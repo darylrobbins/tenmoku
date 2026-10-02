@@ -1,0 +1,51 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+default-members = ["crates/fastedit"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "LicenseRef-Proprietary"
+publish = false
+
+[workspace.dependencies]
+# Internal crates.
+fe-text = { path = "crates/fe-text" }
+fe-buffer = { path = "crates/fe-buffer" }
+
+# GPUI comes from the `gpui-pre-*` crates.io snapshots of Zed (Apache-2.0).
+# 0.3.7 is zed@1a28cff. Every snapshot crate must be bumped together; to move to
+# a Zed git revision instead, add a `[patch.crates-io]` section.
+gpui = { package = "gpui-pre", version = "=0.3.7" }
+# `runtime_shaders` compiles Metal shaders at launch, so builds don't need Xcode's
+# separately downloaded Metal toolchain. Drop it for release builds once CI has
+# that toolchain (`xcodebuild -downloadComponent MetalToolchain`) to save startup time.
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7", features = ["font-kit", "runtime_shaders"] }
+sum-tree = { package = "gpui-pre-sum-tree", version = "=0.3.7" }
+
+ropey = { version = "=2.0.0-beta.1", features = ["metric_chars", "metric_lines_lf", "metric_utf16"] }
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+
+[profile.dev]
+debug = "limited"
+split-debuginfo = "unpacked"
+
+# GPUI and text hot paths are painfully slow unoptimised; keep them fast in dev.
+[profile.dev.package]
+gpui-pre = { opt-level = 3 }
+gpui-pre-platform = { opt-level = 3 }
+gpui-pre-sum-tree = { opt-level = 3 }
+ropey = { opt-level = 3 }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

@@ -1,0 +1,14 @@
+[package]
+name = "fe-buffer"
+description = "Buffers, transactions with origin, anchors and events. Must not depend on GPUI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fe-text.workspace = true
+
+[lints]
+workspace = true

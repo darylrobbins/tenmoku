@@ -1,0 +1,57 @@
+# Dependency policy. fastedit is proprietary: every dependency must be
+# permissively licensed. Run `cargo deny check` (CI does).
+
+[graph]
+all-features = false
+
+[licenses]
+confidence-threshold = 0.93
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "BSL-1.0",
+    "Unlicense",
+    "Unicode-3.0",
+    # BSD-style; libbz2-rs-sys, via GPUI's http client compression.
+    "bzip2-1.0.6",
+    # Public-domain dedication without a patent grant; accepted 2026-10-02 (used by `notify`).
+    "CC0-1.0",
+]
+# MPL-2.0 is allowed only as an *unmodified* dependency, crate by crate.
+# Never patch or copy MPL code into our files. Add entries only after review,
+# and list shipped ones in THIRD_PARTY.md (MPL requires a source-location notice).
+exceptions = [
+    # Build-time only (gpui-pre-apple build script); not linked into the binary.
+    { allow = ["MPL-2.0"], crate = "cbindgen" },
+    # Windows DirectWrite bindings via zed-font-kit; unmodified. Ships only on Windows.
+    { allow = ["MPL-2.0"], crate = "dwrote" },
+    # dirs-sys helper via zed-font-kit; unmodified.
+    { allow = ["MPL-2.0"], crate = "option-ext" },
+]
+
+# Our own crates are proprietary and unpublished.
+[licenses.private]
+ignore = true
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[advisories]
+# Vulnerabilities fail everywhere. "Unmaintained" fails only for our direct
+# dependencies: GPUI's tree (paste, rustybuzz, ttf-parser) is outside our control.
+unmaintained = "workspace"
+ignore = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
