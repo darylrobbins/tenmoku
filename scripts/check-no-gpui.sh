@@ -16,8 +16,10 @@ for crate in $members; do
   if printf '%s\n' "${UI_CRATES[@]}" | grep -qx "$crate"; then
     continue
   fi
+  # GPUI itself and its platform crates. Zed's Apache utility crates that ship
+  # under the same prefix (gpui-pre-sum-tree, -collections, -util, …) are fine.
   if cargo tree -p "$crate" -e normal --target all --prefix none --format '{p}' \
-    | grep -qE '^gpui-pre(-[a-z-]+)? '; then
+    | grep -qE '^gpui-pre(-(platform|macos|apple|linux|windows|wgpu|web|macros))? '; then
     echo "error: core crate '$crate' depends on GPUI:" >&2
     cargo tree -p "$crate" -e normal --target all -i gpui-pre >&2 || true
     failed=1

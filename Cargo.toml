@@ -25,6 +25,13 @@ gpui = { package = "gpui-pre", version = "=0.3.7" }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7", features = ["font-kit", "runtime_shaders"] }
 sum-tree = { package = "gpui-pre-sum-tree", version = "=0.3.7" }
 
+thiserror = "2"
+
+# Test and bench tooling.
+proptest = "1"
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
+rand = "0.9"
+
 ropey = { version = "=2.0.0-beta.1", features = ["metric_chars", "metric_lines_lf", "metric_utf16"] }
 
 [workspace.lints.rust]

@@ -1,35 +1,28 @@
 //! Editable buffers for fastedit.
 //!
-//! M1 fills this in: transactions tagged with an [`Origin`], an undo history
-//! scoped by origin, anchors that survive concurrent edits, and change events.
-//! It must never depend on GPUI.
+//! - [`Buffer`] applies batches of edits atomically and records each as a
+//!   transaction tagged with an [`Origin`] (user, AI, LSP, …). Undo and redo can
+//!   be scoped by origin and work even when later edits exist.
+//! - [`Anchor`]s are positions that follow the text through edits.
+//!   [`Buffer::edit_from`] applies edits computed against an older snapshot,
+//!   which is how AI proposals land while the user keeps typing.
+//! - [`BufferSnapshot`] is an O(1), thread-safe copy for background work.
+//!
+//! This crate must never depend on GPUI.
 
-use fe_text::Text;
+mod buffer;
+mod edit;
+mod log;
+mod selection;
+mod snapshot;
 
-/// Who made an edit. Undo is grouped by origin so the AI's edits can be
-/// reverted without touching the user's.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Origin {
-    User,
-    Ai { agent: String, session: String },
-    Lsp,
-    Format,
-    Host(String),
-}
+pub use buffer::{
+    Buffer, BufferEvent, EditError, EditKind, Origin, Subscription, TransactionId, UndoError,
+};
+pub use edit::Edit;
+pub use fe_text::{Bias, LineEnding, Point, PointUtf16, Text};
+pub use selection::{ResolvedSelection, Selection, SelectionSet};
+pub use snapshot::{Anchor, BufferId, BufferSnapshot, Version};
 
-pub struct Buffer {
-    text: Text,
-}
-
-impl Buffer {
-    pub fn new(text: &str) -> Self {
-        Self {
-            text: Text::new(text),
-        }
-    }
-
-    /// A cheap, immutable view of the current text.
-    pub fn snapshot(&self) -> Text {
-        self.text.clone()
-    }
-}
+#[cfg(test)]
+mod tests;

@@ -9,6 +9,17 @@ publish.workspace = true
 
 [dependencies]
 fe-text.workspace = true
+sum-tree.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+proptest.workspace = true
+rand.workspace = true
+
+[[bench]]
+name = "buffer"
+harness = false
 
 [lints]
 workspace = true
