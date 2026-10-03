@@ -7,12 +7,18 @@ use crate::{
     edit::{Mapping, collapses, map_offset},
 };
 
-/// Every batch of edits ever applied to a buffer, in order. Entry `n` takes
-/// the buffer from version `n` to `n + 1`. Backed by a persistent tree, so
-/// cloning it into a snapshot is O(1).
+/// Every batch of edits applied to a buffer since its floor, in order. Entry
+/// `n` takes the buffer from version `n` to `n + 1`. Backed by a persistent
+/// tree, so cloning it into a snapshot is O(1).
+///
+/// Entries below the floor have been compacted away (see
+/// [`EditLog::compact`]); positions can only be mapped from versions at or
+/// above it.
 #[derive(Clone)]
 pub(crate) struct EditLog {
     entries: SumTree<LogEntry>,
+    /// The index of the first entry kept.
+    floor: usize,
 }
 
 #[derive(Clone)]
@@ -66,11 +72,34 @@ impl EditLog {
     pub(crate) fn new() -> Self {
         Self {
             entries: SumTree::new(()),
+            floor: 0,
         }
     }
 
     pub(crate) fn version(&self) -> Version {
-        Version(self.entries.summary().0)
+        Version(self.floor + self.entries.summary().0)
+    }
+
+    /// The oldest version positions can still be mapped from.
+    pub(crate) fn floor(&self) -> Version {
+        Version(self.floor)
+    }
+
+    /// Drops the entries below `floor` (clamped to the current version).
+    /// Versions keep their numbers. Snapshots cloned earlier keep their own
+    /// entries.
+    pub(crate) fn compact(&mut self, floor: Version) {
+        let floor = floor.min(self.version()).0;
+        if floor <= self.floor {
+            return;
+        }
+        let kept = {
+            let mut cursor = self.entries.cursor::<Count>(());
+            cursor.seek(&Count(floor - self.floor), sum_tree::Bias::Right);
+            cursor.suffix()
+        };
+        self.entries = kept;
+        self.floor = floor;
     }
 
     /// Appends a batch. `inverts` names the version that produced the batch
@@ -79,9 +108,11 @@ impl EditLog {
         let inverts = inverts.map(|version| version.0 - 1);
         let root = match inverts {
             Some(inverted) => {
-                let (_, _, entry) =
-                    self.entries
-                        .find::<Count, _>((), &Count(inverted), sum_tree::Bias::Right);
+                let (_, _, entry) = self.entries.find::<Count, _>(
+                    (),
+                    &Count(inverted - self.floor),
+                    sum_tree::Bias::Right,
+                );
                 let inverted = entry.expect("inverted entry exists").root;
                 Collapse {
                     root: inverted.root,
@@ -89,7 +120,7 @@ impl EditLog {
                 }
             }
             None => Collapse {
-                root: self.entries.summary().0,
+                root: self.version().0,
                 forward: true,
             },
         };
@@ -104,11 +135,17 @@ impl EditLog {
     }
 
     fn entries(&self, from: Version, to: Version) -> impl Iterator<Item = (usize, &LogEntry)> {
+        assert!(
+            from.0 >= self.floor,
+            "{from:?} is below the edit log's floor {:?}",
+            self.floor()
+        );
         debug_assert!(from <= to && to <= self.version());
+        let floor = self.floor;
         let mut cursor = self.entries.cursor::<Count>(());
-        cursor.seek(&Count(from.0), sum_tree::Bias::Right);
+        cursor.seek(&Count(from.0 - floor), sum_tree::Bias::Right);
         std::iter::from_fn(move || {
-            let index = cursor.start().0;
+            let index = floor + cursor.start().0;
             if index >= to.0 {
                 return None;
             }
@@ -158,7 +195,9 @@ impl EditLog {
     ///   never sat beside them, so either side is fine for it); or
     /// - an edit swallowed the boundary into text it replaced, collapsing it
     ///   to one end, and that edit has since been reverted: the replaced text
-    ///   is back, but where in it the boundary was is lost.
+    ///   is back, but where in it the boundary was is lost; or
+    /// - the batch that produced `from` is below the floor, so the batch
+    ///   reverting it couldn't be linked to it.
     ///
     /// `collapsed_by` starts with collapses the boundary inherited (it may
     /// come from an undo or redo computed through one) and gains any found
@@ -171,6 +210,9 @@ impl EditLog {
         to: Version,
         collapsed_by: &mut Vec<Collapse>,
     ) -> Option<usize> {
+        if from.0 <= self.floor {
+            return None;
+        }
         let mut offset = offset;
         for (_, entry) in self.mapping_entries(from, to) {
             if collapsed_by

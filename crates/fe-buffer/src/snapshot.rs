@@ -22,7 +22,10 @@ pub struct Version(pub(crate) usize);
 ///
 /// Resolving costs time proportional to the edits made since the anchor's
 /// version. Long-lived holders should [`BufferSnapshot::refresh`] their
-/// anchors now and then to keep that cost small.
+/// anchors now and then to keep that cost small, and so the buffer's owner
+/// can [compact](crate::Buffer::compact_log) its log below them.
+/// Anchors below a snapshot's [`BufferSnapshot::oldest_version`] can't be
+/// resolved in it.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Anchor {
     pub(crate) offset: usize,
@@ -56,6 +59,14 @@ impl BufferSnapshot {
 
     pub fn version(&self) -> Version {
         self.log.version()
+    }
+
+    /// The oldest version anchors, offsets and [`BufferSnapshot::edits_since`]
+    /// can be mapped from. Older ones were compacted away by
+    /// [`Buffer::compact_log`](crate::Buffer::compact_log); their holders
+    /// have to rebuild from this snapshot.
+    pub fn oldest_version(&self) -> Version {
+        self.log.floor()
     }
 
     pub fn text(&self) -> &Text {
@@ -92,7 +103,8 @@ impl BufferSnapshot {
     /// The anchor's current offset in this snapshot.
     ///
     /// # Panics
-    /// If the anchor comes from a newer version than this snapshot.
+    /// If the anchor comes from a newer version than this snapshot, or one
+    /// below its [`BufferSnapshot::oldest_version`].
     pub fn resolve(&self, anchor: &Anchor) -> usize {
         assert!(
             anchor.version <= self.version(),
@@ -169,6 +181,9 @@ impl BufferSnapshot {
 
     /// The edit batches applied since `version`, oldest first. Each batch's
     /// ranges are in the coordinates just before and just after that batch.
+    ///
+    /// # Panics
+    /// If `version` is below [`BufferSnapshot::oldest_version`].
     pub fn edits_since(&self, version: Version) -> impl Iterator<Item = &Arc<[Edit]>> {
         self.log.batches(version, self.version())
     }

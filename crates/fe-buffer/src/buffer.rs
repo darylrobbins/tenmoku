@@ -60,7 +60,9 @@ pub enum BufferEvent {
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum EditError {
-    #[error("the snapshot belongs to a different buffer or a newer version")]
+    #[error(
+        "the snapshot belongs to a different buffer, a newer version, or one below the edit log's floor"
+    )]
     ForeignSnapshot,
     /// The text an edit was meant to replace has changed since the snapshot.
     #[error("edit {index} conflicts with changes made since the snapshot")]
@@ -248,7 +250,7 @@ impl Buffer {
     /// Once a transaction closes, that origin's oldest transactions are
     /// dropped, and can no longer be undone or redone, until it's under the
     /// cap. The newest is always kept, however large. The edit log is
-    /// unaffected, so anchors and `edits_since` work for every version.
+    /// unaffected; see [`Buffer::compact_log`].
     pub fn set_history_limit(&mut self, bytes: usize) {
         self.history_limit = bytes;
         let origins: Vec<Origin> = self.history_bytes.keys().cloned().collect();
@@ -264,6 +266,44 @@ impl Buffer {
     /// Text bytes `origin`'s undo history holds.
     pub fn history_bytes(&self, origin: &Origin) -> usize {
         self.history_bytes.get(origin).copied().unwrap_or(0)
+    }
+
+    /// Drops edit-log entries below `floor` (clamped to the current version),
+    /// which the caller promises no live anchor, snapshot or `edits_since`
+    /// cursor still needs: the buffer can't see those, so whoever holds them
+    /// picks the floor, typically the oldest version among them after
+    /// [refreshing](BufferSnapshot::refresh) anchors. Version numbers don't
+    /// change, and snapshots taken earlier keep their own log.
+    ///
+    /// Transactions whose next undo or redo would revert batches below the
+    /// floor are dropped from the history. An open transaction is kept, but
+    /// undoing it fails with [`UndoError::Conflict`].
+    pub fn compact_log(&mut self, floor: Version) {
+        self.snapshot.log.compact(floor);
+        let floor = self.snapshot.log.floor();
+        let open = self.open.as_ref().map(|open| open.id);
+        let mut freed: HashMap<Origin, (usize, usize)> = HashMap::new();
+        self.history.retain(|entry| {
+            let pending = entry
+                .undone
+                .as_ref()
+                .map_or(&entry.batches, |undone| &undone.batches);
+            let keep = Some(entry.id) == open || pending.iter().all(|batch| batch.version > floor);
+            if !keep {
+                let (bytes, undone) = freed.entry(entry.origin.clone()).or_default();
+                *bytes += entry_bytes(entry);
+                *undone += usize::from(entry.undone.is_some());
+            }
+            keep
+        });
+        for (origin, (bytes, undone)) in freed {
+            if let Some(held) = self.history_bytes.get_mut(&origin) {
+                *held -= bytes;
+            }
+            if let Some(count) = self.redoable.get_mut(&origin) {
+                *count -= undone;
+            }
+        }
     }
 
     pub fn subscribe(&mut self) -> Subscription {
@@ -306,7 +346,10 @@ impl Buffer {
         I: IntoIterator<Item = (Range<usize>, S)>,
         S: Into<Arc<str>>,
     {
-        if base.id != self.id() || base.version() > self.version() {
+        if base.id != self.id()
+            || base.version() > self.version()
+            || base.version() < self.snapshot.oldest_version()
+        {
             return Err(EditError::ForeignSnapshot);
         }
         let current = &self.snapshot;

@@ -8,6 +8,7 @@ use crate::*;
 mod history_cap;
 mod ideal;
 mod invariants;
+mod log_compaction;
 
 fn ai() -> Origin {
     Origin::Ai {
