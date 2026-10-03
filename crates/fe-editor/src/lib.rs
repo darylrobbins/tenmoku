@@ -4,7 +4,7 @@
 
 use std::{
     io,
-    ops::Range,
+    ops::{Range, RangeInclusive},
     path::{Path, PathBuf},
 };
 
@@ -12,7 +12,7 @@ use fe_buffer::{
     Bias, Buffer, BufferEvent, BufferSnapshot, EditKind, Origin, ResolvedSelection, SelectionSet,
     Subscription, Text, TransactionId, UndoError,
 };
-use fe_display::ExpandedRow;
+use fe_display::{CharWidth, DisplayMap, ExpandedRow, Monospace};
 use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -39,22 +39,43 @@ impl Movement {
             Movement::Up | Movement::Down | Movement::PageUp(_) | Movement::PageDown(_)
         )
     }
+
+    /// Whether a caret moved into folded rows should go past them, rather
+    /// than back to their header.
+    fn is_forward(self) -> bool {
+        matches!(
+            self,
+            Movement::Right
+                | Movement::WordRight
+                | Movement::Down
+                | Movement::PageDown(_)
+                | Movement::DocumentEnd
+        )
+    }
 }
 
 pub struct EditorModel {
     buffer: Buffer,
     selections: SelectionSet,
-    /// Char column each selection's head tries to keep while moving vertically.
+    /// Char column, within its display row, each selection's head tries to
+    /// keep while moving vertically.
     goals: Vec<Option<usize>>,
     tab_size: usize,
     path: Option<PathBuf>,
     events: Subscription,
+    /// Display rows: soft wrap and folds. Synced after each edit.
+    display: DisplayMap,
+    widths: Box<dyn CharWidth>,
+    soft_wrap: bool,
+    /// The width to wrap at when soft wrap is on, in `widths`' unit.
+    wrap_width: f32,
 }
 
 impl EditorModel {
     pub fn new(mut buffer: Buffer, path: Option<PathBuf>) -> Self {
         let events = buffer.subscribe();
         let selections = SelectionSet::caret(buffer.current(), 0);
+        let display = DisplayMap::new(buffer.current(), 4);
         Self {
             buffer,
             selections,
@@ -62,6 +83,10 @@ impl EditorModel {
             tab_size: 4,
             path,
             events,
+            display,
+            widths: Box::new(Monospace),
+            soft_wrap: false,
+            wrap_width: 80.,
         }
     }
 
@@ -141,6 +166,120 @@ impl EditorModel {
 
     pub fn set_tab_size(&mut self, tab_size: usize) {
         self.tab_size = tab_size.max(1);
+        self.display.set_tab_size(self.tab_size, &mut *self.widths);
+    }
+
+    /// The display rows, as of the last [`EditorModel::sync_display`].
+    /// The model syncs after its own edits; call that after editing
+    /// through [`EditorModel::buffer_mut`].
+    pub fn display(&self) -> &DisplayMap {
+        &self.display
+    }
+
+    /// Brings the display rows up to date with the buffer.
+    pub fn sync_display(&mut self) {
+        self.display.sync(self.buffer.current(), &mut *self.widths);
+    }
+
+    /// Measures chars for soft wrap; [`Monospace`] until set.
+    pub fn set_char_widths(&mut self, widths: Box<dyn CharWidth>) {
+        self.widths = widths;
+        self.sync_display();
+        self.display.rewrap(&mut *self.widths);
+    }
+
+    pub fn soft_wrap(&self) -> bool {
+        self.soft_wrap
+    }
+
+    pub fn set_soft_wrap(&mut self, soft_wrap: bool) {
+        self.soft_wrap = soft_wrap;
+        self.apply_wrap();
+    }
+
+    pub fn toggle_soft_wrap(&mut self) {
+        self.set_soft_wrap(!self.soft_wrap);
+    }
+
+    /// Where soft wrap wraps when it's on, in the unit of the char widths.
+    pub fn set_wrap_width(&mut self, width: f32) {
+        self.wrap_width = width;
+        self.apply_wrap();
+    }
+
+    fn apply_wrap(&mut self) {
+        self.sync_display();
+        let width = self.soft_wrap.then_some(self.wrap_width);
+        self.display.set_wrap_width(width, &mut *self.widths);
+    }
+
+    /// Folds the rows each selection spans or, for a caret, the indented
+    /// block it heads or is in. Carets folded away move to the fold's
+    /// header.
+    pub fn fold(&mut self) {
+        self.sync_display();
+        let text = self.text().clone();
+        for selection in self.selections() {
+            let start = text.offset_to_point(selection.range.start);
+            let end = text.offset_to_point(selection.range.end);
+            let last = if end.row > start.row && end.column == 0 {
+                end.row - 1
+            } else {
+                end.row
+            };
+            let rows = if last > start.row {
+                Some(start.row..=last)
+            } else {
+                indented_block(&text, start.row, self.tab_size)
+            };
+            if let Some(rows) = rows {
+                self.display.fold(rows);
+            }
+        }
+        let selections: Vec<_> = self
+            .selections()
+            .into_iter()
+            .map(|selection| {
+                let head = self.skip_folds(selection.head(), false);
+                if head == selection.head() {
+                    selection
+                } else {
+                    caret(head)
+                }
+            })
+            .collect();
+        self.set_selections(selections);
+    }
+
+    /// Unfolds the folds on the rows of each selection.
+    pub fn unfold(&mut self) {
+        self.sync_display();
+        for selection in self.selections() {
+            let start = self.text().offset_to_point(selection.range.start).row;
+            let end = self.text().offset_to_point(selection.range.end).row;
+            self.display.unfold(start..=end);
+        }
+    }
+
+    pub fn unfold_all(&mut self) {
+        self.sync_display();
+        self.display.unfold_all();
+    }
+
+    /// Moves an offset in folded rows out of them: past them going
+    /// `forward` (unless they run to the end), otherwise to the end of
+    /// their header.
+    fn skip_folds(&self, offset: usize, forward: bool) -> usize {
+        let text = self.text();
+        let row = text.offset_to_point(offset).row;
+        let Some(hidden) = self.display.hidden_rows(row) else {
+            return offset;
+        };
+        if forward && hidden.end < text.row_count() {
+            return text.row_start(hidden.end);
+        }
+        let header = hidden.start - 1;
+        text.row_start(header) + text.row_len(header) as usize
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -252,6 +391,7 @@ impl EditorModel {
     }
 
     pub fn move_cursors(&mut self, movement: Movement, extend: bool) {
+        self.sync_display();
         let selections = self.selections();
         if !movement.is_vertical() || self.goals.len() != selections.len() {
             self.goals = vec![None; selections.len()];
@@ -283,7 +423,7 @@ impl EditorModel {
 
     fn moved(&self, offset: usize, movement: Movement, goal: &mut Option<usize>) -> usize {
         let text = self.text();
-        match movement {
+        let moved = match movement {
             Movement::Left => self.prev_grapheme(offset),
             Movement::Right => self.next_grapheme(offset),
             Movement::WordLeft => self.prev_word(offset),
@@ -307,26 +447,40 @@ impl EditorModel {
             Movement::Down => self.vertical(offset, 1, goal),
             Movement::PageUp(rows) => self.vertical(offset, -(rows.max(1) as i64), goal),
             Movement::PageDown(rows) => self.vertical(offset, rows.max(1) as i64, goal),
-        }
+        };
+        self.skip_folds(moved, movement.is_forward())
     }
 
+    /// Moves `delta` display rows, keeping the goal column.
     fn vertical(&self, offset: usize, delta: i64, goal: &mut Option<usize>) -> usize {
-        let text = self.text();
-        let point = text.offset_to_point(offset);
+        let display = &self.display;
+        let row = display.row_for_offset(offset);
         let column = *goal.get_or_insert_with(|| {
-            let row = self.expanded_row(point.row);
-            row.char_column(row.to_display(point.column as usize))
+            let range = display.row(row).range;
+            let expanded = self.expanded_range(range.clone());
+            expanded.char_column(expanded.to_display(offset.saturating_sub(range.start)))
         });
-        let target = point.row as i64 + delta;
+        let target = row as i64 + delta;
         if target < 0 {
             return 0;
         }
-        if target >= text.row_count() as i64 {
-            return text.len();
+        if target >= display.row_count() as i64 {
+            return self.text().len();
         }
-        let row = self.expanded_row(target as u32);
-        let display = row.display_col_for_char_column(column);
-        text.row_start(target as u32) + row.to_buffer(display, Bias::Left)
+        let target = display.row(target as u32);
+        let expanded = self.expanded_range(target.range.clone());
+        let column = expanded.to_buffer(expanded.display_col_for_char_column(column), Bias::Left);
+        let offset = target.range.start + column;
+        if !target.last && offset >= target.range.end {
+            // The end of a soft-wrapped row is the start of the next one.
+            let before_end = self.prev_grapheme(target.range.end);
+            return before_end.max(target.range.start);
+        }
+        offset
+    }
+
+    fn expanded_range(&self, range: Range<usize>) -> ExpandedRow {
+        ExpandedRow::new(&self.text().slice_to_string(range), self.tab_size)
     }
 
     /// Row index, start offset and text of the row containing `offset`.
@@ -559,6 +713,7 @@ impl EditorModel {
     }
 
     fn place_carets_after_history_change(&mut self, kind: EditKind) {
+        self.sync_display();
         let last = self
             .events
             .drain()
@@ -604,6 +759,7 @@ impl EditorModel {
         self.events.drain();
         self.buffer.edit(merged, Origin::User);
         self.events.drain();
+        self.sync_display();
         self.goals.clear();
         self.set_selections(carets);
     }
@@ -628,6 +784,45 @@ fn selection_from(tail: usize, head: usize) -> ResolvedSelection {
             reversed: false,
         }
     }
+}
+
+/// The rows of the block indented under `row`, with `row` as its header: or
+/// if `row` heads none, the block it's in. Blank rows inside belong to the
+/// block; trailing ones don't.
+fn indented_block(text: &Text, row: u32, tab_size: usize) -> Option<RangeInclusive<u32>> {
+    let indent = |row: u32| {
+        let line = text.row_to_string(row);
+        let mut column = 0;
+        for ch in line.chars() {
+            match ch {
+                ' ' => column += 1,
+                '\t' => column += tab_size - column % tab_size,
+                ch if ch.is_whitespace() => {}
+                _ => return Some(column),
+            }
+        }
+        None
+    };
+    let block_under = |header: u32| {
+        let level = indent(header)?;
+        let mut last = header;
+        for row in header + 1..text.row_count() {
+            match indent(row) {
+                Some(indent) if indent <= level => break,
+                Some(_) => last = row,
+                None => {}
+            }
+        }
+        (last > header).then_some(header..=last)
+    };
+    if let Some(block) = block_under(row) {
+        return Some(block);
+    }
+    let level = indent(row)?;
+    let header = (0..row)
+        .rev()
+        .find(|&above| indent(above).is_some_and(|indent| indent < level))?;
+    block_under(header)
 }
 
 fn prev_char_start(text: &str, col: usize) -> Option<usize> {

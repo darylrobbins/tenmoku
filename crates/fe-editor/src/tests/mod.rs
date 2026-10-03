@@ -134,6 +134,101 @@ fn vertical_moves_line_up_through_tabs() {
 }
 
 #[test]
+fn vertical_moves_follow_soft_wrapped_rows() {
+    // Wrapped at 6 chars: `aaaa `, `bbbb `, `cc`, then `dddddd`.
+    let mut model = parse("a|aaa bbbb cc\ndddddd");
+    model.set_wrap_width(6.);
+    model.set_soft_wrap(true);
+    let mut steps = Vec::new();
+    for _ in 0..3 {
+        model.move_cursors(Movement::Down, false);
+        steps.push(render(&model));
+    }
+    assert_eq!(
+        steps,
+        [
+            "aaaa b|bbb cc\ndddddd",
+            "aaaa bbbb c|c\ndddddd",
+            "aaaa bbbb cc\nd|ddddd",
+        ]
+    );
+    // A row's end is the next row's start, so a caret going up to a shorter
+    // wrapped row stops before it.
+    let mut model = parse("aaaa bbbb cc\ndddddd|");
+    model.set_wrap_width(6.);
+    model.set_soft_wrap(true);
+    model.move_cursors(Movement::Up, false);
+    model.move_cursors(Movement::Up, false);
+    assert_eq!(render(&model), "aaaa bbbb| cc\ndddddd");
+
+    model.toggle_soft_wrap();
+    model.move_cursors(Movement::Down, false);
+    assert_eq!(render(&model), "aaaa bbbb cc\ndddddd|");
+}
+
+#[test]
+fn folds_hide_rows_from_movement() {
+    let mut model = parse("de|f a():\n    one\n    two\nend");
+    model.fold();
+    assert_eq!(
+        model.display().folds(),
+        [fe_display::Fold { start: 0, end: 2 }]
+    );
+    let mut steps = Vec::new();
+    for movement in [
+        Movement::Down,
+        Movement::Up,
+        Movement::LineEnd,
+        Movement::Right,
+        Movement::Left,
+    ] {
+        model.move_cursors(movement, false);
+        steps.push(render(&model));
+    }
+    assert_eq!(
+        steps,
+        [
+            "def a():\n    one\n    two\nen|d",
+            "de|f a():\n    one\n    two\nend",
+            "def a():|\n    one\n    two\nend",
+            // Right goes past the fold; left comes back to its header.
+            "def a():\n    one\n    two\n|end",
+            "def a():|\n    one\n    two\nend",
+        ]
+    );
+    model.unfold();
+    assert_eq!(model.display().folds(), []);
+}
+
+#[test]
+fn fold_picks_rows_to_fold() {
+    let text = "def a():\n    one\n\n    two\n\nend";
+    let fold = |marked: &str| {
+        let mut model = parse(marked);
+        model.fold();
+        let folds: Vec<_> = model
+            .display()
+            .folds()
+            .iter()
+            .map(|fold| (fold.start, fold.end))
+            .collect();
+        (folds, render(&model))
+    };
+    // The block a caret heads or is in, without trailing blank rows. A
+    // caret folded away moves to the header.
+    assert_eq!(fold("de|f a():\n    one\n\n    two\n\nend").0, [(0, 3)]);
+    assert_eq!(
+        fold("def a():\n    o|ne\n\n    two\n\nend"),
+        (vec![(0, 3)], format!("def a():|{}", &text[8..]))
+    );
+    // Rows with nothing indented under or around them don't fold.
+    assert_eq!(fold("def a():\n    one\n\n    two\n\ne|nd").0, []);
+    // A selection folds the rows it spans, not counting the row it ends at
+    // the start of.
+    assert_eq!(fold("[def a():\n    one\n]\n    two\n\nend").0, [(0, 1)]);
+}
+
+#[test]
 fn multi_cursor_insert_and_delete() {
     let mut model = parse("a|b\nc|d\n[ef]");
     model.insert("XY");

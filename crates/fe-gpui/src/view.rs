@@ -1,15 +1,23 @@
-use std::ops::Range;
+use std::{ops::Range, time::Duration};
 
-use fe_buffer::{Anchor, Bias};
+use fe_buffer::Anchor;
 use fe_editor::{EditorModel, Movement};
+use fe_syntax::Syntax;
 use gpui::{
-    App, Bounds, ClipboardItem, Context, CursorStyle, EntityInputHandler, FocusHandle, Focusable,
-    InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentElement as _, Pixels, Point, Render, ScrollWheelEvent, Styled as _,
-    UTF16Selection, Window, div, point, px, size,
+    App, AppContext as _, Bounds, ClipboardItem, Context, CursorStyle, EntityInputHandler,
+    FocusHandle, Focusable, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement as _, Pixels, Point, Render, ScrollWheelEvent,
+    Styled as _, Task, UTF16Selection, Window, div, px,
 };
 
-use crate::{element::EditorElement, *};
+use crate::{
+    element::{EditorElement, GlyphWidths},
+    *,
+};
+
+/// How long a frame may spend reparsing before the parse moves to a
+/// background thread. Small edits to files of 10k lines reparse within it.
+const SYNC_PARSE_BUDGET: Duration = Duration::from_millis(1);
 
 /// An editor for one buffer.
 pub struct EditorView {
@@ -25,6 +33,10 @@ pub struct EditorView {
     drag: Option<Drag>,
     /// Text being composed by an input method.
     marked: Option<Range<Anchor>>,
+    /// The buffer's syntax tree, once its language is loaded.
+    pub(crate) syntax: Option<Syntax>,
+    /// A language load or parse running in the background.
+    syntax_task: Option<Task<()>>,
 }
 
 /// What a mouse drag extends: characters, or whole words or rows starting
@@ -37,8 +49,15 @@ enum Drag {
 }
 
 impl EditorView {
-    pub fn new(model: EditorModel, theme: EditorTheme, cx: &mut Context<Self>) -> Self {
-        Self {
+    /// An editor for `model`, highlighted according to its file's language.
+    pub fn new(mut model: EditorModel, theme: EditorTheme, cx: &mut Context<Self>) -> Self {
+        let font = gpui::font(theme.font_family.clone());
+        model.set_char_widths(Box::new(GlyphWidths::new(
+            cx.text_system().clone(),
+            &font,
+            theme.font_size,
+        )));
+        let mut view = Self {
             model,
             theme,
             focus: cx.focus_handle(),
@@ -47,7 +66,33 @@ impl EditorView {
             layout: None,
             drag: None,
             marked: None,
+            syntax: None,
+            syntax_task: None,
+        };
+        let language = view
+            .model
+            .path()
+            .and_then(fe_syntax::language_name_for_path);
+        if let Some(name) = language {
+            if let Some(language) = fe_syntax::loaded_language(name) {
+                view.syntax = Some(Syntax::new(language, view.model.snapshot()));
+            } else {
+                // Compiling a highlight query can take a few frames.
+                view.syntax_task = Some(cx.spawn(async move |this, cx| {
+                    let language = cx
+                        .background_spawn(async move { fe_syntax::language_by_name(name) })
+                        .await;
+                    this.update(cx, |view, cx| {
+                        view.syntax_task = None;
+                        view.syntax =
+                            language.map(|language| Syntax::new(language, view.model.snapshot()));
+                        cx.notify();
+                    })
+                    .ok();
+                }));
+            }
         }
+        view
     }
 
     pub fn model(&self) -> &EditorModel {
@@ -70,36 +115,18 @@ impl EditorView {
     }
 
     fn page_rows(&self) -> u32 {
-        self.layout
-            .as_ref()
-            .map_or(20, |layout| layout.visible_rows().saturating_sub(2).max(1))
+        self.layout.as_ref().map_or(20, |layout| {
+            layout.frame.visible_rows().saturating_sub(2).max(1)
+        })
     }
 
-    /// The buffer offset under a window position, from the last frame.
+    /// The buffer offset under a window position, in the last frame.
     fn offset_for_position(&self, position: Point<Pixels>) -> usize {
-        let Some(layout) = &self.layout else {
-            return 0;
-        };
-        let text = self.model.text();
-        let doc_y = position.y - layout.bounds.top() + self.scroll.y;
-        let row = (doc_y / layout.line_height).floor().max(0.) as u32;
-        if row >= text.row_count() {
-            return text.len();
-        }
-        // Rows outside the last frame (dragging past an edge) clamp to it.
-        let Some(row_layout) = layout.row(row).or_else(|| {
-            if row < layout.first_row {
-                layout.rows.first()
-            } else {
-                layout.rows.last()
-            }
-        }) else {
-            return 0;
-        };
-        let x = position.x - layout.text_left + self.scroll.x;
-        let display = row_layout.line.closest_index_for_x(x);
-        let column = row_layout.expanded.to_buffer(display, Bias::Left);
-        text.row_start(row_layout.row) + column.min(text.row_len(row_layout.row) as usize)
+        self.layout.as_ref().map_or(0, |layout| {
+            layout
+                .frame
+                .offset_at(self.model.text(), layout.to_frame(position))
+        })
     }
 
     fn on_mouse_down(
@@ -170,7 +197,7 @@ impl EditorView {
         let line_height = self
             .layout
             .as_ref()
-            .map_or(px(20.), |layout| layout.line_height);
+            .map_or(px(20.), |layout| px(layout.frame.line_height));
         let delta = event.delta.pixel_delta(line_height);
         self.scroll.x = (self.scroll.x - delta.x).max(px(0.));
         self.scroll.y = (self.scroll.y - delta.y).max(px(0.));
@@ -228,6 +255,32 @@ impl EditorView {
         text.utf16_to_offset(range.start)..text.utf16_to_offset(range.end)
     }
 
+    /// Brings the syntax tree up to date with the text: within this frame if
+    /// the reparse is quick, otherwise on a background thread while the stale
+    /// tree keeps highlighting.
+    fn sync_syntax(&mut self, cx: &mut Context<Self>) {
+        let Some(syntax) = &mut self.syntax else {
+            return;
+        };
+        syntax.edit(self.model.snapshot());
+        if self.syntax_task.is_some() || syntax.parse_within(SYNC_PARSE_BUDGET) {
+            return;
+        }
+        let job = syntax.parse_job();
+        self.syntax_task = Some(cx.spawn(async move |this, cx| {
+            let parsed = cx.background_spawn(async move { job.run() }).await;
+            this.update(cx, |view, cx| {
+                view.syntax_task = None;
+                if let Some(syntax) = &mut view.syntax {
+                    syntax.finish(parsed);
+                }
+                // Repaint, and reparse whatever changed meanwhile.
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
     fn marked_range(&self) -> Option<Range<usize>> {
         self.marked
             .as_ref()
@@ -281,6 +334,7 @@ movement_actions! {
 
 impl Render for EditorView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_syntax(cx);
         let div = div()
             .id("editor")
             .key_context(KEY_CONTEXT)
@@ -314,6 +368,18 @@ impl Render for EditorView {
             }))
             .on_action(cx.listener(|this, _: &Tab, _, cx| {
                 this.model.tab();
+                this.changed(cx);
+            }))
+            .on_action(cx.listener(|this, _: &Fold, _, cx| {
+                this.model.fold();
+                this.changed(cx);
+            }))
+            .on_action(cx.listener(|this, _: &Unfold, _, cx| {
+                this.model.unfold();
+                this.changed(cx);
+            }))
+            .on_action(cx.listener(|this, _: &ToggleSoftWrap, _, cx| {
+                this.model.toggle_soft_wrap();
                 this.changed(cx);
             }))
             .on_action(cx.listener(Self::copy))
@@ -421,15 +487,8 @@ impl EntityInputHandler for EditorView {
     ) -> Option<Bounds<Pixels>> {
         let range = self.range_from_utf16(&range_utf16);
         let layout = self.layout.as_ref()?;
-        let text = self.model.text();
-        let start = text.offset_to_point(range.start);
-        let row = layout.row(start.row)?;
-        let x = row.x_for_column(start.column as usize);
-        let origin = point(
-            layout.text_left + x - self.scroll.x,
-            layout.bounds.top() + layout.line_height * start.row as f32 - self.scroll.y,
-        );
-        Some(Bounds::new(origin, size(px(2.), layout.line_height)))
+        let caret = layout.frame.caret_bounds(range.start)?;
+        Some(layout.bounds(caret))
     }
 
     fn character_index_for_point(

@@ -169,6 +169,8 @@ const CASES: &[Case] = &[
     case("alt-backspace", "foo bar|", "foo |"),
     case("enter", "  ab|c", "  ab\n  |c"),
     case("tab", "ab|", "ab  |"),
+    // A caret folded away moves to the fold's header.
+    case("cmd-alt-[", "a:\n  b|\nc", "a:|\n  b\nc"),
     // Every cursor gets the command.
     case("backspace", "a|b\nc|d", "|b\n|d"),
     case("alt-right", "|ab cd\n|ef gh", "ab| cd\nef| gh"),
@@ -188,7 +190,7 @@ const CASES: &[Case] = &[
 ];
 
 /// Bindings exercised by their own tests rather than the table.
-const DEDICATED: &[&str] = &["cmd-s"];
+const DEDICATED: &[&str] = &["cmd-s", "cmd-alt-]", "alt-z"];
 
 fn run_case(case: &Case) {
     let mut cx = TestAppContext::single();
@@ -277,6 +279,33 @@ fn bindings_are_all_tested(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn unfold_shows_folded_rows(cx: &mut TestAppContext) {
+    let (view, cx) = editor(cx, "a|:\n  b\nc");
+    let rows =
+        |cx: &mut VisualTestContext| view.update(cx, |view, _| view.model().display().row_count());
+    cx.simulate_keystrokes("cmd-alt-[");
+    assert_eq!(rows(cx), 2);
+    cx.simulate_keystrokes("cmd-alt-]");
+    assert_eq!(rows(cx), 3);
+}
+
+#[gpui::test]
+fn soft_wrap_wraps_to_the_window(cx: &mut TestAppContext) {
+    let long = "word ".repeat(1000);
+    let (view, cx) = editor(cx, &format!("|{long}\nend"));
+    let rows =
+        |cx: &mut VisualTestContext| view.update(cx, |view, _| view.model().display().row_count());
+    cx.simulate_keystrokes("alt-z");
+    assert!(rows(cx) > 10, "wrapped into {} rows", rows(cx));
+    // Down moves within the wrapped row.
+    cx.simulate_keystrokes("down");
+    let head = view.update(cx, |view, _| view.model().primary_selection().head());
+    assert!(head > 0 && head < long.len(), "head at {head}");
+    cx.simulate_keystrokes("alt-z");
+    assert_eq!(rows(cx), 2);
+}
+
+#[gpui::test]
 fn bindings_only_apply_to_a_focused_editor(cx: &mut TestAppContext) {
     let (view, cx) = editor(cx, "ab|c");
     cx.update(|window, cx| window.blur(cx));
@@ -360,7 +389,9 @@ fn input_method_utf16_offsets_with_emoji(cx: &mut TestAppContext) {
 fn page_moves_by_the_visible_rows(cx: &mut TestAppContext) {
     let text: String = (0..300).map(|row| format!("row {row}\n")).collect();
     let (view, cx) = editor(cx, &format!("|{text}"));
-    let visible = view.update(cx, |view, _| view.layout.as_ref().unwrap().visible_rows());
+    let visible = view.update(cx, |view, _| {
+        view.layout.as_ref().unwrap().frame.visible_rows()
+    });
     assert!(visible > 3);
     cx.simulate_keystrokes("pagedown");
     let row = view.update(cx, |view, _| {
@@ -491,7 +522,12 @@ fn the_caret_stays_in_view(cx: &mut TestAppContext) {
     let caret = position_of(&view, cx, text.len() + long_row.len());
     let (bounds, line_height) = view.update(cx, |view, _| {
         let layout = view.layout.as_ref().unwrap();
-        (layout.bounds, layout.line_height)
+        let frame = &layout.frame;
+        let size = gpui::size(gpui::px(frame.width), gpui::px(frame.height));
+        (
+            gpui::Bounds::new(layout.origin, size),
+            gpui::px(frame.line_height),
+        )
     });
     assert!(bounds.contains(&caret), "{caret:?} outside {bounds:?}");
     // A few rows of context stay below the caret.
@@ -522,4 +558,32 @@ fn save_writes_the_file(cx: &mut TestAppContext) {
     assert!(!view.update(cx, |view, _| view.model().is_dirty()));
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "one!\r\n");
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The first parse of a large file runs in the background; later edits keep
+/// the tree current.
+#[gpui::test]
+fn highlighting_follows_edits(cx: &mut TestAppContext) {
+    cx.update(init);
+    let text = "fn f() {}\n".repeat(20_000);
+    let (view, cx) = cx.add_window_view(move |_, cx| {
+        let model = EditorModel::new(Buffer::new(&text), Some("main.rs".into()));
+        EditorView::new(model, EditorTheme::default_dark(cx), cx)
+    });
+    cx.update(|window, cx| window.focus(&view.focus_handle(cx), cx));
+    let first_keyword = |cx: &mut VisualTestContext| {
+        cx.run_until_parked();
+        view.update(cx, |view, _| {
+            let syntax = view.syntax.as_ref().expect("language loaded");
+            assert!(!syntax.needs_parse());
+            let spans = syntax.highlights(0..40);
+            spans
+                .into_iter()
+                .find(|span| span.highlight.name() == "keyword")
+                .map(|span| span.range)
+        })
+    };
+    assert_eq!(first_keyword(cx), Some(0..2));
+    cx.simulate_input("// ");
+    assert_eq!(first_keyword(cx), Some(13..15));
 }
