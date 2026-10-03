@@ -1,0 +1,630 @@
+//! Positions in rows too long to shape whole, such as minified files and data
+//! dumps. [`RowIndex`] finds the x and display column of any offset in a row,
+//! and the offset at any x, without shaping the row, so the layout can shape
+//! only the part that's on screen.
+//!
+//! Offsets are buffer offsets; x is from the row's start, in the unit of the
+//! [`CharWidth`] (the UI uses pixels). X is an `f64`: 10 MB along a row is
+//! tens of millions of pixels, where an `f32` is off by several and summing
+//! `f32` widths drifts much further. Sums and multiples of `f32` widths are
+//! exact in an `f64` up to about 2^31, so x matches measuring the prefix
+//! exactly, whichever way it's found.
+
+use std::{collections::HashMap, ops::Range};
+
+use fe_buffer::{BufferId, BufferSnapshot, Version};
+use fe_text::{Bias, Text};
+
+use crate::CharWidth;
+
+/// Bytes between checkpoints.
+const CHUNK: usize = 4 * 1024;
+
+/// Rows [`LongRows`] holds before it starts over.
+const MAX_CACHED_ROWS: usize = 128;
+
+/// A char boundary in a row.
+#[derive(Copy, Clone, Debug, PartialEq)]
+struct Position {
+    offset: usize,
+    /// The display column, counting chars and expanding tabs as
+    /// [`crate::ExpandedRow`] does.
+    column: usize,
+    x: f64,
+}
+
+/// Where a walk along a row stops.
+#[derive(Copy, Clone)]
+enum Target {
+    /// At this char boundary.
+    Offset(usize),
+    /// At the last char boundary at or before this x.
+    X(f64),
+}
+
+/// Checkpoints every 4 KB along one buffer row, each holding a char
+/// boundary's display column and x. They're measured lazily, only as far
+/// along the row as a query needs, so a query costs at most a chunk of
+/// measuring once the row is indexed up to it.
+///
+/// Queries take the measurer the index was made with. Printable ASCII is
+/// measured once; when it's all one width (a monospace font), chunks of only
+/// printable ASCII advance without per-char work.
+pub struct RowIndex {
+    text: Text,
+    end: usize,
+    tab_size: usize,
+    ascii: [f64; 128],
+    /// The width of every printable ASCII char, when they're all equal.
+    advance: Option<f64>,
+    /// The start of each chunk measured so far, then where measuring got to:
+    /// the row's end once it's all measured.
+    checkpoints: Vec<Position>,
+    /// Bytes looked at, so tests can check queries stay local.
+    #[cfg(test)]
+    scanned: std::cell::Cell<usize>,
+}
+
+/// The part of a row to shape for a view, from [`RowIndex::slice`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct RowSlice {
+    /// Buffer offsets, on char boundaries.
+    pub range: Range<usize>,
+    /// The x of `range.start`.
+    pub start_x: f64,
+    /// The display column of `range.start`, for
+    /// [`crate::ExpandedRow::with_start_column`].
+    pub start_column: usize,
+}
+
+impl RowIndex {
+    /// Indexes the buffer row of `text` at `range`, which excludes its line
+    /// break. Nothing past the row's start is measured yet.
+    pub fn new(
+        text: &Text,
+        range: Range<usize>,
+        tab_size: usize,
+        measure: &mut dyn CharWidth,
+    ) -> Self {
+        let ascii: [f64; 128] =
+            std::array::from_fn(|ch| f64::from(measure.char_width(char::from(ch as u8))));
+        let printable = &ascii[usize::from(b' ')..=usize::from(b'~')];
+        let advance = printable
+            .iter()
+            .all(|&width| width == printable[0])
+            .then_some(printable[0]);
+        Self {
+            text: text.clone(),
+            end: range.end,
+            tab_size: tab_size.max(1),
+            ascii,
+            advance,
+            checkpoints: vec![Position {
+                offset: range.start,
+                column: 0,
+                x: 0.,
+            }],
+            #[cfg(test)]
+            scanned: Default::default(),
+        }
+    }
+
+    pub fn range(&self) -> Range<usize> {
+        self.checkpoints[0].offset..self.end
+    }
+
+    /// The x of `offset`, which is clamped to the row and onto a char
+    /// boundary towards the start.
+    pub fn x_for_offset(&mut self, offset: usize, measure: &mut dyn CharWidth) -> f64 {
+        self.locate(offset, measure).x
+    }
+
+    /// The display column of `offset`, clamped as for
+    /// [`RowIndex::x_for_offset`].
+    pub fn column_for_offset(&mut self, offset: usize, measure: &mut dyn CharWidth) -> usize {
+        self.locate(offset, measure).column
+    }
+
+    /// The last char boundary at or before `x`: the start of the char under
+    /// it, or the row's end past it.
+    pub fn offset_for_x(&mut self, x: f64, measure: &mut dyn CharWidth) -> usize {
+        self.locate_x(x, measure).offset
+    }
+
+    /// The whole row's width, which measures all of it.
+    pub fn width(&mut self, measure: &mut dyn CharWidth) -> f64 {
+        self.locate(self.end, measure).x
+    }
+
+    /// The part of the row to shape to show `x_range`: from a char boundary
+    /// at or left of `x_range.start - margin` to one at or right of
+    /// `x_range.end + margin`, clamped to the row.
+    pub fn slice(
+        &mut self,
+        x_range: Range<f64>,
+        margin: f64,
+        measure: &mut dyn CharWidth,
+    ) -> RowSlice {
+        let start = self.locate_x(x_range.start - margin, measure);
+        let end_x = x_range.end + margin;
+        let mut end = self.locate_x(end_x, measure).offset;
+        if self.x_for_offset(end, measure) < end_x && end < self.end {
+            // Include the char that crosses `end_x`.
+            end = self.text.clip_offset(end + 1, Bias::Right);
+        }
+        RowSlice {
+            range: start.offset..end.max(start.offset),
+            start_x: start.x,
+            start_column: start.column,
+        }
+    }
+
+    fn locate(&mut self, offset: usize, measure: &mut dyn CharWidth) -> Position {
+        let offset = self
+            .text
+            .clip_offset(offset.clamp(self.range().start, self.end), Bias::Left);
+        while let Some(next) = self.next_checkpoint()
+            && next <= offset
+        {
+            self.measure_chunk(next, measure);
+        }
+        let ix = self.checkpoints.partition_point(|at| at.offset <= offset) - 1;
+        self.walk(
+            self.checkpoints[ix],
+            offset,
+            Target::Offset(offset),
+            measure,
+        )
+    }
+
+    fn locate_x(&mut self, x: f64, measure: &mut dyn CharWidth) -> Position {
+        while let Some(next) = self.next_checkpoint()
+            && self.checkpoints.last().is_some_and(|last| last.x <= x)
+        {
+            self.measure_chunk(next, measure);
+        }
+        let ix = self
+            .checkpoints
+            .partition_point(|at| at.x <= x)
+            .saturating_sub(1);
+        // Left of the row's start, there may be no checkpoint after it yet.
+        let bound = self
+            .checkpoints
+            .get(ix + 1)
+            .map(|at| at.offset)
+            .or_else(|| self.next_checkpoint())
+            .unwrap_or(self.end);
+        self.walk(self.checkpoints[ix], bound, Target::X(x), measure)
+    }
+
+    /// The end of the chunk after the last checkpoint, unless the row is
+    /// measured to its end.
+    fn next_checkpoint(&self) -> Option<usize> {
+        let last = self.checkpoints.last()?.offset;
+        (last < self.end).then(|| {
+            self.text
+                .clip_offset((last + CHUNK).min(self.end), Bias::Left)
+        })
+    }
+
+    fn measure_chunk(&mut self, end: usize, measure: &mut dyn CharWidth) {
+        let last = *self.checkpoints.last().expect("the row's start");
+        let next = self.walk(last, end, Target::Offset(end), measure);
+        self.checkpoints.push(next);
+    }
+
+    /// Measures from `from` towards `bound` (a char boundary) until `target`.
+    fn walk(
+        &self,
+        from: Position,
+        bound: usize,
+        target: Target,
+        measure: &mut dyn CharWidth,
+    ) -> Position {
+        let bound = match target {
+            Target::Offset(offset) => bound.min(offset),
+            Target::X(_) => bound,
+        };
+        if let Some(advance) = self.advance
+            && self.is_printable_ascii(from.offset..bound)
+        {
+            let len = bound - from.offset;
+            let x_at = |chars: usize| from.x + chars as f64 * advance;
+            let chars = match target {
+                Target::Offset(_) => len,
+                Target::X(x) => {
+                    // The quotient is exact while x is (see the module docs),
+                    // but correct it against `x_at` in case it isn't.
+                    let mut chars = ((x - from.x) / advance).floor().clamp(0., len as f64) as usize;
+                    while chars < len && x_at(chars + 1) <= x {
+                        chars += 1;
+                    }
+                    while chars > 0 && x_at(chars) > x {
+                        chars -= 1;
+                    }
+                    chars
+                }
+            };
+            return Position {
+                offset: from.offset + chars,
+                column: from.column + chars,
+                x: x_at(chars),
+            };
+        }
+        let mut at = from;
+        for chunk in self.text.chunks_in_range(from.offset..bound) {
+            #[cfg(test)]
+            self.scanned.set(self.scanned.get() + chunk.len());
+            for ch in chunk.chars() {
+                let (columns, next_x) = if ch == '\t' {
+                    // A tab is drawn as spaces, so add their widths one by
+                    // one, as measuring the expanded row does.
+                    let columns = self.tab_size - at.column % self.tab_size;
+                    let space = self.ascii[usize::from(b' ')];
+                    (columns, (0..columns).fold(at.x, |x, _| x + space))
+                } else if ch.is_ascii() {
+                    (1, at.x + self.ascii[ch as usize])
+                } else {
+                    (1, at.x + f64::from(measure.char_width(ch)))
+                };
+                if let Target::X(x) = target
+                    && next_x > x
+                {
+                    return at;
+                }
+                at = Position {
+                    offset: at.offset + ch.len_utf8(),
+                    column: at.column + columns,
+                    x: next_x,
+                };
+            }
+        }
+        at
+    }
+
+    fn is_printable_ascii(&self, range: Range<usize>) -> bool {
+        #[cfg(test)]
+        self.scanned.set(self.scanned.get() + range.len());
+        self.text
+            .chunks_in_range(range)
+            .all(|chunk| chunk.bytes().all(|byte| matches!(byte, b' '..=b'~')))
+    }
+}
+
+/// The [`RowIndex`]es of long rows of one buffer version, kept from frame to
+/// frame. Another version or buffer drops them all; so does
+/// [`LongRows::clear`], which a font or tab size change must call.
+#[derive(Default)]
+pub struct LongRows {
+    key: Option<(BufferId, Version)>,
+    rows: HashMap<u32, RowIndex>,
+}
+
+impl LongRows {
+    /// The index of buffer row `row` of `snapshot`.
+    pub fn index(
+        &mut self,
+        snapshot: &BufferSnapshot,
+        row: u32,
+        tab_size: usize,
+        measure: &mut dyn CharWidth,
+    ) -> &mut RowIndex {
+        let key = Some((snapshot.id(), snapshot.version()));
+        if self.key != key || self.rows.len() >= MAX_CACHED_ROWS && !self.rows.contains_key(&row) {
+            self.rows.clear();
+            self.key = key;
+        }
+        self.rows.entry(row).or_insert_with(|| {
+            let text = snapshot.text();
+            let start = text.row_start(row);
+            RowIndex::new(
+                text,
+                start..start + text.row_len(row) as usize,
+                tab_size,
+                measure,
+            )
+        })
+    }
+
+    pub fn clear(&mut self) {
+        self.key = None;
+        self.rows.clear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use proptest::prelude::*;
+
+    use super::*;
+    use crate::{ExpandedRow, Monospace};
+
+    /// Every char `0.` wide, like a monospace font at a fractional size.
+    struct Fixed(f32);
+
+    impl CharWidth for Fixed {
+        fn char_width(&mut self, _: char) -> f32 {
+            self.0
+        }
+    }
+
+    /// ASCII 7.2 wide except a narrow `i`, CJK and emoji twice that and
+    /// combining marks nothing. Counts its calls.
+    #[derive(Default)]
+    struct Wide {
+        calls: usize,
+    }
+
+    impl CharWidth for Wide {
+        fn char_width(&mut self, ch: char) -> f32 {
+            self.calls += 1;
+            match ch {
+                'i' => 3.3,
+                '\u{300}'..='\u{36f}' => 0.,
+                '\u{2e80}'.. => 14.4,
+                _ => 7.2,
+            }
+        }
+    }
+
+    /// Counts calls to [`Monospace`].
+    #[derive(Default)]
+    struct Counting {
+        calls: usize,
+    }
+
+    impl CharWidth for Counting {
+        fn char_width(&mut self, ch: char) -> f32 {
+            self.calls += 1;
+            Monospace.char_width(ch)
+        }
+    }
+
+    /// `row` as the middle row of a text, and its range there.
+    fn middle_row(row: &str) -> (Text, Range<usize>) {
+        let text = Text::new(&format!("before\n{row}\nafter"));
+        (text, 7..7 + row.len())
+    }
+
+    /// Rows of runs of pieces, crossing a few checkpoints.
+    fn long_row() -> impl Strategy<Value = String> {
+        let piece =
+            prop::sample::select(vec!["a", "i", "\t", "é", "中", "😀", "e\u{301}", "ab\tc"]);
+        prop::collection::vec((piece, 1usize..1500), 0..10).prop_map(|runs| {
+            runs.into_iter()
+                .map(|(piece, count)| piece.repeat(count))
+                .collect()
+        })
+    }
+
+    fn check_matches_prefix(
+        row: &str,
+        tab_size: usize,
+        picks: &[prop::sample::Index],
+        measure: &mut dyn CharWidth,
+    ) -> Result<(), TestCaseError> {
+        let (text, range) = middle_row(row);
+        let expanded = ExpandedRow::new(row, tab_size);
+        // (offset, column, x) of every char boundary, summing widths over the
+        // expanded prefix.
+        let mut boundaries = vec![(range.start, 0, 0.)];
+        let (mut display, mut column, mut x) = (0, 0, 0.);
+        for (ix, ch) in row.char_indices() {
+            let end = if ch == '\t' {
+                expanded.to_display(ix + 1)
+            } else {
+                display + ch.len_utf8()
+            };
+            for ch in expanded.text()[display..end].chars() {
+                column += 1;
+                x += f64::from(measure.char_width(ch));
+            }
+            display = end;
+            boundaries.push((range.start + ix + ch.len_utf8(), column, x));
+        }
+
+        let mut index = RowIndex::new(&text, range.clone(), tab_size, measure);
+        for pick in picks {
+            let ix = pick.index(boundaries.len());
+            let (offset, column, want_x) = boundaries[ix];
+            let x = index.x_for_offset(offset, measure);
+            prop_assert_eq!(x, want_x, "x of {}", offset);
+            prop_assert_eq!(index.column_for_offset(offset, measure), column);
+            if let Some(&(next, ..)) = boundaries.get(ix + 1) {
+                prop_assert!(index.x_for_offset(next, measure) >= x);
+            }
+            // The last boundary at or before x, at and around boundaries.
+            for x in [x.next_down(), x, x + 0.25] {
+                let found = index.offset_for_x(x, measure);
+                let at = boundaries.partition_point(|b| b.0 < found);
+                prop_assert_eq!(boundaries[at].0, found, "{} is a char boundary", found);
+                prop_assert!(at == 0 || index.x_for_offset(found, measure) <= x);
+                if let Some(&(next, ..)) = boundaries.get(at + 1) {
+                    prop_assert!(
+                        index.x_for_offset(next, measure) > x,
+                        "{found} is last at {x}"
+                    );
+                }
+            }
+        }
+        let width = index.width(measure);
+        prop_assert_eq!(width, boundaries.last().unwrap().2);
+        prop_assert!(
+            index
+                .checkpoints
+                .is_sorted_by(|a, b| a.offset < b.offset && a.x <= b.x)
+        );
+        for checkpoint in &index.checkpoints {
+            let at = boundaries.partition_point(|b| b.0 < checkpoint.offset);
+            prop_assert_eq!(checkpoint.column, boundaries[at].1);
+            prop_assert_eq!(checkpoint.x, boundaries[at].2);
+        }
+        Ok(())
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(48))]
+
+        #[test]
+        fn index_matches_measuring_the_prefix(
+            row in long_row(),
+            tab_size in 1usize..9,
+            picks in prop::collection::vec(any::<prop::sample::Index>(), 1..48),
+        ) {
+            check_matches_prefix(&row, tab_size, &picks, &mut Monospace)?;
+            check_matches_prefix(&row, tab_size, &picks, &mut Fixed(7.2))?;
+            check_matches_prefix(&row, tab_size, &picks, &mut Wide::default())?;
+        }
+
+        #[test]
+        fn expanded_slice_matches_whole_row(
+            row in "[a\t é中]{0,40}",
+            split in any::<prop::sample::Index>(),
+            tab_size in 1usize..9,
+        ) {
+            let whole = ExpandedRow::new(&row, tab_size);
+            let boundaries: Vec<usize> = row.char_indices().map(|(ix, _)| ix).chain([row.len()]).collect();
+            let split = boundaries[split.index(boundaries.len())];
+            let display_split = whole.to_display(split);
+            let column = whole.char_column(display_split);
+            let part = ExpandedRow::with_start_column(&row[split..], column, tab_size);
+            prop_assert_eq!(part.text(), &whole.text()[display_split..]);
+            for &offset in boundaries.iter().filter(|&&offset| offset >= split) {
+                prop_assert_eq!(
+                    part.to_display(offset - split),
+                    whole.to_display(offset) - display_split
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn slice_is_bounded_and_covers_the_view() {
+        const LEN: usize = 10 << 20;
+        let (view, margin) = (800., 200.);
+        let rows: [(&str, &mut dyn CharWidth); 2] = [
+            ("abcdefgh", &mut Fixed(7.2)),
+            ("ab\tcé中 😀e\u{301}xyz", &mut Wide::default()),
+        ];
+        for (pattern, measure) in rows {
+            let row = pattern.repeat(LEN / pattern.len());
+            let (text, range) = middle_row(&row);
+            let mut index = RowIndex::new(&text, range.clone(), 4, measure);
+            let width = index.width(measure);
+            for start in [
+                -50.,
+                0.,
+                1234.5,
+                width / 2.,
+                width - view,
+                width - 10.,
+                width + 50.,
+            ] {
+                let slice = index.slice(start..start + view, margin, measure);
+                let RowSlice {
+                    range: bytes,
+                    start_x,
+                    start_column,
+                } = slice.clone();
+                assert!(text.is_char_boundary(bytes.start) && text.is_char_boundary(bytes.end));
+                assert!(range.start <= bytes.start && bytes.end <= range.end);
+                assert_eq!(start_x, index.x_for_offset(bytes.start, measure));
+                assert_eq!(start_column, index.column_for_offset(bytes.start, measure));
+                let context = format!("{pattern:?} at {start}: {slice:?}");
+                assert!(start_x <= (start - margin).max(0.), "{context}");
+                let end_x = index.x_for_offset(bytes.end, measure);
+                assert!(
+                    end_x >= start + view + margin || bytes.end == range.end,
+                    "{context}"
+                );
+                // At most 3 bytes per char 7.2 wide, plus a char at each end.
+                assert!(
+                    bytes.len() <= ((view + margin * 2.) / 2.4) as usize + 8,
+                    "{context}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn far_along_a_row_x_stays_exact() {
+        let row = "abcdefgh".repeat(10 << 17);
+        let (text, range) = middle_row(&row);
+        let measure = &mut Fixed(7.2);
+        let mut index = RowIndex::new(&text, range.clone(), 4, measure);
+        for chars in [3, 100, 6_148_089, row.len()] {
+            let x = index.x_for_offset(range.start + chars, measure);
+            assert_eq!(x, chars as f64 * f64::from(7.2f32), "{chars} chars");
+            assert_eq!(index.offset_for_x(x, measure), range.start + chars);
+            assert_eq!(
+                index.offset_for_x(x.next_down(), measure),
+                range.start + chars - 1
+            );
+        }
+    }
+
+    #[test]
+    fn index_builds_lazily() {
+        let row = "é中".repeat(2 << 20);
+        let (text, range) = middle_row(&row);
+        let measure = &mut Wide::default();
+        let mut index = RowIndex::new(&text, range.clone(), 4, measure);
+        index.x_for_offset(range.start + 100, measure);
+        index.offset_for_x(15000., measure);
+        index.slice(5000.0..13000., 2000., measure);
+        let checkpoints = index.checkpoints.len();
+        assert!(checkpoints <= 3, "{checkpoints} checkpoints");
+        assert!(measure.calls <= 128 + 3 * CHUNK, "{} calls", measure.calls);
+
+        index.width(measure);
+        assert_eq!(index.checkpoints.len(), row.len().div_ceil(CHUNK - 1) + 1);
+        assert!(measure.calls > row.chars().count());
+
+        // A fresh index looks at only the start of the row for the first view.
+        let rows: [(&str, &mut dyn CharWidth); 2] = [
+            ("abcdefgh", &mut Counting::default()),
+            ("é中", &mut Wide::default()),
+        ];
+        for (pattern, measure) in rows {
+            let row = pattern.repeat((10 << 20) / pattern.len());
+            let (text, range) = middle_row(&row);
+            let mut index = RowIndex::new(&text, range, 4, measure);
+            index.slice(0.0..800., 200., measure);
+            let scanned = index.scanned.get();
+            assert!(scanned <= 4 * CHUNK, "{pattern:?}: {scanned} bytes scanned");
+        }
+    }
+
+    #[test]
+    fn monospace_ascii_is_not_measured_per_char() {
+        let row = "x = [1, 2, 3];".repeat(1 << 20);
+        let (text, range) = middle_row(&row);
+        let measure = &mut Counting::default();
+        let mut index = RowIndex::new(&text, range.clone(), 4, measure);
+        assert_eq!(index.width(measure), row.len() as f64);
+        assert_eq!(
+            index.offset_for_x(1e6 + 0.5, measure),
+            range.start + 1_000_000
+        );
+        assert_eq!(measure.calls, 128);
+    }
+
+    #[test]
+    fn long_rows_follow_the_snapshot() {
+        let mut buffer = fe_buffer::Buffer::new("ab\n\tcd");
+        let mut rows = LongRows::default();
+        let measure = &mut Monospace;
+        assert_eq!(rows.index(&buffer.snapshot(), 1, 4, measure).range(), 3..6);
+        assert_eq!(
+            rows.index(&buffer.snapshot(), 1, 4, measure).width(measure),
+            6.
+        );
+        assert_eq!(rows.rows.len(), 1);
+
+        buffer.edit([(0..0, "xyz")], fe_buffer::Origin::User);
+        let index = rows.index(&buffer.snapshot(), 1, 4, measure);
+        assert_eq!((index.range(), index.width(measure)), (6..9, 6.));
+        rows.index(&buffer.snapshot(), 0, 4, measure);
+        assert_eq!(rows.rows.len(), 2);
+    }
+}

@@ -8,11 +8,13 @@
 mod display_map;
 mod fold_map;
 pub mod layout;
+mod long_row;
 mod wrap_map;
 
 pub use display_map::{DisplayMap, DisplayRow};
 pub use fe_text::Bias;
 pub use fold_map::Fold;
+pub use long_row::{LongRows, RowIndex, RowSlice};
 
 /// Measures chars for soft wrapping, in the unit of the wrap width (the UI
 /// uses pixels).
@@ -49,6 +51,13 @@ impl ExpandedRow {
     /// Expands each tab to the next multiple of `tab_size` display columns,
     /// counting each char as one column.
     pub fn new(row: &str, tab_size: usize) -> Self {
+        Self::with_start_column(row, 0, tab_size)
+    }
+
+    /// Expands part of a row whose first char is at display column
+    /// `start_column`, so its tabs reach the same tab stops as in the whole
+    /// row. Columns in the result count from the part's start.
+    pub fn with_start_column(row: &str, start_column: usize, tab_size: usize) -> Self {
         let tab_size = tab_size.max(1);
         if !row.contains('\t') {
             return Self {
@@ -58,7 +67,7 @@ impl ExpandedRow {
         }
         let mut text = String::with_capacity(row.len() + 16);
         let mut tabs = Vec::new();
-        let mut column = 0;
+        let mut column = start_column;
         for (buffer_col, ch) in row.char_indices() {
             if ch == '\t' {
                 let width = tab_size - column % tab_size;
