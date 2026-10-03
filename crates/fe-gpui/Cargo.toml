@@ -13,6 +13,7 @@ fe-display.workspace = true
 fe-editor.workspace = true
 fe-syntax.workspace = true
 gpui.workspace = true
+log.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

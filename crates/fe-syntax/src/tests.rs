@@ -1,9 +1,14 @@
-use std::{ops::Range, path::Path, time::Duration};
+use std::{cmp::Reverse, ops::Range, path::Path, time::Duration};
 
 use fe_buffer::{Buffer, Origin};
+use proptest::{prelude::prop, prop_assert, prop_assert_eq, proptest};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 
-use crate::*;
+use crate::{
+    highlight::{Capture, flatten},
+    syntax::FAULT,
+    *,
+};
 
 /// A fully parsed tree for `buffer`.
 fn parsed(language: &'static Language, buffer: &Buffer) -> Syntax {
@@ -375,8 +380,8 @@ fn flat_nodes_highlight_as_one_query_would() {
             0..text.len(),
         ] {
             assert_eq!(
-                syntax.query(tree, range.clone(), true),
-                syntax.query(tree, range.clone(), false),
+                syntax.query(tree, range.clone(), true, Duration::MAX),
+                syntax.query(tree, range.clone(), false, Duration::MAX),
                 "{name} {range:?}"
             );
         }
@@ -399,4 +404,122 @@ fn cached_highlights_follow_edits_and_reparses() {
     assert_eq!(first(&syntax), (3..6, "keyword"));
     syntax.finish(syntax.parse_job().run());
     assert_eq!(first(&syntax), (0..10, "comment"));
+}
+
+/// A parse that panics, on a background thread or within a frame's budget,
+/// leaves the buffer as plain text that can still be edited.
+#[test]
+fn a_panicking_parse_leaves_plain_text() {
+    for background in [true, false] {
+        let mut buffer = Buffer::new("fn f() {}\n");
+        let mut syntax = Syntax::new(rust(), buffer.current());
+        if background {
+            let job = syntax.parse_job();
+            let parsed = std::thread::spawn(move || {
+                FAULT.set(Some("read"));
+                job.run()
+            });
+            syntax.finish(parsed.join().expect("the panic is caught"));
+        } else {
+            FAULT.set(Some("read"));
+            assert!(syntax.parse_within(Duration::from_secs(10)));
+        }
+        assert!(syntax.failed() && !syntax.needs_parse());
+        assert_eq!(syntax.highlights(0..10), []);
+
+        buffer.edit([(0..0, "// ")], Origin::User);
+        syntax.edit(buffer.current());
+        assert!(syntax.tree().is_none() && !syntax.needs_parse());
+        assert!(syntax.parse_within(Duration::from_secs(10)));
+        assert_eq!(syntax.highlights(0..13), []);
+    }
+}
+
+/// A query that panics leaves the buffer as plain text, and doesn't try again.
+#[test]
+fn a_panicking_query_leaves_plain_text() {
+    let syntax = parsed(rust(), &Buffer::new("fn f() {}\n"));
+    FAULT.set(Some("query"));
+    assert_eq!(syntax.highlights(0..10), []);
+    assert!(syntax.failed());
+    assert_eq!(syntax.highlights(0..10), []);
+}
+
+/// A query stops at its time budget, with the highlights found so far.
+#[test]
+fn queries_stop_at_their_budget() {
+    let text = "fn f(x: u8) -> u8 { x + 1 } // c\n".repeat(2000);
+    let syntax = parsed(rust(), &Buffer::new(&text));
+    let tree = syntax.tree().unwrap();
+    let query = |budget| syntax.query(tree, 0..text.len(), false, budget).len();
+    let (all, cut) = (query(Duration::MAX), query(Duration::ZERO));
+    assert!(cut < all / 10, "{cut} of {all} spans");
+}
+
+/// `(start, len, highlight, precedence)`, for captures from proptest.
+type CaptureSpec = (usize, usize, usize, usize);
+
+fn captures(specs: &[CaptureSpec]) -> Vec<Capture> {
+    specs
+        .iter()
+        .map(|&(start, len, highlight, precedence)| Capture {
+            range: start..start + len,
+            highlight: Highlight::all().nth(highlight).unwrap(),
+            precedence,
+        })
+        .collect()
+}
+
+/// [`flatten`]'s rule applied to each byte of `clip` on its own: of the
+/// captures covering it, the one starting last wins, then the shortest, then
+/// the highest precedence, then the earliest.
+fn paint(captures: &[Capture], clip: Range<usize>) -> Vec<Option<Highlight>> {
+    clip.map(|byte| {
+        captures
+            .iter()
+            .enumerate()
+            .filter(|(_, capture)| capture.range.contains(&byte))
+            .max_by_key(|&(ix, capture)| {
+                (
+                    capture.range.start,
+                    Reverse(capture.range.end),
+                    capture.precedence,
+                    Reverse(ix),
+                )
+            })
+            .map(|(_, capture)| capture.highlight)
+    })
+    .collect()
+}
+
+proptest! {
+    /// Random captures, nested and partly overlapping, flatten to the spans
+    /// painting each byte separately gives.
+    #[test]
+    fn flatten_matches_painting_each_byte(
+        specs in prop::collection::vec((0usize..30, 0usize..15, 0usize..4, 0usize..3), 0..12),
+        clip_start in 0usize..35,
+        clip_len in 0usize..30,
+    ) {
+        let clip = clip_start..clip_start + clip_len;
+        let spans = flatten(captures(&specs), clip.clone());
+        let mut painted = vec![None; clip.len()];
+        let mut last: Option<&HighlightSpan> = None;
+        for span in &spans {
+            prop_assert!(!span.range.is_empty(), "{spans:?}");
+            prop_assert!(clip.start <= span.range.start && span.range.end <= clip.end);
+            if let Some(last) = last {
+                prop_assert!(last.range.end <= span.range.start, "{spans:?}");
+                prop_assert!(
+                    last.range.end < span.range.start || last.highlight != span.highlight,
+                    "touching spans with one highlight aren't merged: {spans:?}"
+                );
+            }
+            for byte in span.range.clone() {
+                painted[byte - clip.start] = Some(span.highlight);
+            }
+            last = Some(span);
+        }
+        prop_assert_eq!(painted, paint(&captures(&specs), clip));
+    }
 }

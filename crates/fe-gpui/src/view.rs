@@ -238,21 +238,21 @@ impl EditorView {
 
     fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
         if let Err(error) = self.model.undo() {
-            log_error("undo", &error);
+            log::error!("undo failed: {error}");
         }
         self.changed(cx);
     }
 
     fn redo(&mut self, _: &Redo, _: &mut Window, cx: &mut Context<Self>) {
         if let Err(error) = self.model.redo() {
-            log_error("redo", &error);
+            log::error!("redo failed: {error}");
         }
         self.changed(cx);
     }
 
     fn save(&mut self, _: &Save, _: &mut Window, cx: &mut Context<Self>) {
         if let Err(error) = self.model.save() {
-            log_error("save", &error);
+            log::error!("save failed: {error}");
         }
         cx.notify();
     }
@@ -298,10 +298,6 @@ impl EditorView {
             .as_ref()
             .map(|range| self.model.snapshot().resolve_range(range))
     }
-}
-
-fn log_error(action: &str, error: &dyn std::fmt::Display) {
-    eprintln!("fastedit: {action} failed: {error}");
 }
 
 macro_rules! movement_actions {

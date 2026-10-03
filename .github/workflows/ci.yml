@@ -25,6 +25,8 @@ jobs:
         run: cargo test --workspace
       - name: Core crates stay GPUI-free
         run: scripts/check-no-gpui.sh
+      - name: fe-syntax builds with no languages and with each alone
+        run: scripts/check-syntax-features.sh
 
   deny:
     runs-on: ubuntu-latest
