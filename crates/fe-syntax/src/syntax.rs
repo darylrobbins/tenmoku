@@ -49,20 +49,20 @@ const QUERY_BUDGET: Duration = if cfg!(test) {
 /// one range per run of consecutive visible rows.
 const CACHED_RANGES: usize = 8;
 
-/// What [`Syntax::highlights`] keeps for the current tree.
+/// What [`Syntax::highlights`] keeps between calls.
 #[derive(Default)]
 struct Cache {
-    /// Recent results, newest last, so frames that neither scroll nor edit
-    /// don't query again.
+    /// Recent results for the current tree, newest last, so frames that
+    /// neither scroll nor edit don't query again.
     ranges: VecDeque<(Range<usize>, Vec<HighlightSpan>)>,
+    /// Kept across edits, which are applied to them as to the tree.
     layers: Layers,
 }
 
 impl Cache {
     fn clear(&mut self) {
         self.ranges.clear();
-        // Missing languages stay missing until they're compiled.
-        self.layers.trees.clear();
+        self.layers.clear();
     }
 }
 
@@ -116,11 +116,13 @@ impl Syntax {
     /// Applies the edits made since the last call to the tree, so it lines up
     /// with `snapshot`. Cheap: nothing is reparsed.
     pub fn edit(&mut self, snapshot: &BufferSnapshot) {
-        if snapshot.id() != self.snapshot.id() || snapshot.version() != self.version() {
-            self.cache.get_mut().clear();
+        let version = self.version();
+        let cache = self.cache.get_mut();
+        if snapshot.id() != self.snapshot.id() || snapshot.version() != version {
+            cache.ranges.clear();
         }
         if snapshot.id() != self.snapshot.id()
-            || snapshot.version() < self.version()
+            || snapshot.version() < version
             || snapshot.len() > MAX_PARSE_BYTES
             || self.failed.get()
         {
@@ -128,10 +130,14 @@ impl Syntax {
             // given up on.
             self.tree = None;
             self.parsed = None;
-        } else if let Some(tree) = &mut self.tree
-            && let Some(edit) = input_edit(self.snapshot.text(), snapshot, self.snapshot.version())
+            cache.layers.clear();
+        } else if let Some(edit) =
+            input_edit(self.snapshot.text(), snapshot, self.snapshot.version())
         {
-            tree.edit(&edit);
+            if let Some(tree) = &mut self.tree {
+                tree.edit(&edit);
+            }
+            cache.layers.edit(&edit);
         }
         self.snapshot = snapshot.clone();
     }
@@ -209,7 +215,8 @@ impl Syntax {
         }
         self.tree = Some(tree);
         self.parsed = Some(parsed.snapshot.version());
-        self.cache.get_mut().clear();
+        // The layers stay: they were edited along with the old tree.
+        self.cache.get_mut().ranges.clear();
     }
 
     pub fn tree(&self) -> Option<&Tree> {
@@ -220,7 +227,8 @@ impl Syntax {
     /// non-overlapping, including those of injected languages (see
     /// [`crate::injection`]). Only the part of the tree touching `range` is
     /// queried, and only the injections overlapping it are parsed, so pass
-    /// the visible text, not the whole file. Asking for the same range again
+    /// the visible text, not the whole file. Injected layers far from the
+    /// recently highlighted ranges are dropped. Asking for the same range again
     /// before the tree changes doesn't query again.
     ///
     /// A query that runs out of [`QUERY_BUDGET`] returns the highlights found
@@ -239,6 +247,7 @@ impl Syntax {
             return spans.clone();
         }
 
+        let parsed = self.parsed == Some(self.version());
         let layers = &mut cache.layers;
         let query = || {
             // `None` for a budget too long to be a time.
@@ -252,7 +261,13 @@ impl Syntax {
                 language.local_patterns,
                 deadline,
             );
-            injection::paint(language, text, tree, range.clone(), deadline, layers, spans)
+            let host = injection::Host {
+                language,
+                text,
+                tree,
+                parsed,
+            };
+            injection::paint(host, range.clone(), deadline, layers, spans)
         };
         let Ok((spans, complete)) = catch_unwind(AssertUnwindSafe(query)) else {
             log::error!(
@@ -317,12 +332,23 @@ impl Syntax {
         )
     }
 
-    /// The languages and ranges of the injected layers parsed so far.
+    /// The languages and ranges of the injected layers kept, sorted.
     #[cfg(test)]
     pub(crate) fn layers(&self) -> Vec<injection::LayerKey> {
-        let mut layers: Vec<_> = self.cache.borrow().layers.trees.keys().cloned().collect();
-        layers.sort_by_key(|(_, ranges)| ranges.first().map(|range| range.start));
-        layers
+        self.cache.borrow().layers.keys()
+    }
+
+    /// [`Syntax::layers`], with their trees as S-expressions.
+    #[cfg(test)]
+    pub(crate) fn layer_trees(&self) -> Vec<(injection::LayerKey, String)> {
+        self.cache.borrow().layers.trees()
+    }
+
+    /// The injected layers parsed since the last call, fresh or
+    /// incrementally, in order.
+    #[cfg(test)]
+    pub(crate) fn take_layer_parses(&self) -> Vec<injection::LayerKey> {
+        std::mem::take(&mut self.cache.borrow_mut().layers.parses)
     }
 }
 

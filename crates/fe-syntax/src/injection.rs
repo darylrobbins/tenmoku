@@ -19,18 +19,24 @@
 //!
 //! Only the injections overlapping the highlighted range are found and
 //! parsed, within the same time budget as the query. Their trees are kept
-//! until the host tree changes. An injected language whose query isn't
-//! compiled yet stays plain, and is reported so the caller can compile it off
-//! the UI thread. Inside a layer's ranges its highlights win, and bytes it
+//! across edits, which [`Layers::edit`] applies to them as to the host tree.
+//! Once the host is reparsed, a layer an edit touched is reparsed
+//! incrementally from its old tree, and the others are used as they are. A
+//! layer whose injection is gone is dropped when its bytes are next
+//! highlighted, and one far from the recently highlighted ranges as soon as
+//! it's far.
+//!
+//! An injected language whose query isn't compiled yet stays plain, and is
+//! reported so the caller can compile it off the UI thread. Inside a layer's ranges its highlights win, and bytes it
 //! leaves uncaptured keep the host's: fenced code stays `markup.raw` around
 //! its keywords. A language that isn't in this build, such as `regex` or
 //! `jsdoc`, stays plain.
 
-use std::{collections::HashMap, ops::Range, time::Instant};
+use std::{collections::VecDeque, ops::Range, time::Instant};
 
 use fe_buffer::Text;
 use tree_sitter::{
-    Node, Parser, Query, QueryCursorOptions, QueryError, StreamingIterator as _, Tree,
+    InputEdit, Node, Parser, Query, QueryCursorOptions, QueryError, StreamingIterator as _, Tree,
 };
 
 use crate::{
@@ -46,17 +52,130 @@ const MAX_DEPTH: usize = 3;
 /// Captured language names longer than this aren't looked up.
 const MAX_NAME_LEN: usize = 32;
 
-/// A layer's language and the bytes it was parsed from, which identify it
-/// while the host tree stays the same.
+/// How many recently highlighted ranges keep the layers near them. A frame
+/// highlights one range per run of consecutive visible rows.
+const RECENT_RANGES: usize = 8;
+
+/// A layer's language and the bytes it was parsed from.
+#[cfg(test)]
 pub(crate) type LayerKey = (&'static str, Vec<Range<usize>>);
 
 /// What highlighting keeps between calls for injections.
 #[derive(Default)]
 pub(crate) struct Layers {
-    /// The layers parsed so far. Clear them when the host tree changes.
-    pub(crate) trees: HashMap<LayerKey, Tree>,
+    kept: Vec<Layer>,
     /// Injected languages found without a compiled query.
     pub(crate) missing: Vec<&'static str>,
+    /// The ranges highlighted last, newest last.
+    recent: VecDeque<Range<usize>>,
+    /// Counts [`paint`] calls, to tell which layers the current one used.
+    pass: u64,
+    /// Each layer parsed, fresh or incrementally, in order.
+    #[cfg(test)]
+    pub(crate) parses: Vec<LayerKey>,
+}
+
+/// An injection's parsed tree, kept across edits.
+struct Layer {
+    language: &'static Language,
+    /// The bytes it was parsed from, moved along by the edits since. Sorted
+    /// and not empty.
+    ranges: Vec<Range<usize>>,
+    tree: Tree,
+    /// Whether an edit has touched its bytes since it was parsed.
+    edited: bool,
+    /// The last [`Layers::pass`] that highlighted it.
+    pass: u64,
+}
+
+impl Layer {
+    /// From the start of its first range to the end of its last.
+    fn span(&self) -> Range<usize> {
+        span(&self.ranges)
+    }
+}
+
+impl Layers {
+    /// Forgets every layer, keeping the missing languages: they stay missing
+    /// until they're compiled.
+    pub(crate) fn clear(&mut self) {
+        self.kept.clear();
+        self.recent.clear();
+    }
+
+    /// Applies `edit`, just applied to the host tree, to the layers it
+    /// touches or moves, so they line up with the text again. Those it
+    /// touches are reparsed when next highlighted after the host is.
+    pub(crate) fn edit(&mut self, edit: &InputEdit) {
+        let edited = edit.start_byte..edit.old_end_byte;
+        for layer in &mut self.kept {
+            let span = layer.span();
+            if span.end < edited.start {
+                continue;
+            }
+            layer.edited |= touches(&span, &edited);
+            layer.tree.edit(edit);
+            for range in &mut layer.ranges {
+                *range = moved(range, edit);
+            }
+        }
+        for range in &mut self.recent {
+            *range = moved(range, edit);
+        }
+    }
+
+    /// The languages and ranges of the layers kept, sorted.
+    #[cfg(test)]
+    pub(crate) fn keys(&self) -> Vec<LayerKey> {
+        self.trees().into_iter().map(|(key, _)| key).collect()
+    }
+
+    /// The layers kept, sorted, with their trees as S-expressions.
+    #[cfg(test)]
+    pub(crate) fn trees(&self) -> Vec<(LayerKey, String)> {
+        let mut trees: Vec<_> = self
+            .kept
+            .iter()
+            .map(|layer| {
+                let key = (layer.language.name(), layer.ranges.clone());
+                (key, layer.tree.root_node().to_sexp())
+            })
+            .collect();
+        trees.sort_by(|((a, a_ranges), _), ((b, b_ranges), _)| {
+            (a_ranges.first().map(|range| range.start), a)
+                .cmp(&(b_ranges.first().map(|range| range.start), b))
+        });
+        trees
+    }
+
+    /// Drops the layers that `range`, just highlighted, would have used but
+    /// didn't, as their injections are gone: those with bytes in it, and
+    /// those edited in or next to it. Then remembers `range` as highlighted,
+    /// and drops the layers more than its length from it and the other
+    /// recent ranges.
+    fn highlighted(&mut self, range: Range<usize>, complete: bool, host_parsed: bool) {
+        let pass = self.pass;
+        if complete && host_parsed {
+            self.kept.retain(|layer| {
+                layer.pass == pass
+                    || !(layer.ranges.iter().any(|bytes| overlaps(bytes, &range))
+                        || layer.edited && touches(&layer.span(), &range))
+            });
+        }
+        self.recent.retain(|recent| *recent != range);
+        if self.recent.len() == RECENT_RANGES {
+            self.recent.pop_front();
+        }
+        self.recent.push_back(range);
+        let recent = &self.recent;
+        self.kept.retain(|layer| {
+            let span = layer.span();
+            recent.iter().any(|range| {
+                let near = range.start.saturating_sub(range.len())..range.end + range.len();
+                touches(&span, &near)
+            })
+        });
+    }
 }
 
 /// A language's injections query, with the `#set!` properties of each of its
@@ -105,18 +224,27 @@ impl InjectionQuery {
     }
 }
 
-/// `spans`, the highlights of `tree` in `range`, with the highlights of the
-/// layers injected into it painted over them. Layers are taken from `layers`
-/// or parsed and added to it, and languages whose queries aren't compiled
-/// yet are added to its missing ones.
+/// The tree that layers are injected into.
+pub(crate) struct Host<'a> {
+    pub(crate) language: &'a Language,
+    pub(crate) text: &'a Text,
+    pub(crate) tree: &'a Tree,
+    /// Whether `tree` is parsed from `text`. If it's only been edited to
+    /// match, so are the injections found in it, and layers that edits
+    /// touched are used as they are, not reparsed, like the host tree.
+    pub(crate) parsed: bool,
+}
+
+/// `spans`, the highlights of the host tree in `range`, with the highlights
+/// of the layers injected into it painted over them. Layers are taken from
+/// `layers` or parsed and added to it, and languages whose queries aren't
+/// compiled yet are added to its missing ones.
 ///
 /// Also returns whether every injection overlapping `range` was highlighted.
 /// One isn't if finding or parsing it ran out of time before `deadline`, or
 /// its language is missing.
 pub(crate) fn paint(
-    language: &Language,
-    text: &Text,
-    tree: &Tree,
+    host: Host,
     range: Range<usize>,
     deadline: Option<Instant>,
     layers: &mut Layers,
@@ -125,16 +253,20 @@ pub(crate) fn paint(
     if range.is_empty() {
         return (spans, true);
     }
+    layers.pass += 1;
     let mut painter = Painter {
-        text,
-        range,
+        text: host.text,
+        range: range.clone(),
         deadline,
+        host_parsed: host.parsed,
         layers,
         parser: None,
         complete: true,
     };
-    let spans = painter.paint(language, tree, None, 1, spans);
-    (spans, painter.complete)
+    let spans = painter.paint(host.language, host.tree, None, 1, spans);
+    let complete = painter.complete;
+    layers.highlighted(range, complete, host.parsed);
+    (spans, complete)
 }
 
 /// An injection found in a tree: the language of its content, and the
@@ -148,6 +280,7 @@ struct Painter<'a> {
     text: &'a Text,
     range: Range<usize>,
     deadline: Option<Instant>,
+    host_parsed: bool,
     layers: &'a mut Layers,
     /// Shared by the layers parsed in one call.
     parser: Option<Parser>,
@@ -297,12 +430,33 @@ impl Painter<'_> {
         injections
     }
 
-    /// The layer for `injection`, parsed unless it already was. `None` if
-    /// parsing it ran out of time.
+    /// The layer for `injection`: kept from an earlier call if parsed from
+    /// the same bytes and not edited since, else parsed, incrementally from a
+    /// kept layer that an edit touched at the same place. `None` if parsing
+    /// it ran out of time.
     fn layer(&mut self, injection: &Injection) -> Option<Tree> {
-        let key = (injection.language.name(), injection.ranges.clone());
-        if let Some(tree) = self.layers.trees.get(&key) {
-            return Some(tree.clone());
+        let layers = &mut *self.layers;
+        let pass = layers.pass;
+        let language = injection.language;
+        let same = |layer: &Layer| std::ptr::eq(layer.language, language);
+        let exact = layers
+            .kept
+            .iter()
+            .position(|layer| same(layer) && !layer.edited && layer.ranges == injection.ranges);
+        let kept = exact.or_else(|| {
+            // Not one this call already used: injections at the same place,
+            // such as nested template strings, each keep their own.
+            let span = span(&injection.ranges);
+            layers.kept.iter().position(|layer| {
+                same(layer) && layer.edited && layer.pass != pass && touches(&layer.span(), &span)
+            })
+        });
+        if let Some(ix) = kept {
+            let layer = &mut layers.kept[ix];
+            layer.pass = pass;
+            if exact.is_some() || !self.host_parsed {
+                return Some(layer.tree.clone());
+            }
         }
         let deadline = self.deadline;
         if out_of_time(deadline) {
@@ -329,17 +483,32 @@ impl Painter<'_> {
         }
         let parser = self.parser.get_or_insert_with(Parser::new);
         parser
-            .set_language(&injection.language.grammar)
+            .set_language(&language.grammar)
             .expect("grammar ABI is supported by this tree-sitter");
         // Sorted, disjoint and non-empty, as tree-sitter requires.
         parser.set_included_ranges(&ranges).ok()?;
-        let Some(tree) = parse_text(parser, text, None, || out_of_time(deadline)) else {
+        let old = kept.map(|ix| &layers.kept[ix].tree);
+        let Some(tree) = parse_text(parser, text, old, || out_of_time(deadline)) else {
             // Start the next parse afresh instead of resuming this one.
             parser.reset();
             self.complete = false;
             return None;
         };
-        self.layers.trees.insert(key, tree.clone());
+        #[cfg(test)]
+        layers
+            .parses
+            .push((language.name(), injection.ranges.clone()));
+        let layer = Layer {
+            language,
+            ranges: injection.ranges.clone(),
+            tree: tree.clone(),
+            edited: false,
+            pass,
+        };
+        match kept {
+            Some(ix) => layers.kept[ix] = layer,
+            None => layers.kept.push(layer),
+        }
         Some(tree)
     }
 }
@@ -371,6 +540,37 @@ fn content_ranges(
         ranges.push(start..node.end_byte());
     }
     true
+}
+
+/// From the start of the first of `ranges` to the end of the last.
+fn span(ranges: &[Range<usize>]) -> Range<usize> {
+    let start = ranges.first().map_or(0, |range| range.start);
+    start..ranges.last().map_or(start, |range| range.end)
+}
+
+/// Whether `a` and `b` share a byte.
+fn overlaps(a: &Range<usize>, b: &Range<usize>) -> bool {
+    a.start < b.end && b.start < a.end
+}
+
+/// Whether `a` and `b` share a byte or meet, so that an edit at one could
+/// change what the other holds.
+fn touches(a: &Range<usize>, b: &Range<usize>) -> bool {
+    a.start <= b.end && b.start <= a.end
+}
+
+/// `range` after `edit`, as tree-sitter moves a tree's included ranges: the
+/// bytes after the edit move with it, and those it replaced collapse to its
+/// start.
+fn moved(range: &Range<usize>, edit: &InputEdit) -> Range<usize> {
+    let offset = |offset: usize| {
+        if offset >= edit.old_end_byte {
+            offset - edit.old_end_byte + edit.new_end_byte
+        } else {
+            offset.min(edit.start_byte)
+        }
+    };
+    offset(range.start)..offset(range.end)
 }
 
 /// The non-empty parts of `ranges` inside `within`. Both are sorted and

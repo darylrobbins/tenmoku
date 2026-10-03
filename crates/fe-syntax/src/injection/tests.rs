@@ -2,6 +2,7 @@ use std::{ops::Range, time::Instant};
 
 use fe_buffer::{Buffer, Origin};
 use proptest::{prelude::prop, prop_assert_eq, proptest};
+use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 
 use super::Layers;
 use crate::{
@@ -148,10 +149,243 @@ fn only_injections_overlapping_the_range_are_parsed() {
     syntax.highlights_compiling(fourth..text.len());
     assert_eq!(syntax.layers().len(), 2 + 3 * 2);
 
-    // An edit drops them all.
+    // An edit keeps them, moved along.
+    let moved: Vec<_> = syntax
+        .layers()
+        .into_iter()
+        .map(|(language, ranges)| {
+            (
+                language,
+                ranges.iter().map(|r| r.start + 1..r.end + 1).collect(),
+            )
+        })
+        .collect();
     buffer.edit([(0..0, "x")], Origin::User);
     syntax.edit(buffer.current());
-    assert!(syntax.layers().is_empty());
+    assert_eq!(syntax.layers(), moved);
+}
+
+/// `count` blocks, each a paragraph with inline code and a Rust fence.
+fn blocks(count: usize) -> String {
+    (0..count)
+        .map(|n| format!("Para {n} with `code`.\n\n```rust\nfn f{n}() {{}}\n```\n\n"))
+        .collect()
+}
+
+/// Asserts that `syntax` highlights `buffer` and keeps the same layers as a
+/// fresh parse does.
+fn assert_fresh(name: &str, syntax: &Syntax, buffer: &Buffer, context: &str) {
+    let fresh = parsed(name, buffer);
+    let len = buffer.len();
+    assert_eq!(
+        syntax.highlights_compiling(0..len),
+        fresh.highlights_compiling(0..len),
+        "{context}: {:?}",
+        buffer.text().to_string()
+    );
+    assert_eq!(
+        syntax.layer_trees(),
+        fresh.layer_trees(),
+        "{context}: {:?}",
+        buffer.text().to_string()
+    );
+}
+
+#[test]
+fn an_edit_reparses_only_the_layers_it_touches() {
+    let text = blocks(4);
+    let mut buffer = Buffer::new(&text);
+    let mut syntax = parsed("markdown", &buffer);
+    syntax.highlights_compiling(0..text.len());
+    assert_eq!(syntax.take_layer_parses().len(), 4 * 2);
+
+    // Typing in the second fence. Until the host is reparsed, the layer is
+    // used as it is, like the host tree.
+    let fence = text.find("fn f1").unwrap();
+    buffer.edit([(fence + 4..fence + 4, "x")], Origin::User);
+    syntax.edit(buffer.current());
+    syntax.highlights_compiling(0..buffer.len());
+    assert_eq!(syntax.take_layer_parses(), []);
+    syntax.finish(syntax.parse_job().run());
+    syntax.highlights_compiling(0..buffer.len());
+    let fence = fence..fence + "fn f1x() {}\n".len();
+    assert_eq!(syntax.take_layer_parses(), [("rust", vec![fence])]);
+    assert_fresh("markdown", &syntax, &buffer, "typed in a fence");
+    assert_eq!(syntax.take_layer_parses(), []);
+
+    // Typing at the start moves every layer, but only reparses the first.
+    let before = syntax.layers();
+    buffer.edit([(0..0, "A ")], Origin::User);
+    syntax.edit(buffer.current());
+    syntax.finish(syntax.parse_job().run());
+    syntax.highlights_compiling(0..buffer.len());
+    let parses = syntax.take_layer_parses();
+    let layers = syntax.layers();
+    assert_eq!(parses, layers[..1]);
+    assert_eq!(parses[0].0, "markdown_inline");
+    let moved = |ranges: &[Range<usize>]| ranges.iter().map(|r| r.start + 2..r.end + 2).collect();
+    assert_eq!(
+        layers[1..],
+        before[1..]
+            .iter()
+            .map(|(language, ranges)| (*language, moved(ranges)))
+            .collect::<Vec<_>>()
+    );
+    assert_fresh("markdown", &syntax, &buffer, "typed at the start");
+}
+
+/// Deleting a fence or a `<script>` drops its layer once the host is
+/// reparsed and the place is highlighted again.
+#[test]
+fn a_layer_whose_injection_is_gone_is_dropped() {
+    let cases = [
+        ("markdown", blocks(3), "```rust\nfn f1() {}\n```\n"),
+        (
+            "html",
+            "<p>a</p>\n<script>let a = 1;</script>\n<style>p {}</style>\n".to_string(),
+            "<script>let a = 1;</script>",
+        ),
+    ];
+    for (name, text, gone) in cases {
+        let mut buffer = Buffer::new(&text);
+        let mut syntax = parsed(name, &buffer);
+        syntax.highlights_compiling(0..text.len());
+        let count = syntax.layers().len();
+        let start = text.find(gone).unwrap();
+        buffer.edit([(start..start + gone.len(), "")], Origin::User);
+        syntax.edit(buffer.current());
+        syntax.finish(syntax.parse_job().run());
+        syntax.highlights_compiling(0..buffer.len());
+        assert_eq!(syntax.layers().len(), count - 1, "{name}");
+        assert_fresh(name, &syntax, &buffer, name);
+    }
+}
+
+#[test]
+fn layers_far_from_the_viewport_are_dropped() {
+    let text = blocks(200);
+    let syntax = parsed("markdown", &Buffer::new(&text));
+    // About ten blocks.
+    let screen = text.find("Para 10").unwrap();
+    let mut start = 0;
+    while start < text.len() {
+        let end = (start + screen).min(text.len());
+        syntax.highlights_compiling(start..end);
+        // Within a screen of the last ranges highlighted.
+        let near = start.saturating_sub(super::RECENT_RANGES * screen)..end + screen;
+        let layers = syntax.layers();
+        assert!(
+            layers
+                .iter()
+                .all(|(_, ranges)| near.start <= ranges[0].end && ranges[0].start <= near.end),
+            "{near:?}: {layers:?}"
+        );
+        start = end;
+    }
+    let count = syntax.layers().len();
+    assert!(
+        0 < count && count <= 2 * 10 * (super::RECENT_RANGES + 1),
+        "{count}"
+    );
+}
+
+/// The model is `incremental_reparse_matches_a_full_parse` in the crate's
+/// tests: random batches of edits, with parses finishing late and highlights
+/// in between, must leave the layers and highlights a fresh parse gives.
+#[test]
+fn random_edits_leave_layers_as_a_fresh_parse_would() {
+    let cases: &[(&str, &str, &[&str])] = &[
+        (
+            "markdown",
+            "# A `b`\n\n> Quote `q` and <b>x</b>.\n> More.\n\n\
+             ```rust\nfn main() { let x = 1; }\n```\n\nPara *em* `c`.\n\n\
+             ```js\nconst a = `<p>${b}</p>`;\n```\n",
+            &[
+                "```",
+                "```rust\n",
+                "`",
+                "\n",
+                "\n\n",
+                "> ",
+                "fn ",
+                "{",
+                "}",
+                "<i>",
+                "x",
+                " ",
+                "",
+            ],
+        ),
+        (
+            "html",
+            "<p>a</p>\n<script>const x = 1;\nlet y = html`<b>${x}</b>`;</script>\n\
+             <style>p { color: red; }</style>\n",
+            &[
+                "<script>",
+                "</script>",
+                "<style>",
+                "</style>",
+                "{",
+                "}",
+                "`",
+                "${",
+                ";",
+                "\n",
+                "x",
+                "",
+                "<",
+            ],
+        ),
+        (
+            "javascript",
+            "const a = html`<p class=${c}>hi</p>`;\ncss`a { color: red; }`;\nf(`plain`);\n",
+            &["html`", "css`", "`", "${", "}", "<p>", "\n", "x", ";", ""],
+        ),
+    ];
+    let mut rng = StdRng::seed_from_u64(17);
+    for &(name, text, pieces) in cases {
+        let mut buffer = Buffer::new(text);
+        let mut syntax = parsed(name, &buffer);
+        let mut in_flight = None;
+        for step in 0..200 {
+            for _ in 0..rng.random_range(1..3) {
+                let edits: Vec<_> = (0..rng.random_range(1..3))
+                    .map(|_| {
+                        let start = rng.random_range(0..=buffer.len());
+                        let end = (start + rng.random_range(0..6)).min(buffer.len());
+                        (start..end, pieces[rng.random_range(0..pieces.len())])
+                    })
+                    .collect();
+                buffer.edit(edits, Origin::User);
+            }
+            syntax.edit(buffer.current());
+            match rng.random_range(0..4) {
+                0 => in_flight = Some(syntax.parse_job()),
+                1 => {
+                    if let Some(job) = in_flight.take() {
+                        syntax.finish(job.run());
+                    }
+                }
+                2 => syntax.finish(syntax.parse_job().run()),
+                _ => {}
+            }
+            // A frame, parsed or not, keeping only the layers near it.
+            let start = rng.random_range(0..=buffer.len());
+            let end = (start + rng.random_range(0..40)).min(buffer.len());
+            syntax.highlights_compiling(start..end);
+            if step % 4 == 0 {
+                syntax.finish(syntax.parse_job().run());
+                let fresh = parsed(name, &buffer);
+                assert_eq!(
+                    syntax.highlights_compiling(start..end),
+                    fresh.highlights_compiling(start..end),
+                    "{name} after step {step}: {:?}",
+                    buffer.text().to_string()
+                );
+                assert_fresh(name, &syntax, &buffer, &format!("{name} after step {step}"));
+            }
+        }
+    }
 }
 
 #[test]
@@ -216,23 +450,27 @@ fn injections_out_of_time_stay_plain() {
         let buffer = Buffer::new(&text);
         let syntax = parsed(host, &buffer);
         let (language, tree) = (syntax.language(), syntax.tree().unwrap());
-        let host = highlight_query(language, buffer.text(), tree, 0..text.len(), true, None);
+        let host_spans = highlight_query(language, buffer.text(), tree, 0..text.len(), true, None);
         let mut layers = Layers::default();
         let mut paint = |deadline| {
-            super::paint(
+            let host = super::Host {
                 language,
-                buffer.text(),
+                text: buffer.text(),
                 tree,
+                parsed: true,
+            };
+            super::paint(
+                host,
                 0..text.len(),
                 deadline,
                 &mut layers,
-                host.clone(),
+                host_spans.clone(),
             )
         };
-        assert_eq!(paint(Some(Instant::now())), (host.clone(), false));
+        assert_eq!(paint(Some(Instant::now())), (host_spans.clone(), false));
         let (spans, complete) = paint(None);
-        assert!(complete && spans != host, "{injected}");
-        assert_eq!(layers.trees.len(), 1);
+        assert!(complete && spans != host_spans, "{injected}");
+        assert_eq!(layers.keys().len(), 1);
     }
 }
 
