@@ -6,11 +6,13 @@
 //! `fe-syntax`, then paints the result.
 
 mod element;
+mod timing;
 mod view;
 
 use fe_syntax::Highlight;
 use gpui::{App, Hsla, KeyBinding, Pixels, SharedString, actions, px, rgb, rgba};
 
+pub use timing::{FrameTiming, FrameTimings};
 pub use view::EditorView;
 
 actions!(

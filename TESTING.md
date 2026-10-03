@@ -31,6 +31,9 @@ cargo mutants -p fe-buffer -j 4   # by hand, before milestones
 cargo llvm-cov -p fe-buffer --summary-only
 ```
 
+Benchmarks and the `fastedit --perf` frame-timing run are described in
+[PERF.md](PERF.md), with the latest numbers.
+
 `PROPTEST_CASES` sets the case count for every property test, except the
 large-text rope tests, which run a hundredth as many (at least 8). Note that
 `proptest!` lets the variable override `ProptestConfig::with_cases`, so a test

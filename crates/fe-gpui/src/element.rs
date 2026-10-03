@@ -1,4 +1,9 @@
-use std::{collections::HashMap, ops::Range, sync::Arc};
+use std::{
+    collections::HashMap,
+    ops::Range,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use fe_display::{
     CharWidth,
@@ -15,7 +20,7 @@ use gpui::{
     size,
 };
 
-use crate::{EditorTheme, EditorView};
+use crate::{EditorTheme, EditorView, FrameTiming};
 
 /// What one frame laid out: kept by the view for hit testing and IME.
 pub(crate) struct FrameLayout {
@@ -23,6 +28,8 @@ pub(crate) struct FrameLayout {
     /// coordinates are relative to.
     pub(crate) origin: Point<Pixels>,
     pub(crate) frame: Frame<Line>,
+    /// How long prepaint took, for [`FrameTiming`].
+    prepaint_took: Duration,
 }
 
 impl FrameLayout {
@@ -182,6 +189,7 @@ impl Element for EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<FrameLayout> {
+        let started = Instant::now();
         let theme = &self.view.read(cx).theme;
         let font = gpui::font(theme.font_family.clone());
         let font_size = theme.font_size;
@@ -248,6 +256,7 @@ impl Element for EditorElement {
         Some(FrameLayout {
             origin: bounds.origin,
             frame,
+            prepaint_took: started.elapsed(),
         })
     }
 
@@ -261,6 +270,7 @@ impl Element for EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) {
+        let started = Instant::now();
         let view = self.view.read(cx);
         let theme = view.theme.clone();
         let focus = view.focus.clone();
@@ -323,7 +333,16 @@ impl Element for EditorElement {
             }
         });
 
-        self.view.update(cx, |view, _| view.layout = Some(layout));
+        let painted_at = Instant::now();
+        let timing = FrameTiming {
+            prepaint: layout.prepaint_took,
+            paint: painted_at - started,
+            painted_at,
+        };
+        self.view.update(cx, |view, _| {
+            view.layout = Some(layout);
+            view.frame_timings.record(timing);
+        });
     }
 }
 

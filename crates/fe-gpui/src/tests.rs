@@ -386,6 +386,13 @@ fn input_method_utf16_offsets_with_emoji(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn frames_are_timed(cx: &mut TestAppContext) {
+    let (view, cx) = editor(cx, "fn main() {}|");
+    let frames = view.update(cx, |view, _| view.frame_timings().frames().len());
+    assert!(frames > 0);
+}
+
+#[gpui::test]
 fn page_moves_by_the_visible_rows(cx: &mut TestAppContext) {
     let text: String = (0..300).map(|row| format!("row {row}\n")).collect();
     let (view, cx) = editor(cx, &format!("|{text}"));

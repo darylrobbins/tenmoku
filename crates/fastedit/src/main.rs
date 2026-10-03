@@ -1,7 +1,9 @@
-//! Standalone fastedit host: `fastedit [file]`.
+//! Standalone fastedit host: `fastedit [--perf] [file]`.
 //!
 //! The editor fills the window; the project panel on the right is a
 //! placeholder until the workbench lands (M3).
+
+mod perf;
 
 use std::path::PathBuf;
 
@@ -85,8 +87,13 @@ fn load(path: Option<PathBuf>) -> EditorModel {
 }
 
 fn main() {
-    let path = std::env::args_os().nth(1).map(PathBuf::from);
     let started = std::time::Instant::now();
+    let mut args: Vec<_> = std::env::args_os().skip(1).collect();
+    let perf = args.first().is_some_and(|arg| arg == "--perf");
+    if perf {
+        args.remove(0);
+    }
+    let path = args.into_iter().next().map(PathBuf::from);
     let model = load(path);
     eprintln!(
         "fastedit: loaded {} bytes, {} rows in {:.1?}",
@@ -130,6 +137,9 @@ fn main() {
         window
             .update(cx, |workbench, window, cx| {
                 window.focus(&workbench.editor.focus_handle(cx), cx);
+                if perf {
+                    perf::start(workbench.editor.clone(), started, window, cx);
+                }
             })
             .ok();
         cx.activate(true);

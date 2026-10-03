@@ -12,6 +12,7 @@ use gpui::{
 
 use crate::{
     element::{EditorElement, GlyphWidths},
+    timing::FrameTimings,
     *,
 };
 
@@ -37,6 +38,7 @@ pub struct EditorView {
     pub(crate) syntax: Option<Syntax>,
     /// A language load or parse running in the background.
     syntax_task: Option<Task<()>>,
+    pub(crate) frame_timings: FrameTimings,
 }
 
 /// What a mouse drag extends: characters, or whole words or rows starting
@@ -68,6 +70,7 @@ impl EditorView {
             marked: None,
             syntax: None,
             syntax_task: None,
+            frame_timings: FrameTimings::default(),
         };
         let language = view
             .model
@@ -101,6 +104,15 @@ impl EditorView {
 
     pub fn model_mut(&mut self) -> &mut EditorModel {
         &mut self.model
+    }
+
+    /// How long the editor took to lay out and paint its recent frames.
+    pub fn frame_timings(&self) -> &FrameTimings {
+        &self.frame_timings
+    }
+
+    pub fn frame_timings_mut(&mut self) -> &mut FrameTimings {
+        &mut self.frame_timings
     }
 
     /// Call after anything that moves the cursor or changes the text.

@@ -29,6 +29,7 @@ gpui = { package = "gpui-pre", version = "=0.3.7" }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7", features = ["font-kit", "runtime_shaders"] }
 sum-tree = { package = "gpui-pre-sum-tree", version = "=0.3.7" }
 
+libc = "0.2"
 tempfile = "3"
 thiserror = "2"
 unicode-segmentation = "1"

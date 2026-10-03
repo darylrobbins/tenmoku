@@ -1607,6 +1607,7 @@ dependencies = [
  "fe-gpui",
  "gpui-pre",
  "gpui-pre-platform",
+ "libc",
 ]
 
 [[package]]
@@ -1684,6 +1685,7 @@ dependencies = [
 name = "fe-syntax"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "fe-buffer",
  "rand 0.9.5",
  "tree-sitter",
