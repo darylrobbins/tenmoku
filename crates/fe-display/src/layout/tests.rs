@@ -5,6 +5,8 @@
 //! Notation: `|` is a caret, `[…]` a selection whose head is at its end, and
 //! `{…}` one whose head is at its start. The first is primary.
 
+use fe_buffer::Buffer;
+
 use super::*;
 
 const CELL: f32 = 10.;
@@ -62,7 +64,7 @@ impl TextMeasure for Mono {
     }
 }
 
-fn parse(marked: &str) -> (Text, Vec<ResolvedSelection>) {
+fn parse(marked: &str) -> (String, Vec<ResolvedSelection>) {
     let mut text = String::new();
     let mut selections = Vec::new();
     let mut open = None;
@@ -80,7 +82,7 @@ fn parse(marked: &str) -> (Text, Vec<ResolvedSelection>) {
             _ => text.push(ch),
         }
     }
-    (Text::new(&text), selections)
+    (text, selections)
 }
 
 /// Lays out `marked` in a 400 × `height` editor scrolled to `scroll`.
@@ -90,14 +92,29 @@ fn lay_out(marked: &str, scroll: (f32, f32), autoscroll: bool, height: f32) -> F
 
 fn lay_out_with(
     marked: &str,
-    (x, y): (f32, f32),
+    scroll: (f32, f32),
     autoscroll: bool,
     height: f32,
     highlights: impl FnMut(Range<usize>) -> Vec<StyledSpan<&'static str>>,
 ) -> Frame<Line> {
+    lay_out_display(marked, scroll, autoscroll, height, |_| {}, highlights).0
+}
+
+/// Lays out `marked` with its rows wrapped or folded by `configure`.
+fn lay_out_display(
+    marked: &str,
+    (x, y): (f32, f32),
+    autoscroll: bool,
+    height: f32,
+    configure: impl FnOnce(&mut DisplayMap),
+    highlights: impl FnMut(Range<usize>) -> Vec<StyledSpan<&'static str>>,
+) -> (Frame<Line>, Text) {
     let (text, selections) = parse(marked);
+    let buffer = Buffer::new(&text);
+    let mut display = DisplayMap::new(buffer.current(), 4);
+    configure(&mut display);
     let input = FrameInput {
-        text: &text,
+        display: &display,
         tab_size: 4,
         selections: &selections,
         primary_head: selections[0].head(),
@@ -113,7 +130,8 @@ fn lay_out_with(
             active_line_number: "active",
         },
     };
-    layout_frame(&input, &mut Mono, highlights)
+    let frame = layout_frame(&input, &mut Mono, highlights);
+    (frame, display.text().clone())
 }
 
 fn rect(x: f32, y: f32, width: f32, height: f32) -> Rect {
@@ -307,8 +325,14 @@ fn long_rows_are_cut_off_and_end_the_highlight_query() {
 
 #[test]
 fn hit_testing() {
-    let (text, _) = parse("\tab\n世界x\nend");
-    let frame = lay_out("|\tab\n世界x\nend", (0., 0.), false, 120.);
+    let (frame, text) = lay_out_display(
+        "|\tab\n世界x\nend",
+        (0., 0.),
+        false,
+        120.,
+        |_| {},
+        |_| Vec::new(),
+    );
     let cases = [
         // Inside an expanded tab, positions snap to before it.
         ((GUTTER + 26., 5.), 0),
@@ -327,7 +351,101 @@ fn hit_testing() {
         assert_eq!(frame.offset_at(&text, Vec2 { x, y }), want, "at ({x}, {y})");
     }
     assert_eq!(
-        frame.caret_bounds(&text, 7),
+        frame.caret_bounds(7),
         Some(rect(GUTTER + 20., LINE, 2., LINE))
     );
+}
+
+#[test]
+fn wrapped_rows() {
+    // Wrapped at 6 cells: `aaaa `, `bbbb `, `cc`, then `d`.
+    let wrap = |display: &mut DisplayMap| display.set_wrap_width(Some(6.), &mut crate::Monospace);
+    let (frame, text) = lay_out_display("aa[aa bbbb c]c\nd", (500., 0.), true, 120., wrap, |_| {
+        Vec::new()
+    });
+    let rows: Vec<_> = frame
+        .rows
+        .iter()
+        .map(|row| (row.row, row.buffer_row, row.start..row.end, row.last))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            (0, 0, 0..5, false),
+            (1, 0, 5..10, false),
+            (2, 0, 10..12, true),
+            (3, 1, 13..14, true),
+        ]
+    );
+    // Wrapped rows don't scroll sideways, and only first rows are numbered.
+    assert_eq!(frame.scroll.x, 0.);
+    let numbered: Vec<f32> = frame.line_numbers.iter().map(|(at, _)| at.y).collect();
+    assert_eq!(numbered, [0., 3. * LINE]);
+    // A selection across soft wraps marks no line break until the real one.
+    assert_eq!(
+        frame.selections,
+        [
+            rect(GUTTER + 20., 0., 30., LINE),
+            rect(GUTTER, LINE, 50., LINE),
+            rect(GUTTER, 2. * LINE, 10., LINE),
+        ]
+    );
+    // The caret at a wrap point is at the start of the next row.
+    assert_eq!(frame.caret_bounds(5), Some(rect(GUTTER, LINE, 2., LINE)));
+    // Clicking past a wrapped row's end stays on that row.
+    assert_eq!(frame.offset_at(&text, Vec2 { x: WIDTH, y: 5. }), 4);
+    assert_eq!(
+        frame.offset_at(
+            &text,
+            Vec2 {
+                x: WIDTH,
+                y: 2. * LINE + 5.
+            }
+        ),
+        12
+    );
+}
+
+#[test]
+fn folded_rows() {
+    let fold = |display: &mut DisplayMap| {
+        display.fold(0..=2);
+    };
+    let (frame, _) = lay_out_display(
+        "def [a():\n    one\n    two\nend]",
+        (0., 0.),
+        false,
+        120.,
+        fold,
+        |_| Vec::new(),
+    );
+    let rows: Vec<_> = frame
+        .rows
+        .iter()
+        .map(|row| (row.row, row.buffer_row))
+        .collect();
+    assert_eq!(rows, [(0, 0), (1, 3)]);
+    let numbers: Vec<_> = frame
+        .line_numbers
+        .iter()
+        .map(|(_, line)| line.text.as_str())
+        .collect();
+    assert_eq!(numbers, ["1", "4"]);
+    // The marker sits a cell after the header's text.
+    let markers: Vec<_> = frame
+        .fold_markers
+        .iter()
+        .map(|(at, line)| (at.x, at.y, line.text.as_str()))
+        .collect();
+    assert_eq!(markers, [(GUTTER + 90., 0., FOLD_MARKER)]);
+    // The selection covers the header's line break, which hides the folded
+    // rows, then the row after them.
+    assert_eq!(
+        frame.selections,
+        [
+            rect(GUTTER + 40., 0., 46., LINE),
+            rect(GUTTER, LINE, 30., LINE)
+        ]
+    );
+    assert_eq!(frame.cursors, [rect(GUTTER + 30., LINE, 2., LINE)]);
 }

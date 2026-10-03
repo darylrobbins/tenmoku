@@ -10,7 +10,10 @@ use gpui::{
     Styled as _, Task, UTF16Selection, Window, div, px,
 };
 
-use crate::{element::EditorElement, *};
+use crate::{
+    element::{EditorElement, GlyphWidths},
+    *,
+};
 
 /// How long a frame may spend reparsing before the parse moves to a
 /// background thread. Small edits to files of 10k lines reparse within it.
@@ -47,7 +50,13 @@ enum Drag {
 
 impl EditorView {
     /// An editor for `model`, highlighted according to its file's language.
-    pub fn new(model: EditorModel, theme: EditorTheme, cx: &mut Context<Self>) -> Self {
+    pub fn new(mut model: EditorModel, theme: EditorTheme, cx: &mut Context<Self>) -> Self {
+        let font = gpui::font(theme.font_family.clone());
+        model.set_char_widths(Box::new(GlyphWidths::new(
+            cx.text_system().clone(),
+            &font,
+            theme.font_size,
+        )));
         let mut view = Self {
             model,
             theme,
@@ -361,6 +370,18 @@ impl Render for EditorView {
                 this.model.tab();
                 this.changed(cx);
             }))
+            .on_action(cx.listener(|this, _: &Fold, _, cx| {
+                this.model.fold();
+                this.changed(cx);
+            }))
+            .on_action(cx.listener(|this, _: &Unfold, _, cx| {
+                this.model.unfold();
+                this.changed(cx);
+            }))
+            .on_action(cx.listener(|this, _: &ToggleSoftWrap, _, cx| {
+                this.model.toggle_soft_wrap();
+                this.changed(cx);
+            }))
             .on_action(cx.listener(Self::copy))
             .on_action(cx.listener(Self::cut))
             .on_action(cx.listener(Self::paste))
@@ -466,7 +487,7 @@ impl EntityInputHandler for EditorView {
     ) -> Option<Bounds<Pixels>> {
         let range = self.range_from_utf16(&range_utf16);
         let layout = self.layout.as_ref()?;
-        let caret = layout.frame.caret_bounds(self.model.text(), range.start)?;
+        let caret = layout.frame.caret_bounds(range.start)?;
         Some(layout.bounds(caret))
     }
 

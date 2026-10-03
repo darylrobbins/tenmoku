@@ -168,6 +168,8 @@ const CASES: &[Case] = &[
     case("alt-backspace", "foo bar|", "foo |"),
     case("enter", "  ab|c", "  ab\n  |c"),
     case("tab", "ab|", "ab  |"),
+    // A caret folded away moves to the fold's header.
+    case("cmd-alt-[", "a:\n  b|\nc", "a:|\n  b\nc"),
     // Every cursor gets the command.
     case("backspace", "a|b\nc|d", "|b\n|d"),
     case("alt-right", "|ab cd\n|ef gh", "ab| cd\nef| gh"),
@@ -187,7 +189,7 @@ const CASES: &[Case] = &[
 ];
 
 /// Bindings exercised by their own tests rather than the table.
-const DEDICATED: &[&str] = &["cmd-s"];
+const DEDICATED: &[&str] = &["cmd-s", "cmd-alt-]", "alt-z"];
 
 fn run_case(case: &Case) {
     let mut cx = TestAppContext::single();
@@ -273,6 +275,33 @@ fn bindings_are_all_tested(cx: &mut TestAppContext) {
         stale.is_empty(),
         "tests for bindings that don't exist: {stale:?}"
     );
+}
+
+#[gpui::test]
+fn unfold_shows_folded_rows(cx: &mut TestAppContext) {
+    let (view, cx) = editor(cx, "a|:\n  b\nc");
+    let rows =
+        |cx: &mut VisualTestContext| view.update(cx, |view, _| view.model().display().row_count());
+    cx.simulate_keystrokes("cmd-alt-[");
+    assert_eq!(rows(cx), 2);
+    cx.simulate_keystrokes("cmd-alt-]");
+    assert_eq!(rows(cx), 3);
+}
+
+#[gpui::test]
+fn soft_wrap_wraps_to_the_window(cx: &mut TestAppContext) {
+    let long = "word ".repeat(1000);
+    let (view, cx) = editor(cx, &format!("|{long}\nend"));
+    let rows =
+        |cx: &mut VisualTestContext| view.update(cx, |view, _| view.model().display().row_count());
+    cx.simulate_keystrokes("alt-z");
+    assert!(rows(cx) > 10, "wrapped into {} rows", rows(cx));
+    // Down moves within the wrapped row.
+    cx.simulate_keystrokes("down");
+    let head = view.update(cx, |view, _| view.model().primary_selection().head());
+    assert!(head > 0 && head < long.len(), "head at {head}");
+    cx.simulate_keystrokes("alt-z");
+    assert_eq!(rows(cx), 2);
 }
 
 #[gpui::test]

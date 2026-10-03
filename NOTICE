@@ -6,3 +6,7 @@ This product includes software developed by third parties. See THIRD_PARTY.md.
 GPUI (gpui-pre-* crates)
 Copyright Zed Industries, Inc.
 Licensed under the Apache License, Version 2.0.
+
+gpui-kit (soft wrap and folding, adapted in crates/fe-display)
+Copyright 2024 - 2026 Longbridge.
+Licensed under the Apache License, Version 2.0.

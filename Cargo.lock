@@ -1649,9 +1649,12 @@ dependencies = [
 name = "fe-display"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "fe-buffer",
  "fe-text",
+ "gpui-pre-sum-tree",
  "proptest",
+ "rand 0.9.5",
 ]
 
 [[package]]

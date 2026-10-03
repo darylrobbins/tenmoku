@@ -1,12 +1,35 @@
-//! Maps buffer text to what's displayed. For now this expands tabs within a
-//! row; soft wrap, folds, inlays and blocks come later. [`layout`] lays out a
-//! frame of an editor from that. Must never depend on GPUI.
+//! Maps buffer text to what's displayed: tabs expand within a row, long rows
+//! soft wrap and folds hide rows ([`DisplayMap`]); inlays and blocks come
+//! later. [`layout`] lays out a frame of an editor from that. Must never
+//! depend on GPUI.
 //!
 //! Columns are byte offsets within a row, in buffer or display coordinates.
 
+mod display_map;
+mod fold_map;
 pub mod layout;
+mod wrap_map;
 
+pub use display_map::{DisplayMap, DisplayRow};
 pub use fe_text::Bias;
+pub use fold_map::Fold;
+
+/// Measures chars for soft wrapping, in the unit of the wrap width (the UI
+/// uses pixels).
+pub trait CharWidth {
+    fn char_width(&mut self, ch: char) -> f32;
+}
+
+/// Every char one unit wide, so the wrap width counts chars. For headless
+/// use and tests.
+#[derive(Copy, Clone, Debug, Default)]
+pub struct Monospace;
+
+impl CharWidth for Monospace {
+    fn char_width(&mut self, _: char) -> f32 {
+        1.
+    }
+}
 
 /// One row with its tabs expanded to spaces.
 #[derive(Clone, Debug, PartialEq, Eq)]

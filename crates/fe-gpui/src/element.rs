@@ -1,14 +1,18 @@
-use std::{ops::Range, sync::Arc};
+use std::{collections::HashMap, ops::Range, sync::Arc};
 
-use fe_display::layout::{
-    self, Frame, FrameInput, FrameStyles, MeasuredLine, Rect, StyleRun, StyledSpan, TextMeasure,
-    Vec2,
+use fe_display::{
+    CharWidth,
+    layout::{
+        self, Frame, FrameInput, FrameStyles, MeasuredLine, Rect, StyleRun, StyledSpan,
+        TextMeasure, Vec2,
+    },
 };
 use fe_syntax::Syntax;
 use gpui::{
-    App, Bounds, ContentMask, Element, ElementId, ElementInputHandler, Entity, Font,
+    App, Bounds, ContentMask, Element, ElementId, ElementInputHandler, Entity, Font, FontId,
     GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId, Pixels, Point, ShapedLine,
-    Style, TextAlign, TextRun, Window, WindowTextSystem, fill, point, px, relative, size,
+    Style, TextAlign, TextRun, TextSystem, Window, WindowTextSystem, fill, point, px, relative,
+    size,
 };
 
 use crate::{EditorTheme, EditorView};
@@ -92,6 +96,40 @@ impl TextMeasure for Shaper {
     }
 }
 
+/// Char widths in the editor font, in pixels, for soft wrap. Shapes each
+/// char once, so fallback fonts are measured too.
+pub(crate) struct GlyphWidths {
+    text_system: Arc<TextSystem>,
+    font_id: FontId,
+    font_size: Pixels,
+    cache: HashMap<char, f32>,
+}
+
+impl GlyphWidths {
+    pub(crate) fn new(text_system: Arc<TextSystem>, font: &Font, font_size: Pixels) -> Self {
+        Self {
+            font_id: text_system.resolve_font(font),
+            text_system,
+            font_size,
+            cache: HashMap::new(),
+        }
+    }
+}
+
+impl CharWidth for GlyphWidths {
+    fn char_width(&mut self, ch: char) -> f32 {
+        let Self {
+            text_system,
+            font_id,
+            font_size,
+            cache,
+        } = self;
+        *cache
+            .entry(ch)
+            .or_insert_with(|| text_system.layout_width(*font_id, *font_size, ch).into())
+    }
+}
+
 pub(crate) struct EditorElement {
     view: Entity<EditorView>,
 }
@@ -144,22 +182,32 @@ impl Element for EditorElement {
         window: &mut Window,
         cx: &mut App,
     ) -> Option<FrameLayout> {
-        let view = self.view.read(cx);
-        let theme = &view.theme;
-        let model = &view.model;
-
+        let theme = &self.view.read(cx).theme;
         let font = gpui::font(theme.font_family.clone());
         let font_size = theme.font_size;
         let line_height = (font_size * theme.line_height).round();
         let text_system = window.text_system().clone();
         let font_id = text_system.resolve_font(&font);
-        let em = text_system
+        let em: f32 = text_system
             .em_advance(font_id, font_size)
-            .unwrap_or(font_size * 0.6);
+            .unwrap_or(font_size * 0.6)
+            .into();
 
+        // Soft wrap fills the text area; catch the rows up with any edits.
+        let width: f32 = bounds.size.width.into();
+        self.view.update(cx, |view, _| {
+            let rows = view.model.text().row_count();
+            view.model
+                .set_wrap_width(layout::wrap_width(width, rows, em));
+            view.model.sync_display();
+        });
+
+        let view = self.view.read(cx);
+        let theme = &view.theme;
+        let model = &view.model;
         let selections = model.selections();
         let input = FrameInput {
-            text: model.text(),
+            display: model.display(),
             tab_size: model.tab_size(),
             selections: &selections,
             primary_head: model.primary_selection().head(),
@@ -168,10 +216,10 @@ impl Element for EditorElement {
                 y: view.scroll.y.into(),
             },
             autoscroll: view.autoscroll,
-            width: bounds.size.width.into(),
+            width,
             height: bounds.size.height.into(),
             line_height: line_height.into(),
-            em: em.into(),
+            em,
             styles: FrameStyles {
                 text: theme.foreground,
                 line_number: theme.gutter_foreground,
@@ -242,6 +290,13 @@ impl Element for EditorElement {
                     for row in &frame.rows {
                         let origin = layout.to_window(frame.row_origin(row.row));
                         row.line
+                            .0
+                            .paint(origin, line_height, TextAlign::Left, None, window, cx)
+                            .ok();
+                    }
+                    for (origin, marker) in &frame.fold_markers {
+                        let origin = layout.to_window(*origin);
+                        marker
                             .0
                             .paint(origin, line_height, TextAlign::Left, None, window, cx)
                             .ok();

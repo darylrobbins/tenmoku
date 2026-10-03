@@ -4,7 +4,14 @@
 
 | Our path | Source | Commit | License |
 |---|---|---|---|
-| _none yet_ | | | |
+| `crates/fe-display/src/wrap_map.rs` | [gpui-kit](https://github.com/longbridge/gpui-kit) `crates/base/src/input/editor/display_map/text_wrapper.rs`, `wrap_map.rs` | `2c5162f8c5b0c7fcec066ed53125d304c632bfe2` | Apache-2.0 |
+| `crates/fe-display/src/fold_map.rs` | gpui-kit `…/display_map/fold_map.rs`, `folding.rs` | `2c5162f8c5b0c7fcec066ed53125d304c632bfe2` | Apache-2.0 |
+| `crates/fe-display/src/display_map.rs` | gpui-kit `…/display_map/display_map.rs` | `2c5162f8c5b0c7fcec066ed53125d304c632bfe2` | Apache-2.0 |
+
+gpui-kit is Copyright 2024 - 2026 Longbridge. Its files carry no license
+header and the repository has no NOTICE file, so each adapted file starts with
+a header naming the source, commit and license and saying what was changed.
+Ship the Apache-2.0 license text with them.
 
 ## Tree-sitter grammars and highlight queries
 
