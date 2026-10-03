@@ -82,7 +82,7 @@ fn render(language: &'static Language, text: &str, file_name: &str) -> String {
         (point.row + 1, point.column + 1)
     };
     let mut out = String::new();
-    for span in syntax.highlights(0..text.len()) {
+    for span in syntax.highlights_compiling(0..text.len()) {
         let (row, column) = point(span.range.start);
         let (end_row, end_column) = point(span.range.end);
         let end = if end_row == row {

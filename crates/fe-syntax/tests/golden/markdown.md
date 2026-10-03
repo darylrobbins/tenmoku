@@ -1,6 +1,14 @@
+---
+title: fastedit
+tags: [editor, golden]
+---
+
 # fastedit
 
 A small, fast text editor. This file is a golden highlighting sample.
+
+Inline markup: **strong**, _emphasis_, `code`, ![logo](logo.svg "Logo"),
+<https://fastedit.dev>, <kbd>Ctrl</kbd> and a \*literal\* star.
 
 ## Getting started
 
@@ -59,3 +67,7 @@ fn main() {
 ~~~
 
 Final paragraph with a footnote-like marker[^1].
+
+```mermaid
+graph TD; A-->B
+```

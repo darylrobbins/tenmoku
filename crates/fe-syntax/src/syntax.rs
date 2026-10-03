@@ -15,6 +15,7 @@ use tree_sitter::{
 use crate::{
     HighlightSpan, Language,
     highlight::{Capture, flatten},
+    injection::{self, Layers},
 };
 
 /// Files larger than this are shown without highlighting. A tree costs about
@@ -34,10 +35,10 @@ pub const MAX_PARSE_BYTES: usize = 8 * 1024 * 1024;
 /// cursor started at the child itself doesn't.
 const FLAT_CHILDREN: u32 = 1024;
 
-/// How long one [`Syntax::highlights`] call may query for. Sixty rows take
-/// about 0.1 ms, so only a pathological tree or query reaches this; its
-/// highlights stop where the time ran out. Tests have no limit, so a busy
-/// machine can't make them flaky.
+/// How long one [`Syntax::highlights`] call may query and parse injected
+/// layers for. Sixty rows take about 0.1 ms, so only a pathological tree or
+/// query reaches this; its highlights stop where the time ran out. Tests have
+/// no limit, so a busy machine can't make them flaky.
 const QUERY_BUDGET: Duration = if cfg!(test) {
     Duration::MAX
 } else {
@@ -47,6 +48,23 @@ const QUERY_BUDGET: Duration = if cfg!(test) {
 /// How many recently highlighted ranges [`Syntax`] remembers. A frame queries
 /// one range per run of consecutive visible rows.
 const CACHED_RANGES: usize = 8;
+
+/// What [`Syntax::highlights`] keeps for the current tree.
+#[derive(Default)]
+struct Cache {
+    /// Recent results, newest last, so frames that neither scroll nor edit
+    /// don't query again.
+    ranges: VecDeque<(Range<usize>, Vec<HighlightSpan>)>,
+    layers: Layers,
+}
+
+impl Cache {
+    fn clear(&mut self) {
+        self.ranges.clear();
+        // Missing languages stay missing until they're compiled.
+        self.layers.trees.clear();
+    }
+}
 
 /// A buffer's syntax tree, kept up to date incrementally.
 ///
@@ -65,9 +83,7 @@ pub struct Syntax {
     tree: Option<Tree>,
     /// The version `tree` was last parsed at.
     parsed: Option<Version>,
-    /// Recent [`Syntax::highlights`] results for the current tree, newest
-    /// last, so frames that neither scroll nor edit don't query again.
-    cache: RefCell<VecDeque<(Range<usize>, Vec<HighlightSpan>)>>,
+    cache: RefCell<Cache>,
     /// Set when parsing or highlighting panicked.
     failed: Cell<bool>,
 }
@@ -201,12 +217,17 @@ impl Syntax {
     }
 
     /// Highlights within `range` of the current snapshot, sorted and
-    /// non-overlapping. Only the part of the tree touching `range` is queried,
-    /// so pass the visible text, not the whole file. Asking for the same range
-    /// again before the tree changes doesn't query again.
+    /// non-overlapping, including those of injected languages (see
+    /// [`crate::injection`]). Only the part of the tree touching `range` is
+    /// queried, and only the injections overlapping it are parsed, so pass
+    /// the visible text, not the whole file. Asking for the same range again
+    /// before the tree changes doesn't query again.
     ///
     /// A query that runs out of [`QUERY_BUDGET`] returns the highlights found
-    /// so far, and they're cached like any others.
+    /// so far, and they're cached like any others. But if time runs out while
+    /// finding or parsing injections, or an injected language isn't compiled
+    /// yet (see [`Syntax::missing_languages`]), the result isn't cached: the
+    /// next call tries again, keeping the layers parsed so far.
     pub fn highlights(&self, range: Range<usize>) -> Vec<HighlightSpan> {
         let Some(tree) = self.tree.as_ref().filter(|_| !self.failed.get()) else {
             return Vec::new();
@@ -214,19 +235,26 @@ impl Syntax {
         let text = self.snapshot.text();
         let range = range.start.min(text.len())..range.end.min(text.len());
         let mut cache = self.cache.borrow_mut();
-        if let Some((_, spans)) = cache.iter().find(|(cached, _)| *cached == range) {
+        if let Some((_, spans)) = cache.ranges.iter().find(|(cached, _)| *cached == range) {
             return spans.clone();
         }
 
+        let layers = &mut cache.layers;
         let query = || {
-            self.query(
+            // `None` for a budget too long to be a time.
+            let deadline = Instant::now().checked_add(QUERY_BUDGET);
+            let language = self.language;
+            let spans = highlight_query(
+                language,
+                text,
                 tree,
                 range.clone(),
-                self.language.local_patterns,
-                QUERY_BUDGET,
-            )
+                language.local_patterns,
+                deadline,
+            );
+            injection::paint(language, text, tree, range.clone(), deadline, layers, spans)
         };
-        let Ok(spans) = catch_unwind(AssertUnwindSafe(query)) else {
+        let Ok((spans, complete)) = catch_unwind(AssertUnwindSafe(query)) else {
             log::error!(
                 "{}: highlighting panicked; showing plain text",
                 self.language.name()
@@ -234,16 +262,43 @@ impl Syntax {
             self.failed.set(true);
             return Vec::new();
         };
-        if cache.len() == CACHED_RANGES {
-            cache.pop_front();
+        if complete {
+            if cache.ranges.len() == CACHED_RANGES {
+                cache.ranges.pop_front();
+            }
+            cache.ranges.push_back((range, spans.clone()));
         }
-        cache.push_back((range, spans.clone()));
         spans
     }
 
-    /// Queries `tree` for the highlights in `range`, stopping after `budget`.
-    /// With `split`, nodes with many children are queried a child at a time;
-    /// that's only correct when no pattern spans several siblings.
+    /// Injected languages that [`Syntax::highlights`] found uncompiled, so
+    /// their code showed plain. Compile each with [`crate::language_by_name`]
+    /// off the UI thread, as that takes up to 20 ms, then highlight again.
+    pub fn missing_languages(&self) -> Vec<&'static str> {
+        let missing = &mut self.cache.borrow_mut().layers.missing;
+        missing.retain(|name| crate::loaded_language(name).is_none());
+        missing.clone()
+    }
+
+    /// [`Syntax::highlights`], after compiling the injected languages it
+    /// needs on this thread.
+    #[cfg(test)]
+    pub(crate) fn highlights_compiling(&self, range: Range<usize>) -> Vec<HighlightSpan> {
+        loop {
+            let spans = self.highlights(range.clone());
+            let missing = self.missing_languages();
+            if missing.is_empty() {
+                return spans;
+            }
+            for name in missing {
+                crate::language_by_name(name);
+            }
+        }
+    }
+
+    /// Queries `tree` for the highlights in `range` without injections,
+    /// stopping after `budget`. See [`highlight_query`].
+    #[cfg(test)]
     pub(crate) fn query(
         &self,
         tree: &Tree,
@@ -251,58 +306,50 @@ impl Syntax {
         split: bool,
         budget: Duration,
     ) -> Vec<HighlightSpan> {
-        fault_point("query");
-        // `None` for a budget too long to be a time.
         let deadline = Instant::now().checked_add(budget);
-        let root = tree.root_node();
-        let split = if split && !range.is_empty() {
-            flat_paths(root, &range)
-        } else {
-            Vec::new()
-        };
-        let mut cursor = QueryCursor::new();
-        cursor.set_byte_range(range.clone());
-        let mut captures = Vec::new();
-        self.query_node(&mut cursor, root, &range, &split, deadline, &mut captures);
-        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-            log::debug!(
-                "{}: highlighting {range:?} took over {budget:?}; showing what was found",
-                self.language.name()
-            );
-        }
-        flatten(captures, range)
+        highlight_query(
+            self.language,
+            self.snapshot.text(),
+            tree,
+            range,
+            split,
+            deadline,
+        )
     }
 
-    /// Adds the captures of the matches that start at `node` or below it.
-    /// Nodes in `split` are queried only for matches starting at them, then
-    /// their children are queried one by one.
-    fn query_node(
-        &self,
-        cursor: &mut QueryCursor,
-        node: Node,
-        range: &Range<usize>,
-        split: &[Node],
-        deadline: Option<Instant>,
-        captures: &mut Vec<Capture>,
-    ) {
-        let split_here = split.contains(&node);
-        cursor.set_max_start_depth(split_here.then_some(0));
-        let text = self.snapshot.text();
+    /// The languages and ranges of the injected layers parsed so far.
+    #[cfg(test)]
+    pub(crate) fn layers(&self) -> Vec<injection::LayerKey> {
+        let mut layers: Vec<_> = self.cache.borrow().layers.trees.keys().cloned().collect();
+        layers.sort_by_key(|(_, ranges)| ranges.first().map(|range| range.start));
+        layers
+    }
+}
+
+/// Queries `tree`, of `language` and parsed from `text`, for the highlights
+/// in `range`, stopping at `deadline`. With `split`, nodes with many children
+/// are queried a child at a time; that's only correct when no pattern spans
+/// several siblings.
+pub(crate) fn highlight_query(
+    language: &Language,
+    text: &Text,
+    tree: &Tree,
+    range: Range<usize>,
+    split: bool,
+    deadline: Option<Instant>,
+) -> Vec<HighlightSpan> {
+    fault_point("query");
+    let mut captures = Vec::new();
+    for_each_query_root(tree, &range, split, |cursor, node| {
         // Predicates like `#match?` read node text straight from the rope.
         let source = |node: Node| chunks(text, node.byte_range());
-        let mut progress = |_: &_| {
-            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-                ControlFlow::Break(())
-            } else {
-                ControlFlow::Continue(())
-            }
-        };
+        let mut progress = |_: &_| until(deadline);
         let options = QueryCursorOptions::new().progress_callback(&mut progress);
-        let mut matches = cursor.captures_with_options(&self.language.query, node, source, options);
+        let mut matches = cursor.captures_with_options(&language.query, node, source, options);
         while let Some((found, ix)) = matches.next() {
             let capture = found.captures()[*ix];
-            if let Some(highlight) = self.language.highlights[capture.index as usize] {
-                let precedence = if self.language.earlier_patterns_win {
+            if let Some(highlight) = language.highlights[capture.index as usize] {
+                let precedence = if language.earlier_patterns_win {
                     usize::MAX - found.pattern_index
                 } else {
                     found.pattern_index
@@ -314,6 +361,50 @@ impl Syntax {
                 });
             }
         }
+    });
+    if out_of_time(deadline) {
+        log::debug!(
+            "{}: highlighting {range:?} ran out of time; showing what was found",
+            language.name()
+        );
+    }
+    flatten(captures, range)
+}
+
+/// Whether `deadline` has passed. `None` never does.
+pub(crate) fn out_of_time(deadline: Option<Instant>) -> bool {
+    deadline.is_some_and(|deadline| Instant::now() >= deadline)
+}
+
+/// Tells tree-sitter to stop once `deadline` has passed.
+pub(crate) fn until(deadline: Option<Instant>) -> ControlFlow<()> {
+    if out_of_time(deadline) {
+        ControlFlow::Break(())
+    } else {
+        ControlFlow::Continue(())
+    }
+}
+
+/// Calls `run` with a cursor limited to `range` and each node to query
+/// `tree` from, so that together they find each match touching `range` once.
+/// That's just the root, unless `split`: then each node on [`flat_paths`] is
+/// queried only for matches starting at it, and its children one by one.
+pub(crate) fn for_each_query_root<'tree>(
+    tree: &'tree Tree,
+    range: &Range<usize>,
+    split: bool,
+    mut run: impl FnMut(&mut QueryCursor, Node<'tree>),
+) {
+    fn visit<'tree>(
+        cursor: &mut QueryCursor,
+        node: Node<'tree>,
+        range: &Range<usize>,
+        split: &[Node],
+        run: &mut impl FnMut(&mut QueryCursor, Node<'tree>),
+    ) {
+        let split_here = split.contains(&node);
+        cursor.set_max_start_depth(split_here.then_some(0));
+        run(cursor, node);
         if !split_here {
             return;
         }
@@ -326,12 +417,22 @@ impl Syntax {
             if child.start_byte() >= range.end {
                 break;
             }
-            self.query_node(cursor, child, range, split, deadline, captures);
+            visit(cursor, child, range, split, run);
             if !children.goto_next_sibling() {
                 break;
             }
         }
     }
+
+    let root = tree.root_node();
+    let split = if split && !range.is_empty() {
+        flat_paths(root, range)
+    } else {
+        Vec::new()
+    };
+    let mut cursor = QueryCursor::new();
+    cursor.set_byte_range(range.clone());
+    visit(&mut cursor, root, range, &split, &mut run);
 }
 
 /// The nodes to query a child at a time for `range`: each node with more than
@@ -358,7 +459,7 @@ pub(crate) fn flat_paths<'tree>(root: Node<'tree>, range: &Range<usize>) -> Vec<
     split
 }
 
-fn chunks(text: &Text, range: Range<usize>) -> impl Iterator<Item = &[u8]> {
+pub(crate) fn chunks(text: &Text, range: Range<usize>) -> impl Iterator<Item = &[u8]> {
     // An edited, not yet reparsed tree can have a node end inside a char.
     let start = text.clip_offset(range.start, fe_buffer::Bias::Left);
     let end = text
@@ -413,42 +514,57 @@ impl ParseJob {
         })
     }
 
-    fn parse_tree(&self, mut out_of_time: impl FnMut() -> bool) -> Option<Tree> {
+    fn parse_tree(&self, out_of_time: impl FnMut() -> bool) -> Option<Tree> {
         let mut parser = Parser::new();
         parser
             .set_language(&self.language.grammar)
             .expect("grammar ABI is supported by this tree-sitter");
-        let text = self.snapshot.text();
-        let mut progress = |_: &tree_sitter::ParseState| {
-            if out_of_time() {
-                ControlFlow::Break(())
-            } else {
-                ControlFlow::Continue(())
-            }
-        };
-        // Tree-sitter calls `read` from C, which a panic can't unwind
-        // through (it aborts), so it's caught there and resumed after.
-        let mut panic = None;
-        let mut read = |offset: usize, _: tree_sitter::Point| {
-            let bytes = catch_unwind(AssertUnwindSafe(|| {
-                fault_point("read");
-                text.bytes_at(offset)
-            }));
-            bytes.unwrap_or_else(|payload| {
-                panic.get_or_insert(payload);
-                &[]
-            })
-        };
-        let tree = parser.parse_with_options(
-            &mut read,
+        parse_text(
+            &mut parser,
+            self.snapshot.text(),
             self.old_tree.as_ref(),
-            Some(ParseOptions::new().progress_callback(&mut progress)),
-        );
-        if let Some(payload) = panic {
-            resume_unwind(payload);
-        }
-        tree
+            out_of_time,
+        )
     }
+}
+
+/// Parses `text` with `parser`, set up with its language and any included
+/// ranges. `None` if `out_of_time` stopped it.
+pub(crate) fn parse_text(
+    parser: &mut Parser,
+    text: &Text,
+    old_tree: Option<&Tree>,
+    mut out_of_time: impl FnMut() -> bool,
+) -> Option<Tree> {
+    let mut progress = |_: &tree_sitter::ParseState| {
+        if out_of_time() {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    };
+    // Tree-sitter calls `read` from C, which a panic can't unwind
+    // through (it aborts), so it's caught there and resumed after.
+    let mut panic = None;
+    let mut read = |offset: usize, _: tree_sitter::Point| {
+        let bytes = catch_unwind(AssertUnwindSafe(|| {
+            fault_point("read");
+            text.bytes_at(offset)
+        }));
+        bytes.unwrap_or_else(|payload| {
+            panic.get_or_insert(payload);
+            &[]
+        })
+    };
+    let tree = parser.parse_with_options(
+        &mut read,
+        old_tree,
+        Some(ParseOptions::new().progress_callback(&mut progress)),
+    );
+    if let Some(payload) = panic {
+        resume_unwind(payload);
+    }
+    tree
 }
 
 #[cfg(test)]

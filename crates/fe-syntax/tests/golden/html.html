@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="settings.css">
     <style>
       body { margin: 0; }
+      #top > h1 { font-size: 1.5em; color: #333; }
     </style>
   </head>
   <body class="settings theme-light">
@@ -63,5 +64,11 @@
       <small>&copy; 2026 Golden Sample</small>
     </footer>
     <script src="settings.js" defer></script>
+    <script>
+      // Show only the section named in the URL.
+      for (const section of document.querySelectorAll("section")) {
+        section.hidden = location.hash !== `#${section.id}`;
+      }
+    </script>
   </body>
 </html>

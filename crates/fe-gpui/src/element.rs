@@ -250,9 +250,10 @@ impl Element for EditorElement {
         });
 
         let scroll = point(px(frame.scroll.x), px(frame.scroll.y));
-        self.view.update(cx, |view, _| {
+        self.view.update(cx, |view, cx| {
             view.scroll = scroll;
             view.autoscroll = false;
+            view.load_injected_languages(cx);
         });
         Some(FrameLayout {
             origin: bounds.origin,

@@ -1,0 +1,327 @@
+use std::{ops::Range, time::Instant};
+
+use fe_buffer::{Buffer, Origin};
+use proptest::{prelude::prop, prop_assert_eq, proptest};
+
+use super::Layers;
+use crate::{
+    highlight::{clip, overlay},
+    syntax::highlight_query,
+    *,
+};
+
+fn parsed(name: &str, buffer: &Buffer) -> Syntax {
+    let mut syntax = Syntax::new(language_by_name(name).unwrap(), buffer.current());
+    syntax.finish(syntax.parse_job().run());
+    syntax
+}
+
+/// `(text, highlight)` for every span of `text` highlighted whole.
+fn spans(name: &str, text: &str) -> Vec<(String, &'static str)> {
+    let syntax = parsed(name, &Buffer::new(text));
+    syntax
+        .highlights_compiling(0..text.len())
+        .into_iter()
+        .map(|span| (text[span.range].to_string(), span.highlight.name()))
+        .collect()
+}
+
+/// Asserts that `found` includes each of `expected`.
+fn assert_includes(found: &[(String, &str)], expected: &[(&str, &str)]) {
+    let missing: Vec<_> = expected
+        .iter()
+        .filter(|&&(text, highlight)| !found.contains(&(text.to_string(), highlight)))
+        .collect();
+    assert!(missing.is_empty(), "missing {missing:?} in {found:?}");
+}
+
+#[test]
+fn markdown_inline_and_fenced_code_are_highlighted() {
+    let text = "# A `b`\n\n\
+                > Some `code` and [a link](https://x.dev).\n\
+                > More *emphasis*.\n\n\
+                ```rust\nfn main() {}\n```\n";
+    let found = spans("markdown", text);
+    assert_includes(
+        &found,
+        &[
+            // Inline grammar, inside a heading and a block quote.
+            ("A ", "markup.heading"),
+            ("b", "markup.raw"),
+            ("code", "markup.raw"),
+            ("`", "punctuation.delimiter"),
+            ("a link", "markup.link"),
+            ("https://x.dev", "markup.link.url"),
+            // The block grammar's `> ` between the quote's lines stays.
+            ("> ", "punctuation.special"),
+            // Rust in the fence, over the fence's own highlight.
+            ("fn", "keyword"),
+            ("main", "function"),
+            ("rust\n", "markup.raw"),
+            (" ", "markup.raw"),
+        ],
+    );
+    // Emphasis has no highlight of ours, but its delimiters do.
+    assert!(!found.iter().any(|(text, _)| text.contains("emphasis")));
+
+    // Fence languages resolve by alias and extension, ignoring case.
+    for (fence, keyword) in [
+        ("JS", "const"),
+        ("py", "def"),
+        ("c++", "class"),
+        ("shell", "if"),
+        ("rust,ignore", "fn"),
+    ] {
+        let source = match keyword {
+            "const" => "const a = 1;",
+            "def" => "def f(): pass",
+            "class" => "class C {};",
+            "if" => "if true; then :; fi",
+            _ => "fn f() {}",
+        };
+        let text = format!("```{fence}\n{source}\n```\n");
+        assert_includes(&spans("markdown", &text), &[(keyword, "keyword")]);
+    }
+}
+
+#[test]
+fn html_script_and_style_are_highlighted() {
+    let text = "<style>p { color: red; }</style>\n\
+                <script>const x = `<b>${1}</b>`;</script>\n";
+    assert_includes(
+        &spans("html", text),
+        &[
+            ("style", "tag"),
+            ("color", "property"),
+            ("script", "tag"),
+            ("const", "keyword"),
+            ("1", "number"),
+        ],
+    );
+}
+
+/// A tagged template's pieces are parsed as one layer, around its `${…}`s,
+/// which stay JavaScript.
+#[test]
+fn tagged_templates_combine_their_pieces() {
+    let text = "html`<p class=${c}>hi</p>`;\ncss`a { color: red; }`;\n";
+    let found = spans("javascript", text);
+    assert_includes(
+        &found,
+        &[
+            ("p", "tag"),
+            ("class", "attribute"),
+            ("c", "variable"),
+            ("${", "punctuation.special"),
+            ("hi", "string"),
+            ("color", "property"),
+        ],
+    );
+    let syntax = parsed("javascript", &Buffer::new(text));
+    syntax.highlights_compiling(0..text.len());
+    let layers = syntax.layers();
+    assert_eq!(layers[0], ("html", vec![5..14, 18..25]));
+    assert_eq!(layers[1].0, "css");
+}
+
+#[test]
+fn only_injections_overlapping_the_range_are_parsed() {
+    let block = |n| format!("Para {n} with `code`.\n\n```rust\nfn f{n}() {{}}\n```\n\n");
+    let text: String = (0..6).map(block).collect();
+    let mut buffer = Buffer::new(&text);
+    let mut syntax = parsed("markdown", &buffer);
+    let third = text.find("Para 2").unwrap();
+    let fourth = text.find("Para 3").unwrap();
+
+    syntax.highlights_compiling(third..fourth);
+    let layers = syntax.layers();
+    let languages: Vec<_> = layers.iter().map(|(language, _)| *language).collect();
+    assert_eq!(languages, ["markdown_inline", "rust"]);
+    assert!(
+        layers
+            .iter()
+            .all(|(_, ranges)| third <= ranges[0].start && ranges[0].end <= fourth),
+        "{layers:?}"
+    );
+
+    // Another range adds its own layers, and keeps those already parsed.
+    syntax.highlights_compiling(fourth..text.len());
+    assert_eq!(syntax.layers().len(), 2 + 3 * 2);
+
+    // An edit drops them all.
+    buffer.edit([(0..0, "x")], Origin::User);
+    syntax.edit(buffer.current());
+    assert!(syntax.layers().is_empty());
+}
+
+#[test]
+fn unknown_injected_languages_stay_plain() {
+    let text = "```mermaid\ngraph TD; A-->B\n```\n";
+    assert_eq!(
+        spans("markdown", text),
+        [
+            ("```", "punctuation.delimiter"),
+            ("mermaid\ngraph TD; A-->B\n", "markup.raw"),
+            ("```", "punctuation.delimiter"),
+            ("\n", "markup.raw"),
+        ]
+        .map(|(text, highlight)| (text.to_string(), highlight))
+    );
+
+    // Regex and JSDoc have no grammar here; the host's highlights stay.
+    let text = "/** @param {number} x */\nconst r = /ab+c/g;\nstyled.div`a`;\n";
+    assert_includes(
+        &spans("javascript", text),
+        &[
+            ("/** @param {number} x */", "comment"),
+            ("ab+c", "string.special"),
+            ("`a`", "string"),
+        ],
+    );
+}
+
+/// An injected language that isn't compiled yet stays plain and is reported
+/// missing. Once it's compiled, the next call highlights it.
+#[test]
+fn missing_languages_are_reported() {
+    let text = "```java\nclass A {}\n```\n";
+    let syntax = parsed("markdown", &Buffer::new(text));
+    let keyword =
+        |spans: Vec<HighlightSpan>| spans.iter().any(|span| span.highlight.name() == "keyword");
+    let first = syntax.highlights(0..text.len());
+    // Each test has its own process under nextest, so Java hasn't been
+    // compiled yet; under `cargo test` another test may have compiled it.
+    let missing = syntax.missing_languages();
+    if !missing.is_empty() {
+        assert_eq!(missing, ["java"]);
+        assert!(!keyword(first));
+    }
+    language_by_name("java");
+    assert_eq!(syntax.missing_languages(), [] as [&str; 0]);
+    assert!(keyword(syntax.highlights(0..text.len())));
+}
+
+/// Finding and parsing injections stop at the deadline, leave the
+/// injections plain and report the result incomplete. The next call, with
+/// time, highlights them.
+#[test]
+fn injections_out_of_time_stay_plain() {
+    let pieces = "<b>${x}</b>".repeat(2000);
+    let cases = [
+        ("markdown", "rust", "```rust\nfn f() {}\n```\n".to_string()),
+        ("javascript", "html", format!("html`{pieces}`;\n")),
+    ];
+    for (host, injected, text) in cases {
+        language_by_name(injected);
+        let buffer = Buffer::new(&text);
+        let syntax = parsed(host, &buffer);
+        let (language, tree) = (syntax.language(), syntax.tree().unwrap());
+        let host = highlight_query(language, buffer.text(), tree, 0..text.len(), true, None);
+        let mut layers = Layers::default();
+        let mut paint = |deadline| {
+            super::paint(
+                language,
+                buffer.text(),
+                tree,
+                0..text.len(),
+                deadline,
+                &mut layers,
+                host.clone(),
+            )
+        };
+        assert_eq!(paint(Some(Instant::now())), (host.clone(), false));
+        let (spans, complete) = paint(None);
+        assert!(complete && spans != host, "{injected}");
+        assert_eq!(layers.trees.len(), 1);
+    }
+}
+
+/// Collecting a content node's ranges stops at the deadline: a block quote
+/// with a continuation on every line has as many ranges as lines.
+#[test]
+fn content_ranges_stop_at_the_deadline() {
+    let text = "> line\n".repeat(1000);
+    let syntax = parsed("markdown", &Buffer::new(&text));
+    let root = syntax.tree().unwrap().root_node();
+    let inline = root
+        .named_descendant_for_byte_range(2, 3)
+        .filter(|node| node.kind() == "inline")
+        .expect("the quote's text");
+    let mut ranges = Vec::new();
+    assert!(super::content_ranges(inline, false, None, &mut ranges));
+    assert_eq!(ranges.len(), 1000);
+    ranges.clear();
+    assert!(!super::content_ranges(
+        inline,
+        false,
+        Some(Instant::now()),
+        &mut ranges
+    ));
+    assert!(ranges.len() <= 1);
+}
+
+fn spans_of(specs: &[(usize, usize, usize)]) -> Vec<HighlightSpan> {
+    let mut start = 0;
+    let mut spans: Vec<HighlightSpan> = Vec::new();
+    for &(gap, len, highlight) in specs {
+        start += gap;
+        let range = start..start + len + 1;
+        let highlight = Highlight::all().nth(highlight).unwrap();
+        start = range.end;
+        match spans.last_mut() {
+            Some(last) if last.range.end == range.start && last.highlight == highlight => {
+                last.range.end = range.end;
+            }
+            _ => spans.push(HighlightSpan { range, highlight }),
+        }
+    }
+    spans
+}
+
+fn paint(spans: &[HighlightSpan], len: usize) -> Vec<Option<Highlight>> {
+    let mut bytes = vec![None; len];
+    for span in spans {
+        bytes[span.range.clone()].fill(Some(span.highlight));
+    }
+    bytes
+}
+
+proptest! {
+    /// Clipping then overlaying gives what painting the clipped top over the
+    /// base byte by byte does.
+    #[test]
+    fn clipped_overlay_paints_each_byte(
+        base in prop::collection::vec((0usize..4, 0usize..6, 0usize..3), 0..8),
+        top in prop::collection::vec((0usize..4, 0usize..6, 0usize..3), 0..8),
+        ranges in prop::collection::vec((0usize..6, 0usize..8), 0..5),
+    ) {
+        const LEN: usize = 128;
+        let (base, top) = (spans_of(&base), spans_of(&top));
+        let mut start = 0;
+        let ranges: Vec<Range<usize>> = ranges
+            .iter()
+            .map(|&(gap, len)| {
+                start += gap;
+                let range = start..start + len + 1;
+                start = range.end;
+                range
+            })
+            .collect();
+        let inside = |byte: usize| ranges.iter().any(|range| range.contains(&byte));
+        let mut expected = paint(&base, LEN);
+        for (byte, painted) in paint(&top, LEN).into_iter().enumerate() {
+            if painted.is_some() && inside(byte) {
+                expected[byte] = painted;
+            }
+        }
+        let merged = overlay(base, clip(top, &ranges));
+        for pair in merged.windows(2) {
+            prop_assert_eq!(pair[0].range.end <= pair[1].range.start, true);
+            prop_assert_eq!(
+                pair[0].range.end < pair[1].range.start || pair[0].highlight != pair[1].highlight,
+                true
+            );
+        }
+        prop_assert_eq!(paint(&merged, LEN), expected);
+    }
+}

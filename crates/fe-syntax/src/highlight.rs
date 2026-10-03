@@ -187,3 +187,82 @@ pub(crate) fn flatten(mut captures: Vec<Capture>, clip: Range<usize>) -> Vec<Hig
     }
     spans
 }
+
+/// The parts of `spans` inside `ranges`. Both are sorted and don't overlap.
+pub(crate) fn clip(spans: Vec<HighlightSpan>, ranges: &[Range<usize>]) -> Vec<HighlightSpan> {
+    let mut clipped = Vec::with_capacity(spans.len());
+    let mut first = 0;
+    for span in spans {
+        while ranges
+            .get(first)
+            .is_some_and(|range| range.end <= span.range.start)
+        {
+            first += 1;
+        }
+        for range in ranges[first..]
+            .iter()
+            .take_while(|range| range.start < span.range.end)
+        {
+            let range = span.range.start.max(range.start)..span.range.end.min(range.end);
+            if !range.is_empty() {
+                clipped.push(HighlightSpan {
+                    range,
+                    highlight: span.highlight,
+                });
+            }
+        }
+    }
+    clipped
+}
+
+/// `top` painted over `base`: each byte takes its highlight from `top` if a
+/// span there covers it, else from `base`. Both are sorted and
+/// non-overlapping, and so is the result, with touching spans of one
+/// highlight merged as [`flatten`] does.
+pub(crate) fn overlay(base: Vec<HighlightSpan>, top: Vec<HighlightSpan>) -> Vec<HighlightSpan> {
+    if top.is_empty() {
+        return base;
+    }
+    // The parts of `base` that `top` leaves uncovered.
+    let mut pieces = Vec::with_capacity(base.len() + top.len());
+    let mut first = 0;
+    for span in base {
+        let mut start = span.range.start;
+        while top.get(first).is_some_and(|top| top.range.end <= start) {
+            first += 1;
+        }
+        for top in top[first..]
+            .iter()
+            .take_while(|top| top.range.start < span.range.end)
+        {
+            if start < top.range.start {
+                pieces.push(HighlightSpan {
+                    range: start..top.range.start,
+                    highlight: span.highlight,
+                });
+            }
+            start = start.max(top.range.end);
+        }
+        if start < span.range.end {
+            pieces.push(HighlightSpan {
+                range: start..span.range.end,
+                highlight: span.highlight,
+            });
+        }
+    }
+    pieces.extend(top);
+    pieces.sort_by_key(|span| span.range.start);
+
+    let mut merged: Vec<HighlightSpan> = Vec::with_capacity(pieces.len());
+    for span in pieces {
+        match merged.last_mut() {
+            Some(last)
+                if last.highlight == span.highlight && last.range.end == span.range.start =>
+            {
+                last.range.end = span.range.end;
+            }
+            _ => merged.push(span),
+        }
+    }
+    merged
+}

@@ -38,6 +38,8 @@ pub struct EditorView {
     pub(crate) syntax: Option<SyntaxDriver<Task<()>>>,
     /// The language loading in the background.
     language_task: Option<Task<()>>,
+    /// Injected languages loading in the background.
+    injected_task: Option<Task<()>>,
     pub(crate) frame_timings: FrameTimings,
 }
 
@@ -70,6 +72,7 @@ impl EditorView {
             marked: None,
             syntax: None,
             language_task: None,
+            injected_task: None,
             frame_timings: FrameTimings::default(),
         };
         let language = view
@@ -274,6 +277,31 @@ impl EditorView {
         if let Some(syntax) = &mut self.syntax {
             syntax.sync(self.model.snapshot(), &mut ParseSpawner(cx));
         }
+    }
+
+    /// Compiles the injected languages the last frame's highlights lacked,
+    /// such as a Markdown fence's, in the background, then draws again.
+    pub(crate) fn load_injected_languages(&mut self, cx: &mut Context<Self>) {
+        let Some(syntax) = &self.syntax else {
+            return;
+        };
+        let missing = syntax.syntax().missing_languages();
+        if missing.is_empty() || self.injected_task.is_some() {
+            return;
+        }
+        self.injected_task = Some(cx.spawn(async move |this, cx| {
+            cx.background_spawn(async move {
+                for name in missing {
+                    fe_syntax::language_by_name(name);
+                }
+            })
+            .await;
+            this.update(cx, |view, cx| {
+                view.injected_task = None;
+                cx.notify();
+            })
+            .ok();
+        }));
     }
 
     fn marked_range(&self) -> Option<Range<usize>> {

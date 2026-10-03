@@ -2,7 +2,7 @@ use std::{path::Path, sync::OnceLock};
 
 use tree_sitter::Query;
 
-use crate::Highlight;
+use crate::{Highlight, injection::InjectionQuery};
 
 /// A grammar with its highlight query, compiled on first use.
 pub struct Language {
@@ -15,6 +15,7 @@ pub struct Language {
     /// Whether no pattern spans several siblings, so a node's children can
     /// be queried one at a time. True of every query so far.
     pub(crate) local_patterns: bool,
+    pub(crate) injections: Option<InjectionQuery>,
 }
 
 impl Language {
@@ -33,6 +34,10 @@ impl Language {
             .map(|name| Highlight::from_capture(name))
             .collect();
         let local_patterns = (0..query.pattern_count()).all(|ix| !query.is_pattern_non_local(ix));
+        let injections = def.injections.map(|source| {
+            InjectionQuery::new(&grammar, source)
+                .unwrap_or_else(|error| panic!("{} injections query: {error}", def.name))
+        });
         Self {
             name: def.name,
             grammar,
@@ -40,6 +45,7 @@ impl Language {
             highlights,
             earlier_patterns_win: def.earlier_patterns_win,
             local_patterns,
+            injections,
         }
     }
 }
@@ -54,7 +60,7 @@ impl std::fmt::Debug for Language {
 pub fn language_name_for_path(path: &Path) -> Option<&'static str> {
     let file_name = path.file_name()?.to_str()?;
     let extension = path.extension().and_then(|ext| ext.to_str());
-    DEFS.iter()
+    listed()
         .find(|def| {
             def.file_names.contains(&file_name)
                 || extension.is_some_and(|ext| def.extensions.contains(&ext))
@@ -82,7 +88,47 @@ pub fn loaded_language(name: &str) -> Option<&'static Language> {
 
 /// Every language compiled into this build.
 pub fn language_names() -> impl Iterator<Item = &'static str> {
-    DEFS.iter().map(|def| def.name)
+    listed().map(|def| def.name)
+}
+
+fn listed() -> impl Iterator<Item = &'static Def> {
+    DEFS.iter().filter(|def| !def.hidden)
+}
+
+/// Other names injections use for our languages, besides file extensions.
+const ALIASES: &[(&str, &str)] = &[("shell", "bash")];
+
+/// What an injection's language name refers to.
+pub(crate) enum Injected {
+    Ready(&'static Language),
+    /// A language of this build whose query isn't compiled yet. Compiling it
+    /// here could take a few frames; see [`crate::Syntax::missing_languages`].
+    Missing(&'static str),
+    /// Not a language of this build.
+    Unknown,
+}
+
+/// The language an injection names, ignoring case: by its name, a file
+/// extension (`js`, `py`, `c++`) or an alias such as `shell`. Anything after
+/// a comma is ignored, as in a ```` ```rust,ignore ```` fence.
+pub(crate) fn injected_language(name: &str) -> Injected {
+    let name = name.split(',').next().unwrap_or_default().trim();
+    let name = name.to_ascii_lowercase();
+    let name = ALIASES
+        .iter()
+        .find(|(alias, _)| *alias == name)
+        .map_or(name.as_str(), |(_, canonical)| canonical);
+    let Some(ix) = DEFS
+        .iter()
+        .position(|def| def.name == name)
+        .or_else(|| DEFS.iter().position(|def| def.extensions.contains(&name)))
+    else {
+        return Injected::Unknown;
+    };
+    match COMPILED[ix].get() {
+        Some(language) => Injected::Ready(language),
+        None => Injected::Missing(DEFS[ix].name),
+    }
 }
 
 static COMPILED: [OnceLock<Language>; DEFS.len()] = [const { OnceLock::new() }; DEFS.len()];
@@ -100,6 +146,10 @@ struct Def {
     /// uses the last, and most queries list general patterns first. A few
     /// older queries are written the other way round.
     earlier_patterns_win: bool,
+    /// The query marking code in other languages; see [`crate::injection`].
+    injections: Option<&'static str>,
+    /// Only reached through injections: not listed, nor chosen by file name.
+    hidden: bool,
 }
 
 /// One entry per Cargo feature. Every query is the one the grammar crate ships.
@@ -112,6 +162,8 @@ const DEFS: &[Def] = &[
         grammar: || tree_sitter_rust::LANGUAGE.into(),
         highlights: || &[tree_sitter_rust::HIGHLIGHTS_QUERY],
         earlier_patterns_win: false,
+        injections: None,
+        hidden: false,
     },
     #[cfg(feature = "python")]
     Def {
@@ -121,6 +173,8 @@ const DEFS: &[Def] = &[
         grammar: || tree_sitter_python::LANGUAGE.into(),
         highlights: || &[tree_sitter_python::HIGHLIGHTS_QUERY],
         earlier_patterns_win: false,
+        injections: None,
+        hidden: false,
     },
     #[cfg(feature = "javascript")]
     Def {
@@ -135,6 +189,8 @@ const DEFS: &[Def] = &[
             ]
         },
         earlier_patterns_win: false,
+        injections: Some(tree_sitter_javascript::INJECTIONS_QUERY),
+        hidden: false,
     },
     #[cfg(feature = "typescript")]
     Def {
@@ -149,6 +205,9 @@ const DEFS: &[Def] = &[
             ]
         },
         earlier_patterns_win: false,
+        // TypeScript ships no injections query; JavaScript's fits its trees.
+        injections: Some(tree_sitter_javascript::INJECTIONS_QUERY),
+        hidden: false,
     },
     #[cfg(feature = "typescript")]
     Def {
@@ -164,6 +223,8 @@ const DEFS: &[Def] = &[
             ]
         },
         earlier_patterns_win: false,
+        injections: Some(tree_sitter_javascript::INJECTIONS_QUERY),
+        hidden: false,
     },
     #[cfg(feature = "json")]
     Def {
@@ -173,6 +234,8 @@ const DEFS: &[Def] = &[
         grammar: || tree_sitter_json::LANGUAGE.into(),
         highlights: || &[tree_sitter_json::HIGHLIGHTS_QUERY],
         earlier_patterns_win: true,
+        injections: None,
+        hidden: false,
     },
     #[cfg(feature = "toml")]
     Def {
@@ -182,6 +245,8 @@ const DEFS: &[Def] = &[
         grammar: || tree_sitter_toml_ng::LANGUAGE.into(),
         highlights: || &[tree_sitter_toml_ng::HIGHLIGHTS_QUERY],
         earlier_patterns_win: false,
+        injections: None,
+        hidden: false,
     },
     #[cfg(feature = "go")]
     Def {
@@ -191,6 +256,8 @@ const DEFS: &[Def] = &[
         grammar: || tree_sitter_go::LANGUAGE.into(),
         highlights: || &[tree_sitter_go::HIGHLIGHTS_QUERY],
         earlier_patterns_win: true,
+        injections: None,
+        hidden: false,
     },
     #[cfg(feature = "c")]
     Def {
@@ -200,6 +267,8 @@ const DEFS: &[Def] = &[
         grammar: || tree_sitter_c::LANGUAGE.into(),
         highlights: || &[tree_sitter_c::HIGHLIGHT_QUERY],
         earlier_patterns_win: false,
+        injections: None,
+        hidden: false,
     },
     #[cfg(feature = "cpp")]
     Def {
@@ -214,6 +283,8 @@ const DEFS: &[Def] = &[
             ]
         },
         earlier_patterns_win: false,
+        injections: None,
+        hidden: false,
     },
     #[cfg(feature = "bash")]
     Def {
@@ -223,6 +294,8 @@ const DEFS: &[Def] = &[
         grammar: || tree_sitter_bash::LANGUAGE.into(),
         highlights: || &[tree_sitter_bash::HIGHLIGHT_QUERY],
         earlier_patterns_win: false,
+        injections: None,
+        hidden: false,
     },
     #[cfg(feature = "html")]
     Def {
@@ -232,6 +305,8 @@ const DEFS: &[Def] = &[
         grammar: || tree_sitter_html::LANGUAGE.into(),
         highlights: || &[tree_sitter_html::HIGHLIGHTS_QUERY],
         earlier_patterns_win: false,
+        injections: Some(tree_sitter_html::INJECTIONS_QUERY),
+        hidden: false,
     },
     #[cfg(feature = "css")]
     Def {
@@ -241,6 +316,8 @@ const DEFS: &[Def] = &[
         grammar: || tree_sitter_css::LANGUAGE.into(),
         highlights: || &[tree_sitter_css::HIGHLIGHTS_QUERY],
         earlier_patterns_win: true,
+        injections: None,
+        hidden: false,
     },
     #[cfg(feature = "yaml")]
     Def {
@@ -250,8 +327,10 @@ const DEFS: &[Def] = &[
         grammar: || tree_sitter_yaml::LANGUAGE.into(),
         highlights: || &[tree_sitter_yaml::HIGHLIGHTS_QUERY],
         earlier_patterns_win: false,
+        injections: None,
+        hidden: false,
     },
-    // Block structure only: inline markup needs the inline grammar injected.
+    // Block structure only: inline markup is `markdown_inline`, injected.
     #[cfg(feature = "markdown")]
     Def {
         name: "markdown",
@@ -260,6 +339,19 @@ const DEFS: &[Def] = &[
         grammar: || tree_sitter_md::LANGUAGE.into(),
         highlights: || &[tree_sitter_md::HIGHLIGHT_QUERY_BLOCK],
         earlier_patterns_win: false,
+        injections: Some(tree_sitter_md::INJECTION_QUERY_BLOCK),
+        hidden: false,
+    },
+    #[cfg(feature = "markdown")]
+    Def {
+        name: "markdown_inline",
+        extensions: &[],
+        file_names: &[],
+        grammar: || tree_sitter_md::INLINE_LANGUAGE.into(),
+        highlights: || &[tree_sitter_md::HIGHLIGHT_QUERY_INLINE],
+        earlier_patterns_win: false,
+        injections: Some(tree_sitter_md::INJECTION_QUERY_INLINE),
+        hidden: true,
     },
     #[cfg(feature = "java")]
     Def {
@@ -269,5 +361,7 @@ const DEFS: &[Def] = &[
         grammar: || tree_sitter_java::LANGUAGE.into(),
         highlights: || &[tree_sitter_java::HIGHLIGHTS_QUERY],
         earlier_patterns_win: false,
+        injections: None,
+        hidden: false,
     },
 ];

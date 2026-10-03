@@ -594,3 +594,26 @@ fn highlighting_follows_edits(cx: &mut TestAppContext) {
     cx.simulate_input("// ");
     assert_eq!(first_keyword(cx), Some(13..15));
 }
+
+/// A frame that needs an injected language, here a Markdown fence's, has
+/// the view compile it in the background and draw again, without input.
+#[gpui::test]
+fn injected_languages_load_without_input(cx: &mut TestAppContext) {
+    cx.update(init);
+    let text = "# Notes\n\n```python\ndef f(): pass\n```\n";
+    let (view, cx) = cx.add_window_view(move |_, cx| {
+        let model = EditorModel::new(Buffer::new(text), Some("README.md".into()));
+        EditorView::new(model, EditorTheme::default_dark(cx), cx)
+    });
+    cx.run_until_parked();
+    assert!(fe_syntax::loaded_language("python").is_some());
+    view.update(cx, |view, _| {
+        let syntax = view.syntax.as_ref().expect("language loaded").syntax();
+        assert_eq!(syntax.missing_languages(), [] as [&str; 0]);
+        let def = syntax
+            .highlights(0..text.len())
+            .into_iter()
+            .find(|span| &text[span.range.clone()] == "def");
+        assert_eq!(def.map(|span| span.highlight.name()), Some("keyword"));
+    });
+}

@@ -2,7 +2,8 @@
 //!
 //! - [`Language`]s come from grammar crates, one Cargo feature each, and are
 //!   chosen by file name with [`language_for_path`]. Each uses the highlight
-//!   query its grammar ships. Language injections aren't supported yet.
+//!   and injections queries its grammar ships. Injected languages, such as
+//!   Markdown's inline markup and fenced code, are highlighted too.
 //! - [`Syntax`] keeps a buffer's tree up to date incrementally from
 //!   [`fe_buffer::BufferSnapshot`]s. Parsing can run on another thread via
 //!   [`ParseJob`], so a UI never has to wait for it. [`SyntaxDriver`] decides
@@ -14,6 +15,7 @@
 
 mod driver;
 mod highlight;
+mod injection;
 mod language;
 mod syntax;
 
