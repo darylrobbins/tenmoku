@@ -25,6 +25,11 @@ use crate::{
 /// the worst under 800 MB.
 pub const MAX_PARSE_BYTES: usize = 8 * 1024 * 1024;
 
+/// How much of a file over [`MAX_PARSE_BYTES`] is parsed around the visible
+/// text (see [`Syntax::window_job`]). At the densest measured tree, 96× its
+/// source, a window's tree stays near 3 MB.
+const WINDOW_BYTES: usize = 32 * 1024;
+
 /// Nodes with more children than this are highlighted a child at a time.
 ///
 /// Tree-sitter keeps a node's repeated children in a tree of hidden nodes
@@ -73,6 +78,10 @@ impl Cache {
 /// edited text. Reparsing happens either on the calling thread within a time
 /// budget ([`Syntax::parse_within`]) or anywhere via a [`ParseJob`].
 ///
+/// A file over [`MAX_PARSE_BYTES`] has no tree. Instead, a window of it
+/// around the visible text can be parsed with [`Syntax::window_job`]; that
+/// highlights approximately, as if the file started at the window.
+///
 /// A panic while parsing or highlighting is caught and logged, and the buffer
 /// shows as plain text from then on, since trying again would most likely
 /// panic again.
@@ -83,6 +92,11 @@ pub struct Syntax {
     tree: Option<Tree>,
     /// The version `tree` was last parsed at.
     parsed: Option<Version>,
+    /// A parse of only the bytes in its range, for a file too big for
+    /// `tree`. Edited to match `snapshot` like `tree`, along with its range.
+    window: Option<(Range<usize>, Tree)>,
+    /// The version `window` was last parsed at.
+    window_parsed: Option<Version>,
     cache: RefCell<Cache>,
     /// Set when parsing or highlighting panicked.
     failed: Cell<bool>,
@@ -99,6 +113,8 @@ impl Syntax {
             snapshot: snapshot.clone(),
             tree: None,
             parsed: None,
+            window: None,
+            window_parsed: None,
             cache: RefCell::default(),
             failed: Cell::new(false),
             last_reparse: None,
@@ -126,24 +142,33 @@ impl Syntax {
         if snapshot.id() != self.snapshot.id() || snapshot.version() != version {
             cache.ranges.clear();
         }
-        if snapshot.id() != self.snapshot.id()
-            || snapshot.version() < version
-            || snapshot.len() > MAX_PARSE_BYTES
-            || self.failed.get()
-        {
-            // A different buffer, history we can't map, too big to parse, or
-            // given up on.
-            self.tree = None;
-            self.parsed = None;
-            self.last_reparse = None;
-            cache.layers.clear();
+        let mapped = snapshot.id() == self.snapshot.id()
+            && snapshot.version() >= version
+            && !self.failed.get();
+        if !mapped {
+            // A different buffer, history we can't map, or given up on.
+            self.window = None;
+            self.window_parsed = None;
         } else if let Some(edit) =
             input_edit(self.snapshot.text(), snapshot, self.snapshot.version())
         {
             if let Some(tree) = &mut self.tree {
                 tree.edit(&edit);
             }
+            if let Some((range, tree)) = &mut self.window {
+                tree.edit(&edit);
+                *range = included_range(tree);
+            }
             cache.layers.edit(&edit);
+        }
+        if !mapped || snapshot.len() > MAX_PARSE_BYTES {
+            // Too big to parse whole: only a window highlights, and the
+            // layers it needs are parsed afresh.
+            if self.tree.take().is_some() || !mapped {
+                cache.layers.clear();
+            }
+            self.parsed = None;
+            self.last_reparse = None;
         }
         self.snapshot = snapshot.clone();
     }
@@ -197,7 +222,48 @@ impl Syntax {
             language: self.language,
             snapshot: self.snapshot.clone(),
             old_tree: self.tree.clone(),
+            window: None,
         }
+    }
+
+    /// For a file over [`MAX_PARSE_BYTES`], a parse of the 32 KB
+    /// around `visible`, which can run on any thread. Pass the result to
+    /// [`Syntax::finish`]. `None` for a smaller file, one given up on, or
+    /// when the window would hold no row start to begin at, as in the middle
+    /// of a very long line.
+    ///
+    /// The window starts at a row start, where an item most likely starts,
+    /// and ends on a char boundary. It's parsed from scratch as if the file
+    /// held only its text, so a string or comment opened above it highlights
+    /// wrongly.
+    pub fn window_job(&self, visible: Range<usize>) -> Option<ParseJob> {
+        let text = self.snapshot.text();
+        if text.len() <= MAX_PARSE_BYTES || self.failed.get() {
+            return None;
+        }
+        let middle = (visible.start.min(text.len()) + visible.end.min(text.len())) / 2;
+        let start = middle
+            .saturating_sub(WINDOW_BYTES / 2)
+            .min(text.len() - WINDOW_BYTES);
+        let end = text.clip_offset(start + WINDOW_BYTES, fe_buffer::Bias::Left);
+        let point = text.offset_to_point(start);
+        let start = if point.column == 0 {
+            start
+        } else {
+            text.point_to_offset(fe_buffer::Point::new(point.row + 1, 0))
+        };
+        (start < end).then(|| ParseJob {
+            language: self.language,
+            snapshot: self.snapshot.clone(),
+            old_tree: None,
+            window: Some(start..end),
+        })
+    }
+
+    /// The text the current window was parsed from, edited along with it,
+    /// if there is one. Its highlights are used while there's no full tree.
+    pub fn window(&self) -> Option<Range<usize>> {
+        self.window.as_ref().map(|(range, _)| range.clone())
     }
 
     /// Installs a parse result. One for an older version than the current
@@ -207,32 +273,41 @@ impl Syntax {
         let Some(mut tree) = parsed.tree else {
             self.failed.set(true);
             self.tree = None;
+            self.window = None;
             self.cache.get_mut().clear();
             return;
         };
+        let version = parsed.snapshot.version();
         let usable = parsed.snapshot.id() == self.snapshot.id()
-            && parsed.snapshot.version() <= self.version()
-            && self.snapshot.len() <= MAX_PARSE_BYTES
-            && self
-                .parsed
-                .is_none_or(|version| version < parsed.snapshot.version());
+            && version <= self.version()
+            && if parsed.window.is_some() {
+                // Another window at the same version is for another view.
+                self.snapshot.len() > MAX_PARSE_BYTES
+                    && self.window_parsed.is_none_or(|current| current <= version)
+            } else {
+                self.snapshot.len() <= MAX_PARSE_BYTES
+                    && self.parsed.is_none_or(|current| current < version)
+            };
         if !usable || self.failed.get() {
             return;
         }
-        if let Some(edit) = input_edit(
-            parsed.snapshot.text(),
-            &self.snapshot,
-            parsed.snapshot.version(),
-        ) {
+        if let Some(edit) = input_edit(parsed.snapshot.text(), &self.snapshot, version) {
             tree.edit(&edit);
+        }
+        self.cache.get_mut().ranges.clear();
+        if parsed.window.is_some() {
+            self.window = Some((included_range(&tree), tree));
+            self.window_parsed = Some(version);
+            return;
         }
         if parsed.incremental {
             self.last_reparse = Some(parsed.elapsed);
         }
         self.tree = Some(tree);
-        self.parsed = Some(parsed.snapshot.version());
+        self.parsed = Some(version);
+        self.window = None;
+        self.window_parsed = None;
         // The layers stay: they were edited along with the old tree.
-        self.cache.get_mut().ranges.clear();
     }
 
     pub fn tree(&self) -> Option<&Tree> {
@@ -252,18 +327,33 @@ impl Syntax {
     /// finding or parsing injections, or an injected language isn't compiled
     /// yet (see [`Syntax::missing_languages`]), the result isn't cached: the
     /// next call tries again, keeping the layers parsed so far.
+    ///
+    /// Without a full tree, the window's highlights are used, those in
+    /// `range` ∩ [`Syntax::window`].
     pub fn highlights(&self, range: Range<usize>) -> Vec<HighlightSpan> {
-        let Some(tree) = self.tree.as_ref().filter(|_| !self.failed.get()) else {
+        if self.failed.get() {
             return Vec::new();
-        };
+        }
         let text = self.snapshot.text();
         let range = range.start.min(text.len())..range.end.min(text.len());
+        let (tree, parsed, range) = match (&self.tree, &self.window) {
+            (Some(tree), _) => (tree, self.parsed, range),
+            (None, Some((window, tree))) => {
+                let start = range.start.max(window.start);
+                let end = range.end.min(window.end);
+                if start >= end {
+                    return Vec::new();
+                }
+                (tree, self.window_parsed, start..end)
+            }
+            (None, None) => return Vec::new(),
+        };
         let mut cache = self.cache.borrow_mut();
         if let Some((_, spans)) = cache.ranges.iter().find(|(cached, _)| *cached == range) {
             return spans.clone();
         }
 
-        let parsed = self.parsed == Some(self.version());
+        let parsed = parsed == Some(self.version());
         let layers = &mut cache.layers;
         let query = || {
             // `None` for a budget too long to be a time.
@@ -515,6 +605,8 @@ pub struct ParseJob {
     language: &'static Language,
     snapshot: BufferSnapshot,
     old_tree: Option<Tree>,
+    /// The only text to parse, for a [`Syntax::window_job`].
+    window: Option<Range<usize>>,
 }
 
 /// The result of a [`ParseJob`].
@@ -522,6 +614,8 @@ pub struct Parsed {
     /// `None` if parsing panicked.
     tree: Option<Tree>,
     snapshot: BufferSnapshot,
+    /// The text parsed, if not all of it.
+    window: Option<Range<usize>>,
     /// How long the parse took.
     pub(crate) elapsed: Duration,
     /// Whether it started from an earlier tree.
@@ -558,6 +652,7 @@ impl ParseJob {
         Some(Parsed {
             tree,
             snapshot: self.snapshot,
+            window: self.window,
             elapsed: started.elapsed(),
             incremental: self.old_tree.is_some(),
         })
@@ -568,6 +663,21 @@ impl ParseJob {
         parser
             .set_language(&self.language.grammar)
             .expect("grammar ABI is supported by this tree-sitter");
+        if let Some(window) = &self.window {
+            let text = self.snapshot.text();
+            let point = |offset| {
+                let point = text.offset_to_point(offset);
+                tree_sitter::Point::new(point.row as usize, point.column as usize)
+            };
+            parser
+                .set_included_ranges(&[tree_sitter::Range {
+                    start_byte: window.start,
+                    end_byte: window.end,
+                    start_point: point(window.start),
+                    end_point: point(window.end),
+                }])
+                .expect("one range is in order");
+        }
         parse_text(
             &mut parser,
             self.snapshot.text(),
@@ -616,8 +726,19 @@ pub(crate) fn parse_text(
     tree
 }
 
+/// The text a window's tree was parsed from, edited along with it.
+fn included_range(tree: &Tree) -> Range<usize> {
+    let ranges = tree.included_ranges();
+    ranges
+        .first()
+        .map_or(0..0, |range| range.start_byte..range.end_byte)
+}
+
 #[cfg(test)]
 mod reparse_budget_tests;
+
+#[cfg(test)]
+mod window_tests;
 
 #[cfg(test)]
 thread_local! {
