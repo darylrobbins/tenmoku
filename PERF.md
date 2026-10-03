@@ -20,7 +20,11 @@ numbers come out several times worse and noisy.
 
 `--perf` opens a real window and prints:
 
-- **open:** time from launch to the first painted frame;
+- **open:** time from launch to the first presented frame, which is the
+  "Loading <file>…" placeholder while the file is read on a background
+  thread (or the file itself, if the read finished first; the line says
+  which), and to *file shown*, the first frame painted with the editor. The
+  scroll phases start after the file is shown;
 - **smooth scroll:** 600 frames scrolling 40 px (about two rows) each;
 - **jump scroll:** 600 frames scrolling about 1000 rows each, so every frame
   shows rows that haven't been shaped yet;
@@ -28,7 +32,8 @@ numbers come out several times worse and noisy.
   `EditorView::frame_timings()`; *interval* is the time between painted
   frames, so 8.3 ms is 120 fps and any interval over 12.5 ms missed a vsync;
 - **memory:** the process's physical footprint (what Activity Monitor shows),
-  which on Apple Silicon includes GPU memory;
+  which on Apple Silicon includes GPU memory, and its resident set; each with
+  its peak over the process's life so far, which covers the background read;
 - **idle:** CPU used over 5 s with nothing happening, starting 2 s after the
   last scroll (GPUI keeps presenting for a second after fast input).
 
@@ -51,8 +56,8 @@ which is enough for these targets.
 
 | Target | Result | |
 |---|---|---|
-| 1M-line file interactive in < 500 ms | 33 MB: 189 ms to first frame (load 17 ms). 100 MB: 201 ms (load 43 ms) | ✅ |
-| Memory ≤ 1.5× file size | Unhighlighted: 100 MB file costs 1.46×, 33 MB 1.48×, over a 21 MB empty editor at open. **Highlighted: a 16 MB Rust file costs 630 MB more than the same file unhighlighted (~39×)** | ❌ for highlighted files |
+| 1M-line file interactive in < 500 ms | Read in the background (T5): the loading placeholder is presented at 201–258 ms whatever the file; the file is shown at 297–339 ms for 33 MB and 271–310 ms for 100 MB. See [background loading](#background-loading) | ✅ |
+| Memory ≤ 1.5× file size | Unhighlighted: 100 MB file costs 1.46–1.47×, 33 MB 1.45–1.48×, over an empty editor at file shown (footprint and resident). The read peaks no higher. **Highlighted: a 16 MB Rust file costs 630 MB more than the same file unhighlighted (~39×)** | ❌ for highlighted files |
 | Scrolling holds 120 fps | Smooth scrolling: 120 fps on every file, 0–1 missed vsyncs in 600 frames. Jump scrolling: 119–120 fps, but a highlighted 16 MB file spends 6.5 ms p50 in prepaint and misses 14 vsyncs | ✅, little headroom when highlighted |
 | Idle CPU near zero | 0.8–0.95% of a core, no frames painted | ✅ |
 | UI never blocks on a parse | A frame tries at most 1 ms of reparse, then moves it to a background thread | ✅ by design; see reparse below |
@@ -61,6 +66,44 @@ Every 1M-line file tried is over `MAX_PARSE_BYTES` (16 MB), so the 1M-line
 runs are unhighlighted. The largest highlighted file is 16 MB (486k lines of
 Rust). The limit has since dropped to 8 MB (see [tree memory](#tree-memory)),
 so files like the 16 MB rows below are no longer highlighted.
+
+### Background loading
+
+`fastedit <file>` opens the window at once and reads the file on a
+background thread (`crates/fastedit/src/loader.rs`); the first frame shows
+"Loading <file>…" and the editor replaces it when the read finishes.
+Measured 2026-10-03 on the same machine, release build, three repeat runs
+each, with other jobs running (load average 7–14), so the times are noisier
+than the m2-bench numbers above. The files are 1M lines of ASCII.
+
+| File | First frame (placeholder) | File shown | Footprint at file shown | Resident at file shown (peak) |
+|---|---|---|---|---|
+| empty | 201–227 ms | 269–294 ms | 260 MB | 99 MB (99 MB) |
+| 1M lines, 33 MB | 217–258 ms | 297–339 ms | 307–308 MB: +47–48 MB, 1.45–1.48× | 146–147 MB (147 MB): +47–48 MB, 1.45–1.48× |
+| 1M lines, 100 MB | 208–251 ms | 271–310 ms | 399 MB: +139 MB, 1.46× | 238–239 MB (239 MB): +139–140 MB, 1.46–1.47× |
+
+"First frame" is when the first frame is presented, not drawn: `open_window`
+draws a frame at once but presents it at the window's first frame request,
+and if the read had finished by then, the editor would be drawn and presented
+instead and `--perf` would say so. It didn't happen in these runs, even for
+the empty file.
+
+Costs are over the empty file. Memory is now taken at file shown rather than
+at the first frame, so it includes the ~240 MB of GPU memory that appears
+with the first frames. The lifetime peaks equal the values at file shown: the
+streaming read plus the rope never holds more than the finished rope.
+
+The first frame no longer depends on the file's size: before, 100 MB painted
+its first frame 43 ms later than an empty file, and a 1 GB file would have
+blocked for about 0.45 s. The read itself takes 20–80 ms for 100 MB.
+
+The cost is that a file is never on the first frame, even an empty one: it
+shows 60–90 ms after the placeholder. The read finishes within a millisecond
+for a small file, but the main thread is busy for another 30–80 ms after the
+window opens before the read's result is picked up, and the editor's first
+frame waits for the next vsync after that. Small files, the common case, are
+on screen about 90 ms later than when they were read before the window
+opened.
 
 ### Scrolling, per frame (p50 / p99)
 

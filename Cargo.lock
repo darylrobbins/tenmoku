@@ -1609,6 +1609,7 @@ dependencies = [
  "gpui-pre-platform",
  "libc",
  "log",
+ "tempfile",
 ]
 
 [[package]]

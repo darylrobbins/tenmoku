@@ -1,7 +1,9 @@
 //! `fastedit --perf <file>`: measures the M2 large-file targets in a real
 //! window, prints them and quits. See PERF.md for how to read the output.
 //!
-//! 1. Open: time from launch to the first painted frame, and memory then.
+//! 1. Open: time from launch to the first presented frame (the loading
+//!    placeholder, unless the background read beat it), and to the first
+//!    frame that shows the file; memory then.
 //! 2. Scroll: one scroll-wheel event per frame, first smoothly and then in
 //!    large jumps, timing every frame the editor paints.
 //! 3. Idle: CPU used over a few seconds with nothing happening.
@@ -13,6 +15,8 @@ use std::{
 };
 
 use fe_gpui::{EditorView, FrameTiming};
+
+use crate::Workbench;
 use gpui::{
     App, Entity, Modifiers, PlatformInput, ScrollDelta, ScrollWheelEvent, TouchPhase, Window,
     point, px,
@@ -43,24 +47,25 @@ macro_rules! say {
 }
 
 struct Run {
-    editor: Entity<EditorView>,
+    workbench: Entity<Workbench>,
+    /// Set once the file is read and the editor replaces the placeholder.
+    editor: Option<Entity<EditorView>>,
     launched: Instant,
     file_bytes: usize,
+    /// When the first frame was presented, and whether it was the loading
+    /// placeholder.
+    first_presented: Option<(Instant, bool)>,
     frame: u32,
     frames: Vec<FrameTiming>,
 }
 
-pub(crate) fn start(
-    editor: Entity<EditorView>,
-    launched: Instant,
-    window: &mut Window,
-    cx: &mut App,
-) {
-    let file_bytes = editor.read(cx).model().text().len();
+pub(crate) fn start(workbench: Entity<Workbench>, launched: Instant, window: &mut Window) {
     let run = Rc::new(RefCell::new(Run {
-        editor,
+        workbench,
+        editor: None,
         launched,
-        file_bytes,
+        file_bytes: 0,
+        first_presented: None,
         frame: 0,
         frames: Vec::new(),
     }));
@@ -70,25 +75,46 @@ pub(crate) fn start(
 /// Runs at the start of every frame until the scroll phases are over.
 fn tick(run: Rc<RefCell<Run>>, window: &mut Window, cx: &mut App) {
     let mut state = run.borrow_mut();
-    let painted = state.editor.read(cx).frame_timings().frames().copied();
-    state.frames.extend(painted);
-    state
-        .editor
-        .update(cx, |view, _| view.frame_timings_mut().clear());
+    if state.first_presented.is_none() {
+        // `open_window` draws a frame but leaves presenting it to the first
+        // frame request, which runs this callback first. Nothing else swaps
+        // the placeholder for the editor in between, so if it's still here,
+        // it's what gets presented.
+        let placeholder = state.workbench.read(cx).editor().is_none();
+        state.first_presented = Some((Instant::now(), placeholder));
+    }
+    if state.editor.is_none() {
+        state.editor = state.workbench.read(cx).editor().cloned();
+        if let Some(editor) = &state.editor {
+            state.file_bytes = editor.read(cx).model().text().len();
+        }
+    }
+    if let Some(editor) = state.editor.clone() {
+        let painted = editor.read(cx).frame_timings().frames().copied();
+        state.frames.extend(painted);
+        editor.update(cx, |view, _| view.frame_timings_mut().clear());
+    }
 
     if state.frame == 0 {
-        // Wait for the first painted frame.
-        let Some(first) = state.frames.first() else {
+        // Wait for the first frame that shows the file.
+        let Some(painted) = state.frames.first().map(|frame| frame.painted_at) else {
             drop(state);
             window.on_next_frame(move |window, cx| tick(run, window, cx));
             return;
         };
+        let (presented, placeholder) = state.first_presented.expect("set above");
+        let (first, shown) = open_milestones(presented, placeholder, painted);
         say!(
-            "open: first frame painted {:.0?} after launch, window active: {}",
-            first.painted_at - state.launched,
+            "open: first frame {:.0?} after launch ({}), window active: {}",
+            first - state.launched,
+            if placeholder { "loading" } else { "the file" },
             window.is_window_active()
         );
-        print_memory("after open", state.file_bytes);
+        say!(
+            "open: file shown {:.0?} after launch",
+            shown - state.launched
+        );
+        print_memory("at file shown", state.file_bytes);
     }
 
     let scroll_end = SETTLE_FRAMES + SCROLL_FRAMES;
@@ -131,8 +157,30 @@ fn tick(run: Rc<RefCell<Run>>, window: &mut Window, cx: &mut App) {
     window.on_next_frame(move |window, cx| tick(run, window, cx));
 }
 
+/// The first frame and the first frame showing the file, given when the
+/// first frame was presented, whether that was the loading placeholder, and
+/// when the editor first painted. The editor's frames are presented as soon
+/// as they're painted, except one painted when the window opened, which waits
+/// for the first presentation.
+fn open_milestones(
+    first_presented: Instant,
+    placeholder: bool,
+    editor_painted: Instant,
+) -> (Instant, Instant) {
+    if placeholder {
+        (first_presented, editor_painted)
+    } else {
+        let shown = editor_painted.max(first_presented);
+        (shown, shown)
+    }
+}
+
 fn idle(run: Rc<RefCell<Run>>, cx: &mut App) {
-    let editor = run.borrow().editor.clone();
+    let editor = run
+        .borrow()
+        .editor
+        .clone()
+        .expect("scrolling needs the editor");
     cx.spawn(async move |cx| {
         cx.background_executor().timer(IDLE_SETTLE).await;
         cx.update(|cx| editor.update(cx, |view, _| view.frame_timings_mut().clear()));
@@ -207,11 +255,17 @@ fn print_memory(when: &str, file_bytes: usize) {
         say!("memory {when}: unavailable");
         return;
     }
+    // SAFETY: `getrusage` fills in the struct it's given.
+    let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+    unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
     let mb = |bytes: u64| bytes as f64 / (1024. * 1024.);
     say!(
-        "memory {when}: footprint {:.0} MB, peak {:.0} MB, file {:.0} MB",
+        "memory {when}: footprint {:.0} MB, peak {:.0} MB; resident {:.0} MB, peak {:.0} MB; file {:.0} MB",
         mb(info.ri_phys_footprint),
         mb(info.ri_lifetime_max_phys_footprint),
+        mb(info.ri_resident_size),
+        // Bytes on macOS.
+        mb(usage.ru_maxrss as u64),
         mb(file_bytes as u64),
     );
 }
@@ -225,4 +279,38 @@ fn cpu_time() -> Duration {
         Duration::from_secs(time.tv_sec as u64) + Duration::from_micros(time.tv_usec as u64)
     };
     duration(usage.ru_utime) + duration(usage.ru_stime)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn placeholder_presented_first_is_the_first_frame() {
+        let presented = Instant::now();
+        let painted = presented + Duration::from_millis(90);
+        assert_eq!(
+            open_milestones(presented, true, painted),
+            (presented, painted)
+        );
+    }
+
+    #[test]
+    fn read_done_before_the_first_presentation_shows_the_file_first() {
+        // The read finished before the first frame request: the editor is
+        // drawn and presented in it, and the placeholder never is.
+        let presented = Instant::now();
+        let painted = presented + Duration::from_millis(1);
+        assert_eq!(
+            open_milestones(presented, false, painted),
+            (painted, painted)
+        );
+        // The editor was drawn when the window opened (no file, or a
+        // synchronous draw), and waited for the first presentation.
+        let painted = presented - Duration::from_millis(5);
+        assert_eq!(
+            open_milestones(presented, false, painted),
+            (presented, presented)
+        );
+    }
 }

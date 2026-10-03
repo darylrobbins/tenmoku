@@ -1,0 +1,58 @@
+//! Reads the opened file off the main thread, so the window paints first.
+//!
+//! Only the [`Buffer`] crosses threads: `EditorModel` isn't `Send` (it holds
+//! its char widths as a `Box<dyn CharWidth>`), so the main thread builds it.
+
+use std::{
+    fs::File,
+    io::{self, BufReader},
+    path::PathBuf,
+};
+
+use fe_buffer::Buffer;
+
+/// Reads `path` into a buffer the way `EditorModel::open` does. A missing
+/// file is `Ok(None)`: a new file, which saving creates.
+pub(crate) fn read(path: PathBuf) -> io::Result<Option<Buffer>> {
+    let file = match File::open(&path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    Buffer::from_reader(BufReader::with_capacity(256 * 1024, file)).map(Some)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_file_into_buffer_off_the_calling_thread() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notes.txt");
+        std::fs::write(&path, "one\r\ntwo\n").unwrap();
+
+        let caller = std::thread::current().id();
+        let (reader, buffer) =
+            std::thread::spawn(move || (std::thread::current().id(), read(path)))
+                .join()
+                .unwrap();
+
+        assert_ne!(reader, caller);
+        let buffer = buffer.unwrap().expect("the file exists");
+        assert_eq!(buffer.text().to_string(), "one\ntwo\n");
+    }
+
+    #[test]
+    fn missing_file_is_a_new_buffer() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(read(dir.path().join("new.txt")).unwrap().is_none());
+    }
+
+    #[test]
+    fn unreadable_file_is_an_error() {
+        // A directory opens, but reading it fails.
+        let dir = tempfile::tempdir().unwrap();
+        assert!(read(dir.path().to_path_buf()).is_err());
+    }
+}
