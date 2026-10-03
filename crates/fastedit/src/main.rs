@@ -1,45 +1,104 @@
-//! Standalone fastedit host. For now (M0) it only proves the GPUI toolchain:
-//! a window with the workbench's rough shape, editor left, project tree right.
+//! Standalone fastedit host: `fastedit [file]`.
+//!
+//! The editor fills the window; the project panel on the right is a
+//! placeholder until the workbench lands (M3).
 
+use std::path::PathBuf;
+
+use fe_buffer::Buffer;
+use fe_editor::EditorModel;
+use fe_gpui::{EditorTheme, EditorView};
 use gpui::{
-    App, AppContext as _, Context, IntoElement, ParentElement as _, Render, Styled as _,
-    TitlebarOptions, Window, WindowBounds, WindowOptions, div, px, rgb, size,
+    App, AppContext as _, Context, Entity, Focusable as _, IntoElement, KeyBinding,
+    ParentElement as _, Render, Styled as _, TitlebarOptions, Window, WindowBounds, WindowOptions,
+    actions, div, px, rgb, size,
 };
 
-struct Workbench;
+actions!(fastedit, [Quit]);
+
+const WELCOME: &str = "\
+fastedit
+
+Open a file with:  cargo run -p fastedit -- path/to/file
+
+Keys: arrows, alt-arrows (words), cmd-arrows (line/document),
+shift to select, double/triple-click, cmd-c/x/v, cmd-z/shift-cmd-z, cmd-s.
+";
+
+struct Workbench {
+    editor: Entity<EditorView>,
+}
+
+impl Workbench {
+    fn title(&self, cx: &App) -> String {
+        let model = self.editor.read(cx).model();
+        let name = model
+            .path()
+            .and_then(|path| path.file_name())
+            .map_or("untitled".into(), |name| {
+                name.to_string_lossy().into_owned()
+            });
+        let dirty = if model.is_dirty() { " ●" } else { "" };
+        format!("{name}{dirty} — fastedit")
+    }
+}
 
 impl Render for Workbench {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        window.set_window_title(&self.title(cx));
         div()
             .size_full()
             .flex()
-            .bg(rgb(0x1a1b1e))
-            .text_color(rgb(0xc9ccd3))
-            .text_size(px(13.))
+            .bg(rgb(0x16181d))
+            .text_color(rgb(0x8b8f98))
+            .text_size(px(12.))
+            .child(div().flex_1().h_full().child(self.editor.clone()))
             .child(
                 div()
-                    .flex_1()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child("fastedit"),
-            )
-            .child(
-                div()
-                    .w(px(260.))
+                    .w(px(240.))
                     .h_full()
                     .border_l_1()
-                    .border_color(rgb(0x2a2c31))
-                    .bg(rgb(0x16171a))
-                    .p_3()
-                    .text_color(rgb(0x8b8f98))
-                    .child("Project"),
+                    .border_color(rgb(0x23262d))
+                    .bg(rgb(0x121418))
+                    .px_3()
+                    .py_2()
+                    .child("PROJECT"),
             )
     }
 }
 
+fn load(path: Option<PathBuf>) -> EditorModel {
+    let Some(path) = path else {
+        return EditorModel::new(Buffer::new(WELCOME), None);
+    };
+    match EditorModel::open(&path) {
+        Ok(model) => model,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            // A new file: saving creates it.
+            EditorModel::new(Buffer::new(""), Some(path))
+        }
+        Err(error) => {
+            eprintln!("fastedit: cannot open {}: {error}", path.display());
+            std::process::exit(1);
+        }
+    }
+}
+
 fn main() {
-    gpui_platform::application().run(|cx: &mut App| {
+    let path = std::env::args_os().nth(1).map(PathBuf::from);
+    let started = std::time::Instant::now();
+    let model = load(path);
+    eprintln!(
+        "fastedit: loaded {} bytes, {} rows in {:.1?}",
+        model.text().len(),
+        model.text().row_count(),
+        started.elapsed()
+    );
+
+    gpui_platform::application().run(move |cx: &mut App| {
+        fe_gpui::init(cx);
+        cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
+        cx.on_action(|_: &Quit, cx| cx.quit());
         cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {
                 cx.quit();
@@ -47,18 +106,32 @@ fn main() {
         })
         .detach();
 
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::centered(size(px(1100.), px(720.)), cx)),
-                titlebar: Some(TitlebarOptions {
-                    title: Some("fastedit".into()),
+        let theme = EditorTheme::default_dark(cx);
+        let window = cx
+            .open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(1200.), px(800.)), cx)),
+                    titlebar: Some(TitlebarOptions {
+                        title: Some("fastedit".into()),
+                        ..Default::default()
+                    }),
                     ..Default::default()
-                }),
-                ..Default::default()
-            },
-            |_, cx| cx.new(|_| Workbench),
-        )
-        .expect("failed to open the main window");
+                },
+                |_, cx| {
+                    let editor = cx.new(|cx| EditorView::new(model, theme, cx));
+                    cx.new(|cx| {
+                        // Re-render (and retitle) whenever the editor changes.
+                        cx.observe(&editor, |_, _, cx| cx.notify()).detach();
+                        Workbench { editor }
+                    })
+                },
+            )
+            .expect("failed to open the main window");
+        window
+            .update(cx, |workbench, window, cx| {
+                window.focus(&workbench.editor.focus_handle(cx), cx);
+            })
+            .ok();
         cx.activate(true);
     });
 }

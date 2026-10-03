@@ -104,6 +104,36 @@ impl Text {
         (Self::new(&normalized), line_ending)
     }
 
+    /// Streams text from `reader` without holding a second copy of it.
+    /// Line endings are normalised like [`Text::from_file_contents`]; invalid
+    /// UTF-8 becomes U+FFFD, as with [`String::from_utf8_lossy`].
+    pub fn from_reader(mut reader: impl std::io::Read) -> std::io::Result<(Self, LineEnding)> {
+        let mut builder = ropey::RopeBuilder::new();
+        let mut normalizer = Normalizer::default();
+        let mut read_buf = vec![0u8; 64 * 1024];
+        let mut pending = Vec::new();
+        let mut decoded = String::new();
+        loop {
+            let read = match reader.read(&mut read_buf) {
+                Ok(0) => break,
+                Ok(read) => read,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error),
+            };
+            pending.extend_from_slice(&read_buf[..read]);
+            let consumed = decode_lossy(&pending, false, &mut decoded);
+            pending.drain(..consumed);
+            normalizer.push(&decoded, &mut builder);
+            decoded.clear();
+        }
+        decode_lossy(&pending, true, &mut decoded);
+        normalizer.push(&decoded, &mut builder);
+        let text = Self {
+            rope: builder.finish(),
+        };
+        Ok((text, normalizer.line_ending.unwrap_or_default()))
+    }
+
     /// Length in bytes.
     pub fn len(&self) -> usize {
         self.rope.len()
@@ -300,6 +330,81 @@ impl std::fmt::Display for Text {
 impl std::fmt::Debug for Text {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         std::fmt::Debug::fmt(&self.to_string(), f)
+    }
+}
+
+/// Appends the valid UTF-8 prefix of `bytes` to `out`, replacing invalid
+/// sequences with U+FFFD. Returns how many bytes were consumed; an incomplete
+/// sequence at the end is left for the next call unless `eof`.
+fn decode_lossy(bytes: &[u8], eof: bool, out: &mut String) -> usize {
+    let mut consumed = 0;
+    loop {
+        let rest = &bytes[consumed..];
+        match std::str::from_utf8(rest) {
+            Ok(valid) => {
+                out.push_str(valid);
+                return bytes.len();
+            }
+            Err(error) => {
+                let valid = error.valid_up_to();
+                out.push_str(std::str::from_utf8(&rest[..valid]).expect("validated prefix"));
+                match error.error_len() {
+                    Some(invalid) => {
+                        out.push(char::REPLACEMENT_CHARACTER);
+                        consumed += valid + invalid;
+                    }
+                    None if eof => {
+                        out.push(char::REPLACEMENT_CHARACTER);
+                        return bytes.len();
+                    }
+                    None => return consumed + valid,
+                }
+            }
+        }
+    }
+}
+
+/// Normalises line endings across streamed chunks, including a `\r\n` split
+/// between two chunks, and detects the file's line ending like
+/// [`LineEnding::detect`].
+#[derive(Default)]
+struct Normalizer {
+    ended_with_cr: bool,
+    line_ending: Option<LineEnding>,
+}
+
+impl Normalizer {
+    fn push(&mut self, chunk: &str, builder: &mut ropey::RopeBuilder) {
+        if chunk.is_empty() {
+            return;
+        }
+        if self.line_ending.is_none()
+            && let Some(ix) = chunk.find('\n')
+        {
+            let after_cr = if ix == 0 {
+                self.ended_with_cr
+            } else {
+                chunk.as_bytes()[ix - 1] == b'\r'
+            };
+            self.line_ending = Some(if after_cr {
+                LineEnding::CrLf
+            } else {
+                LineEnding::Lf
+            });
+        }
+
+        let mut chunk = chunk;
+        if self.ended_with_cr && chunk.starts_with('\n') {
+            // The '\r' that ended the previous chunk already became this '\n'.
+            chunk = &chunk[1..];
+        }
+        self.ended_with_cr = chunk.ends_with('\r');
+        if !chunk.contains('\r') {
+            builder.append(chunk);
+            return;
+        }
+        let normalized = chunk.replace("\r\n", "\n").replace('\r', "\n");
+        builder.append(&normalized);
     }
 }
 

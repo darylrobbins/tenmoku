@@ -5,6 +5,9 @@ use rand::{Rng, SeedableRng, rngs::StdRng};
 
 use crate::*;
 
+mod ideal;
+mod invariants;
+
 fn ai() -> Origin {
     Origin::Ai {
         agent: "agent".into(),
@@ -455,8 +458,9 @@ fn new_edits_discard_only_their_origins_redo() {
     buffer.edit([(0..0, "c")], Origin::User);
     assert_eq!(buffer.redo(is_user), Ok(None));
     assert!(buffer.redo(is_ai).unwrap().is_some());
-    // Restored text goes before text inserted at the same point since.
-    assert_eq!(buffer.text().to_string(), "bc");
+    // Restored text goes after text inserted at the same point since
+    // (matching the reference model in `ideal.rs`).
+    assert_eq!(buffer.text().to_string(), "cb");
 }
 
 #[test]
@@ -599,4 +603,68 @@ fn anchor_resolution_is_consistent_across_many_versions() {
             assert_eq!(buffer.current().resolve(anchor), *expected);
         }
     }
+}
+
+#[test]
+fn accessors_and_small_apis() {
+    let mut buffer = Buffer::from_reader("one\r\ntwo".as_bytes()).unwrap();
+    assert_eq!(buffer.text().to_string(), "one\ntwo");
+    assert_eq!(buffer.line_ending(), LineEnding::CrLf);
+    buffer.set_line_ending(LineEnding::Lf);
+    let mut saved = Vec::new();
+    buffer.write_to(&mut saved).unwrap();
+    assert_eq!(saved, b"one\ntwo");
+    assert!(!buffer.is_empty());
+
+    let snapshot = buffer.snapshot();
+    assert_eq!(snapshot.id(), buffer.id());
+    assert!(!snapshot.is_empty());
+    let anchor = snapshot.anchor_after(2);
+    assert_eq!(anchor.version(), snapshot.version());
+    assert_eq!(anchor.bias(), Bias::Right);
+    let debug = format!("{snapshot:?}");
+    assert!(
+        debug.contains("BufferSnapshot") && debug.contains("len: 7"),
+        "{debug}"
+    );
+
+    // A backwards range is the same as the forwards one.
+    #[allow(clippy::reversed_empty_ranges)]
+    let backwards = 3..1;
+    buffer.edit([(backwards, "X")], Origin::User);
+    assert_eq!(buffer.text().to_string(), "oX\ntwo");
+
+    let selection = ResolvedSelection {
+        range: 1..4,
+        reversed: true,
+    };
+    assert_eq!((selection.head(), selection.tail()), (1, 4));
+    let set = SelectionSet::caret(buffer.current(), 0);
+    assert!(!set.is_empty());
+    assert_eq!(set.iter().count(), 1);
+}
+
+#[test]
+#[should_panic(expected = "newer than snapshot")]
+fn resolving_a_newer_anchor_panics() {
+    let mut buffer = Buffer::new("abc");
+    let old = buffer.snapshot();
+    buffer.edit([(0..0, "x")], Origin::User);
+    let anchor = buffer.current().anchor_after(1);
+    old.resolve(&anchor);
+}
+
+#[test]
+fn dirty_tracking() {
+    let mut buffer = Buffer::new("abc");
+    assert!(!buffer.is_dirty());
+    buffer.edit([(0..0, "x")], Origin::User);
+    assert!(buffer.is_dirty());
+    buffer.did_save();
+    assert!(!buffer.is_dirty());
+    buffer.undo(|_| true).unwrap();
+    assert!(
+        buffer.is_dirty(),
+        "undoing past a save makes the buffer dirty again"
+    );
 }

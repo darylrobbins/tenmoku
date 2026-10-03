@@ -14,6 +14,9 @@ publish = false
 # Internal crates.
 fe-text = { path = "crates/fe-text" }
 fe-buffer = { path = "crates/fe-buffer" }
+fe-display = { path = "crates/fe-display" }
+fe-editor = { path = "crates/fe-editor" }
+fe-gpui = { path = "crates/fe-gpui" }
 
 # GPUI comes from the `gpui-pre-*` crates.io snapshots of Zed (Apache-2.0).
 # 0.3.7 is zed@1a28cff. Every snapshot crate must be bumped together; to move to
@@ -25,7 +28,9 @@ gpui = { package = "gpui-pre", version = "=0.3.7" }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7", features = ["font-kit", "runtime_shaders"] }
 sum-tree = { package = "gpui-pre-sum-tree", version = "=0.3.7" }
 
+tempfile = "3"
 thiserror = "2"
+unicode-segmentation = "1"
 
 # Test and bench tooling.
 proptest = "1"

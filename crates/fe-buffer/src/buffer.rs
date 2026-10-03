@@ -9,7 +9,11 @@ use std::{
 
 use fe_text::{Bias, LineEnding, Text};
 
-use crate::{BufferId, BufferSnapshot, Edit, Version, edit::normalize, log::EditLog};
+use crate::{
+    BufferId, BufferSnapshot, Edit, Version,
+    edit::{Mapping, normalize},
+    log::{Collapse, EditLog},
+};
 
 /// Who made an edit. Undo can be scoped by origin, so the AI's edits can be
 /// reverted without touching the user's.
@@ -126,6 +130,10 @@ struct AppliedBatch {
     edits: Arc<[Edit]>,
     old_texts: Vec<Arc<str>>,
     new_texts: Vec<Arc<str>>,
+    /// For undo and redo batches: the log entries whose replacements
+    /// collapsed positions this batch was computed from. If one of them is
+    /// reverted, this batch's positions can no longer be trusted.
+    collapsed_by: Arc<[Collapse]>,
 }
 
 static NEXT_BUFFER_ID: AtomicU64 = AtomicU64::new(1);
@@ -141,6 +149,13 @@ impl Buffer {
     pub fn from_file_contents(contents: &str) -> Self {
         let (text, line_ending) = Text::from_file_contents(contents);
         Self::with_text(text, line_ending)
+    }
+
+    /// Streams a buffer from `reader` (e.g. a file) without an intermediate
+    /// copy. Line endings are normalised; invalid UTF-8 becomes U+FFFD.
+    pub fn from_reader(reader: impl std::io::Read) -> std::io::Result<Self> {
+        let (text, line_ending) = Text::from_reader(reader)?;
+        Ok(Self::with_text(text, line_ending))
     }
 
     fn with_text(text: Text, line_ending: LineEnding) -> Self {
@@ -526,6 +541,7 @@ fn apply(
         edits,
         old_texts,
         new_texts,
+        collapsed_by: Arc::from([]),
     })
 }
 
@@ -537,18 +553,25 @@ fn revert(state: &mut BufferSnapshot, batches: &[AppliedBatch]) -> Result<Vec<Ap
     let mut produced = Vec::with_capacity(batches.len());
     for batch in batches.iter().rev() {
         let mut inverse = Vec::with_capacity(batch.edits.len());
+        // Collapses this batch's positions inherited, plus any found now.
+        let mut collapsed_by = batch.collapsed_by.to_vec();
         for ((edit, old_text), new_text) in batch
             .edits
             .iter()
             .zip(&batch.old_texts)
             .zip(&batch.new_texts)
         {
+            let mut map = |offset, mapping| {
+                state
+                    .map_for_history(offset, mapping, batch.version, &mut collapsed_by)
+                    .ok_or(())
+            };
             let range = if edit.new.is_empty() {
-                let at = state.map_offset(edit.new.start, Bias::Left, batch.version);
+                let at = map(edit.new.start, Mapping::RESTORE)?;
                 at..at
             } else {
-                let start = state.map_offset(edit.new.start, Bias::Right, batch.version);
-                let end = state.map_offset(edit.new.end, Bias::Left, batch.version);
+                let start = map(edit.new.start, Bias::Right.into())?;
+                let end = map(edit.new.end, Bias::Left.into())?;
                 if end < start {
                     return Err(());
                 }
@@ -559,7 +582,10 @@ fn revert(state: &mut BufferSnapshot, batches: &[AppliedBatch]) -> Result<Vec<Ap
             }
             inverse.push((range, old_text.clone()));
         }
-        if let Some(applied) = apply(state, inverse, Some(batch.version)) {
+        if let Some(mut applied) = apply(state, inverse, Some(batch.version)) {
+            collapsed_by.sort_unstable();
+            collapsed_by.dedup();
+            applied.collapsed_by = collapsed_by.into();
             produced.push(applied);
         }
     }

@@ -1,9 +1,11 @@
 use std::sync::Arc;
 
-use fe_text::Bias;
 use sum_tree::{ContextLessSummary, Item, SumTree};
 
-use crate::{Edit, Version, edit::map_offset};
+use crate::{
+    Edit, Version,
+    edit::{Mapping, collapses, map_offset},
+};
 
 /// Every batch of edits ever applied to a buffer, in order. Entry `n` takes
 /// the buffer from version `n` to `n + 1`. Backed by a persistent tree, so
@@ -18,6 +20,25 @@ struct LogEntry {
     edits: Arc<[Edit]>,
     /// For undo and redo batches, the entry this one exactly reverses.
     inverts: Option<usize>,
+    /// The original edit this entry derives from through undo and redo, and
+    /// whether it re-applies (`true`) or reverses (`false`) it. An original
+    /// edit is its own root, applied forward.
+    root: Collapse,
+}
+
+/// An edit that collapsed a position, identified by its root edit and
+/// direction so that reverting it can be recognised through any chain of
+/// undos and redos.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) struct Collapse {
+    root: usize,
+    forward: bool,
+}
+
+impl Collapse {
+    fn reverted_by(self, other: Collapse) -> bool {
+        self.root == other.root && self.forward != other.forward
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -56,7 +77,30 @@ impl EditLog {
     /// this one reverses, for undo and redo.
     pub(crate) fn push(&mut self, edits: Arc<[Edit]>, inverts: Option<Version>) {
         let inverts = inverts.map(|version| version.0 - 1);
-        self.entries.push(LogEntry { edits, inverts }, ());
+        let root = match inverts {
+            Some(inverted) => {
+                let (_, _, entry) =
+                    self.entries
+                        .find::<Count, _>((), &Count(inverted), sum_tree::Bias::Right);
+                let inverted = entry.expect("inverted entry exists").root;
+                Collapse {
+                    root: inverted.root,
+                    forward: !inverted.forward,
+                }
+            }
+            None => Collapse {
+                root: self.entries.summary().0,
+                forward: true,
+            },
+        };
+        self.entries.push(
+            LogEntry {
+                edits,
+                inverts,
+                root,
+            },
+            (),
+        );
     }
 
     fn entries(&self, from: Version, to: Version) -> impl Iterator<Item = (usize, &LogEntry)> {
@@ -86,6 +130,13 @@ impl EditLog {
     /// Mapping through it instead would lose which side of the batch's
     /// boundaries a position was on.
     pub(crate) fn mapping_batches(&self, from: Version, to: Version) -> Vec<&Arc<[Edit]>> {
+        self.mapping_entries(from, to)
+            .into_iter()
+            .map(|(_, entry)| &entry.edits)
+            .collect()
+    }
+
+    fn mapping_entries(&self, from: Version, to: Version) -> Vec<(usize, &LogEntry)> {
         let mut stack: Vec<(usize, &LogEntry)> = Vec::new();
         for (index, entry) in self.entries(from, to) {
             if entry.inverts.is_some() && stack.last().map(|(top, _)| *top) == entry.inverts {
@@ -94,13 +145,59 @@ impl EditLog {
                 stack.push((index, entry));
             }
         }
-        stack.into_iter().map(|(_, entry)| &entry.edits).collect()
+        stack
+    }
+
+    /// Maps a boundary of text that undo or redo is about to change, like
+    /// [`EditLog::map`].
+    ///
+    /// Returns `None` when the answer is unknowable:
+    /// - another undo or redo has since put text back exactly at the
+    ///   boundary: the two pieces of text may once have sat side by side, and
+    ///   offsets alone can't say in which order (text typed fresh at the spot
+    ///   never sat beside them, so either side is fine for it); or
+    /// - an edit swallowed the boundary into text it replaced, collapsing it
+    ///   to one end, and that edit has since been reverted: the replaced text
+    ///   is back, but where in it the boundary was is lost.
+    ///
+    /// `collapsed_by` starts with collapses the boundary inherited (it may
+    /// come from an undo or redo computed through one) and gains any found
+    /// here, to pass on to the batch being produced.
+    pub(crate) fn map_for_history(
+        &self,
+        offset: usize,
+        mapping: Mapping,
+        from: Version,
+        to: Version,
+        collapsed_by: &mut Vec<Collapse>,
+    ) -> Option<usize> {
+        let mut offset = offset;
+        for (_, entry) in self.mapping_entries(from, to) {
+            if collapsed_by
+                .iter()
+                .any(|collapse| collapse.reverted_by(entry.root))
+            {
+                return None;
+            }
+            if collapses(&entry.edits, offset) {
+                collapsed_by.push(entry.root);
+            }
+            let reinserted_here = entry.inverts.is_some()
+                && entry.edits.iter().any(|edit| {
+                    edit.old.is_empty() && edit.old.start == offset && !edit.new.is_empty()
+                });
+            if reinserted_here {
+                return None;
+            }
+            offset = map_offset(&entry.edits, offset, mapping);
+        }
+        Some(offset)
     }
 
     /// Maps an offset at version `from` to the equivalent offset at version `to`.
-    pub(crate) fn map(&self, offset: usize, bias: Bias, from: Version, to: Version) -> usize {
+    pub(crate) fn map(&self, offset: usize, mapping: Mapping, from: Version, to: Version) -> usize {
         self.mapping_batches(from, to)
             .into_iter()
-            .fold(offset, |offset, edits| map_offset(edits, offset, bias))
+            .fold(offset, |offset, edits| map_offset(edits, offset, mapping))
     }
 }

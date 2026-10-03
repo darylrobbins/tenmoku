@@ -11,33 +11,72 @@ pub struct Edit {
     pub new: Range<usize>,
 }
 
+/// How an offset moves where an edit touches it. Anchors use their bias for
+/// both cases; restoring deleted text needs them to differ.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Mapping {
+    /// Side to take when text is inserted exactly at the offset.
+    pub insertion: Bias,
+    /// Side to take when the offset is strictly inside a replaced range.
+    pub inside: Bias,
+}
+
+impl Mapping {
+    /// For the point where undo or redo puts deleted text back. It goes after
+    /// text inserted there since (which sat before the deleted text), and to
+    /// the start of a replacement that swallowed the point (whose new text sat
+    /// after everything it replaced, deleted text included).
+    pub(crate) const RESTORE: Mapping = Mapping {
+        insertion: Bias::Right,
+        inside: Bias::Left,
+    };
+}
+
+impl From<Bias> for Mapping {
+    fn from(bias: Bias) -> Self {
+        Mapping {
+            insertion: bias,
+            inside: bias,
+        }
+    }
+}
+
 /// Maps `offset` through one batch of edits.
 ///
 /// Offsets outside every edit shift by the length change of the edits before
 /// them. For an offset touching or inside an edit:
-/// - text inserted exactly at the offset: `Left` stays before it, `Right` moves after it;
+/// - text inserted exactly at the offset: `mapping.insertion` picks the side;
 /// - at the start of a replaced range: stays at the start;
 /// - at the end of a replaced range: moves to the end of the new text;
-/// - strictly inside a replaced range: `Left` goes to its start, `Right` to its end.
-pub(crate) fn map_offset(edits: &[Edit], offset: usize, bias: Bias) -> usize {
+/// - strictly inside a replaced range: `mapping.inside` picks the end.
+pub(crate) fn map_offset(edits: &[Edit], offset: usize, mapping: impl Into<Mapping>) -> usize {
     let ix = edits.partition_point(|edit| edit.old.end < offset);
-    map_offset_at(edits, ix, offset, bias)
+    map_offset_at(edits, ix, offset, mapping.into())
+}
+
+/// Whether `offset` is strictly inside text an edit in this batch replaced,
+/// where mapping collapses it to one end and forgets where it was.
+pub(crate) fn collapses(edits: &[Edit], offset: usize) -> bool {
+    let ix = edits.partition_point(|edit| edit.old.end <= offset);
+    edits
+        .get(ix)
+        .is_some_and(|edit| edit.old.start < offset && offset < edit.old.end)
 }
 
 /// Maps ascending `offsets` (all with the same bias) through one batch in a
 /// single pass. Mapping preserves their order.
-pub(crate) fn map_sorted(edits: &[Edit], offsets: &mut [usize], bias: Bias) {
+pub(crate) fn map_sorted(edits: &[Edit], offsets: &mut [usize], mapping: Mapping) {
     let mut ix = 0;
     for offset in offsets {
         while ix < edits.len() && edits[ix].old.end < *offset {
             ix += 1;
         }
-        *offset = map_offset_at(edits, ix, *offset, bias);
+        *offset = map_offset_at(edits, ix, *offset, mapping);
     }
 }
 
 /// `ix` is the first edit whose old range ends at or after `offset`.
-fn map_offset_at(edits: &[Edit], mut ix: usize, offset: usize, bias: Bias) -> usize {
+fn map_offset_at(edits: &[Edit], mut ix: usize, offset: usize, mapping: Mapping) -> usize {
     // A replacement ending at `offset` may be followed by an edit starting
     // there; the later edit decides (its start is this one's new end).
     while ix + 1 < edits.len()
@@ -57,13 +96,13 @@ fn map_offset_at(edits: &[Edit], mut ix: usize, offset: usize, bias: Bias) -> us
         return offset + edit.new.start - edit.old.start;
     }
     let side = if edit.old.is_empty() {
-        bias
+        mapping.insertion
     } else if offset == edit.old.start {
         Bias::Left
     } else if offset == edit.old.end {
         Bias::Right
     } else {
-        bias
+        mapping.inside
     };
     match side {
         Bias::Left => edit.new.start,
@@ -147,7 +186,7 @@ mod tests {
                 .iter()
                 .map(|&offset| map_offset(&edits, offset, bias))
                 .collect();
-            map_sorted(&edits, &mut offsets, bias);
+            map_sorted(&edits, &mut offsets, bias.into());
             assert_eq!(offsets, expected);
         }
     }

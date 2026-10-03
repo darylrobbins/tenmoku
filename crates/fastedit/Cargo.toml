@@ -8,6 +8,9 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+fe-buffer.workspace = true
+fe-editor.workspace = true
+fe-gpui.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
 

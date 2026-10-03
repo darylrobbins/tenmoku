@@ -2,7 +2,11 @@ use std::{ops::Range, sync::Arc};
 
 use fe_text::{Bias, Text};
 
-use crate::{Edit, edit::map_sorted, log::EditLog};
+use crate::{
+    Edit,
+    edit::{Mapping, map_sorted},
+    log::EditLog,
+};
 
 /// Identifies a buffer, so snapshots and anchors can't be mixed up between buffers.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -96,8 +100,12 @@ impl BufferSnapshot {
             anchor.version,
             self.version()
         );
-        self.log
-            .map(anchor.offset, anchor.bias, anchor.version, self.version())
+        self.log.map(
+            anchor.offset,
+            anchor.bias.into(),
+            anchor.version,
+            self.version(),
+        )
     }
 
     /// Resolves many anchors at once, in the order given. Much faster than
@@ -117,7 +125,7 @@ impl BufferSnapshot {
             );
             let mut offsets: Vec<usize> = group.iter().map(|&ix| anchors[ix].offset).collect();
             for edits in self.log.mapping_batches(first.version, self.version()) {
-                map_sorted(edits, &mut offsets, first.bias);
+                map_sorted(edits, &mut offsets, first.bias.into());
             }
             for (&ix, offset) in group.iter().zip(offsets) {
                 resolved[ix] = offset;
@@ -144,7 +152,19 @@ impl BufferSnapshot {
 
     /// Maps an offset from an older version of this buffer to this one.
     pub fn map_offset(&self, offset: usize, bias: Bias, from: Version) -> usize {
-        self.log.map(offset, bias, from, self.version())
+        self.log.map(offset, bias.into(), from, self.version())
+    }
+
+    /// See [`EditLog::map_for_history`].
+    pub(crate) fn map_for_history(
+        &self,
+        offset: usize,
+        mapping: Mapping,
+        from: Version,
+        collapsed_by: &mut Vec<crate::log::Collapse>,
+    ) -> Option<usize> {
+        self.log
+            .map_for_history(offset, mapping, from, self.version(), collapsed_by)
     }
 
     /// The edit batches applied since `version`, oldest first. Each batch's

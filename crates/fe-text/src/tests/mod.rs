@@ -2,6 +2,8 @@ use proptest::prelude::*;
 
 use super::*;
 
+mod large;
+
 #[test]
 fn round_trips() {
     let text = Text::new("fn main() {}\n");
@@ -121,4 +123,120 @@ proptest! {
         expected.replace_range(start..end, &insert);
         prop_assert_eq!(text.to_string(), expected);
     }
+}
+
+/// Hands out its bytes a few at a time, to split sequences across reads.
+struct TrickleReader<'a> {
+    bytes: &'a [u8],
+    step: usize,
+}
+
+impl std::io::Read for TrickleReader<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let len = self.step.min(self.bytes.len()).min(buf.len());
+        buf[..len].copy_from_slice(&self.bytes[..len]);
+        self.bytes = &self.bytes[len..];
+        Ok(len)
+    }
+}
+
+#[test]
+fn from_reader_handles_large_input() {
+    let source = "line one\r\nline two é\r\n".repeat(20_000);
+    let (text, ending) = Text::from_reader(source.as_bytes()).unwrap();
+    assert_eq!(ending, LineEnding::CrLf);
+    assert_eq!(text.to_string(), source.replace("\r\n", "\n"));
+}
+
+proptest! {
+    #[test]
+    fn from_reader_matches_lossy_decoding(
+        bytes in proptest::collection::vec(
+            prop_oneof![
+                4 => proptest::num::u8::ANY,
+                2 => Just(b'\r'),
+                2 => Just(b'\n'),
+                2 => Just(b'a'),
+            ],
+            0..300,
+        ),
+        step in 1usize..8,
+    ) {
+        let lossy = String::from_utf8_lossy(&bytes);
+        let (expected, expected_ending) = Text::from_file_contents(&lossy);
+        let (text, ending) = Text::from_reader(TrickleReader { bytes: &bytes, step }).unwrap();
+        prop_assert_eq!(text.to_string(), expected.to_string());
+        prop_assert_eq!(ending, expected_ending);
+    }
+}
+
+#[test]
+fn line_ending_strings() {
+    assert_eq!(LineEnding::Lf.as_str(), "\n");
+    assert_eq!(LineEnding::CrLf.as_str(), "\r\n");
+}
+
+#[test]
+fn emptiness_and_char_boundaries() {
+    assert!(Text::new("").is_empty());
+    assert!(!Text::new("a").is_empty());
+    let text = Text::new("a😀b");
+    assert!(text.is_char_boundary(1));
+    assert!(!text.is_char_boundary(2), "inside the emoji");
+    assert!(!text.is_char_boundary(4));
+    assert!(text.is_char_boundary(5));
+}
+
+#[test]
+fn rows_past_the_end_clamp_to_the_last_row() {
+    let text = Text::new("one\ntwo\nthree");
+    assert_eq!(text.row_start(2), 8);
+    assert_eq!(text.row_start(3), 8);
+    assert_eq!(text.row_start(u32::MAX), 8);
+    assert_eq!(text.row_len(99), 5);
+}
+
+#[test]
+fn debug_shows_the_text() {
+    assert_eq!(format!("{:?}", Text::new("a\nb")), "\"a\\nb\"");
+}
+
+/// Fails its first read with `Interrupted`, as signals can cause.
+struct InterruptedOnce<'a> {
+    interrupted: bool,
+    bytes: &'a [u8],
+}
+
+impl std::io::Read for InterruptedOnce<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if !self.interrupted {
+            self.interrupted = true;
+            return Err(std::io::ErrorKind::Interrupted.into());
+        }
+        let len = self.bytes.len().min(buf.len());
+        buf[..len].copy_from_slice(&self.bytes[..len]);
+        self.bytes = &self.bytes[len..];
+        Ok(len)
+    }
+}
+
+/// Fails every read.
+struct Broken;
+
+impl std::io::Read for Broken {
+    fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+        Err(std::io::ErrorKind::PermissionDenied.into())
+    }
+}
+
+#[test]
+fn from_reader_retries_interrupted_reads_and_reports_errors() {
+    let reader = InterruptedOnce {
+        interrupted: false,
+        bytes: b"retried\n",
+    };
+    let (text, _) = Text::from_reader(reader).unwrap();
+    assert_eq!(text.to_string(), "retried\n");
+    let error = Text::from_reader(Broken).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
 }
