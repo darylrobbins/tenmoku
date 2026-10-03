@@ -9,6 +9,7 @@ Release builds on an M3 Max MacBook Pro (120 Hz built-in display), measured
 ```zsh
 cargo bench -p fe-syntax                          # parse, reparse, highlight (~8 min)
 cargo bench -p fe-syntax -- 10k                   # just the 10k-line cases
+cargo bench -p fe-syntax --bench flat             # highlighting huge flat files (~2 min)
 cargo bench -p fe-buffer                          # load and edit (M1)
 cargo build --release -p fastedit
 target/release/fastedit --perf path/to/file       # open, scroll, memory, idle; then quits
@@ -58,7 +59,8 @@ which is enough for these targets.
 
 Every 1M-line file tried is over `MAX_PARSE_BYTES` (16 MB), so the 1M-line
 runs are unhighlighted. The largest highlighted file is 16 MB (486k lines of
-Rust).
+Rust). The limit has since dropped to 8 MB (see [tree memory](#tree-memory)),
+so files like the 16 MB rows below are no longer highlighted.
 
 ### Scrolling, per frame (p50 / p99)
 
@@ -121,6 +123,53 @@ file), so it isn't our wrapper. Above roughly 0.5 MB of Rust, a reparse never
 fits the view's 1 ms synchronous budget: each keystroke spends that 1 ms and
 then reparses in the background, and colours lag the text by the reparse
 time.
+
+## Flat files (`cargo bench -p fe-syntax --bench flat`)
+
+Files where one node has about a million children: a JSON array of numbers,
+the same with single digits (the most elements that fit), and Markdown
+paragraphs. Each is filled to just under `MAX_PARSE_BYTES`. The cost is one
+60-row highlight, scrolled a row at a time, measured 2026-10-03.
+
+| File | Start | Middle | End | Unscrolled |
+|---|---|---|---|---|
+| JSON, 850k numbers (8 MB) | 24 µs | 20 µs | 15 µs | 62 ns |
+| JSON, 2.8M zeros (8 MB) | 47 µs | 31 µs | 16 µs | 62 ns |
+| Markdown, 450k paragraphs (8 MB) | 22 µs | 18 µs | 13 µs | 33 ns |
+
+Before this, highlighting cost depended on position. On a 1M-element JSON
+array (9.4 MB), a screen cost 0.27 ms at the top, 0.15 ms in the middle and
+0.03 ms at the end, and 0.45 ms at the top of a 1.5M-element array. Markdown
+with 500k paragraphs cost 0.18 ms at the top. Tree-sitter stores a node's
+repeated children as a partly balanced tree of hidden nodes, and early
+children sit about a thousand levels deep. A query cursor walks up through
+those levels at every child it visits. `Syntax::highlights` now queries a node
+with more than 1024 children only for patterns rooted at the node itself,
+then queries each child in view separately.
+
+A frame that doesn't scroll or edit reuses the last highlights, so it doesn't
+query at all: that's the Unscrolled column. Logs and CSV have no grammar and
+are never highlighted.
+
+### Tree memory
+
+Each bench prints its trees' memory, measured as the growth in malloc'd bytes
+across a parse:
+
+| Source | Tree / source |
+|---|---|
+| Rust, generated items (4 and 15 MB) | 40× |
+| Rust, this repo's sources concatenated (4 MB) | 34× |
+| JSON, pretty-printed objects (4 and 15 MB) | 30× |
+| JSON, an array of numbers (8 MB) | 29× |
+| JSON, an array of single digits (8 MB) | 96× |
+| Markdown, mixed blocks (4 and 15 MB) | 71× |
+| Markdown, short paragraphs (8 MB) | 85× |
+
+Memory grows linearly with size, and with the number of nodes more than the
+number of bytes. `MAX_PARSE_BYTES` is now 8 MB, down from 16 MB. That keeps a
+code file's tree near 300 MB, and the worst case above under 800 MB; at
+16 MB, trees reached 0.6–1.5 GB.
 
 ## Not measured yet
 

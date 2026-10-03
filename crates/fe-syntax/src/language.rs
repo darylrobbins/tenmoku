@@ -12,6 +12,9 @@ pub struct Language {
     /// The highlight for each of the query's captures, by capture index.
     pub(crate) highlights: Vec<Option<Highlight>>,
     pub(crate) earlier_patterns_win: bool,
+    /// Whether no pattern spans several siblings, so a node's children can
+    /// be queried one at a time. True of every query so far.
+    pub(crate) local_patterns: bool,
 }
 
 impl Language {
@@ -29,12 +32,14 @@ impl Language {
             .iter()
             .map(|name| Highlight::from_capture(name))
             .collect();
+        let local_patterns = (0..query.pattern_count()).all(|ix| !query.is_pattern_non_local(ix));
         Self {
             name: def.name,
             grammar,
             query,
             highlights,
             earlier_patterns_win: def.earlier_patterns_win,
+            local_patterns,
         }
     }
 }

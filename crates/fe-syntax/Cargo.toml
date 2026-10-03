@@ -70,5 +70,9 @@ rand.workspace = true
 name = "syntax"
 harness = false
 
+[[bench]]
+name = "flat"
+harness = false
+
 [lints]
 workspace = true

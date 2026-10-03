@@ -326,3 +326,77 @@ fn capture_names_map_to_the_most_specific_highlight() {
     assert_eq!(style("type.builtin"), Some(3));
     assert_eq!(style("keyword"), None);
 }
+
+/// Highlighting a node with many children a child at a time gives the same
+/// spans as one query over the whole tree.
+#[test]
+fn flat_nodes_highlight_as_one_query_would() {
+    let cases: &[(&str, &str, &str, &str)] = &[
+        ("rust", "", "fn f() -> u8 { 1 } // c\n", ""),
+        ("python", "", "def f(x): return None  # c\n", ""),
+        ("javascript", "", "const a = () => <div>{1}</div>;\n", ""),
+        ("typescript", "", "let a: number = 1;\n", ""),
+        ("tsx", "", "let a: number = <b/>;\n", ""),
+        ("json", "[\n", "  {\"k\": [1, true]},\n", "  null\n]\n"),
+        ("json", "{\"items\": [\n", "  \"a\\n\",\n", "  0\n]}\n"),
+        ("toml", "", "[t]\nname = \"x\" # c\n", ""),
+        ("go", "package main\n", "func f() int { return 1 }\n", ""),
+        ("c", "", "int f(void) { return 0; }\n", ""),
+        ("cpp", "", "namespace n { class C {}; }\n", ""),
+        ("bash", "", "echo \"$HOME\" # c\n", ""),
+        ("html", "", "<p class=\"a\">hi</p>\n", ""),
+        ("css", "", "a { color: red; }\n", ""),
+        ("yaml", "", "- item: 1 # c\n", ""),
+        (
+            "markdown",
+            "# Title\n\n",
+            "Some text.\n\n```rust\nfn f() {}\n```\n\n",
+            "",
+        ),
+        ("java", "", "class A { int f() { return 1; } }\n", ""),
+    ];
+    for &(name, header, item, footer) in cases {
+        let text = format!("{header}{}{footer}", item.repeat(1500));
+        let buffer = Buffer::new(&text);
+        let syntax = parsed(language_by_name(name).unwrap(), &buffer);
+        let tree = syntax.tree().unwrap();
+        let rows = buffer.text().row_count();
+        let row = |row: u32| buffer.text().row_start(row);
+        let mid = row(rows / 2);
+        assert!(
+            !crate::syntax::flat_paths(tree.root_node(), &(mid..mid + 1)).is_empty(),
+            "{name}: no node has many children"
+        );
+        for range in [
+            0..row(60),
+            mid..row(rows / 2 + 60),
+            mid + 3..mid + 500,
+            row(rows - 60)..text.len(),
+            0..text.len(),
+        ] {
+            assert_eq!(
+                syntax.query(tree, range.clone(), true),
+                syntax.query(tree, range.clone(), false),
+                "{name} {range:?}"
+            );
+        }
+    }
+}
+
+/// Highlights are cached per range until an edit or a reparse.
+#[test]
+fn cached_highlights_follow_edits_and_reparses() {
+    let mut buffer = Buffer::new("let x = 1;\n");
+    let mut syntax = parsed(rust(), &buffer);
+    let first = |syntax: &Syntax| {
+        let span = syntax.highlights(0..10)[0].clone();
+        (span.range, span.highlight.name())
+    };
+    assert_eq!(first(&syntax), (0..3, "keyword"));
+    assert_eq!(first(&syntax), (0..3, "keyword"));
+    buffer.edit([(0..0, "// ")], Origin::User);
+    syntax.edit(buffer.current());
+    assert_eq!(first(&syntax), (3..6, "keyword"));
+    syntax.finish(syntax.parse_job().run());
+    assert_eq!(first(&syntax), (0..10, "comment"));
+}
