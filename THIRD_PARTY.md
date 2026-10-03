@@ -18,9 +18,11 @@ Ship the Apache-2.0 license text with them.
 
 `fe-syntax` links these grammars, one Cargo feature each, and uses the
 highlight and injections queries each crate ships, unmodified, via the
-crate's own constants. Audited 2026-10-02, and the injections queries
-2026-10-03: every crate is MIT, and no query names a source other than its
-own repository except where noted.
+crate's own constants. Audited 2026-10-02, the injections queries
+2026-10-03, and Ruby to XML 2026-10-03: every crate is MIT, and no query names
+a source other than its own repository except where noted. The Ruby, Lua and
+XML crates ship no licence file, only `license = "MIT"` in their manifests;
+their repositories hold the MIT text.
 
 | Feature | Crate | Version | Upstream | License | Query |
 |---|---|---|---|---|---|
@@ -40,6 +42,12 @@ own repository except where noted.
 | yaml | tree-sitter-yaml | 0.7.2, patched² | https://github.com/tree-sitter-grammars/tree-sitter-yaml | MIT | `HIGHLIGHTS_QUERY` |
 | markdown | tree-sitter-md | 0.5.3 | https://github.com/tree-sitter-grammars/tree-sitter-markdown | MIT | `HIGHLIGHT_QUERY_BLOCK`¹; `INJECTION_QUERY_BLOCK`. Inline grammar (`INLINE_LANGUAGE`, our `markdown_inline`): `HIGHLIGHT_QUERY_INLINE`¹; `INJECTION_QUERY_INLINE` |
 | java | tree-sitter-java | 0.23.5 | https://github.com/tree-sitter/tree-sitter-java | MIT | `HIGHLIGHTS_QUERY` |
+| ruby | tree-sitter-ruby | 0.23.1 | https://github.com/tree-sitter/tree-sitter-ruby | MIT | `HIGHLIGHTS_QUERY`, then `queries/ruby.scm`⁴ |
+| lua | tree-sitter-lua | 0.5.0 | https://github.com/tree-sitter-grammars/tree-sitter-lua | MIT | `HIGHLIGHTS_QUERY`; `INJECTIONS_QUERY` |
+| php | tree-sitter-php | 0.24.2 | https://github.com/tree-sitter/tree-sitter-php | MIT | `HIGHLIGHTS_QUERY`; `INJECTIONS_QUERY` (grammar `LANGUAGE_PHP`) |
+| csharp | tree-sitter-c-sharp | 0.23.5 | https://github.com/tree-sitter/tree-sitter-c-sharp | MIT | `HIGHLIGHTS_QUERY` |
+| scala | tree-sitter-scala | 0.26.2 | https://github.com/tree-sitter/tree-sitter-scala | MIT | `HIGHLIGHTS_QUERY` |
+| xml | tree-sitter-xml | 0.7.0 | https://github.com/tree-sitter-grammars/tree-sitter-xml | MIT | `XML_HIGHLIGHT_QUERY` (grammar `LANGUAGE_XML`) |
 
 ¹ Each of these two files says it comes from nvim-treesitter (Apache-2.0, an
 allowed source). Ship the Apache-2.0 license text with them.
@@ -53,6 +61,11 @@ queries are unchanged from 0.7.2. The vendored README says when to drop it.
 capture can't be overridden. Adapted from nvim-treesitter (Apache-2.0, an
 allowed source); ship the Apache-2.0 license text with it. Keys are `property`
 and table headers `type`.
+
+⁴ Goes after the crate's `HIGHLIGHTS_QUERY`. It restates that query's own
+patterns for identifiers (MIT, same crate), so local variables aren't
+highlighted as methods: the crate's method pattern depends on `#is-not? local`,
+which we don't evaluate.
 
 How patterns take precedence follows tree-sitter-highlight 0.25 (MIT), which
 was read for the rule, not copied: see `earlier_patterns_win` in

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<?xml-stylesheet type="text/xsl" href="catalog.xsl"?>
+<!DOCTYPE catalog [
+  <!ELEMENT catalog (book+)>
+  <!ELEMENT book (title, author+, price?)>
+  <!ATTLIST book id ID #REQUIRED
+                 lang CDATA "en">
+  <!ENTITY publisher "Golden Press">
+]>
+<!-- A small book catalogue, used as a golden highlighting sample. -->
+<catalog xmlns="urn:example:catalog"
+         xmlns:xlink="http://www.w3.org/1999/xlink"
+         updated="2026-10-03">
+  <book id="b1" lang="en">
+    <title>Parsing &amp; Highlighting</title>
+    <author>A. Writer</author>
+    <author>B. Editor</author>
+    <price currency="CAD">39.95</price>
+    <link xlink:href="https://example.com/b1"/>
+  </book>
+  <book id="b2">
+    <title>Trees &#x26; Queries</title>
+    <author>C. Reader</author>
+    <notes><![CDATA[
+      Prices <em>may</em> change; see &publisher; for details.
+    ]]></notes>
+  </book>
+  <book id='b3' lang="fr">
+    <title>Le Lexique</title>
+    <author>D. Auteur</author>
+    <price currency="EUR">24.00</price>
+    <?render mode="compact"?>
+  </book>
+  <summary count="3">
+    Three books from &publisher;.
+  </summary>
+</catalog>

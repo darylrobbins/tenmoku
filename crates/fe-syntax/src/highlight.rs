@@ -44,14 +44,26 @@ const NAMES: &[&str] = &[
 /// Capture names some grammars use for something in [`NAMES`].
 const ALIASES: &[(&str, &str)] = &[
     ("boolean", "constant.builtin"),
+    ("conditional", "keyword"),
     ("delimiter", "punctuation.delimiter"),
+    ("exception", "keyword"),
+    ("field", "property"),
+    ("float", "number"),
     ("function.special", "function.macro"),
+    ("include", "keyword"),
+    ("method", "function.method"),
     ("namespace", "module"),
+    ("parameter", "variable.parameter"),
+    ("preproc", "keyword"),
+    ("repeat", "keyword"),
+    ("storageclass", "keyword"),
     ("string.escape", "escape"),
+    ("tag.attribute", "attribute"),
     ("text.literal", "markup.raw"),
     ("text.reference", "markup.link"),
     ("text.title", "markup.heading"),
     ("text.uri", "markup.link.url"),
+    ("type.qualifier", "keyword"),
 ];
 
 /// A highlight from our vocabulary.

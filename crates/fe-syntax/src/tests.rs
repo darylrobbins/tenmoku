@@ -172,6 +172,71 @@ fn each_language_highlights_a_snippet() {
                 ("f", "function.method"),
             ],
         ),
+        (
+            "Gemfile",
+            "def f(x) = x\nv = f(:sym) # c",
+            &[
+                ("def", "keyword"),
+                ("f", "function.method"),
+                ("v", "variable"),
+                (":sym", "string.special"),
+                ("# c", "comment"),
+            ],
+        ),
+        (
+            "x.lua",
+            "local function f(x) return nil end -- c",
+            &[
+                ("local", "keyword"),
+                ("f", "function"),
+                ("nil", "constant.builtin"),
+                ("-- c", "comment"),
+            ],
+        ),
+        (
+            "x.php",
+            "<?php function f($x) { return null; } // c",
+            &[
+                ("<?php", "tag"),
+                ("function", "keyword"),
+                ("f", "function"),
+                ("x", "variable"),
+                ("null", "constant.builtin"),
+                ("// c", "comment"),
+            ],
+        ),
+        (
+            "x.cs",
+            "class C { int F() => 1; } // c",
+            &[
+                ("class", "keyword"),
+                ("C", "type"),
+                ("int", "type.builtin"),
+                ("F", "function"),
+                ("// c", "comment"),
+            ],
+        ),
+        (
+            "x.scala",
+            "object O { def f(x: Int) = \"s\" } // c",
+            &[
+                ("object", "keyword"),
+                ("def", "keyword"),
+                ("f", "function.method"),
+                ("Int", "type"),
+                ("\"s\"", "string"),
+                ("// c", "comment"),
+            ],
+        ),
+        (
+            "x.svg",
+            "<svg width=\"1\"><!-- c --></svg>",
+            &[
+                ("svg", "tag"),
+                ("width", "property"),
+                ("<!-- c -->", "comment"),
+            ],
+        ),
     ];
     let mut covered = Vec::new();
     let mut missing = Vec::new();

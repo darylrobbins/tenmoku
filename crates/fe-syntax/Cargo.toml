@@ -24,6 +24,12 @@ default = [
     "yaml",
     "markdown",
     "java",
+    "ruby",
+    "lua",
+    "php",
+    "csharp",
+    "scala",
+    "xml",
 ]
 rust = ["dep:tree-sitter-rust"]
 python = ["dep:tree-sitter-python"]
@@ -42,6 +48,12 @@ css = ["dep:tree-sitter-css"]
 yaml = ["dep:tree-sitter-yaml"]
 markdown = ["dep:tree-sitter-md"]
 java = ["dep:tree-sitter-java"]
+ruby = ["dep:tree-sitter-ruby"]
+lua = ["dep:tree-sitter-lua"]
+php = ["dep:tree-sitter-php"]
+csharp = ["dep:tree-sitter-c-sharp"]
+scala = ["dep:tree-sitter-scala"]
+xml = ["dep:tree-sitter-xml"]
 
 [dependencies]
 fe-buffer.workspace = true
@@ -49,6 +61,7 @@ log.workspace = true
 tree-sitter.workspace = true
 tree-sitter-bash = { workspace = true, optional = true }
 tree-sitter-c = { workspace = true, optional = true }
+tree-sitter-c-sharp = { workspace = true, optional = true }
 tree-sitter-cpp = { workspace = true, optional = true }
 tree-sitter-css = { workspace = true, optional = true }
 tree-sitter-go = { workspace = true, optional = true }
@@ -56,11 +69,16 @@ tree-sitter-html = { workspace = true, optional = true }
 tree-sitter-java = { workspace = true, optional = true }
 tree-sitter-javascript = { workspace = true, optional = true }
 tree-sitter-json = { workspace = true, optional = true }
+tree-sitter-lua = { workspace = true, optional = true }
 tree-sitter-md = { workspace = true, optional = true }
+tree-sitter-php = { workspace = true, optional = true }
 tree-sitter-python = { workspace = true, optional = true }
+tree-sitter-ruby = { workspace = true, optional = true }
 tree-sitter-rust = { workspace = true, optional = true }
+tree-sitter-scala = { workspace = true, optional = true }
 tree-sitter-toml-ng = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
+tree-sitter-xml = { workspace = true, optional = true }
 tree-sitter-yaml = { workspace = true, optional = true }
 
 [dev-dependencies]

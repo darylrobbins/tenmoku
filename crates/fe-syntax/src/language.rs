@@ -371,4 +371,76 @@ const DEFS: &[Def] = &[
         injections: None,
         hidden: false,
     },
+    #[cfg(feature = "ruby")]
+    Def {
+        name: "ruby",
+        extensions: &["rb"],
+        file_names: &["Gemfile", "Rakefile"],
+        grammar: || tree_sitter_ruby::LANGUAGE.into(),
+        highlights: || {
+            &[
+                tree_sitter_ruby::HIGHLIGHTS_QUERY,
+                include_str!("../queries/ruby.scm"),
+            ]
+        },
+        earlier_patterns_win: false,
+        injections: None,
+        hidden: false,
+    },
+    #[cfg(feature = "lua")]
+    Def {
+        name: "lua",
+        extensions: &["lua"],
+        file_names: &[],
+        grammar: || tree_sitter_lua::LANGUAGE.into(),
+        highlights: || &[tree_sitter_lua::HIGHLIGHTS_QUERY],
+        earlier_patterns_win: false,
+        injections: Some(tree_sitter_lua::INJECTIONS_QUERY),
+        hidden: false,
+    },
+    // PHP in an HTML page; the HTML around the `<?php` tags stays plain.
+    #[cfg(feature = "php")]
+    Def {
+        name: "php",
+        extensions: &["php"],
+        file_names: &[],
+        grammar: || tree_sitter_php::LANGUAGE_PHP.into(),
+        highlights: || &[tree_sitter_php::HIGHLIGHTS_QUERY],
+        earlier_patterns_win: false,
+        injections: Some(tree_sitter_php::INJECTIONS_QUERY),
+        hidden: false,
+    },
+    #[cfg(feature = "csharp")]
+    Def {
+        name: "csharp",
+        extensions: &["cs"],
+        file_names: &[],
+        grammar: || tree_sitter_c_sharp::LANGUAGE.into(),
+        highlights: || &[tree_sitter_c_sharp::HIGHLIGHTS_QUERY],
+        earlier_patterns_win: false,
+        injections: None,
+        hidden: false,
+    },
+    #[cfg(feature = "scala")]
+    Def {
+        name: "scala",
+        extensions: &["scala", "sc"],
+        file_names: &[],
+        grammar: || tree_sitter_scala::LANGUAGE.into(),
+        highlights: || &[tree_sitter_scala::HIGHLIGHTS_QUERY],
+        earlier_patterns_win: false,
+        injections: None,
+        hidden: false,
+    },
+    #[cfg(feature = "xml")]
+    Def {
+        name: "xml",
+        extensions: &["xml", "svg", "plist"],
+        file_names: &[],
+        grammar: || tree_sitter_xml::LANGUAGE_XML.into(),
+        highlights: || &[tree_sitter_xml::XML_HIGHLIGHT_QUERY],
+        earlier_patterns_win: false,
+        injections: None,
+        hidden: false,
+    },
 ];
