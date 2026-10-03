@@ -581,7 +581,7 @@ fn highlighting_follows_edits(cx: &mut TestAppContext) {
     let first_keyword = |cx: &mut VisualTestContext| {
         cx.run_until_parked();
         view.update(cx, |view, _| {
-            let syntax = view.syntax.as_ref().expect("language loaded");
+            let syntax = view.syntax.as_ref().expect("language loaded").syntax();
             assert!(!syntax.needs_parse());
             let spans = syntax.highlights(0..40);
             spans

@@ -5,16 +5,19 @@
 //!   query its grammar ships. Language injections aren't supported yet.
 //! - [`Syntax`] keeps a buffer's tree up to date incrementally from
 //!   [`fe_buffer::BufferSnapshot`]s. Parsing can run on another thread via
-//!   [`ParseJob`], so a UI never has to wait for it.
+//!   [`ParseJob`], so a UI never has to wait for it. [`SyntaxDriver`] decides
+//!   where each reparse runs, starting background ones through a [`Spawner`].
 //! - Grammar capture names map onto our own [`Highlight`] vocabulary, which
 //!   themes colour (see [`resolve_theme`]).
 //!
 //! This crate must never depend on GPUI.
 
+mod driver;
 mod highlight;
 mod language;
 mod syntax;
 
+pub use driver::{Spawner, SyntaxDriver};
 pub use highlight::{Highlight, HighlightSpan, resolve_theme};
 pub use language::{
     Language, language_by_name, language_for_path, language_name_for_path, language_names,

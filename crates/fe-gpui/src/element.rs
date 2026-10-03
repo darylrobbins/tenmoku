@@ -12,7 +12,7 @@ use fe_display::{
         TextMeasure, Vec2,
     },
 };
-use fe_syntax::Syntax;
+use fe_syntax::{Syntax, SyntaxDriver};
 use gpui::{
     App, Bounds, ContentMask, Element, ElementId, ElementInputHandler, Entity, Font, FontId,
     GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId, Pixels, Point, ShapedLine,
@@ -238,6 +238,7 @@ impl Element for EditorElement {
         let syntax = view
             .syntax
             .as_ref()
+            .map(SyntaxDriver::syntax)
             .filter(|syntax| syntax.version() == model.snapshot().version());
         let mut shaper = Shaper {
             text_system,

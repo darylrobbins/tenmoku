@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use fe_buffer::{BufferSnapshot, Text, Version};
+use fe_buffer::{BufferId, BufferSnapshot, Text, Version};
 use tree_sitter::{
     InputEdit, Node, ParseOptions, Parser, QueryCursor, QueryCursorOptions, StreamingIterator as _,
     Tree,
@@ -93,6 +93,10 @@ impl Syntax {
         self.snapshot.version()
     }
 
+    pub(crate) fn buffer_id(&self) -> BufferId {
+        self.snapshot.id()
+    }
+
     /// Applies the edits made since the last call to the tree, so it lines up
     /// with `snapshot`. Cheap: nothing is reparsed.
     pub fn edit(&mut self, snapshot: &BufferSnapshot) {
@@ -131,10 +135,18 @@ impl Syntax {
     /// Reparses on this thread unless that takes longer than `budget`.
     /// Returns whether the tree no longer needs parsing.
     pub fn parse_within(&mut self, budget: Duration) -> bool {
+        let started = Instant::now();
+        self.parse_until(|| started.elapsed() > budget)
+    }
+
+    /// Reparses on this thread, giving up as soon as `out_of_time` returns
+    /// true; tree-sitter asks it every so often while parsing. Returns
+    /// whether the tree no longer needs parsing.
+    pub fn parse_until(&mut self, out_of_time: impl FnMut() -> bool) -> bool {
         if !self.needs_parse() {
             return true;
         }
-        match self.parse_job().parse(Some(budget)) {
+        match self.parse_job().parse(out_of_time) {
             Some(parsed) => {
                 self.finish(parsed);
                 true
@@ -369,17 +381,23 @@ pub struct Parsed {
     snapshot: BufferSnapshot,
 }
 
+impl Parsed {
+    pub(crate) fn buffer_id(&self) -> BufferId {
+        self.snapshot.id()
+    }
+}
+
 impl ParseJob {
     /// Parses to the end. Doesn't panic: if parsing does, the result makes
     /// [`Syntax::finish`] give up on highlighting.
     pub fn run(self) -> Parsed {
-        self.parse(None)
+        self.parse(|| false)
             .expect("a parse without a time limit completes")
     }
 
-    /// `None` if `budget` runs out first.
-    fn parse(self, budget: Option<Duration>) -> Option<Parsed> {
-        let tree = match catch_unwind(AssertUnwindSafe(|| self.parse_tree(budget))) {
+    /// `None` if `out_of_time` says so before the parse completes.
+    fn parse(self, out_of_time: impl FnMut() -> bool) -> Option<Parsed> {
+        let tree = match catch_unwind(AssertUnwindSafe(|| self.parse_tree(out_of_time))) {
             Ok(tree) => Some(tree?),
             Err(_) => {
                 log::error!(
@@ -395,16 +413,18 @@ impl ParseJob {
         })
     }
 
-    fn parse_tree(&self, budget: Option<Duration>) -> Option<Tree> {
+    fn parse_tree(&self, mut out_of_time: impl FnMut() -> bool) -> Option<Tree> {
         let mut parser = Parser::new();
         parser
             .set_language(&self.language.grammar)
             .expect("grammar ABI is supported by this tree-sitter");
         let text = self.snapshot.text();
-        let started = Instant::now();
-        let mut progress = |_: &tree_sitter::ParseState| match budget {
-            Some(budget) if started.elapsed() > budget => ControlFlow::Break(()),
-            _ => ControlFlow::Continue(()),
+        let mut progress = |_: &tree_sitter::ParseState| {
+            if out_of_time() {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
         };
         // Tree-sitter calls `read` from C, which a panic can't unwind
         // through (it aborts), so it's caught there and resumed after.

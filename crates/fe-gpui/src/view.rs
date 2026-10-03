@@ -1,8 +1,8 @@
 use std::{ops::Range, time::Duration};
 
-use fe_buffer::Anchor;
+use fe_buffer::{Anchor, BufferSnapshot};
 use fe_editor::{EditorModel, Movement};
-use fe_syntax::Syntax;
+use fe_syntax::{Language, ParseJob, Spawner, Syntax, SyntaxDriver};
 use gpui::{
     App, AppContext as _, Bounds, ClipboardItem, Context, CursorStyle, EntityInputHandler,
     FocusHandle, Focusable, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
@@ -35,9 +35,9 @@ pub struct EditorView {
     /// Text being composed by an input method.
     marked: Option<Range<Anchor>>,
     /// The buffer's syntax tree, once its language is loaded.
-    pub(crate) syntax: Option<Syntax>,
-    /// A language load or parse running in the background.
-    syntax_task: Option<Task<()>>,
+    pub(crate) syntax: Option<SyntaxDriver<Task<()>>>,
+    /// The language loading in the background.
+    language_task: Option<Task<()>>,
     pub(crate) frame_timings: FrameTimings,
 }
 
@@ -69,7 +69,7 @@ impl EditorView {
             drag: None,
             marked: None,
             syntax: None,
-            syntax_task: None,
+            language_task: None,
             frame_timings: FrameTimings::default(),
         };
         let language = view
@@ -78,17 +78,17 @@ impl EditorView {
             .and_then(fe_syntax::language_name_for_path);
         if let Some(name) = language {
             if let Some(language) = fe_syntax::loaded_language(name) {
-                view.syntax = Some(Syntax::new(language, view.model.snapshot()));
+                view.syntax = Some(syntax_driver(language, view.model.snapshot()));
             } else {
                 // Compiling a highlight query can take a few frames.
-                view.syntax_task = Some(cx.spawn(async move |this, cx| {
+                view.language_task = Some(cx.spawn(async move |this, cx| {
                     let language = cx
                         .background_spawn(async move { fe_syntax::language_by_name(name) })
                         .await;
                     this.update(cx, |view, cx| {
-                        view.syntax_task = None;
+                        view.language_task = None;
                         view.syntax =
-                            language.map(|language| Syntax::new(language, view.model.snapshot()));
+                            language.map(|language| syntax_driver(language, view.model.snapshot()));
                         cx.notify();
                     })
                     .ok();
@@ -271,18 +271,33 @@ impl EditorView {
     /// the reparse is quick, otherwise on a background thread while the stale
     /// tree keeps highlighting.
     fn sync_syntax(&mut self, cx: &mut Context<Self>) {
-        let Some(syntax) = &mut self.syntax else {
-            return;
-        };
-        syntax.edit(self.model.snapshot());
-        if self.syntax_task.is_some() || syntax.parse_within(SYNC_PARSE_BUDGET) {
-            return;
+        if let Some(syntax) = &mut self.syntax {
+            syntax.sync(self.model.snapshot(), &mut ParseSpawner(cx));
         }
-        let job = syntax.parse_job();
-        self.syntax_task = Some(cx.spawn(async move |this, cx| {
+    }
+
+    fn marked_range(&self) -> Option<Range<usize>> {
+        self.marked
+            .as_ref()
+            .map(|range| self.model.snapshot().resolve_range(range))
+    }
+}
+
+fn syntax_driver(language: &'static Language, snapshot: &BufferSnapshot) -> SyntaxDriver<Task<()>> {
+    SyntaxDriver::new(Syntax::new(language, snapshot), SYNC_PARSE_BUDGET)
+}
+
+/// Runs a view's parses on GPUI's background executor and hands the results
+/// back to it.
+struct ParseSpawner<'a, 'b>(&'a mut Context<'b, EditorView>);
+
+impl Spawner for ParseSpawner<'_, '_> {
+    type Task = Task<()>;
+
+    fn spawn(&mut self, job: ParseJob) -> Task<()> {
+        self.0.spawn(async move |this, cx| {
             let parsed = cx.background_spawn(async move { job.run() }).await;
             this.update(cx, |view, cx| {
-                view.syntax_task = None;
                 if let Some(syntax) = &mut view.syntax {
                     syntax.finish(parsed);
                 }
@@ -290,13 +305,7 @@ impl EditorView {
                 cx.notify();
             })
             .ok();
-        }));
-    }
-
-    fn marked_range(&self) -> Option<Range<usize>> {
-        self.marked
-            .as_ref()
-            .map(|range| self.model.snapshot().resolve_range(range))
+        })
     }
 }
 
