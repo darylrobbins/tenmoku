@@ -1,6 +1,7 @@
 use std::{ops::Range, time::Duration};
 
 use fe_buffer::{Anchor, BufferSnapshot};
+use fe_display::layout::{MAX_SHAPED_ROW_BYTES, RowLayout};
 use fe_editor::{EditorModel, Movement};
 use fe_syntax::{Language, ParseJob, Spawner, Syntax, SyntaxDriver};
 use gpui::{
@@ -272,10 +273,15 @@ impl EditorView {
 
     /// Brings the syntax tree up to date with the text: within this frame if
     /// the reparse is quick, otherwise on a background thread while the stale
-    /// tree keeps highlighting.
+    /// tree keeps highlighting. A file too big to parse whole gets a window
+    /// around the text the last frame showed, parsed in the background.
     fn sync_syntax(&mut self, cx: &mut Context<Self>) {
+        let visible = self
+            .layout
+            .as_ref()
+            .map_or(0..0, |layout| shown_text(&layout.frame.rows));
         if let Some(syntax) = &mut self.syntax {
-            syntax.sync(self.model.snapshot(), &mut ParseSpawner(cx));
+            syntax.sync(self.model.snapshot(), visible, &mut ParseSpawner(cx));
         }
     }
 
@@ -311,6 +317,19 @@ impl EditorView {
     }
 }
 
+/// The text a frame shows, to parse a window around: of its longest run of
+/// rows with nothing hidden between them, from the first row's start to the
+/// last shaped byte. A fold hides rows, and a row longer than
+/// [`MAX_SHAPED_ROW_BYTES`] hides the rest of its text.
+fn shown_text<L>(rows: &[RowLayout<L>]) -> Range<usize> {
+    let shaped_end = |row: &RowLayout<L>| row.end.min(row.start + MAX_SHAPED_ROW_BYTES);
+    rows.chunk_by(|above, below| {
+        below.buffer_row <= above.buffer_row + 1 && shaped_end(above) == above.end
+    })
+    .max_by_key(|run| run.len())
+    .map_or(0..0, |run| run[0].start..shaped_end(&run[run.len() - 1]))
+}
+
 fn syntax_driver(language: &'static Language, snapshot: &BufferSnapshot) -> SyntaxDriver<Task<()>> {
     SyntaxDriver::new(Syntax::new(language, snapshot), SYNC_PARSE_BUDGET)
 }
@@ -327,9 +346,10 @@ impl Spawner for ParseSpawner<'_, '_> {
             let parsed = cx.background_spawn(async move { job.run() }).await;
             this.update(cx, |view, cx| {
                 if let Some(syntax) = &mut view.syntax {
-                    syntax.finish(parsed);
+                    syntax.finish(parsed, &mut ParseSpawner(cx));
                 }
-                // Repaint, and reparse whatever changed meanwhile.
+                // Repaint, and reparse whatever changed or scrolled into
+                // view meanwhile.
                 cx.notify();
             })
             .ok();
@@ -378,8 +398,13 @@ movement_actions! {
 }
 
 impl Render for EditorView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_syntax(cx);
+        if self.model.snapshot().len() > fe_syntax::MAX_PARSE_BYTES {
+            // This frame may scroll; once it's painted, ask for a window
+            // around what it shows.
+            cx.defer_in(window, |view, _, cx| view.sync_syntax(cx));
+        }
         let div = div()
             .id("editor")
             .key_context(KEY_CONTEXT)
@@ -546,3 +571,6 @@ impl EntityInputHandler for EditorView {
         Some(self.model.text().offset_to_utf16(offset))
     }
 }
+
+#[cfg(test)]
+mod window_tests;

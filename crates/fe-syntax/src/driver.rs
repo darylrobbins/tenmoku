@@ -1,8 +1,11 @@
-use std::time::{Duration, Instant};
+use std::{
+    ops::Range,
+    time::{Duration, Instant},
+};
 
-use fe_buffer::BufferSnapshot;
+use fe_buffer::{BufferSnapshot, Version};
 
-use crate::{ParseJob, Parsed, Syntax};
+use crate::{MAX_PARSE_BYTES, ParseJob, Parsed, Syntax};
 
 /// Runs [`ParseJob`]s off the calling thread. A UI implements it with its
 /// executor; tests run the jobs when they choose.
@@ -24,12 +27,29 @@ pub trait Spawner {
 /// highlighting, and later syncs only edit the tree until it finishes. Its
 /// result is edited forward and used, and the next sync reparses whatever
 /// changed meanwhile. Dropping the driver cancels the background parse.
+///
+/// A file over [`MAX_PARSE_BYTES`] is highlighted through a window around the
+/// visible text (see [`Syntax::window_job`]), always parsed in the
+/// background. While one window parses, the last keeps highlighting, and
+/// syncs only record the viewport; when it lands, [`SyntaxDriver::finish`]
+/// starts one parse for the latest viewport, if that still needs one.
 pub struct SyntaxDriver<T> {
     syntax: Syntax,
     budget: Duration,
     clock: Box<dyn Fn() -> Instant>,
-    /// The background parse, if one is running.
-    task: Option<T>,
+    /// The background parse, if one is running: of the whole file, or of a
+    /// window for a viewport. Only one runs at a time, of either kind.
+    task: Option<(T, Option<WindowRequest>)>,
+    /// What the installed window was parsed for.
+    window: Option<WindowRequest>,
+    /// The viewport at the last sync.
+    visible: Range<usize>,
+}
+
+/// A window parse: the version it parses and the viewport it's for.
+struct WindowRequest {
+    version: Version,
+    visible: Range<usize>,
 }
 
 impl<T> SyntaxDriver<T> {
@@ -41,6 +61,8 @@ impl<T> SyntaxDriver<T> {
             budget,
             clock: Box::new(Instant::now),
             task: None,
+            window: None,
+            visible: 0..0,
         }
     }
 
@@ -61,13 +83,25 @@ impl<T> SyntaxDriver<T> {
 
     /// Catches the tree up with `snapshot`: reparses within the budget, or
     /// else starts a background parse with `spawner` unless one is running.
-    pub fn sync<S: Spawner<Task = T>>(&mut self, snapshot: &BufferSnapshot, spawner: &mut S) {
+    /// For a file over [`MAX_PARSE_BYTES`], starts a window parse around
+    /// `visible`, the byte range on screen, unless the window covers it.
+    pub fn sync<S: Spawner<Task = T>>(
+        &mut self,
+        snapshot: &BufferSnapshot,
+        visible: Range<usize>,
+        spawner: &mut S,
+    ) {
         if snapshot.id() != self.syntax.buffer_id() {
             // A parse of another buffer is no use.
             self.task = None;
         }
         self.syntax.edit(snapshot);
+        self.visible = visible;
         if self.task.is_some() {
+            return;
+        }
+        if snapshot.len() > MAX_PARSE_BYTES {
+            self.sync_window(spawner);
             return;
         }
         let (clock, budget) = (&self.clock, self.budget);
@@ -77,20 +111,51 @@ impl<T> SyntaxDriver<T> {
         }) {
             return;
         }
-        self.task = Some(spawner.spawn(self.syntax.parse_job()));
+        self.task = Some((spawner.spawn(self.syntax.parse_job()), None));
     }
 
-    /// Installs the result of the background parse. Sync again afterwards to
-    /// reparse the edits made while it ran.
-    pub fn finish(&mut self, parsed: Parsed) {
+    /// Starts a window parse for the latest viewport unless the window is up
+    /// to date and covers it, or was parsed for it already: a viewport wider
+    /// than a window is never covered. Nothing for a file under the limit.
+    fn sync_window<S: Spawner<Task = T>>(&mut self, spawner: &mut S) {
+        let visible = self.visible.clone();
+        let version = self.syntax.version();
+        let current = self.syntax.window().zip(
+            self.window
+                .as_ref()
+                .filter(|parsed| parsed.version == version),
+        );
+        if let Some((window, parsed)) = current
+            && (window.start <= visible.start && visible.end <= window.end
+                || parsed.visible == visible)
+        {
+            return;
+        }
+        if let Some(job) = self.syntax.window_job(visible.clone()) {
+            let request = WindowRequest { version, visible };
+            self.task = Some((spawner.spawn(job), Some(request)));
+        }
+    }
+
+    /// Installs the result of the background parse. For a file over the
+    /// limit, then starts one window parse for the latest viewport if it
+    /// needs one. Sync again afterwards to reparse the edits made while it
+    /// ran.
+    pub fn finish<S: Spawner<Task = T>>(&mut self, parsed: Parsed, spawner: &mut S) {
         if parsed.buffer_id() != self.syntax.buffer_id() {
             // From a cancelled parse of a previous buffer.
             return;
         }
-        self.task = None;
+        if let Some((_, Some(request))) = self.task.take() {
+            self.window = Some(request);
+        }
         self.syntax.finish(parsed);
+        self.sync_window(spawner);
     }
 }
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod window_tests;
