@@ -1,0 +1,64 @@
+# A crate manifest and editor config, used as a golden highlighting sample.
+
+[package]
+name = "golden-sample"
+version = "0.4.2"
+edition = "2024"
+description = """
+A multi-line description
+that spans several lines."""
+authors = ['Sample Author <author@example.com>']
+license = "MIT OR Apache-2.0"
+publish = false
+
+[features]
+default = ["std", "highlight"]
+std = []
+highlight = ["dep:tree-sitter"]
+
+[dependencies]
+tree-sitter = { version = "0.27", optional = true }
+serde = { version = "1", features = ["derive"], default-features = false }
+regex = "1.11"
+
+[dev-dependencies]
+proptest = "1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+opt-level = 3
+debug = false
+
+[profile.dev.package."*"]
+opt-level = 1
+
+[editor]
+tab-size = 4
+font-size = 13.5
+ruler = +80
+scroll-speed = -1.5e0
+hex-color = 0xff8800
+octal-mode = 0o755
+flags = 0b1010
+started = 2026-10-03T09:30:00Z
+birthday = 1979-05-27
+alarm = 07:32:00
+nan-check = nan
+huge = inf
+
+[editor.theme]
+"name with spaces" = 'Quiet Light'
+dotted.key.path = true
+inline = { a = 1, b = [1, 2, 3], c = { nested = "yes" } }
+
+[[workspace.members]]
+path = "crates/core"
+tests = ["unit", "golden"]
+
+[[workspace.members]]
+path = "crates/ui"
+tests = [
+  "unit",   # trailing comment
+  "visual",
+]

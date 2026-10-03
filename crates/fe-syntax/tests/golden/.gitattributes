@@ -1,0 +1,2 @@
+# Golden spans are byte offsets into the samples: keep them byte for byte.
+* -text

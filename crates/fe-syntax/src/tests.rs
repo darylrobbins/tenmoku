@@ -1,5 +1,7 @@
 use std::{cmp::Reverse, ops::Range, path::Path, time::Duration};
 
+mod golden;
+
 use fe_buffer::{Buffer, Origin};
 use proptest::{prelude::prop, prop_assert, prop_assert_eq, proptest};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};

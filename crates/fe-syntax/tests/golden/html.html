@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<!-- A settings page, used as a golden highlighting sample. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>fastedit &mdash; Settings</title>
+    <link rel="stylesheet" href="settings.css">
+    <style>
+      body { margin: 0; }
+    </style>
+  </head>
+  <body class="settings theme-light">
+    <header id="top">
+      <h1>Settings</h1>
+      <nav aria-label="Sections">
+        <a href="#editor">Editor</a> |
+        <a href="#files">Files</a> |
+        <a href="#keys" title='Key bindings'>Keys</a>
+      </nav>
+    </header>
+
+    <main>
+      <section id="editor">
+        <h2>Editor</h2>
+        <form action="/settings" method="post" novalidate>
+          <label for="font-size">Font size</label>
+          <input id="font-size" name="fontSize" type="number" min=8 max=48 value="13">
+
+          <label>
+            <input type="checkbox" name="softWrap" checked>
+            Soft wrap long lines
+          </label>
+
+          <select name="theme">
+            <option value="light" selected>Quiet Light</option>
+            <option value="dark">Midnight</option>
+          </select>
+
+          <textarea name="notes" rows="3">Free text &lt;not markup&gt;</textarea>
+          <button type="submit">Save</button>
+        </form>
+      </section>
+
+      <section id="files">
+        <h2>Files</h2>
+        <table>
+          <thead>
+            <tr><th>Pattern</th><th>Language</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>*.rs</code></td><td>Rust</td></tr>
+            <tr><td><code>Justfile</code></td><td>Make</td></tr>
+          </tbody>
+        </table>
+        <p>Files over <strong>8&nbsp;MB</strong> open without highlighting.<br>
+          See <em>Performance</em> for details.</p>
+      </section>
+    </main>
+
+    <footer>
+      <img src="logo.svg" alt="fastedit logo" width="24" height="24">
+      <small>&copy; 2026 Golden Sample</small>
+    </footer>
+    <script src="settings.js" defer></script>
+  </body>
+</html>

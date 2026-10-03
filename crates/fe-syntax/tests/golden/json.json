@@ -1,0 +1,56 @@
+{
+  "$schema": "https://example.com/fastedit/settings.schema.json",
+  "name": "golden sample settings",
+  "version": 3,
+  "editor": {
+    "fontFamily": "Berkeley Mono",
+    "fontSize": 13.5,
+    "lineHeight": 1.4,
+    "tabSize": 4,
+    "insertSpaces": true,
+    "softWrap": false,
+    "rulers": [80, 100, 120],
+    "cursor": {
+      "style": "bar",
+      "blink": true,
+      "blinkIntervalMs": 530
+    }
+  },
+  "theme": {
+    "name": "Quiet Light",
+    "overrides": {
+      "keyword": "#7a3e9d",
+      "string": "#448c27",
+      "comment": "#aaaaaa",
+      "number": "#9c5d27"
+    }
+  },
+  "files": {
+    "exclude": ["**/.git", "**/node_modules", "**/target"],
+    "associations": {
+      "*.jsonc": "json",
+      "Justfile": "make"
+    },
+    "maxParseBytes": 8388608,
+    "encoding": "utf-8",
+    "trimTrailingWhitespace": true,
+    "finalNewline": null
+  },
+  "keymap": [
+    { "keys": "cmd-p", "command": "palette.open" },
+    { "keys": "cmd-shift-[", "command": "fold" },
+    { "keys": "cmd-shift-]", "command": "unfold" },
+    { "keys": "alt-up", "command": "selection.expand", "when": "editorFocus" }
+  ],
+  "languages": {
+    "markdown": { "softWrap": true, "rulers": [] },
+    "python": { "tabSize": 4 },
+    "go": { "insertSpaces": false }
+  },
+  "experimental": {
+    "gpuTextAtlas": false,
+    "scrollInertia": -0.25,
+    "escapes": "tab\there, quote \" and unicode é",
+    "largeFileThreshold": 1e7
+  }
+}

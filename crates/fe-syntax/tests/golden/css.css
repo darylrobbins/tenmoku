@@ -1,0 +1,74 @@
+/* Editor chrome styles, used as a golden highlighting sample. */
+@charset "utf-8";
+@import url("reset.css") screen;
+
+:root {
+  --gutter-width: 4ch;
+  --accent: #3b82f6;
+  --accent-soft: rgb(59 130 246 / 0.15);
+  --font-mono: "Berkeley Mono", ui-monospace, monospace;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  font: 13px/1.4 var(--font-mono);
+}
+
+.editor {
+  display: grid;
+  grid-template-columns: var(--gutter-width) 1fr;
+  overflow: hidden;
+}
+
+.editor > .gutter {
+  color: hsl(220deg 10% 55%);
+  text-align: right;
+  padding-inline: 0.5em 1em;
+  user-select: none;
+}
+
+.editor .line.current,
+.editor .line:hover {
+  background-color: var(--accent-soft);
+}
+
+.cursor {
+  width: 2px;
+  background: var(--accent) !important;
+  animation: blink 1.06s steps(1) infinite;
+}
+
+#status-bar[data-mode="insert"] .mode {
+  color: white;
+  background: linear-gradient(90deg, #16a34a, #22c55e 80%);
+}
+
+a:not([href^="http"]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+@keyframes blink {
+  from { opacity: 1; }
+  50% { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-color-scheme: dark) and (min-width: 600px) {
+  :root {
+    --accent: #60a5fa;
+  }
+  .editor { transform: translateX(calc(100% - 12px)) scale(1.02); }
+}
+
+@supports (scrollbar-gutter: stable) {
+  .editor { scrollbar-gutter: stable both-edges; }
+}

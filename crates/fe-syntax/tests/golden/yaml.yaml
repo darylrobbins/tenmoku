@@ -1,0 +1,69 @@
+# A CI workflow, used as a golden highlighting sample.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      cases:
+        description: "Cases per property test"
+        default: '50000'
+        required: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  RUSTFLAGS: -D warnings
+
+defaults: &defaults
+  timeout-minutes: 30
+  continue-on-error: false
+
+jobs:
+  check:
+    <<: *defaults
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-24.04]
+        toolchain:
+          - stable
+          - 1.98.1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: rustup toolchain install ${{ matrix.toolchain }}
+      - name: Test
+        run: |
+          cargo test --workspace
+          cargo test -p fe-syntax --test golden
+      - name: Notes
+        run: >
+          echo "folded text
+          continues here"
+        if: ${{ always() }}
+
+  deny:
+    <<: *defaults
+    runs-on: ubuntu-latest
+    steps:
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: --all-features
+    retries: ~
+    cache: null
+    ratio: 0.75
+    enabled: yes
+    mask: 0o755
+    started: 2026-10-03
+---
+# A second document.
+? complex key
+: complex value
+list_of_maps:
+  - {name: a, value: 1}
+  - {name: b, value: 2}
