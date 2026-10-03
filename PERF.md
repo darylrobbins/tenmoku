@@ -396,6 +396,25 @@ A frame that doesn't scroll or edit reuses the last highlights, so it doesn't
 query at all: that's the Unscrolled column. Logs and CSV have no grammar and
 are never highlighted.
 
+**YAML over 32,768 lines** (T15, 2026-10-03). tree-sitter-yaml 0.7.2's
+external scanner keeps the current row in an `int16_t`. At line 32,769 it wraps
+to −32,768, so `has_nwl = cur_row > row` misses that newline, and the line gets
+error nodes. The same happens again every 65,536 lines after that. Any YAML
+was affected, not just lists: 32,768 lines of `- item N`, `- a` or `kN: N`
+parsed clean, and 32,769 didn't. A 100k-line list got an ERROR root, as did
+the largest list under `MAX_PARSE_BYTES` (607k items, 8 MB), so highlighting
+stopped past the first screen. The count is lines, not bytes or items: 20k
+items separated by blank lines (40k lines) failed too. Upstream:
+[tree-sitter-yaml#49](https://github.com/tree-sitter-grammars/tree-sitter-yaml/issues/49),
+fixed by the unmerged
+[PR #35](https://github.com/tree-sitter-grammars/tree-sitter-yaml/pull/35),
+which widens the row fields to `int32_t`. No release after 0.7.2 has the fix.
+The row is private scanner state, so nothing in `fe-syntax` could work around
+it. We now build 0.7.2 with #35 applied, from `vendor/tree-sitter-yaml/`
+through `[patch.crates-io]`; its README says when to drop it. With the patch,
+all the cases above parse clean, as does a mapping nested 200 deep, and
+`crates/fe-syntax/tests/yaml_long_list.rs` checks a 100k-item list.
+
 ### Tree memory
 
 Each bench prints its trees' memory, measured as the growth in malloc'd bytes

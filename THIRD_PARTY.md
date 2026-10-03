@@ -36,12 +36,17 @@ own repository except where noted.
 | bash | tree-sitter-bash | 0.25.1 | https://github.com/tree-sitter/tree-sitter-bash | MIT | `HIGHLIGHT_QUERY` |
 | html | tree-sitter-html | 0.23.2 | https://github.com/tree-sitter/tree-sitter-html | MIT | `HIGHLIGHTS_QUERY`; `INJECTIONS_QUERY` |
 | css | tree-sitter-css | 0.25.0 | https://github.com/tree-sitter/tree-sitter-css | MIT | `HIGHLIGHTS_QUERY` |
-| yaml | tree-sitter-yaml | 0.7.2 | https://github.com/tree-sitter-grammars/tree-sitter-yaml | MIT | `HIGHLIGHTS_QUERY` |
+| yaml | tree-sitter-yaml | 0.7.2, patched² | https://github.com/tree-sitter-grammars/tree-sitter-yaml | MIT | `HIGHLIGHTS_QUERY` |
 | markdown | tree-sitter-md | 0.5.3 | https://github.com/tree-sitter-grammars/tree-sitter-markdown | MIT | `HIGHLIGHT_QUERY_BLOCK`¹; `INJECTION_QUERY_BLOCK`. Inline grammar (`INLINE_LANGUAGE`, our `markdown_inline`): `HIGHLIGHT_QUERY_INLINE`¹; `INJECTION_QUERY_INLINE` |
 | java | tree-sitter-java | 0.23.5 | https://github.com/tree-sitter/tree-sitter-java | MIT | `HIGHLIGHTS_QUERY` |
 
 ¹ Each of these two files says it comes from nvim-treesitter (Apache-2.0, an
 allowed source). Ship the Apache-2.0 license text with them.
+
+² Vendored in `vendor/tree-sitter-yaml/` and used through `[patch.crates-io]`.
+It's 0.7.2 with upstream PR #35 (commits `fa76593` and `8025f83`) applied to
+`src/scanner.c`, which fixes YAML over 32,768 lines (issue #49). The licence and
+queries are unchanged from 0.7.2. The vendored README says when to drop it.
 
 How patterns take precedence follows tree-sitter-highlight 0.25 (MIT), which
 was read for the rule, not copied: see `earlier_patterns_win` in

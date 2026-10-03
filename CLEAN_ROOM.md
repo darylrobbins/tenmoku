@@ -27,6 +27,18 @@ When you copy code:
 2. Add a row to `THIRD_PARTY.md` with the source, commit and license.
 3. Apache-2.0 sources: keep their `NOTICE` text, if any, in our `NOTICE`.
 
+## Patched grammars
+
+A grammar is patched only with a person's approval. The patched crate is
+vendored under `vendor/<crate>/` and wired in through `[patch.crates-io]` in
+`Cargo.toml`. Its `README.md` names the upstream version, the change applied
+and when to drop the patch. Keep the upstream `LICENSE` and mark the row in
+`THIRD_PARTY.md` as patched.
+
+| Crate | License | Patch | Drop when |
+|---|---|---|---|
+| tree-sitter-yaml 0.7.2 | MIT | upstream PR #35, `src/scanner.c` only | a release fixes issue #49 |
+
 ## MPL-2.0
 
 Allowed only as an **unmodified dependency**, approved crate by crate in
