@@ -10,20 +10,24 @@ editor view (`fe-gpui`) are tested in layers. Each layer catches things the othe
 | Reference model | `fe-buffer/src/tests/ideal.rs` | Undo/redo across user and AI origins matches a slow, obviously correct model (characters are never removed, only hidden). Inserted characters are unique, so nothing can match by coincidence |
 | Invariants | `fe-buffer/src/tests/invariants.rs`, `fe-editor/src/tests/laws.rs` | Laws that hold for any input: anchors come home after undo, events never skip a version, movement round-trips, multi-cursor typing matches a string, random command streams keep the model well formed |
 | Key bindings | `fe-gpui/src/tests.rs` | Real keystrokes go through the real keymap into a focused editor in a headless GPUI window. One table row per binding, plus typing, input-method composition, clipboard and save. `bindings_are_all_tested` fails if a binding has no row |
-| Mutation testing | `cargo mutants` | The tests notice when the code is broken |
+
+Mutation testing (`cargo mutants -p <crate>`) is worth running by hand before a
+milestone, to find code the tests don't actually check. It isn't part of CI.
 
 ## Running
 
 ```zsh
-cargo test --workspace            # what CI runs on every push (~15 s)
-scripts/soak.sh                   # 50k cases per property, release (minutes)
-scripts/soak.sh 500000            # long soak
-cargo mutants -p fe-buffer -j 4   # mutation testing (~15 min per crate)
+cargo test --workspace            # what CI runs on every push
+scripts/soak.sh                   # 50k cases per property, release (a few minutes);
+                                  # run after changing undo/redo or anchor code
+cargo mutants -p fe-buffer -j 4   # by hand, before milestones
 cargo llvm-cov -p fe-buffer --summary-only
 ```
 
-`PROPTEST_CASES` sets the case count for every property test. CI's `soak`
-workflow runs the long soak and mutation testing nightly.
+`PROPTEST_CASES` sets the case count for every property test. Slow tests (the
+large-text rope tests and the refusal-rate check) are `#[ignore]`d, so plain
+`cargo test` skips them; `scripts/soak.sh` runs them. CI's `soak` workflow runs
+the script on demand.
 
 ## When a property test fails
 

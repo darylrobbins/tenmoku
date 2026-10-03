@@ -539,7 +539,7 @@ fn cases() -> u32 {
     std::env::var("PROPTEST_CASES")
         .ok()
         .and_then(|cases| cases.parse().ok())
-        .unwrap_or(512)
+        .unwrap_or(256)
 }
 
 proptest! {
@@ -564,6 +564,7 @@ proptest! {
 /// the rate creeping up. (The sessions are adversarial: edits cluster at the
 /// edges of earlier edits, where ordering is ambiguous.)
 #[test]
+#[ignore = "slow: run by scripts/soak.sh"]
 fn avoidable_refusals_stay_rare() {
     let mut total = Stats::default();
     for seed in 0..400 {

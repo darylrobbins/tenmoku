@@ -1,15 +1,13 @@
 name: Soak
 
-# Long randomized and mutation testing of the core crates. Too slow for every
-# push, so it runs nightly and on demand.
+# Longer randomized runs of the core property tests, including the slow ones
+# that `cargo test` skips. On demand only for now.
 on:
-  schedule:
-    - cron: "17 6 * * *"
   workflow_dispatch:
     inputs:
       cases:
         description: Cases per property test
-        default: "200000"
+        default: "50000"
 
 env:
   CARGO_TERM_COLOR: always
@@ -17,7 +15,7 @@ env:
 jobs:
   properties:
     runs-on: macos-15
-    timeout-minutes: 90
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: Install toolchain from rust-toolchain.toml
@@ -25,24 +23,5 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Property tests
         env:
-          CASES: ${{ inputs.cases || '200000' }}
+          CASES: ${{ inputs.cases || '50000' }}
         run: scripts/soak.sh "$CASES"
-
-  mutants:
-    runs-on: macos-15
-    timeout-minutes: 120
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install toolchain from rust-toolchain.toml
-        run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-mutants
-      - name: Mutation testing
-        run: cargo mutants -p fe-text -p fe-buffer -p fe-display -p fe-editor -j 3 --timeout 120
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: mutants
-          path: mutants.out

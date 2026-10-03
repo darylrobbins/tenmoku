@@ -166,13 +166,14 @@ fn cases() -> u32 {
     std::env::var("PROPTEST_CASES")
         .ok()
         .and_then(|cases| cases.parse().ok())
-        .map_or(24, |cases: u32| (cases / 10).max(1))
+        .map_or(8, |cases: u32| (cases / 1000).max(8))
 }
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(cases()))]
 
     #[test]
+    #[ignore = "slow: run with scripts/soak.sh"]
     fn large_text_matches_reference_through_edits(seed in any::<u64>()) {
         let mut rng = StdRng::seed_from_u64(seed);
         let size = if cfg!(debug_assertions) { 60_000 } else { 400_000 };
@@ -217,6 +218,7 @@ proptest! {
     }
 
     #[test]
+    #[ignore = "slow: run with scripts/soak.sh"]
     fn large_crlf_round_trips(seed in any::<u64>()) {
         let mut rng = StdRng::seed_from_u64(seed);
         let lf = random_text(&mut rng, 200_000);

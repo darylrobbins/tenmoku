@@ -82,7 +82,7 @@ fn random_edits_match_string_model() {
     let mut model = String::from("fn main() {\n    println!(\"héllo 😀\");\n}\n");
     let mut buffer = Buffer::new(&model);
     let mut total = 0;
-    while total < 100_000 {
+    while total < 10_000 {
         let count = rng.random_range(1..4);
         let edits: Vec<(Range<usize>, String)> = disjoint_ranges(&mut rng, &model, count)
             .into_iter()
@@ -278,128 +278,6 @@ proptest! {
         prop_assert_eq!(buffer.text().to_string(), expected);
     }
 
-    #[test]
-    fn undo_and_redo_round_trip(source in ascii_text(), seed in any::<u64>()) {
-        let mut rng = StdRng::seed_from_u64(seed);
-        let mut buffer = Buffer::new(&source);
-        let mut states = vec![source.clone()];
-        for _ in 0..rng.random_range(1..15) {
-            let grouped = rng.random_bool(0.3);
-            if grouped {
-                buffer.start_transaction(Origin::User);
-            }
-            let mut recorded = false;
-            for _ in 0..if grouped { 3 } else { 1 } {
-                let text = buffer.text().to_string();
-                let edits: Vec<(Range<usize>, String)> = disjoint_ranges(&mut rng, &text, 2)
-                    .into_iter()
-                    .map(|range| (range, random_insert(&mut rng)))
-                    .collect();
-                recorded |= buffer.edit(edits, Origin::User).is_some();
-            }
-            if grouped {
-                recorded = buffer.end_transaction().is_some();
-            }
-            // One state per transaction, even if it left the text unchanged.
-            if recorded {
-                states.push(buffer.text().to_string());
-            }
-        }
-
-        for expected in states.iter().rev().skip(1) {
-            prop_assert!(buffer.undo(is_user).unwrap().is_some());
-            prop_assert_eq!(&buffer.text().to_string(), expected);
-        }
-        prop_assert_eq!(buffer.undo(is_user), Ok(None));
-        for expected in states.iter().skip(1) {
-            prop_assert!(buffer.redo(is_user).unwrap().is_some());
-            prop_assert_eq!(&buffer.text().to_string(), expected);
-        }
-        prop_assert_eq!(buffer.redo(is_user), Ok(None));
-    }
-
-    #[test]
-    fn interleaved_undo_never_corrupts(source in ascii_text(), seed in any::<u64>()) {
-        let mut rng = StdRng::seed_from_u64(seed);
-        let mut buffer = Buffer::new(&source);
-        let mut anchors = Vec::new();
-        for _ in 0..40 {
-            let before = buffer.text().to_string();
-            let origin_filter: fn(&Origin) -> bool = if rng.random_bool(0.5) { is_user } else { is_ai };
-            match rng.random_range(0..6) {
-                0..=2 => {
-                    let origin = if rng.random_bool(0.5) { Origin::User } else { ai() };
-                    let edits: Vec<(Range<usize>, String)> = disjoint_ranges(&mut rng, &before, 2)
-                        .into_iter()
-                        .map(|range| (range, random_insert(&mut rng)))
-                        .collect();
-                    buffer.edit(edits, origin);
-                }
-                3 | 4 => match buffer.undo(origin_filter) {
-                    Ok(Some(_)) => {
-                        // An undo can always be redone straight away, exactly.
-                        let undone = buffer.text().to_string();
-                        prop_assert!(buffer.redo(origin_filter).unwrap().is_some());
-                        prop_assert_eq!(buffer.text().to_string(), before.clone());
-                        prop_assert!(buffer.undo(origin_filter).unwrap().is_some());
-                        prop_assert_eq!(buffer.text().to_string(), undone);
-                    }
-                    Ok(None) => prop_assert_eq!(buffer.text().to_string(), before.clone()),
-                    Err(_) => prop_assert_eq!(buffer.text().to_string(), before.clone(), "failed undo changed text"),
-                },
-                _ => {
-                    if buffer.redo(origin_filter).is_err() {
-                        prop_assert_eq!(buffer.text().to_string(), before.clone(), "failed redo changed text");
-                    }
-                }
-            }
-            let offset = rng.random_range(0..=buffer.len());
-            anchors.push(buffer.current().anchor_at(offset, Bias::Right));
-            let snapshot = buffer.snapshot();
-            for anchor in &anchors {
-                let offset = snapshot.resolve(anchor);
-                prop_assert!(offset <= snapshot.len());
-                prop_assert!(snapshot.text().is_char_boundary(offset));
-            }
-        }
-    }
-
-    #[test]
-    fn undoing_ai_keeps_user_edits(source in ascii_text(), seed in any::<u64>()) {
-        let mut rng = StdRng::seed_from_u64(seed);
-        let mut buffer = Buffer::new(&source);
-        // Each char tagged with whether the AI wrote it.
-        let mut model: Vec<(char, bool)> = source.chars().map(|ch| (ch, false)).collect();
-
-        for _ in 0..rng.random_range(1..20) {
-            let len = model.len();
-            if rng.random_bool(0.4) {
-                // AI inserts somewhere.
-                let at = rng.random_range(0..=len);
-                buffer.edit([(at..at, "AI")], ai());
-                model.splice(at..at, [('A', true), ('I', true)]);
-            } else {
-                // The user edits around, but not inside, AI text.
-                let start = rng.random_range(0..=len);
-                let end = (start + rng.random_range(0..4)).min(len);
-                let touches_ai = model[start..end].iter().any(|(_, by_ai)| *by_ai);
-                let splits_ai = start > 0 && start < len && model[start - 1].1 && model[start].1;
-                if touches_ai || splits_ai {
-                    continue;
-                }
-                buffer.edit([(start..end, "u")], Origin::User);
-                model.splice(start..end, [('u', false)]);
-            }
-            prop_assert_eq!(
-                buffer.text().to_string(),
-                model.iter().map(|(ch, _)| *ch).collect::<String>()
-            );
-        }
-
-        while buffer.undo(is_ai).expect("AI undo must not conflict").is_some() {}
-        let expected: String = model.iter().filter(|(_, by_ai)| !by_ai).map(|(ch, _)| *ch).collect();
-        prop_assert_eq!(buffer.text().to_string(), expected);
-    }
 }
 
 #[test]

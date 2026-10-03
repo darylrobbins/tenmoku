@@ -211,7 +211,10 @@ proptest! {
     fn cut_then_paste_restores(text in text_strategy(), a in any::<prop::sample::Index>(), b in any::<prop::sample::Index>()) {
         let points = rest_points(&text);
         let (a, b) = (points[a.index(points.len())], points[b.index(points.len())]);
-        prop_assume!(a != b);
+        if a == b {
+            // Nothing to cut; skipping beats rejecting (short texts hit this often).
+            return Ok(());
+        }
         let range = a.min(b)..a.max(b);
         let mut model = EditorModel::new(Buffer::new(&text), None);
         model.select_range(range.clone(), false);
