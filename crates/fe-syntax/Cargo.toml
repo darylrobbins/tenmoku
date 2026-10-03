@@ -63,7 +63,12 @@ tree-sitter-typescript = { workspace = true, optional = true }
 tree-sitter-yaml = { workspace = true, optional = true }
 
 [dev-dependencies]
+criterion.workspace = true
 rand.workspace = true
+
+[[bench]]
+name = "syntax"
+harness = false
 
 [lints]
 workspace = true
