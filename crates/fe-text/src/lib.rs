@@ -263,6 +263,17 @@ impl Text {
         self.rope.slice(range).chunks()
     }
 
+    /// The bytes from `offset` to the end of the chunk holding it, borrowed
+    /// from the rope. Empty at or past the end of the text. For parsers that
+    /// pull text a piece at a time.
+    pub fn bytes_at(&self, offset: usize) -> &[u8] {
+        if offset >= self.len() {
+            return &[];
+        }
+        let (chunk, start) = self.rope.chunk(offset);
+        &chunk.as_bytes()[offset - start..]
+    }
+
     pub fn slice_to_string(&self, range: Range<usize>) -> String {
         let mut text = String::with_capacity(range.len());
         for chunk in self.chunks_in_range(range) {

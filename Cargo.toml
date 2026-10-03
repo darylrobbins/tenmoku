@@ -17,6 +17,7 @@ fe-buffer = { path = "crates/fe-buffer" }
 fe-display = { path = "crates/fe-display" }
 fe-editor = { path = "crates/fe-editor" }
 fe-gpui = { path = "crates/fe-gpui" }
+fe-syntax = { path = "crates/fe-syntax" }
 
 # GPUI comes from the `gpui-pre-*` crates.io snapshots of Zed (Apache-2.0).
 # 0.3.7 is zed@1a28cff. Every snapshot crate must be bumped together; to move to
@@ -36,6 +37,25 @@ unicode-segmentation = "1"
 proptest = "1"
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 rand = "0.9"
+
+# Tree-sitter and grammars (all MIT; each grammar's license and queries audited
+# when added, see THIRD_PARTY.md).
+tree-sitter = "0.27"
+tree-sitter-bash = "0.25"
+tree-sitter-c = "0.24"
+tree-sitter-cpp = "0.23"
+tree-sitter-css = "0.25"
+tree-sitter-go = "0.25"
+tree-sitter-html = "0.23"
+tree-sitter-java = "0.23"
+tree-sitter-javascript = "0.25"
+tree-sitter-json = "0.24"
+tree-sitter-md = "0.5"
+tree-sitter-python = "0.25"
+tree-sitter-rust = "0.24"
+tree-sitter-toml-ng = "0.7"
+tree-sitter-typescript = "0.23"
+tree-sitter-yaml = "0.7"
 
 ropey = { version = "=2.0.0-beta.1", features = ["metric_chars", "metric_lines_lf", "metric_utf16"] }
 
@@ -57,6 +77,7 @@ gpui-pre = { opt-level = 3 }
 gpui-pre-platform = { opt-level = 3 }
 gpui-pre-sum-tree = { opt-level = 3 }
 ropey = { opt-level = 3 }
+tree-sitter = { opt-level = 3 }
 
 [profile.release]
 lto = "thin"

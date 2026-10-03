@@ -388,3 +388,59 @@ fn save_writes_the_file(cx: &mut TestAppContext) {
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "one!\r\n");
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[gpui::test]
+fn rows_are_coloured_by_highlight(cx: &mut TestAppContext) {
+    let theme = cx.update(|cx| EditorTheme::default_dark(cx));
+    let span = |range, capture| fe_syntax::HighlightSpan {
+        range,
+        highlight: fe_syntax::Highlight::from_capture(capture).unwrap(),
+    };
+    let color = |capture| theme.syntax_color(fe_syntax::Highlight::from_capture(capture).unwrap());
+    // The row `\tif "é"` starts at offset 100; a comment runs into it.
+    let row = fe_display::ExpandedRow::new("\tif \"é\"", 4);
+    let spans = [
+        span(50..101, "comment"),
+        span(101..103, "keyword"),
+        span(104..108, "string"),
+    ];
+    let runs = crate::element::row_runs(&row, 100, &spans, &gpui::font("Menlo"), &theme);
+    let runs: Vec<_> = runs.iter().map(|run| (run.len, Some(run.color))).collect();
+    assert_eq!(
+        runs,
+        [
+            (4, color("comment")),
+            (2, color("keyword")),
+            (1, Some(theme.foreground)),
+            (4, color("string")),
+        ]
+    );
+}
+
+/// The first parse of a large file runs in the background; later edits keep
+/// the tree current.
+#[gpui::test]
+fn highlighting_follows_edits(cx: &mut TestAppContext) {
+    cx.update(init);
+    let text = "fn f() {}\n".repeat(20_000);
+    let (view, cx) = cx.add_window_view(move |_, cx| {
+        let model = EditorModel::new(Buffer::new(&text), Some("main.rs".into()));
+        EditorView::new(model, EditorTheme::default_dark(cx), cx)
+    });
+    cx.update(|window, cx| window.focus(&view.focus_handle(cx), cx));
+    let first_keyword = |cx: &mut VisualTestContext| {
+        cx.run_until_parked();
+        view.update(cx, |view, _| {
+            let syntax = view.syntax.as_ref().expect("language loaded");
+            assert!(!syntax.needs_parse());
+            let spans = syntax.highlights(0..40);
+            spans
+                .into_iter()
+                .find(|span| span.highlight.name() == "keyword")
+                .map(|span| span.range)
+        })
+    };
+    assert_eq!(first_keyword(cx), Some(0..2));
+    cx.simulate_input("// ");
+    assert_eq!(first_keyword(cx), Some(13..15));
+}

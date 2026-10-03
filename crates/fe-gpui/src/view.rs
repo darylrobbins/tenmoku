@@ -1,15 +1,20 @@
-use std::ops::Range;
+use std::{ops::Range, time::Duration};
 
 use fe_buffer::{Anchor, Bias};
 use fe_editor::{EditorModel, Movement};
+use fe_syntax::Syntax;
 use gpui::{
-    App, Bounds, ClipboardItem, Context, CursorStyle, EntityInputHandler, FocusHandle, Focusable,
-    InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentElement as _, Pixels, Point, Render, ScrollWheelEvent, Styled as _,
-    UTF16Selection, Window, div, point, px, size,
+    App, AppContext as _, Bounds, ClipboardItem, Context, CursorStyle, EntityInputHandler,
+    FocusHandle, Focusable, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement as _, Pixels, Point, Render, ScrollWheelEvent,
+    Styled as _, Task, UTF16Selection, Window, div, point, px, size,
 };
 
 use crate::{element::EditorElement, *};
+
+/// How long a frame may spend reparsing before the parse moves to a
+/// background thread. Small edits to files of 10k lines reparse within it.
+const SYNC_PARSE_BUDGET: Duration = Duration::from_millis(1);
 
 /// An editor for one buffer.
 pub struct EditorView {
@@ -25,6 +30,10 @@ pub struct EditorView {
     drag: Option<Drag>,
     /// Text being composed by an input method.
     marked: Option<Range<Anchor>>,
+    /// The buffer's syntax tree, once its language is loaded.
+    pub(crate) syntax: Option<Syntax>,
+    /// A language load or parse running in the background.
+    syntax_task: Option<Task<()>>,
 }
 
 /// What a mouse drag extends: characters, or whole words or rows starting
@@ -37,8 +46,9 @@ enum Drag {
 }
 
 impl EditorView {
+    /// An editor for `model`, highlighted according to its file's language.
     pub fn new(model: EditorModel, theme: EditorTheme, cx: &mut Context<Self>) -> Self {
-        Self {
+        let mut view = Self {
             model,
             theme,
             focus: cx.focus_handle(),
@@ -47,7 +57,33 @@ impl EditorView {
             layout: None,
             drag: None,
             marked: None,
+            syntax: None,
+            syntax_task: None,
+        };
+        let language = view
+            .model
+            .path()
+            .and_then(fe_syntax::language_name_for_path);
+        if let Some(name) = language {
+            if let Some(language) = fe_syntax::loaded_language(name) {
+                view.syntax = Some(Syntax::new(language, view.model.snapshot()));
+            } else {
+                // Compiling a highlight query can take a few frames.
+                view.syntax_task = Some(cx.spawn(async move |this, cx| {
+                    let language = cx
+                        .background_spawn(async move { fe_syntax::language_by_name(name) })
+                        .await;
+                    this.update(cx, |view, cx| {
+                        view.syntax_task = None;
+                        view.syntax =
+                            language.map(|language| Syntax::new(language, view.model.snapshot()));
+                        cx.notify();
+                    })
+                    .ok();
+                }));
+            }
         }
+        view
     }
 
     pub fn model(&self) -> &EditorModel {
@@ -228,6 +264,32 @@ impl EditorView {
         text.utf16_to_offset(range.start)..text.utf16_to_offset(range.end)
     }
 
+    /// Brings the syntax tree up to date with the text: within this frame if
+    /// the reparse is quick, otherwise on a background thread while the stale
+    /// tree keeps highlighting.
+    fn sync_syntax(&mut self, cx: &mut Context<Self>) {
+        let Some(syntax) = &mut self.syntax else {
+            return;
+        };
+        syntax.edit(self.model.snapshot());
+        if self.syntax_task.is_some() || syntax.parse_within(SYNC_PARSE_BUDGET) {
+            return;
+        }
+        let job = syntax.parse_job();
+        self.syntax_task = Some(cx.spawn(async move |this, cx| {
+            let parsed = cx.background_spawn(async move { job.run() }).await;
+            this.update(cx, |view, cx| {
+                view.syntax_task = None;
+                if let Some(syntax) = &mut view.syntax {
+                    syntax.finish(parsed);
+                }
+                // Repaint, and reparse whatever changed meanwhile.
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
     fn marked_range(&self) -> Option<Range<usize>> {
         self.marked
             .as_ref()
@@ -281,6 +343,7 @@ movement_actions! {
 
 impl Render for EditorView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_syntax(cx);
         let div = div()
             .id("editor")
             .key_context(KEY_CONTEXT)

@@ -1,12 +1,15 @@
+use std::ops::Range;
+
 use fe_buffer::Bias;
 use fe_display::ExpandedRow;
+use fe_syntax::{HighlightSpan, Syntax};
 use gpui::{
-    App, Bounds, ContentMask, Element, ElementId, ElementInputHandler, Entity, GlobalElementId,
-    InspectorElementId, IntoElement, LayoutId, Pixels, Point, ShapedLine, SharedString, Style,
-    TextAlign, TextRun, Window, fill, point, px, relative, size,
+    App, Bounds, ContentMask, Element, ElementId, ElementInputHandler, Entity, Font,
+    GlobalElementId, InspectorElementId, IntoElement, LayoutId, Pixels, Point, ShapedLine,
+    SharedString, Style, TextAlign, TextRun, Window, fill, point, px, relative, size,
 };
 
-use crate::EditorView;
+use crate::{EditorTheme, EditorView};
 
 /// Longest prefix of a row that is shaped and painted. Rows beyond this
 /// (minified files, data dumps) are cut off rather than stalling a frame.
@@ -158,25 +161,32 @@ impl Element for EditorElement {
         let end_row = (((scroll.y + height) / line_height).ceil() as u32).min(row_count);
         let row_top = |row: u32| bounds.top() + line_height * row as f32 - scroll.y;
 
-        let mut rows = Vec::with_capacity((end_row - first_row) as usize);
-        for row in first_row..end_row {
-            let start = text.row_start(row);
-            let len = (text.row_len(row) as usize).min(MAX_SHAPED_ROW_BYTES);
-            let end = text.clip_offset(start + len, Bias::Left);
-            let expanded = ExpandedRow::new(&text.slice_to_string(start..end), tab_size);
+        let row_ranges: Vec<Range<usize>> = (first_row..end_row)
+            .map(|row| {
+                let start = text.row_start(row);
+                let len = (text.row_len(row) as usize).min(MAX_SHAPED_ROW_BYTES);
+                start..text.clip_offset(start + len, Bias::Left)
+            })
+            .collect();
+        // A tree for another version (never expected) would misplace colours.
+        let syntax = view
+            .syntax
+            .as_ref()
+            .filter(|syntax| syntax.version() == model.snapshot().version());
+        let highlights = visible_highlights(syntax, &row_ranges);
+
+        let mut rows = Vec::with_capacity(row_ranges.len());
+        for (row, range) in (first_row..).zip(row_ranges) {
+            let expanded = ExpandedRow::new(&text.slice_to_string(range.clone()), tab_size);
             let shown: SharedString = expanded.text().to_string().into();
-            let runs = if shown.is_empty() {
-                Vec::new()
-            } else {
-                vec![TextRun {
-                    len: shown.len(),
-                    font: font.clone(),
-                    color: theme.foreground,
-                    background_color: None,
-                    underline: None,
-                    strikethrough: None,
-                }]
-            };
+            let first_span = highlights.partition_point(|span| span.range.end <= range.start);
+            let runs = row_runs(
+                &expanded,
+                range.start,
+                &highlights[first_span..],
+                &font,
+                &theme,
+            );
             let line = text_system.shape_line(shown, font_size, &runs, None);
             rows.push(RowLayout {
                 row,
@@ -361,4 +371,73 @@ impl Element for EditorElement {
 
         self.view.update(cx, |view, _| view.layout = Some(layout));
     }
+}
+
+/// Highlights for the visible rows. Consecutive rows are queried together; a
+/// row cut short ends the query, so the hidden rest of a long line isn't
+/// highlighted.
+fn visible_highlights(syntax: Option<&Syntax>, rows: &[Range<usize>]) -> Vec<HighlightSpan> {
+    let Some(syntax) = syntax else {
+        return Vec::new();
+    };
+    let mut ranges: Vec<Range<usize>> = Vec::new();
+    for row in rows {
+        match ranges.last_mut() {
+            Some(last) if last.end + 1 == row.start => last.end = row.end,
+            _ => ranges.push(row.clone()),
+        }
+    }
+    ranges
+        .into_iter()
+        .flat_map(|range| syntax.highlights(range))
+        .collect()
+}
+
+/// Text runs covering a row's displayed text: highlighted spans in their
+/// theme colours and everything else in the foreground colour. `spans` are
+/// sorted and start with the first one ending after `row_start`.
+pub(crate) fn row_runs(
+    expanded: &ExpandedRow,
+    row_start: usize,
+    spans: &[HighlightSpan],
+    font: &Font,
+    theme: &EditorTheme,
+) -> Vec<TextRun> {
+    let shown = expanded.text().len();
+    let display = |offset: usize| {
+        expanded
+            .to_display(offset.saturating_sub(row_start))
+            .min(shown)
+    };
+    let run = |len: usize, color| TextRun {
+        len,
+        font: font.clone(),
+        color,
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    let mut runs = Vec::new();
+    let mut at = 0;
+    for span in spans {
+        if at == shown {
+            break;
+        }
+        let Some(color) = theme.syntax_color(span.highlight) else {
+            continue;
+        };
+        let (start, end) = (display(span.range.start).max(at), display(span.range.end));
+        if end <= start {
+            continue;
+        }
+        if start > at {
+            runs.push(run(start - at, theme.foreground));
+        }
+        runs.push(run(end - start, color));
+        at = end;
+    }
+    if at < shown {
+        runs.push(run(shown - at, theme.foreground));
+    }
+    runs
 }

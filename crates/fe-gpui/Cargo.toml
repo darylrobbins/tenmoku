@@ -11,6 +11,7 @@ publish.workspace = true
 fe-buffer.workspace = true
 fe-display.workspace = true
 fe-editor.workspace = true
+fe-syntax.workspace = true
 gpui.workspace = true
 
 [dev-dependencies]
