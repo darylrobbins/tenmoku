@@ -1,7 +1,10 @@
 //! Maps buffer text to what's displayed. For now this expands tabs within a
-//! row; soft wrap, folds, inlays and blocks come later. Must never depend on GPUI.
+//! row; soft wrap, folds, inlays and blocks come later. [`layout`] lays out a
+//! frame of an editor from that. Must never depend on GPUI.
 //!
 //! Columns are byte offsets within a row, in buffer or display coordinates.
+
+pub mod layout;
 
 pub use fe_text::Bias;
 

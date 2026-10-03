@@ -352,7 +352,9 @@ fn input_method_utf16_offsets_with_emoji(cx: &mut TestAppContext) {
 fn page_moves_by_the_visible_rows(cx: &mut TestAppContext) {
     let text: String = (0..300).map(|row| format!("row {row}\n")).collect();
     let (view, cx) = editor(cx, &format!("|{text}"));
-    let visible = view.update(cx, |view, _| view.layout.as_ref().unwrap().visible_rows());
+    let visible = view.update(cx, |view, _| {
+        view.layout.as_ref().unwrap().frame.visible_rows()
+    });
     assert!(visible > 3);
     cx.simulate_keystrokes("pagedown");
     let row = view.update(cx, |view, _| {
@@ -387,34 +389,6 @@ fn save_writes_the_file(cx: &mut TestAppContext) {
     assert!(!view.update(cx, |view, _| view.model().is_dirty()));
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "one!\r\n");
     std::fs::remove_dir_all(&dir).unwrap();
-}
-
-#[gpui::test]
-fn rows_are_coloured_by_highlight(cx: &mut TestAppContext) {
-    let theme = cx.update(|cx| EditorTheme::default_dark(cx));
-    let span = |range, capture| fe_syntax::HighlightSpan {
-        range,
-        highlight: fe_syntax::Highlight::from_capture(capture).unwrap(),
-    };
-    let color = |capture| theme.syntax_color(fe_syntax::Highlight::from_capture(capture).unwrap());
-    // The row `\tif "é"` starts at offset 100; a comment runs into it.
-    let row = fe_display::ExpandedRow::new("\tif \"é\"", 4);
-    let spans = [
-        span(50..101, "comment"),
-        span(101..103, "keyword"),
-        span(104..108, "string"),
-    ];
-    let runs = crate::element::row_runs(&row, 100, &spans, &gpui::font("Menlo"), &theme);
-    let runs: Vec<_> = runs.iter().map(|run| (run.len, Some(run.color))).collect();
-    assert_eq!(
-        runs,
-        [
-            (4, color("comment")),
-            (2, color("keyword")),
-            (1, Some(theme.foreground)),
-            (4, color("string")),
-        ]
-    );
 }
 
 /// The first parse of a large file runs in the background; later edits keep

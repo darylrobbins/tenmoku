@@ -1649,6 +1649,7 @@ dependencies = [
 name = "fe-display"
 version = "0.1.0"
 dependencies = [
+ "fe-buffer",
  "fe-text",
  "proptest",
 ]

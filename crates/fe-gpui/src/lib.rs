@@ -1,8 +1,9 @@
 //! GPUI front end for the headless editor in `fe-editor`.
 //!
 //! [`EditorView`] owns an [`fe_editor::EditorModel`] and turns input into
-//! model commands; [`element::EditorElement`] shapes only the visible rows and
-//! paints them, coloured by `fe-syntax`.
+//! model commands; [`element::EditorElement`] lays out the visible rows with
+//! [`fe_display::layout`], shaping them with GPUI and colouring them by
+//! `fe-syntax`, then paints the result.
 
 mod element;
 mod view;

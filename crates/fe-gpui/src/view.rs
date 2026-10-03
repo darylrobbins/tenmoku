@@ -1,13 +1,13 @@
 use std::{ops::Range, time::Duration};
 
-use fe_buffer::{Anchor, Bias};
+use fe_buffer::Anchor;
 use fe_editor::{EditorModel, Movement};
 use fe_syntax::Syntax;
 use gpui::{
     App, AppContext as _, Bounds, ClipboardItem, Context, CursorStyle, EntityInputHandler,
     FocusHandle, Focusable, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, ParentElement as _, Pixels, Point, Render, ScrollWheelEvent,
-    Styled as _, Task, UTF16Selection, Window, div, point, px, size,
+    Styled as _, Task, UTF16Selection, Window, div, px,
 };
 
 use crate::{element::EditorElement, *};
@@ -106,36 +106,18 @@ impl EditorView {
     }
 
     fn page_rows(&self) -> u32 {
-        self.layout
-            .as_ref()
-            .map_or(20, |layout| layout.visible_rows().saturating_sub(2).max(1))
+        self.layout.as_ref().map_or(20, |layout| {
+            layout.frame.visible_rows().saturating_sub(2).max(1)
+        })
     }
 
-    /// The buffer offset under a window position, from the last frame.
+    /// The buffer offset under a window position, in the last frame.
     fn offset_for_position(&self, position: Point<Pixels>) -> usize {
-        let Some(layout) = &self.layout else {
-            return 0;
-        };
-        let text = self.model.text();
-        let doc_y = position.y - layout.bounds.top() + self.scroll.y;
-        let row = (doc_y / layout.line_height).floor().max(0.) as u32;
-        if row >= text.row_count() {
-            return text.len();
-        }
-        // Rows outside the last frame (dragging past an edge) clamp to it.
-        let Some(row_layout) = layout.row(row).or_else(|| {
-            if row < layout.first_row {
-                layout.rows.first()
-            } else {
-                layout.rows.last()
-            }
-        }) else {
-            return 0;
-        };
-        let x = position.x - layout.text_left + self.scroll.x;
-        let display = row_layout.line.closest_index_for_x(x);
-        let column = row_layout.expanded.to_buffer(display, Bias::Left);
-        text.row_start(row_layout.row) + column.min(text.row_len(row_layout.row) as usize)
+        self.layout.as_ref().map_or(0, |layout| {
+            layout
+                .frame
+                .offset_at(self.model.text(), layout.to_frame(position))
+        })
     }
 
     fn on_mouse_down(
@@ -206,7 +188,7 @@ impl EditorView {
         let line_height = self
             .layout
             .as_ref()
-            .map_or(px(20.), |layout| layout.line_height);
+            .map_or(px(20.), |layout| px(layout.frame.line_height));
         let delta = event.delta.pixel_delta(line_height);
         self.scroll.x = (self.scroll.x - delta.x).max(px(0.));
         self.scroll.y = (self.scroll.y - delta.y).max(px(0.));
@@ -484,15 +466,8 @@ impl EntityInputHandler for EditorView {
     ) -> Option<Bounds<Pixels>> {
         let range = self.range_from_utf16(&range_utf16);
         let layout = self.layout.as_ref()?;
-        let text = self.model.text();
-        let start = text.offset_to_point(range.start);
-        let row = layout.row(start.row)?;
-        let x = row.x_for_column(start.column as usize);
-        let origin = point(
-            layout.text_left + x - self.scroll.x,
-            layout.bounds.top() + layout.line_height * start.row as f32 - self.scroll.y,
-        );
-        Some(Bounds::new(origin, size(px(2.), layout.line_height)))
+        let caret = layout.frame.caret_bounds(self.model.text(), range.start)?;
+        Some(layout.bounds(caret))
     }
 
     fn character_index_for_point(
