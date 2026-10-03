@@ -132,6 +132,11 @@ pub(crate) struct Capture {
 /// `clip`, following tree-sitter's highlighting rules: a node nested in
 /// another wins over it, and when several patterns capture the same node the
 /// one with the highest precedence wins.
+///
+/// Byte by byte, that's: of the captures covering the byte, the one starting
+/// last wins, then the shortest, then the highest precedence, then the
+/// earliest in `captures`. Captures from one tree only nest, but this also
+/// holds for ones that partly overlap, as an edited tree's can.
 pub(crate) fn flatten(mut captures: Vec<Capture>, clip: Range<usize>) -> Vec<HighlightSpan> {
     captures.sort_by(|a, b| {
         a.range
@@ -158,7 +163,8 @@ pub(crate) fn flatten(mut captures: Vec<Capture>, clip: Range<usize>) -> Vec<Hig
         }
     };
 
-    // The captures enclosing `pos`, innermost last, with their ends.
+    // The captures started so far, latest last, with their ends. Ones that
+    // have ended are popped once nothing later is left above them.
     let mut stack: Vec<(usize, Highlight)> = Vec::new();
     let mut pos = clip.start;
     for capture in captures {
@@ -173,11 +179,7 @@ pub(crate) fn flatten(mut captures: Vec<Capture>, clip: Range<usize>) -> Vec<Hig
             push(pos..capture.range.start, highlight);
         }
         pos = pos.max(capture.range.start);
-        // A capture straddling its parent's end is cut off there.
-        let end = stack
-            .last()
-            .map_or(capture.range.end, |&(end, _)| end.min(capture.range.end));
-        stack.push((end, capture.highlight));
+        stack.push((capture.range.end, capture.highlight));
     }
     while let Some((end, highlight)) = stack.pop() {
         push(pos..end, highlight);

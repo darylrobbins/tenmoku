@@ -1608,6 +1608,7 @@ dependencies = [
  "gpui-pre",
  "gpui-pre-platform",
  "libc",
+ "log",
 ]
 
 [[package]]
@@ -1679,6 +1680,7 @@ dependencies = [
  "fe-editor",
  "fe-syntax",
  "gpui-pre",
+ "log",
 ]
 
 [[package]]
@@ -1687,6 +1689,8 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "fe-buffer",
+ "log",
+ "proptest",
  "rand 0.9.5",
  "tree-sitter",
  "tree-sitter-bash",

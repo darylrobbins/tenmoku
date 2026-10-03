@@ -9,7 +9,7 @@ The core crates (`fe-text`, `fe-buffer`, `fe-display`, `fe-editor`,
 | String differential | `fe-text/src/tests/large.rs`, `fe-buffer` `random_edits_match_string_model` | Every query and edit matches a plain `String`. The `fe-text` texts reach 400 KB so the rope's tree, chunk boundaries and line indexes are exercised |
 | Reference model | `fe-buffer/src/tests/ideal.rs` | Undo/redo across user and AI origins matches a slow, obviously correct model (characters are never removed, only hidden). Inserted characters are unique, so nothing can match by coincidence |
 | Invariants | `fe-buffer/src/tests/invariants.rs`, `fe-editor/src/tests/laws.rs` | Laws that hold for any input: anchors come home after undo, events never skip a version, movement round-trips, multi-cursor typing matches a string, random command streams keep the model well formed |
-| Syntax | `fe-syntax/src/tests.rs` | One snippet per language with spans it must highlight; random batched edits, with parses finishing late, leave the same tree and highlights as a parse from scratch; a visible range highlights exactly like the same slice of the whole file |
+| Syntax | `fe-syntax/src/tests.rs` | One snippet per language with spans it must highlight; random batched edits, with parses finishing late, leave the same tree and highlights as a parse from scratch; a visible range highlights exactly like the same slice of the whole file; random nested and overlapping captures flatten to the spans a byte-by-byte model paints; a parse or query that panics (injected with `FAULT`) leaves plain text |
 | Display map | `fe-display/src/{lib,wrap_map,fold_map}.rs`, `display_map/tests.rs` | One property per layer (tabs, soft wrap, folds), then all three under random edits: every buffer offset maps to the display row showing it (or a fold's header) and back, rows tile the text, and a map kept up to date edit by edit matches one built from scratch |
 | Frame layout | `fe-display/src/layout/tests.rs` | Scrolling, autoscroll, visible rows, selection and cursor rectangles, line numbers, fold markers, style runs and hit testing, with soft-wrapped and folded rows, laid out against a fake monospace measurer (tabs, wide chars), with no window |
 | Key bindings | `fe-gpui/src/tests.rs` | Real keystrokes go through the real keymap into a focused editor in a headless GPUI window. One table row per binding, plus typing, input-method composition, clipboard and save. `bindings_are_all_tested` fails if a binding has no row |
@@ -27,6 +27,7 @@ are only caught by `fe-gpui`'s tests; add `--test-workspace true` to count them.
 cargo test --workspace            # what CI runs on every push
 scripts/soak.sh                   # 50k cases per property, release (a few minutes);
                                   # run after changing undo/redo or anchor code
+scripts/check-syntax-features.sh  # fe-syntax with no languages, then each alone (CI runs it)
 cargo mutants -p fe-buffer -j 4   # by hand, before milestones
 cargo llvm-cov -p fe-buffer --summary-only
 ```

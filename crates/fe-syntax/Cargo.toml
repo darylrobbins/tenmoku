@@ -45,6 +45,7 @@ java = ["dep:tree-sitter-java"]
 
 [dependencies]
 fe-buffer.workspace = true
+log.workspace = true
 tree-sitter.workspace = true
 tree-sitter-bash = { workspace = true, optional = true }
 tree-sitter-c = { workspace = true, optional = true }
@@ -64,6 +65,7 @@ tree-sitter-yaml = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion.workspace = true
+proptest.workspace = true
 rand.workspace = true
 
 [[bench]]

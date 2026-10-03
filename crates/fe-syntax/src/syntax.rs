@@ -1,13 +1,15 @@
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     collections::VecDeque,
     ops::{ControlFlow, Range},
+    panic::{AssertUnwindSafe, catch_unwind, resume_unwind},
     time::{Duration, Instant},
 };
 
 use fe_buffer::{BufferSnapshot, Text, Version};
 use tree_sitter::{
-    InputEdit, Node, ParseOptions, Parser, QueryCursor, StreamingIterator as _, Tree,
+    InputEdit, Node, ParseOptions, Parser, QueryCursor, QueryCursorOptions, StreamingIterator as _,
+    Tree,
 };
 
 use crate::{
@@ -32,6 +34,16 @@ pub const MAX_PARSE_BYTES: usize = 8 * 1024 * 1024;
 /// cursor started at the child itself doesn't.
 const FLAT_CHILDREN: u32 = 1024;
 
+/// How long one [`Syntax::highlights`] call may query for. Sixty rows take
+/// about 0.1 ms, so only a pathological tree or query reaches this; its
+/// highlights stop where the time ran out. Tests have no limit, so a busy
+/// machine can't make them flaky.
+const QUERY_BUDGET: Duration = if cfg!(test) {
+    Duration::MAX
+} else {
+    Duration::from_millis(2)
+};
+
 /// How many recently highlighted ranges [`Syntax`] remembers. A frame queries
 /// one range per run of consecutive visible rows.
 const CACHED_RANGES: usize = 8;
@@ -42,6 +54,10 @@ const CACHED_RANGES: usize = 8;
 /// without parsing; the stale tree still highlights correctly outside the
 /// edited text. Reparsing happens either on the calling thread within a time
 /// budget ([`Syntax::parse_within`]) or anywhere via a [`ParseJob`].
+///
+/// A panic while parsing or highlighting is caught and logged, and the buffer
+/// shows as plain text from then on, since trying again would most likely
+/// panic again.
 pub struct Syntax {
     language: &'static Language,
     snapshot: BufferSnapshot,
@@ -52,6 +68,8 @@ pub struct Syntax {
     /// Recent [`Syntax::highlights`] results for the current tree, newest
     /// last, so frames that neither scroll nor edit don't query again.
     cache: RefCell<VecDeque<(Range<usize>, Vec<HighlightSpan>)>>,
+    /// Set when parsing or highlighting panicked.
+    failed: Cell<bool>,
 }
 
 impl Syntax {
@@ -62,6 +80,7 @@ impl Syntax {
             tree: None,
             parsed: None,
             cache: RefCell::default(),
+            failed: Cell::new(false),
         }
     }
 
@@ -83,8 +102,10 @@ impl Syntax {
         if snapshot.id() != self.snapshot.id()
             || snapshot.version() < self.version()
             || snapshot.len() > MAX_PARSE_BYTES
+            || self.failed.get()
         {
-            // A different buffer, history we can't map, or too big to parse.
+            // A different buffer, history we can't map, too big to parse, or
+            // given up on.
             self.tree = None;
             self.parsed = None;
         } else if let Some(tree) = &mut self.tree
@@ -97,11 +118,18 @@ impl Syntax {
 
     /// Whether the tree is missing or hasn't been reparsed since the last edit.
     pub fn needs_parse(&self) -> bool {
-        self.snapshot.len() <= MAX_PARSE_BYTES && self.parsed != Some(self.version())
+        self.snapshot.len() <= MAX_PARSE_BYTES
+            && self.parsed != Some(self.version())
+            && !self.failed.get()
+    }
+
+    /// Whether parsing or highlighting panicked, leaving the buffer plain text.
+    pub fn failed(&self) -> bool {
+        self.failed.get()
     }
 
     /// Reparses on this thread unless that takes longer than `budget`.
-    /// Returns whether the tree is now up to date.
+    /// Returns whether the tree no longer needs parsing.
     pub fn parse_within(&mut self, budget: Duration) -> bool {
         if !self.needs_parse() {
             return true;
@@ -129,16 +157,21 @@ impl Syntax {
     /// snapshot is still newer than the tree's last parse, so it's edited
     /// forward and used; [`Syntax::needs_parse`] stays true.
     pub fn finish(&mut self, parsed: Parsed) {
+        let Some(mut tree) = parsed.tree else {
+            self.failed.set(true);
+            self.tree = None;
+            self.cache.get_mut().clear();
+            return;
+        };
         let usable = parsed.snapshot.id() == self.snapshot.id()
             && parsed.snapshot.version() <= self.version()
             && self.snapshot.len() <= MAX_PARSE_BYTES
             && self
                 .parsed
                 .is_none_or(|version| version < parsed.snapshot.version());
-        if !usable {
+        if !usable || self.failed.get() {
             return;
         }
-        let mut tree = parsed.tree;
         if let Some(edit) = input_edit(
             parsed.snapshot.text(),
             &self.snapshot,
@@ -159,8 +192,11 @@ impl Syntax {
     /// non-overlapping. Only the part of the tree touching `range` is queried,
     /// so pass the visible text, not the whole file. Asking for the same range
     /// again before the tree changes doesn't query again.
+    ///
+    /// A query that runs out of [`QUERY_BUDGET`] returns the highlights found
+    /// so far, and they're cached like any others.
     pub fn highlights(&self, range: Range<usize>) -> Vec<HighlightSpan> {
-        let Some(tree) = &self.tree else {
+        let Some(tree) = self.tree.as_ref().filter(|_| !self.failed.get()) else {
             return Vec::new();
         };
         let text = self.snapshot.text();
@@ -170,7 +206,22 @@ impl Syntax {
             return spans.clone();
         }
 
-        let spans = self.query(tree, range.clone(), self.language.local_patterns);
+        let query = || {
+            self.query(
+                tree,
+                range.clone(),
+                self.language.local_patterns,
+                QUERY_BUDGET,
+            )
+        };
+        let Ok(spans) = catch_unwind(AssertUnwindSafe(query)) else {
+            log::error!(
+                "{}: highlighting panicked; showing plain text",
+                self.language.name()
+            );
+            self.failed.set(true);
+            return Vec::new();
+        };
         if cache.len() == CACHED_RANGES {
             cache.pop_front();
         }
@@ -178,15 +229,19 @@ impl Syntax {
         spans
     }
 
-    /// Queries `tree` for the highlights in `range`. With `split`, nodes with
-    /// many children are queried a child at a time; that's only correct when
-    /// no pattern spans several siblings.
+    /// Queries `tree` for the highlights in `range`, stopping after `budget`.
+    /// With `split`, nodes with many children are queried a child at a time;
+    /// that's only correct when no pattern spans several siblings.
     pub(crate) fn query(
         &self,
         tree: &Tree,
         range: Range<usize>,
         split: bool,
+        budget: Duration,
     ) -> Vec<HighlightSpan> {
+        fault_point("query");
+        // `None` for a budget too long to be a time.
+        let deadline = Instant::now().checked_add(budget);
         let root = tree.root_node();
         let split = if split && !range.is_empty() {
             flat_paths(root, &range)
@@ -196,7 +251,13 @@ impl Syntax {
         let mut cursor = QueryCursor::new();
         cursor.set_byte_range(range.clone());
         let mut captures = Vec::new();
-        self.query_node(&mut cursor, root, &range, &split, &mut captures);
+        self.query_node(&mut cursor, root, &range, &split, deadline, &mut captures);
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            log::debug!(
+                "{}: highlighting {range:?} took over {budget:?}; showing what was found",
+                self.language.name()
+            );
+        }
         flatten(captures, range)
     }
 
@@ -209,6 +270,7 @@ impl Syntax {
         node: Node,
         range: &Range<usize>,
         split: &[Node],
+        deadline: Option<Instant>,
         captures: &mut Vec<Capture>,
     ) {
         let split_here = split.contains(&node);
@@ -216,7 +278,15 @@ impl Syntax {
         let text = self.snapshot.text();
         // Predicates like `#match?` read node text straight from the rope.
         let source = |node: Node| chunks(text, node.byte_range());
-        let mut matches = cursor.captures(&self.language.query, node, source);
+        let mut progress = |_: &_| {
+            if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                ControlFlow::Break(())
+            } else {
+                ControlFlow::Continue(())
+            }
+        };
+        let options = QueryCursorOptions::new().progress_callback(&mut progress);
+        let mut matches = cursor.captures_with_options(&self.language.query, node, source, options);
         while let Some((found, ix)) = matches.next() {
             let capture = found.captures()[*ix];
             if let Some(highlight) = self.language.highlights[capture.index as usize] {
@@ -244,7 +314,7 @@ impl Syntax {
             if child.start_byte() >= range.end {
                 break;
             }
-            self.query_node(cursor, child, range, split, captures);
+            self.query_node(cursor, child, range, split, deadline, captures);
             if !children.goto_next_sibling() {
                 break;
             }
@@ -294,17 +364,38 @@ pub struct ParseJob {
 
 /// The result of a [`ParseJob`].
 pub struct Parsed {
-    tree: Tree,
+    /// `None` if parsing panicked.
+    tree: Option<Tree>,
     snapshot: BufferSnapshot,
 }
 
 impl ParseJob {
+    /// Parses to the end. Doesn't panic: if parsing does, the result makes
+    /// [`Syntax::finish`] give up on highlighting.
     pub fn run(self) -> Parsed {
         self.parse(None)
             .expect("a parse without a time limit completes")
     }
 
+    /// `None` if `budget` runs out first.
     fn parse(self, budget: Option<Duration>) -> Option<Parsed> {
+        let tree = match catch_unwind(AssertUnwindSafe(|| self.parse_tree(budget))) {
+            Ok(tree) => Some(tree?),
+            Err(_) => {
+                log::error!(
+                    "{}: parsing panicked; showing plain text",
+                    self.language.name()
+                );
+                None
+            }
+        };
+        Some(Parsed {
+            tree,
+            snapshot: self.snapshot,
+        })
+    }
+
+    fn parse_tree(&self, budget: Option<Duration>) -> Option<Tree> {
         let mut parser = Parser::new();
         parser
             .set_language(&self.language.grammar)
@@ -315,17 +406,48 @@ impl ParseJob {
             Some(budget) if started.elapsed() > budget => ControlFlow::Break(()),
             _ => ControlFlow::Continue(()),
         };
+        // Tree-sitter calls `read` from C, which a panic can't unwind
+        // through (it aborts), so it's caught there and resumed after.
+        let mut panic = None;
+        let mut read = |offset: usize, _: tree_sitter::Point| {
+            let bytes = catch_unwind(AssertUnwindSafe(|| {
+                fault_point("read");
+                text.bytes_at(offset)
+            }));
+            bytes.unwrap_or_else(|payload| {
+                panic.get_or_insert(payload);
+                &[]
+            })
+        };
         let tree = parser.parse_with_options(
-            &mut |offset, _| text.bytes_at(offset),
+            &mut read,
             self.old_tree.as_ref(),
             Some(ParseOptions::new().progress_callback(&mut progress)),
-        )?;
-        Some(Parsed {
-            tree,
-            snapshot: self.snapshot,
-        })
+        );
+        if let Some(payload) = panic {
+            resume_unwind(payload);
+        }
+        tree
     }
 }
+
+#[cfg(test)]
+thread_local! {
+    /// Where the next parse or query on this thread panics, for tests.
+    pub(crate) static FAULT: Cell<Option<&'static str>> = const { Cell::new(None) };
+}
+
+/// Panics if a test asked for a fault at `point`.
+#[cfg(test)]
+fn fault_point(point: &'static str) {
+    if FAULT.get() == Some(point) {
+        FAULT.set(None);
+        panic!("fault injected at {point}");
+    }
+}
+
+#[cfg(not(test))]
+fn fault_point(_: &'static str) {}
 
 /// One edit covering every change from version `from` (whose text is `old`)
 /// to `new`. Tree-sitter needs each edit's row and column as well as its

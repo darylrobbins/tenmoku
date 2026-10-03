@@ -527,6 +527,12 @@ pub fn row_runs<S: Clone>(
     if at < shown {
         runs.push(run(shown - at, text));
     }
+    debug_assert_eq!(
+        runs.iter().map(|run| run.len).sum::<usize>(),
+        shown,
+        "runs must cover {:?}",
+        expanded.text()
+    );
     runs
 }
 

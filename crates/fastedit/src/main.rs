@@ -80,14 +80,51 @@ fn load(path: Option<PathBuf>) -> EditorModel {
             EditorModel::new(Buffer::new(""), Some(path))
         }
         Err(error) => {
-            eprintln!("fastedit: cannot open {}: {error}", path.display());
+            log::error!("cannot open {}: {error}", path.display());
             std::process::exit(1);
         }
     }
 }
 
+/// Logs to stderr: warnings and errors, and fastedit's own info. `RUST_LOG`
+/// sets one level for everything instead (`debug`, `trace`, …).
+struct StderrLogger {
+    level: Option<log::LevelFilter>,
+}
+
+impl log::Log for StderrLogger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        let target = metadata.target();
+        let ours = target.starts_with("fastedit") || target.starts_with("fe_");
+        let level = self.level.unwrap_or(if ours {
+            log::LevelFilter::Info
+        } else {
+            log::LevelFilter::Warn
+        });
+        metadata.level() <= level
+    }
+
+    fn log(&self, record: &log::Record) {
+        if self.enabled(record.metadata()) {
+            eprintln!("[{} {}] {}", record.level(), record.target(), record.args());
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+fn init_logging() {
+    let level = std::env::var("RUST_LOG")
+        .ok()
+        .and_then(|level| level.parse().ok());
+    if log::set_logger(Box::leak(Box::new(StderrLogger { level }))).is_ok() {
+        log::set_max_level(level.unwrap_or(log::LevelFilter::Info));
+    }
+}
+
 fn main() {
     let started = std::time::Instant::now();
+    init_logging();
     let mut args: Vec<_> = std::env::args_os().skip(1).collect();
     let perf = args.first().is_some_and(|arg| arg == "--perf");
     if perf {
@@ -95,8 +132,8 @@ fn main() {
     }
     let path = args.into_iter().next().map(PathBuf::from);
     let model = load(path);
-    eprintln!(
-        "fastedit: loaded {} bytes, {} rows in {:.1?}",
+    log::info!(
+        "loaded {} bytes, {} rows in {:.1?}",
         model.text().len(),
         model.text().row_count(),
         started.elapsed()
