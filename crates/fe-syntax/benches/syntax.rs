@@ -8,7 +8,8 @@
 //!   highlighting it would cost.
 //!
 //! A reparse follows one keystroke inside a word somewhere random. A
-//! highlight is 60 rows from a random row, about one screen.
+//! highlight is 60 rows from a random row, about one screen. Each tree's
+//! memory against its source is printed too (macOS only).
 //!
 //! Run with `cargo bench -p fe-syntax`; `cargo bench -p fe-syntax -- 10k`
 //! runs only the small cases.
@@ -22,6 +23,8 @@ use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_ma
 use fe_buffer::{Buffer, Origin};
 use fe_syntax::{MAX_PARSE_BYTES, Syntax, language_by_name};
 use rand::{Rng, SeedableRng, rngs::StdRng};
+
+mod support;
 
 const VISIBLE_ROWS: u32 = 60;
 
@@ -154,9 +157,10 @@ fn benches(c: &mut Criterion) {
 
         // Reparse and highlight where the editor highlights.
         let limit = MAX_PARSE_BYTES - 1024;
+        let at_limit = format!("{}MB", MAX_PARSE_BYTES / (1024 * 1024));
         for (size, text) in [
             ("10k lines", corpus(10_000, usize::MAX)),
-            ("16MB", corpus(usize::MAX, limit)),
+            (at_limit.as_str(), corpus(usize::MAX, limit)),
         ] {
             let mut buffer = Buffer::new(&text);
             let rows = buffer.text().row_count();
@@ -166,7 +170,10 @@ fn benches(c: &mut Criterion) {
             group.bench_function(BenchmarkId::new("parse", size), |b| {
                 b.iter(|| syntax.parse_job().run())
             });
+            let before = support::allocated();
             syntax.finish(syntax.parse_job().run());
+            let tree = support::allocated().saturating_sub(before);
+            support::tree_memory(&format!("{id} {size}"), text.len(), tree);
 
             group.bench_function(BenchmarkId::new("highlight 60 rows", size), |b| {
                 let text = buffer.text().clone();

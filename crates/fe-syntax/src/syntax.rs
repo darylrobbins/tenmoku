@@ -1,19 +1,40 @@
 use std::{
+    cell::RefCell,
+    collections::VecDeque,
     ops::{ControlFlow, Range},
     time::{Duration, Instant},
 };
 
 use fe_buffer::{BufferSnapshot, Text, Version};
-use tree_sitter::{InputEdit, ParseOptions, Parser, QueryCursor, StreamingIterator as _, Tree};
+use tree_sitter::{
+    InputEdit, Node, ParseOptions, Parser, QueryCursor, StreamingIterator as _, Tree,
+};
 
 use crate::{
     HighlightSpan, Language,
     highlight::{Capture, flatten},
 };
 
-/// Files larger than this are shown without highlighting: their trees would
-/// cost several times the file's size in memory.
-pub const MAX_PARSE_BYTES: usize = 16 * 1024 * 1024;
+/// Files larger than this are shown without highlighting. A tree costs about
+/// 30× its source in memory for JSON, 35–40× for Rust and 70× for Markdown,
+/// and up to 100× for the densest text, such as a JSON array of single digits
+/// (the benches print it). At 8 MB a code file's tree stays near 300 MB, and
+/// the worst under 800 MB.
+pub const MAX_PARSE_BYTES: usize = 8 * 1024 * 1024;
+
+/// Nodes with more children than this are highlighted a child at a time.
+///
+/// Tree-sitter keeps a node's repeated children in a tree of hidden nodes
+/// that is only partly balanced: in a JSON array of a million numbers, the
+/// early elements sit about a thousand hidden levels deep. A query cursor
+/// started above such a node walks up through those levels at every child it
+/// visits, so one screen near the top of the array costs about 0.4 ms. A
+/// cursor started at the child itself doesn't.
+const FLAT_CHILDREN: u32 = 1024;
+
+/// How many recently highlighted ranges [`Syntax`] remembers. A frame queries
+/// one range per run of consecutive visible rows.
+const CACHED_RANGES: usize = 8;
 
 /// A buffer's syntax tree, kept up to date incrementally.
 ///
@@ -28,6 +49,9 @@ pub struct Syntax {
     tree: Option<Tree>,
     /// The version `tree` was last parsed at.
     parsed: Option<Version>,
+    /// Recent [`Syntax::highlights`] results for the current tree, newest
+    /// last, so frames that neither scroll nor edit don't query again.
+    cache: RefCell<VecDeque<(Range<usize>, Vec<HighlightSpan>)>>,
 }
 
 impl Syntax {
@@ -37,6 +61,7 @@ impl Syntax {
             snapshot: snapshot.clone(),
             tree: None,
             parsed: None,
+            cache: RefCell::default(),
         }
     }
 
@@ -52,6 +77,9 @@ impl Syntax {
     /// Applies the edits made since the last call to the tree, so it lines up
     /// with `snapshot`. Cheap: nothing is reparsed.
     pub fn edit(&mut self, snapshot: &BufferSnapshot) {
+        if snapshot.id() != self.snapshot.id() || snapshot.version() != self.version() {
+            self.cache.get_mut().clear();
+        }
         if snapshot.id() != self.snapshot.id()
             || snapshot.version() < self.version()
             || snapshot.len() > MAX_PARSE_BYTES
@@ -120,6 +148,7 @@ impl Syntax {
         }
         self.tree = Some(tree);
         self.parsed = Some(parsed.snapshot.version());
+        self.cache.get_mut().clear();
     }
 
     pub fn tree(&self) -> Option<&Tree> {
@@ -128,20 +157,66 @@ impl Syntax {
 
     /// Highlights within `range` of the current snapshot, sorted and
     /// non-overlapping. Only the part of the tree touching `range` is queried,
-    /// so pass the visible text, not the whole file.
+    /// so pass the visible text, not the whole file. Asking for the same range
+    /// again before the tree changes doesn't query again.
     pub fn highlights(&self, range: Range<usize>) -> Vec<HighlightSpan> {
         let Some(tree) = &self.tree else {
             return Vec::new();
         };
         let text = self.snapshot.text();
         let range = range.start.min(text.len())..range.end.min(text.len());
-        let query = &self.language.query;
+        let mut cache = self.cache.borrow_mut();
+        if let Some((_, spans)) = cache.iter().find(|(cached, _)| *cached == range) {
+            return spans.clone();
+        }
+
+        let spans = self.query(tree, range.clone(), self.language.local_patterns);
+        if cache.len() == CACHED_RANGES {
+            cache.pop_front();
+        }
+        cache.push_back((range, spans.clone()));
+        spans
+    }
+
+    /// Queries `tree` for the highlights in `range`. With `split`, nodes with
+    /// many children are queried a child at a time; that's only correct when
+    /// no pattern spans several siblings.
+    pub(crate) fn query(
+        &self,
+        tree: &Tree,
+        range: Range<usize>,
+        split: bool,
+    ) -> Vec<HighlightSpan> {
+        let root = tree.root_node();
+        let split = if split && !range.is_empty() {
+            flat_paths(root, &range)
+        } else {
+            Vec::new()
+        };
         let mut cursor = QueryCursor::new();
         cursor.set_byte_range(range.clone());
-        // Predicates like `#match?` read node text straight from the rope.
-        let source = |node: tree_sitter::Node| chunks(text, node.byte_range());
-        let mut matches = cursor.captures(query, tree.root_node(), source);
         let mut captures = Vec::new();
+        self.query_node(&mut cursor, root, &range, &split, &mut captures);
+        flatten(captures, range)
+    }
+
+    /// Adds the captures of the matches that start at `node` or below it.
+    /// Nodes in `split` are queried only for matches starting at them, then
+    /// their children are queried one by one.
+    fn query_node(
+        &self,
+        cursor: &mut QueryCursor,
+        node: Node,
+        range: &Range<usize>,
+        split: &[Node],
+        captures: &mut Vec<Capture>,
+    ) {
+        let split_here = split.contains(&node);
+        cursor.set_max_start_depth(split_here.then_some(0));
+        let text = self.snapshot.text();
+        // Predicates like `#match?` read node text straight from the rope.
+        let source = |node: Node| chunks(text, node.byte_range());
+        let mut matches = cursor.captures(&self.language.query, node, source);
         while let Some((found, ix)) = matches.next() {
             let capture = found.captures()[*ix];
             if let Some(highlight) = self.language.highlights[capture.index as usize] {
@@ -157,8 +232,48 @@ impl Syntax {
                 });
             }
         }
-        flatten(captures, range)
+        if !split_here {
+            return;
+        }
+        let mut children = node.walk();
+        if children.goto_first_child_for_byte(range.start).is_none() {
+            return;
+        }
+        loop {
+            let child = children.node();
+            if child.start_byte() >= range.end {
+                break;
+            }
+            self.query_node(cursor, child, range, split, captures);
+            if !children.goto_next_sibling() {
+                break;
+            }
+        }
     }
+}
+
+/// The nodes to query a child at a time for `range`: each node with more than
+/// [`FLAT_CHILDREN`] children on the way down to either end of the range, and
+/// the nodes above it. A flat node that lies wholly inside the range isn't
+/// split; its children are all visible anyway.
+pub(crate) fn flat_paths<'tree>(root: Node<'tree>, range: &Range<usize>) -> Vec<Node<'tree>> {
+    let mut split = Vec::new();
+    for offset in [range.start, range.end - 1] {
+        let mut cursor = root.walk();
+        // The nodes on the way down since the last flat one.
+        let mut path = Vec::new();
+        loop {
+            let node = cursor.node();
+            path.push(node);
+            if node.child_count() > FLAT_CHILDREN {
+                split.append(&mut path);
+            }
+            if cursor.goto_first_child_for_byte(offset).is_none() {
+                break;
+            }
+        }
+    }
+    split
 }
 
 fn chunks(text: &Text, range: Range<usize>) -> impl Iterator<Item = &[u8]> {
