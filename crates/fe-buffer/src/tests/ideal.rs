@@ -535,15 +535,10 @@ fn run_session(seed: u64, single_origin: bool) -> Result<Stats, TestCaseError> {
     }
 }
 
-fn cases() -> u32 {
-    std::env::var("PROPTEST_CASES")
-        .ok()
-        .and_then(|cases| cases.parse().ok())
-        .unwrap_or(256)
-}
-
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(cases()))]
+    // `run_session` minimises failures itself; shrinking the seed would just
+    // run (and minimise) unrelated sessions.
+    #![proptest_config(ProptestConfig { max_shrink_iters: 0, ..ProptestConfig::default() })]
 
     /// With one origin, undo and redo must always succeed and match.
     #[test]

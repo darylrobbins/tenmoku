@@ -3,7 +3,10 @@
 //! exercised. Every query is checked against a plain `String` with
 //! precomputed indexes.
 
-use proptest::prelude::*;
+use proptest::{
+    prelude::*,
+    test_runner::{TestCaseResult, TestRunner},
+};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 
 use crate::*;
@@ -12,23 +15,23 @@ use crate::*;
 struct Reference {
     text: String,
     row_starts: Vec<usize>,
-    /// UTF-16 length of `text[..ix]` at every char boundary `ix`.
-    utf16_at: std::collections::HashMap<usize, usize>,
+    /// UTF-16 length of `text[..ix]`, indexed by byte; valid at char boundaries.
+    utf16_at: Vec<usize>,
 }
 
 impl Reference {
     fn new(text: String) -> Self {
         let mut row_starts = vec![0];
-        let mut utf16_at = std::collections::HashMap::with_capacity(text.len() + 1);
+        let mut utf16_at = Vec::with_capacity(text.len() + 1);
         let mut utf16 = 0;
         for (ix, ch) in text.char_indices() {
-            utf16_at.insert(ix, utf16);
+            utf16_at.resize(ix + ch.len_utf8(), utf16);
             utf16 += ch.len_utf16();
             if ch == '\n' {
                 row_starts.push(ix + 1);
             }
         }
-        utf16_at.insert(text.len(), utf16);
+        utf16_at.push(utf16);
         Self {
             text,
             row_starts,
@@ -52,7 +55,7 @@ impl Reference {
         let row_start = self.row_starts[point.row as usize];
         PointUtf16::new(
             point.row,
-            (self.utf16_at[&offset] - self.utf16_at[&row_start]) as u32,
+            (self.utf16_at[offset] - self.utf16_at[row_start]) as u32,
         )
     }
 
@@ -97,7 +100,7 @@ fn check_all(text: &Text, reference: &Reference, rng: &mut impl Rng) -> Result<(
     let source = &reference.text;
     prop_assert_eq!(text.len(), source.len());
     prop_assert_eq!(text.is_empty(), source.is_empty());
-    prop_assert_eq!(text.len_utf16(), reference.utf16_at[&source.len()]);
+    prop_assert_eq!(text.len_utf16(), reference.utf16_at[source.len()]);
     prop_assert_eq!(text.row_count() as usize, reference.row_starts.len());
     prop_assert_eq!(text.max_point(), reference.point(source.len()));
 
@@ -117,7 +120,7 @@ fn check_all(text: &Text, reference: &Reference, rng: &mut impl Rng) -> Result<(
         let point_utf16 = reference.point_utf16(offset);
         prop_assert_eq!(text.offset_to_point_utf16(offset), point_utf16);
         prop_assert_eq!(text.point_utf16_to_offset(point_utf16), offset);
-        let utf16 = reference.utf16_at[&offset];
+        let utf16 = reference.utf16_at[offset];
         prop_assert_eq!(text.offset_to_utf16(offset), utf16);
         prop_assert_eq!(text.utf16_to_offset(utf16), offset);
         prop_assert_eq!(text.char_at(offset), source[offset..].chars().next());
@@ -162,77 +165,98 @@ fn check_all(text: &Text, reference: &Reference, rng: &mut impl Rng) -> Result<(
     Ok(())
 }
 
-fn cases() -> u32 {
-    std::env::var("PROPTEST_CASES")
+/// Runs `test` on random seeds: `PROPTEST_CASES / 100` of them (at least 8),
+/// as each case edits a text of up to 400 KB. The runner is driven by hand
+/// because `proptest!` lets `PROPTEST_CASES` override a per-test case count.
+/// Shrinking is off: a smaller seed is just an unrelated case.
+fn for_random_seeds(test: impl Fn(u64) -> TestCaseResult) {
+    let cases = std::env::var("PROPTEST_CASES")
         .ok()
         .and_then(|cases| cases.parse().ok())
-        .map_or(8, |cases: u32| (cases / 1000).max(8))
+        .map_or(8, |cases: u32| (cases / 100).max(8));
+    let config = ProptestConfig {
+        cases,
+        max_shrink_iters: 0,
+        failure_persistence: None,
+        ..ProptestConfig::default()
+    };
+    if let Err(error) = TestRunner::new(config).run(&any::<u64>(), test) {
+        panic!("{error}");
+    }
 }
 
-proptest! {
-    #![proptest_config(ProptestConfig::with_cases(cases()))]
+#[test]
+fn large_text_matches_reference_through_edits() {
+    for_random_seeds(edit_session);
+}
 
-    #[test]
-    #[ignore = "slow: run with scripts/soak.sh"]
-    fn large_text_matches_reference_through_edits(seed in any::<u64>()) {
-        let mut rng = StdRng::seed_from_u64(seed);
-        let size = if cfg!(debug_assertions) { 60_000 } else { 400_000 };
-        let initial = random_text(&mut rng, size);
-        let mut text = Text::new(&initial);
-        let mut reference = Reference::new(initial);
+#[test]
+fn large_crlf_round_trips() {
+    for_random_seeds(crlf_round_trip);
+}
+
+fn edit_session(seed: u64) -> TestCaseResult {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let size = if cfg!(debug_assertions) {
+        60_000
+    } else {
+        400_000
+    };
+    let initial = random_text(&mut rng, size);
+    let mut text = Text::new(&initial);
+    let mut reference = Reference::new(initial);
+    check_all(&text, &reference, &mut rng)?;
+
+    for _ in 0..30 {
+        let a = reference.boundary(&mut rng);
+        let b = reference.boundary(&mut rng);
+        let range = a.min(b)..a.max(b);
+        // Mostly small edits; sometimes huge deletions or insertions.
+        let insert = match rng.random_range(0..10) {
+            0 => random_text(&mut rng, 50_000),
+            1 => String::new(),
+            _ => random_text(&mut rng, 40),
+        };
+        let range = if rng.random_bool(0.7) {
+            // Keep most deletions short so the text doesn't collapse.
+            range.start..reference.text.len().min(range.start + (range.len() % 200))
+        } else {
+            range
+        };
+        let mut end = range.end;
+        while !reference.text.is_char_boundary(end) {
+            end -= 1;
+        }
+        let range = range.start..end.max(range.start);
+        text.replace(range.clone(), &insert);
+        let mut source = std::mem::take(&mut reference.text);
+        source.replace_range(range, &insert);
+        reference = Reference::new(source);
         check_all(&text, &reference, &mut rng)?;
-
-        for _ in 0..30 {
-            let a = reference.boundary(&mut rng);
-            let b = reference.boundary(&mut rng);
-            let range = a.min(b)..a.max(b);
-            // Mostly small edits; sometimes huge deletions or insertions.
-            let insert = match rng.random_range(0..10) {
-                0 => random_text(&mut rng, 50_000),
-                1 => String::new(),
-                _ => random_text(&mut rng, 40),
-            };
-            let range = if rng.random_bool(0.7) {
-                // Keep most deletions short so the text doesn't collapse.
-                range.start..reference.text.len().min(range.start + (range.len() % 200))
-            } else {
-                range
-            };
-            let mut end = range.end;
-            while !reference.text.is_char_boundary(end) {
-                end -= 1;
-            }
-            let range = range.start..end.max(range.start);
-            text.replace(range.clone(), &insert);
-            let mut source = std::mem::take(&mut reference.text);
-            source.replace_range(range, &insert);
-            reference = Reference::new(source);
-            check_all(&text, &reference, &mut rng)?;
-        }
-
-        // Snapshots are unaffected by later edits.
-        let snapshot = text.clone();
-        let before = snapshot.to_string();
-        text.replace(0..text.len(), "gone");
-        prop_assert_eq!(snapshot.to_string(), before);
     }
 
-    #[test]
-    #[ignore = "slow: run with scripts/soak.sh"]
-    fn large_crlf_round_trips(seed in any::<u64>()) {
-        let mut rng = StdRng::seed_from_u64(seed);
-        let lf = random_text(&mut rng, 200_000);
-        let crlf = lf.replace('\n', "\r\n");
-        let (text, ending) = Text::from_file_contents(&crlf);
-        prop_assert_eq!(text.to_string(), lf.clone());
-        if lf.contains('\n') {
-            prop_assert_eq!(ending, LineEnding::CrLf);
-        }
-        let mut saved = Vec::new();
-        text.write_to(LineEnding::CrLf, &mut saved).unwrap();
-        prop_assert!(saved == crlf.as_bytes());
+    // Snapshots are unaffected by later edits.
+    let snapshot = text.clone();
+    let before = snapshot.to_string();
+    text.replace(0..text.len(), "gone");
+    prop_assert_eq!(snapshot.to_string(), before);
+    Ok(())
+}
 
-        let (streamed, _) = Text::from_reader(crlf.as_bytes()).unwrap();
-        prop_assert!(streamed.to_string() == lf);
+fn crlf_round_trip(seed: u64) -> TestCaseResult {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let lf = random_text(&mut rng, 200_000);
+    let crlf = lf.replace('\n', "\r\n");
+    let (text, ending) = Text::from_file_contents(&crlf);
+    prop_assert_eq!(text.to_string(), lf.clone());
+    if lf.contains('\n') {
+        prop_assert_eq!(ending, LineEnding::CrLf);
     }
+    let mut saved = Vec::new();
+    text.write_to(LineEnding::CrLf, &mut saved).unwrap();
+    prop_assert!(saved == crlf.as_bytes());
+
+    let (streamed, _) = Text::from_reader(crlf.as_bytes()).unwrap();
+    prop_assert!(streamed.to_string() == lf);
+    Ok(())
 }

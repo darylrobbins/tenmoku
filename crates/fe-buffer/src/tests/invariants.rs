@@ -8,13 +8,6 @@ use rand::{Rng, SeedableRng, rngs::StdRng};
 use super::{ai, disjoint_ranges, is_user, random_insert, random_range};
 use crate::*;
 
-fn cases() -> u32 {
-    std::env::var("PROPTEST_CASES")
-        .ok()
-        .and_then(|cases| cases.parse().ok())
-        .unwrap_or(256)
-}
-
 /// Random edits in a few batches, some grouped into transactions.
 fn random_user_session(buffer: &mut Buffer, rng: &mut impl Rng, steps: usize) {
     for _ in 0..steps {
@@ -50,8 +43,6 @@ fn text_strategy() -> impl Strategy<Value = String> {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(cases()))]
-
     /// Undoing everything puts every anchor back exactly where it was, and
     /// redoing everything puts it where the edits left it.
     #[test]

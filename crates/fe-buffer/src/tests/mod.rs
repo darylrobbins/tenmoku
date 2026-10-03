@@ -173,11 +173,6 @@ fn ascii_text() -> impl Strategy<Value = String> {
 }
 
 proptest! {
-    // 256 cases by default; set PROPTEST_CASES for longer runs.
-    #![proptest_config(ProptestConfig::with_cases(
-        std::env::var("PROPTEST_CASES").ok().and_then(|cases| cases.parse().ok()).unwrap_or(256)
-    ))]
-
     #[test]
     fn anchors_follow_their_characters(source in ascii_text(), seed in any::<u64>()) {
         let mut rng = StdRng::seed_from_u64(seed);

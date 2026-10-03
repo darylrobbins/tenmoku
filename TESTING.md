@@ -24,10 +24,12 @@ cargo mutants -p fe-buffer -j 4   # by hand, before milestones
 cargo llvm-cov -p fe-buffer --summary-only
 ```
 
-`PROPTEST_CASES` sets the case count for every property test. Slow tests (the
-large-text rope tests and the refusal-rate check) are `#[ignore]`d, so plain
-`cargo test` skips them; `scripts/soak.sh` runs them. CI's `soak` workflow runs
-the script on demand.
+`PROPTEST_CASES` sets the case count for every property test, except the
+large-text rope tests, which run a hundredth as many (at least 8). Note that
+`proptest!` lets the variable override `ProptestConfig::with_cases`, so a test
+that needs its own count has to drive `TestRunner` itself, as `large.rs` does.
+The slow refusal-rate check is `#[ignore]`d, so plain `cargo test` skips it;
+`scripts/soak.sh` runs it. CI's `soak` workflow runs the script on demand.
 
 ## When a property test fails
 

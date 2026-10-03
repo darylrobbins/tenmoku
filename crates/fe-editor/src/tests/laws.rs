@@ -8,13 +8,6 @@ use unicode_segmentation::UnicodeSegmentation;
 use super::{parse, render};
 use crate::*;
 
-fn cases() -> u32 {
-    std::env::var("PROPTEST_CASES")
-        .ok()
-        .and_then(|cases| cases.parse().ok())
-        .unwrap_or(256)
-}
-
 /// Text mixing words, punctuation, indentation, tabs, blank rows and
 /// multi-codepoint graphemes.
 fn text_strategy() -> impl Strategy<Value = String> {
@@ -87,8 +80,6 @@ fn check_well_formed(model: &EditorModel) -> Result<(), TestCaseError> {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(cases()))]
-
     /// Right then Left returns to where you started, from any rest point.
     #[test]
     fn right_then_left_round_trips(text in text_strategy()) {
