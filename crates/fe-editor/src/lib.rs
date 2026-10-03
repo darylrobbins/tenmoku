@@ -12,7 +12,7 @@ use fe_buffer::{
     Bias, Buffer, BufferEvent, BufferSnapshot, EditKind, Origin, ResolvedSelection, SelectionSet,
     Subscription, Text, TransactionId, UndoError,
 };
-use fe_display::{CharWidth, DisplayMap, ExpandedRow, Monospace};
+use fe_display::{CharWidth, DisplayMap, ExpandedRow, Monospace, WRAP_SLICE_BYTES};
 use unicode_segmentation::UnicodeSegmentation;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -167,7 +167,7 @@ impl EditorModel {
     pub fn set_tab_size(&mut self, tab_size: usize) {
         self.tab_size = tab_size.max(1);
         self.display.set_tab_size(self.tab_size, &mut *self.widths);
-        self.wrap_all();
+        self.wrap_near_cursor();
     }
 
     /// The display rows, as of the last [`EditorModel::sync_display`].
@@ -177,10 +177,10 @@ impl EditorModel {
         &self.display
     }
 
-    /// Brings the display rows up to date with the buffer.
+    /// Brings the display rows up to date with the buffer. Wrapping rows
+    /// still pending is [`EditorModel::wrap_pending`]'s job.
     pub fn sync_display(&mut self) {
         self.display.sync(self.buffer.current(), &mut *self.widths);
-        self.wrap_all();
     }
 
     /// Measures chars for soft wrap; [`Monospace`] until set.
@@ -188,7 +188,7 @@ impl EditorModel {
         self.widths = widths;
         self.sync_display();
         self.display.rewrap(&mut *self.widths);
-        self.wrap_all();
+        self.wrap_near_cursor();
     }
 
     pub fn soft_wrap(&self) -> bool {
@@ -206,21 +206,66 @@ impl EditorModel {
 
     /// Where soft wrap wraps when it's on, in the unit of the char widths.
     pub fn set_wrap_width(&mut self, width: f32) {
+        if self.fit_wrap_width(width) {
+            self.wrap_near_cursor();
+        }
+    }
+
+    /// Like [`EditorModel::set_wrap_width`], but wraps nothing: for the frame
+    /// loop, which wraps pending rows a slice at a time around the
+    /// viewport. Returns whether the wrap width changed.
+    pub fn fit_wrap_width(&mut self, width: f32) -> bool {
         self.wrap_width = width;
-        self.apply_wrap();
+        self.invalidate_wrap()
     }
 
     fn apply_wrap(&mut self) {
-        self.sync_display();
-        let width = self.soft_wrap.then_some(self.wrap_width);
-        self.display.set_wrap_width(width, &mut *self.widths);
-        self.wrap_all();
+        if self.invalidate_wrap() {
+            self.wrap_near_cursor();
+        }
     }
 
-    /// Wraps every row pending a wrap at once, until the frame loop wraps
-    /// them in slices around the viewport (Paddock T-24b).
-    fn wrap_all(&mut self) {
-        self.display.wrap_pending(0, usize::MAX, &mut *self.widths);
+    /// Points the display at the wrap width in force, marking rows pending
+    /// if it changed. Returns whether it did.
+    fn invalidate_wrap(&mut self) -> bool {
+        self.sync_display();
+        let width = self.soft_wrap.then_some(self.wrap_width);
+        let changed = width != self.display.wrap_width();
+        self.display.set_wrap_width(width, &mut *self.widths);
+        changed
+    }
+
+    /// Wraps one slice of pending rows around the primary cursor's buffer
+    /// row, so a small file is wrapped by the time a command returns and a
+    /// large one has the rows the cursor is on.
+    fn wrap_near_cursor(&mut self) {
+        let row = self
+            .text()
+            .offset_to_point(self.primary_selection().head())
+            .row;
+        self.wrap_pending(row);
+    }
+
+    /// Wraps one [`WRAP_SLICE_BYTES`] slice of pending rows, those from
+    /// buffer row `around_row` onward first. Returns whether rows are still
+    /// pending; the frame loop calls this until they're not.
+    pub fn wrap_pending(&mut self, around_row: u32) -> bool {
+        self.display
+            .wrap_pending(around_row, WRAP_SLICE_BYTES, &mut *self.widths)
+    }
+
+    /// [`EditorModel::wrap_pending`] for a viewport whose top is `top`, in
+    /// display rows. Wraps around the top row's buffer row and returns
+    /// whether rows are still pending, and the top that keeps the top
+    /// row's first char at the same height: on a row that is now wrapped
+    /// differently, the row it moved into.
+    pub fn wrap_pending_at(&mut self, top: f32) -> (bool, f32) {
+        let top = top.max(0.);
+        let row = (top as u32).min(self.display.row_count().saturating_sub(1));
+        let anchor = self.display.row(row);
+        let pending = self.wrap_pending(anchor.buffer_row);
+        let row_now = self.display.row_for_offset(anchor.range.start);
+        (pending, row_now as f32 + (top - row as f32))
     }
 
     /// Folds the rows each selection spans or, for a caret, the indented

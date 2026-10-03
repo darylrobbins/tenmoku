@@ -1,6 +1,7 @@
 use super::*;
 
 mod laws;
+mod pending_wrap;
 
 /// Builds a model from text where `|` marks carets and `[`…`]` selections
 /// (head at `]`).

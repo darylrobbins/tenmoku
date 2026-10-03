@@ -7,7 +7,10 @@
 //!    and again once a background parse has had time to land.
 //! 2. Scroll: one scroll-wheel event per frame, first smoothly and then in
 //!    large jumps, timing every frame the editor paints.
-//! 3. Idle: CPU used over a few seconds with nothing happening.
+//! 3. Soft wrap: alt-z, the window narrower by an em, wider by an em, and
+//!    alt-z again, each followed by the frames that wrap the pending rows
+//!    a slice at a time, timing every frame until none are pending.
+//! 4. Idle: CPU used over a few seconds with nothing happening.
 
 use std::{
     cell::{Cell, RefCell},
@@ -19,8 +22,8 @@ use fe_gpui::{EditorView, FrameTiming};
 
 use crate::Workbench;
 use gpui::{
-    App, Entity, Modifiers, PlatformInput, ScrollDelta, ScrollWheelEvent, TouchPhase, Window,
-    point, px,
+    App, Entity, Keystroke, Modifiers, PlatformInput, ScrollDelta, ScrollWheelEvent, TouchPhase,
+    Window, point, px, size,
 };
 
 /// Frames to let a background parse land before scrolling.
@@ -37,6 +40,8 @@ const IDLE: Duration = Duration::from_secs(5);
 const MISSED_VSYNC: Duration = Duration::from_micros(12_500);
 /// Intervals longer than this are listed individually.
 const STALL: Duration = Duration::from_millis(50);
+/// Frames to wait for a resize to reach the editor.
+const RESIZE_FRAMES: u32 = 120;
 
 /// `println!` that ignores a closed stdout (`fastedit --perf | head`): a
 /// panic inside a platform callback aborts the app.
@@ -245,8 +250,9 @@ fn tick(run: Rc<RefCell<Run>>, window: &mut Window, cx: &mut App) {
     if state.frame == scroll_end + SCROLL_FRAMES {
         report("jump scroll", &state.frames);
         print_memory("after scrolling", state.file_bytes);
+        state.frames.clear();
         drop(state);
-        idle(run, cx);
+        wrap_step(run, 0, window, cx);
         return;
     }
     state.frame += 1;
@@ -361,6 +367,131 @@ fn phase_line(phase: &str, since_launch: Duration) -> String {
 
 fn millis(duration: Duration) -> String {
     format!("{:.1} ms", duration.as_secs_f64() * 1000.)
+}
+
+/// The soft-wrap phase's steps, in order.
+#[derive(Clone, Copy, Debug)]
+enum WrapStep {
+    /// alt-z, with soft wrap off.
+    On,
+    Narrower,
+    Wider,
+    /// alt-z, with soft wrap on.
+    Off,
+}
+
+const WRAP_STEPS: [WrapStep; 4] = [
+    WrapStep::On,
+    WrapStep::Narrower,
+    WrapStep::Wider,
+    WrapStep::Off,
+];
+
+/// Starts step `step` of the soft-wrap phase, then idles after the last.
+fn wrap_step(run: Rc<RefCell<Run>>, step: usize, window: &mut Window, cx: &mut App) {
+    let Some(&what) = WRAP_STEPS.get(step) else {
+        idle(run, cx);
+        return;
+    };
+    let editor = run
+        .borrow()
+        .editor
+        .clone()
+        .expect("wrapping needs the editor");
+    let width_before = editor.read(cx).model().display().wrap_width();
+    let started = Instant::now();
+    match what {
+        WrapStep::On | WrapStep::Off => {
+            let wrapping = editor.read(cx).model().soft_wrap();
+            let alt_z = Keystroke::parse("alt-z").expect("a keystroke");
+            window.dispatch_keystroke(alt_z, cx);
+            assert_ne!(
+                editor.read(cx).model().soft_wrap(),
+                wrapping,
+                "alt-z didn't reach the editor"
+            );
+        }
+        WrapStep::Narrower | WrapStep::Wider => {
+            let theme = &run.borrow().workbench.read(cx).theme;
+            let text_system = window.text_system();
+            let font_id = text_system.resolve_font(&gpui::font(theme.font_family.clone()));
+            let em = text_system
+                .em_advance(font_id, theme.font_size)
+                .expect("the editor's font");
+            let viewport = window.viewport_size();
+            let delta = if matches!(what, WrapStep::Wider) {
+                em
+            } else {
+                -em
+            };
+            window.resize(size(viewport.width + delta, viewport.height));
+        }
+    }
+    let command = started.elapsed();
+    let name = format!("wrap {what:?}");
+    window.on_next_frame(move |window, cx| {
+        wrap_tick(
+            run,
+            step,
+            name,
+            (started, command, width_before),
+            0,
+            window,
+            cx,
+        );
+    });
+}
+
+/// Runs at the start of every frame of a soft-wrap step, until the wrap
+/// width has changed and no rows are pending.
+fn wrap_tick(
+    run: Rc<RefCell<Run>>,
+    step: usize,
+    name: String,
+    (started, command, width_before): (Instant, Duration, Option<f32>),
+    frame: u32,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let mut state = run.borrow_mut();
+    let editor = state.editor.clone().expect("wrapping needs the editor");
+    state
+        .frames
+        .extend(editor.read(cx).frame_timings().frames().copied());
+    editor.update(cx, |view, _| view.frame_timings_mut().clear());
+    let display = editor.read(cx).model().display();
+    let width = display.wrap_width();
+    let changed = width != width_before;
+    if !changed && frame < RESIZE_FRAMES || display.wrap_is_pending() {
+        drop(state);
+        window.on_next_frame(move |window, cx| {
+            wrap_tick(
+                run,
+                step,
+                name,
+                (started, command, width_before),
+                frame + 1,
+                window,
+                cx,
+            );
+        });
+        return;
+    }
+    if changed {
+        say!(
+            "{name}: wrap width {width_before:?} -> {width:?}, {} display rows, \
+             wrapped {:.0?} after the command (which took {})",
+            display.row_count(),
+            started.elapsed(),
+            millis(command),
+        );
+        report(&name, &state.frames);
+    } else {
+        say!("{name}: the wrap width didn't change in {RESIZE_FRAMES} frames");
+    }
+    state.frames.clear();
+    drop(state);
+    wrap_step(run, step + 1, window, cx);
 }
 
 fn idle(run: Rc<RefCell<Run>>, cx: &mut App) {

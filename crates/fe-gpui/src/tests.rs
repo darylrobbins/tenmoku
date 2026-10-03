@@ -5,9 +5,10 @@
 //! Notation: `|` is a caret, `[…]` a selection whose head is at its end, and
 //! `{…}` one whose head is at its start.
 
-use std::collections::BTreeSet;
+use std::{cell::Cell, collections::BTreeSet, rc::Rc};
 
 use fe_buffer::{Buffer, ResolvedSelection};
+use fe_display::{CharWidth, WRAP_SLICE_BYTES};
 use fe_editor::EditorModel;
 use gpui::{
     ClipboardItem, Entity, EntityInputHandler as _, Focusable as _, Keystroke, Modifiers,
@@ -303,6 +304,183 @@ fn soft_wrap_wraps_to_the_window(cx: &mut TestAppContext) {
     assert!(head > 0 && head < long.len(), "head at {head}");
     cx.simulate_keystrokes("alt-z");
     assert_eq!(rows(cx), 2);
+}
+
+/// Delivers frames until no rows are pending a wrap. Returns how many.
+fn wrap_through(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> usize {
+    let pending = |cx: &mut VisualTestContext| {
+        view.update(cx, |view, _| view.model().display().wrap_is_pending())
+    };
+    let mut frames = 0;
+    while pending(cx) {
+        assert!(frames < 1000, "wrapping stalled");
+        cx.update(|window, cx| window.simulate_next_frame(cx));
+        cx.run_until_parked();
+        frames += 1;
+    }
+    frames
+}
+
+#[gpui::test]
+fn large_files_wrap_across_frames_keeping_the_top_row(cx: &mut TestAppContext) {
+    // 1.6 MB: about a dozen wrap slices.
+    let text: String = (0..4_000)
+        .map(|row| format!("{row:05} {}\n", "word ".repeat(80)))
+        .collect();
+    let (view, cx) = editor(cx, &format!("|{text}"));
+
+    // The command wraps the caret's rows, and frames wrap the rest.
+    cx.simulate_keystrokes("alt-z");
+    assert!(wrap_through(&view, cx) > 1);
+
+    // Scroll a continuation row to the top.
+    let (top, anchor) = view.update(cx, |view, _| {
+        let display = view.model().display();
+        let top = display.row_for_buffer_row(2_000) + 1;
+        let row = display.row(top);
+        assert!(!row.first, "{row:?}");
+        (top, row.range.start)
+    });
+    let position = position_of(&view, cx, 0);
+    cx.simulate_event(ScrollWheelEvent {
+        position,
+        delta: ScrollDelta::Lines(point(0., -(top as f32))),
+        ..Default::default()
+    });
+    let before = position_of(&view, cx, anchor);
+
+    // Widen until no row wraps: the anchor's text stays at the top.
+    let height = cx.update(|window, _| window.viewport_size().height);
+    cx.simulate_resize(gpui::size(gpui::px(8_000.), height));
+    cx.run_until_parked();
+    assert!(wrap_through(&view, cx) > 1);
+    view.update(cx, |view, _| {
+        let display = view.model().display();
+        let row = display.row(display.row_for_offset(anchor));
+        assert!(row.first && row.last, "{row:?}");
+    });
+    assert_eq!(position_of(&view, cx, anchor).y, before.y);
+}
+
+/// Fixed char widths, counting the bytes measured: ASCII ones separately,
+/// since the wrap measures every ASCII char once per width to cache them.
+#[derive(Clone, Default)]
+struct Counting {
+    ascii: Rc<Cell<usize>>,
+    other: Rc<Cell<usize>>,
+}
+
+impl Counting {
+    /// The ASCII and other bytes measured since the last call.
+    fn take(&self) -> (usize, usize) {
+        (self.ascii.take(), self.other.take())
+    }
+}
+
+impl CharWidth for Counting {
+    fn char_width(&mut self, ch: char) -> f32 {
+        let count = if ch.is_ascii() {
+            &self.ascii
+        } else {
+            &self.other
+        };
+        count.set(count.get() + ch.len_utf8());
+        8.
+    }
+}
+
+#[gpui::test]
+fn each_frame_wraps_at_most_one_slice(cx: &mut TestAppContext) {
+    // 1M rows of non-ASCII chars, which wrapping measures one by one.
+    let text: String = (0..1_000_000)
+        .map(|row| format!("{}\n", "é".repeat(1 + row % 8)))
+        .collect();
+    // A slice stops at the first row that reaches its budget.
+    let slice = WRAP_SLICE_BYTES + "é".repeat(8).len();
+    let (view, cx) = editor(cx, &format!("|{text}"));
+    let measured = Counting::default();
+    view.update(cx, |view, _| {
+        view.model_mut().set_char_widths(Box::new(measured.clone()));
+    });
+    measured.take();
+    let pending = |cx: &mut VisualTestContext| {
+        view.update(cx, |view, _| view.model().display().wrap_is_pending())
+    };
+    let painted = |cx: &mut VisualTestContext| {
+        view.update(cx, |view, _| {
+            let painted = view.frame_timings().frames().len();
+            view.frame_timings_mut().clear();
+            painted
+        })
+    };
+    // Each frame after the first asks for the next while rows are pending,
+    // paints once, and wraps one slice.
+    let frames = |cx: &mut VisualTestContext| {
+        for _ in 0..5 {
+            let requested = cx.update(|window, cx| window.simulate_next_frame(cx));
+            assert!(requested > 0, "no frame requested");
+            cx.run_until_parked();
+            assert_eq!(painted(cx), 1);
+            let (ascii, other) = measured.take();
+            assert_eq!(ascii, 0, "no new width, no new ASCII cache");
+            assert!(other > 0, "the frame wrapped nothing");
+            assert!(other <= slice, "{other} bytes");
+            assert!(pending(cx));
+        }
+    };
+
+    // alt-z wraps one slice around the caret, after caching the ASCII
+    // widths; its frame then wraps one around the viewport.
+    painted(cx);
+    let command = cx.update(|window, cx| {
+        window.dispatch_keystroke(Keystroke::parse("alt-z").unwrap(), cx);
+        // Taken before the frame this update ends with.
+        measured.take()
+    });
+    cx.run_until_parked();
+    assert!(view.update(cx, |view, _| view.model().soft_wrap()));
+    let (ascii, other) = command;
+    assert_eq!(ascii, 128);
+    assert!(other > 0 && other <= slice, "{other} bytes");
+    // The test window may also redraw for the keystroke itself, before the
+    // toggle: one slice in all.
+    assert!(painted(cx) >= 1);
+    let (ascii, other) = measured.take();
+    assert_eq!(ascii, 0);
+    assert!(other > 0 && other <= slice, "{other} bytes");
+    assert!(pending(cx));
+    frames(cx);
+
+    // Once wrapped, no more frames are asked for.
+    view.update(cx, |view, _| while view.model_mut().wrap_pending(0) {});
+    cx.update(|window, cx| window.simulate_next_frame(cx));
+    cx.run_until_parked();
+    assert_eq!(cx.update(|window, cx| window.simulate_next_frame(cx)), 0);
+    painted(cx);
+    measured.take();
+
+    // A window an em narrower: its frame caches the ASCII widths for the
+    // new width and wraps one slice.
+    let (em, wrap_width) = cx.update(|window, cx| {
+        let view = view.read(cx);
+        let text_system = window.text_system();
+        let font_id = text_system.resolve_font(&gpui::font(view.theme.font_family.clone()));
+        let em = text_system
+            .em_advance(font_id, view.theme.font_size)
+            .unwrap();
+        (em, view.model().display().wrap_width().unwrap())
+    });
+    let size = cx.update(|window, _| window.viewport_size());
+    cx.simulate_resize(gpui::size(size.width - em, size.height));
+    cx.run_until_parked();
+    let narrower = view.update(cx, |view, _| view.model().display().wrap_width().unwrap());
+    assert!((wrap_width - narrower - f32::from(em)).abs() < 0.01);
+    assert_eq!(painted(cx), 1);
+    let (ascii, other) = measured.take();
+    assert_eq!(ascii, 128);
+    assert!(other > 0 && other <= slice, "{other} bytes");
+    assert!(pending(cx));
+    frames(cx);
 }
 
 #[gpui::test]

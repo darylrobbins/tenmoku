@@ -236,6 +236,7 @@ impl Element for EditorElement {
         let font = gpui::font(theme.font_family.clone());
         let font_size = theme.font_size;
         let line_height = (font_size * theme.line_height).round();
+        let line_height_f32: f32 = line_height.into();
         let text_system = window.text_system().clone();
         let font_id = text_system.resolve_font(&font);
         let em: f32 = text_system
@@ -248,9 +249,27 @@ impl Element for EditorElement {
         self.view.update(cx, |view, _| {
             let rows = view.model.text().row_count();
             view.model
-                .set_wrap_width(layout::wrap_width(width, rows, em));
+                .fit_wrap_width(layout::wrap_width(width, rows, em));
             view.model.sync_display();
         });
+        // Wrap a slice of what's pending around the top of the viewport,
+        // keeping the text at the top where it is unless the caret is about
+        // to be scrolled into view, and ask for another frame to continue.
+        let pending = self.view.update(cx, |view, _| {
+            if !view.model.display().wrap_is_pending() {
+                return false;
+            }
+            let (pending, top) = view
+                .model
+                .wrap_pending_at(f32::from(view.scroll.y) / line_height_f32);
+            if !view.autoscroll {
+                view.scroll.y = px(top * line_height_f32);
+            }
+            pending
+        });
+        if pending {
+            window.request_animation_frame();
+        }
 
         let view = self.view.read(cx);
         let theme = &view.theme;
