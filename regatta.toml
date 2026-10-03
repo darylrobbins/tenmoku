@@ -85,8 +85,8 @@ size_exclude = ["**/tests/**", "**/tests.rs", "**/testdata/**", "**/golden/**", 
 human_paths = ["regatta.toml", ".github/workflows/**", "Cargo.lock", "deny.toml", "THIRD_PARTY.md", "NOTICE", "CLEAN_ROOM.md", "rust-toolchain.toml"]
 
 [caps]
-# A GPUI build is heavy and this machine is short on disk.
-lanes_max = 2
+# Lanes share one target dir (see top), so each costs little disk; builds queue on its lock.
+lanes_max = 3
 
 [review]
 on_finish = true
