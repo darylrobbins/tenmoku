@@ -14,10 +14,10 @@ use fe_display::{
 };
 use fe_syntax::{Syntax, SyntaxDriver};
 use gpui::{
-    App, Bounds, ContentMask, Element, ElementId, ElementInputHandler, Entity, Font, FontId,
-    GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId, Pixels, Point, ShapedLine,
-    Style, TextAlign, TextRun, TextSystem, Window, WindowTextSystem, fill, point, px, relative,
-    size,
+    App, Bounds, ContentMask, DecorationRun, Element, ElementId, ElementInputHandler, Entity, Font,
+    FontId, GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId, LineLayout, Pixels,
+    Point, Style, TextAlign, TextRun, TextSystem, Window, WindowTextSystem, fill, point, px,
+    relative, size,
 };
 
 use crate::{EditorTheme, EditorView, FrameTiming};
@@ -55,22 +55,64 @@ impl FrameLayout {
     }
 }
 
-/// A row or line number shaped by GPUI.
+/// A row or line number shaped by GPUI in one font run, with its colours
+/// applied at paint time.
 #[derive(Clone)]
-pub(crate) struct Line(ShapedLine);
+pub(crate) struct Line {
+    layout: Arc<LineLayout>,
+    decorations: Vec<DecorationRun>,
+}
+
+impl Line {
+    fn paint(&self, origin: Point<Pixels>, line_height: Pixels, window: &mut Window, cx: &mut App) {
+        self.layout
+            .paint(
+                origin,
+                line_height,
+                TextAlign::Left,
+                None,
+                &self.decorations,
+                window,
+                cx,
+            )
+            .ok();
+    }
+}
 
 impl MeasuredLine for Line {
     fn width(&self) -> f32 {
-        self.0.width.into()
+        self.layout.width.into()
     }
 
     fn x_for_index(&self, index: usize) -> f32 {
-        self.0.x_for_index(index).into()
+        self.layout.x_for_index(index).into()
     }
 
     fn index_for_x(&self, x: f32) -> usize {
-        self.0.closest_index_for_x(px(x))
+        self.layout.closest_index_for_x(px(x))
     }
+}
+
+/// The decoration runs that colour a row: the style runs with adjacent
+/// same-colour ones merged.
+fn decoration_runs(runs: &[StyleRun<Hsla>]) -> Vec<DecorationRun> {
+    let mut out: Vec<DecorationRun> = Vec::with_capacity(runs.len());
+    for run in runs {
+        if run.len == 0 {
+            continue;
+        }
+        match out.last_mut() {
+            Some(last) if last.color == run.style => last.len += run.len as u32,
+            _ => out.push(DecorationRun {
+                len: run.len as u32,
+                color: run.style,
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            }),
+        }
+    }
+    out
 }
 
 /// Measures text with the window's shaper, in the editor font.
@@ -85,21 +127,20 @@ impl TextMeasure for Shaper {
     type Line = Line;
 
     fn shape(&mut self, text: &str, runs: &[StyleRun<Hsla>]) -> Line {
-        let runs: Vec<TextRun> = runs
-            .iter()
-            .map(|run| TextRun {
-                len: run.len,
-                font: self.font.clone(),
-                color: run.style,
-                background_color: None,
-                underline: None,
-                strikethrough: None,
-            })
-            .collect();
-        Line(
-            self.text_system
-                .shape_line(text.to_string().into(), self.font_size, &runs, None),
-        )
+        let whole = [TextRun {
+            len: text.len(),
+            font: self.font.clone(),
+            color: Hsla::default(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        }];
+        Line {
+            layout: self
+                .text_system
+                .layout_line(text, self.font_size, &whole, None),
+            decorations: decoration_runs(runs),
+        }
     }
 }
 
@@ -301,17 +342,11 @@ impl Element for EditorElement {
                     }
                     for row in &frame.rows {
                         let origin = layout.to_window(frame.row_origin(row.row));
-                        row.line
-                            .0
-                            .paint(origin, line_height, TextAlign::Left, None, window, cx)
-                            .ok();
+                        row.line.paint(origin, line_height, window, cx);
                     }
                     for (origin, marker) in &frame.fold_markers {
                         let origin = layout.to_window(*origin);
-                        marker
-                            .0
-                            .paint(origin, line_height, TextAlign::Left, None, window, cx)
-                            .ok();
+                        marker.paint(origin, line_height, window, cx);
                     }
                     if focus.is_focused(window) {
                         for &cursor in &frame.cursors {
@@ -321,17 +356,7 @@ impl Element for EditorElement {
                 },
             );
             for (origin, number) in &frame.line_numbers {
-                number
-                    .0
-                    .paint(
-                        layout.to_window(*origin),
-                        line_height,
-                        TextAlign::Left,
-                        None,
-                        window,
-                        cx,
-                    )
-                    .ok();
+                number.paint(layout.to_window(*origin), line_height, window, cx);
             }
         });
 
@@ -368,3 +393,6 @@ fn styled_highlights(
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests;
