@@ -8,6 +8,7 @@
 | `crates/fe-display/src/fold_map.rs` | gpui-kit `…/display_map/fold_map.rs`, `folding.rs` | `2c5162f8c5b0c7fcec066ed53125d304c632bfe2` | Apache-2.0 |
 | `crates/fe-display/src/display_map.rs` | gpui-kit `…/display_map/display_map.rs` | `2c5162f8c5b0c7fcec066ed53125d304c632bfe2` | Apache-2.0 |
 | `crates/fe-syntax/queries/toml.scm` | [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter) `runtime/queries/toml/highlights.scm` | `e289100ff98969e118c702199d88b764ce9e7fdf` | Apache-2.0 |
+| `crates/fe-syntax/queries/kotlin.scm` | nvim-treesitter `runtime/queries/kotlin/highlights.scm` | `3e1f54c1ce0a86959313f1cb7f60262ea57aaa23` | Apache-2.0 |
 
 gpui-kit is Copyright 2024 - 2026 Longbridge. Its files carry no license
 header and the repository has no NOTICE file, so each adapted file starts with
@@ -19,10 +20,10 @@ Ship the Apache-2.0 license text with them.
 `fe-syntax` links these grammars, one Cargo feature each, and uses the
 highlight and injections queries each crate ships, unmodified, via the
 crate's own constants. Audited 2026-10-02, the injections queries
-2026-10-03, and Ruby to XML 2026-10-03: every crate is MIT, and no query names
-a source other than its own repository except where noted. The Ruby, Lua and
-XML crates ship no licence file, only `license = "MIT"` in their manifests;
-their repositories hold the MIT text.
+2026-10-03, and Ruby to XML and Swift to Make 2026-10-03: every crate is MIT,
+and no query names a source other than its own repository except where noted.
+The Ruby, Lua, XML, SQL and Make crates ship no licence file, only
+`license = "MIT"` in their manifests; their repositories hold the MIT text.
 
 | Feature | Crate | Version | Upstream | License | Query |
 |---|---|---|---|---|---|
@@ -48,8 +49,13 @@ their repositories hold the MIT text.
 | csharp | tree-sitter-c-sharp | 0.23.5 | https://github.com/tree-sitter/tree-sitter-c-sharp | MIT | `HIGHLIGHTS_QUERY` |
 | scala | tree-sitter-scala | 0.26.2 | https://github.com/tree-sitter/tree-sitter-scala | MIT | `HIGHLIGHTS_QUERY` |
 | xml | tree-sitter-xml | 0.7.0 | https://github.com/tree-sitter-grammars/tree-sitter-xml | MIT | `XML_HIGHLIGHT_QUERY` (grammar `LANGUAGE_XML`) |
+| swift | tree-sitter-swift | 0.7.3 | https://github.com/alex-pinkus/tree-sitter-swift | MIT | `HIGHLIGHTS_QUERY` |
+| kotlin | tree-sitter-kotlin-sg | 0.4.1 | https://github.com/ast-grep/tree-sitter-kotlin, a publication of https://github.com/fwcd/tree-sitter-kotlin⁵ | MIT | `HIGHLIGHTS_QUERY`¹, then `queries/kotlin.scm`⁶ |
+| sql | tree-sitter-sequel | 0.3.11 | https://github.com/derekstride/tree-sitter-sql | MIT | `HIGHLIGHTS_QUERY`, then `queries/sql.scm`⁷ |
+| dockerfile | tree-sitter-containerfile | 0.9.2 | https://github.com/wharflab/tree-sitter-containerfile⁵ | MIT | `HIGHLIGHTS_QUERY`; `INJECTIONS_QUERY` |
+| make | tree-sitter-make | 1.1.1 | https://github.com/tree-sitter-grammars/tree-sitter-make | MIT | `HIGHLIGHTS_QUERY` |
 
-¹ Each of these two files says it comes from nvim-treesitter (Apache-2.0, an
+¹ Each of these files says it comes from nvim-treesitter (Apache-2.0, an
 allowed source). Ship the Apache-2.0 license text with them.
 
 ² Vendored in `vendor/tree-sitter-yaml/` and used through `[patch.crates-io]`.
@@ -66,6 +72,23 @@ and table headers `type`.
 patterns for identifiers (MIT, same crate), so local variables aren't
 highlighted as methods: the crate's method pattern depends on `#is-not? local`,
 which we don't evaluate.
+
+⁵ The canonical crates don't build against `tree-sitter` 0.27:
+`tree-sitter-kotlin` 0.3.8 (fwcd) needs `tree-sitter` < 0.23 and
+`tree-sitter-dockerfile` 0.2.0 (camdencheek) needs 0.20. `tree-sitter-kotlin-sg`
+is fwcd's repository with only the crate name and metadata changed; its
+`LICENSE` is fwcd's. `tree-sitter-containerfile` continues camdencheek's
+grammar and ships both its own and camdencheek's MIT licence.
+
+⁶ Goes after the crate's `HIGHLIGHTS_QUERY`, which is an older copy of the same
+nvim-treesitter file. Adapted from nvim-treesitter (Apache-2.0, an allowed
+source); ship the Apache-2.0 license text with it. It names functions declared
+with modifiers or annotations, the `package` keyword and path, `companion`,
+and SCREAMING_CASE constants.
+
+⁷ Goes after the crate's `HIGHLIGHTS_QUERY`. It restates that query's two
+number patterns (MIT, same crate) as regexes: the crate writes them with the
+Lua class `%d`, so they never matched and numbers were strings.
 
 How patterns take precedence follows tree-sitter-highlight 0.25 (MIT), which
 was read for the rule, not copied: see `earlier_patterns_win` in

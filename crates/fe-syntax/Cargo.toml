@@ -30,6 +30,11 @@ default = [
     "csharp",
     "scala",
     "xml",
+    "swift",
+    "kotlin",
+    "sql",
+    "dockerfile",
+    "make",
 ]
 rust = ["dep:tree-sitter-rust"]
 python = ["dep:tree-sitter-python"]
@@ -54,6 +59,11 @@ php = ["dep:tree-sitter-php"]
 csharp = ["dep:tree-sitter-c-sharp"]
 scala = ["dep:tree-sitter-scala"]
 xml = ["dep:tree-sitter-xml"]
+swift = ["dep:tree-sitter-swift"]
+kotlin = ["dep:tree-sitter-kotlin-sg"]
+sql = ["dep:tree-sitter-sequel"]
+dockerfile = ["dep:tree-sitter-containerfile"]
+make = ["dep:tree-sitter-make"]
 
 [dependencies]
 fe-buffer.workspace = true
@@ -62,6 +72,7 @@ tree-sitter.workspace = true
 tree-sitter-bash = { workspace = true, optional = true }
 tree-sitter-c = { workspace = true, optional = true }
 tree-sitter-c-sharp = { workspace = true, optional = true }
+tree-sitter-containerfile = { workspace = true, optional = true }
 tree-sitter-cpp = { workspace = true, optional = true }
 tree-sitter-css = { workspace = true, optional = true }
 tree-sitter-go = { workspace = true, optional = true }
@@ -69,13 +80,17 @@ tree-sitter-html = { workspace = true, optional = true }
 tree-sitter-java = { workspace = true, optional = true }
 tree-sitter-javascript = { workspace = true, optional = true }
 tree-sitter-json = { workspace = true, optional = true }
+tree-sitter-kotlin-sg = { workspace = true, optional = true }
 tree-sitter-lua = { workspace = true, optional = true }
+tree-sitter-make = { workspace = true, optional = true }
 tree-sitter-md = { workspace = true, optional = true }
 tree-sitter-php = { workspace = true, optional = true }
 tree-sitter-python = { workspace = true, optional = true }
 tree-sitter-ruby = { workspace = true, optional = true }
 tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-scala = { workspace = true, optional = true }
+tree-sitter-sequel = { workspace = true, optional = true }
+tree-sitter-swift = { workspace = true, optional = true }
 tree-sitter-toml-ng = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
 tree-sitter-xml = { workspace = true, optional = true }

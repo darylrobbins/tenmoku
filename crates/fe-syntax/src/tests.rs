@@ -237,6 +237,63 @@ fn each_language_highlights_a_snippet() {
                 ("<!-- c -->", "comment"),
             ],
         ),
+        (
+            "x.swift",
+            "func f(x: Int) -> String { return \"s\" } // c",
+            &[
+                ("func", "keyword"),
+                ("f", "function.method"),
+                ("Int", "type"),
+                ("\"s\"", "string"),
+                ("// c", "comment"),
+            ],
+        ),
+        (
+            "x.kt",
+            "private fun f(x: Int) = null // c",
+            &[
+                ("fun", "keyword"),
+                ("f", "function"),
+                ("x", "variable.parameter"),
+                ("Int", "type.builtin"),
+                ("null", "constant.builtin"),
+                ("// c", "comment"),
+            ],
+        ),
+        (
+            "x.sql",
+            "SELECT name, 1 FROM t WHERE x = 'a'; -- c",
+            &[
+                ("SELECT", "keyword"),
+                ("name", "property"),
+                ("1", "number"),
+                ("t", "type"),
+                ("'a'", "string"),
+                ("-- c", "comment"),
+            ],
+        ),
+        (
+            "Containerfile",
+            "FROM alpine AS base\nRUN echo \"hi\" && ls -l",
+            &[
+                ("FROM", "keyword"),
+                ("AS", "keyword"),
+                ("RUN", "keyword"),
+                ("echo", "function"),
+                ("\"hi\"", "string"),
+                ("-l", "constant"),
+            ],
+        ),
+        (
+            "GNUmakefile",
+            "# c\nCC ?= cc\nall: $(SRC)\n\techo hi",
+            &[
+                ("CC", "constant.builtin"),
+                ("?=", "operator"),
+                ("# c", "comment"),
+                ("SRC", "constant"),
+            ],
+        ),
     ];
     let mut covered = Vec::new();
     let mut missing = Vec::new();

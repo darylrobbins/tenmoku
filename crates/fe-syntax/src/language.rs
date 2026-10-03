@@ -443,4 +443,69 @@ const DEFS: &[Def] = &[
         injections: None,
         hidden: false,
     },
+    #[cfg(feature = "swift")]
+    Def {
+        name: "swift",
+        extensions: &["swift"],
+        file_names: &[],
+        grammar: || tree_sitter_swift::LANGUAGE.into(),
+        highlights: || &[tree_sitter_swift::HIGHLIGHTS_QUERY],
+        earlier_patterns_win: false,
+        injections: None,
+        hidden: false,
+    },
+    #[cfg(feature = "kotlin")]
+    Def {
+        name: "kotlin",
+        extensions: &["kt", "kts"],
+        file_names: &[],
+        grammar: || tree_sitter_kotlin_sg::LANGUAGE.into(),
+        highlights: || {
+            &[
+                tree_sitter_kotlin_sg::HIGHLIGHTS_QUERY,
+                include_str!("../queries/kotlin.scm"),
+            ]
+        },
+        earlier_patterns_win: false,
+        injections: None,
+        hidden: false,
+    },
+    #[cfg(feature = "sql")]
+    Def {
+        name: "sql",
+        extensions: &["sql"],
+        file_names: &[],
+        grammar: || tree_sitter_sequel::LANGUAGE.into(),
+        highlights: || {
+            &[
+                tree_sitter_sequel::HIGHLIGHTS_QUERY,
+                include_str!("../queries/sql.scm"),
+            ]
+        },
+        earlier_patterns_win: false,
+        injections: None,
+        hidden: false,
+    },
+    #[cfg(feature = "dockerfile")]
+    Def {
+        name: "dockerfile",
+        extensions: &["dockerfile"],
+        file_names: &["Dockerfile", "Containerfile"],
+        grammar: || tree_sitter_containerfile::LANGUAGE.into(),
+        highlights: || &[tree_sitter_containerfile::HIGHLIGHTS_QUERY],
+        earlier_patterns_win: false,
+        injections: Some(tree_sitter_containerfile::INJECTIONS_QUERY),
+        hidden: false,
+    },
+    #[cfg(feature = "make")]
+    Def {
+        name: "make",
+        extensions: &["mk"],
+        file_names: &["Makefile", "GNUmakefile"],
+        grammar: || tree_sitter_make::LANGUAGE.into(),
+        highlights: || &[tree_sitter_make::HIGHLIGHTS_QUERY],
+        earlier_patterns_win: false,
+        injections: None,
+        hidden: false,
+    },
 ];
