@@ -167,6 +167,7 @@ impl EditorModel {
     pub fn set_tab_size(&mut self, tab_size: usize) {
         self.tab_size = tab_size.max(1);
         self.display.set_tab_size(self.tab_size, &mut *self.widths);
+        self.wrap_all();
     }
 
     /// The display rows, as of the last [`EditorModel::sync_display`].
@@ -179,6 +180,7 @@ impl EditorModel {
     /// Brings the display rows up to date with the buffer.
     pub fn sync_display(&mut self) {
         self.display.sync(self.buffer.current(), &mut *self.widths);
+        self.wrap_all();
     }
 
     /// Measures chars for soft wrap; [`Monospace`] until set.
@@ -186,6 +188,7 @@ impl EditorModel {
         self.widths = widths;
         self.sync_display();
         self.display.rewrap(&mut *self.widths);
+        self.wrap_all();
     }
 
     pub fn soft_wrap(&self) -> bool {
@@ -211,6 +214,13 @@ impl EditorModel {
         self.sync_display();
         let width = self.soft_wrap.then_some(self.wrap_width);
         self.display.set_wrap_width(width, &mut *self.widths);
+        self.wrap_all();
+    }
+
+    /// Wraps every row pending a wrap at once, until the frame loop wraps
+    /// them in slices around the viewport (Paddock T-24b).
+    fn wrap_all(&mut self) {
+        self.display.wrap_pending(0, usize::MAX, &mut *self.widths);
     }
 
     /// Folds the rows each selection spans or, for a caret, the indented

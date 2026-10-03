@@ -6,13 +6,19 @@
 //
 // Modified for fastedit: GPUI-free (wrapping measures through `CharWidth`),
 // lines are read from `fe_text::Text`, items store only their wrap points,
-// and an unwrapped map keeps no tree at all.
+// an unwrapped map keeps no tree at all, and a new width re-wraps rows in
+// slices rather than all at once.
 
 //! Soft wrapping: buffer rows ↔ wrap rows.
 //!
-//! Each buffer row is one item in a [`SumTree`] holding the byte offsets
-//! where its continuation rows start, so mapping between buffer rows and
-//! wrap rows is a seek, and an edit re-wraps only the rows it touched.
+//! Each wrapped buffer row is one item in a [`SumTree`] holding the byte
+//! offsets where its continuation rows start, and a run of unwrapped rows is
+//! one item, so mapping between buffer rows and wrap rows is a seek, and an
+//! edit re-wraps only the rows it touched.
+//!
+//! A new width, tab size or font doesn't re-wrap anything by itself: every
+//! row becomes pending and keeps showing its previous wrap until
+//! [`WrapMap::wrap_pending`] gets to it.
 
 use std::ops::Range;
 
@@ -22,9 +28,12 @@ use sum_tree::{Bias, ContextLessSummary, Dimension, Dimensions, Item, SumTree};
 use crate::CharWidth;
 
 #[derive(Clone, Debug)]
-struct LineItem {
-    /// Byte offsets within the row where continuation rows start, ascending.
-    breaks: Box<[u32]>,
+enum LineItem {
+    /// One buffer row: byte offsets within it where continuation rows
+    /// start, ascending.
+    Wrapped(Box<[u32]>),
+    /// This many buffer rows (at least one), none of them wrapped.
+    Unwrapped(u32),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -48,9 +57,15 @@ impl Item for LineItem {
     type Summary = LineSummary;
 
     fn summary(&self, (): ()) -> LineSummary {
-        LineSummary {
-            buffer_rows: 1,
-            wrap_rows: self.breaks.len() + 1,
+        match self {
+            Self::Wrapped(breaks) => LineSummary {
+                buffer_rows: 1,
+                wrap_rows: breaks.len() + 1,
+            },
+            &Self::Unwrapped(rows) => LineSummary {
+                buffer_rows: rows as usize,
+                wrap_rows: rows as usize,
+            },
         }
     }
 }
@@ -92,12 +107,14 @@ pub(crate) struct WrapSegment {
 }
 
 pub(crate) struct WrapMap {
-    /// `None` doesn't wrap: every buffer row is one wrap row and `lines` is
-    /// empty.
+    /// `None` doesn't wrap: every buffer row is one wrap row, `lines` is
+    /// empty and nothing is pending.
     width: Option<f32>,
     tab_size: usize,
     line_count: usize,
     lines: SumTree<LineItem>,
+    pending: Pending,
+    ascii: AsciiWidths,
 }
 
 impl WrapMap {
@@ -107,6 +124,8 @@ impl WrapMap {
             tab_size: tab_size.max(1),
             line_count: text.row_count() as usize,
             lines: SumTree::new(()),
+            pending: Pending::default(),
+            ascii: AsciiWidths::default(),
         }
     }
 
@@ -114,7 +133,9 @@ impl WrapMap {
         self.width
     }
 
-    /// Re-wraps every row of `text` at `width`.
+    /// Wraps at `width` from now on, measuring with `widths`. Re-wraps
+    /// nothing yet: every row is pending, showing its previous wrap (or
+    /// none) until [`WrapMap::wrap_pending`] reaches it.
     pub(crate) fn rebuild(
         &mut self,
         text: &Text,
@@ -122,21 +143,36 @@ impl WrapMap {
         tab_size: usize,
         widths: &mut dyn CharWidth,
     ) {
-        self.width = width;
         self.tab_size = tab_size.max(1);
-        self.line_count = text.row_count() as usize;
-        self.lines = match width {
-            None => SumTree::new(()),
-            Some(width) => {
-                let mut wrapper = Wrapper::new(width, self.tab_size, widths);
-                let items = (0..text.row_count()).map(|row| wrapper.wrap_row(text, row));
-                SumTree::from_iter(items, ())
+        debug_assert_eq!(self.line_count, text.row_count() as usize);
+        match width {
+            None => {
+                self.lines = SumTree::new(());
+                self.pending = Pending::default();
             }
-        };
+            Some(width) => {
+                self.ascii = AsciiWidths::new(width, widths);
+                if self.width.is_none() {
+                    self.lines = unwrapped(self.line_count);
+                }
+                self.pending = Pending::all(self.line_count);
+            }
+        }
+        self.width = width;
+    }
+
+    /// Follows `text`, which isn't an edit of the text so far: every row
+    /// shows unwrapped and, when wrapping, is pending.
+    pub(crate) fn reset(&mut self, text: &Text) {
+        self.line_count = text.row_count() as usize;
+        if self.width.is_some() {
+            self.lines = unwrapped(self.line_count);
+            self.pending = Pending::all(self.line_count);
+        }
     }
 
     /// Replaces `old_rows` rows starting at `start` with `new_rows` rows of
-    /// `text`, which is the text after the edit.
+    /// `text`, which is the text after the edit, wrapping them.
     pub(crate) fn splice(
         &mut self,
         text: &Text,
@@ -149,16 +185,71 @@ impl WrapMap {
         let Some(width) = self.width else {
             return;
         };
-        let mut wrapper = Wrapper::new(width, self.tab_size, widths);
-        let new_lines = (start..start + new_rows).map(|row| wrapper.wrap_row(text, row as u32));
-        let mut cursor = self.lines.cursor::<BufferRows>(());
-        let mut lines = cursor.slice(&BufferRows(start), Bias::Right);
-        cursor.seek_forward(&BufferRows(start + old_rows), Bias::Right);
-        lines.extend(new_lines, ());
-        lines.append(cursor.suffix(), ());
-        drop(cursor);
-        self.lines = lines;
+        let mut wrapper = Wrapper::new(width, self.tab_size, &self.ascii, widths);
+        let new_lines = (start..start + new_rows).map(|row| wrapper.wrap_row(text, row as u32).0);
+        replace_rows(&mut self.lines, start..start + old_rows, new_lines);
+        self.pending
+            .splice(start as u32, old_rows as u32, new_rows as u32);
         debug_assert_eq!(self.lines.summary().buffer_rows, self.line_count);
+    }
+
+    pub(crate) fn is_pending(&self) -> bool {
+        !self.pending.0.is_empty()
+    }
+
+    /// Wraps pending rows of `text`, those from `around` onward first, then
+    /// those before it, nearest first, until it has wrapped `budget` bytes
+    /// of rows, newlines included (at least one row). Returns whether rows
+    /// are still pending.
+    pub(crate) fn wrap_pending(
+        &mut self,
+        text: &Text,
+        around: u32,
+        budget: usize,
+        widths: &mut dyn CharWidth,
+    ) -> bool {
+        let Some(width) = self.width else {
+            return false;
+        };
+        let mut wrapper = Wrapper::new(width, self.tab_size, &self.ascii, widths);
+        let mut spent = 0;
+        let mut new_lines = Vec::new();
+        let mut wrap = |row: u32, spent: &mut usize| {
+            let (line, len) = wrapper.wrap_row(text, row);
+            *spent += len + 1;
+            line
+        };
+        while spent < budget || spent == 0 {
+            let ix = self.pending.0.partition_point(|rows| rows.end <= around);
+            new_lines.clear();
+            let rows = if let Some(rows) = self.pending.0.get(ix) {
+                let start = rows.start.max(around);
+                let mut end = start;
+                while end < rows.end && (spent < budget || spent == 0) {
+                    new_lines.push(wrap(end, &mut spent));
+                    end += 1;
+                }
+                start..end
+            } else if let Some(rows) = self.pending.0.last() {
+                let mut start = rows.end;
+                while start > rows.start && (spent < budget || spent == 0) {
+                    start -= 1;
+                    new_lines.push(wrap(start, &mut spent));
+                }
+                new_lines.reverse();
+                start..rows.end
+            } else {
+                break;
+            };
+            replace_rows(
+                &mut self.lines,
+                rows.start as usize..rows.end as usize,
+                new_lines.drain(..),
+            );
+            self.pending
+                .splice(rows.start, rows.len() as u32, rows.len() as u32);
+        }
+        self.is_pending()
     }
 
     pub(crate) fn row_count(&self) -> usize {
@@ -175,7 +266,11 @@ impl WrapMap {
         }
         let mut cursor = self.lines.cursor::<Dimensions<BufferRows, WrapRows>>(());
         cursor.seek(&BufferRows(buffer_row), Bias::Right);
-        cursor.start().1.0
+        let (start, first) = (cursor.start().0.0, cursor.start().1.0);
+        match cursor.item() {
+            Some(LineItem::Unwrapped(_)) => first + buffer_row - start,
+            _ => first,
+        }
     }
 
     /// The wrap row showing byte `column` of `buffer_row`. A wrap point
@@ -186,11 +281,14 @@ impl WrapMap {
         }
         let mut cursor = self.lines.cursor::<Dimensions<BufferRows, WrapRows>>(());
         cursor.seek(&BufferRows(buffer_row), Bias::Right);
-        let first = cursor.start().1.0;
-        let wrapped = cursor.item().map_or(0, |line| {
-            line.breaks.partition_point(|&at| at as usize <= column)
-        });
-        first + wrapped
+        let (start, first) = (cursor.start().0.0, cursor.start().1.0);
+        match cursor.item() {
+            Some(LineItem::Wrapped(breaks)) => {
+                first + breaks.partition_point(|&at| at as usize <= column)
+            }
+            Some(LineItem::Unwrapped(_)) => first + buffer_row - start,
+            None => first,
+        }
     }
 
     /// Where wrap row `row` (clamped to the last) is.
@@ -201,12 +299,11 @@ impl WrapMap {
         } else {
             let mut cursor = self.lines.cursor::<Dimensions<WrapRows, BufferRows>>(());
             cursor.seek(&WrapRows(row), Bias::Right);
-            let line = cursor.item().expect("row is in range");
-            (
-                cursor.start().1.0,
-                &line.breaks[..],
-                row - cursor.start().0.0,
-            )
+            let (first, start) = (cursor.start().0.0, cursor.start().1.0);
+            match cursor.item().expect("row is in range") {
+                LineItem::Wrapped(breaks) => (start, &breaks[..], row - first),
+                LineItem::Unwrapped(_) => (start + row - first, &[][..], 0),
+            }
         };
         let len = text.row_len(buffer_row as u32) as usize;
         let start = index.checked_sub(1).map_or(0, |ix| breaks[ix] as usize);
@@ -218,87 +315,214 @@ impl WrapMap {
             range: start..end,
         }
     }
+
+    #[cfg(test)]
+    pub(crate) fn item_count(&self) -> usize {
+        self.lines.iter().count()
+    }
 }
 
-/// Finds wrap points, caching the widths of ASCII chars.
+/// `rows` buffer rows, unwrapped.
+fn unwrapped(rows: usize) -> SumTree<LineItem> {
+    let mut lines = SumTree::new(());
+    if rows > 0 {
+        lines.push(LineItem::Unwrapped(rows as u32), ());
+    }
+    lines
+}
+
+/// Replaces buffer rows `old` of `lines` with `new`, splitting the unwrapped
+/// runs around them.
+fn replace_rows(
+    lines: &mut SumTree<LineItem>,
+    old: Range<usize>,
+    new: impl IntoIterator<Item = LineItem>,
+) {
+    let mut cursor = lines.cursor::<BufferRows>(());
+    let mut result = cursor.slice(&BufferRows(old.start), Bias::Right);
+    let before = old.start - cursor.start().0;
+    if before > 0 {
+        result.push(LineItem::Unwrapped(before as u32), ());
+    }
+    result.extend(new, ());
+    cursor.seek_forward(&BufferRows(old.end), Bias::Right);
+    if cursor.item().is_some() && cursor.start().0 < old.end {
+        let after = cursor.end().0 - old.end;
+        result.push(LineItem::Unwrapped(after as u32), ());
+        cursor.next();
+    }
+    result.append(cursor.suffix(), ());
+    drop(cursor);
+    *lines = result;
+}
+
+/// Buffer rows still to wrap at the current width: sorted, disjoint and
+/// non-adjacent.
+#[derive(Debug, Default)]
+struct Pending(Vec<Range<u32>>);
+
+impl Pending {
+    fn all(rows: usize) -> Self {
+        Self((rows > 0).then_some(0..rows as u32).into_iter().collect())
+    }
+
+    /// Follows rows `start..start + old_rows` being replaced by `new_rows`
+    /// wrapped ones; later rows shift.
+    fn splice(&mut self, start: u32, old_rows: u32, new_rows: u32) {
+        let old_end = start + old_rows;
+        let shift = |row: u32| row + new_rows - old_rows;
+        let mut ranges: Vec<Range<u32>> = Vec::with_capacity(self.0.len() + 1);
+        for rows in self.0.drain(..) {
+            let before = rows.start..rows.end.min(start);
+            let after =
+                (rows.end > old_end).then(|| shift(rows.start.max(old_end))..shift(rows.end));
+            for piece in [Some(before), after].into_iter().flatten() {
+                if piece.is_empty() {
+                    continue;
+                }
+                match ranges.last_mut() {
+                    Some(last) if last.end == piece.start => last.end = piece.end,
+                    _ => ranges.push(piece),
+                }
+            }
+        }
+        self.0 = ranges;
+    }
+}
+
+/// The widths of ASCII chars, measured once per [`WrapMap::rebuild`].
+#[derive(Default)]
+struct AsciiWidths {
+    widths: Option<Box<[f32; 128]>>,
+    /// Rows of at most this many ASCII chars, none of them a tab, fit the
+    /// wrap width without measuring.
+    fits: usize,
+}
+
+impl AsciiWidths {
+    /// Caps the work of finding `fits` for huge widths.
+    const MAX_FITS: usize = u16::MAX as usize;
+
+    fn new(width: f32, widths: &mut dyn CharWidth) -> Self {
+        let mut table = [0.; 128];
+        for (ch, slot) in (0..128u8).map(char::from).zip(&mut table) {
+            *slot = widths.char_width(ch);
+        }
+        // Run `break_points`' check on a row of the widest char. Float sums
+        // only grow with their terms, so no row of narrower chars breaks
+        // where this one doesn't.
+        let widest = table.iter().copied().fold(0., f32::max);
+        let mut fits = 1;
+        let mut x = widest;
+        while fits < Self::MAX_FITS && x + widest <= width {
+            x += widest;
+            fits += 1;
+        }
+        Self {
+            widths: Some(Box::new(table)),
+            fits,
+        }
+    }
+
+    fn get(&self, ch: char) -> Option<f32> {
+        self.widths.as_ref()?.get(ch as usize).copied()
+    }
+}
+
+/// Finds wrap points, with ASCII widths from the cache.
 struct Wrapper<'a> {
     width: f32,
     tab_size: usize,
+    ascii: &'a AsciiWidths,
     widths: &'a mut dyn CharWidth,
-    ascii: [f32; 128],
     line: String,
 }
 
 impl<'a> Wrapper<'a> {
-    fn new(width: f32, tab_size: usize, widths: &'a mut dyn CharWidth) -> Self {
-        let mut ascii = [0.; 128];
-        for (ch, slot) in (0..128u8).map(char::from).zip(&mut ascii) {
-            *slot = widths.char_width(ch);
-        }
+    fn new(
+        width: f32,
+        tab_size: usize,
+        ascii: &'a AsciiWidths,
+        widths: &'a mut dyn CharWidth,
+    ) -> Self {
         Self {
             width,
             tab_size,
-            widths,
             ascii,
+            widths,
             line: String::new(),
         }
     }
 
-    fn char_width(&mut self, ch: char) -> f32 {
-        match self.ascii.get(ch as usize) {
-            Some(&width) => width,
-            None => self.widths.char_width(ch),
-        }
-    }
-
-    fn wrap_row(&mut self, text: &Text, row: u32) -> LineItem {
+    /// Wraps `row`, returning its length too.
+    fn wrap_row(&mut self, text: &Text, row: u32) -> (LineItem, usize) {
         let start = text.row_start(row);
+        let end = if row + 1 < text.row_count() {
+            text.row_start(row + 1) - 1
+        } else {
+            text.len()
+        };
+        let range = start..end;
+        if range.len() <= self.ascii.fits
+            && text
+                .chunks_in_range(range.clone())
+                .all(|chunk| chunk.bytes().all(|b| b.is_ascii() && b != b'\t'))
+        {
+            return (LineItem::Wrapped(Box::default()), range.len());
+        }
         let mut line = std::mem::take(&mut self.line);
         line.clear();
-        line.extend(text.chunks_in_range(start..start + text.row_len(row) as usize));
-        let breaks = self.wrap_points(&line);
+        line.extend(text.chunks_in_range(range.clone()));
+        let (ascii, widths) = (self.ascii, &mut *self.widths);
+        let breaks = break_points(&line, self.width, self.tab_size, |ch| {
+            ascii.get(ch).unwrap_or_else(|| widths.char_width(ch))
+        });
         self.line = line;
-        LineItem { breaks }
+        (LineItem::Wrapped(breaks), range.len())
     }
+}
 
-    /// Breaks `line` into rows no wider than the wrap width, after the
-    /// whitespace before a word where possible, otherwise mid-word. Every
-    /// row keeps at least one char, and whitespace may hang past the edge.
-    /// Tab stops count from the start of each row, as the rows are laid
-    /// out.
-    fn wrap_points(&mut self, line: &str) -> Box<[u32]> {
-        let space = self.char_width(' ');
-        let mut breaks = Vec::new();
-        let mut row_start = 0;
-        'rows: loop {
-            let mut x = 0.;
-            let mut column = 0;
-            let mut word_start = None;
-            let mut after_space = false;
-            for (ix, ch) in line[row_start..].char_indices() {
-                let is_space = ch.is_whitespace();
-                if after_space && !is_space {
-                    word_start = Some(ix);
-                }
-                let (width, columns) = if ch == '\t' {
-                    let columns = self.tab_size - column % self.tab_size;
-                    (space * columns as f32, columns)
-                } else {
-                    (self.char_width(ch), 1)
-                };
-                if ix > 0 && !is_space && x + width > self.width {
-                    row_start += word_start.unwrap_or(ix);
-                    breaks.push(row_start as u32);
-                    continue 'rows;
-                }
-                x += width;
-                column += columns;
-                after_space = is_space;
+/// Breaks `line` into rows no wider than `width`, after the whitespace
+/// before a word where possible, otherwise mid-word. Every row keeps at
+/// least one char, and whitespace may hang past the edge. Tab stops count
+/// from the start of each row, as the rows are laid out.
+fn break_points(
+    line: &str,
+    width: f32,
+    tab_size: usize,
+    mut char_width: impl FnMut(char) -> f32,
+) -> Box<[u32]> {
+    let space = char_width(' ');
+    let mut breaks = Vec::new();
+    let mut row_start = 0;
+    'rows: loop {
+        let mut x = 0.;
+        let mut column = 0;
+        let mut word_start = None;
+        let mut after_space = false;
+        for (ix, ch) in line[row_start..].char_indices() {
+            let is_space = ch.is_whitespace();
+            if after_space && !is_space {
+                word_start = Some(ix);
             }
-            break;
+            let (ch_width, columns) = if ch == '\t' {
+                let columns = tab_size - column % tab_size;
+                (space * columns as f32, columns)
+            } else {
+                (char_width(ch), 1)
+            };
+            if ix > 0 && !is_space && x + ch_width > width {
+                row_start += word_start.unwrap_or(ix);
+                breaks.push(row_start as u32);
+                continue 'rows;
+            }
+            x += ch_width;
+            column += columns;
+            after_space = is_space;
         }
-        breaks.into()
+        break;
     }
+    breaks.into()
 }
 
 #[cfg(test)]
@@ -308,10 +532,15 @@ mod tests {
     use super::*;
     use crate::Monospace;
 
+    fn wrap_all(map: &mut WrapMap, text: &Text) {
+        assert!(!map.wrap_pending(text, 0, usize::MAX, &mut Monospace));
+    }
+
     fn wrapped(text: &str, width: f32) -> Vec<Vec<String>> {
         let text = Text::new(text);
         let mut map = WrapMap::new(&text, 4);
         map.rebuild(&text, Some(width), 4, &mut Monospace);
+        wrap_all(&mut map, &text);
         rows(&map, &text)
     }
 
@@ -350,6 +579,18 @@ mod tests {
         assert_eq!(wrapped("abc", 0.5), [vec!["a", "b", "c"]]);
     }
 
+    /// ASCII chars one to three `scale`s wide; others four.
+    struct Uneven {
+        scale: f32,
+    }
+
+    impl CharWidth for Uneven {
+        fn char_width(&mut self, ch: char) -> f32 {
+            let units = if ch.is_ascii() { ch as u32 % 3 + 1 } else { 4 };
+            units as f32 * self.scale
+        }
+    }
+
     proptest! {
         /// Rows tile their buffer row, fit the width, and the splice after an
         /// edit matches wrapping from scratch.
@@ -363,6 +604,7 @@ mod tests {
             let before = Text::new(&text);
             let mut map = WrapMap::new(&before, 4);
             map.rebuild(&before, Some(width), 4, &mut Monospace);
+            wrap_all(&mut map, &before);
             for row in 0..before.row_count() {
                 let first = map.first_row(row as usize);
                 let segment = map.segment(&before, first);
@@ -392,7 +634,33 @@ mod tests {
             map.splice(&after, first_row, old_rows, new_rows, &mut Monospace);
             let mut fresh = WrapMap::new(&after, 4);
             fresh.rebuild(&after, Some(width), 4, &mut Monospace);
+            wrap_all(&mut fresh, &after);
             prop_assert_eq!(rows(&map, &after), rows(&fresh, &after));
+        }
+
+        /// Wrapping with the cached ASCII widths, skipping rows that fit,
+        /// breaks where measuring every char does.
+        #[test]
+        fn ascii_fast_path_matches_measuring(
+            text in "[a-e~ \t\né]{0,120}",
+            columns in 1usize..40,
+            scale in prop::sample::select(vec![0.1f32, 0.3, 1., 7.3]),
+        ) {
+            let text = Text::new(&text);
+            let width = columns as f32 * scale;
+            let mut widths = Uneven { scale };
+            let ascii = AsciiWidths::new(width, &mut widths);
+            let mut wrapper = Wrapper::new(width, 4, &ascii, &mut widths);
+            for row in 0..text.row_count() {
+                let (LineItem::Wrapped(breaks), _) = wrapper.wrap_row(&text, row) else {
+                    unreachable!();
+                };
+                let start = text.row_start(row);
+                let line = text.slice_to_string(start..start + text.row_len(row) as usize);
+                let mut measured = Uneven { scale };
+                let want = break_points(&line, width, 4, |ch| measured.char_width(ch));
+                prop_assert_eq!(breaks, want, "row {:?}", line);
+            }
         }
     }
 }

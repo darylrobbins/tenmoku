@@ -11,7 +11,7 @@ pub mod layout;
 mod long_row;
 mod wrap_map;
 
-pub use display_map::{DisplayMap, DisplayRow};
+pub use display_map::{DisplayMap, DisplayRow, WRAP_SLICE_BYTES};
 pub use fe_text::Bias;
 pub use fold_map::Fold;
 pub use long_row::{LongRows, RowIndex, RowSlice};

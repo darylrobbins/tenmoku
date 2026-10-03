@@ -359,7 +359,10 @@ fn hit_testing() {
 #[test]
 fn wrapped_rows() {
     // Wrapped at 6 cells: `aaaa `, `bbbb `, `cc`, then `d`.
-    let wrap = |display: &mut DisplayMap| display.set_wrap_width(Some(6.), &mut crate::Monospace);
+    let wrap = |display: &mut DisplayMap| {
+        display.set_wrap_width(Some(6.), &mut crate::Monospace);
+        display.wrap_pending(0, usize::MAX, &mut crate::Monospace);
+    };
     let (frame, text) = lay_out_display("aa[aa bbbb c]c\nd", (500., 0.), true, 120., wrap, |_| {
         Vec::new()
     });

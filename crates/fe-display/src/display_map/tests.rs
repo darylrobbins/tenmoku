@@ -4,13 +4,19 @@ use proptest::prelude::*;
 use super::*;
 use crate::Monospace;
 
-fn rows(map: &DisplayMap) -> Vec<DisplayRow> {
+pub(super) fn rows(map: &DisplayMap) -> Vec<DisplayRow> {
     (0..map.row_count()).map(|row| map.row(row)).collect()
+}
+
+/// Sets the wrap width and wraps every row.
+pub(super) fn wrap_at(map: &mut DisplayMap, width: Option<f32>) {
+    map.set_wrap_width(width, &mut Monospace);
+    assert!(!map.wrap_pending(0, usize::MAX, &mut Monospace));
 }
 
 /// Rows tile the visible text in order, and every buffer offset maps to the
 /// row showing it, or if folded away to its fold's header.
-fn check_round_trips(map: &DisplayMap) -> Result<(), TestCaseError> {
+pub(super) fn check_round_trips(map: &DisplayMap) -> Result<(), TestCaseError> {
     let text = map.text();
     let rows = rows(map);
     prop_assert_eq!(rows[0].range.start, 0);
@@ -51,9 +57,9 @@ fn check_round_trips(map: &DisplayMap) -> Result<(), TestCaseError> {
 }
 
 /// An edit at offset `at` (clamped) replacing `len` bytes with `insert`.
-type EditSpec = (usize, usize, String);
+pub(super) type EditSpec = (usize, usize, String);
 
-fn apply(buffer: &mut Buffer, batch: &[EditSpec]) {
+pub(super) fn apply(buffer: &mut Buffer, batch: &[EditSpec]) {
     let text = buffer.text();
     let mut edits: Vec<(Range<usize>, String)> = Vec::new();
     let mut end = 0;
@@ -71,7 +77,7 @@ fn apply(buffer: &mut Buffer, batch: &[EditSpec]) {
     buffer.edit(edits, Origin::User);
 }
 
-fn edit_strategy() -> impl Strategy<Value = EditSpec> {
+pub(super) fn edit_strategy() -> impl Strategy<Value = EditSpec> {
     (0usize..80, 0usize..12, "[ab \n\t]{0,10}")
 }
 
@@ -89,7 +95,7 @@ proptest! {
         let width = width.map(|width| width as f32);
         let mut buffer = Buffer::new(&text);
         let mut map = DisplayMap::new(buffer.current(), 4);
-        map.set_wrap_width(width, &mut Monospace);
+        wrap_at(&mut map, width);
         for (start, len) in folds {
             map.fold(start..=start + len);
         }
@@ -104,7 +110,7 @@ proptest! {
         check_round_trips(&map)?;
 
         let mut fresh = DisplayMap::new(buffer.current(), 4);
-        fresh.set_wrap_width(width, &mut Monospace);
+        wrap_at(&mut fresh, width);
         for fold in map.folds() {
             fresh.fold(fold.start..=fold.end);
         }
@@ -143,7 +149,7 @@ fn folds_hide_rows_and_follow_edits() {
 fn wrapped_rows_continue_their_buffer_row() {
     let buffer = Buffer::new("aaaa bbbb cc\nd");
     let mut map = DisplayMap::new(buffer.current(), 4);
-    map.set_wrap_width(Some(6.), &mut Monospace);
+    wrap_at(&mut map, Some(6.));
     let shown: Vec<_> = rows(&map)
         .iter()
         .map(|row| (row.buffer_row, row.range.clone(), row.first, row.last))

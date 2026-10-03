@@ -18,11 +18,16 @@ use crate::{
     wrap_map::WrapMap,
 };
 
+/// A [`DisplayMap::wrap_pending`] budget that wraps in about 0.6 ms (release,
+/// Apple Silicon, code-like rows).
+pub const WRAP_SLICE_BYTES: usize = 128 * 1024;
+
 /// Maps a buffer to the rows displayed: buffer rows are soft wrapped into
 /// wrap rows, and folds hide some of those.
 ///
 /// The map follows one buffer through [`DisplayMap::sync`], which re-wraps
-/// only the rows edits touched.
+/// only the rows edits touched. A new wrap width re-wraps the other rows in
+/// slices through [`DisplayMap::wrap_pending`].
 pub struct DisplayMap {
     snapshot: BufferSnapshot,
     tab_size: usize,
@@ -64,6 +69,8 @@ impl DisplayMap {
 
     /// Catches up with `snapshot`, a later version of the same buffer,
     /// re-wrapping the rows edited since. Folds edits touched are dropped.
+    /// Another buffer, or an earlier version, shows unwrapped and unfolded,
+    /// with every row pending a wrap.
     pub fn sync(&mut self, snapshot: &BufferSnapshot, widths: &mut dyn CharWidth) {
         let ours = &self.snapshot;
         if snapshot.id() == ours.id() && snapshot.version() == ours.version() {
@@ -73,7 +80,8 @@ impl DisplayMap {
             // Another buffer, or history we can't follow.
             self.snapshot = snapshot.clone();
             self.folds.unfold_all();
-            self.rewrap(widths);
+            self.wrap.reset(snapshot.text());
+            self.rebuild_folds();
             return;
         }
         for edit in row_edits(ours.text(), snapshot, ours.version()) {
@@ -95,7 +103,9 @@ impl DisplayMap {
     }
 
     /// Wraps rows wider than `width`, as measured by `widths`, or with
-    /// `None` stops wrapping. Re-wraps every row if the width changed.
+    /// `None` stops wrapping. A new width wraps nothing yet: every row is
+    /// pending, shown as it was, until [`DisplayMap::wrap_pending`] gets to
+    /// it.
     pub fn set_wrap_width(&mut self, width: Option<f32>, widths: &mut dyn CharWidth) {
         if width != self.wrap.width() {
             self.wrap
@@ -112,8 +122,8 @@ impl DisplayMap {
         }
     }
 
-    /// Re-wraps every row, for when `widths` measures differently, such as
-    /// after a font change.
+    /// Marks every row pending a wrap, for when `widths` measures
+    /// differently, such as after a font change.
     pub fn rewrap(&mut self, widths: &mut dyn CharWidth) {
         self.wrap.rebuild(
             self.snapshot.text(),
@@ -122,6 +132,32 @@ impl DisplayMap {
             widths,
         );
         self.rebuild_folds();
+    }
+
+    /// Whether rows are still to be wrapped at the current width, tab size
+    /// and font.
+    pub fn wrap_is_pending(&self) -> bool {
+        self.wrap.is_pending()
+    }
+
+    /// Wraps pending rows, those from buffer row `around` onward first, then
+    /// those before it, nearest first, until it has wrapped `budget_bytes`
+    /// of rows (at least one row). Returns whether rows are still pending.
+    /// [`WRAP_SLICE_BYTES`] keeps a call well inside a frame.
+    pub fn wrap_pending(
+        &mut self,
+        around: u32,
+        budget_bytes: usize,
+        widths: &mut dyn CharWidth,
+    ) -> bool {
+        if !self.wrap.is_pending() {
+            return false;
+        }
+        let pending = self
+            .wrap
+            .wrap_pending(self.snapshot.text(), around, budget_bytes, widths);
+        self.rebuild_folds();
+        pending
     }
 
     fn rebuild_folds(&mut self) {
@@ -275,5 +311,7 @@ fn row_edits(old: &Text, new: &BufferSnapshot, from: Version) -> Vec<RowEdit> {
     .collect()
 }
 
+#[cfg(test)]
+mod pending_wrap_tests;
 #[cfg(test)]
 mod tests;

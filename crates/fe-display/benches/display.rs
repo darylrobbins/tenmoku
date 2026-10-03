@@ -1,15 +1,19 @@
 //! Display map budgets on a 1M-line file (release, Apple Silicon): a
 //! keystroke re-wraps only its row, far inside the 8 ms p99 keystroke-to-paint
-//! budget; wrapping the whole file (turning soft wrap on, resizing) is
-//! measured to see how far it is from a frame.
+//! budget; a new wrap width (turning soft wrap on, resizing) marks every row
+//! pending and wraps one slice of [`WRAP_SLICE_BYTES`] around the viewport
+//! per frame, which has to stay well inside a frame.
 //!
 //! Run with `cargo bench -p fe-display`.
 
-use std::hint::black_box;
+use std::{
+    hint::black_box,
+    time::{Duration, Instant},
+};
 
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 use fe_buffer::{Buffer, Origin};
-use fe_display::{DisplayMap, Monospace};
+use fe_display::{DisplayMap, Monospace, WRAP_SLICE_BYTES};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 
 /// 1M lines of code-like text, about 75 MB, most wider than 80 columns.
@@ -29,16 +33,40 @@ fn corpus() -> String {
     text
 }
 
+/// The viewport's first buffer row.
+const AROUND: u32 = 500_000;
+
 fn benches(c: &mut Criterion) {
     let mut buffer = Buffer::new(&corpus());
     let mut map = DisplayMap::new(buffer.current(), 4);
 
     let mut wrap = c.benchmark_group("wrap");
-    wrap.sample_size(10);
-    wrap.bench_function("1M lines at 80 columns", |b| {
+    wrap.bench_function("set width + one slice, 1M lines", |b| {
         b.iter(|| {
             map.set_wrap_width(None, &mut Monospace);
             map.set_wrap_width(Some(black_box(80.)), &mut Monospace);
+            map.wrap_pending(AROUND, WRAP_SLICE_BYTES, &mut Monospace)
+        })
+    });
+    wrap.bench_function("one slice, 1M lines", |b| {
+        b.iter_custom(|iters| {
+            let mut total = Duration::ZERO;
+            for _ in 0..iters {
+                map.set_wrap_width(None, &mut Monospace);
+                map.set_wrap_width(Some(80.), &mut Monospace);
+                let start = Instant::now();
+                black_box(map.wrap_pending(AROUND, WRAP_SLICE_BYTES, &mut Monospace));
+                total += start.elapsed();
+            }
+            total
+        })
+    });
+    wrap.sample_size(10);
+    wrap.bench_function("all pending rows in slices, 1M lines at 80 columns", |b| {
+        b.iter(|| {
+            map.set_wrap_width(None, &mut Monospace);
+            map.set_wrap_width(Some(black_box(80.)), &mut Monospace);
+            while map.wrap_pending(AROUND, WRAP_SLICE_BYTES, &mut Monospace) {}
         })
     });
     wrap.finish();
@@ -51,6 +79,7 @@ fn benches(c: &mut Criterion) {
     let len = buffer.len();
     for (name, width) in [("unwrapped", None), ("wrapped", Some(80.))] {
         map.set_wrap_width(width, &mut Monospace);
+        map.wrap_pending(0, usize::MAX, &mut Monospace);
         c.bench_function(&format!("sync/keystroke, 1M lines {name}"), |b| {
             b.iter_batched(
                 || rng.random_range(0..len),
