@@ -14,6 +14,7 @@ The core crates (`fe-text`, `fe-buffer`, `fe-display`, `fe-editor`,
 | Display map | `fe-display/src/{lib,wrap_map,fold_map}.rs`, `display_map/tests.rs` | One property per layer (tabs, soft wrap, folds), then all three under random edits: every buffer offset maps to the display row showing it (or a fold's header) and back, rows tile the text, and a map kept up to date edit by edit matches one built from scratch |
 | Frame layout | `fe-display/src/layout/tests.rs` | Scrolling, autoscroll, visible rows, selection and cursor rectangles, line numbers, fold markers, style runs and hit testing, with soft-wrapped and folded rows, laid out against a fake monospace measurer (tabs, wide chars), with no window |
 | Key bindings | `fe-gpui/src/tests.rs` | Real keystrokes go through the real keymap into a focused editor in a headless GPUI window. One table row per binding, plus typing, input-method composition, clipboard and save. `bindings_are_all_tested` fails if a binding has no row |
+| Screenshots | `fe-gpui/examples/screenshots/`, `golden/` | The editor view, rendered off screen by the real Metal renderer, matches a golden PNG per scene: highlighted Rust, a multi-line selection, three carets, tab indentation, a long line cut off at the right edge, and a three-digit gutter. See [Screenshots](#screenshots) |
 
 Mutation testing (`cargo mutants -p <crate>`) is worth running by hand before a
 milestone, to find code the tests don't actually check. It isn't part of CI.
@@ -41,6 +42,51 @@ large-text rope tests, which run a hundredth as many (at least 8). Note that
 `proptest!` lets the variable override `ProptestConfig::with_cases`, so a test
 that needs its own count has to drive `TestRunner` itself, as `large.rs` does.
 CI's `soak` workflow runs `scripts/soak.sh` on demand.
+
+## Screenshots
+
+```zsh
+cargo run -p fe-gpui --example screenshots                       # compare every scene with its golden
+UPDATE_SCREENSHOTS=1 cargo run -p fe-gpui --example screenshots  # rewrite the goldens
+cargo run -p fe-gpui --example screenshots -- render out.png path/to/file [--size 800x480]
+```
+
+Scenes render through GPUI's `VisualTestAppContext`: a window at
+(-10000, -10000), 800×480 logical pixels, drawn by Metal and read back from
+its texture. Nothing appears on screen and no screen-recording permission is
+needed, so agents can run all three commands. Background parses are run to
+completion first, so highlights show. AppKit has to run on the main thread,
+so scenes render only under `cargo run`. The example is built as a test
+(`test = true`), so `cargo test` and the gate run the comparison's unit
+tests (`compare::tests`) but never render.
+
+A pixel matches when each RGBA channel is within ±2/255 of the golden's. A
+scene passes when at most 0.1% of its pixels differ. On failure the run
+prints the mismatch, writes `target/screenshots/<scene>.actual.png` and
+`<scene>.diff.png` (the capture dimmed, with differing pixels in magenta), and
+exits nonzero. A size mismatch fails outright and writes the same two files;
+its diff covers both images, with the area only one of them has in magenta.
+It usually means the display's scale factor differs from the goldens' 2×.
+
+After an intended rendering change, regenerate with `UPDATE_SCREENSHOTS=1`,
+look at every changed PNG, and commit them with the change. Rendering is
+deterministic on one machine: regenerating without a change leaves the files
+byte-identical.
+
+`render` opens a file in the same pinned theme and saves one frame. Use it to
+look at a UI change without a screen; the image is 2× the given size.
+
+**Font.** Goldens pin the font to Menlo rather than taking whatever
+`EditorTheme::default_dark` finds installed. Menlo ships with macOS under
+Apple's licence. It is used from the system, not bundled or redistributed,
+so it needs no `deny.toml` or THIRD_PARTY.md entry. A macOS update can
+change Menlo's rendering. If goldens drift, or CI's `macos-15` renders text
+differently from a local machine, take the goldens from CI rather than
+raising the tolerance: a failing run uploads `target/screenshots/` as the
+`screenshots` artifact, and its `<scene>.actual.png` files become the new
+`golden/<scene>.png`. JetBrains Mono
+(OFL-1.1) would be steadier, but bundling it needs the licence added to
+the allowlist and a THIRD_PARTY.md row.
 
 ## When a property test fails
 

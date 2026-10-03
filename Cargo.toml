@@ -29,6 +29,8 @@ gpui = { package = "gpui-pre", version = "=0.3.7" }
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7", features = ["font-kit", "runtime_shaders"] }
 sum-tree = { package = "gpui-pre-sum-tree", version = "=0.3.7" }
 
+# PNG decode/encode for the fe-gpui screenshot goldens (already in the lock through gpui).
+image = { version = "0.25", default-features = false, features = ["png"] }
 libc = "0.2"
 log = "0.4"
 tempfile = "3"
