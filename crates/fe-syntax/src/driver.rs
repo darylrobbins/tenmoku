@@ -72,10 +72,9 @@ impl<T> SyntaxDriver<T> {
         }
         let (clock, budget) = (&self.clock, self.budget);
         let started = clock();
-        if self
-            .syntax
-            .parse_until(|| clock().saturating_duration_since(started) > budget)
-        {
+        if self.syntax.parse_until(budget, || {
+            clock().saturating_duration_since(started) > budget
+        }) {
             return;
         }
         self.task = Some(spawner.spawn(self.syntax.parse_job()));

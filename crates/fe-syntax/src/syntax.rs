@@ -86,6 +86,10 @@ pub struct Syntax {
     cache: RefCell<Cache>,
     /// Set when parsing or highlighting panicked.
     failed: Cell<bool>,
+    /// How long the last incremental reparse took, if there's been one since
+    /// the tree was last dropped. A first full parse says nothing about the
+    /// cost of a keystroke, so it isn't recorded.
+    last_reparse: Option<Duration>,
 }
 
 impl Syntax {
@@ -97,6 +101,7 @@ impl Syntax {
             parsed: None,
             cache: RefCell::default(),
             failed: Cell::new(false),
+            last_reparse: None,
         }
     }
 
@@ -130,6 +135,7 @@ impl Syntax {
             // given up on.
             self.tree = None;
             self.parsed = None;
+            self.last_reparse = None;
             cache.layers.clear();
         } else if let Some(edit) =
             input_edit(self.snapshot.text(), snapshot, self.snapshot.version())
@@ -158,15 +164,22 @@ impl Syntax {
     /// Returns whether the tree no longer needs parsing.
     pub fn parse_within(&mut self, budget: Duration) -> bool {
         let started = Instant::now();
-        self.parse_until(|| started.elapsed() > budget)
+        self.parse_until(budget, || started.elapsed() > budget)
     }
 
     /// Reparses on this thread, giving up as soon as `out_of_time` returns
     /// true; tree-sitter asks it every so often while parsing. Returns
     /// whether the tree no longer needs parsing.
-    pub fn parse_until(&mut self, out_of_time: impl FnMut() -> bool) -> bool {
+    ///
+    /// Returns false without parsing if the last incremental reparse took
+    /// longer than `budget`, since this one would most likely overrun too. A
+    /// background parse that finishes within it turns this back on.
+    pub fn parse_until(&mut self, budget: Duration, out_of_time: impl FnMut() -> bool) -> bool {
         if !self.needs_parse() {
             return true;
+        }
+        if self.last_reparse.is_some_and(|took| took > budget) {
+            return false;
         }
         match self.parse_job().parse(out_of_time) {
             Some(parsed) => {
@@ -212,6 +225,9 @@ impl Syntax {
             parsed.snapshot.version(),
         ) {
             tree.edit(&edit);
+        }
+        if parsed.incremental {
+            self.last_reparse = Some(parsed.elapsed);
         }
         self.tree = Some(tree);
         self.parsed = Some(parsed.snapshot.version());
@@ -506,6 +522,10 @@ pub struct Parsed {
     /// `None` if parsing panicked.
     tree: Option<Tree>,
     snapshot: BufferSnapshot,
+    /// How long the parse took.
+    pub(crate) elapsed: Duration,
+    /// Whether it started from an earlier tree.
+    pub(crate) incremental: bool,
 }
 
 impl Parsed {
@@ -524,6 +544,7 @@ impl ParseJob {
 
     /// `None` if `out_of_time` says so before the parse completes.
     fn parse(self, out_of_time: impl FnMut() -> bool) -> Option<Parsed> {
+        let started = Instant::now();
         let tree = match catch_unwind(AssertUnwindSafe(|| self.parse_tree(out_of_time))) {
             Ok(tree) => Some(tree?),
             Err(_) => {
@@ -537,6 +558,8 @@ impl ParseJob {
         Some(Parsed {
             tree,
             snapshot: self.snapshot,
+            elapsed: started.elapsed(),
+            incremental: self.old_tree.is_some(),
         })
     }
 
@@ -592,6 +615,9 @@ pub(crate) fn parse_text(
     }
     tree
 }
+
+#[cfg(test)]
+mod reparse_budget_tests;
 
 #[cfg(test)]
 thread_local! {
