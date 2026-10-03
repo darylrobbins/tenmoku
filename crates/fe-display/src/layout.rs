@@ -13,11 +13,16 @@ use std::ops::Range;
 use fe_buffer::ResolvedSelection;
 use fe_text::{Bias, Text};
 
-use crate::{DisplayMap, ExpandedRow};
+use crate::{CharWidth, DisplayMap, DisplayRow, ExpandedRow, LongRows, RowIndex, RowSlice};
 
-/// Longest prefix of a row that is shaped and painted. Rows beyond this
-/// (minified files, data dumps) are cut off rather than stalling a frame.
+/// Longest row that is shaped whole. Of a longer row (minified files, data
+/// dumps), only a slice around the view is shaped, rather than stalling a
+/// frame; with soft wrap on, such a row is still to be wrapped and only its
+/// first this many bytes are shaped.
 pub const MAX_SHAPED_ROW_BYTES: usize = 8 * 1024;
+
+/// How far past each side of the view a long row's slice reaches, in ems.
+const SLICE_MARGIN_EMS: f32 = 32.;
 
 /// Shown after a row whose following rows are folded.
 pub const FOLD_MARKER: &str = "⋯";
@@ -143,29 +148,106 @@ pub struct RowLayout<L> {
     /// The display row.
     pub row: u32,
     pub buffer_row: u32,
-    /// The buffer offsets the row covers. Only the first
-    /// [`MAX_SHAPED_ROW_BYTES`] are shaped.
+    /// The buffer offsets the row covers.
     pub start: usize,
     pub end: usize,
     /// Ends its buffer row, rather than at a soft wrap.
     pub last: bool,
+    /// Of a row longer than [`MAX_SHAPED_ROW_BYTES`] with soft wrap off, the
+    /// part around the view that's shaped. Positions elsewhere in the row
+    /// come from its [`RowIndex`] in the frame's [`LongRows`].
+    pub slice: Option<RowSlice>,
+    /// The shaped text, from [`RowLayout::shown`].
     pub expanded: ExpandedRow,
     pub line: L,
 }
 
-impl<L: MeasuredLine> RowLayout<L> {
-    /// X offset (from column 0) of a buffer offset in this row.
-    pub fn x_for_offset(&self, offset: usize) -> f32 {
-        let display = self.expanded.to_display(offset.saturating_sub(self.start));
-        self.line
-            .x_for_index(display.min(self.expanded.text().len()))
+impl<L> RowLayout<L> {
+    /// The buffer offsets shaped into `line`: the row's slice, or the start
+    /// of the row up to [`MAX_SHAPED_ROW_BYTES`].
+    pub fn shown(&self) -> Range<usize> {
+        match &self.slice {
+            Some(slice) => slice.range.clone(),
+            None => {
+                let shown = self.expanded.text().len();
+                self.start..self.start + self.expanded.to_buffer(shown, Bias::Left)
+            }
+        }
+    }
+
+    /// The x of `line`'s start, from column 0.
+    pub fn start_x(&self) -> f64 {
+        self.slice.as_ref().map_or(0., |slice| slice.start_x)
     }
 
     /// Whether the caret at `offset` is on this row. A soft wrap point
     /// starts the row after it.
     pub fn contains(&self, offset: usize) -> bool {
-        self.start <= offset && (offset < self.end || offset == self.end && self.last)
+        contains(self.start..self.end, self.last, offset)
     }
+
+    /// A long row's index, if `long_rows` still holds it for this row.
+    fn index<'a>(&self, long_rows: &'a mut LongRows) -> Option<&'a mut RowIndex> {
+        self.slice.as_ref()?;
+        long_rows
+            .get(self.buffer_row)
+            .filter(|index| index.range() == (self.start..self.end))
+    }
+}
+
+impl<L: MeasuredLine> RowLayout<L> {
+    /// X offset (from column 0) of a buffer offset in this row. Past the
+    /// shaped text, a long row's index places it, if `long_rows` holds it.
+    pub fn x_for_offset(
+        &self,
+        offset: usize,
+        long_rows: &mut LongRows,
+        widths: &mut dyn CharWidth,
+    ) -> f64 {
+        let shown = self.shown();
+        if !(shown.start..=shown.end).contains(&offset)
+            && let Some(index) = self.index(long_rows)
+        {
+            return index.x_for_offset(offset, widths);
+        }
+        let display = self
+            .expanded
+            .to_display(offset.clamp(shown.start, shown.end) - shown.start);
+        self.start_x() + f64::from(self.line.x_for_index(display))
+    }
+
+    /// The buffer offset closest to `x` (from column 0) in this row.
+    fn offset_for_x(
+        &self,
+        text: &Text,
+        x: f64,
+        long_rows: &mut LongRows,
+        widths: &mut dyn CharWidth,
+    ) -> usize {
+        let line_x = x - self.start_x();
+        if (line_x < 0. || line_x > f64::from(self.line.width()))
+            && let Some(index) = self.index(long_rows)
+        {
+            let before = index.offset_for_x(x, widths);
+            let after = text.clip_offset(before + 1, Bias::Right).min(self.end);
+            let past = x - index.x_for_offset(before, widths);
+            return if after > before && index.x_for_offset(after, widths) - x < past {
+                after
+            } else {
+                before
+            };
+        }
+        let display = self.line.index_for_x(line_x as f32);
+        self.shown().start + self.expanded.to_buffer(display, Bias::Left)
+    }
+}
+
+/// A row laid out, or a long row to slice once the horizontal scroll is
+/// known, with its display row.
+type Pending<L> = Result<RowLayout<L>, (u32, DisplayRow)>;
+
+fn contains(row: Range<usize>, last: bool, offset: usize) -> bool {
+    row.start <= offset && (offset < row.end || offset == row.end && last)
 }
 
 impl<L: MeasuredLine> Frame<L> {
@@ -187,11 +269,18 @@ impl<L: MeasuredLine> Frame<L> {
         self.line_height * row as f32 - self.scroll.y
     }
 
+    /// The x in the frame of `x` from column 0. Far along a long row, x is
+    /// too big for an `f32` to place exactly, so this subtracts the scroll
+    /// position first.
+    pub fn view_x(&self, x: f64) -> f32 {
+        self.text_left + (x - f64::from(self.scroll.x)) as f32
+    }
+
     /// Where a row's line is painted.
-    pub fn row_origin(&self, row: u32) -> Vec2 {
+    pub fn line_origin(&self, row: &RowLayout<L>) -> Vec2 {
         Vec2 {
-            x: self.text_left - self.scroll.x,
-            y: self.row_top(row),
+            x: self.view_x(row.start_x()),
+            y: self.row_top(row.row),
         }
     }
 
@@ -207,8 +296,15 @@ impl<L: MeasuredLine> Frame<L> {
 
     /// The buffer offset under `position`. Rows outside this frame (dragging
     /// past an edge) clamp to its first or last row, and positions past the
-    /// end of a soft-wrapped row stay on it.
-    pub fn offset_at(&self, text: &Text, position: Vec2) -> usize {
+    /// end of a soft-wrapped row stay on it. `long_rows` and `widths` are
+    /// what the frame was laid out with.
+    pub fn offset_at(
+        &self,
+        text: &Text,
+        position: Vec2,
+        long_rows: &mut LongRows,
+        widths: &mut dyn CharWidth,
+    ) -> usize {
         let row = ((position.y + self.scroll.y) / self.line_height)
             .floor()
             .max(0.) as u32;
@@ -224,10 +320,8 @@ impl<L: MeasuredLine> Frame<L> {
         }) else {
             return 0;
         };
-        let display = row
-            .line
-            .index_for_x(position.x - self.text_left + self.scroll.x);
-        let offset = row.start + row.expanded.to_buffer(display, Bias::Left);
+        let x = f64::from(position.x - self.text_left) + f64::from(self.scroll.x);
+        let offset = row.offset_for_x(text, x, long_rows, widths);
         if !row.last && offset >= row.end {
             return text.clip_offset(row.end - 1, Bias::Left).max(row.start);
         }
@@ -235,10 +329,15 @@ impl<L: MeasuredLine> Frame<L> {
     }
 
     /// A caret-sized rectangle at `offset`, if its row is in this frame.
-    pub fn caret_bounds(&self, offset: usize) -> Option<Rect> {
+    pub fn caret_bounds(
+        &self,
+        offset: usize,
+        long_rows: &mut LongRows,
+        widths: &mut dyn CharWidth,
+    ) -> Option<Rect> {
         let row = self.row_containing(offset)?;
         Some(Rect {
-            x: self.text_left + row.x_for_offset(offset) - self.scroll.x,
+            x: self.view_x(row.x_for_offset(offset, long_rows, widths)),
             y: self.row_top(row.row),
             width: CURSOR_WIDTH,
             height: self.line_height,
@@ -264,10 +363,14 @@ pub fn wrap_width(width: f32, buffer_rows: u32, em: f32) -> f32 {
 
 /// Lays out the rows visible in `input`, shaping them with `measure`.
 /// `highlights` returns the styled spans within a buffer range, sorted; it's
-/// called once per run of consecutive visible rows.
+/// called once per run of consecutive visible rows, and once per slice of a
+/// long row. `long_rows` holds the indexes of long rows, measured with
+/// `widths`, from frame to frame.
 pub fn layout_frame<M: TextMeasure>(
     input: &FrameInput<M::Style>,
     measure: &mut M,
+    long_rows: &mut LongRows,
+    widths: &mut dyn CharWidth,
     mut highlights: impl FnMut(Range<usize>) -> Vec<StyledSpan<M::Style>>,
 ) -> Frame<M::Line> {
     let FrameInput {
@@ -284,6 +387,8 @@ pub fn layout_frame<M: TextMeasure>(
         ref styles,
     } = *input;
     let text = display.text();
+    let snapshot = display.snapshot();
+    long_rows.start_frame();
 
     let row_count = display.row_count();
     let text_left = gutter_width(text.row_count(), em);
@@ -308,59 +413,127 @@ pub fn layout_frame<M: TextMeasure>(
     let end_row = (((scroll.y + height) / line_height).ceil() as u32).min(row_count);
     let row_top = |row: u32| line_height * row as f32 - scroll.y;
 
+    // Long rows are sliced once the horizontal scroll is known; the others
+    // are shaped first, since it depends on them. With soft wrap on, a row
+    // too long to shape is still to be wrapped, and is cut off instead.
+    let wrapped = display.wrap_width().is_some();
+    let is_long = |row: &DisplayRow| !wrapped && row.range.len() > MAX_SHAPED_ROW_BYTES;
     let display_rows: Vec<_> = (first_row..end_row).map(|row| display.row(row)).collect();
-    let shown: Vec<Range<usize>> = display_rows
+    let folded: Vec<usize> = (0..display_rows.len())
+        .filter(|&ix| display_rows[ix].folded)
+        .collect();
+    let cut = |row: &DisplayRow| {
+        let len = row.range.len().min(MAX_SHAPED_ROW_BYTES);
+        row.range.start..text.clip_offset(row.range.start + len, Bias::Left)
+    };
+    let shown: Vec<_> = display_rows
         .iter()
-        .map(|row| {
-            let len = row.range.len().min(MAX_SHAPED_ROW_BYTES);
-            row.range.start..text.clip_offset(row.range.start + len, Bias::Left)
-        })
+        .filter(|row| !is_long(row))
+        .map(cut)
         .collect();
     let spans = visible_spans(&shown, &mut highlights);
 
-    let mut rows = Vec::with_capacity(shown.len());
-    let mut folded = Vec::new();
-    for ((row, display_row), range) in (first_row..).zip(display_rows).zip(shown) {
-        let expanded = ExpandedRow::new(&text.slice_to_string(range.clone()), tab_size);
-        let first_span = spans.partition_point(|span| span.range.end <= range.start);
-        let runs = row_runs(&expanded, range.start, &spans[first_span..], &styles.text);
+    let shape_row = |measure: &mut M,
+                     row: u32,
+                     display_row: DisplayRow,
+                     slice: Option<RowSlice>,
+                     spans: &[StyledSpan<M::Style>]| {
+        let (shown, start_column) = match &slice {
+            Some(slice) => (slice.range.clone(), slice.start_column),
+            None => (cut(&display_row), 0),
+        };
+        let expanded = ExpandedRow::with_start_column(
+            &text.slice_to_string(shown.clone()),
+            start_column,
+            tab_size,
+        );
+        let first_span = spans.partition_point(|span| span.range.end <= shown.start);
+        let runs = row_runs(&expanded, shown.start, &spans[first_span..], &styles.text);
         let line = measure.shape(expanded.text(), &runs);
-        if display_row.folded {
-            folded.push(rows.len());
-        }
-        rows.push(RowLayout {
+        RowLayout {
             row,
             buffer_row: display_row.buffer_row,
             start: display_row.range.start,
             end: display_row.range.end,
             last: display_row.last,
+            slice,
             expanded,
             line,
-        });
-    }
-    let containing = |offset: usize| rows.iter().find(|row| row.contains(offset));
+        }
+    };
+    let laid_out: Vec<Pending<M::Line>> = (first_row..)
+        .zip(display_rows)
+        .map(|(row, display_row)| {
+            if is_long(&display_row) {
+                Err((row, display_row))
+            } else {
+                Ok(shape_row(measure, row, display_row, None, &spans))
+            }
+        })
+        .collect();
 
     // Horizontally, keep the cursor inside the text area too. Wrapped rows
-    // fit, so they don't scroll.
-    if display.wrap_width().is_some() {
+    // fit, so they don't scroll. Long rows are as wide as their index
+    // measures them, though only a slice is shaped.
+    if wrapped {
         scroll.x = 0.;
     } else {
-        if autoscroll && let Some(row) = containing(primary_head) {
-            let x = row.x_for_offset(primary_head);
-            let margin = em * 4.;
-            if x < scroll.x + margin {
-                scroll.x = x - margin;
+        let mut scroll_x = f64::from(scroll.x);
+        let text_width = f64::from(text_width);
+        let margin = f64::from(em) * 4.;
+        let mut head_x = || {
+            laid_out.iter().find_map(|row| match row {
+                Ok(row) => row
+                    .contains(primary_head)
+                    .then(|| row.x_for_offset(primary_head, long_rows, widths)),
+                Err((_, row)) => contains(row.range.clone(), row.last, primary_head).then(|| {
+                    long_rows
+                        .index(snapshot, row.buffer_row, tab_size, widths)
+                        .x_for_offset(primary_head, widths)
+                }),
+            })
+        };
+        if autoscroll && let Some(x) = head_x() {
+            if x < scroll_x + margin {
+                scroll_x = x - margin;
             }
-            if x > scroll.x + text_width - margin {
-                scroll.x = x - text_width + margin;
+            if x > scroll_x + text_width - margin {
+                scroll_x = x - text_width + margin;
             }
         }
-        let widest = rows.iter().map(|row| row.line.width()).fold(0., f32::max);
-        let max_scroll_x = (widest - text_width + em * 4.).max(0.);
-        scroll.x = scroll.x.clamp(0., max_scroll_x);
+        let widest = laid_out
+            .iter()
+            .map(|row| match row {
+                Ok(row) => f64::from(row.line.width()),
+                Err((_, row)) => long_rows
+                    .index(snapshot, row.buffer_row, tab_size, widths)
+                    .width(widths),
+            })
+            .fold(0., f64::max);
+        let max_scroll_x = (widest - text_width + margin).max(0.);
+        scroll.x = scroll_x.clamp(0., max_scroll_x) as f32;
     }
-    let x_at =
-        |row: &RowLayout<M::Line>, offset: usize| text_left + row.x_for_offset(offset) - scroll.x;
+
+    let scroll_x = f64::from(scroll.x);
+    let view = scroll_x..scroll_x + f64::from(text_width);
+    let slice_margin = f64::from(em * SLICE_MARGIN_EMS);
+    let rows: Vec<_> = laid_out
+        .into_iter()
+        .map(|row| match row {
+            Ok(row) => row,
+            Err((row, display_row)) => {
+                let slice = long_rows
+                    .index(snapshot, display_row.buffer_row, tab_size, widths)
+                    .slice(view.clone(), slice_margin, widths);
+                let spans = highlights(slice.range.clone());
+                shape_row(measure, row, display_row, Some(slice), &spans)
+            }
+        })
+        .collect();
+    let containing = |offset: usize| rows.iter().find(|row| row.contains(offset));
+    let mut x_at = |row: &RowLayout<M::Line>, offset: usize| {
+        text_left + (row.x_for_offset(offset, long_rows, widths) - scroll_x) as f32
+    };
 
     let mut selection_rects = Vec::new();
     let mut cursors = Vec::new();
@@ -398,10 +571,13 @@ pub fn layout_frame<M: TextMeasure>(
             if line_break {
                 right += em * 0.6;
             }
+            // Far along a long row, a selection reaches far off screen,
+            // further than an `f32` places its visible edge exactly.
+            let clamp = |x: f32| x.clamp(text_left - em, width + em);
             selection_rects.push(Rect::from_corners(
-                x_at(row, from),
+                clamp(x_at(row, from)),
                 row_top(row.row),
-                right,
+                clamp(right),
                 row_top(row.row) + line_height,
             ));
         }
@@ -448,7 +624,7 @@ pub fn layout_frame<M: TextMeasure>(
         .map(|ix| {
             let row = &rows[ix];
             let origin = Vec2 {
-                x: text_left + row.line.width() + em - scroll.x,
+                x: x_at(row, row.end) + em,
                 y: row_top(row.row),
             };
             (origin, shape(FOLD_MARKER, &styles.line_number))
@@ -472,9 +648,10 @@ pub fn layout_frame<M: TextMeasure>(
     }
 }
 
-/// Spans for the visible rows. Consecutive rows (across a line break or a
-/// soft wrap) are queried together; a row cut short ends the query, so the
-/// hidden rest of a long line isn't highlighted.
+/// Spans for the visible rows that are shaped from their start. Consecutive
+/// rows (across a line break or a soft wrap) are queried together; a row cut
+/// short ends the query, so the hidden rest of a long line isn't
+/// highlighted.
 fn visible_spans<S>(
     rows: &[Range<usize>],
     highlights: &mut impl FnMut(Range<usize>) -> Vec<StyledSpan<S>>,
@@ -536,5 +713,7 @@ pub fn row_runs<S: Clone>(
     runs
 }
 
+#[cfg(test)]
+mod long_row_tests;
 #[cfg(test)]
 mod tests;

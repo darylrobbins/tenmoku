@@ -1,12 +1,14 @@
 use std::{
     collections::HashMap,
+    mem,
     ops::Range,
     sync::Arc,
     time::{Duration, Instant},
 };
 
+use fe_buffer::Text;
 use fe_display::{
-    CharWidth,
+    CharWidth, LongRows,
     layout::{
         self, Frame, FrameInput, FrameStyles, MeasuredLine, Rect, StyleRun, StyledSpan,
         TextMeasure, Vec2,
@@ -28,6 +30,12 @@ pub(crate) struct FrameLayout {
     /// coordinates are relative to.
     pub(crate) origin: Point<Pixels>,
     pub(crate) frame: Frame<Line>,
+    /// The indexes of long rows, kept from frame to frame, and the char
+    /// widths they're measured with, for the tab size they're laid out
+    /// with.
+    long_rows: LongRows,
+    glyph_widths: GlyphWidths,
+    tab_size: usize,
     /// When prepaint started and how long it took, for [`FrameTiming`].
     prepaint_started: Instant,
     prepaint_took: Duration,
@@ -43,6 +51,21 @@ impl FrameLayout {
 
     pub(crate) fn to_window(&self, point: Vec2) -> Point<Pixels> {
         self.origin + gpui::point(px(point.x), px(point.y))
+    }
+
+    /// The buffer offset under a window position.
+    pub(crate) fn offset_at(&mut self, text: &Text, position: Point<Pixels>) -> usize {
+        let position = self.to_frame(position);
+        self.frame
+            .offset_at(text, position, &mut self.long_rows, &mut self.glyph_widths)
+    }
+
+    /// The window bounds of a caret at `offset`, if its row is on screen.
+    pub(crate) fn caret_bounds(&mut self, offset: usize) -> Option<Bounds<Pixels>> {
+        let caret = self
+            .frame
+            .caret_bounds(offset, &mut self.long_rows, &mut self.glyph_widths)?;
+        Some(self.bounds(caret))
     }
 
     pub(crate) fn bounds(&self, rect: Rect) -> Bounds<Pixels> {
@@ -145,8 +168,9 @@ impl TextMeasure for Shaper {
     }
 }
 
-/// Char widths in the editor font, in pixels, for soft wrap. Shapes each
-/// char once, so fallback fonts are measured too.
+/// Char widths in the editor font, in pixels, for soft wrap and long rows.
+/// Shapes each char once, so fallback fonts are measured too.
+#[derive(Clone)]
 pub(crate) struct GlyphWidths {
     text_system: Arc<TextSystem>,
     font_id: FontId,
@@ -255,6 +279,20 @@ impl Element for EditorElement {
         // Wrap a slice of what's pending around the top of the viewport,
         // keeping the text at the top where it is unless the caret is about
         // to be scrolled into view, and ask for another frame to continue.
+        // Long rows' indexes stay valid while the font and tab size do.
+        let tab_size = self.view.read(cx).model.tab_size();
+        let carried = self.view.update(cx, |view, _| {
+            let layout = view.layout.as_mut()?;
+            let widths = &layout.glyph_widths;
+            (widths.font_id == font_id
+                && widths.font_size == font_size
+                && layout.tab_size == tab_size)
+                .then(|| (mem::take(&mut layout.long_rows), widths.clone()))
+        });
+        let (mut long_rows, mut glyph_widths) = carried.unwrap_or_else(|| {
+            let widths = GlyphWidths::new(cx.text_system().clone(), &font, font_size);
+            (LongRows::default(), widths)
+        });
         let pending = self.view.update(cx, |view, _| {
             if !view.model.display().wrap_is_pending() {
                 return false;
@@ -277,7 +315,7 @@ impl Element for EditorElement {
         let selections = model.selections();
         let input = FrameInput {
             display: model.display(),
-            tab_size: model.tab_size(),
+            tab_size,
             selections: &selections,
             primary_head: model.primary_selection().head(),
             scroll: Vec2 {
@@ -306,9 +344,13 @@ impl Element for EditorElement {
             font,
             font_size,
         };
-        let frame = layout::layout_frame(&input, &mut shaper, |range| {
-            styled_highlights(syntax, theme, range)
-        });
+        let frame = layout::layout_frame(
+            &input,
+            &mut shaper,
+            &mut long_rows,
+            &mut glyph_widths,
+            |range| styled_highlights(syntax, theme, range),
+        );
 
         let scroll = point(px(frame.scroll.x), px(frame.scroll.y));
         self.view.update(cx, |view, cx| {
@@ -319,6 +361,9 @@ impl Element for EditorElement {
         Some(FrameLayout {
             origin: bounds.origin,
             frame,
+            long_rows,
+            glyph_widths,
+            tab_size,
             prepaint_started: started,
             prepaint_took: started.elapsed(),
         })
@@ -362,7 +407,7 @@ impl Element for EditorElement {
                         window.paint_quad(fill(layout.bounds(selection), theme.selection));
                     }
                     for row in &frame.rows {
-                        let origin = layout.to_window(frame.row_origin(row.row));
+                        let origin = layout.to_window(frame.line_origin(row));
                         row.line.paint(origin, line_height, window, cx);
                     }
                     for (origin, marker) in &frame.fold_markers {

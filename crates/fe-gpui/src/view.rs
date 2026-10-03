@@ -1,7 +1,7 @@
 use std::{ops::Range, time::Duration};
 
 use fe_buffer::{Anchor, BufferSnapshot};
-use fe_display::layout::{MAX_SHAPED_ROW_BYTES, RowLayout};
+use fe_display::layout::RowLayout;
 use fe_editor::{EditorModel, Movement};
 use fe_syntax::{Language, ParseJob, Spawner, Syntax, SyntaxDriver};
 use gpui::{
@@ -137,12 +137,11 @@ impl EditorView {
     }
 
     /// The buffer offset under a window position, in the last frame.
-    fn offset_for_position(&self, position: Point<Pixels>) -> usize {
-        self.layout.as_ref().map_or(0, |layout| {
-            layout
-                .frame
-                .offset_at(self.model.text(), layout.to_frame(position))
-        })
+    fn offset_for_position(&mut self, position: Point<Pixels>) -> usize {
+        let text = self.model.text();
+        self.layout
+            .as_mut()
+            .map_or(0, |layout| layout.offset_at(text, position))
     }
 
     fn on_mouse_down(
@@ -318,16 +317,18 @@ impl EditorView {
 }
 
 /// The text a frame shows, to parse a window around: of its longest run of
-/// rows with nothing hidden between them, from the first row's start to the
-/// last shaped byte. A fold hides rows, and a row longer than
-/// [`MAX_SHAPED_ROW_BYTES`] hides the rest of its text.
+/// rows with nothing hidden between them, from the first shaped byte to the
+/// last. A fold hides rows, and only part of a long row is shaped.
 fn shown_text<L>(rows: &[RowLayout<L>]) -> Range<usize> {
-    let shaped_end = |row: &RowLayout<L>| row.end.min(row.start + MAX_SHAPED_ROW_BYTES);
     rows.chunk_by(|above, below| {
-        below.buffer_row <= above.buffer_row + 1 && shaped_end(above) == above.end
+        below.buffer_row <= above.buffer_row + 1
+            && above.shown().end == above.end
+            && below.shown().start == below.start
     })
     .max_by_key(|run| run.len())
-    .map_or(0..0, |run| run[0].start..shaped_end(&run[run.len() - 1]))
+    .map_or(0..0, |run| {
+        run[0].shown().start..run[run.len() - 1].shown().end
+    })
 }
 
 fn syntax_driver(language: &'static Language, snapshot: &BufferSnapshot) -> SyntaxDriver<Task<()>> {
@@ -556,9 +557,7 @@ impl EntityInputHandler for EditorView {
         _: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
         let range = self.range_from_utf16(&range_utf16);
-        let layout = self.layout.as_ref()?;
-        let caret = layout.frame.caret_bounds(range.start)?;
-        Some(layout.bounds(caret))
+        self.layout.as_mut()?.caret_bounds(range.start)
     }
 
     fn character_index_for_point(

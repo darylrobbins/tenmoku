@@ -67,6 +67,11 @@ impl DisplayMap {
         self.snapshot.text()
     }
 
+    /// The buffer snapshot the rows are of.
+    pub fn snapshot(&self) -> &BufferSnapshot {
+        &self.snapshot
+    }
+
     /// Catches up with `snapshot`, a later version of the same buffer,
     /// re-wrapping the rows edited since. Folds edits touched are dropped.
     /// Another buffer, or an earlier version, shows unwrapped and unfolded,

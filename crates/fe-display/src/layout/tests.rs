@@ -9,12 +9,12 @@ use fe_buffer::Buffer;
 
 use super::*;
 
-const CELL: f32 = 10.;
-const LINE: f32 = 20.;
-const GUTTER: f32 = 70.;
-const WIDTH: f32 = 400.;
+pub(super) const CELL: f32 = 10.;
+pub(super) const LINE: f32 = 20.;
+pub(super) const GUTTER: f32 = 70.;
+pub(super) const WIDTH: f32 = 400.;
 
-fn advance(ch: char) -> f32 {
+pub(super) fn advance(ch: char) -> f32 {
     let wide = matches!(ch,
         '\u{1100}'..='\u{115F}' | '\u{2E80}'..='\u{A4CF}' | '\u{AC00}'..='\u{D7A3}'
         | '\u{F900}'..='\u{FAFF}' | '\u{FF00}'..='\u{FF60}' | '\u{1F300}'..='\u{1FAFF}');
@@ -22,9 +22,9 @@ fn advance(ch: char) -> f32 {
 }
 
 #[derive(Clone, Debug)]
-struct Line {
-    text: String,
-    runs: Vec<StyleRun<&'static str>>,
+pub(super) struct Line {
+    pub(super) text: String,
+    pub(super) runs: Vec<StyleRun<&'static str>>,
 }
 
 impl MeasuredLine for Line {
@@ -48,7 +48,13 @@ impl MeasuredLine for Line {
     }
 }
 
-struct Mono;
+pub(super) struct Mono;
+
+impl CharWidth for Mono {
+    fn char_width(&mut self, ch: char) -> f32 {
+        advance(ch)
+    }
+}
 
 impl TextMeasure for Mono {
     type Style = &'static str;
@@ -64,7 +70,7 @@ impl TextMeasure for Mono {
     }
 }
 
-fn parse(marked: &str) -> (String, Vec<ResolvedSelection>) {
+pub(super) fn parse(marked: &str) -> (String, Vec<ResolvedSelection>) {
     let mut text = String::new();
     let mut selections = Vec::new();
     let mut open = None;
@@ -130,11 +136,17 @@ fn lay_out_display(
             active_line_number: "active",
         },
     };
-    let frame = layout_frame(&input, &mut Mono, highlights);
+    let frame = layout_frame(
+        &input,
+        &mut Mono,
+        &mut LongRows::default(),
+        &mut Mono,
+        highlights,
+    );
     (frame, display.text().clone())
 }
 
-fn rect(x: f32, y: f32, width: f32, height: f32) -> Rect {
+pub(super) fn rect(x: f32, y: f32, width: f32, height: f32) -> Rect {
     Rect {
         x,
         y,
@@ -306,24 +318,6 @@ fn rows_are_styled_by_their_spans() {
 }
 
 #[test]
-fn long_rows_are_cut_off_and_end_the_highlight_query() {
-    let long = "x".repeat(MAX_SHAPED_ROW_BYTES + 100);
-    let marked = format!("|a\nb\n{long}\nc");
-    let mut queries = Vec::new();
-    let frame = lay_out_with(&marked, (0., 0.), false, 120., |range| {
-        queries.push(range);
-        Vec::new()
-    });
-    let long_start = 4;
-    let c_start = long_start + long.len() + 1;
-    assert_eq!(
-        queries,
-        [0..long_start + MAX_SHAPED_ROW_BYTES, c_start..c_start + 1]
-    );
-    assert_eq!(frame.rows[2].line.text.len(), MAX_SHAPED_ROW_BYTES);
-}
-
-#[test]
 fn hit_testing() {
     let (frame, text) = lay_out_display(
         "|\tab\n世界x\nend",
@@ -348,10 +342,14 @@ fn hit_testing() {
         ((GUTTER, 10. * LINE), text.len()),
     ];
     for ((x, y), want) in cases {
-        assert_eq!(frame.offset_at(&text, Vec2 { x, y }), want, "at ({x}, {y})");
+        assert_eq!(
+            frame.offset_at(&text, Vec2 { x, y }, &mut LongRows::default(), &mut Mono),
+            want,
+            "at ({x}, {y})"
+        );
     }
     assert_eq!(
-        frame.caret_bounds(7),
+        frame.caret_bounds(7, &mut LongRows::default(), &mut Mono),
         Some(rect(GUTTER + 20., LINE, 2., LINE))
     );
 }
@@ -394,16 +392,29 @@ fn wrapped_rows() {
         ]
     );
     // The caret at a wrap point is at the start of the next row.
-    assert_eq!(frame.caret_bounds(5), Some(rect(GUTTER, LINE, 2., LINE)));
+    assert_eq!(
+        frame.caret_bounds(5, &mut LongRows::default(), &mut Mono),
+        Some(rect(GUTTER, LINE, 2., LINE))
+    );
     // Clicking past a wrapped row's end stays on that row.
-    assert_eq!(frame.offset_at(&text, Vec2 { x: WIDTH, y: 5. }), 4);
+    assert_eq!(
+        frame.offset_at(
+            &text,
+            Vec2 { x: WIDTH, y: 5. },
+            &mut LongRows::default(),
+            &mut Mono
+        ),
+        4
+    );
     assert_eq!(
         frame.offset_at(
             &text,
             Vec2 {
                 x: WIDTH,
                 y: 2. * LINE + 5.
-            }
+            },
+            &mut LongRows::default(),
+            &mut Mono,
         ),
         12
     );

@@ -20,7 +20,8 @@ use crate::CharWidth;
 /// Bytes between checkpoints.
 const CHUNK: usize = 4 * 1024;
 
-/// Rows [`LongRows`] holds before it starts over.
+/// Rows [`LongRows`] holds before it drops those the last two frames
+/// didn't use.
 const MAX_CACHED_ROWS: usize = 128;
 
 /// A char boundary in a row.
@@ -293,14 +294,22 @@ impl RowIndex {
 
 /// The [`RowIndex`]es of long rows of one buffer version, kept from frame to
 /// frame. Another version or buffer drops them all; so does
-/// [`LongRows::clear`], which a font or tab size change must call.
+/// [`LongRows::clear`], which a font or tab size change must call. Rows the
+/// current or last frame used are never dropped, however many there are.
 #[derive(Default)]
 pub struct LongRows {
     key: Option<(BufferId, Version)>,
-    rows: HashMap<u32, RowIndex>,
+    /// Each index, with the frame that last used it.
+    rows: HashMap<u32, (RowIndex, u64)>,
+    frame: u64,
 }
 
 impl LongRows {
+    /// Starts a frame, which [`LongRows::index`] counts its rows as used by.
+    pub fn start_frame(&mut self) {
+        self.frame += 1;
+    }
+
     /// The index of buffer row `row` of `snapshot`.
     pub fn index(
         &mut self,
@@ -310,20 +319,33 @@ impl LongRows {
         measure: &mut dyn CharWidth,
     ) -> &mut RowIndex {
         let key = Some((snapshot.id(), snapshot.version()));
-        if self.key != key || self.rows.len() >= MAX_CACHED_ROWS && !self.rows.contains_key(&row) {
+        if self.key != key {
             self.rows.clear();
             self.key = key;
         }
-        self.rows.entry(row).or_insert_with(|| {
+        if self.rows.len() >= MAX_CACHED_ROWS && !self.rows.contains_key(&row) {
+            let frame = self.frame;
+            self.rows.retain(|_, (_, used)| *used + 1 >= frame);
+        }
+        let (index, used) = self.rows.entry(row).or_insert_with(|| {
             let text = snapshot.text();
             let start = text.row_start(row);
-            RowIndex::new(
+            let index = RowIndex::new(
                 text,
                 start..start + text.row_len(row) as usize,
                 tab_size,
                 measure,
-            )
-        })
+            );
+            (index, 0)
+        });
+        *used = self.frame;
+        index
+    }
+
+    /// The index of buffer row `row` of the version last indexed, if it's
+    /// still held.
+    pub fn get(&mut self, row: u32) -> Option<&mut RowIndex> {
+        self.rows.get_mut(&row).map(|(index, _)| index)
     }
 
     pub fn clear(&mut self) {
