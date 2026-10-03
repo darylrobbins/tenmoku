@@ -1,6 +1,7 @@
 use std::{cmp::Reverse, ops::Range, path::Path, time::Duration};
 
 mod golden;
+mod query_overrides;
 
 use fe_buffer::{Buffer, Origin};
 use proptest::{prelude::prop, prop_assert, prop_assert_eq, proptest};
@@ -96,7 +97,7 @@ fn each_language_highlights_a_snippet() {
             "[package]\nname = \"x\" # c\n",
             &[
                 ("package", "type"),
-                ("name", "type"),
+                ("name", "property"),
                 ("\"x\"", "string"),
                 ("# c", "comment"),
             ],

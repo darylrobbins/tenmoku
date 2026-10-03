@@ -141,6 +141,12 @@ struct Def {
     /// The highlight query, in parts concatenated in order. Later patterns
     /// win, so a language extending another lists the base language first,
     /// as the grammar's own `tree-sitter.json` does.
+    ///
+    /// Where the crate's query is weak, our own `queries/<lang>.scm` goes
+    /// after it as an override, so its patterns win on the same node (with
+    /// `earlier_patterns_win` false). When the crate's query has a pattern
+    /// that can't be cancelled that way, ours stands in for it instead, as
+    /// TOML's does; the file's header says which.
     highlights: fn() -> &'static [&'static str],
     /// When several patterns capture the same node, tree-sitter's highlighter
     /// uses the last, and most queries list general patterns first. A few
@@ -152,7 +158,8 @@ struct Def {
     hidden: bool,
 }
 
-/// One entry per Cargo feature. Every query is the one the grammar crate ships.
+/// One entry per Cargo feature. Every query is the one the grammar crate ships,
+/// plus an override from `queries/` where noted.
 const DEFS: &[Def] = &[
     #[cfg(feature = "rust")]
     Def {
@@ -243,7 +250,7 @@ const DEFS: &[Def] = &[
         extensions: &["toml"],
         file_names: &["Cargo.lock"],
         grammar: || tree_sitter_toml_ng::LANGUAGE.into(),
-        highlights: || &[tree_sitter_toml_ng::HIGHLIGHTS_QUERY],
+        highlights: || &[include_str!("../queries/toml.scm")],
         earlier_patterns_win: false,
         injections: None,
         hidden: false,

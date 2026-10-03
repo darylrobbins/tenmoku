@@ -7,6 +7,7 @@
 | `crates/fe-display/src/wrap_map.rs` | [gpui-kit](https://github.com/longbridge/gpui-kit) `crates/base/src/input/editor/display_map/text_wrapper.rs`, `wrap_map.rs` | `2c5162f8c5b0c7fcec066ed53125d304c632bfe2` | Apache-2.0 |
 | `crates/fe-display/src/fold_map.rs` | gpui-kit `…/display_map/fold_map.rs`, `folding.rs` | `2c5162f8c5b0c7fcec066ed53125d304c632bfe2` | Apache-2.0 |
 | `crates/fe-display/src/display_map.rs` | gpui-kit `…/display_map/display_map.rs` | `2c5162f8c5b0c7fcec066ed53125d304c632bfe2` | Apache-2.0 |
+| `crates/fe-syntax/queries/toml.scm` | [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter) `runtime/queries/toml/highlights.scm` | `e289100ff98969e118c702199d88b764ce9e7fdf` | Apache-2.0 |
 
 gpui-kit is Copyright 2024 - 2026 Longbridge. Its files carry no license
 header and the repository has no NOTICE file, so each adapted file starts with
@@ -29,7 +30,7 @@ own repository except where noted.
 | javascript | tree-sitter-javascript | 0.25.0 | https://github.com/tree-sitter/tree-sitter-javascript | MIT | `HIGHLIGHT_QUERY` + `JSX_HIGHLIGHT_QUERY`; `INJECTIONS_QUERY` |
 | typescript | tree-sitter-typescript | 0.23.2 | https://github.com/tree-sitter/tree-sitter-typescript | MIT | JavaScript's, then `HIGHLIGHTS_QUERY`; JavaScript's `INJECTIONS_QUERY` |
 | json | tree-sitter-json | 0.24.8 | https://github.com/tree-sitter/tree-sitter-json | MIT | `HIGHLIGHTS_QUERY` |
-| toml | tree-sitter-toml-ng | 0.7.0 | https://github.com/tree-sitter-grammars/tree-sitter-toml | MIT | `HIGHLIGHTS_QUERY` |
+| toml | tree-sitter-toml-ng | 0.7.0 | https://github.com/tree-sitter-grammars/tree-sitter-toml | MIT | `queries/toml.scm`³ |
 | go | tree-sitter-go | 0.25.0 | https://github.com/tree-sitter/tree-sitter-go | MIT | `HIGHLIGHTS_QUERY` |
 | c | tree-sitter-c | 0.24.2 | https://github.com/tree-sitter/tree-sitter-c | MIT | `HIGHLIGHT_QUERY` |
 | cpp | tree-sitter-cpp | 0.23.4 | https://github.com/tree-sitter/tree-sitter-cpp | MIT | C's, then `HIGHLIGHT_QUERY` |
@@ -47,6 +48,11 @@ allowed source). Ship the Apache-2.0 license text with them.
 It's 0.7.2 with upstream PR #35 (commits `fa76593` and `8025f83`) applied to
 `src/scanner.c`, which fixes YAML over 32,768 lines (issue #49). The licence and
 queries are unchanged from 0.7.2. The vendored README says when to drop it.
+
+³ Used in place of the crate's `HIGHLIGHTS_QUERY`, whose whole-pair `property`
+capture can't be overridden. Adapted from nvim-treesitter (Apache-2.0, an
+allowed source); ship the Apache-2.0 license text with it. Keys are `property`
+and table headers `type`.
 
 How patterns take precedence follows tree-sitter-highlight 0.25 (MIT), which
 was read for the rule, not copied: see `earlier_patterns_win` in
