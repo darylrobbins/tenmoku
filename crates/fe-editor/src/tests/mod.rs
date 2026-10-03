@@ -118,6 +118,12 @@ fn vertical_moves_keep_goal_column() {
     assert_eq!(render(&model), "|abcdef\nab\nabcdefgh");
     model.move_cursors(Movement::PageDown(10), false);
     assert_eq!(render(&model), "abcdef\nab\nabcdefgh|");
+    // A horizontal move sets a new goal.
+    let mut model = parse("abcdef|\nab\nabcdefgh");
+    model.move_cursors(Movement::Down, false);
+    model.move_cursors(Movement::Left, false);
+    model.move_cursors(Movement::Down, false);
+    assert_eq!(render(&model), "abcdef\nab\na|bcdefgh");
 }
 
 #[test]
@@ -159,9 +165,9 @@ fn newline_keeps_indentation() {
     model.newline();
     assert_eq!(render(&model), "    let x = 1;\n    |\nfn");
     // Splitting inside the indentation doesn't over-indent.
-    let mut split = parse("  |  x");
+    let mut split = parse("a\n  |  x");
     split.newline();
-    assert_eq!(render(&split), "  \n  |  x");
+    assert_eq!(render(&split), "a\n  \n  |  x");
 }
 
 #[test]

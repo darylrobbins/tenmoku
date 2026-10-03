@@ -13,6 +13,10 @@ editor view (`fe-gpui`) are tested in layers. Each layer catches things the othe
 
 Mutation testing (`cargo mutants -p <crate>`) is worth running by hand before a
 milestone, to find code the tests don't actually check. It isn't part of CI.
+Each crate takes a few minutes with `-j 6`. The known survivors are equivalent
+mutants (bookkeeping that only saves work, guards a later check repeats),
+trivial accessors, and `fe-gpui`'s paint geometry. Some `fe-editor` mutants
+are only caught by `fe-gpui`'s tests; add `--test-workspace true` to count them.
 
 ## Running
 
@@ -28,8 +32,7 @@ cargo llvm-cov -p fe-buffer --summary-only
 large-text rope tests, which run a hundredth as many (at least 8). Note that
 `proptest!` lets the variable override `ProptestConfig::with_cases`, so a test
 that needs its own count has to drive `TestRunner` itself, as `large.rs` does.
-The slow refusal-rate check is `#[ignore]`d, so plain `cargo test` skips it;
-`scripts/soak.sh` runs it. CI's `soak` workflow runs the script on demand.
+CI's `soak` workflow runs `scripts/soak.sh` on demand.
 
 ## When a property test fails
 
@@ -48,7 +51,7 @@ In those cases the buffer refuses with `UndoError::Conflict` rather than guess.
 A refusal never changes the text.
 
 `avoidable_refusals_stay_rare` tracks how often a refused transaction's text
-was actually intact. It was 2.2% of attempts in adversarial sessions when the
-test was introduced. Plain undo and redo of a single origin are exact and never
+was actually intact. It is 1.8% of attempts in its adversarial sessions, with
+a budget of 2.2%. Plain undo and redo of a single origin are exact and never
 refused. Removing the limitation would mean giving every character an identity,
 as collaborative editors do.

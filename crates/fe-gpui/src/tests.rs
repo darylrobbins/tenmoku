@@ -10,8 +10,9 @@ use std::collections::BTreeSet;
 use fe_buffer::{Buffer, ResolvedSelection};
 use fe_editor::EditorModel;
 use gpui::{
-    ClipboardItem, Entity, EntityInputHandler as _, Focusable as _, Keystroke, TestAppContext,
-    VisualTestContext,
+    ClipboardItem, Entity, EntityInputHandler as _, Focusable as _, Keystroke, Modifiers,
+    MouseButton, MouseDownEvent, Pixels, Point, ScrollDelta, ScrollWheelEvent, TestAppContext,
+    VisualTestContext, point,
 };
 
 use crate::*;
@@ -307,9 +308,12 @@ fn input_method_composition(cx: &mut TestAppContext) {
             // Typing "ka" in a Japanese input method composes "か".
             view.replace_and_mark_text_in_range(None, "k", Some(1..1), window, cx);
             assert_eq!(view.marked_text_range(window, cx), Some(2..3));
-            view.replace_and_mark_text_in_range(None, "か", Some(1..1), window, cx);
+            view.replace_and_mark_text_in_range(None, "か", Some(0..1), window, cx);
             assert_eq!(view.model().text().to_string(), "abか");
             assert_eq!(view.marked_text_range(window, cx), Some(2..3));
+            // The selection goes where the input method asked, relative to the composition.
+            let selection = view.selected_text_range(false, window, cx).unwrap();
+            assert_eq!(selection.range, 2..3);
             // Choosing a candidate commits it in place of the composition.
             view.replace_text_in_range(None, "加", window, cx);
             assert_eq!(view.marked_text_range(window, cx), None);
@@ -329,7 +333,11 @@ fn input_method_composition(cx: &mut TestAppContext) {
             // Positions on screen exist for visible text.
             let bounds = view.bounds_for_range(0..1, Default::default(), window, cx);
             assert!(bounds.is_some());
+            // Unmarking keeps the composed text but ends the composition.
+            view.replace_and_mark_text_in_range(None, "k", None, window, cx);
             view.unmark_text(window, cx);
+            assert_eq!(view.marked_text_range(window, cx), None);
+            assert_eq!(view.model().text().to_string(), "ab加k");
         })
     });
 }
@@ -361,6 +369,133 @@ fn page_moves_by_the_visible_rows(cx: &mut TestAppContext) {
     });
     // A page keeps a little overlap with the previous one.
     assert_eq!(row, visible - 2);
+}
+
+/// The window position of the caret at `offset`, as reported to input methods.
+fn position_of(
+    view: &Entity<EditorView>,
+    cx: &mut VisualTestContext,
+    offset: usize,
+) -> Point<Pixels> {
+    cx.update(|window, cx| {
+        view.update(cx, |view, cx| {
+            let utf16 = view.model().text().offset_to_utf16(offset);
+            view.bounds_for_range(utf16..utf16, Default::default(), window, cx)
+                .expect("visible")
+                .center()
+        })
+    })
+}
+
+fn double_click(cx: &mut VisualTestContext, position: Point<Pixels>) {
+    cx.simulate_event(MouseDownEvent {
+        position,
+        button: MouseButton::Left,
+        modifiers: Modifiers::none(),
+        click_count: 2,
+        first_mouse: false,
+    });
+}
+
+fn drag(cx: &mut VisualTestContext, from: Point<Pixels>, to: Point<Pixels>) {
+    cx.simulate_mouse_down(from, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_move(to, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_up(to, MouseButton::Left, Modifiers::none());
+}
+
+#[gpui::test]
+fn mouse_clicks_and_drags_select(cx: &mut TestAppContext) {
+    let (view, cx) = editor(cx, "|one two\nthree four\nfive");
+    let at = |offset, cx: &mut VisualTestContext| position_of(&view, cx, offset);
+
+    let p = at(5, cx);
+    cx.simulate_click(p, Modifiers::none());
+    assert_eq!(state(&view, cx), "one t|wo\nthree four\nfive");
+    cx.update(|window, cx| {
+        let index = view.update(cx, |view, cx| view.character_index_for_point(p, window, cx));
+        assert_eq!(index, Some(5));
+    });
+    let p = at(12, cx);
+    cx.simulate_click(p, Modifiers::shift());
+    assert_eq!(state(&view, cx), "one t[wo\nthre]e four\nfive");
+
+    let (from, to) = (at(12, cx), at(1, cx));
+    drag(cx, from, to);
+    assert_eq!(state(&view, cx), "o{ne two\nthre}e four\nfive");
+
+    // Double-click selects a word; dragging grows it a word at a time.
+    let (from, to) = (at(5, cx), at(16, cx));
+    double_click(cx, from);
+    assert_eq!(state(&view, cx), "one [two]\nthree four\nfive");
+    cx.simulate_mouse_move(to, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_up(to, MouseButton::Left, Modifiers::none());
+    assert_eq!(state(&view, cx), "one [two\nthree four]\nfive");
+    let (from, to) = (at(16, cx), at(1, cx));
+    double_click(cx, from);
+    cx.simulate_mouse_move(to, MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_up(to, MouseButton::Left, Modifiers::none());
+    assert_eq!(state(&view, cx), "{one two\nthree four}\nfive");
+
+    // Triple-click selects the row.
+    let p = at(10, cx);
+    cx.simulate_event(MouseDownEvent {
+        position: p,
+        button: MouseButton::Left,
+        modifiers: Modifiers::none(),
+        click_count: 3,
+        first_mouse: false,
+    });
+    assert_eq!(state(&view, cx), "one two\n[three four\n]five");
+}
+
+#[gpui::test]
+fn scrolling_moves_what_a_click_hits(cx: &mut TestAppContext) {
+    let text: String = (0..300).map(|row| format!("row {row}\n")).collect();
+    let (view, cx) = editor(cx, &format!("|{text}"));
+    // The start of the third visible row.
+    let target = position_of(&view, cx, "row 0\nrow 1\n".len());
+    let scroll = |lines: f32, cx: &mut VisualTestContext| {
+        cx.simulate_event(ScrollWheelEvent {
+            position: target,
+            delta: ScrollDelta::Lines(point(0., lines)),
+            ..Default::default()
+        });
+    };
+    let clicked_row = |cx: &mut VisualTestContext| {
+        cx.simulate_click(target, Modifiers::none());
+        view.update(cx, |view, _| {
+            let head = view.model().primary_selection().head();
+            view.model().text().offset_to_point(head).row
+        })
+    };
+
+    // Wheel deltas are negative when scrolling down.
+    scroll(-3., cx);
+    let row_5 = text.find("row 5").unwrap();
+    assert_eq!(
+        position_of(&view, cx, row_5),
+        target,
+        "caret boxes move with the scroll"
+    );
+    assert_eq!(clicked_row(cx), 5);
+    scroll(10., cx);
+    assert_eq!(clicked_row(cx), 2, "can't scroll above the start");
+}
+
+#[gpui::test]
+fn the_caret_stays_in_view(cx: &mut TestAppContext) {
+    let text: String = (0..300).map(|row| format!("row {row}\n")).collect();
+    let long_row = "x".repeat(500);
+    let (view, cx) = editor(cx, &format!("|{text}{long_row}"));
+    cx.simulate_keystrokes("cmd-down");
+    let caret = position_of(&view, cx, text.len() + long_row.len());
+    let (bounds, line_height) = view.update(cx, |view, _| {
+        let layout = view.layout.as_ref().unwrap();
+        (layout.bounds, layout.line_height)
+    });
+    assert!(bounds.contains(&caret), "{caret:?} outside {bounds:?}");
+    // A few rows of context stay below the caret.
+    assert!(caret.y + line_height * 2. < bounds.bottom());
 }
 
 #[gpui::test]

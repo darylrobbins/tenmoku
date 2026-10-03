@@ -559,10 +559,9 @@ proptest! {
 /// the rate creeping up. (The sessions are adversarial: edits cluster at the
 /// edges of earlier edits, where ordering is ambiguous.)
 #[test]
-#[ignore = "slow: run by scripts/soak.sh"]
 fn avoidable_refusals_stay_rare() {
     let mut total = Stats::default();
-    for seed in 0..400 {
+    for seed in 0..100 {
         let stats = run_session(seed, false).expect("matches reference");
         total.attempts += stats.attempts;
         total.refused += stats.refused;
@@ -577,8 +576,10 @@ fn avoidable_refusals_stay_rare() {
     );
 }
 
-/// Measured at 2.2% (141 of 6,335 attempts) when introduced.
-const AVOIDABLE_REFUSAL_BUDGET: f64 = 0.03;
+/// Measured at 1.8% (29 of 1,595 attempts). The sessions are seeded, so the
+/// rate only moves when the code does; mistakes in collapse tracking push it
+/// to 2.4% or more.
+const AVOIDABLE_REFUSAL_BUDGET: f64 = 0.022;
 
 #[test]
 fn adjacent_deletions_undone_out_of_order_are_never_misordered() {
