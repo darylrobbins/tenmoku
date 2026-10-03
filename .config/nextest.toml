@@ -1,0 +1,10 @@
+# Keep nextest's store in the workspace even when CARGO_TARGET_DIR points elsewhere,
+# so Regatta finds the JUnit report at target/nextest/ci/junit.xml.
+[store]
+dir = "target/nextest"
+
+[profile.ci]
+fail-fast = false
+
+[profile.ci.junit]
+path = "junit.xml"

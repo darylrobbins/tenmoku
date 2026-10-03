@@ -1,0 +1,97 @@
+# Regatta configuration for fastedit. See ~/code/regatta/docs/guide/configuration.md.
+#
+# Lanes and gate snapshots live under .worktrees/. A local .worktrees/.cargo/config.toml
+# (not tracked) points them all at one shared target directory, so GPUI is built once
+# rather than per lane. Commands here don't depend on it: without it each run builds
+# in its own target/.
+#
+# Gate commands run with the caller's PATH; cargo comes from rustup in ~/.cargo/bin.
+version = 2
+base_branch = "main"
+worktree_root = ".worktrees"
+
+[specs]
+dir = "docs/specs"
+commit = true
+
+[timeouts]
+# A cold build of GPUI takes several minutes.
+setup = "20m"
+stage = "30m"
+review = "15m"
+
+[[components]]
+name = "fastedit"
+path = "."
+stack = "rust-cargo"
+[components.commands]
+fmt = 'PATH="$HOME/.cargo/bin:$PATH" cargo fmt --all --check'
+vet = 'PATH="$HOME/.cargo/bin:$PATH" cargo clippy --workspace --all-targets -- -D warnings'
+build = 'PATH="$HOME/.cargo/bin:$PATH" cargo build --workspace --all-targets'
+# JUnit lands in target/nextest/ci/junit.xml (.config/nextest.toml), where the stack reads it.
+test = 'PATH="$HOME/.cargo/bin:$PATH" cargo nextest run --workspace --profile ci'
+test_one = 'PATH="$HOME/.cargo/bin:$PATH" cargo nextest run --workspace --profile ci -E "test(={test})"'
+no_gpui = 'PATH="$HOME/.cargo/bin:$PATH" scripts/check-no-gpui.sh'
+syntax_features = 'PATH="$HOME/.cargo/bin:$PATH" scripts/check-syntax-features.sh'
+# Licenses, bans and sources only: advisories need the network and run in CI.
+deny = 'PATH="$HOME/.cargo/bin:$PATH" cargo deny check licenses bans sources'
+
+[pipeline]
+gate = ["fmt", "vet", "build", "test", "no_gpui", "syntax_features", "deny"]
+fast = ["fmt", "vet", "test"]
+post_merge = ["build", "test"]
+# Cargo serialises on the shared target directory anyway.
+max_parallel = 2
+
+[[pipeline.stages]]
+name = "fmt"
+run = "fmt"
+
+[[pipeline.stages]]
+name = "vet"
+run = "vet"
+
+[[pipeline.stages]]
+name = "build"
+run = "build"
+
+[[pipeline.stages]]
+name = "test"
+run = "test"
+needs = ["build"]
+
+[[pipeline.stages]]
+name = "no_gpui"
+run = "no_gpui"
+when = { paths = ["**/Cargo.toml", "Cargo.lock", "scripts/check-no-gpui.sh"] }
+
+[[pipeline.stages]]
+name = "syntax_features"
+run = "syntax_features"
+needs = ["vet"]
+when = { paths = ["crates/fe-syntax/**", "Cargo.lock", "scripts/check-syntax-features.sh"] }
+
+[[pipeline.stages]]
+name = "deny"
+run = "deny"
+when = { paths = ["**/Cargo.toml", "Cargo.lock", "deny.toml"] }
+
+[merge]
+strategy = "squash"
+max_changed_lines = 1000
+size_exclude = ["**/tests/**", "**/tests.rs", "**/testdata/**", "**/golden/**", "docs/**", "**/*.md", "**/proptest-regressions/**"]
+# Licensing is a person's call (CLEAN_ROOM.md): new dependencies, the deny allowlist,
+# third-party notices, the toolchain pin, CI and the policy itself.
+human_paths = ["regatta.toml", ".github/workflows/**", "Cargo.lock", "deny.toml", "THIRD_PARTY.md", "NOTICE", "CLEAN_ROOM.md", "rust-toolchain.toml"]
+
+[caps]
+# A GPUI build is heavy and this machine is short on disk.
+lanes_max = 2
+
+[review]
+on_finish = true
+
+# Medium and larger tasks run on Opus at high effort.
+[[routing.rules]]
+when = { complexity = ["m", "l", "xl"] }
+tier = "deep"
