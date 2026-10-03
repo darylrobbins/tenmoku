@@ -28,7 +28,8 @@ pub(crate) struct FrameLayout {
     /// coordinates are relative to.
     pub(crate) origin: Point<Pixels>,
     pub(crate) frame: Frame<Line>,
-    /// How long prepaint took, for [`FrameTiming`].
+    /// When prepaint started and how long it took, for [`FrameTiming`].
+    prepaint_started: Instant,
     prepaint_took: Duration,
 }
 
@@ -299,6 +300,7 @@ impl Element for EditorElement {
         Some(FrameLayout {
             origin: bounds.origin,
             frame,
+            prepaint_started: started,
             prepaint_took: started.elapsed(),
         })
     }
@@ -362,6 +364,7 @@ impl Element for EditorElement {
 
         let painted_at = Instant::now();
         let timing = FrameTiming {
+            prepaint_started: layout.prepaint_started,
             prepaint: layout.prepaint_took,
             paint: painted_at - started,
             painted_at,

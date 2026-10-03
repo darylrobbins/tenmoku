@@ -10,7 +10,7 @@ mod timing;
 mod view;
 
 use fe_syntax::Highlight;
-use gpui::{App, Hsla, KeyBinding, Pixels, SharedString, actions, px, rgb, rgba};
+use gpui::{App, Hsla, KeyBinding, Pixels, SharedString, actions, font, px, rgb, rgba};
 
 pub use timing::{FrameTiming, FrameTimings};
 pub use view::EditorView;
@@ -136,10 +136,19 @@ pub struct EditorTheme {
 impl EditorTheme {
     /// A dark theme using the first installed font of a preferred list.
     pub fn default_dark(cx: &App) -> Self {
-        let installed = cx.text_system().all_font_names();
+        // Resolving a family loads just that family, which the first frame
+        // needs anyway; listing every installed font took ~70 ms at launch.
+        // A missing family resolves to a fallback font under another name.
+        let text_system = cx.text_system();
+        let installed = |family: &str| {
+            let id = text_system.resolve_font(&font(family));
+            text_system
+                .get_font_for_id(id)
+                .is_some_and(|resolved| resolved.family == family)
+        };
         let font_family = ["JetBrains Mono", "SF Mono", "Menlo"]
             .into_iter()
-            .find(|family| installed.iter().any(|name| name == family))
+            .find(|family| installed(family))
             .unwrap_or("Menlo");
         Self {
             font_family: font_family.into(),

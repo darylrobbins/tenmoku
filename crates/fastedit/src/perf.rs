@@ -1,17 +1,18 @@
 //! `fastedit --perf <file>`: measures the M2 large-file targets in a real
 //! window, prints them and quits. See PERF.md for how to read the output.
 //!
-//! 1. Open: time from launch to the first presented frame (the loading
-//!    placeholder, unless the background read beat it), and to the first
-//!    frame that shows the file; memory then.
+//! 1. Open: startup phases from process start (see [`Startup`]) to the
+//!    first presented frame (the loading placeholder, unless the background
+//!    read beat it) and the first frame that shows the file; memory then,
+//!    and again once a background parse has had time to land.
 //! 2. Scroll: one scroll-wheel event per frame, first smoothly and then in
 //!    large jumps, timing every frame the editor paints.
 //! 3. Idle: CPU used over a few seconds with nothing happening.
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     rc::Rc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use fe_gpui::{EditorView, FrameTiming};
@@ -46,26 +47,115 @@ macro_rules! say {
     }};
 }
 
+/// When startup reached each milestone up to the window opening. `main`
+/// records them whether or not `--perf` is on: they're a few `Instant`s.
+pub(crate) struct Startup {
+    /// When the kernel started the process, before exec and dyld; `None` if
+    /// it couldn't be read.
+    process: Option<Instant>,
+    main: Instant,
+    /// When `gpui_platform::application()` returned: GPUI's platform and
+    /// app state exist, AppKit hasn't launched.
+    pub(crate) platform: Option<Instant>,
+    /// When `Application::run` called back: AppKit finished launching.
+    pub(crate) app: Option<Instant>,
+    /// When `open_window` called back to build the root view: the native
+    /// window and its renderer exist (shaders compiled).
+    pub(crate) view: Option<Instant>,
+    /// When `open_window` returned: the first frame is drawn, not yet
+    /// presented.
+    pub(crate) window: Option<Instant>,
+}
+
+impl Startup {
+    /// Call first thing in `main`.
+    pub(crate) fn new() -> Self {
+        let main = Instant::now();
+        Self {
+            process: process_start(main),
+            main,
+            platform: None,
+            app: None,
+            view: None,
+            window: None,
+        }
+    }
+
+    /// Process start, or `main` if that's unknown.
+    pub(crate) fn launched(&self) -> Instant {
+        self.process.unwrap_or(self.main)
+    }
+}
+
+/// The kernel's start time for this process, as an `Instant`. It's
+/// wall-clock time to the microsecond, so it's converted through the wall
+/// clock now, taken next to `now`.
+fn process_start(now: Instant) -> Option<Instant> {
+    let wall = SystemTime::now();
+    // SAFETY: `info` is a `proc_bsdinfo`, the flavour asked for, and the
+    // size passed is its size.
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    let written = unsafe {
+        libc::proc_pidinfo(
+            libc::getpid(),
+            libc::PROC_PIDTBSDINFO,
+            0,
+            (&raw mut info).cast(),
+            size,
+        )
+    };
+    if written != size {
+        return None;
+    }
+    let started = SystemTime::UNIX_EPOCH
+        + Duration::from_secs(info.pbi_start_tvsec)
+        + Duration::from_micros(info.pbi_start_tvusec);
+    now.checked_sub(wall.duration_since(started).ok()?)
+}
+
+thread_local! {
+    /// When the background read finished, and when the main thread picked
+    /// its result up.
+    static LOADED: Cell<Option<(Instant, Instant)>> = const { Cell::new(None) };
+}
+
+/// Records that the file read, finished at `read`, reached the main thread.
+pub(crate) fn file_loaded(read: Instant) {
+    LOADED.set(Some((read, Instant::now())));
+}
+
 struct Run {
     workbench: Entity<Workbench>,
     /// Set once the file is read and the editor replaces the placeholder.
     editor: Option<Entity<EditorView>>,
-    launched: Instant,
+    startup: Startup,
     file_bytes: usize,
-    /// When the first frame was presented, and whether it was the loading
-    /// placeholder.
-    first_presented: Option<(Instant, bool)>,
+    /// Whether the first frame presented was the loading placeholder.
+    placeholder_first: Option<bool>,
+    /// The frame requests until the file is shown.
+    requests: Vec<FrameRequest>,
     frame: u32,
     frames: Vec<FrameTiming>,
 }
 
-pub(crate) fn start(workbench: Entity<Workbench>, launched: Instant, window: &mut Window) {
+/// One of the window's frame requests: it runs `on_next_frame` callbacks,
+/// then draws if anything changed, then presents.
+#[derive(Clone, Copy, Debug)]
+struct FrameRequest {
+    started: Instant,
+    /// When the request returned, after presenting; `None` until then.
+    returned: Option<Instant>,
+}
+
+pub(crate) fn start(workbench: Entity<Workbench>, startup: Startup, window: &mut Window) {
     let run = Rc::new(RefCell::new(Run {
         workbench,
         editor: None,
-        launched,
+        startup,
         file_bytes: 0,
-        first_presented: None,
+        placeholder_first: None,
+        requests: Vec::new(),
         frame: 0,
         frames: Vec::new(),
     }));
@@ -75,13 +165,15 @@ pub(crate) fn start(workbench: Entity<Workbench>, launched: Instant, window: &mu
 /// Runs at the start of every frame until the scroll phases are over.
 fn tick(run: Rc<RefCell<Run>>, window: &mut Window, cx: &mut App) {
     let mut state = run.borrow_mut();
-    if state.first_presented.is_none() {
-        // `open_window` draws a frame but leaves presenting it to the first
-        // frame request, which runs this callback first. Nothing else swaps
-        // the placeholder for the editor in between, so if it's still here,
-        // it's what gets presented.
-        let placeholder = state.workbench.read(cx).editor().is_none();
-        state.first_presented = Some((Instant::now(), placeholder));
+    if state.frame == 0 {
+        if state.placeholder_first.is_none() {
+            // `open_window` draws a frame but leaves presenting it to the
+            // first frame request, which runs this callback first. Nothing
+            // else swaps the placeholder for the editor in between, so if
+            // it's still here, it's what gets presented.
+            state.placeholder_first = Some(state.workbench.read(cx).editor().is_none());
+        }
+        note_frame_request(&run, &mut state, cx);
     }
     if state.editor.is_none() {
         state.editor = state.workbench.read(cx).editor().cloned();
@@ -96,24 +188,41 @@ fn tick(run: Rc<RefCell<Run>>, window: &mut Window, cx: &mut App) {
     }
 
     if state.frame == 0 {
-        // Wait for the first frame that shows the file.
-        let Some(painted) = state.frames.first().map(|frame| frame.painted_at) else {
+        // Wait until the first frame that shows the file is presented, and
+        // report after that, so reporting doesn't delay what it measures.
+        let shown = state.frames.first().and_then(|&painted| {
+            presented_after(painted.painted_at, &state.requests).map(|shown| (painted, shown))
+        });
+        let Some((painted, shown)) = shown else {
             drop(state);
             window.on_next_frame(move |window, cx| tick(run, window, cx));
             return;
         };
-        let (presented, placeholder) = state.first_presented.expect("set above");
-        let (first, shown) = open_milestones(presented, placeholder, painted);
+        let request = state.requests[0];
+        let first = request.returned.unwrap_or(shown);
+        let placeholder = state.placeholder_first.expect("set above");
+        let launched = state.startup.launched();
+        if state.startup.process.is_none() {
+            say!("open: process start unavailable; times are from main");
+        }
+        let phases = startup_phases(
+            &state.startup,
+            request.started,
+            first,
+            placeholder,
+            painted,
+            shown,
+        );
+        for (phase, at) in phases {
+            say!("{}", phase_line(&phase, at - launched));
+        }
         say!(
             "open: first frame {:.0?} after launch ({}), window active: {}",
-            first - state.launched,
+            first - launched,
             if placeholder { "loading" } else { "the file" },
             window.is_window_active()
         );
-        say!(
-            "open: file shown {:.0?} after launch",
-            shown - state.launched
-        );
+        say!("open: file shown {:.0?} after launch", shown - launched);
         print_memory("at file shown", state.file_bytes);
     }
 
@@ -125,6 +234,8 @@ fn tick(run: Rc<RefCell<Run>>, window: &mut Window, cx: &mut App) {
         _ => None,
     };
     if state.frame == SETTLE_FRAMES {
+        // Once a background parse has had time to land.
+        print_memory("after settling", state.file_bytes);
         state.frames.clear();
     }
     if state.frame == scroll_end {
@@ -157,22 +268,99 @@ fn tick(run: Rc<RefCell<Run>>, window: &mut Window, cx: &mut App) {
     window.on_next_frame(move |window, cx| tick(run, window, cx));
 }
 
-/// The first frame and the first frame showing the file, given when the
-/// first frame was presented, whether that was the loading placeholder, and
-/// when the editor first painted. The editor's frames are presented as soon
-/// as they're painted, except one painted when the window opened, which waits
-/// for the first presentation.
-fn open_milestones(
-    first_presented: Instant,
+/// Records a frame request starting now, and when it returns: GPUI has no
+/// hook after presenting, but a task spawned now runs on the main thread
+/// once the request, including its present, is done.
+fn note_frame_request(run: &Rc<RefCell<Run>>, state: &mut Run, cx: &mut App) {
+    let index = state.requests.len();
+    state.requests.push(FrameRequest {
+        started: Instant::now(),
+        returned: None,
+    });
+    let run = run.clone();
+    cx.spawn(async move |_| {
+        run.borrow_mut().requests[index].returned = Some(Instant::now());
+    })
+    .detach();
+}
+
+/// When a frame painted at `painted` was presented: the end of the first
+/// frame request that returned after it. A frame drawn when the window
+/// opened waits for the first request; later frames are drawn and presented
+/// in the same request.
+fn presented_after(painted: Instant, requests: &[FrameRequest]) -> Option<Instant> {
+    requests
+        .iter()
+        .filter_map(|request| request.returned)
+        .find(|&returned| returned >= painted)
+}
+
+/// The startup milestones, in order, each named with how long the phase
+/// that ends at it took. `first_request` is when the first frame request
+/// started and `first_frame` when it returned, having presented.
+fn startup_phases(
+    startup: &Startup,
+    first_request: Instant,
+    first_frame: Instant,
     placeholder: bool,
-    editor_painted: Instant,
-) -> (Instant, Instant) {
-    if placeholder {
-        (first_presented, editor_painted)
-    } else {
-        let shown = editor_painted.max(first_presented);
-        (shown, shown)
+    editor: FrameTiming,
+    shown: Instant,
+) -> Vec<(String, Instant)> {
+    let mut phases = vec![(startup.main, "to main".to_string())];
+    phases.extend(startup.platform.map(|at| (at, "platform created".into())));
+    phases.extend(
+        startup
+            .app
+            .map(|at| (at, "app callback (AppKit launched)".into())),
+    );
+    phases.extend(
+        startup
+            .view
+            .map(|at| (at, "window and renderer created".into())),
+    );
+    phases.extend(
+        startup
+            .window
+            .map(|at| (at, "window open (first frame drawn)".into())),
+    );
+    let what = if placeholder { "loading" } else { "the file" };
+    phases.push((first_request, "first frame requested".into()));
+    phases.push((first_frame, format!("first frame presented ({what})")));
+    if let Some((read, loaded)) = LOADED.get() {
+        phases.push((read, "file read (background thread)".into()));
+        phases.push((loaded, "file loaded (main thread)".into()));
     }
+    phases.push((
+        editor.prepaint_started,
+        "editor's first prepaint starts".into(),
+    ));
+    phases.push((
+        editor.painted_at,
+        format!(
+            "editor's first paint done (prepaint {:.1?}, paint {:.1?})",
+            editor.prepaint, editor.paint
+        ),
+    ));
+    phases.push((shown, "file shown (presented)".into()));
+    // Stable, so ties keep the order above.
+    phases.sort_by_key(|(at, _)| *at);
+    let mut previous = startup.launched();
+    phases
+        .into_iter()
+        .map(|(at, name)| {
+            let phase = at.saturating_duration_since(previous);
+            previous = previous.max(at);
+            (format!("{name}, +{}", millis(phase)), at)
+        })
+        .collect()
+}
+
+fn phase_line(phase: &str, since_launch: Duration) -> String {
+    format!("open: {:>7} {phase}", millis(since_launch))
+}
+
+fn millis(duration: Duration) -> String {
+    format!("{:.1} ms", duration.as_secs_f64() * 1000.)
 }
 
 fn idle(run: Rc<RefCell<Run>>, cx: &mut App) {
@@ -285,32 +473,52 @@ fn cpu_time() -> Duration {
 mod tests {
     use super::*;
 
-    #[test]
-    fn placeholder_presented_first_is_the_first_frame() {
-        let presented = Instant::now();
-        let painted = presented + Duration::from_millis(90);
-        assert_eq!(
-            open_milestones(presented, true, painted),
-            (presented, painted)
-        );
+    fn at(start: Instant, ms: u64) -> Instant {
+        start + Duration::from_millis(ms)
     }
 
     #[test]
-    fn read_done_before_the_first_presentation_shows_the_file_first() {
-        // The read finished before the first frame request: the editor is
-        // drawn and presented in it, and the placeholder never is.
-        let presented = Instant::now();
-        let painted = presented + Duration::from_millis(1);
-        assert_eq!(
-            open_milestones(presented, false, painted),
-            (painted, painted)
-        );
-        // The editor was drawn when the window opened (no file, or a
-        // synchronous draw), and waited for the first presentation.
-        let painted = presented - Duration::from_millis(5);
-        assert_eq!(
-            open_milestones(presented, false, painted),
-            (presented, presented)
-        );
+    fn file_is_shown_when_the_first_request_after_its_paint_returns() {
+        let t = Instant::now();
+        let request = |started, returned: Option<u64>| FrameRequest {
+            started: at(t, started),
+            returned: returned.map(|ms| at(t, ms)),
+        };
+        let requests = [
+            request(10, Some(14)),
+            request(18, Some(22)),
+            request(26, None),
+        ];
+        // Drawn when the window opened: the first request presents it.
+        assert_eq!(presented_after(at(t, 5), &requests), Some(at(t, 14)));
+        // Drawn during the second request, which presents it.
+        assert_eq!(presented_after(at(t, 20), &requests), Some(at(t, 22)));
+        // Drawn during a request that hasn't returned yet.
+        assert_eq!(presented_after(at(t, 27), &requests), None);
+    }
+
+    #[test]
+    fn first_prepaint_is_when_the_editor_started_it() {
+        // Other elements prepaint for 5 ms between the editor's prepaint
+        // and paint, so durations back from the paint would put it at 107.
+        let t = Instant::now();
+        let editor = FrameTiming {
+            prepaint_started: at(t, 100),
+            prepaint: Duration::from_millis(2),
+            paint: Duration::from_millis(1),
+            painted_at: at(t, 108),
+        };
+        let startup = Startup {
+            process: Some(t),
+            main: at(t, 5),
+            platform: None,
+            app: None,
+            view: None,
+            window: None,
+        };
+        let phases = startup_phases(&startup, at(t, 112), at(t, 115), false, editor, at(t, 115));
+        let (name, prepaint) = &phases[1];
+        assert!(name.starts_with("editor's first prepaint starts"), "{name}");
+        assert_eq!(*prepaint, at(t, 100));
     }
 }

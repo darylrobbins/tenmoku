@@ -1,4 +1,6 @@
 //! Reads the opened file off the main thread, so the window paints first.
+//! The read starts at the top of `main`, so a small file is usually read by
+//! the time the window is built, and is on its first frame.
 //!
 //! Only the [`Buffer`] crosses threads: `EditorModel` isn't `Send` (it holds
 //! its char widths as a `Box<dyn CharWidth>`), so the main thread builds it.
@@ -6,7 +8,10 @@
 use std::{
     fs::File,
     io::{self, BufReader},
-    path::PathBuf,
+    path::{Path, PathBuf},
+    sync::mpsc,
+    thread,
+    time::Instant,
 };
 
 use fe_buffer::Buffer;
@@ -20,6 +25,53 @@ pub(crate) fn read(path: PathBuf) -> io::Result<Option<Buffer>> {
         Err(error) => return Err(error),
     };
     Buffer::from_reader(BufReader::with_capacity(256 * 1024, file)).map(Some)
+}
+
+/// A read running on its own thread.
+pub(crate) struct Reading {
+    path: PathBuf,
+    done: mpsc::Receiver<Read>,
+}
+
+/// A finished read: what [`read`] returned, and when.
+pub(crate) struct Read {
+    pub(crate) result: io::Result<Option<Buffer>>,
+    pub(crate) at: Instant,
+}
+
+/// Starts reading `path` on a new thread.
+pub(crate) fn start(path: PathBuf) -> Reading {
+    let (sender, done) = mpsc::sync_channel(1);
+    let reader_path = path.clone();
+    thread::Builder::new()
+        .name("read file".into())
+        .spawn(move || {
+            let result = read(reader_path);
+            sender
+                .send(Read {
+                    result,
+                    at: Instant::now(),
+                })
+                .ok();
+        })
+        .expect("failed to start the file reader thread");
+    Reading { path, done }
+}
+
+impl Reading {
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// The read, if it has finished. It's returned once.
+    pub(crate) fn try_finish(&self) -> Option<Read> {
+        self.done.try_recv().ok()
+    }
+
+    /// Waits for the read to finish; don't call it on the main thread.
+    pub(crate) fn finish(self) -> Read {
+        self.done.recv().expect("the reader thread panicked")
+    }
 }
 
 #[cfg(test)]
@@ -41,6 +93,18 @@ mod tests {
         assert_ne!(reader, caller);
         let buffer = buffer.unwrap().expect("the file exists");
         assert_eq!(buffer.text().to_string(), "one\ntwo\n");
+    }
+
+    #[test]
+    fn started_read_finishes_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notes.txt");
+        std::fs::write(&path, "text").unwrap();
+
+        let reading = start(path.clone());
+        assert_eq!(reading.path(), path);
+        let read = reading.finish();
+        assert_eq!(read.result.unwrap().unwrap().text().to_string(), "text");
     }
 
     #[test]

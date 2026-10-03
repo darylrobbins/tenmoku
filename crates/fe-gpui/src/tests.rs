@@ -388,8 +388,13 @@ fn input_method_utf16_offsets_with_emoji(cx: &mut TestAppContext) {
 #[gpui::test]
 fn frames_are_timed(cx: &mut TestAppContext) {
     let (view, cx) = editor(cx, "fn main() {}|");
-    let frames = view.update(cx, |view, _| view.frame_timings().frames().len());
-    assert!(frames > 0);
+    let frames: Vec<_> = view.update(cx, |view, _| {
+        view.frame_timings().frames().copied().collect()
+    });
+    assert!(!frames.is_empty());
+    for frame in frames {
+        assert!(frame.prepaint_started + frame.prepaint + frame.paint <= frame.painted_at);
+    }
 }
 
 #[gpui::test]

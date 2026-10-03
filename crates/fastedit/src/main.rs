@@ -11,6 +11,8 @@ use std::{
     time::Instant,
 };
 
+use perf::Startup;
+
 use fe_buffer::Buffer;
 use fe_editor::EditorModel;
 use fe_gpui::{EditorTheme, EditorView};
@@ -42,18 +44,27 @@ struct Workbench {
 }
 
 impl Workbench {
-    fn new(path: Option<PathBuf>, theme: EditorTheme, cx: &mut Context<Self>) -> Self {
-        let content = match path {
-            Some(path) => Content::Loading { path },
-            None => Content::Ready {
-                editor: Self::new_editor(
-                    EditorModel::new(Buffer::new(WELCOME), None),
-                    theme.clone(),
-                    cx,
-                ),
-            },
+    /// `file` is the file to show: its path, and its buffer if it's read.
+    fn new(
+        file: Option<(PathBuf, Option<Buffer>)>,
+        theme: EditorTheme,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let model = match file {
+            None => EditorModel::new(Buffer::new(WELCOME), None),
+            Some((path, Some(buffer))) => EditorModel::new(buffer, Some(path)),
+            Some((path, None)) => {
+                return Self {
+                    content: Content::Loading { path },
+                    theme,
+                };
+            }
         };
-        Self { content, theme }
+        let editor = Self::new_editor(model, theme.clone(), cx);
+        Self {
+            content: Content::Ready { editor },
+            theme,
+        }
     }
 
     fn new_editor(
@@ -139,34 +150,39 @@ impl Render for Workbench {
     }
 }
 
-/// Reads `path` on a background thread, then shows it in the window. A read
-/// error quits with exit code 1.
+/// The buffer a finished read produced. A read error quits with exit code 1.
+fn loaded(path: &Path, read: loader::Read, started: Instant) -> Buffer {
+    perf::file_loaded(read.at);
+    let buffer = match read.result {
+        Ok(Some(buffer)) => buffer,
+        // A new file: saving creates it.
+        Ok(None) => Buffer::new(""),
+        Err(error) => {
+            log::error!("cannot open {}: {error}", path.display());
+            std::process::exit(1);
+        }
+    };
+    log::info!(
+        "loaded {} bytes, {} rows in {:.1?}",
+        buffer.len(),
+        buffer.text().row_count(),
+        started.elapsed()
+    );
+    buffer
+}
+
+/// Waits for `reading` off the main thread, then shows the file in the
+/// window.
 fn open_in_background(
-    path: PathBuf,
+    reading: loader::Reading,
     window: WindowHandle<Workbench>,
     started: Instant,
     cx: &mut App,
 ) {
-    let read = cx.background_spawn({
-        let path = path.clone();
-        async move { loader::read(path) }
-    });
+    let path = reading.path().to_owned();
+    let read = cx.background_spawn(async move { reading.finish() });
     cx.spawn(async move |cx| {
-        let buffer = match read.await {
-            Ok(Some(buffer)) => buffer,
-            // A new file: saving creates it.
-            Ok(None) => Buffer::new(""),
-            Err(error) => {
-                log::error!("cannot open {}: {error}", path.display());
-                std::process::exit(1);
-            }
-        };
-        log::info!(
-            "loaded {} bytes, {} rows in {:.1?}",
-            buffer.len(),
-            buffer.text().row_count(),
-            started.elapsed()
-        );
+        let buffer = loaded(&path, read.await, started);
         let model = EditorModel::new(buffer, Some(path));
         window
             .update(cx, |workbench, window, cx| {
@@ -214,6 +230,7 @@ fn init_logging() {
 }
 
 fn main() {
+    let mut startup = Startup::new();
     let started = Instant::now();
     init_logging();
     let mut args: Vec<_> = std::env::args_os().skip(1).collect();
@@ -221,9 +238,15 @@ fn main() {
     if perf {
         args.remove(0);
     }
-    let path = args.into_iter().next().map(PathBuf::from);
+    let reading = args
+        .into_iter()
+        .next()
+        .map(|path| loader::start(PathBuf::from(path)));
 
-    gpui_platform::application().run(move |cx: &mut App| {
+    let application = gpui_platform::application();
+    startup.platform = Some(Instant::now());
+    application.run(move |cx: &mut App| {
+        startup.app = Some(Instant::now());
         fe_gpui::init(cx);
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
         cx.on_action(|_: &Quit, cx| cx.quit());
@@ -245,24 +268,40 @@ fn main() {
                     }),
                     ..Default::default()
                 },
-                {
-                    let path = path.clone();
-                    |_, cx| cx.new(|cx| Workbench::new(path, theme, cx))
+                |window, cx| {
+                    startup.view = Some(Instant::now());
+                    // Show the file on the first frame if it's read by now.
+                    let file = reading.as_ref().map(|reading| {
+                        let buffer = reading
+                            .try_finish()
+                            .map(|read| loaded(reading.path(), read, started));
+                        (reading.path().to_owned(), buffer)
+                    });
+                    let workbench = cx.new(|cx| Workbench::new(file, theme, cx));
+                    // Focus before the window's first draw: focusing after
+                    // it would make the first frame request draw again.
+                    let focus = workbench
+                        .read(cx)
+                        .editor()
+                        .map(|editor| editor.focus_handle(cx));
+                    if let Some(focus) = focus {
+                        window.focus(&focus, cx);
+                    }
+                    workbench
                 },
             )
             .expect("failed to open the main window");
-        window
+        startup.window = Some(Instant::now());
+        let loading = window
             .update(cx, |workbench, window, cx| {
-                if let Some(editor) = workbench.editor() {
-                    window.focus(&editor.focus_handle(cx), cx);
-                }
                 if perf {
-                    perf::start(cx.entity(), started, window);
+                    perf::start(cx.entity(), startup, window);
                 }
+                workbench.editor().is_none()
             })
-            .ok();
-        if let Some(path) = path {
-            open_in_background(path, window, started, cx);
+            .unwrap_or(false);
+        if loading && let Some(reading) = reading {
+            open_in_background(reading, window, started, cx);
         }
         cx.activate(true);
     });

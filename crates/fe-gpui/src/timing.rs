@@ -9,6 +9,9 @@ const KEPT_FRAMES: usize = 240;
 /// The editor element's cost in one frame.
 #[derive(Copy, Clone, Debug)]
 pub struct FrameTiming {
+    /// When prepaint started. The window may prepaint other elements
+    /// between this element's prepaint and paint.
+    pub prepaint_started: Instant,
     /// Layout: scrolling, highlighting and shaping the visible rows.
     pub prepaint: Duration,
     pub paint: Duration,
