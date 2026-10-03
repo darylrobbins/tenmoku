@@ -101,6 +101,9 @@ pub struct Buffer {
     /// How many undone (redoable) transactions each origin has, so edits only
     /// scan the history to discard redos when there are some.
     redoable: HashMap<Origin, usize>,
+    /// Text bytes each origin's history entries hold; see [`entry_bytes`].
+    history_bytes: HashMap<Origin, usize>,
+    history_limit: usize,
     saved_version: Version,
     pub(crate) subscribers: Vec<Weak<Mutex<Vec<BufferEvent>>>>,
 }
@@ -139,6 +142,14 @@ struct AppliedBatch {
 static NEXT_BUFFER_ID: AtomicU64 = AtomicU64::new(1);
 
 impl Buffer {
+    /// Default for [`Buffer::set_history_limit`]: 16 MiB of text per origin.
+    ///
+    /// T7 (`examples/history_memory.rs`) measured a replace-all of 507k
+    /// six-byte words with eight-byte ones on a 33 MB file: about 7.1 MB of
+    /// old and new text per pass. This keeps the last two such passes
+    /// undoable, and never limits ordinary typing.
+    pub const DEFAULT_HISTORY_LIMIT: usize = 16 << 20;
+
     /// A buffer holding `text`, which must use `\n` line endings.
     pub fn new(text: &str) -> Self {
         Self::with_text(Text::new(text), LineEnding::Lf)
@@ -171,6 +182,8 @@ impl Buffer {
             next_transaction: 0,
             undo_clock: 0,
             redoable: HashMap::new(),
+            history_bytes: HashMap::new(),
+            history_limit: Self::DEFAULT_HISTORY_LIMIT,
             saved_version: Version::default(),
             subscribers: Vec::new(),
         }
@@ -229,6 +242,28 @@ impl Buffer {
         self.emit(BufferEvent::Saved {
             version: self.saved_version,
         });
+    }
+
+    /// Caps each origin's undo history at `bytes` of old and new text.
+    /// Once a transaction closes, that origin's oldest transactions are
+    /// dropped, and can no longer be undone or redone, until it's under the
+    /// cap. The newest is always kept, however large. The edit log is
+    /// unaffected, so anchors and `edits_since` work for every version.
+    pub fn set_history_limit(&mut self, bytes: usize) {
+        self.history_limit = bytes;
+        let origins: Vec<Origin> = self.history_bytes.keys().cloned().collect();
+        for origin in origins {
+            self.trim_history(&origin);
+        }
+    }
+
+    pub fn history_limit(&self) -> usize {
+        self.history_limit
+    }
+
+    /// Text bytes `origin`'s undo history holds.
+    pub fn history_bytes(&self, origin: &Origin) -> usize {
+        self.history_bytes.get(origin).copied().unwrap_or(0)
     }
 
     pub fn subscribe(&mut self) -> Subscription {
@@ -346,6 +381,8 @@ impl Buffer {
             self.history.remove(ix);
             None
         } else {
+            let origin = self.history[ix].origin.clone();
+            self.trim_history(&origin);
             Some(id)
         }
     }
@@ -371,11 +408,13 @@ impl Buffer {
         self.snapshot = state;
         self.undo_clock += 1;
         let entry = &mut self.history[ix];
+        let added = batches_bytes(&batches);
         entry.undone = Some(Undone {
             batches: batches.clone(),
             at: self.undo_clock,
         });
         let (id, origin) = (entry.id, entry.origin.clone());
+        *self.history_bytes.entry(origin.clone()).or_default() += added;
         *self.redoable.entry(origin.clone()).or_default() += 1;
         for batch in &batches {
             self.emit_batch(id, &origin, EditKind::Undo, batch);
@@ -408,9 +447,13 @@ impl Buffer {
             revert(&mut state, &undone.batches).map_err(|()| UndoError::Conflict(entry.id))?;
         self.snapshot = state;
         let entry = &mut self.history[ix];
+        let removed = entry_bytes(entry);
         entry.undone = None;
         entry.batches = batches.clone();
+        let added = entry_bytes(entry);
         let (id, origin) = (entry.id, entry.origin.clone());
+        let held = self.history_bytes.entry(origin.clone()).or_default();
+        *held = *held - removed + added;
         if let Some(count) = self.redoable.get_mut(&origin) {
             *count -= 1;
         }
@@ -428,9 +471,19 @@ impl Buffer {
     fn record(&mut self, origin: Origin, batch: AppliedBatch) -> TransactionId {
         // A fresh edit discards this origin's redo history.
         if self.redoable.remove(&origin).is_some_and(|count| count > 0) {
-            self.history
-                .retain(|entry| entry.undone.is_none() || entry.origin != origin);
+            let mut freed = 0;
+            self.history.retain(|entry| {
+                let keep = entry.undone.is_none() || entry.origin != origin;
+                if !keep {
+                    freed += entry_bytes(entry);
+                }
+                keep
+            });
+            if let Some(held) = self.history_bytes.get_mut(&origin) {
+                *held -= freed;
+            }
         }
+        *self.history_bytes.entry(origin.clone()).or_default() += batch_bytes(&batch);
 
         if let Some(open) = &self.open
             && open.origin == origin
@@ -447,11 +500,65 @@ impl Buffer {
         let id = self.next_transaction_id();
         self.history.push(HistoryEntry {
             id,
-            origin,
+            origin: origin.clone(),
             batches: vec![batch],
             undone: None,
         });
+        self.trim_history(&origin);
         id
+    }
+
+    /// Drops `origin`'s oldest closed transactions until its history is
+    /// under the limit, always keeping its newest.
+    fn trim_history(&mut self, origin: &Origin) {
+        let Some(&held) = self.history_bytes.get(origin) else {
+            return;
+        };
+        if held <= self.history_limit {
+            return;
+        }
+        let open = self.open.as_ref().map(|open| open.id);
+        // Indices of the origin's closed entries, oldest first; the last
+        // is never dropped.
+        let mut droppable: Vec<usize> = self
+            .history
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| entry.origin == *origin && Some(entry.id) != open)
+            .map(|(ix, _)| ix)
+            .collect();
+        droppable.pop();
+        let mut held = held;
+        let mut drop_ids = Vec::new();
+        let mut undone = 0;
+        for ix in droppable {
+            if held <= self.history_limit {
+                break;
+            }
+            let entry = &self.history[ix];
+            held -= entry_bytes(entry);
+            undone += usize::from(entry.undone.is_some());
+            drop_ids.push(entry.id);
+        }
+        if drop_ids.is_empty() {
+            return;
+        }
+        // `drop_ids` is in history order, so one ordered pass finds them.
+        let mut next = drop_ids.iter().peekable();
+        self.history.retain(|entry| {
+            if next.peek() == Some(&&entry.id) {
+                next.next();
+                false
+            } else {
+                true
+            }
+        });
+        self.history_bytes.insert(origin.clone(), held);
+        if undone > 0
+            && let Some(count) = self.redoable.get_mut(origin)
+        {
+            *count -= undone;
+        }
     }
 
     fn emit_batch(
@@ -484,6 +591,28 @@ impl Buffer {
                 None => false,
             });
     }
+}
+
+/// Text bytes a history entry holds, including its undone batches.
+fn entry_bytes(entry: &HistoryEntry) -> usize {
+    batches_bytes(&entry.batches)
+        + entry
+            .undone
+            .as_ref()
+            .map_or(0, |undone| batches_bytes(&undone.batches))
+}
+
+fn batches_bytes(batches: &[AppliedBatch]) -> usize {
+    batches.iter().map(batch_bytes).sum()
+}
+
+fn batch_bytes(batch: &AppliedBatch) -> usize {
+    batch
+        .old_texts
+        .iter()
+        .chain(&batch.new_texts)
+        .map(|text| text.len())
+        .sum()
 }
 
 fn clip_range(text: &Text, range: Range<usize>) -> Range<usize> {
