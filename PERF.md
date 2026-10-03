@@ -115,7 +115,24 @@ rows starting at a random row.
 | Full parse, 1M lines (31 / 22 / 19 MB) | 2.26 s | 1.23 s | 3.01 s |
 
 The plan's syntax target is a reparse under 5 ms on 10k lines. Rust and JSON
-meet it with room to spare; Markdown doesn't.
+meet it with room to spare; Markdown doesn't, and stays a documented limit.
+
+**Why Markdown is slow (T4).** It isn't our wrapper: plain tree-sitter driving
+`tree_sitter_md::LANGUAGE` over the same 187 KB corpus and the same random
+in-word keystrokes averages 7.5 ms per reparse against the bench's 6.1 ms. The
+cost tracks the distance to the end of the file, not the edit: 6.5 ms at 1% of
+the file, 5.8 ms at 25%, 4.2 ms at 50%, 2.9 ms at 90%, with no changed ranges
+(the tree comes out the same shape). A profile of 20,000 reparses puts under
+0.4% in the block scanner and the lexer combined (calls included). The time is in tree-sitter's
+parser itself: about a quarter in `ts_parser_parse` (reuse checks), a fifth in
+`ts_subtree_summarize_children` and 3% in `ts_subtree_compress` (rebuilding the
+`document` node's 666 children and the ancestors of the edit), and the rest in
+stack pushes, `reusable_node_advance` and freeing subtrees. Rust and JSON trees
+reuse their unchanged tail whole; the Markdown block grammar's tail is walked
+and reduced node by node. The fix would be in the grammar's structure (an
+upstream tree-sitter-md change or a fork, which is a dependency change and
+needs a licence audit), so it is left as a limit: follow-up card T33. At the
+16 MB parse limit the same cost is the 640 ms above.
 
 Reparse time grows with file size, not with the size of the edit. Plain
 tree-sitter shows the same cost (25–30 ms per keystroke on the 16 MB Rust
