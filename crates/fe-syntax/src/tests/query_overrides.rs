@@ -5,7 +5,7 @@ use fe_buffer::Buffer;
 use crate::{Syntax, language_by_name};
 
 /// `(text, highlight)` for every span of `text` in `language`.
-fn highlighted(language: &str, text: &str) -> Vec<(String, &'static str)> {
+pub(super) fn highlighted(language: &str, text: &str) -> Vec<(String, &'static str)> {
     let buffer = Buffer::new(text);
     let language = language_by_name(language).unwrap();
     let mut syntax = Syntax::new(language, buffer.current());
@@ -17,7 +17,7 @@ fn highlighted(language: &str, text: &str) -> Vec<(String, &'static str)> {
         .collect()
 }
 
-fn has(spans: &[(String, &'static str)], text: &str, highlight: &str) -> bool {
+pub(super) fn has(spans: &[(String, &'static str)], text: &str, highlight: &str) -> bool {
     spans.iter().any(|(t, h)| t == text && *h == highlight)
 }
 

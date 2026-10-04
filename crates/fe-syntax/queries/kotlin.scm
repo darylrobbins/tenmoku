@@ -10,6 +10,10 @@
 ; lost it, it colours the whole `package` line as a module, and it has no
 ; `companion` keyword or SCREAMING_CASE constants. Later patterns win over
 ; earlier ones on the same node.
+;
+; The constant patterns are broad, so they would also take over calls such as
+; `TODO()` and `Foo.BAR()`. The crate's call patterns are therefore restated
+; after them, unchanged, and a call keeps its function highlight.
 
 ((simple_identifier) @constant
   (#match? @constant "^[A-Z][A-Z0-9_]*$"))
@@ -30,3 +34,60 @@
 
 (companion_object
   "companion" @keyword)
+
+; function()
+(call_expression
+	. (simple_identifier) @function)
+
+; object.function() or object.property.function()
+(call_expression
+	(navigation_expression
+		(navigation_suffix
+			(simple_identifier) @function) . ))
+
+(call_expression
+	. (simple_identifier) @function.builtin
+    (#any-of? @function.builtin
+		"arrayOf"
+		"arrayOfNulls"
+		"byteArrayOf"
+		"shortArrayOf"
+		"intArrayOf"
+		"longArrayOf"
+		"ubyteArrayOf"
+		"ushortArrayOf"
+		"uintArrayOf"
+		"ulongArrayOf"
+		"floatArrayOf"
+		"doubleArrayOf"
+		"booleanArrayOf"
+		"charArrayOf"
+		"emptyArray"
+		"mapOf"
+		"setOf"
+		"listOf"
+		"emptyMap"
+		"emptySet"
+		"emptyList"
+		"mutableMapOf"
+		"mutableSetOf"
+		"mutableListOf"
+		"print"
+		"println"
+		"error"
+		"TODO"
+		"run"
+		"runCatching"
+		"repeat"
+		"lazy"
+		"lazyOf"
+		"enumValues"
+		"enumValueOf"
+		"assert"
+		"check"
+		"checkNotNull"
+		"require"
+		"requireNotNull"
+		"with"
+		"synchronized"
+))

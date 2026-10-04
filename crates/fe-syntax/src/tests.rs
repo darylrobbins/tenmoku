@@ -1,6 +1,7 @@
 use std::{cmp::Reverse, ops::Range, path::Path, time::Duration};
 
 mod golden;
+mod kotlin_sql_overrides;
 mod query_overrides;
 
 use fe_buffer::{Buffer, Origin};
