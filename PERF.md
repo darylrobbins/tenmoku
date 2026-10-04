@@ -360,7 +360,9 @@ reuse their unchanged tail whole; the Markdown block grammar's tail is walked
 and reduced node by node. The fix would be in the grammar's structure (an
 upstream tree-sitter-md change or a fork, which is a dependency change and
 needs a licence audit), so it is left as a limit: follow-up card T33. At the
-16 MB parse limit the same cost is the 640 ms above.
+16 MB parse limit the same cost is the 640 ms above. The decision (accept it for
+now, upstream issue drafted, fork assessed) is in
+[docs/decisions/markdown-reparse.md](docs/decisions/markdown-reparse.md).
 
 Reparse time grows with file size, not with the size of the edit. Plain
 tree-sitter shows the same cost (25–30 ms per keystroke on the 16 MB Rust
