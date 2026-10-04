@@ -1,21 +1,25 @@
 //! Measures how much memory the edit log and undo history hold on to.
 //! Run: `cargo run --release -p fe-buffer --example history_memory`
 //!
+//! Each scenario runs in its own process, printing one line.
+//!
 //! Release-run numbers (Apple Silicon, RSS via `ps`, sampled with inputs alive):
 //!
 //! - Long session (1 MB file, 200k single-character user transactions, 10%
 //!   deletions): +98.8 MB, 494 B per transaction. After undoing all 200k,
-//!   memory grew a further 8.7 MB (538 B per transaction in total): nothing is
-//!   reclaimed, because the log keeps the undo batches too.
+//!   RSS was 10.4 MB lower than at the typed sample (442 B per transaction
+//!   left over the baseline): undo reclaims little, because the log keeps the
+//!   undo batches too.
 //! - Replace-all (33 MB file, 507,692 occurrences per pass, 6 -> 8 bytes, one
-//!   batch per pass): pass 1 +138.8 MB (45.6 B per replaced byte); passes 2-5
-//!   +65.1-65.2 MB each (21.4 B per replaced byte). Total +399.5 MB, 12x the
-//!   file, for five passes. Pass 1 is higher partly because it also pays for
-//!   first-touch allocator and tree growth.
-//! - After undoing the five passes: +16.3 MB more, again nothing reclaimed.
+//!   batch per pass): passes +161.7, +65.2, +24.5, +56.9, +16.3 MB (53.1, 21.4,
+//!   8.1, 18.7, 5.3 B per replaced byte). Total +324.6 MB, about 10x the file,
+//!   for five passes. Per-pass RSS is noisy: freed Vec and tree capacity is
+//!   reused by later passes, so read the total, not single passes.
+//! - Undoing replace-all (only 2 of the 5 passes are undoable: the default
+//!   history limit evicted the rest) left RSS +166.9 MB above the pre-undo sample, nothing reclaimed.
 //!
-//! Memory grows linearly with edits and is never released. Per-edit cost is
-//! roughly 21 B per replaced byte (about 128 B per edit) in a batch, and
+//! Memory grows with edits and is not released. The total works out to about
+//! 21 B per replaced byte at most (about 128 B per edit) in a batch, and
 //! about 500 B per single-character transaction.
 
 use fe_buffer::{Buffer, Origin};
@@ -90,13 +94,9 @@ fn replace_all() {
     let occurrences = 33_000_000 / line.len();
     let source = line.repeat(occurrences);
     let mut buffer = Buffer::new(&source);
-    println!(
-        "replace-all: file {:.1} MB, {occurrences} occurrences per pass",
-        source.len() as f64 / 1e6
-    );
-
     let start = resident_bytes();
     let mut previous = start;
+    let mut passes = Vec::with_capacity(PASSES);
     for pass in 0..PASSES {
         // Each pass grows every line by 2 bytes, so offsets are computed
         // rather than found, which keeps a second copy of the text out of
@@ -110,26 +110,44 @@ fn replace_all() {
             .collect();
         buffer.edit(edits, Origin::User);
         let now = resident_bytes();
-        println!(
-            "  pass {}: +{:.1} MB ({:.2} B per replaced byte)",
-            pass + 1,
+        passes.push(format!(
+            "+{:.1} MB ({:.2} B/byte)",
             mb(growth(now, previous)),
             growth(now, previous) as f64 / (occurrences * 6) as f64,
-        );
+        ));
         previous = now;
     }
     let done = resident_bytes();
     let undone = undo_all(&mut buffer);
     let after_undo = resident_bytes();
     println!(
-        "  total +{:.1} MB; after undoing {undone}: {:+.1} MB vs. before undo",
+        "replace-all: file {:.1} MB, {occurrences} occurrences per pass; passes [{}]; \
+         total +{:.1} MB; after undoing {undone}: {:+.1} MB vs. before undo",
+        source.len() as f64 / 1e6,
+        passes.join(", "),
         mb(growth(done, start)),
         mb(growth(after_undo, done)),
     );
     std::hint::black_box((&source, &buffer));
 }
 
+/// Each scenario runs in a fresh process so allocator pages retained by one
+/// cannot leak into another's baseline. Its inputs stay alive through its
+/// final sample.
 fn main() {
-    long_session();
-    replace_all();
+    match std::env::args().nth(1).as_deref() {
+        Some("long-session") => long_session(),
+        Some("replace-all") => replace_all(),
+        Some(other) => panic!("unknown scenario {other:?}"),
+        None => {
+            let exe = std::env::current_exe().expect("current_exe");
+            for scenario in ["long-session", "replace-all"] {
+                let status = std::process::Command::new(&exe)
+                    .arg(scenario)
+                    .status()
+                    .expect("spawn scenario");
+                assert!(status.success(), "{scenario} failed");
+            }
+        }
+    }
 }
