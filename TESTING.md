@@ -14,7 +14,7 @@ The core crates (`fe-text`, `fe-buffer`, `fe-display`, `fe-editor`,
 | Display map | `fe-display/src/{lib,wrap_map,fold_map}.rs`, `display_map/tests.rs` | One property per layer (tabs, soft wrap, folds), then all three under random edits: every buffer offset maps to the display row showing it (or a fold's header) and back, rows tile the text, and a map kept up to date edit by edit matches one built from scratch |
 | Frame layout | `fe-display/src/layout/tests.rs` | Scrolling, autoscroll, visible rows, selection and cursor rectangles, line numbers, fold markers, style runs and hit testing, with soft-wrapped and folded rows, laid out against a fake monospace measurer (tabs, wide chars), with no window |
 | Key bindings | `fe-gpui/src/tests.rs` | Real keystrokes go through the real keymap into a focused editor in a headless GPUI window. One table row per binding, plus typing, input-method composition, clipboard and save. `bindings_are_all_tested` fails if a binding has no row |
-| Screenshots | `fe-gpui/examples/screenshots/`, `golden/` | The editor view, rendered off screen by the real Metal renderer, matches a golden PNG per scene: highlighted Rust, a multi-line selection, three carets, tab indentation, a long line cut off at the right edge, and a three-digit gutter. See [Screenshots](#screenshots) |
+| Screenshots | `fe-gpui/examples/screenshots/`, `golden/` | The editor view, rendered off screen by the real Metal renderer, matches a golden PNG per scene: highlighted Rust, a multi-line selection, three carets, tab indentation, a long line cut off at the right edge, a three-digit gutter, Markdown with a Python fence, and 400 KB of C. See [Screenshots](#screenshots) |
 
 Mutation testing (`cargo mutants -p <crate>`) is worth running by hand before a
 milestone, to find code the tests don't actually check. It isn't part of CI.
@@ -56,8 +56,14 @@ cargo run -p fe-gpui --example screenshots -- render out.png path/to/file [--siz
 Scenes render through GPUI's `VisualTestAppContext`: a window at
 (-10000, -10000), 800×480 logical pixels, drawn by Metal and read back from
 its texture. Nothing appears on screen and no screen-recording permission is
-needed, so agents can run all three commands. Background parses are run to
-completion first, so highlights show. AppKit has to run on the main thread,
+needed, so agents can run all three commands. A scene is drawn until a
+frame and the background work it starts (loading languages, parsing) leave
+the view without a notification, then that frame is captured. After ten
+frames the run fails instead. The last two scenes are cold: they must be the
+first to load their languages, and their highlights must land from a second
+round of background work, an injected language or a parse too long for a
+frame. The run fails if either check doesn't hold, so they keep covering
+highlights that land late. AppKit has to run on the main thread,
 so scenes render only under `cargo run`. The example is built as a test
 (`test = true`), so `cargo test` and the gate run the comparison's unit
 tests (`compare::tests`) but never render.

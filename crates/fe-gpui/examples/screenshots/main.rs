@@ -16,8 +16,10 @@
 mod compare;
 
 use std::{
+    cell::Cell,
     path::{Path, PathBuf},
     process::ExitCode,
+    rc::Rc,
 };
 
 use fe_buffer::{Buffer, ResolvedSelection};
@@ -31,6 +33,9 @@ type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 /// The window size of every scene, in logical pixels.
 const SCENE_SIZE: Size<Pixels> = size(px(800.), px(480.));
 
+/// How many frames a scene may take to settle. Each takes two today.
+const MAX_FRAMES: usize = 10;
+
 /// Pinned so goldens don't depend on which fonts are installed (TESTING.md).
 const FONT_FAMILY: &str = "Menlo";
 
@@ -40,6 +45,10 @@ struct Scene {
     name: &'static str,
     path: &'static str,
     text: String,
+    /// Languages the scene must be the first to load. Its highlights then
+    /// land from at least two rounds of background work: the language, then
+    /// a parse too long for a frame or an injected language.
+    cold: &'static [&'static str],
 }
 
 fn scenes() -> Vec<Scene> {
@@ -47,6 +56,7 @@ fn scenes() -> Vec<Scene> {
         name,
         path,
         text: text.to_owned(),
+        cold: &[],
     };
     let numbered: String = (1..=140)
         .map(|n| {
@@ -86,8 +96,40 @@ fn scenes() -> Vec<Scene> {
             name: "three_digit_gutter",
             path: "scene.rs",
             text: numbered,
+            cold: &[],
+        },
+        Scene {
+            name: "markdown_fence",
+            path: "scene.md",
+            text: MARKDOWN.to_owned(),
+            cold: &["markdown", "markdown_inline", "python"],
+        },
+        Scene {
+            name: "large_c",
+            path: "scene.c",
+            text: large_c(),
+            cold: &["c"],
         },
     ]
+}
+
+const MARKDOWN: &str = "‸# Notes\n\n\
+Plain text with *emphasis*, **strong** words and `inline code`.\n\n\
+```python\n\
+def greet(name: str) -> str:\n    # Python, injected into the fence\n    return f\"hello, {name}\"\n\
+```\n\n\
+- a list item\n\
+- [a link](https://example.com)\n";
+
+/// About 400 KB of C, too much to parse within a frame's budget.
+fn large_c() -> String {
+    let mut text = String::from("‸#include <stdio.h>\n\n");
+    for n in 0..4_000 {
+        text.push_str(&format!(
+            "/* Doubles its argument. */\nstatic int double_{n}(int x) {{\n    return x * 2; // {n}\n}}\n\n"
+        ));
+    }
+    text
 }
 
 const RUST: &str = r#"‸use std::collections::HashMap;
@@ -146,13 +188,14 @@ fn parse(marked: &str) -> (String, Vec<ResolvedSelection>) {
     (text, selections)
 }
 
-/// Renders `model` in a focused editor, off screen, once background parses
-/// have landed.
+/// Renders `model` in a focused editor, off screen, once the background work
+/// its frames start (loading languages, parsing) has landed. Also returns
+/// how many times the view asked to be drawn again meanwhile.
 fn capture(
     cx: &mut VisualTestAppContext,
     model: EditorModel,
     size: Size<Pixels>,
-) -> Result<RgbaImage> {
+) -> Result<(RgbaImage, usize)> {
     let window = cx.open_offscreen_window(size, |_, cx| {
         let theme = EditorTheme {
             font_family: FONT_FAMILY.into(),
@@ -160,20 +203,46 @@ fn capture(
         };
         cx.new(|cx| EditorView::new(model, theme, cx))
     })?;
-    cx.update_window(window.into(), |view, window, cx| {
+    let view = cx.update_window(window.into(), |view, window, cx| {
         let view = view.downcast::<EditorView>().expect("an editor");
         window.focus(&view.focus_handle(cx), cx);
+        view
     })?;
-    // Lay out once so autoscroll and visible-range highlighting have a frame
-    // to work from, let the parse finish, then draw what it found.
-    for _ in 0..2 {
-        cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))?;
+    // The view notifies itself when background work lands or a frame asks
+    // for another (as while soft wrap catches up). Draw until a frame and
+    // everything it started leave it quiet: that frame shows the result.
+    // (A test-mode app also redraws a window whenever it's notified, so the
+    // work can land over fewer frames than it has rounds.)
+    let notifications = Rc::new(Cell::new(0));
+    let _observer = cx.update(|cx| {
+        let notifications = notifications.clone();
+        cx.observe(&view, move |_, _| {
+            notifications.set(notifications.get() + 1)
+        })
+    });
+    let mut settled = false;
+    for _ in 0..MAX_FRAMES {
+        let before = notifications.get();
+        cx.update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+            window.simulate_next_frame(cx);
+        })?;
         cx.run_until_parked();
+        if notifications.get() == before {
+            settled = true;
+            break;
+        }
     }
-    let image = cx.capture_screenshot(window.into())?;
+    let image = if settled {
+        cx.capture_screenshot(window.into())
+            .map(|image| (image, notifications.get()))
+            .map_err(Into::into)
+    } else {
+        Err(format!("still changing after {MAX_FRAMES} frames").into())
+    };
     cx.update_window(window.into(), |_, window, _| window.remove_window())?;
     cx.run_until_parked();
-    Ok(image)
+    image
 }
 
 /// fe-gpui's directory. `cargo run` sets it at run time; prefer that over the
@@ -202,10 +271,24 @@ fn check_scenes(cx: &mut VisualTestAppContext, update: bool) -> Result<bool> {
     let out_dir = workspace_dir().join("target/screenshots");
     let mut passed = true;
     for scene in scenes() {
+        if let Some(loaded) = scene
+            .cold
+            .iter()
+            .find(|name| fe_syntax::loaded_language(name).is_some())
+        {
+            return Err(format!("{}: {loaded} was loaded by an earlier scene", scene.name).into());
+        }
         let (text, selections) = parse(&scene.text);
         let mut model = EditorModel::new(Buffer::new(&text), Some(scene.path.into()));
         model.set_selections(selections);
-        let image = capture(cx, model, SCENE_SIZE)?;
+        let (image, notifications) = capture(cx, model, SCENE_SIZE)?;
+        if !scene.cold.is_empty() && notifications < 2 {
+            return Err(format!(
+                "{}: no background work landed after the language loaded",
+                scene.name
+            )
+            .into());
+        }
         let golden_path = golden_dir().join(format!("{}.png", scene.name));
         if update {
             image.save(&golden_path)?;
@@ -246,7 +329,7 @@ fn render(cx: &mut VisualTestAppContext, args: &[String]) -> Result<()> {
         _ => return Err(usage.into()),
     };
     let model = EditorModel::open(file).map_err(|error| format!("opening {file}: {error}"))?;
-    capture(cx, model, size)?.save(out)?;
+    capture(cx, model, size)?.0.save(out)?;
     println!("wrote {out}");
     Ok(())
 }
