@@ -88,7 +88,7 @@ fn hidden_text_doesnt_move_the_window(cx: &mut TestAppContext) {
     let folded = header..400_000 * ROW.len();
     view.update(cx, |view, _| {
         view.model.select_range(folded.clone(), false);
-        view.model.fold();
+        view.model.fold(&|_| None);
     });
     let rows = show(&view, header, cx);
     assert!(rows.iter().any(|&(start, _)| start <= header), "{rows:?}");

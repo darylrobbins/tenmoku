@@ -1,5 +1,6 @@
 use super::*;
 
+mod fold_candidates;
 mod laws;
 mod pending_wrap;
 
@@ -170,7 +171,7 @@ fn vertical_moves_follow_soft_wrapped_rows() {
 #[test]
 fn folds_hide_rows_from_movement() {
     let mut model = parse("de|f a():\n    one\n    two\nend");
-    model.fold();
+    model.fold(&|_| None);
     assert_eq!(
         model.display().folds(),
         [fe_display::Fold { start: 0, end: 2 }]
@@ -206,7 +207,7 @@ fn fold_picks_rows_to_fold() {
     let text = "def a():\n    one\n\n    two\n\nend";
     let fold = |marked: &str| {
         let mut model = parse(marked);
-        model.fold();
+        model.fold(&|_| None);
         let folds: Vec<_> = model
             .display()
             .folds()

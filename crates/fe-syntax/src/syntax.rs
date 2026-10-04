@@ -131,6 +131,11 @@ impl Syntax {
         self.snapshot.version()
     }
 
+    /// The text of the snapshot the tree has been edited to match.
+    pub(crate) fn text(&self) -> &Text {
+        self.snapshot.text()
+    }
+
     pub(crate) fn buffer_id(&self) -> BufferId {
         self.snapshot.id()
     }

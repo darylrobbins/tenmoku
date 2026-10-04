@@ -260,6 +260,25 @@ impl EditorView {
         cx.notify();
     }
 
+    /// Folds by the syntax tree's blocks where it has one at a caret's row.
+    fn fold(&mut self, _: &Fold, _: &mut Window, cx: &mut Context<Self>) {
+        let syntax = synced_syntax(&self.syntax, &self.model);
+        self.model
+            .fold(&|row| syntax.and_then(|syntax| fe_syntax::fold_range_at(syntax, row)));
+        self.changed(cx);
+    }
+
+    /// Folds every block of the syntax tree, or with none, every indented
+    /// block.
+    fn fold_all(&mut self, _: &FoldAll, _: &mut Window, cx: &mut Context<Self>) {
+        let rows = 0..self.model.text().row_count();
+        let candidates = synced_syntax(&self.syntax, &self.model)
+            .map(|syntax| fe_syntax::fold_ranges(syntax, rows))
+            .unwrap_or_default();
+        self.model.fold_all(candidates);
+        self.changed(cx);
+    }
+
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
         let (text, _) = self.model.copy_text();
         cx.write_to_clipboard(ClipboardItem::new_string(text));
@@ -379,6 +398,15 @@ fn shown_text<L>(rows: &[RowLayout<L>]) -> Range<usize> {
     .map_or(0..0, |run| {
         run[0].shown().start..run[run.len() - 1].shown().end
     })
+}
+
+/// The syntax tree, if it's been edited to match `model`'s text.
+fn synced_syntax<'a>(
+    syntax: &'a Option<SyntaxDriver<Task<()>>>,
+    model: &EditorModel,
+) -> Option<&'a Syntax> {
+    let syntax = syntax.as_ref()?.syntax();
+    (syntax.version() == model.snapshot().version()).then_some(syntax)
 }
 
 fn syntax_driver(language: &'static Language, snapshot: &BufferSnapshot) -> SyntaxDriver<Task<()>> {
@@ -501,12 +529,14 @@ impl Render for EditorView {
                 this.model.tab();
                 this.changed(cx);
             }))
-            .on_action(cx.listener(|this, _: &Fold, _, cx| {
-                this.model.fold();
-                this.changed(cx);
-            }))
+            .on_action(cx.listener(Self::fold))
+            .on_action(cx.listener(Self::fold_all))
             .on_action(cx.listener(|this, _: &Unfold, _, cx| {
                 this.model.unfold();
+                this.changed(cx);
+            }))
+            .on_action(cx.listener(|this, _: &UnfoldAll, _, cx| {
+                this.model.unfold_all();
                 this.changed(cx);
             }))
             .on_action(cx.listener(|this, _: &ToggleSoftWrap, _, cx| {

@@ -10,11 +10,14 @@
 //!   where each reparse runs, starting background ones through a [`Spawner`].
 //! - Grammar capture names map onto our own [`Highlight`] vocabulary, which
 //!   themes colour (see [`resolve_theme`]).
+//! - [`fold_ranges`] and [`fold_range_at`] find the rows a tree's blocks,
+//!   bodies, lists and comments span, for folding.
 //!
 //! This crate must never depend on GPUI.
 
 mod detect;
 mod driver;
+mod fold;
 mod highlight;
 mod injection;
 mod language;
@@ -22,6 +25,7 @@ mod syntax;
 
 pub use detect::{detect_language_name, language_name_for_shebang};
 pub use driver::{Spawner, SyntaxDriver};
+pub use fold::{fold_range_at, fold_ranges};
 pub use highlight::{Highlight, HighlightSpan, resolve_theme};
 pub use language::{
     Language, language_by_name, language_for_path, language_name_for_path, language_names,

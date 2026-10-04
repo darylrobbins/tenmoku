@@ -212,6 +212,16 @@ impl DisplayMap {
         folded
     }
 
+    /// Folds each of `folds` as [`DisplayMap::fold`] does, rebuilding once.
+    pub fn fold_many(&mut self, folds: impl IntoIterator<Item = RangeInclusive<u32>>) {
+        let last = self.text().row_count() - 1;
+        let folds = folds
+            .into_iter()
+            .map(|rows| *rows.start()..=(*rows.end()).min(last));
+        self.folds.fold_many(folds);
+        self.rebuild_folds();
+    }
+
     /// Unfolds the folds whose header or hidden rows overlap `buffer_rows`.
     pub fn unfold(&mut self, buffer_rows: RangeInclusive<u32>) -> bool {
         let unfolded = self.folds.unfold(buffer_rows);

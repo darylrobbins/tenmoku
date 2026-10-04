@@ -97,6 +97,8 @@ struct Case {
     after: &'static str,
     clipboard_before: Option<&'static str>,
     clipboard_after: Option<&'static str>,
+    /// The folds expected afterwards, as `(header, last)` rows.
+    folds: Option<&'static [(u32, u32)]>,
 }
 
 const fn case(binding: &'static str, before: &'static str, after: &'static str) -> Case {
@@ -107,6 +109,7 @@ const fn case(binding: &'static str, before: &'static str, after: &'static str) 
         after,
         clipboard_before: None,
         clipboard_after: None,
+        folds: None,
     }
 }
 
@@ -119,6 +122,13 @@ impl Case {
         Case {
             clipboard_before: before,
             clipboard_after: Some(after),
+            ..self
+        }
+    }
+
+    const fn folds(self, folds: &'static [(u32, u32)]) -> Self {
+        Case {
+            folds: Some(folds),
             ..self
         }
     }
@@ -171,7 +181,12 @@ const CASES: &[Case] = &[
     case("enter", "  ab|c", "  ab\n  |c"),
     case("tab", "ab|", "ab  |"),
     // A caret folded away moves to the fold's header.
-    case("cmd-alt-[", "a:\n  b|\nc", "a:|\n  b\nc"),
+    case("cmd-alt-[", "a:\n  b|\nc", "a:|\n  b\nc").folds(&[(0, 1)]),
+    // Plain text folds every indented block.
+    case("cmd-k cmd-0", "a:\n  b|\nc:\n  d", "a:|\n  b\nc:\n  d").folds(&[(0, 1), (2, 3)]),
+    case("cmd-k cmd-j", "a:\n  b|\nc:\n  d", "a:|\n  b\nc:\n  d")
+        .keys("cmd-k cmd-0 cmd-k cmd-j")
+        .folds(&[]),
     // Every cursor gets the command.
     case("backspace", "a|b\nc|d", "|b\n|d"),
     case("alt-right", "|ab cd\n|ef gh", "ab| cd\nef| gh"),
@@ -206,6 +221,17 @@ fn run_case(case: &Case) {
         "`{}` from {:?} (keys {:?})",
         case.binding, case.before, case.keys
     );
+    if let Some(expected) = case.folds {
+        let folds: Vec<_> = view.update(cx, |view, _| {
+            let folds = view.model().display().folds();
+            folds.iter().map(|fold| (fold.start, fold.end)).collect()
+        });
+        assert_eq!(
+            folds, expected,
+            "folds after `{}` from {:?}",
+            case.binding, case.before
+        );
+    }
     if let Some(expected) = case.clipboard_after {
         let clipboard = cx.read_from_clipboard().and_then(|item| item.text());
         assert_eq!(
@@ -230,11 +256,18 @@ fn every_binding_does_what_it_should() {
     }
 }
 
-/// Normalises a keystroke string so differently written forms compare equal.
-fn normalized(keystroke: &str) -> String {
-    Keystroke::parse(keystroke)
-        .expect("valid keystroke")
-        .unparse()
+/// Normalises a keystroke string, or a chord of several, so differently
+/// written forms compare equal.
+fn normalized(keystrokes: &str) -> String {
+    let keystrokes: Vec<_> = keystrokes
+        .split_whitespace()
+        .map(|keystroke| {
+            Keystroke::parse(keystroke)
+                .expect("valid keystroke")
+                .unparse()
+        })
+        .collect();
+    keystrokes.join(" ")
 }
 
 #[gpui::test]
@@ -288,6 +321,38 @@ fn unfold_shows_folded_rows(cx: &mut TestAppContext) {
     assert_eq!(rows(cx), 2);
     cx.simulate_keystrokes("cmd-alt-]");
     assert_eq!(rows(cx), 3);
+}
+
+#[gpui::test]
+fn folds_follow_the_syntax_tree(cx: &mut TestAppContext) {
+    // Not indented at all, so indentation alone would fold nothing.
+    let text = "function f()\nif x then\n|y()\nend\nz()\nend";
+    let (view, cx) = editor(cx, text);
+    view.update(cx, |view, cx| view.set_language(Some("lua"), cx));
+    cx.run_until_parked();
+    let parsed = view.update(cx, |view, _| {
+        view.syntax().and_then(fe_syntax::Syntax::tree).is_some()
+    });
+    assert!(parsed);
+    let folds = |cx: &mut VisualTestContext| {
+        view.update(cx, |view, _| {
+            let folds = view.model().display().folds();
+            folds
+                .iter()
+                .map(|fold| (fold.start, fold.end))
+                .collect::<Vec<_>>()
+        })
+    };
+    // A caret in a block, heading none, folds the block it's in, up to its
+    // `end`.
+    cx.simulate_keystrokes("cmd-alt-[");
+    assert_eq!(folds(cx), [(1, 2)]);
+    assert_eq!(
+        state(&view, cx),
+        "function f()\nif x then|\ny()\nend\nz()\nend"
+    );
+    cx.simulate_keystrokes("cmd-k cmd-j cmd-k cmd-0");
+    assert_eq!(folds(cx), [(0, 4), (1, 2)]);
 }
 
 #[gpui::test]

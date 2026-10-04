@@ -141,6 +141,19 @@ impl FoldMap {
         true
     }
 
+    /// Folds each of `folds` as [`FoldMap::fold`] does, sorting once.
+    pub(crate) fn fold_many(&mut self, folds: impl IntoIterator<Item = RangeInclusive<u32>>) {
+        let folds = folds.into_iter().map(|rows| Fold {
+            start: *rows.start(),
+            end: *rows.end(),
+        });
+        self.folds
+            .extend(folds.filter(|fold| fold.end > fold.start));
+        self.folds
+            .sort_unstable_by_key(|fold| (fold.start, fold.end));
+        self.folds.dedup();
+    }
+
     /// Removes the folds whose header or hidden rows overlap `rows`.
     pub(crate) fn unfold(&mut self, rows: RangeInclusive<u32>) -> bool {
         let before = self.folds.len();
@@ -305,5 +318,18 @@ mod tests {
             let got = fold_map.folds().first().map(|fold| (fold.start, fold.end));
             assert_eq!(got, want, "edit at {start}, {old_rows} => {new_rows} rows");
         }
+    }
+
+    #[test]
+    fn fold_many_folds_as_fold_does() {
+        let rows = [4..=6, 1..=8, 2..=2, 4..=6, 0..=3];
+        let mut one_at_a_time = FoldMap::default();
+        for rows in rows.clone() {
+            one_at_a_time.fold(rows);
+        }
+        let mut at_once = FoldMap::default();
+        at_once.fold(1..=8);
+        at_once.fold_many(rows);
+        assert_eq!(at_once.folds(), one_at_a_time.folds());
     }
 }

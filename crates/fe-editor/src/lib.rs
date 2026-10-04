@@ -268,10 +268,10 @@ impl EditorModel {
         (pending, row_now as f32 + (top - row as f32))
     }
 
-    /// Folds the rows each selection spans or, for a caret, the indented
-    /// block it heads or is in. Carets folded away move to the fold's
-    /// header.
-    pub fn fold(&mut self) {
+    /// Folds the rows each selection spans or, for a caret, the fold
+    /// `candidate_at` gives for its row, else the indented block it heads or
+    /// is in. Carets folded away move to the fold's header.
+    pub fn fold(&mut self, candidate_at: &dyn Fn(u32) -> Option<RangeInclusive<u32>>) {
         self.sync_display();
         let text = self.text().clone();
         for selection in self.selections() {
@@ -285,12 +285,58 @@ impl EditorModel {
             let rows = if last > start.row {
                 Some(start.row..=last)
             } else {
-                indented_block(&text, start.row, self.tab_size)
+                candidate_at(start.row).or_else(|| indented_block(&text, start.row, self.tab_size))
             };
             if let Some(rows) = rows {
                 self.display.fold(rows);
             }
         }
+        self.move_folded_carets();
+    }
+
+    /// Folds every one of `candidates`, or with none, every indented block.
+    /// Carets folded away move to the fold's header.
+    pub fn fold_all(&mut self, candidates: impl IntoIterator<Item = RangeInclusive<u32>>) {
+        self.sync_display();
+        let mut candidates = candidates.into_iter().peekable();
+        if candidates.peek().is_some() {
+            self.display.fold_many(candidates);
+        } else {
+            let blocks = indented_blocks(self.text(), self.tab_size);
+            self.display.fold_many(blocks);
+        }
+        self.move_folded_carets();
+    }
+
+    /// Folds `rows` behind their first. Carets folded away move to it.
+    pub fn fold_rows(&mut self, rows: RangeInclusive<u32>) {
+        self.sync_display();
+        self.display.fold(rows);
+        self.move_folded_carets();
+    }
+
+    /// Unfolds the folds whose header or hidden rows overlap `rows`.
+    pub fn unfold_rows(&mut self, rows: RangeInclusive<u32>) {
+        self.sync_display();
+        self.display.unfold(rows);
+    }
+
+    /// Unfolds the folds on the rows of each selection.
+    pub fn unfold(&mut self) {
+        for selection in self.selections() {
+            let start = self.text().offset_to_point(selection.range.start).row;
+            let end = self.text().offset_to_point(selection.range.end).row;
+            self.unfold_rows(start..=end);
+        }
+    }
+
+    pub fn unfold_all(&mut self) {
+        self.sync_display();
+        self.display.unfold_all();
+    }
+
+    /// Moves the carets in folded rows to their fold's header.
+    fn move_folded_carets(&mut self) {
         let selections: Vec<_> = self
             .selections()
             .into_iter()
@@ -304,21 +350,6 @@ impl EditorModel {
             })
             .collect();
         self.set_selections(selections);
-    }
-
-    /// Unfolds the folds on the rows of each selection.
-    pub fn unfold(&mut self) {
-        self.sync_display();
-        for selection in self.selections() {
-            let start = self.text().offset_to_point(selection.range.start).row;
-            let end = self.text().offset_to_point(selection.range.end).row;
-            self.display.unfold(start..=end);
-        }
-    }
-
-    pub fn unfold_all(&mut self) {
-        self.sync_display();
-        self.display.unfold_all();
     }
 
     /// Moves an offset in folded rows out of them: past them going
@@ -841,23 +872,25 @@ fn selection_from(tail: usize, head: usize) -> ResolvedSelection {
     }
 }
 
+/// The column `row`'s text starts at, or `None` for a blank row.
+fn indent(text: &Text, row: u32, tab_size: usize) -> Option<usize> {
+    let mut column = 0;
+    for ch in text.row_to_string(row).chars() {
+        match ch {
+            ' ' => column += 1,
+            '\t' => column += tab_size - column % tab_size,
+            ch if ch.is_whitespace() => {}
+            _ => return Some(column),
+        }
+    }
+    None
+}
+
 /// The rows of the block indented under `row`, with `row` as its header: or
 /// if `row` heads none, the block it's in. Blank rows inside belong to the
 /// block; trailing ones don't.
 fn indented_block(text: &Text, row: u32, tab_size: usize) -> Option<RangeInclusive<u32>> {
-    let indent = |row: u32| {
-        let line = text.row_to_string(row);
-        let mut column = 0;
-        for ch in line.chars() {
-            match ch {
-                ' ' => column += 1,
-                '\t' => column += tab_size - column % tab_size,
-                ch if ch.is_whitespace() => {}
-                _ => return Some(column),
-            }
-        }
-        None
-    };
+    let indent = |row: u32| indent(text, row, tab_size);
     let block_under = |header: u32| {
         let level = indent(header)?;
         let mut last = header;
@@ -878,6 +911,33 @@ fn indented_block(text: &Text, row: u32, tab_size: usize) -> Option<RangeInclusi
         .rev()
         .find(|&above| indent(above).is_some_and(|indent| indent < level))?;
     block_under(header)
+}
+
+/// Every block [`indented_block`] finds under a row, in one pass.
+fn indented_blocks(text: &Text, tab_size: usize) -> Vec<RangeInclusive<u32>> {
+    let mut blocks = Vec::new();
+    // The rows heading the blocks open so far, with their indents, outermost
+    // first.
+    let mut open: Vec<(u32, usize)> = Vec::new();
+    let mut last_text_row = 0;
+    let mut close = |open: &mut Vec<(u32, usize)>, level: usize, last_text_row: u32| {
+        while let Some(&(header, _)) = open.last().filter(|(_, indent)| *indent >= level) {
+            open.pop();
+            if last_text_row > header {
+                blocks.push(header..=last_text_row);
+            }
+        }
+    };
+    for row in 0..text.row_count() {
+        let Some(level) = indent(text, row, tab_size) else {
+            continue;
+        };
+        close(&mut open, level, last_text_row);
+        open.push((row, level));
+        last_text_row = row;
+    }
+    close(&mut open, 0, last_text_row);
+    blocks
 }
 
 fn prev_char_start(text: &str, col: usize) -> Option<usize> {
