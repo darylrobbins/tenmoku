@@ -88,6 +88,16 @@ pub(crate) struct Line {
 }
 
 impl Line {
+    /// The colour of the byte at `index` of the shaped text.
+    #[cfg(test)]
+    pub(crate) fn color_at(&self, index: usize) -> Option<Hsla> {
+        let mut end = 0;
+        self.decorations.iter().find_map(|run| {
+            end += run.len as usize;
+            (index < end).then_some(run.color)
+        })
+    }
+
     fn paint(&self, origin: Point<Pixels>, line_height: Pixels, window: &mut Window, cx: &mut App) {
         self.layout
             .paint(

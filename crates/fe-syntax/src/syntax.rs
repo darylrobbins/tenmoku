@@ -332,7 +332,7 @@ impl Syntax {
     /// A query that runs out of [`QUERY_BUDGET`] returns the highlights found
     /// so far, and they're cached like any others. But if time runs out while
     /// finding or parsing injections, or an injected language isn't compiled
-    /// yet (see [`Syntax::missing_languages`]), the result isn't cached: the
+    /// yet (see [`Syntax::take_missing_languages`]), the result isn't cached: the
     /// next call tries again, keeping the layers parsed so far.
     ///
     /// Without a full tree, the window's highlights are used, those in
@@ -399,22 +399,24 @@ impl Syntax {
         spans
     }
 
-    /// Injected languages that [`Syntax::highlights`] found uncompiled, so
-    /// their code showed plain. Compile each with [`crate::language_by_name`]
-    /// off the UI thread, as that takes up to 20 ms, then highlight again.
-    pub fn missing_languages(&self) -> Vec<&'static str> {
-        let missing = &mut self.cache.borrow_mut().layers.missing;
-        missing.retain(|name| crate::loaded_language(name).is_none());
-        missing.clone()
+    /// Takes the injected languages that [`Syntax::highlights`] has found
+    /// uncompiled since the last call, so their code showed plain. Compile
+    /// each with [`crate::language_by_name`] off the UI thread, as that takes
+    /// up to 20 ms, then highlight again.
+    ///
+    /// A language compiled since it was found is still returned: the
+    /// highlights already shown lack it all the same, and need redrawing.
+    pub fn take_missing_languages(&self) -> Vec<&'static str> {
+        std::mem::take(&mut self.cache.borrow_mut().layers.missing)
     }
 
     /// [`Syntax::highlights`], after compiling the injected languages it
-    /// needs on this thread.
+    /// needs on this thread, highlighting again while any were missing.
     #[cfg(test)]
     pub(crate) fn highlights_compiling(&self, range: Range<usize>) -> Vec<HighlightSpan> {
         loop {
             let spans = self.highlights(range.clone());
-            let missing = self.missing_languages();
+            let missing = self.take_missing_languages();
             if missing.is_empty() {
                 return spans;
             }
@@ -512,7 +514,21 @@ pub(crate) fn highlight_query(
 
 /// Whether `deadline` has passed. `None` never does.
 pub(crate) fn out_of_time(deadline: Option<Instant>) -> bool {
-    deadline.is_some_and(|deadline| Instant::now() >= deadline)
+    deadline.is_some_and(|deadline| checked_deadline() || Instant::now() >= deadline)
+}
+
+/// Counts a deadline check, and says whether a test wants the deadline
+/// passed by now.
+#[cfg(test)]
+fn checked_deadline() -> bool {
+    let checks = DEADLINE_CHECKS.get() + 1;
+    DEADLINE_CHECKS.set(checks);
+    checks > DEADLINE_AFTER.get()
+}
+
+#[cfg(not(test))]
+fn checked_deadline() -> bool {
+    false
 }
 
 /// Tells tree-sitter to stop once `deadline` has passed.
@@ -753,6 +769,11 @@ mod window_tests;
 thread_local! {
     /// Where the next parse or query on this thread panics, for tests.
     pub(crate) static FAULT: Cell<Option<&'static str>> = const { Cell::new(None) };
+    /// How many times [`out_of_time`] has checked a deadline on this thread.
+    pub(crate) static DEADLINE_CHECKS: Cell<usize> = const { Cell::new(0) };
+    /// After how many checks every deadline on this thread has passed, so a
+    /// test can make it pass at any step.
+    pub(crate) static DEADLINE_AFTER: Cell<usize> = const { Cell::new(usize::MAX) };
 }
 
 /// Panics if a test asked for a fault at `point`.

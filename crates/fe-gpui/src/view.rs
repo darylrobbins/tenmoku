@@ -21,6 +21,9 @@ use crate::{
 /// background thread. Small edits to files of 10k lines reparse within it.
 const SYNC_PARSE_BUDGET: Duration = Duration::from_millis(1);
 
+#[cfg(test)]
+pub(crate) type SyntaxHook = Box<dyn FnMut(&Syntax)>;
+
 /// An editor for one buffer.
 pub struct EditorView {
     pub(crate) model: EditorModel,
@@ -41,6 +44,10 @@ pub struct EditorView {
     language_task: Option<Task<()>>,
     /// Injected languages loading in the background.
     injected_task: Option<Task<()>>,
+    /// Runs just before the view takes the injected languages a frame
+    /// lacked, so a test can compile one in between.
+    #[cfg(test)]
+    pub(crate) before_taking_missing: Option<SyntaxHook>,
     pub(crate) frame_timings: FrameTimings,
 }
 
@@ -74,6 +81,8 @@ impl EditorView {
             syntax: None,
             language_task: None,
             injected_task: None,
+            #[cfg(test)]
+            before_taking_missing: None,
             frame_timings: FrameTimings::default(),
         };
         let language = view
@@ -290,7 +299,13 @@ impl EditorView {
         let Some(syntax) = &self.syntax else {
             return;
         };
-        let missing = syntax.syntax().missing_languages();
+        #[cfg(test)]
+        if let Some(hook) = &mut self.before_taking_missing {
+            hook(syntax.syntax());
+        }
+        // Taken even while a task runs: its redraw highlights again, and
+        // finds any still missing.
+        let missing = syntax.syntax().take_missing_languages();
         if missing.is_empty() || self.injected_task.is_some() {
             return;
         }

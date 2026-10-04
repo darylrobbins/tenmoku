@@ -102,7 +102,7 @@ const ALIASES: &[(&str, &str)] = &[("shell", "bash")];
 pub(crate) enum Injected {
     Ready(&'static Language),
     /// A language of this build whose query isn't compiled yet. Compiling it
-    /// here could take a few frames; see [`crate::Syntax::missing_languages`].
+    /// here could take a few frames; see [`crate::Syntax::take_missing_languages`].
     Missing(&'static str),
     /// Not a language of this build.
     Unknown,

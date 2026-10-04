@@ -88,7 +88,7 @@ fn run(input: Input) {
 fn highlights(syntax: &Syntax, range: Range<usize>) -> Vec<HighlightSpan> {
     loop {
         let spans = syntax.highlights(range.clone());
-        let missing = syntax.missing_languages();
+        let missing = syntax.take_missing_languages();
         if missing.is_empty() {
             return spans;
         }

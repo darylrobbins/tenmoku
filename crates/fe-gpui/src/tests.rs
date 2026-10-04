@@ -778,6 +778,28 @@ fn highlighting_follows_edits(cx: &mut TestAppContext) {
     assert_eq!(first_keyword(cx), Some(13..15));
 }
 
+/// The colour the last frame drew the byte at `offset` in, and the theme's
+/// keyword colour.
+fn drawn_color(
+    view: &Entity<EditorView>,
+    cx: &mut VisualTestContext,
+    offset: usize,
+) -> (Option<gpui::Hsla>, Option<gpui::Hsla>) {
+    view.update(cx, |view, _| {
+        let frame = &view.layout.as_ref().expect("drawn").frame;
+        let row = frame
+            .rows
+            .iter()
+            .find(|row| row.shown().contains(&offset))
+            .expect("offset shown");
+        let keyword = fe_syntax::Highlight::all().find(|highlight| highlight.name() == "keyword");
+        (
+            row.line.color_at(offset - row.shown().start),
+            view.theme.syntax_color(keyword.unwrap()),
+        )
+    })
+}
+
 /// A frame that needs an injected language, here a Markdown fence's, has
 /// the view compile it in the background and draw again, without input.
 #[gpui::test]
@@ -790,13 +812,39 @@ fn injected_languages_load_without_input(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     assert!(fe_syntax::loaded_language("python").is_some());
-    view.update(cx, |view, _| {
-        let syntax = view.syntax.as_ref().expect("language loaded").syntax();
-        assert_eq!(syntax.missing_languages(), [] as [&str; 0]);
-        let def = syntax
-            .highlights(0..text.len())
-            .into_iter()
-            .find(|span| &text[span.range.clone()] == "def");
-        assert_eq!(def.map(|span| span.highlight.name()), Some("keyword"));
+    let (def, keyword) = drawn_color(&view, cx, text.find("def").unwrap());
+    assert_eq!(def, keyword);
+}
+
+/// A language compiled elsewhere, as by another view, after a frame's
+/// highlights found it missing but before the view asks what's missing,
+/// still has the view draw again.
+#[gpui::test]
+fn injected_languages_compiled_meanwhile_draw_again(cx: &mut TestAppContext) {
+    cx.update(init);
+    fe_syntax::language_by_name("markdown");
+    // No other test here uses Lua, and each has its own process under
+    // nextest.
+    assert!(fe_syntax::loaded_language("lua").is_none());
+    let text = "```lua\nlocal x = 1\n```\n";
+    let raced = Rc::new(Cell::new(false));
+    let (view, cx) = cx.add_window_view({
+        let raced = raced.clone();
+        move |_, cx| {
+            let model = EditorModel::new(Buffer::new(text), Some("README.md".into()));
+            let mut view = EditorView::new(model, EditorTheme::default_dark(cx), cx);
+            view.before_taking_missing = Some(Box::new(move |syntax| {
+                // Once a frame has highlighted the parsed tree without Lua.
+                if !syntax.needs_parse() && fe_syntax::loaded_language("lua").is_none() {
+                    fe_syntax::language_by_name("lua");
+                    raced.set(true);
+                }
+            }));
+            view
+        }
     });
+    cx.run_until_parked();
+    assert!(raced.get());
+    let (local, keyword) = drawn_color(&view, cx, text.find("local").unwrap());
+    assert_eq!(local, keyword);
 }

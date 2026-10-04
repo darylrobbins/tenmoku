@@ -1,4 +1,8 @@
-use std::{ops::Range, time::Instant};
+use std::{
+    cell::Cell,
+    ops::Range,
+    time::{Duration, Instant},
+};
 
 use fe_buffer::{Buffer, Origin};
 use proptest::{prelude::prop, prop_assert_eq, proptest};
@@ -7,7 +11,7 @@ use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 use super::Layers;
 use crate::{
     highlight::{clip, overlay},
-    syntax::highlight_query,
+    syntax::{DEADLINE_AFTER, DEADLINE_CHECKS, highlight_query},
     *,
 };
 
@@ -415,23 +419,21 @@ fn unknown_injected_languages_stay_plain() {
 }
 
 /// An injected language that isn't compiled yet stays plain and is reported
-/// missing. Once it's compiled, the next call highlights it.
+/// missing, even if it's compiled before it's asked for, as by another view.
+/// The next call highlights it.
 #[test]
 fn missing_languages_are_reported() {
     let text = "```java\nclass A {}\n```\n";
     let syntax = parsed("markdown", &Buffer::new(text));
     let keyword =
         |spans: Vec<HighlightSpan>| spans.iter().any(|span| span.highlight.name() == "keyword");
-    let first = syntax.highlights(0..text.len());
     // Each test has its own process under nextest, so Java hasn't been
     // compiled yet; under `cargo test` another test may have compiled it.
-    let missing = syntax.missing_languages();
-    if !missing.is_empty() {
-        assert_eq!(missing, ["java"]);
-        assert!(!keyword(first));
-    }
+    let first = keyword(syntax.highlights(0..text.len()));
     language_by_name("java");
-    assert_eq!(syntax.missing_languages(), [] as [&str; 0]);
+    let missing: &[&str] = if first { &[] } else { &["java"] };
+    assert_eq!(syntax.take_missing_languages(), missing);
+    assert_eq!(syntax.take_missing_languages(), [] as [&str; 0]);
     assert!(keyword(syntax.highlights(0..text.len())));
 }
 
@@ -496,6 +498,86 @@ fn content_ranges_stop_at_the_deadline() {
         &mut ranges
     ));
     assert!(ranges.len() <= 1);
+}
+
+/// Collecting a combined template string's pieces checks the deadline at
+/// each of them, and finding its injection stops within a few checks of the
+/// deadline passing, wherever that happens.
+#[test]
+fn combined_templates_stop_at_the_deadline() {
+    let pieces = "<b>${x}</b>".repeat(2000);
+    let text = format!("html`{pieces}`;\n");
+    language_by_name("html");
+    let buffer = Buffer::new(&text);
+    let syntax = parsed("javascript", &buffer);
+    let tree = syntax.tree().unwrap();
+    // Too far off to pass by the clock: it passes when the test says.
+    let deadline = Instant::now().checked_add(Duration::from_secs(3600));
+    // Runs `f` with the deadline passing after `after` checks, and counts
+    // the checks.
+    let with_deadline_after = |after, f: &mut dyn FnMut() -> bool| {
+        DEADLINE_CHECKS.set(0);
+        DEADLINE_AFTER.set(after);
+        let in_time = f();
+        DEADLINE_AFTER.set(usize::MAX);
+        (in_time, DEADLINE_CHECKS.get())
+    };
+
+    let fragment = tree
+        .root_node()
+        .named_descendant_for_byte_range(5, 6)
+        .filter(|node| node.kind() == "string_fragment")
+        .expect("the template's first piece");
+    let pattern = super::Pattern {
+        language: None,
+        combined: true,
+        include_children: true,
+    };
+    let collected = Cell::new(0);
+    let mut collect = || {
+        let mut ranges = Vec::new();
+        let in_time = super::match_ranges(
+            &[fragment],
+            0,
+            &pattern,
+            &mut Default::default(),
+            deadline,
+            &mut ranges,
+        );
+        collected.set(ranges.len());
+        in_time
+    };
+    // 2001 fragments, 2000 substitutions and two backticks.
+    assert_eq!(with_deadline_after(usize::MAX, &mut collect), (true, 4003));
+    for after in [0, 1, 2000, 4002] {
+        assert_eq!(with_deadline_after(after, &mut collect), (false, after + 1));
+        assert!(collected.get() <= after.div_ceil(2), "{after}");
+    }
+
+    let mut layers = Layers::default();
+    let mut find = || {
+        let mut painter = super::Painter {
+            text: buffer.text(),
+            range: 0..text.len(),
+            deadline,
+            host_parsed: true,
+            layers: &mut layers,
+            parser: None,
+            complete: true,
+        };
+        let found = painter.find(syntax.language(), tree, None);
+        painter.complete && found.len() == 1
+    };
+    let (complete, checks) = with_deadline_after(usize::MAX, &mut find);
+    assert!(complete && checks > 4003, "{checks} checks");
+    for after in (0..checks).step_by(checks / 100) {
+        let (complete, taken) = with_deadline_after(after, &mut find);
+        assert!(!complete, "deadline after {after} checks");
+        assert!(
+            taken <= after + 3,
+            "{taken} checks with the deadline after {after}"
+        );
+    }
 }
 
 fn spans_of(specs: &[(usize, usize, usize)]) -> Vec<HighlightSpan> {

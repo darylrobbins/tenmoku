@@ -18,7 +18,9 @@
 //! file, so a layer never depends on which range is being highlighted.
 //!
 //! Only the injections overlapping the highlighted range are found and
-//! parsed, within the same time budget as the query. Their trees are kept
+//! parsed, within the same time budget as the query. Finding one checks the
+//! deadline at every node it visits, as a template string can have
+//! thousands of pieces. Their trees are kept
 //! across edits, which [`Layers::edit`] applies to them as to the host tree.
 //! Once the host is reparsed, a layer an edit touched is reparsed
 //! incrementally from its old tree, and the others are used as they are. A
@@ -32,7 +34,11 @@
 //! its keywords. A language that isn't in this build, such as `regex` or
 //! `jsdoc`, stays plain.
 
-use std::{collections::VecDeque, ops::Range, time::Instant};
+use std::{
+    collections::{HashSet, VecDeque},
+    ops::Range,
+    time::Instant,
+};
 
 use fe_buffer::Text;
 use tree_sitter::{
@@ -64,7 +70,8 @@ pub(crate) type LayerKey = (&'static str, Vec<Range<usize>>);
 #[derive(Default)]
 pub(crate) struct Layers {
     kept: Vec<Layer>,
-    /// Injected languages found without a compiled query.
+    /// Injected languages found without a compiled query, until taken by
+    /// [`crate::Syntax::take_missing_languages`].
     pub(crate) missing: Vec<&'static str>,
     /// The ranges highlighted last, newest last.
     recent: VecDeque<Range<usize>>,
@@ -96,8 +103,8 @@ impl Layer {
 }
 
 impl Layers {
-    /// Forgets every layer, keeping the missing languages: they stay missing
-    /// until they're compiled.
+    /// Forgets every layer, keeping the missing languages: highlights
+    /// already shown lack them.
     pub(crate) fn clear(&mut self) {
         self.kept.clear();
         self.recent.clear();
@@ -362,7 +369,7 @@ impl Painter<'_> {
 
         let mut injections = Vec::new();
         // The pattern and parent node of each combined injection so far.
-        let mut combined = Vec::new();
+        let mut combined = HashSet::new();
         for (pattern_ix, content, name) in matches {
             if out_of_time(deadline) {
                 break;
@@ -389,28 +396,19 @@ impl Painter<'_> {
                 Injected::Unknown => continue,
             };
             let mut ranges = Vec::new();
-            for node in content {
-                let parent = node.parent().filter(|_| pattern.combined);
-                let Some(parent) = parent else {
-                    content_ranges(node, pattern.include_children, deadline, &mut ranges);
-                    continue;
-                };
-                if combined.contains(&(pattern_ix, parent.id())) {
-                    continue;
-                }
-                combined.push((pattern_ix, parent.id()));
-                let mut cursor = parent.walk();
-                for sibling in parent.children(&mut cursor) {
-                    if sibling.kind_id() == node.kind_id()
-                        && !content_ranges(sibling, pattern.include_children, deadline, &mut ranges)
-                    {
-                        break;
-                    }
-                }
-            }
-            if out_of_time(deadline) {
+            if !match_ranges(
+                &content,
+                pattern_ix,
+                pattern,
+                &mut combined,
+                deadline,
+                &mut ranges,
+            ) {
                 break;
             }
+            // The nodes come in document order, so sorting only checks the
+            // order. Like `intersect` and finding the layer, it takes time
+            // linear in the ranges collected, each within the deadline.
             ranges.sort_by_key(|range| range.start);
             if let Some(parent) = parent {
                 ranges = intersect(&ranges, parent);
@@ -513,6 +511,45 @@ impl Painter<'_> {
     }
 }
 
+/// Adds the bytes of a match's `content` nodes to `ranges`, each combined
+/// with its siblings of the same kind if the pattern says so and `combined`
+/// doesn't already hold its parent. Returns false, with only some added, if
+/// `deadline` passes first: it's checked at every node visited, as a
+/// template string can hold thousands of pieces.
+fn match_ranges(
+    content: &[Node],
+    pattern_ix: usize,
+    pattern: &Pattern,
+    combined: &mut HashSet<(usize, usize)>,
+    deadline: Option<Instant>,
+    ranges: &mut Vec<Range<usize>>,
+) -> bool {
+    for &node in content {
+        let parent = node.parent().filter(|_| pattern.combined);
+        let Some(parent) = parent else {
+            if !content_ranges(node, pattern.include_children, deadline, ranges) {
+                return false;
+            }
+            continue;
+        };
+        if !combined.insert((pattern_ix, parent.id())) {
+            continue;
+        }
+        let mut cursor = parent.walk();
+        for sibling in parent.children(&mut cursor) {
+            let in_time = if sibling.kind_id() == node.kind_id() {
+                content_ranges(sibling, pattern.include_children, deadline, ranges)
+            } else {
+                !out_of_time(deadline)
+            };
+            if !in_time {
+                return false;
+            }
+        }
+    }
+    true
+}
+
 /// Adds `node`'s bytes to `ranges`, leaving out its named children's unless
 /// `include_children`. Anonymous children are the host grammar's view of the
 /// content's own punctuation, so they stay. Returns false, with only some
@@ -523,6 +560,9 @@ fn content_ranges(
     deadline: Option<Instant>,
     ranges: &mut Vec<Range<usize>>,
 ) -> bool {
+    if out_of_time(deadline) {
+        return false;
+    }
     let mut start = node.start_byte();
     if !include_children {
         let mut cursor = node.walk();
