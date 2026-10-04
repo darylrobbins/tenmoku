@@ -28,6 +28,14 @@ They widen `row`, `cur_row`, `end_row`, `blk_imp_row` and the local
 `bgn_row` to `int32_t`, along with their serialized form. `col` and the
 indentation stacks stay 16 bits, so the serialized state grows by 4 bytes.
 
+On top of PR #35, `serialize` and `deserialize` copy the two widened fields,
+`row` and `blk_imp_row`, with `memcpy` rather than through an `int32_t *`.
+`blk_imp_row` sits at byte offset 6 of the buffer, so the pointer access PR #35
+uses is misaligned, which is undefined behavior; clang's
+`-fsanitize=alignment` aborts on it during an ordinary parse. The byte layout
+is unchanged. The 16-bit fields all sit at even offsets and keep upstream's
+pointer accesses.
+
 Besides the patch, this copy differs from the crates.io package in a few ways.
 The packaged files are kept except `README.md`, which is this file, and the
 cargo metadata files. `Cargo.toml` is the package's original manifest without

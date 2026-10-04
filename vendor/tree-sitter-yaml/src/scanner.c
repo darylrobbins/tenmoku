@@ -1,6 +1,8 @@
 #include "tree_sitter/array.h"
 #include "tree_sitter/parser.h"
 
+#include <string.h>
+
 #define _str(x) #x
 #define _file(x) _str(schema.x.c)
 
@@ -164,11 +166,11 @@ typedef struct {
 
 static unsigned serialize(Scanner *scanner, char *buffer) {
     size_t size = 0;
-    *(int32_t *)&buffer[size] = scanner->row;
+    memcpy(&buffer[size], &scanner->row, sizeof(int32_t));
     size += sizeof(int32_t);
     *(int16_t *)&buffer[size] = scanner->col;
     size += sizeof(int16_t);
-    *(int32_t *)&buffer[size] = scanner->blk_imp_row;
+    memcpy(&buffer[size], &scanner->blk_imp_row, sizeof(int32_t));
     size += sizeof(int32_t);
     *(int16_t *)&buffer[size] = scanner->blk_imp_col;
     size += sizeof(int16_t);
@@ -198,11 +200,11 @@ static void deserialize(Scanner *scanner, const char *buffer, unsigned length) {
     array_push(&scanner->ind_len_stk, -1);
     if (length > 0) {
         size_t size = 0;
-        scanner->row = *(int32_t *)&buffer[size];
+        memcpy(&scanner->row, &buffer[size], sizeof(int32_t));
         size += sizeof(int32_t);
         scanner->col = *(int16_t *)&buffer[size];
         size += sizeof(int16_t);
-        scanner->blk_imp_row = *(int32_t *)&buffer[size];
+        memcpy(&scanner->blk_imp_row, &buffer[size], sizeof(int32_t));
         size += sizeof(int32_t);
         scanner->blk_imp_col = *(int16_t *)&buffer[size];
         size += sizeof(int16_t);
