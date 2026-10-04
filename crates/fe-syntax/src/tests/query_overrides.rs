@@ -66,35 +66,56 @@ fn toml_deep_and_quoted_keys() {
     }
 }
 
-/// A key of `n` components named `k0`, `k1`, ….
-fn key(n: usize) -> String {
+/// A key of `n` components named `k0`, `k1`, …, each wrapped in `quote`.
+fn key(n: usize, quote: &str) -> String {
     (0..n)
-        .map(|i| format!("k{i}"))
+        .map(|i| format!("{quote}k{i}{quote}"))
         .collect::<Vec<_>>()
         .join(".")
+}
+
+/// The three places a key can appear, with the highlight a covered component
+/// gets there and the one a component beyond the depth limit falls back to,
+/// by quoting: bare keys fall back to `property`, quoted ones to `string`.
+fn key_forms(key: &str) -> [(String, &'static str, [&'static str; 3]); 3] {
+    [
+        (
+            format!("[{key}]\n"),
+            "type",
+            ["property", "string", "string"],
+        ),
+        (
+            format!("[[{key}]]\n"),
+            "type",
+            ["property", "string", "string"],
+        ),
+        (
+            format!("{key} = 1\n"),
+            "property",
+            ["property", "string", "string"],
+        ),
+    ]
 }
 
 #[test]
 fn toml_keys_are_covered_to_eleven_components() {
     // Eleven components, 10 dotted_keys deep, is the limit documented in
     // queries/toml.scm; the twelfth, leftmost, component falls back.
-    for (text, highlight) in [
-        (format!("[{}]\n", key(11)), "type"),
-        (format!("[[{}]]\n", key(11)), "type"),
-        (format!("{} = 1\n", key(11)), "property"),
-    ] {
-        let spans = highlighted("toml", &text);
-        for i in 0..11 {
-            assert!(
-                has(&spans, &format!("k{i}"), highlight),
-                "{text}: {spans:?}"
-            );
+    for (q, quote) in ["", "\"", "'"].into_iter().enumerate() {
+        for (text, highlight, _) in key_forms(&key(11, quote)) {
+            let spans = highlighted("toml", &text);
+            for i in 0..11 {
+                let component = format!("{quote}k{i}{quote}");
+                assert!(has(&spans, &component, highlight), "{text}: {spans:?}");
+            }
         }
-    }
-    for text in [format!("[{}]\n", key(12)), format!("[[{}]]\n", key(12))] {
-        let spans = highlighted("toml", &text);
-        assert!(has(&spans, "k0", "property"), "{text}: {spans:?}");
-        assert!(has(&spans, "k11", "type"), "{text}: {spans:?}");
+        for (text, highlight, fallback) in key_forms(&key(12, quote)) {
+            let spans = highlighted("toml", &text);
+            let k0 = format!("{quote}k0{quote}");
+            assert!(has(&spans, &k0, fallback[q]), "{text}: {spans:?}");
+            let k11 = format!("{quote}k11{quote}");
+            assert!(has(&spans, &k11, highlight), "{text}: {spans:?}");
+        }
     }
 }
 
