@@ -275,20 +275,24 @@ impl Buffer {
     /// [refreshing](BufferSnapshot::refresh) anchors. Version numbers don't
     /// change, and snapshots taken earlier keep their own log.
     ///
-    /// Transactions whose next undo or redo would revert batches below the
-    /// floor are dropped from the history. An open transaction is kept, but
-    /// undoing it fails with [`UndoError::Conflict`].
+    /// Transactions with a batch below the floor, applied or undone, are
+    /// dropped from the history. An open transaction is kept, but undoing it
+    /// fails with [`UndoError::Conflict`]. So does undoing or redoing a kept
+    /// transaction whose batches derive, through earlier undos and redos,
+    /// from an edit below the floor.
     pub fn compact_log(&mut self, floor: Version) {
         self.snapshot.log.compact(floor);
         let floor = self.snapshot.log.floor();
         let open = self.open.as_ref().map(|open| open.id);
         let mut freed: HashMap<Origin, (usize, usize)> = HashMap::new();
         self.history.retain(|entry| {
-            let pending = entry
-                .undone
-                .as_ref()
-                .map_or(&entry.batches, |undone| &undone.batches);
-            let keep = Some(entry.id) == open || pending.iter().all(|batch| batch.version > floor);
+            let undone = entry.undone.iter().flat_map(|undone| &undone.batches);
+            let keep = Some(entry.id) == open
+                || entry
+                    .batches
+                    .iter()
+                    .chain(undone)
+                    .all(|batch| batch.version > floor);
             if !keep {
                 let (bytes, undone) = freed.entry(entry.origin.clone()).or_default();
                 *bytes += entry_bytes(entry);

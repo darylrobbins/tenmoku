@@ -84,13 +84,16 @@ answer from T-19a.
 - `map_for_history` returns `None` when the batch that produced `from` is
   below the floor (`from <= floor`). The undo or redo is then refused with
   `UndoError::Conflict` and the text is left unchanged.
-- **Deviation:** collapse roots below the floor are *not* treated as
-  unknowable. A root is an identifier that every entry in its undo/redo chain
-  carries. `reverted_by` compares it only against entries in the mapped
-  range, and all of those are at or above the floor. That comparison is
-  therefore still exact, and refusing it would turn away undos that are safe.
-- `compact_log` drops each closed history entry whose *next* revert (its
-  `batches`, or `undone.batches` if it's undone) holds a batch below the
-  floor. An undone transaction whose original batch was compacted can still
-  be redone. The open transaction is kept, and undoing it is refused with
-  `Conflict`. The next compaction after it closes drops it.
+- Collapse roots below the floor are treated as unknowable, as specified
+  (changed in T39; T14 first shipped a deviation here). `map_for_history`
+  also returns `None` when the root of the batch that produced `from`, of
+  an entry mapped through, or of an inherited collapse in `collapsed_by` is
+  below the floor. An entry's `inverts` is never below its root, so this
+  covers inversion links too.
+- `compact_log` drops each closed history entry with a batch below the
+  floor, in `batches` or in `undone.batches`. An undone transaction whose
+  original batch was compacted is dropped, so it can't be redone. The open
+  transaction is kept, and undoing it is refused with `Conflict`. The next
+  compaction after it closes drops it. A kept transaction whose batches
+  derive from an edit below the floor (say, a redo of it) is refused with
+  `Conflict` too.

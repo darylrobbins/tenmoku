@@ -108,12 +108,7 @@ impl EditLog {
         let inverts = inverts.map(|version| version.0 - 1);
         let root = match inverts {
             Some(inverted) => {
-                let (_, _, entry) = self.entries.find::<Count, _>(
-                    (),
-                    &Count(inverted - self.floor),
-                    sum_tree::Bias::Right,
-                );
-                let inverted = entry.expect("inverted entry exists").root;
+                let inverted = self.entry(inverted).root;
                 Collapse {
                     root: inverted.root,
                     forward: !inverted.forward,
@@ -132,6 +127,14 @@ impl EditLog {
             },
             (),
         );
+    }
+
+    /// The entry at `index`, which must be at or above the floor.
+    fn entry(&self, index: usize) -> &LogEntry {
+        let (_, _, entry) =
+            self.entries
+                .find::<Count, _>((), &Count(index - self.floor), sum_tree::Bias::Right);
+        entry.expect("log entry exists")
     }
 
     fn entries(&self, from: Version, to: Version) -> impl Iterator<Item = (usize, &LogEntry)> {
@@ -197,7 +200,12 @@ impl EditLog {
     ///   to one end, and that edit has since been reverted: the replaced text
     ///   is back, but where in it the boundary was is lost; or
     /// - the batch that produced `from` is below the floor, so the batch
-    ///   reverting it couldn't be linked to it.
+    ///   reverting it couldn't be linked to it; or
+    /// - a collapse root the boundary depends on points below the floor: the
+    ///   root of the batch that produced `from`, of an entry mapped through,
+    ///   or of a collapse in `collapsed_by`. What that root's chain of undos
+    ///   and redos did below the floor is gone. (An entry's `inverts` is
+    ///   never below its root, so this covers inversions too.)
     ///
     /// `collapsed_by` starts with collapses the boundary inherited (it may
     /// come from an undo or redo computed through one) and gains any found
@@ -210,11 +218,18 @@ impl EditLog {
         to: Version,
         collapsed_by: &mut Vec<Collapse>,
     ) -> Option<usize> {
-        if from.0 <= self.floor {
+        let below_floor = |collapse: &Collapse| collapse.root < self.floor;
+        if from.0 <= self.floor
+            || below_floor(&self.entry(from.0 - 1).root)
+            || collapsed_by.iter().any(below_floor)
+        {
             return None;
         }
         let mut offset = offset;
         for (_, entry) in self.mapping_entries(from, to) {
+            if below_floor(&entry.root) {
+                return None;
+            }
             if collapsed_by
                 .iter()
                 .any(|collapse| collapse.reverted_by(entry.root))

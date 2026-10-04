@@ -130,19 +130,38 @@ fn undo_below_the_floor_is_refused_without_changing_text() {
     buffer.compact_log(version);
     assert_eq!(buffer.undo(is_user), Ok(None));
 
-    // An undone transaction depends only on its undo batches, so it can
-    // still be redone, and undone again, after its original batch is
-    // compacted away.
+    // An undone transaction whose original batch is below the floor is
+    // dropped too, so it can't be redone.
     let mut buffer = Buffer::new("");
     let a = buffer.edit([(0..0, "a")], Origin::User).unwrap();
     assert_eq!(buffer.undo(is_user), Ok(Some(a)));
     buffer.compact_log(Version(1));
-    assert_eq!(buffer.redo(is_user), Ok(Some(a)));
-    assert_eq!(buffer.text().to_string(), "a");
-    assert_eq!(buffer.undo(is_user), Ok(Some(a)));
-    assert_eq!(buffer.text().to_string(), "");
-    // Undone and below the floor: no longer redoable.
-    buffer.compact_log(buffer.version());
     assert_eq!(buffer.redo(is_user), Ok(None));
+    assert_eq!(buffer.text().to_string(), "");
     assert_eq!(buffer.history_bytes(&Origin::User), 0);
+}
+
+#[test]
+fn undo_that_depends_on_an_edit_below_the_floor_is_refused() {
+    let is_lsp = |origin: &Origin| *origin == Origin::Lsp;
+
+    // The transaction's batch is a redo of an edit below the floor.
+    let mut buffer = Buffer::new("");
+    let a = buffer.edit([(0..0, "a")], Origin::User).unwrap();
+    assert_eq!(buffer.undo(is_user), Ok(Some(a)));
+    assert_eq!(buffer.redo(is_user), Ok(Some(a)));
+    buffer.compact_log(Version(2));
+    assert_eq!(buffer.undo(is_user), Err(UndoError::Conflict(a)));
+    assert_eq!(buffer.text().to_string(), "a");
+
+    // The transaction maps through an undo of an edit below the floor.
+    let mut buffer = Buffer::new("");
+    let a = buffer.edit([(0..0, "a")], Origin::User).unwrap();
+    let c = buffer.edit([(1..1, "c")], Origin::Lsp).unwrap();
+    assert_eq!(buffer.undo(is_user), Ok(Some(a)));
+    buffer.compact_log(Version(1));
+    let version = buffer.version();
+    assert_eq!(buffer.undo(is_lsp), Err(UndoError::Conflict(c)));
+    assert_eq!(buffer.text().to_string(), "c");
+    assert_eq!(buffer.version(), version);
 }
