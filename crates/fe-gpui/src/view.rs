@@ -1,6 +1,6 @@
 use std::{ops::Range, time::Duration};
 
-use fe_buffer::{Anchor, BufferSnapshot};
+use fe_buffer::{Anchor, Bias, BufferSnapshot};
 use fe_display::layout::RowLayout;
 use fe_editor::{EditorModel, Movement};
 use fe_syntax::{Language, ParseJob, Spawner, Syntax, SyntaxDriver};
@@ -20,6 +20,10 @@ use crate::{
 /// How long a frame may spend reparsing before the parse moves to a
 /// background thread. Small edits to files of 10k lines reparse within it.
 const SYNC_PARSE_BUDGET: Duration = Duration::from_millis(1);
+
+/// How much of the buffer's start is read for a shebang, when the path names
+/// no language.
+const DETECT_BYTES: usize = 512;
 
 #[cfg(test)]
 pub(crate) type SyntaxHook = Box<dyn FnMut(&Syntax)>;
@@ -85,30 +89,56 @@ impl EditorView {
             before_taking_missing: None,
             frame_timings: FrameTimings::default(),
         };
-        let language = view
-            .model
-            .path()
-            .and_then(fe_syntax::language_name_for_path);
-        if let Some(name) = language {
-            if let Some(language) = fe_syntax::loaded_language(name) {
-                view.syntax = Some(syntax_driver(language, view.model.snapshot()));
-            } else {
-                // Compiling a highlight query can take a few frames.
-                view.language_task = Some(cx.spawn(async move |this, cx| {
-                    let language = cx
-                        .background_spawn(async move { fe_syntax::language_by_name(name) })
-                        .await;
-                    this.update(cx, |view, cx| {
-                        view.language_task = None;
-                        view.syntax =
-                            language.map(|language| syntax_driver(language, view.model.snapshot()));
-                        cx.notify();
-                    })
-                    .ok();
-                }));
-            }
-        }
+        let text = view.model.text();
+        let start = text.slice_to_string(0..text.clip_offset(DETECT_BYTES, Bias::Left));
+        let language = fe_syntax::detect_language_name(view.model.path(), &start);
+        view.set_language(language, cx);
         view
+    }
+
+    /// Highlights the buffer as the language called `name`, or as plain text
+    /// for `None` or a name that isn't compiled in. Overrides whatever was
+    /// detected when the view opened, and sticks until the next call. A
+    /// language not loaded yet loads in the background, with the buffer
+    /// plain until it's ready.
+    pub fn set_language(&mut self, name: Option<&str>, cx: &mut Context<Self>) {
+        // Dropping the driver and the load cancels them, so neither can
+        // install anything for the old language.
+        self.syntax = None;
+        self.language_task = None;
+        cx.notify();
+        let Some(name) = name.and_then(|name| fe_syntax::language_names().find(|&n| n == name))
+        else {
+            return;
+        };
+        if let Some(language) = fe_syntax::loaded_language(name) {
+            self.syntax = Some(syntax_driver(language, self.model.snapshot()));
+            return;
+        }
+        // Compiling a highlight query can take a few frames.
+        self.language_task = Some(cx.spawn(async move |this, cx| {
+            let language = cx
+                .background_spawn(async move { fe_syntax::language_by_name(name) })
+                .await;
+            this.update(cx, |view, cx| {
+                view.language_task = None;
+                view.syntax =
+                    language.map(|language| syntax_driver(language, view.model.snapshot()));
+                cx.notify();
+            })
+            .ok();
+        }));
+    }
+
+    /// The buffer's syntax, once its language has loaded; `None` for plain
+    /// text. Its [`Syntax::tree`] has been edited to match
+    /// [`Syntax::version`], which may trail the model's snapshot until the
+    /// next frame, but the tree may not have been reparsed since the latest
+    /// edits: [`Syntax::needs_parse`] says whether it has. Node positions are
+    /// right for the text at that version either way; only the structure of
+    /// the edited text may be stale.
+    pub fn syntax(&self) -> Option<&Syntax> {
+        self.syntax.as_ref().map(SyntaxDriver::syntax)
     }
 
     pub fn model(&self) -> &EditorModel {
@@ -289,7 +319,12 @@ impl EditorView {
             .as_ref()
             .map_or(0..0, |layout| shown_text(&layout.frame.rows));
         if let Some(syntax) = &mut self.syntax {
-            syntax.sync(self.model.snapshot(), visible, &mut ParseSpawner(cx));
+            let language = syntax.syntax().language();
+            syntax.sync(
+                self.model.snapshot(),
+                visible,
+                &mut ParseSpawner { cx, language },
+            );
         }
     }
 
@@ -352,17 +387,27 @@ fn syntax_driver(language: &'static Language, snapshot: &BufferSnapshot) -> Synt
 
 /// Runs a view's parses on GPUI's background executor and hands the results
 /// back to it.
-struct ParseSpawner<'a, 'b>(&'a mut Context<'b, EditorView>);
+struct ParseSpawner<'a, 'b> {
+    cx: &'a mut Context<'b, EditorView>,
+    /// The language being parsed.
+    language: &'static Language,
+}
 
 impl Spawner for ParseSpawner<'_, '_> {
     type Task = Task<()>;
 
     fn spawn(&mut self, job: ParseJob) -> Task<()> {
-        self.0.spawn(async move |this, cx| {
+        let language = self.language;
+        self.cx.spawn(async move |this, cx| {
             let parsed = cx.background_spawn(async move { job.run() }).await;
             this.update(cx, |view, cx| {
-                if let Some(syntax) = &mut view.syntax {
-                    syntax.finish(parsed, &mut ParseSpawner(cx));
+                // `set_language` drops the driver, cancelling this, but a
+                // tree of another language must never be installed: the
+                // driver only checks the buffer and version.
+                if let Some(syntax) = &mut view.syntax
+                    && std::ptr::eq(syntax.syntax().language(), language)
+                {
+                    syntax.finish(parsed, &mut ParseSpawner { cx, language });
                 }
                 // Repaint, and reparse whatever changed or scrolled into
                 // view meanwhile.
@@ -585,6 +630,9 @@ impl EntityInputHandler for EditorView {
         Some(self.model.text().offset_to_utf16(offset))
     }
 }
+
+#[cfg(test)]
+mod language_tests;
 
 #[cfg(test)]
 mod window_tests;
