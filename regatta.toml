@@ -1,11 +1,12 @@
 # Regatta configuration for fastedit. See ~/code/regatta/docs/guide/configuration.md.
 #
-# Lanes and gate snapshots live under .worktrees/. A local .worktrees/.cargo/config.toml
-# (not tracked) points them all at one shared target directory, so GPUI is built once
-# rather than per lane. Commands here don't depend on it: without it each run builds
-# in its own target/.
-#
-# Gate commands run with the caller's PATH; cargo comes from rustup in ~/.cargo/bin.
+# Lanes live under .worktrees/. A local .worktrees/.cargo/config.toml (not tracked)
+# points them at one shared target directory, so GPUI is built once rather than per lane.
+# Verification snapshots (.worktrees/.verify/<id>) build in their own target/ instead:
+# a workspace crate has the same artifact name in every worktree and cargo trusts mtimes,
+# so concurrent snapshots sharing a target used each other's builds. scripts/ci-env.sh
+# sets that up; every command below runs through it. It also puts cargo (rustup, in
+# ~/.cargo/bin) on PATH.
 version = 2
 base_branch = "main"
 worktree_root = ".worktrees"
@@ -25,16 +26,16 @@ name = "fastedit"
 path = "."
 stack = "rust-cargo"
 [components.commands]
-fmt = 'PATH="$HOME/.cargo/bin:$PATH" cargo fmt --all --check'
-vet = 'PATH="$HOME/.cargo/bin:$PATH" cargo clippy --workspace --all-targets -- -D warnings'
-build = 'PATH="$HOME/.cargo/bin:$PATH" cargo build --workspace --all-targets'
+fmt = 'scripts/ci-env.sh cargo fmt --all --check'
+vet = 'scripts/ci-env.sh cargo clippy --workspace --all-targets -- -D warnings'
+build = 'scripts/ci-env.sh cargo build --workspace --all-targets'
 # JUnit lands in target/nextest/ci/junit.xml (.config/nextest.toml), where the stack reads it.
-test = 'PATH="$HOME/.cargo/bin:$PATH" cargo nextest run --workspace --profile ci'
-test_one = 'PATH="$HOME/.cargo/bin:$PATH" cargo nextest run --workspace --profile ci -E "test(={test})"'
-no_gpui = 'PATH="$HOME/.cargo/bin:$PATH" scripts/check-no-gpui.sh'
-syntax_features = 'PATH="$HOME/.cargo/bin:$PATH" scripts/check-syntax-features.sh'
+test = 'scripts/ci-env.sh cargo nextest run --workspace --profile ci'
+test_one = 'scripts/ci-env.sh cargo nextest run --workspace --profile ci -E "test(={test})"'
+no_gpui = 'scripts/ci-env.sh scripts/check-no-gpui.sh'
+syntax_features = 'scripts/ci-env.sh scripts/check-syntax-features.sh'
 # Licenses, bans and sources only: advisories need the network and run in CI.
-deny = 'PATH="$HOME/.cargo/bin:$PATH" cargo deny check licenses bans sources'
+deny = 'scripts/ci-env.sh cargo deny check licenses bans sources'
 
 [pipeline]
 gate = ["fmt", "vet", "build", "test", "no_gpui", "syntax_features", "deny"]
