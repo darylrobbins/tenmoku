@@ -13,12 +13,14 @@
 //!
 //! This crate must never depend on GPUI.
 
+mod detect;
 mod driver;
 mod highlight;
 mod injection;
 mod language;
 mod syntax;
 
+pub use detect::{detect_language_name, language_name_for_shebang};
 pub use driver::{Spawner, SyntaxDriver};
 pub use highlight::{Highlight, HighlightSpan, resolve_theme};
 pub use language::{
