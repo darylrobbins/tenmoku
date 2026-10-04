@@ -265,6 +265,72 @@ fn a_layer_whose_injection_is_gone_is_dropped() {
     }
 }
 
+/// Deleting the whole text leaves every layer's ranges empty; highlighting
+/// the empty buffer once the host is reparsed drops them all.
+#[test]
+fn deleting_everything_drops_every_layer() {
+    let text = blocks(3);
+    let mut buffer = Buffer::new(&text);
+    let mut syntax = parsed("markdown", &buffer);
+    syntax.highlights_compiling(0..text.len());
+    assert!(!syntax.layers().is_empty());
+    buffer.edit([(0..text.len(), "")], Origin::User);
+    syntax.edit(buffer.current());
+    syntax.finish(syntax.parse_job().run());
+    syntax.highlights_compiling(0..0);
+    assert_eq!(syntax.layers(), []);
+}
+
+/// Typing inside a template's `${…}` leaves the bytes of the HTML layer
+/// around it as they were, so it isn't reparsed.
+#[test]
+fn an_edit_between_a_layers_ranges_reparses_nothing() {
+    let text = "html`<p class=${c}>hi</p>`;\n";
+    let mut buffer = Buffer::new(text);
+    let mut syntax = parsed("javascript", &buffer);
+    syntax.highlights_compiling(0..text.len());
+    assert_eq!(syntax.take_layer_parses(), [("html", vec![5..14, 18..25])]);
+    let c = text.find("c}").unwrap();
+    for at in [c, c + 1] {
+        buffer.edit([(at..at, "x")], Origin::User);
+        syntax.edit(buffer.current());
+        syntax.finish(syntax.parse_job().run());
+        syntax.highlights_compiling(0..buffer.len());
+        assert_eq!(syntax.take_layer_parses(), [], "typed at {at}");
+        assert_fresh("javascript", &syntax, &buffer, "typed in ${…}");
+        syntax.take_layer_parses();
+    }
+}
+
+/// Showing a cached range again makes its layers recent, so the next range
+/// far away drops the oldest range's layers, not its.
+#[test]
+fn a_cached_range_shown_again_keeps_its_layers() {
+    let text = blocks(200);
+    let syntax = parsed("markdown", &Buffer::new(&text));
+    // A block every 20, far apart: each range keeps only its own layers.
+    let block = |n: usize| {
+        let start = |n| text.find(&format!("Para {n} ")).unwrap();
+        start(n)..start(n + 1)
+    };
+    let kept = |n: usize| {
+        let range = block(n);
+        syntax
+            .layers()
+            .iter()
+            .any(|(_, ranges)| range.start <= ranges[0].start && ranges[0].end <= range.end)
+    };
+    let ranges = super::RECENT_RANGES;
+    for n in 0..ranges {
+        syntax.highlights_compiling(block(20 * n));
+    }
+    // Cached, as nothing has changed.
+    syntax.highlights_compiling(block(0));
+    syntax.highlights_compiling(block(20 * ranges));
+    assert!(kept(0) && !kept(20), "{:?}", syntax.layers());
+    assert!((2..=ranges).all(|n| kept(20 * n)));
+}
+
 #[test]
 fn layers_far_from_the_viewport_are_dropped() {
     let text = blocks(200);

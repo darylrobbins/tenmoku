@@ -120,7 +120,9 @@ impl Layers {
             if span.end < edited.start {
                 continue;
             }
-            layer.edited |= touches(&span, &edited);
+            // An edit between its ranges, such as inside a template
+            // string's `${…}`, leaves its bytes as they were.
+            layer.edited |= layer.ranges.iter().any(|range| touches(range, &edited));
             layer.tree.edit(edit);
             for range in &mut layer.ranges {
                 *range = moved(range, edit);
@@ -157,9 +159,7 @@ impl Layers {
 
     /// Drops the layers that `range`, just highlighted, would have used but
     /// didn't, as their injections are gone: those with bytes in it, and
-    /// those edited in or next to it. Then remembers `range` as highlighted,
-    /// and drops the layers more than its length from it and the other
-    /// recent ranges.
+    /// those edited in or next to it. Then [`Layers::visited`].
     fn highlighted(&mut self, range: Range<usize>, complete: bool, host_parsed: bool) {
         let pass = self.pass;
         if complete && host_parsed {
@@ -169,6 +169,13 @@ impl Layers {
                         || layer.edited && touches(&layer.span(), &range))
             });
         }
+        self.visited(range);
+    }
+
+    /// Remembers `range` as highlighted, newest, whether just now or from
+    /// a cached result, and drops the layers more than its length from it
+    /// and the other recent ranges.
+    pub(crate) fn visited(&mut self, range: Range<usize>) {
         self.recent.retain(|recent| *recent != range);
         if self.recent.len() == RECENT_RANGES {
             self.recent.pop_front();
@@ -257,10 +264,13 @@ pub(crate) fn paint(
     layers: &mut Layers,
     spans: Vec<HighlightSpan>,
 ) -> (Vec<HighlightSpan>, bool) {
+    layers.pass += 1;
     if range.is_empty() {
+        // Nothing to paint, but the layers edited at it are as unused as
+        // if it weren't empty: those left when the whole text is deleted.
+        layers.highlighted(range, true, host.parsed);
         return (spans, true);
     }
-    layers.pass += 1;
     let mut painter = Painter {
         text: host.text,
         range: range.clone(),

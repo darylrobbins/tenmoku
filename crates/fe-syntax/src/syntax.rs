@@ -356,7 +356,10 @@ impl Syntax {
             (None, None) => return Vec::new(),
         };
         let mut cache = self.cache.borrow_mut();
+        let cache = &mut *cache;
         if let Some((_, spans)) = cache.ranges.iter().find(|(cached, _)| *cached == range) {
+            // Shown again, so its layers are as recent as a query's.
+            cache.layers.visited(range);
             return spans.clone();
         }
 
