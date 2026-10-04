@@ -9,8 +9,11 @@ pub struct Language {
     name: &'static str,
     pub(crate) grammar: tree_sitter::Language,
     pub(crate) query: Query,
-    /// The highlight for each of the query's captures, by capture index.
-    pub(crate) highlights: Vec<Option<Highlight>>,
+    /// What each of the query's captures paints, by capture index: a
+    /// highlight, or `Some(None)` for `@none`, which clears the highlights
+    /// around it. Captures outside our vocabulary (`spell`, …) are `None`
+    /// and ignored.
+    pub(crate) highlights: Vec<Option<Option<Highlight>>>,
     pub(crate) earlier_patterns_win: bool,
     /// Whether no pattern spans several siblings, so a node's children can
     /// be queried one at a time. True of every query so far.
@@ -31,7 +34,10 @@ impl Language {
         let highlights = query
             .capture_names()
             .iter()
-            .map(|name| Highlight::from_capture(name))
+            .map(|name| match *name {
+                "none" => Some(None),
+                name => Highlight::from_capture(name).map(Some),
+            })
             .collect();
         let local_patterns = (0..query.pattern_count()).all(|ix| !query.is_pattern_non_local(ix));
         let injections = def.injections.map(|source| {
@@ -344,7 +350,15 @@ const DEFS: &[Def] = &[
         extensions: &["md", "markdown"],
         file_names: &[],
         grammar: || tree_sitter_md::LANGUAGE.into(),
-        highlights: || &[tree_sitter_md::HIGHLIGHT_QUERY_BLOCK],
+        // The crate's query clears a fence's code with `@none`; we keep it
+        // `markup.raw`, so a fence in a language we lack still stands out.
+        // Later patterns win, so this overrides it.
+        highlights: || {
+            &[
+                tree_sitter_md::HIGHLIGHT_QUERY_BLOCK,
+                "\n(code_fence_content) @text.literal\n",
+            ]
+        },
         earlier_patterns_win: false,
         injections: Some(tree_sitter_md::INJECTION_QUERY_BLOCK),
         hidden: false,
@@ -407,7 +421,7 @@ const DEFS: &[Def] = &[
         grammar: || tree_sitter_php::LANGUAGE_PHP.into(),
         highlights: || &[tree_sitter_php::HIGHLIGHTS_QUERY],
         earlier_patterns_win: false,
-        injections: Some(tree_sitter_php::INJECTIONS_QUERY),
+        injections: Some(include_str!("../queries/php-injections.scm")),
         hidden: false,
     },
     #[cfg(feature = "csharp")]

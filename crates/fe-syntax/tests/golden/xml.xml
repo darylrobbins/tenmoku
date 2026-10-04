@@ -1,36 +1,61 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <?xml-stylesheet type="text/xsl" href="catalog.xsl"?>
 <!DOCTYPE catalog [
-  <!ELEMENT catalog (book+)>
-  <!ELEMENT book (title, author+, price?)>
+  <!ELEMENT catalog (book+, series*, summary)>
+  <!ELEMENT book (title, author+, price?, notes?, link?)>
+  <!ELEMENT title (#PCDATA | em)*>
+  <!ELEMENT shelf EMPTY>
+  <!ELEMENT extra ANY>
   <!ATTLIST book id ID #REQUIRED
-                 lang CDATA "en">
+                 lang CDATA "en"
+                 format (hardcover | paperback | ebook) "paperback"
+                 series IDREF #IMPLIED>
+  <!ATTLIST catalog version CDATA #FIXED "2">
   <!ENTITY publisher "Golden Press">
+  <!ENTITY % common "title, author+">
+  <!ENTITY cover SYSTEM "covers/b1.png" NDATA png>
+  <!ENTITY legal PUBLIC "-//Example//TEXT Legal//EN" "legal.txt">
+  <!NOTATION png SYSTEM "image/png">
 ]>
 <!-- A small book catalogue, used as a golden highlighting sample. -->
 <catalog xmlns="urn:example:catalog"
          xmlns:xlink="http://www.w3.org/1999/xlink"
+         xmlns:dc="http://purl.org/dc/elements/1.1/"
          updated="2026-10-03">
-  <book id="b1" lang="en">
+  <book id="b1" lang="en" format="hardcover">
     <title>Parsing &amp; Highlighting</title>
     <author>A. Writer</author>
     <author>B. Editor</author>
     <price currency="CAD">39.95</price>
-    <link xlink:href="https://example.com/b1"/>
+    <link xlink:href="https://example.com/b1" xlink:type="simple"/>
   </book>
-  <book id="b2">
-    <title>Trees &#x26; Queries</title>
+  <book id="b2" series="s1">
+    <title>Trees &#x26; <em>Queries</em></title>
     <author>C. Reader</author>
     <notes><![CDATA[
       Prices <em>may</em> change; see &publisher; for details.
     ]]></notes>
   </book>
-  <book id='b3' lang="fr">
+  <book id='b3' lang="fr" format='ebook'>
     <title>Le Lexique</title>
     <author>D. Auteur</author>
     <price currency="EUR">24.00</price>
     <?render mode="compact"?>
   </book>
+  <!--
+    A series groups books; its members point back with IDREF.
+  -->
+  <series id="s1">
+    <dc:title>Tools of the Trade</dc:title>
+    <dc:creator>E. Series-Editor</dc:creator>
+    <member ref="b2" position="1"/>
+    <shelf/>
+  </series>
+  <extra>
+    Mixed <em>content</em> with a &#169; sign, &lt;angles&gt;,
+    &quot;quotes&quot; and &apos;apostrophes&apos;.
+    <empty></empty>
+  </extra>
   <summary count="3">
     Three books from &publisher;.
   </summary>

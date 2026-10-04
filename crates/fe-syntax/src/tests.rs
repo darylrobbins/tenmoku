@@ -441,6 +441,37 @@ fn an_edited_tree_highlights_before_it_is_reparsed() {
     assert_eq!(syntax.highlights(0..text.len())[0].range, 2..4);
 }
 
+/// `@none` clears the highlight around it: Scala's interpolated code isn't
+/// coloured as the string it's in, whether `$x` or `${…}`.
+#[test]
+fn none_captures_clear_the_enclosing_highlight() {
+    let text = "val m = s\"a $x b ${y.size} c\"\n";
+    let syntax = parsed(language_by_name("scala").unwrap(), &Buffer::new(text));
+    let found = spans(&syntax, text, 0..text.len());
+    for expected in [
+        ("\"a ", "string"),
+        ("$", "punctuation.special"),
+        (" b ", "string"),
+        ("{", "punctuation.bracket"),
+        ("size", "property"),
+        (" c\"", "string"),
+    ] {
+        assert!(
+            found.contains(&(expected.0.to_string(), expected.1)),
+            "{expected:?} in {found:?}"
+        );
+    }
+    // `x` and `y` are plain.
+    let all = syntax.highlights(0..text.len());
+    for before in ["$x", "{y"] {
+        let at = text.find(before).unwrap() + 1;
+        assert!(
+            !all.iter().any(|span| span.range.contains(&at)),
+            "{before}: {found:?}"
+        );
+    }
+}
+
 #[test]
 fn capture_names_map_to_the_most_specific_highlight() {
     let name = |capture| Highlight::from_capture(capture).map(Highlight::name);
@@ -582,6 +613,7 @@ fn queries_stop_at_their_budget() {
 }
 
 /// `(start, len, highlight, precedence)`, for captures from proptest.
+/// Highlight 0 is `@none`, and `n` the `n - 1`th highlight.
 type CaptureSpec = (usize, usize, usize, usize);
 
 fn captures(specs: &[CaptureSpec]) -> Vec<Capture> {
@@ -589,7 +621,9 @@ fn captures(specs: &[CaptureSpec]) -> Vec<Capture> {
         .iter()
         .map(|&(start, len, highlight, precedence)| Capture {
             range: start..start + len,
-            highlight: Highlight::all().nth(highlight).unwrap(),
+            highlight: highlight
+                .checked_sub(1)
+                .map(|ix| Highlight::all().nth(ix).unwrap()),
             precedence,
         })
         .collect()
@@ -597,7 +631,8 @@ fn captures(specs: &[CaptureSpec]) -> Vec<Capture> {
 
 /// [`flatten`]'s rule applied to each byte of `clip` on its own: of the
 /// captures covering it, the one starting last wins, then the shortest, then
-/// the highest precedence, then the earliest.
+/// the highest precedence, then the earliest. If it's `@none`, the byte has
+/// no highlight.
 fn paint(captures: &[Capture], clip: Range<usize>) -> Vec<Option<Highlight>> {
     clip.map(|byte| {
         captures
@@ -612,7 +647,7 @@ fn paint(captures: &[Capture], clip: Range<usize>) -> Vec<Option<Highlight>> {
                     Reverse(ix),
                 )
             })
-            .map(|(_, capture)| capture.highlight)
+            .and_then(|(_, capture)| capture.highlight)
     })
     .collect()
 }
@@ -622,7 +657,7 @@ proptest! {
     /// painting each byte separately gives.
     #[test]
     fn flatten_matches_painting_each_byte(
-        specs in prop::collection::vec((0usize..30, 0usize..15, 0usize..4, 0usize..3), 0..12),
+        specs in prop::collection::vec((0usize..30, 0usize..15, 0usize..5, 0usize..3), 0..12),
         clip_start in 0usize..35,
         clip_len in 0usize..30,
     ) {

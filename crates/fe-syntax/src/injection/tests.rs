@@ -129,6 +129,48 @@ fn tagged_templates_combine_their_pieces() {
     assert_eq!(layers[1].0, "css");
 }
 
+/// PHP heredocs and nowdocs are parsed in the language their label names. A
+/// heredoc's pieces form one layer around its interpolations, which stay PHP.
+#[test]
+fn php_heredocs_and_nowdocs_inject_their_text() {
+    let text = "<?php\n\
+                $q = <<<SQL\n  SELECT a FROM t WHERE id = {$id} AND b = 1\n  SQL;\n\
+                $r = <<<'sql'\n  SELECT c\n  FROM u\n  sql;\n";
+    let found = spans("php", text);
+    assert_includes(
+        &found,
+        &[
+            ("SELECT", "keyword"),
+            ("FROM", "keyword"),
+            ("WHERE", "keyword"),
+            ("t", "type"),
+            ("u", "type"),
+            ("1", "number"),
+            ("id", "variable"),
+        ],
+    );
+    let selects = found
+        .iter()
+        .filter(|span| *span == &("SELECT".into(), "keyword"));
+    assert_eq!(selects.count(), 2, "{found:?}");
+
+    let syntax = parsed("php", &Buffer::new(text));
+    syntax.highlights_compiling(0..text.len());
+    let at = |s: &str| text.find(s).unwrap();
+    let layers = syntax.layers();
+    assert_eq!(layers.len(), 2, "{layers:?}");
+    assert_eq!(layers[0].0, "sql");
+    assert_eq!(
+        layers[0].1[..2],
+        [
+            at("  SELECT a")..at("{$id}"),
+            at("} AND") + 1..at("\n  SQL")
+        ]
+    );
+    assert_eq!(layers[1].0, "sql");
+    assert_eq!(layers[1].1[0].start, at("  SELECT c"));
+}
+
 #[test]
 fn only_injections_overlapping_the_range_are_parsed() {
     let block = |n| format!("Para {n} with `code`.\n\n```rust\nfn f{n}() {{}}\n```\n\n");

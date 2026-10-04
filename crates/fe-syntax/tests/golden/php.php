@@ -86,5 +86,12 @@ $names = ['a' => 1, "b" => 2.5, 'c' => true];
 echo <<<TEXT
     Queued {$names['a']} task(s) at 0x1F
     TEXT;
+$recent = <<<SQL
+    SELECT id, name FROM tasks ORDER BY id DESC LIMIT {$names['a']}
+    SQL;
+$total = <<<'SQL'
+    SELECT count(*) AS total
+    FROM tasks
+    SQL;
 ?>
 <p>Done.</p>

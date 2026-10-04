@@ -89,7 +89,7 @@ impl Highlight {
 
     /// Maps a grammar's capture name to the most specific highlight it
     /// matches: `function.method.call` becomes `function.method`. Names
-    /// outside the vocabulary (`spell`, `none`, …) map to nothing.
+    /// outside the vocabulary (`spell`, …) map to nothing.
     pub fn from_capture(name: &str) -> Option<Highlight> {
         let mut name = name;
         loop {
@@ -135,10 +135,12 @@ pub struct HighlightSpan {
 }
 
 /// One query capture: a node's range, its highlight, and the precedence of
-/// the pattern that captured it.
+/// the pattern that captured it. A capture without a highlight, `@none`,
+/// clears the highlights of the captures around it, as Scala's query does
+/// for code interpolated in a string.
 pub(crate) struct Capture {
     pub(crate) range: Range<usize>,
-    pub(crate) highlight: Highlight,
+    pub(crate) highlight: Option<Highlight>,
     pub(crate) precedence: usize,
 }
 
@@ -149,8 +151,9 @@ pub(crate) struct Capture {
 ///
 /// Byte by byte, that's: of the captures covering the byte, the one starting
 /// last wins, then the shortest, then the highest precedence, then the
-/// earliest in `captures`. Captures from one tree only nest, but this also
-/// holds for ones that partly overlap, as an edited tree's can.
+/// earliest in `captures`; if that one has no highlight, the byte has none.
+/// Captures from one tree only nest, but this also holds for ones that
+/// partly overlap, as an edited tree's can.
 pub(crate) fn flatten(mut captures: Vec<Capture>, clip: Range<usize>) -> Vec<HighlightSpan> {
     captures.sort_by(|a, b| {
         a.range
@@ -163,11 +166,11 @@ pub(crate) fn flatten(mut captures: Vec<Capture>, clip: Range<usize>) -> Vec<Hig
     captures.dedup_by(|next, kept| next.range == kept.range);
 
     let mut spans = Vec::new();
-    let mut push = |range: Range<usize>, highlight: Highlight| {
+    let mut push = |range: Range<usize>, highlight: Option<Highlight>| {
         let range = range.start.max(clip.start)..range.end.min(clip.end);
-        if range.is_empty() {
+        let Some(highlight) = highlight.filter(|_| !range.is_empty()) else {
             return;
-        }
+        };
         match spans.last_mut() {
             Some(HighlightSpan {
                 range: last,
@@ -179,7 +182,7 @@ pub(crate) fn flatten(mut captures: Vec<Capture>, clip: Range<usize>) -> Vec<Hig
 
     // The captures started so far, latest last, with their ends. Ones that
     // have ended are popped once nothing later is left above them.
-    let mut stack: Vec<(usize, Highlight)> = Vec::new();
+    let mut stack: Vec<(usize, Option<Highlight>)> = Vec::new();
     let mut pos = clip.start;
     for capture in captures {
         while let Some(&(end, highlight)) = stack.last()
