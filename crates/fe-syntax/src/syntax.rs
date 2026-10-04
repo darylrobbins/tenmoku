@@ -42,9 +42,10 @@ const FLAT_CHILDREN: u32 = 1024;
 
 /// How long one [`Syntax::highlights`] call may query and parse injected
 /// layers for. Sixty rows take about 0.1 ms, so only a pathological tree or
-/// query reaches this; its highlights stop where the time ran out. Tests have
-/// no limit, so a busy machine can't make them flaky.
-const QUERY_BUDGET: Duration = if cfg!(test) {
+/// query reaches this; its highlights stop where the time ran out. Tests and
+/// the `no-query-budget` feature have no limit, so a busy machine can't make
+/// them flaky.
+const QUERY_BUDGET: Duration = if cfg!(any(test, feature = "no-query-budget")) {
     Duration::MAX
 } else {
     Duration::from_millis(2)

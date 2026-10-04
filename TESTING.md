@@ -34,6 +34,8 @@ cargo mutants -p fe-buffer -j 4   # by hand, before milestones
 cargo llvm-cov -p fe-buffer --summary-only
 ```
 
+Fuzzing is separate and also by hand; see [Fuzzing](#fuzzing).
+
 Benchmarks and the `fastedit --perf` frame-timing run are described in
 [PERF.md](PERF.md), with the latest numbers.
 
@@ -87,6 +89,25 @@ raising the tolerance: a failing run uploads `target/screenshots/` as the
 `golden/<scene>.png`. JetBrains Mono
 (OFL-1.1) would be steadier, but bundling it needs the licence added to
 the allowlist and a THIRD_PARTY.md row.
+
+## Fuzzing
+
+The grammars are C, several with hand-written external scanners, and a
+memory error or abort in one takes down the editor: fe-syntax's
+`catch_unwind` only stops panics. `fuzz/` has two cargo-fuzz targets that
+run under AddressSanitizer:
+
+- `syntax_edits`: arbitrary text in every language, edited in batches, must
+  end with the same tree and highlights as a fresh parse.
+- `buffer_edits`: edit, undo and redo streams over two origins match a
+  `String`, and a refused undo or redo changes nothing.
+
+Run both for ten minutes or more by hand before a milestone. They need
+nightly and are never part of `cargo test` or the gate: `fuzz/` is its own
+cargo workspace, outside the root one. [fuzz/README.md](fuzz/README.md) has
+the commands, including the `CFLAGS` that instrument the C code, and what to
+do with a crash. Minimized crashing inputs live in
+`fuzz/regressions/<target>/`.
 
 ## When a property test fails
 

@@ -1,0 +1,40 @@
+# Fuzz targets for cargo-fuzz, run by hand on nightly; see README.md.
+# The `[workspace]` table keeps this crate out of the root workspace, so the
+# root Cargo.toml, Cargo.lock, gate and `cargo test` never see it.
+[package]
+name = "fastedit-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "LicenseRef-Proprietary"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+arbitrary = { version = "1.4", features = ["derive"] }
+fe-buffer = { path = "../crates/fe-buffer" }
+# Highlights must be complete to compare, whatever the machine's load.
+fe-syntax = { path = "../crates/fe-syntax", features = ["no-query-budget"] }
+libfuzzer-sys = "0.4"
+
+[[bin]]
+name = "syntax_edits"
+path = "fuzz_targets/syntax_edits.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "buffer_edits"
+path = "fuzz_targets/buffer_edits.rs"
+test = false
+doc = false
+bench = false
+
+# The root workspace's patch doesn't reach this one, so repeat it: fuzz the
+# YAML scanner the editor ships (see the root Cargo.toml).
+[patch.crates-io]
+tree-sitter-yaml = { path = "../vendor/tree-sitter-yaml" }

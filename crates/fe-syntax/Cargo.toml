@@ -64,6 +64,10 @@ kotlin = ["dep:tree-sitter-kotlin-sg"]
 sql = ["dep:tree-sitter-sequel"]
 dockerfile = ["dep:tree-sitter-containerfile"]
 make = ["dep:tree-sitter-make"]
+# Highlight queries run to completion, as in this crate's tests, instead of
+# stopping after `QUERY_BUDGET`. For the fuzz targets in `fuzz/`, which compare
+# highlights and can't tell a cut-short result from a complete one.
+no-query-budget = []
 
 [dependencies]
 fe-buffer.workspace = true
