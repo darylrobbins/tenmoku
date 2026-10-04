@@ -144,6 +144,30 @@ fn inside_word(buffer: &Buffer, rng: &mut impl Rng) -> usize {
     }
 }
 
+/// The offset between the first two letters in `row`, if it has a word.
+fn inside_word_in_row(buffer: &Buffer, row: u32) -> Option<usize> {
+    let text = buffer.text();
+    let start = text.row_start(row);
+    let chunk = text.bytes_at(start);
+    let line = &chunk[..chunk
+        .iter()
+        .position(|&b| b == b'\n')
+        .unwrap_or(chunk.len())];
+    line.windows(2)
+        .position(|pair| pair.iter().all(u8::is_ascii_alphabetic))
+        .map(|ix| start + ix + 1)
+}
+
+/// A word offset in a random row of `rows`, resampling rows without one.
+fn inside_word_in(buffer: &Buffer, rng: &mut impl Rng, rows: std::ops::Range<u32>) -> usize {
+    loop {
+        let row = rng.random_range(rows.clone());
+        if let Some(offset) = inside_word_in_row(buffer, row) {
+            return offset;
+        }
+    }
+}
+
 fn benches(c: &mut Criterion) {
     type Corpus = fn(usize, usize) -> String;
     let languages: [(&str, Corpus); 3] = [("rust", rust), ("json", json), ("markdown", markdown)];
@@ -207,6 +231,44 @@ fn benches(c: &mut Criterion) {
                     total
                 })
             });
+
+            // The same keystroke at a row in the first 1% and one in the last
+            // 1%: in one batch, then as two batches synced together, which
+            // takes the merged-span path.
+            for (name, batches) in [
+                ("reparse two-cursor keystroke", 1),
+                ("reparse two-cursor keystroke, two batches", 2),
+            ] {
+                group.bench_function(BenchmarkId::new(name, size), |b| {
+                    let reparse = |buffer: &Buffer, syntax: &mut Syntax| {
+                        syntax.edit(&buffer.snapshot());
+                        let started = Instant::now();
+                        assert!(syntax.parse_within(Duration::from_secs(60)));
+                        started.elapsed()
+                    };
+                    let band = (rows / 100).max(1);
+                    b.iter_custom(|iters| {
+                        let mut total = Duration::ZERO;
+                        for _ in 0..iters {
+                            let top = inside_word_in(&buffer, &mut rng, 0..band);
+                            let bottom = inside_word_in(&buffer, &mut rng, rows - band..rows);
+                            if batches == 1 {
+                                buffer.edit([(top..top, "x"), (bottom..bottom, "x")], Origin::User);
+                            } else {
+                                buffer.edit([(top..top, "x")], Origin::User);
+                                buffer.edit([(bottom + 1..bottom + 1, "x")], Origin::User);
+                            }
+                            total += reparse(&buffer, &mut syntax);
+                            buffer.edit(
+                                [(top..top + 1, ""), (bottom + 1..bottom + 2, "")],
+                                Origin::User,
+                            );
+                            reparse(&buffer, &mut syntax);
+                        }
+                        total
+                    })
+                });
+            }
         }
 
         let text = corpus(1_000_000, usize::MAX);

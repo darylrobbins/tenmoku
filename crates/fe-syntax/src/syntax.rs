@@ -150,17 +150,23 @@ impl Syntax {
             // A different buffer, history we can't map, or given up on.
             self.window = None;
             self.window_parsed = None;
-        } else if let Some(edit) =
-            input_edit(self.snapshot.text(), snapshot, self.snapshot.version())
+        } else if let edits = input_edits(self.snapshot.text(), snapshot, self.snapshot.version())
+            && !edits.is_empty()
         {
             if let Some(tree) = &mut self.tree {
-                tree.edit(&edit);
+                for edit in &edits {
+                    tree.edit(edit);
+                }
             }
             if let Some((range, tree)) = &mut self.window {
-                tree.edit(&edit);
+                for edit in &edits {
+                    tree.edit(edit);
+                }
                 *range = included_range(tree);
             }
-            cache.layers.edit(&edit);
+            for edit in &edits {
+                cache.layers.edit(edit);
+            }
         }
         if !mapped || snapshot.len() > MAX_PARSE_BYTES {
             // Too big to parse whole: only a window highlights, and the
@@ -292,7 +298,7 @@ impl Syntax {
         if !usable || self.failed.get() {
             return;
         }
-        if let Some(edit) = input_edit(parsed.snapshot.text(), &self.snapshot, version) {
+        for edit in input_edits(parsed.snapshot.text(), &self.snapshot, version) {
             tree.edit(&edit);
         }
         self.cache.get_mut().ranges.clear();
@@ -739,6 +745,8 @@ fn included_range(tree: &Tree) -> Range<usize> {
 mod reparse_budget_tests;
 
 #[cfg(test)]
+mod input_edit_tests;
+#[cfg(test)]
 mod window_tests;
 
 #[cfg(test)]
@@ -759,12 +767,49 @@ fn fault_point(point: &'static str) {
 #[cfg(not(test))]
 fn fault_point(_: &'static str) {}
 
-/// One edit covering every change from version `from` (whose text is `old`)
-/// to `new`. Tree-sitter needs each edit's row and column as well as its
-/// bytes, and those are only known for the first and last texts, so the
-/// batches in between are merged into a single span. Text outside it keeps
-/// its parse.
-fn input_edit(old: &Text, new: &BufferSnapshot, from: Version) -> Option<InputEdit> {
+/// The edits taking the tree from version `from` (whose text is `old`) to
+/// `new`, to apply in order. Tree-sitter needs each edit's row and column as
+/// well as its bytes. Those are known for the texts at both ends, so a single
+/// batch gives one edit per cursor and text between cursors keeps its parse.
+/// With more batches the intermediate texts are gone, and they merge into one
+/// span; text outside it keeps its parse.
+fn input_edits(old: &Text, new: &BufferSnapshot, from: Version) -> Vec<InputEdit> {
+    let point = |text: &Text, offset: usize| {
+        let point = text.offset_to_point(offset);
+        tree_sitter::Point::new(point.row as usize, point.column as usize)
+    };
+    let mut batches = new.edits_since(from).filter(|batch| !batch.is_empty());
+    let (Some(first_batch), second) = (batches.next(), batches.next()) else {
+        return Vec::new();
+    };
+    if second.is_none() {
+        // Edits are sorted and don't overlap, so edit k starts at `new.start`
+        // once the earlier ones are applied.
+        return first_batch
+            .iter()
+            .map(|edit| {
+                let start = point(new.text(), edit.new.start);
+                let old_start = point(old, edit.old.start);
+                let old_end = point(old, edit.old.end);
+                let old_end_position = if old_end.row == old_start.row {
+                    tree_sitter::Point::new(
+                        start.row,
+                        start.column + old_end.column - old_start.column,
+                    )
+                } else {
+                    tree_sitter::Point::new(start.row + old_end.row - old_start.row, old_end.column)
+                };
+                InputEdit {
+                    start_byte: edit.new.start,
+                    old_end_byte: edit.new.start + edit.old.len(),
+                    new_end_byte: edit.new.end,
+                    start_position: start,
+                    old_end_position,
+                    new_end_position: point(new.text(), edit.new.end),
+                }
+            })
+            .collect();
+    }
     // Start, end in `old`, and end in the text after the batches so far.
     let mut hull: Option<(usize, usize, usize)> = None;
     for batch in new.edits_since(from) {
@@ -784,17 +829,15 @@ fn input_edit(old: &Text, new: &BufferSnapshot, from: Version) -> Option<InputEd
             }
         });
     }
-    let (start, old_end, new_end) = hull?;
-    let point = |text: &Text, offset: usize| {
-        let point = text.offset_to_point(offset);
-        tree_sitter::Point::new(point.row as usize, point.column as usize)
+    let Some((start, old_end, new_end)) = hull else {
+        return Vec::new();
     };
-    Some(InputEdit {
+    vec![InputEdit {
         start_byte: start,
         old_end_byte: old_end,
         new_end_byte: new_end,
         start_position: point(old, start),
         old_end_position: point(old, old_end),
         new_end_position: point(new.text(), new_end),
-    })
+    }]
 }
