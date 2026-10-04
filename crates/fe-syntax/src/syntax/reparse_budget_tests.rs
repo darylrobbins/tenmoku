@@ -68,7 +68,9 @@ fn a_rejected_result_leaves_the_timing_alone() {
     let mut syntax = edited_after(&mut buffer, BUDGET / 2);
     // A slow result for the version already parsed is rejected as stale.
     let mut stale = syntax.parse_job().run();
-    syntax.finish(syntax.parse_job().run());
+    let mut accepted = syntax.parse_job().run();
+    accepted.elapsed = BUDGET / 2;
+    syntax.finish(accepted);
     stale.elapsed = BUDGET * 100;
     syntax.finish(stale);
     buffer.edit([(0..0, "// ")], Origin::User);
