@@ -1,8 +1,8 @@
 # Markdown: the slow keystroke reparse
 
 Status: **decided: accept ~6–8 ms for now, and post the upstream issue drafted
-below.** No fork, no dependency change. Decided 2026-10-03. Source card T33
-(follow-up to T4).
+below.** No fork, no dependency change. The user approved "accept ~6–8 ms for
+now" on 2026-10-03. Source card T33 (follow-up to T4).
 
 ## Context
 
@@ -20,7 +20,7 @@ where Rust and JSON reuse it whole.
 `cargo bench -p fe-syntax --bench syntax -- "markdown/reparse keystroke"` at
 b9602bc (current main's tip when run), tree-sitter 0.27.0, tree-sitter-md 0.5.3,
 Apple M3 Max, 2026-10-03. The machine was loaded (load average ~13 on the
-machine's cores while other lanes ran), so these are upper bounds:
+machine's cores while other lanes ran), so treat them as noisy, not as bounds:
 
 | Corpus | Criterion time (low / mid / high) |
 |---|---|
@@ -29,8 +29,11 @@ machine's cores while other lanes ran), so these are upper bounds:
 | 8 MB (442k lines) | 376 / 416 / 457 ms |
 
 PERF.md's quiet-machine figures are 6.1 ms at 10k lines and 640 ms at 16 MB.
-The 8 MB case is under the 8 MB `MAX_PARSE_BYTES` limit, so it is the worst case
-a user can reach. Treat the table as "no better than before, no clear
+The 8 MB row is a near-limit corpus (under the 8 MB `MAX_PARSE_BYTES` limit),
+with edits at random positions averaged. It is a measured estimate for that
+corpus, not a worst case: edits near the start cost more, and document structure
+and machine load also move the figure. Worst-case latency is unmeasured. Treat
+the table as "no better than before, no clear
 regression"; rerun on an idle machine before quoting a figure externally.
 
 ## Options
@@ -127,8 +130,10 @@ current cost is tolerable (below).
   lines; most notes are far shorter, and the cost scales with the distance to the
   end, so the common case is well under 6 ms.
 - Highlighting itself is cheap (0.05 ms for 60 rows).
-- The worst case is bounded by `MAX_PARSE_BYTES` (8 MB): ~0.4 s lag, with the
-  text still responsive.
+- On a near-limit 8 MB corpus the random-edit estimate is ~0.4 s of colour lag,
+  with the text still responsive. `MAX_PARSE_BYTES` does not bound latency, and
+  worst-case latency (edits at the start, other document structures) remains
+  unmeasured.
 
 ## What we haven't shown
 
