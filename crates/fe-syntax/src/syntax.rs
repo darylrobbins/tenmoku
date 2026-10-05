@@ -809,23 +809,26 @@ pub(crate) fn parse_text(
     old_tree: Option<&Tree>,
     mut out_of_time: impl FnMut() -> bool,
 ) -> Option<Tree> {
-    let mut progress = |_: &tree_sitter::ParseState| {
-        if out_of_time() {
-            ControlFlow::Break(())
-        } else {
-            ControlFlow::Continue(())
-        }
-    };
-    // Tree-sitter calls `read` from C, which a panic can't unwind
-    // through (it aborts), so it's caught there and resumed after.
-    let mut panic = None;
+    // Tree-sitter calls `read` and `progress` from C, which a panic can't
+    // unwind through (it aborts), so it's caught there, the parse stopped,
+    // and the panic resumed after.
+    let panic = RefCell::new(None);
+    let mut progress =
+        |_: &tree_sitter::ParseState| match catch_unwind(AssertUnwindSafe(&mut out_of_time)) {
+            Ok(false) => ControlFlow::Continue(()),
+            Ok(true) => ControlFlow::Break(()),
+            Err(payload) => {
+                panic.borrow_mut().get_or_insert(payload);
+                ControlFlow::Break(())
+            }
+        };
     let mut read = |offset: usize, _: tree_sitter::Point| {
         let bytes = catch_unwind(AssertUnwindSafe(|| {
             fault_point("read");
             text.bytes_at(offset)
         }));
         bytes.unwrap_or_else(|payload| {
-            panic.get_or_insert(payload);
+            panic.borrow_mut().get_or_insert(payload);
             &[]
         })
     };
@@ -834,7 +837,7 @@ pub(crate) fn parse_text(
         old_tree,
         Some(ParseOptions::new().progress_callback(&mut progress)),
     );
-    if let Some(payload) = panic {
+    if let Some(payload) = panic.into_inner() {
         resume_unwind(payload);
     }
     tree

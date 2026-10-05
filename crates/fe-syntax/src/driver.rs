@@ -92,8 +92,11 @@ impl<T> SyntaxDriver<T> {
         spawner: &mut S,
     ) {
         if snapshot.id() != self.syntax.buffer_id() {
-            // A parse of another buffer is no use.
+            // Nothing of another buffer is any use: not its parse, its
+            // window, or that it failed.
             self.task = None;
+            self.window = None;
+            self.syntax = Syntax::new(self.syntax.language(), snapshot);
         }
         self.syntax.edit(snapshot);
         self.visible = visible;

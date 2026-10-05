@@ -165,3 +165,47 @@ fn dropping_the_driver_or_switching_buffers_cancels_its_parse() {
     drop(driver);
     assert_eq!(spawner.pending(), 0);
 }
+
+#[test]
+fn a_new_buffer_is_parsed_after_the_last_one_failed() {
+    let buffer = Buffer::new("fn f() {}\n");
+    let (mut driver, _) = driver(&buffer);
+    let mut spawner = ManualSpawner::default();
+    crate::syntax::FAULT.set(Some("read"));
+    driver.sync(buffer.current(), 0..0, &mut spawner);
+    assert!(driver.syntax().failed());
+
+    let other = Buffer::new("fn g() {}\n");
+    driver.sync(other.current(), 0..0, &mut spawner);
+    assert!(!driver.syntax().failed() && !driver.syntax().needs_parse());
+    assert_eq!(first_keyword(&driver), Some(0..2));
+}
+
+/// A stop check that panics mid-parse gives up on the buffer rather than
+/// unwinding through tree-sitter's C, which would abort.
+#[test]
+fn a_panicking_stop_check_leaves_plain_text() {
+    let buffer = big_rust();
+    let mut syntax = Syntax::new(rust(), buffer.current());
+    assert!(syntax.parse_until(BUDGET, || panic!("stop check")));
+    assert!(syntax.failed() && !syntax.needs_parse());
+    assert_eq!(syntax.highlights(0..40), []);
+}
+
+#[test]
+fn a_clock_panicking_mid_parse_leaves_plain_text() {
+    let buffer = big_rust();
+    let reads = Cell::new(0);
+    let start = Instant::now();
+    // The first read starts the budget; the next is a check while parsing.
+    let mut driver =
+        SyntaxDriver::new(Syntax::new(rust(), buffer.current()), BUDGET).with_clock(move || {
+            reads.set(reads.get() + 1);
+            assert!(reads.get() < 2, "clock panicked");
+            start
+        });
+    let mut spawner = ManualSpawner::default();
+    driver.sync(buffer.current(), 0..0, &mut spawner);
+    assert!(driver.syntax().failed());
+    assert_eq!(spawner.spawned, 0);
+}
