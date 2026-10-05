@@ -3,8 +3,11 @@
 //! tree memory can't be counted deterministically (tree-sitter allocates
 //! through C malloc, and tests run in parallel).
 
+#[cfg(any(feature = "rust", feature = "json", feature = "markdown"))]
 use fe_buffer::{Buffer, Origin};
-use fe_syntax::{Syntax, TREE_BUDGET_BYTES, language_by_name, language_names};
+#[cfg(any(feature = "rust", feature = "json", feature = "markdown"))]
+use fe_syntax::Syntax;
+use fe_syntax::{TREE_BUDGET_BYTES, language_by_name, language_names};
 
 /// Tree bytes per source byte, from PERF.md, "Tree memory".
 fn ratio(name: &str) -> usize {
@@ -50,6 +53,7 @@ fn markdown_limit() {
     );
 }
 
+#[cfg(any(feature = "rust", feature = "json", feature = "markdown"))]
 /// Exactly `len` bytes of a cheap repeated line.
 fn text_of(len: usize) -> String {
     let mut text = "a\n".repeat(len / 2);
@@ -57,6 +61,7 @@ fn text_of(len: usize) -> String {
     text
 }
 
+#[cfg(any(feature = "rust", feature = "json", feature = "markdown"))]
 fn check(name: &str) {
     let language = language_by_name(name).expect("language is compiled in");
     let limit = language.parse_limit();

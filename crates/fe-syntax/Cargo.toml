@@ -103,7 +103,7 @@ tree-sitter-yaml = { workspace = true, optional = true }
 [dev-dependencies]
 # Integration tests that compare highlights need them complete, whatever the
 # machine's load. The crate itself gets this only under `cfg(test)`.
-fe-syntax = { path = ".", features = ["no-query-budget"] }
+fe-syntax = { path = ".", default-features = false, features = ["no-query-budget"] }
 criterion.workspace = true
 proptest.workspace = true
 rand.workspace = true
