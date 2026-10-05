@@ -201,12 +201,11 @@ fn recorded_keystrokes_replay_headless(cx: &mut TestAppContext) {
 fn app_commands_propagate_from_the_editor(cx: &mut TestAppContext) {
     let (view, cx, recorded) = recording_editor(cx, "ab");
     cx.simulate_keystrokes("cmd-q");
-    let commands: Vec<_> = recorded
-        .borrow()
-        .iter()
-        .map(|i| (i.command.to_string(), i.source))
-        .collect();
-    assert_eq!(commands, [("app.quit".to_string(), Source::Keyboard)]);
+    let quit = Invocation::of("app.quit")
+        .unwrap()
+        .source(Source::Keyboard)
+        .context(fe_editor::commands::context());
+    assert_eq!(*recorded.borrow(), std::slice::from_ref(&quit));
 
     let unknown = RunCommand(Invocation::of("nowhere.unknown").unwrap());
     cx.update(|window, cx| {
@@ -218,5 +217,13 @@ fn app_commands_propagate_from_the_editor(cx: &mut TestAppContext) {
     assert_eq!(
         view.update(cx, |view, _| view.model().text().to_string()),
         "ab"
+    );
+
+    // Unfocused, the app gets it straight from the keymap, in no context.
+    cx.update(|window, cx| window.blur(cx));
+    cx.simulate_keystrokes("cmd-q");
+    assert_eq!(
+        *recorded.borrow(),
+        [quit.clone(), quit.context(ContextStack::new())]
     );
 }

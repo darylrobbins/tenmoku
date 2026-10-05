@@ -35,6 +35,10 @@ type Observer = Rc<dyn Fn(&Invocation)>;
 struct Commands {
     app: Rc<Registry<AppCommands>>,
     observers: Vec<Observer>,
+    /// The invocation a focused view propagated, stamped with its
+    /// context: GPUI propagates the original [`RunCommand`], whose context
+    /// is empty. Cleared once the dispatch is over.
+    propagated: Option<Invocation>,
 }
 
 impl Global for Commands {}
@@ -53,7 +57,19 @@ pub(crate) fn init(cx: &mut App) {
     })
     .expect("app command IDs are valid and distinct");
     cx.default_global::<Commands>().app = Rc::new(app);
-    cx.on_action(|run: &RunCommand, cx| dispatch_app(&run.0, cx));
+    cx.on_action(|run: &RunCommand, cx| {
+        let propagated = cx.default_global::<Commands>().propagated.take();
+        // The view's stamped copy, if this is what it propagated.
+        let invocation = propagated
+            .filter(|stamped| {
+                Invocation {
+                    context: run.0.context.clone(),
+                    ..stamped.clone()
+                } == run.0
+            })
+            .unwrap_or_else(|| run.0.clone());
+        dispatch_app(&invocation, cx)
+    });
     cx.bind_keys(DEFAULT_BINDINGS.iter().map(|binding| {
         let invocation = Invocation::of(binding.command)
             .expect("default bindings name valid command IDs")
@@ -139,7 +155,8 @@ impl EditorView {
     }
 
     /// Runs `invocation` on this editor, in its context. An ID the editor
-    /// doesn't know propagates, to the app's commands.
+    /// doesn't know propagates, still in that context, to the app's
+    /// commands.
     fn run_command(&mut self, invocation: Invocation, cx: &mut Context<Self>) {
         let invocation = invocation.context(fe_editor::commands::context());
         let registry = EDITOR_COMMANDS.with(Rc::clone);
@@ -163,7 +180,12 @@ impl EditorView {
                 }
                 notify_observers(&invocation, cx);
             }
-            Err(DispatchError::UnknownCommand(_)) => cx.propagate(),
+            Err(DispatchError::UnknownCommand(_)) => {
+                cx.default_global::<Commands>().propagated = Some(invocation);
+                // In case no app handler takes it.
+                cx.defer(|cx| cx.default_global::<Commands>().propagated = None);
+                cx.propagate();
+            }
             Err(DispatchError::Failed {
                 command,
                 error: CommandError(message),
