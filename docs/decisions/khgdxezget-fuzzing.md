@@ -251,8 +251,12 @@ than incrementally. Measure that before choosing it.
 `tsx-incremental-parse-hang-from-empty`
 
 The second run found it again from a different starting point: an empty
-document, with `(\0[/(\0[/]]]]]]\u{FFFD}#` inserted. A fresh parse of the
-result takes 11 ms, and the incremental one doesn't finish.
+document, with `(\0[/(\0[/]]]]]]\u{FFFD}#` inserted. The incremental parse
+doesn't finish. Neither does a fresh parse of the result: T47 parsed it with
+`Parser::parse(text, None)` and no edits, and it was still running after 60 s
+in debug and release builds. (An earlier version of this record said a fresh
+parse took 11 ms; that doesn't reproduce.) Only the initial text of the other
+input, `` x)3,`x ``, parses fresh, in 128 µs.
 
 The first is a 36-byte input, hand-encoded: language `tsx`, text `` x)3,`x ``,
 and one batch inserting `x""[[)}` at 0. `cargo fuzz tmin` couldn't shrink
@@ -264,14 +268,16 @@ A run without a limit reached 4.6 GB before I killed it.
 
 Draft upstream issue (tree-sitter/tree-sitter, cc tree-sitter-typescript):
 
-> **Incremental reparse never terminates (memory grows without bound) for a 13-byte TSX edit**
+> **Incremental reparse never terminates (memory grows without bound) for a 13-byte TSX edit, and a fresh parse of the result**
 >
 > tree-sitter 0.27.0, tree-sitter-typescript 0.23.2, `LANGUAGE_TSX`. Parse
 > `` x)3,`x ``. Then insert `x""[[)}` at byte 0 (`InputEdit` start 0, old
 > end 0, new end 7), and reparse `` x""[[)}x)3,`x `` with the old tree. The
 > parse doesn't return. With a progress callback it's still going after 30
 > s, and without one its RSS passes 4 GB. A fresh parse of the same text
-> takes microseconds, although it nests `non_null_expression` very deeply.
+> (`Parser::parse(text, None)`, no old tree) doesn't return either: it was
+> still running after 60 s in debug and release builds. So this isn't an
+> incremental-only bug. The initial text `` x)3,`x `` alone parses in 128 µs.
 > The same happens with `é` or U+FFFD in place of `x`. Without the leading
 > `x` in the insertion, both parses agree at once.
 

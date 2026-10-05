@@ -51,6 +51,21 @@ const QUERY_BUDGET: Duration = if cfg!(any(test, feature = "no-query-budget")) {
     Duration::from_millis(2)
 };
 
+/// How long [`ParseJob::run`] lets a parse take before giving up on it.
+/// Tree-sitter's progress callback is the only way to stop one, and some
+/// grammars have inputs whose parse never ends (the TSX ones in
+/// `fuzz/regressions/syntax_edits`), from scratch as well as incrementally.
+///
+/// A release-build full parse of a file at [`MAX_PARSE_BYTES`] takes 0.85 s
+/// for 8 MB of Rust and 1.7 s for 8 MB of dense JSON, the slowest measured.
+/// [`FULL_PARSE_CAP`] is 5 s, about 3× that, so no legitimate file is cut
+/// off. An incremental parse that overruns [`INCREMENTAL_PARSE_CAP`] is
+/// retried from scratch, so a cap that is too tight only costs time; 2 s is
+/// above any full parse of a typical file. Together they stay under 10 s, so
+/// a runaway parse is abandoned within 7 s.
+const INCREMENTAL_PARSE_CAP: Duration = Duration::from_secs(2);
+const FULL_PARSE_CAP: Duration = Duration::from_secs(5);
+
 /// How many recently highlighted ranges [`Syntax`] remembers. A frame queries
 /// one range per run of consecutive visible rows.
 const CACHED_RANGES: usize = 8;
@@ -640,9 +655,16 @@ pub struct ParseJob {
     window: Option<Range<usize>>,
 }
 
+/// How one parse attempt ended.
+enum Attempt {
+    Tree(Tree),
+    Overran,
+    Panicked,
+}
+
 /// The result of a [`ParseJob`].
 pub struct Parsed {
-    /// `None` if parsing panicked.
+    /// `None` if parsing panicked or overran its cap.
     tree: Option<Tree>,
     snapshot: BufferSnapshot,
     /// The text parsed, if not all of it.
@@ -660,25 +682,66 @@ impl Parsed {
 }
 
 impl ParseJob {
-    /// Parses to the end. Doesn't panic: if parsing does, the result makes
+    /// Parses to the end, within [`INCREMENTAL_PARSE_CAP`] when starting from
+    /// an earlier tree and [`FULL_PARSE_CAP`] from scratch. An incremental
+    /// parse that overruns is retried once from scratch. Doesn't panic or
+    /// hang: if parsing panics or both attempts overrun, the result makes
     /// [`Syntax::finish`] give up on highlighting.
     pub fn run(self) -> Parsed {
-        self.parse(|| false)
-            .expect("a parse without a time limit completes")
+        self.run_until(|cap| {
+            let started = Instant::now();
+            move || started.elapsed() > cap
+        })
+    }
+
+    /// [`ParseJob::run`] with each attempt's stop check made by `deadline`
+    /// from the cap that attempt is under, so a test can force an overrun.
+    pub(crate) fn run_until<F: FnMut() -> bool>(
+        self,
+        mut deadline: impl FnMut(Duration) -> F,
+    ) -> Parsed {
+        let started = Instant::now();
+        let incremental = self.old_tree.is_some();
+        let first_cap = if incremental {
+            INCREMENTAL_PARSE_CAP
+        } else {
+            FULL_PARSE_CAP
+        };
+        let mut tree = self.attempt(self.old_tree.as_ref(), deadline(first_cap));
+        if incremental && matches!(tree, Attempt::Overran) {
+            log::warn!(
+                "{}: incremental parse took over {INCREMENTAL_PARSE_CAP:?}; parsing from scratch",
+                self.language.name()
+            );
+            tree = self.attempt(None, deadline(FULL_PARSE_CAP));
+        }
+        let tree = match tree {
+            Attempt::Tree(tree) => Some(tree),
+            Attempt::Overran => {
+                log::error!(
+                    "{}: parsing took too long; showing plain text",
+                    self.language.name()
+                );
+                None
+            }
+            Attempt::Panicked => None,
+        };
+        Parsed {
+            tree,
+            snapshot: self.snapshot,
+            window: self.window,
+            elapsed: started.elapsed(),
+            incremental,
+        }
     }
 
     /// `None` if `out_of_time` says so before the parse completes.
     fn parse(self, out_of_time: impl FnMut() -> bool) -> Option<Parsed> {
         let started = Instant::now();
-        let tree = match catch_unwind(AssertUnwindSafe(|| self.parse_tree(out_of_time))) {
-            Ok(tree) => Some(tree?),
-            Err(_) => {
-                log::error!(
-                    "{}: parsing panicked; showing plain text",
-                    self.language.name()
-                );
-                None
-            }
+        let tree = match self.attempt(self.old_tree.as_ref(), out_of_time) {
+            Attempt::Tree(tree) => Some(tree),
+            Attempt::Overran => return None,
+            Attempt::Panicked => None,
         };
         Some(Parsed {
             tree,
@@ -689,7 +752,26 @@ impl ParseJob {
         })
     }
 
-    fn parse_tree(&self, out_of_time: impl FnMut() -> bool) -> Option<Tree> {
+    /// One parse from `old_tree`, which stops when `out_of_time` says so.
+    fn attempt(&self, old_tree: Option<&Tree>, out_of_time: impl FnMut() -> bool) -> Attempt {
+        match catch_unwind(AssertUnwindSafe(|| self.parse_tree(old_tree, out_of_time))) {
+            Ok(Some(tree)) => Attempt::Tree(tree),
+            Ok(None) => Attempt::Overran,
+            Err(_) => {
+                log::error!(
+                    "{}: parsing panicked; showing plain text",
+                    self.language.name()
+                );
+                Attempt::Panicked
+            }
+        }
+    }
+
+    fn parse_tree(
+        &self,
+        old_tree: Option<&Tree>,
+        out_of_time: impl FnMut() -> bool,
+    ) -> Option<Tree> {
         let mut parser = Parser::new();
         parser
             .set_language(&self.language.grammar)
@@ -709,12 +791,7 @@ impl ParseJob {
                 }])
                 .expect("one range is in order");
         }
-        parse_text(
-            &mut parser,
-            self.snapshot.text(),
-            self.old_tree.as_ref(),
-            out_of_time,
-        )
+        parse_text(&mut parser, self.snapshot.text(), old_tree, out_of_time)
     }
 }
 
@@ -770,6 +847,8 @@ mod reparse_budget_tests;
 
 #[cfg(test)]
 mod input_edit_tests;
+#[cfg(test)]
+mod runaway_parse_tests;
 #[cfg(test)]
 mod window_tests;
 

@@ -50,8 +50,10 @@ The build (about 600 MB with ASan) goes to the cargo target directory; set
 found so far, all upstream bugs and all still open. The decision file maps
 each one to the crash it came from.
 
-- `tsx-incremental-parse-hang*`: a TSX incremental reparse that never
-  finishes. Expect a libFuzzer timeout or out-of-memory error.
+- `tsx-incremental-parse-hang*`: a TSX parse that never finishes, and a
+  fresh parse of the same text doesn't either. They no longer time out,
+  because fe-syntax bounds the parse and falls back to plain text, but the
+  upstream hang is still open.
 - `bash-heredoc-*`, `markdown-inline-*`, `java-*`, `python-*`, `cpp-*` and
   `javascript-*`:
   incremental reparses that disagree with a fresh parse.
