@@ -163,12 +163,56 @@ fn php_heredocs_and_nowdocs_inject_their_text() {
     assert_eq!(
         layers[0].1[..2],
         [
-            at("  SELECT a")..at("{$id}"),
+            at("\n  SELECT a")..at("{$id}"),
             at("} AND") + 1..at("\n  SQL")
         ]
     );
     assert_eq!(layers[1].0, "sql");
-    assert_eq!(layers[1].1[0].start, at("  SELECT c"));
+    assert_eq!(layers[1].1[0].start, at("\n  SELECT c"));
+}
+
+/// The line breaks between a heredoc's lines, which no node covers, are
+/// injected with its text: an SQL `--` comment ends at the end of its line,
+/// as it does in a nowdoc.
+#[test]
+fn php_heredoc_line_breaks_end_sql_comments() {
+    let text = "<?php\n\
+                $q = <<<SQL\n  SELECT a -- by {$id}\n  FROM t\n\n  WHERE b = 1\n  SQL;\n\
+                $r = <<<'SQL'\n  SELECT c -- all\n  FROM u\n  SQL;\n";
+    let found = spans("php", text);
+    assert_includes(
+        &found,
+        &[
+            ("FROM", "keyword"),
+            ("t", "type"),
+            ("WHERE", "keyword"),
+            ("1", "number"),
+            ("u", "type"),
+        ],
+    );
+    let froms = found
+        .iter()
+        .filter(|span| *span == &("FROM".into(), "keyword"));
+    assert_eq!(froms.count(), 2, "{found:?}");
+}
+
+/// A heredoc in a language where line breaks matter, YAML, parses its lines
+/// as lines, around an interpolation.
+#[test]
+fn php_heredocs_keep_lines_for_yaml() {
+    let text = "<?php\n$y = <<<YAML\n  a: 1\n  b: {$x}\n  c: true\n  YAML;\n";
+    let found = spans("php", text);
+    assert_includes(
+        &found,
+        &[
+            ("a", "property"),
+            ("1", "number"),
+            ("b", "property"),
+            ("x", "variable"),
+            ("c", "property"),
+            ("true", "constant.builtin"),
+        ],
+    );
 }
 
 #[test]
@@ -642,6 +686,7 @@ fn combined_templates_stop_at_the_deadline() {
         language: None,
         combined: true,
         include_children: true,
+        include_gaps: false,
     };
     let collected = Cell::new(0);
     let mut collect = || {

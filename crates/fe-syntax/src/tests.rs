@@ -1,6 +1,7 @@
 use std::{cmp::Reverse, ops::Range, path::Path, time::Duration};
 
 mod golden;
+mod injected_clears;
 mod kotlin_sql_overrides;
 mod query_overrides;
 
@@ -9,7 +10,7 @@ use proptest::{prelude::prop, prop_assert, prop_assert_eq, proptest};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 
 use crate::{
-    highlight::{Capture, flatten},
+    highlight::{Capture, Painted, flatten},
     syntax::FAULT,
     *,
 };
@@ -632,9 +633,9 @@ fn captures(specs: &[CaptureSpec]) -> Vec<Capture> {
 
 /// [`flatten`]'s rule applied to each byte of `clip` on its own: of the
 /// captures covering it, the one starting last wins, then the shortest, then
-/// the highest precedence, then the earliest. If it's `@none`, the byte has
-/// no highlight.
-fn paint(captures: &[Capture], clip: Range<usize>) -> Vec<Option<Highlight>> {
+/// the highest precedence, then the earliest. If it's `@none`, the byte is
+/// cleared, `Some(None)`; if there's none, it's `None`.
+fn paint(captures: &[Capture], clip: Range<usize>) -> Vec<Option<Option<Highlight>>> {
     clip.map(|byte| {
         captures
             .iter()
@@ -648,7 +649,7 @@ fn paint(captures: &[Capture], clip: Range<usize>) -> Vec<Option<Highlight>> {
                     Reverse(ix),
                 )
             })
-            .and_then(|(_, capture)| capture.highlight)
+            .map(|(_, capture)| capture.highlight)
     })
     .collect()
 }
@@ -665,7 +666,7 @@ proptest! {
         let clip = clip_start..clip_start + clip_len;
         let spans = flatten(captures(&specs), clip.clone());
         let mut painted = vec![None; clip.len()];
-        let mut last: Option<&HighlightSpan> = None;
+        let mut last: Option<&Painted> = None;
         for span in &spans {
             prop_assert!(!span.range.is_empty(), "{spans:?}");
             prop_assert!(clip.start <= span.range.start && span.range.end <= clip.end);

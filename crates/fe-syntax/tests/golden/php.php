@@ -87,7 +87,8 @@ echo <<<TEXT
     Queued {$names['a']} task(s) at 0x1F
     TEXT;
 $recent = <<<SQL
-    SELECT id, name FROM tasks ORDER BY id DESC LIMIT {$names['a']}
+    SELECT id, name -- newest first
+    FROM tasks ORDER BY id DESC LIMIT {$names['a']}
     SQL;
 $total = <<<'SQL'
     SELECT count(*) AS total

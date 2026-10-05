@@ -9,6 +9,11 @@
 ; newlines and the braces of `{$x}`, were injected. Capturing the pieces and
 ; combining them parses the text as one layer around the interpolations,
 ; which stay PHP.
+;
+; A heredoc's scanner skips the line break ending each line without making a
+; node of it, so `injection.include-gaps`, our own property, adds the body's
+; bytes that no child covers. Without them the lines run together, and an
+; SQL `--` comment swallows the next line.
 
 ((comment) @injection.content
   (#set! injection.language "phpdoc"))
@@ -17,10 +22,12 @@
   (heredoc_body
     (string_content) @injection.content)
   (heredoc_end) @injection.language
-  (#set! injection.combined))
+  (#set! injection.combined)
+  (#set! injection.include-gaps))
 
 (nowdoc
   (nowdoc_body
     (nowdoc_string) @injection.content)
   (heredoc_end) @injection.language
-  (#set! injection.combined))
+  (#set! injection.combined)
+  (#set! injection.include-gaps))

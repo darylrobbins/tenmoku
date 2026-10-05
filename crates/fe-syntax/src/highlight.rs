@@ -129,9 +129,27 @@ pub fn resolve_theme<T: Clone>(styles: &[(&str, T)]) -> Vec<Option<T>> {
 
 /// A run of text with one highlight.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HighlightSpan {
+pub struct HighlightSpan<H = Highlight> {
     pub range: Range<usize>,
-    pub highlight: Highlight,
+    pub highlight: H,
+}
+
+/// A run of text with one highlight, or with none where `@none` cleared it.
+/// Injected layers keep their cleared runs until painted over the host, so
+/// that they clear its highlights too, unlike bytes no capture covers.
+pub(crate) type Painted = HighlightSpan<Option<Highlight>>;
+
+/// The runs of `spans` that have a highlight.
+pub(crate) fn highlighted(spans: Vec<Painted>) -> Vec<HighlightSpan> {
+    spans
+        .into_iter()
+        .filter_map(|span| {
+            span.highlight.map(|highlight| HighlightSpan {
+                range: span.range,
+                highlight,
+            })
+        })
+        .collect()
 }
 
 /// One query capture: a node's range, its highlight, and the precedence of
@@ -151,10 +169,11 @@ pub(crate) struct Capture {
 ///
 /// Byte by byte, that's: of the captures covering the byte, the one starting
 /// last wins, then the shortest, then the highest precedence, then the
-/// earliest in `captures`; if that one has no highlight, the byte has none.
+/// earliest in `captures`; if that one has no highlight, the byte is in a
+/// cleared span. A byte no capture covers is in no span.
 /// Captures from one tree only nest, but this also holds for ones that
 /// partly overlap, as an edited tree's can.
-pub(crate) fn flatten(mut captures: Vec<Capture>, clip: Range<usize>) -> Vec<HighlightSpan> {
+pub(crate) fn flatten(mut captures: Vec<Capture>, clip: Range<usize>) -> Vec<Painted> {
     captures.sort_by(|a, b| {
         a.range
             .start
@@ -168,9 +187,9 @@ pub(crate) fn flatten(mut captures: Vec<Capture>, clip: Range<usize>) -> Vec<Hig
     let mut spans = Vec::new();
     let mut push = |range: Range<usize>, highlight: Option<Highlight>| {
         let range = range.start.max(clip.start)..range.end.min(clip.end);
-        let Some(highlight) = highlight.filter(|_| !range.is_empty()) else {
+        if range.is_empty() {
             return;
-        };
+        }
         match spans.last_mut() {
             Some(HighlightSpan {
                 range: last,
@@ -206,7 +225,10 @@ pub(crate) fn flatten(mut captures: Vec<Capture>, clip: Range<usize>) -> Vec<Hig
 }
 
 /// The parts of `spans` inside `ranges`. Both are sorted and don't overlap.
-pub(crate) fn clip(spans: Vec<HighlightSpan>, ranges: &[Range<usize>]) -> Vec<HighlightSpan> {
+pub(crate) fn clip<H: Copy>(
+    spans: Vec<HighlightSpan<H>>,
+    ranges: &[Range<usize>],
+) -> Vec<HighlightSpan<H>> {
     let mut clipped = Vec::with_capacity(spans.len());
     let mut first = 0;
     for span in spans {
@@ -233,10 +255,13 @@ pub(crate) fn clip(spans: Vec<HighlightSpan>, ranges: &[Range<usize>]) -> Vec<Hi
 }
 
 /// `top` painted over `base`: each byte takes its highlight from `top` if a
-/// span there covers it, else from `base`. Both are sorted and
+/// span there covers it, even a cleared one, else from `base`. Both are sorted and
 /// non-overlapping, and so is the result, with touching spans of one
 /// highlight merged as [`flatten`] does.
-pub(crate) fn overlay(base: Vec<HighlightSpan>, top: Vec<HighlightSpan>) -> Vec<HighlightSpan> {
+pub(crate) fn overlay<H: Copy + Eq>(
+    base: Vec<HighlightSpan<H>>,
+    top: Vec<HighlightSpan<H>>,
+) -> Vec<HighlightSpan<H>> {
     if top.is_empty() {
         return base;
     }
@@ -270,7 +295,7 @@ pub(crate) fn overlay(base: Vec<HighlightSpan>, top: Vec<HighlightSpan>) -> Vec<
     pieces.extend(top);
     pieces.sort_by_key(|span| span.range.start);
 
-    let mut merged: Vec<HighlightSpan> = Vec::with_capacity(pieces.len());
+    let mut merged: Vec<HighlightSpan<H>> = Vec::with_capacity(pieces.len());
     for span in pieces {
         match merged.last_mut() {
             Some(last)

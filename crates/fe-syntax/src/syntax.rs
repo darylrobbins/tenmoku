@@ -14,7 +14,7 @@ use tree_sitter::{
 
 use crate::{
     HighlightSpan, Language,
-    highlight::{Capture, flatten},
+    highlight::{Capture, Painted, flatten, highlighted},
     injection::{self, Layers},
 };
 
@@ -406,6 +406,7 @@ impl Syntax {
             self.failed.set(true);
             return Vec::new();
         };
+        let spans = highlighted(spans);
         if complete {
             if cache.ranges.len() == CACHED_RANGES {
                 cache.ranges.pop_front();
@@ -453,14 +454,14 @@ impl Syntax {
         budget: Duration,
     ) -> Vec<HighlightSpan> {
         let deadline = Instant::now().checked_add(budget);
-        highlight_query(
+        highlighted(highlight_query(
             self.language,
             self.snapshot.text(),
             tree,
             range,
             split,
             deadline,
-        )
+        ))
     }
 
     /// The languages and ranges of the injected layers kept, sorted.
@@ -490,7 +491,7 @@ impl Syntax {
 }
 
 /// Queries `tree`, of `language` and parsed from `text`, for the highlights
-/// in `range`, stopping at `deadline`. With `split`, nodes with many children
+/// in `range`, stopping at `deadline`, with the runs `@none` cleared. With `split`, nodes with many children
 /// are queried a child at a time; that's only correct when no pattern spans
 /// several siblings.
 pub(crate) fn highlight_query(
@@ -500,7 +501,7 @@ pub(crate) fn highlight_query(
     range: Range<usize>,
     split: bool,
     deadline: Option<Instant>,
-) -> Vec<HighlightSpan> {
+) -> Vec<Painted> {
     fault_point("query");
     let mut captures = Vec::new();
     for_each_query_root(tree, &range, split, |cursor, node| {

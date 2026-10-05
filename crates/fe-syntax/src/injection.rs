@@ -8,7 +8,10 @@
 //! of the injected language over just the content's bytes, set with
 //! [`Parser::set_included_ranges`]. The content's named child nodes, such as
 //! the `> ` continuing a Markdown block quote, are left out unless the
-//! pattern sets `injection.include-children`. Layers can hold
+//! pattern sets `injection.include-children`. A combined pattern that sets
+//! `injection.include-gaps`, our own property, also takes the bytes of the
+//! content's parent that no node covers: the line breaks a PHP heredoc's
+//! scanner skips between its pieces. Layers can hold
 //! injections of their own, up to [`MAX_DEPTH`] deep: Markdown's blocks hold
 //! inline markup, which holds HTML.
 //!
@@ -33,9 +36,11 @@
 //! it's far.
 //!
 //! An injected language whose query isn't compiled yet stays plain, and is
-//! reported so the caller can compile it off the UI thread. Inside a layer's ranges its highlights win, and bytes it
-//! leaves uncaptured keep the host's: fenced code stays `markup.raw` around
-//! its keywords. A language that isn't in this build, such as `regex` or
+//! reported so the caller can compile it off the UI thread. Inside a layer's
+//! ranges its highlights win, and bytes it leaves uncaptured keep the
+//! host's: fenced code stays `markup.raw` around its keywords. Bytes it
+//! clears with `@none` stay plain, as Scala's interpolated code does in a
+//! PHP nowdoc. A language that isn't in this build, such as `regex` or
 //! `jsdoc`, stays plain.
 
 use std::{
@@ -50,8 +55,8 @@ use tree_sitter::{
 };
 
 use crate::{
-    HighlightSpan, Language,
-    highlight::{clip, overlay},
+    Language,
+    highlight::{Painted, clip, overlay},
     language::{Injected, injected_language},
     syntax::{chunks, for_each_query_root, highlight_query, out_of_time, parse_text, until},
 };
@@ -228,6 +233,7 @@ struct Pattern {
     language: Option<Box<str>>,
     combined: bool,
     include_children: bool,
+    include_gaps: bool,
 }
 
 impl InjectionQuery {
@@ -241,6 +247,7 @@ impl InjectionQuery {
                         "injection.language" => pattern.language = property.value.clone(),
                         "injection.combined" => pattern.combined = true,
                         "injection.include-children" => pattern.include_children = true,
+                        "injection.include-gaps" => pattern.include_gaps = true,
                         _ => {}
                     }
                 }
@@ -281,8 +288,8 @@ pub(crate) fn paint(
     range: Range<usize>,
     deadline: Option<Instant>,
     layers: &mut Layers,
-    spans: Vec<HighlightSpan>,
-) -> (Vec<HighlightSpan>, bool) {
+    spans: Vec<Painted>,
+) -> (Vec<Painted>, bool) {
     layers.pass += 1;
     if range.is_empty() {
         // Nothing to paint, but the layers edited at it are as unused as
@@ -333,8 +340,8 @@ impl Painter<'_> {
         tree: &Tree,
         parent: Option<&[Range<usize>]>,
         depth: usize,
-        mut spans: Vec<HighlightSpan>,
-    ) -> Vec<HighlightSpan> {
+        mut spans: Vec<Painted>,
+    ) -> Vec<Painted> {
         if depth > MAX_DEPTH {
             return spans;
         }
@@ -611,7 +618,8 @@ enum Collected {
 
 /// Adds the bytes of a match's `content` nodes to `ranges`, each combined
 /// with its siblings of the same kind if the pattern says so and `combined`
-/// doesn't already hold its parent. Stops, with only some added, if
+/// doesn't already hold its parent, and with the parent's bytes outside its
+/// children if the pattern includes gaps. Stops, with only some added, if
 /// `deadline` passes first or there are too many: the deadline is checked at
 /// every node visited, as a template string can hold thousands of pieces.
 fn match_ranges(
@@ -636,21 +644,50 @@ fn match_ranges(
         if !combined.insert((pattern_ix, parent.id())) {
             continue;
         }
-        let mut cursor = parent.walk();
-        for sibling in parent.children(&mut cursor) {
-            let collected = if sibling.kind_id() == node.kind_id() {
-                content_ranges(sibling, pattern.include_children, deadline, ranges)
-            } else if out_of_time(deadline) {
-                Collected::OutOfTime
+        // The end of the last sibling, where the next gap starts.
+        let mut end = parent.start_byte();
+        let gap = |end: usize, start: usize, ranges: &mut Vec<Range<usize>>| {
+            if pattern.include_gaps && end < start && !push(ranges, end..start) {
+                Collected::TooMany
             } else {
                 Collected::All
+            }
+        };
+        let mut cursor = parent.walk();
+        for sibling in parent.children(&mut cursor) {
+            let collected = match gap(end, sibling.start_byte(), ranges) {
+                Collected::All if sibling.kind_id() == node.kind_id() => {
+                    content_ranges(sibling, pattern.include_children, deadline, ranges)
+                }
+                Collected::All if out_of_time(deadline) => Collected::OutOfTime,
+                collected => collected,
             };
+            end = end.max(sibling.end_byte());
             if collected != Collected::All {
                 return collected;
             }
         }
+        match gap(end, parent.end_byte(), ranges) {
+            Collected::All => {}
+            stopped => return stopped,
+        }
     }
     Collected::All
+}
+
+/// Adds `range` to `ranges`, extending the last if it ends where `range`
+/// starts. False if that would grow `ranges` past [`MAX_LAYER_RANGES`].
+fn push(ranges: &mut Vec<Range<usize>>, range: Range<usize>) -> bool {
+    if let Some(last) = ranges.last_mut()
+        && last.end == range.start
+    {
+        last.end = range.end;
+    } else if ranges.len() == MAX_LAYER_RANGES {
+        return false;
+    } else {
+        ranges.push(range);
+    }
+    true
 }
 
 /// Adds `node`'s bytes to `ranges`, leaving out its named children's unless
@@ -666,13 +703,6 @@ fn content_ranges(
     if out_of_time(deadline) {
         return Collected::OutOfTime;
     }
-    let mut push = |range: Range<usize>| {
-        if ranges.len() == MAX_LAYER_RANGES {
-            return false;
-        }
-        ranges.push(range);
-        true
-    };
     let mut start = node.start_byte();
     if !include_children {
         let mut cursor = node.walk();
@@ -680,13 +710,13 @@ fn content_ranges(
             if out_of_time(deadline) {
                 return Collected::OutOfTime;
             }
-            if start < child.start_byte() && !push(start..child.start_byte()) {
+            if start < child.start_byte() && !push(ranges, start..child.start_byte()) {
                 return Collected::TooMany;
             }
             start = start.max(child.end_byte());
         }
     }
-    if start < node.end_byte() && !push(start..node.end_byte()) {
+    if start < node.end_byte() && !push(ranges, start..node.end_byte()) {
         return Collected::TooMany;
     }
     Collected::All
