@@ -8,7 +8,7 @@ use fe_buffer::{Buffer, Origin};
 use proptest::{prelude::prop, prop_assert_eq, proptest};
 use rand::{Rng as _, SeedableRng as _, rngs::StdRng};
 
-use super::Layers;
+use super::{Collected, Layers};
 use crate::{
     highlight::{clip, overlay},
     syntax::{DEADLINE_AFTER, DEADLINE_CHECKS, highlight_query},
@@ -596,16 +596,28 @@ fn content_ranges_stop_at_the_deadline() {
         .filter(|node| node.kind() == "inline")
         .expect("the quote's text");
     let mut ranges = Vec::new();
-    assert!(super::content_ranges(inline, false, None, &mut ranges));
-    assert_eq!(ranges.len(), 1000);
+    let collected = super::content_ranges(inline, false, None, &mut ranges);
+    assert_eq!((collected, ranges.len()), (Collected::All, 1000));
     ranges.clear();
-    assert!(!super::content_ranges(
-        inline,
-        false,
-        Some(Instant::now()),
-        &mut ranges
-    ));
+    let collected = super::content_ranges(inline, false, Some(Instant::now()), &mut ranges);
+    assert_eq!(collected, Collected::OutOfTime);
     assert!(ranges.len() <= 1);
+}
+
+/// Runs `f` with every deadline passing after `after` checks, and counts the
+/// checks.
+fn with_deadline_after<T>(after: usize, f: &mut dyn FnMut() -> T) -> (T, usize) {
+    DEADLINE_CHECKS.set(0);
+    DEADLINE_AFTER.set(after);
+    let result = f();
+    DEADLINE_AFTER.set(usize::MAX);
+    (result, DEADLINE_CHECKS.get())
+}
+
+/// A deadline too far off to pass by the clock: it passes when the test
+/// says, with [`with_deadline_after`].
+fn far_deadline() -> Option<Instant> {
+    Instant::now().checked_add(Duration::from_secs(3600))
 }
 
 /// Collecting a combined template string's pieces checks the deadline at
@@ -619,17 +631,7 @@ fn combined_templates_stop_at_the_deadline() {
     let buffer = Buffer::new(&text);
     let syntax = parsed("javascript", &buffer);
     let tree = syntax.tree().unwrap();
-    // Too far off to pass by the clock: it passes when the test says.
-    let deadline = Instant::now().checked_add(Duration::from_secs(3600));
-    // Runs `f` with the deadline passing after `after` checks, and counts
-    // the checks.
-    let with_deadline_after = |after, f: &mut dyn FnMut() -> bool| {
-        DEADLINE_CHECKS.set(0);
-        DEADLINE_AFTER.set(after);
-        let in_time = f();
-        DEADLINE_AFTER.set(usize::MAX);
-        (in_time, DEADLINE_CHECKS.get())
-    };
+    let deadline = far_deadline();
 
     let fragment = tree
         .root_node()
@@ -645,7 +647,7 @@ fn combined_templates_stop_at_the_deadline() {
     let mut collect = || {
         let mut ranges = Vec::new();
         let in_time = super::match_ranges(
-            &[fragment],
+            &[fragment, fragment],
             0,
             &pattern,
             &mut Default::default(),
@@ -655,10 +657,17 @@ fn combined_templates_stop_at_the_deadline() {
         collected.set(ranges.len());
         in_time
     };
-    // 2001 fragments, 2000 substitutions and two backticks.
-    assert_eq!(with_deadline_after(usize::MAX, &mut collect), (true, 4003));
-    for after in [0, 1, 2000, 4002] {
-        assert_eq!(with_deadline_after(after, &mut collect), (false, after + 1));
+    // The first node, 2001 fragments, 2000 substitutions, two backticks,
+    // and the second node, whose parent is already combined.
+    let all = 1 + 4003 + 1;
+    assert_eq!(
+        with_deadline_after(usize::MAX, &mut collect),
+        (Collected::All, all)
+    );
+    assert_eq!(collected.get(), 2001);
+    for after in [0, 1, 2000, 4003, all - 1] {
+        let stopped = with_deadline_after(after, &mut collect);
+        assert_eq!(stopped, (Collected::OutOfTime, after + 1));
         assert!(collected.get() <= after.div_ceil(2), "{after}");
     }
 
@@ -752,4 +761,114 @@ proptest! {
         }
         prop_assert_eq!(paint(&merged, LEN), expected);
     }
+}
+
+/// Paints the injections of `syntax`'s tree over all of `buffer`, with
+/// `layers`, and says whether the result is complete.
+fn paint_all(
+    buffer: &Buffer,
+    syntax: &Syntax,
+    deadline: Option<Instant>,
+    layers: &mut Layers,
+) -> bool {
+    let host = super::Host {
+        language: syntax.language(),
+        text: buffer.text(),
+        tree: syntax.tree().unwrap(),
+        parsed: true,
+    };
+    super::paint(host, 0..buffer.len(), deadline, layers, Vec::new()).1
+}
+
+/// Painting injections, from finding them to parsing, reusing and
+/// highlighting their layers, stops within a few checks of the deadline
+/// passing, wherever that happens: whether a layer of thousands of ranges is
+/// parsed afresh, kept from an earlier call, or reparsed after an edit.
+#[test]
+fn painting_stops_at_the_deadline() {
+    let pieces = "<b>${x}</b>".repeat(2000);
+    let text = format!("html`{pieces}`;\n");
+    language_by_name("html");
+    let mut buffer = Buffer::new(&text);
+    let mut syntax = parsed("javascript", &buffer);
+    let deadline = far_deadline();
+    // Paints from a copy of `layers` with the deadline passing at each of
+    // about 100 steps, and returns the parses of a run in time.
+    let assert_stops = |buffer: &Buffer, syntax: &Syntax, layers: &Layers, case: &str| {
+        let run = |after| {
+            let mut layers = layers.clone();
+            layers.parses.clear();
+            let paint = &mut || paint_all(buffer, syntax, deadline, &mut layers);
+            let (complete, checks) = with_deadline_after(after, paint);
+            (complete, checks, layers.parses)
+        };
+        let (complete, checks, parses) = run(usize::MAX);
+        assert!(complete, "{case}");
+        for after in (0..checks).step_by(checks.div_ceil(100)) {
+            let (complete, taken, _) = run(after);
+            assert!(!complete, "{case}: deadline after {after} checks");
+            assert!(
+                taken <= after + 3,
+                "{case}: {taken} checks with the deadline after {after}"
+            );
+        }
+        parses
+    };
+    let layer = |ranges| vec![("html", ranges)];
+
+    let parses = assert_stops(&buffer, &syntax, &Layers::default(), "parsed afresh");
+    assert_eq!(parses.len(), 1);
+    let ranges = parses[0].1.clone();
+    assert_eq!(ranges.len(), 2001);
+
+    syntax.highlights_compiling(0..text.len());
+    assert_eq!(syntax.layers(), layer(ranges.clone()));
+    let kept = syntax.kept_layers();
+    assert_eq!(assert_stops(&buffer, &syntax, &kept, "kept"), []);
+
+    // Typing in the last piece.
+    let at = text.len() - "</b>`;\n".len();
+    buffer.edit([(at..at, "i")], Origin::User);
+    syntax.edit(buffer.current());
+    syntax.finish(syntax.parse_job().run());
+    let edited = syntax.kept_layers();
+    let mut ranges = ranges;
+    ranges.last_mut().unwrap().end += 1;
+    let parses = assert_stops(&buffer, &syntax, &edited, "edited");
+    assert_eq!(parses, layer(ranges));
+}
+
+/// An injection with too many ranges stays plain, and one with just few
+/// enough is parsed. Either way the result is complete: it would be the same
+/// every time.
+#[test]
+fn an_injection_with_too_many_ranges_stays_plain() {
+    language_by_name("html");
+    for (pieces, layers) in [
+        (super::MAX_LAYER_RANGES - 1, 1),
+        (super::MAX_LAYER_RANGES, 0),
+    ] {
+        // `pieces` substitutions between `pieces + 1` fragments.
+        let text = format!("html`{}a`;\n", "a${x}".repeat(pieces));
+        let buffer = Buffer::new(&text);
+        let syntax = parsed("javascript", &buffer);
+        let mut kept = Layers::default();
+        assert!(paint_all(&buffer, &syntax, None, &mut kept), "{pieces}");
+        assert_eq!(kept.keys().len(), layers, "{pieces}");
+    }
+}
+
+/// Past [`super::MAX_INJECTIONS`] in a tree, injections stay plain, and past
+/// [`super::MAX_KEPT_LAYERS`] layers are parsed and used but not kept.
+#[test]
+fn injections_and_layers_kept_are_bounded() {
+    let text = "`c`\n\n".repeat(super::MAX_INJECTIONS + 1);
+    language_by_name("markdown_inline");
+    let buffer = Buffer::new(&text);
+    let syntax = parsed("markdown", &buffer);
+    let mut layers = Layers::default();
+    assert!(paint_all(&buffer, &syntax, None, &mut layers));
+    // Each paragraph's inline markup is a layer.
+    assert_eq!(layers.parses.len(), super::MAX_INJECTIONS);
+    assert_eq!(layers.keys().len(), super::MAX_KEPT_LAYERS);
 }

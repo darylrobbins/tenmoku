@@ -476,6 +476,12 @@ impl Syntax {
         self.cache.borrow().layers.keys()
     }
 
+    /// A copy of the injected layers kept.
+    #[cfg(test)]
+    pub(crate) fn kept_layers(&self) -> injection::Layers {
+        self.cache.borrow().layers.clone()
+    }
+
     /// [`Syntax::layers`], with their trees as S-expressions.
     #[cfg(test)]
     pub(crate) fn layer_trees(&self) -> Vec<(injection::LayerKey, String)> {

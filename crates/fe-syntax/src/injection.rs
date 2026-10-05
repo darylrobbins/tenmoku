@@ -20,7 +20,11 @@
 //! Only the injections overlapping the highlighted range are found and
 //! parsed, within the same time budget as the query. Finding one checks the
 //! deadline at every node it visits, as a template string can have
-//! thousands of pieces. Their trees are kept
+//! thousands of pieces, and so does each later step over its ranges or the
+//! layers kept. What a step does between checks is bounded by size, not
+//! time: an injection with more than [`MAX_LAYER_RANGES`] ranges stays
+//! plain, a tree's injections past [`MAX_INJECTIONS`] are left plain, and at
+//! most [`MAX_KEPT_LAYERS`] layers are kept. Their trees are kept
 //! across edits, which [`Layers::edit`] applies to them as to the host tree.
 //! Once the host is reparsed, a layer an edit touched is reparsed
 //! incrementally from its old tree, and the others are used as they are. A
@@ -58,6 +62,19 @@ const MAX_DEPTH: usize = 3;
 /// Captured language names longer than this aren't looked up.
 const MAX_NAME_LEN: usize = 32;
 
+/// An injection with more ranges than this stays plain. Each step over its
+/// ranges, from sorting them to tree-sitter installing them as a layer's
+/// included ranges, is then bounded whatever the deadline.
+const MAX_LAYER_RANGES: usize = 16 * 1024;
+
+/// How many injections one highlight finds in a tree. Those past it stay
+/// plain, bounding the matches collected and the combined parents hashed.
+const MAX_INJECTIONS: usize = 4096;
+
+/// How many layers are kept. A layer parsed with this many kept is used but
+/// not kept, bounding each look through them for one to reuse.
+const MAX_KEPT_LAYERS: usize = 1024;
+
 /// How many recently highlighted ranges keep the layers near them. A frame
 /// highlights one range per run of consecutive visible rows.
 const RECENT_RANGES: usize = 8;
@@ -68,6 +85,7 @@ pub(crate) type LayerKey = (&'static str, Vec<Range<usize>>);
 
 /// What highlighting keeps between calls for injections.
 #[derive(Default)]
+#[cfg_attr(test, derive(Clone))]
 pub(crate) struct Layers {
     kept: Vec<Layer>,
     /// Injected languages found without a compiled query, until taken by
@@ -83,6 +101,7 @@ pub(crate) struct Layers {
 }
 
 /// An injection's parsed tree, kept across edits.
+#[cfg_attr(test, derive(Clone))]
 struct Layer {
     language: &'static Language,
     /// The bytes it was parsed from, moved along by the edits since. Sorted
@@ -320,6 +339,12 @@ impl Painter<'_> {
             return spans;
         }
         for injection in self.find(language, tree, parent) {
+            // Finding the injections may have run out of time, or the last
+            // one's highlighting.
+            if out_of_time(self.deadline) {
+                self.complete = false;
+                break;
+            }
             let Some(layer) = self.layer(&injection) else {
                 continue;
             };
@@ -344,8 +369,8 @@ impl Painter<'_> {
     }
 
     /// The injections in `tree` overlapping the range, in a language of
-    /// this build. With `parent`, their content is cut to those ranges. If
-    /// time runs out, the ones found so far.
+    /// this build, up to [`MAX_INJECTIONS`]. With `parent`, their content is
+    /// cut to those ranges. If time runs out, the ones found so far.
     fn find(
         &mut self,
         language: &Language,
@@ -363,7 +388,9 @@ impl Painter<'_> {
             let mut progress = |_: &_| until(deadline);
             let options = QueryCursorOptions::new().progress_callback(&mut progress);
             let mut iter = cursor.matches_with_options(&query.query, node, source, options);
-            while let Some(found) = iter.next() {
+            while matches.len() < MAX_INJECTIONS
+                && let Some(found) = iter.next()
+            {
                 let captured = |ix| {
                     found
                         .captures()
@@ -377,11 +404,19 @@ impl Painter<'_> {
             }
         });
 
+        if matches.len() == MAX_INJECTIONS {
+            log::debug!(
+                "{}: found {MAX_INJECTIONS} injections in {:?}; any more stay plain",
+                language.name(),
+                self.range
+            );
+        }
         let mut injections = Vec::new();
         // The pattern and parent node of each combined injection so far.
         let mut combined = HashSet::new();
         for (pattern_ix, content, name) in matches {
             if out_of_time(deadline) {
+                self.complete = false;
                 break;
             }
             let pattern = &query.patterns[pattern_ix];
@@ -406,33 +441,53 @@ impl Painter<'_> {
                 Injected::Unknown => continue,
             };
             let mut ranges = Vec::new();
-            if !match_ranges(
+            let collected = match_ranges(
                 &content,
                 pattern_ix,
                 pattern,
                 &mut combined,
                 deadline,
                 &mut ranges,
-            ) {
-                break;
+            );
+            match collected {
+                Collected::All => {}
+                Collected::TooMany => {
+                    too_many(language);
+                    continue;
+                }
+                Collected::OutOfTime => {
+                    self.complete = false;
+                    break;
+                }
             }
             // The nodes come in document order, so sorting only checks the
-            // order. Like `intersect` and finding the layer, it takes time
-            // linear in the ranges collected, each within the deadline.
+            // order, in time bounded by `MAX_LAYER_RANGES`.
             ranges.sort_by_key(|range| range.start);
             if let Some(parent) = parent {
-                ranges = intersect(&ranges, parent);
+                let Some(parts) = intersect(&ranges, parent, deadline) else {
+                    self.complete = false;
+                    break;
+                };
+                // Cutting adds at most a part per range of the parent's.
+                if parts.len() > MAX_LAYER_RANGES {
+                    too_many(language);
+                    continue;
+                }
+                ranges = parts;
             }
-            let overlaps = ranges
-                .iter()
-                .any(|range| range.start < self.range.end && self.range.start < range.end);
-            if overlaps {
+            // Sorted and disjoint, so the first to end after the range's
+            // start is the only one that can overlap it.
+            let first = ranges.partition_point(|range| range.end <= self.range.start);
+            if ranges
+                .get(first)
+                .is_some_and(|range| range.start < self.range.end)
+            {
                 injections.push(Injection { language, ranges });
             }
         }
+        // The query, too, may have stopped. Some injections may be missing:
+        // the next call looks again, and finds the layers parsed so far kept.
         if out_of_time(deadline) {
-            // Some may be missing. The next call looks again, and finds the
-            // layers parsed so far kept.
             self.complete = false;
         }
         injections
@@ -440,36 +495,43 @@ impl Painter<'_> {
 
     /// The layer for `injection`: kept from an earlier call if parsed from
     /// the same bytes and not edited since, else parsed, incrementally from a
-    /// kept layer that an edit touched at the same place. `None` if parsing
-    /// it ran out of time.
+    /// kept layer that an edit touched at the same place. `None` if looking
+    /// for it or parsing it ran out of time.
     fn layer(&mut self, injection: &Injection) -> Option<Tree> {
         let layers = &mut *self.layers;
+        let deadline = self.deadline;
         let pass = layers.pass;
         let language = injection.language;
-        let same = |layer: &Layer| std::ptr::eq(layer.language, language);
-        let exact = layers
-            .kept
-            .iter()
-            .position(|layer| same(layer) && !layer.edited && layer.ranges == injection.ranges);
-        let kept = exact.or_else(|| {
-            // Not one this call already used: injections at the same place,
-            // such as nested template strings, each keep their own.
-            let span = span(&injection.ranges);
-            layers.kept.iter().position(|layer| {
-                same(layer) && layer.edited && layer.pass != pass && touches(&layer.span(), &span)
-            })
-        });
+        let span = span(&injection.ranges);
+        // One kept with the same bytes, else the first edited at the same
+        // place that this call hasn't used: injections at the same place,
+        // such as nested template strings, each keep their own.
+        let (mut exact, mut near) = (None, None);
+        for (ix, layer) in layers.kept.iter().enumerate() {
+            // Comparing ranges is bounded by `MAX_LAYER_RANGES`.
+            if out_of_time(deadline) {
+                self.complete = false;
+                return None;
+            }
+            if !std::ptr::eq(layer.language, language) {
+                continue;
+            }
+            if !layer.edited && layer.ranges == injection.ranges {
+                exact = Some(ix);
+                break;
+            }
+            if near.is_none() && layer.edited && layer.pass != pass && touches(&layer.span(), &span)
+            {
+                near = Some(ix);
+            }
+        }
+        let kept = exact.or(near);
         if let Some(ix) = kept {
             let layer = &mut layers.kept[ix];
             layer.pass = pass;
             if exact.is_some() || !self.host_parsed {
                 return Some(layer.tree.clone());
             }
-        }
-        let deadline = self.deadline;
-        if out_of_time(deadline) {
-            self.complete = false;
-            return None;
         }
         let text = self.text;
         let point = |offset| {
@@ -515,17 +577,27 @@ impl Painter<'_> {
         };
         match kept {
             Some(ix) => layers.kept[ix] = layer,
-            None => layers.kept.push(layer),
+            None if layers.kept.len() < MAX_KEPT_LAYERS => layers.kept.push(layer),
+            None => log::debug!("{MAX_KEPT_LAYERS} layers kept; not keeping another"),
         }
         Some(tree)
     }
 }
 
+/// How collecting an injection's ranges ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Collected {
+    All,
+    /// It has more than [`MAX_LAYER_RANGES`].
+    TooMany,
+    OutOfTime,
+}
+
 /// Adds the bytes of a match's `content` nodes to `ranges`, each combined
 /// with its siblings of the same kind if the pattern says so and `combined`
-/// doesn't already hold its parent. Returns false, with only some added, if
-/// `deadline` passes first: it's checked at every node visited, as a
-/// template string can hold thousands of pieces.
+/// doesn't already hold its parent. Stops, with only some added, if
+/// `deadline` passes first or there are too many: the deadline is checked at
+/// every node visited, as a template string can hold thousands of pieces.
 fn match_ranges(
     content: &[Node],
     pattern_ix: usize,
@@ -533,63 +605,84 @@ fn match_ranges(
     combined: &mut HashSet<(usize, usize)>,
     deadline: Option<Instant>,
     ranges: &mut Vec<Range<usize>>,
-) -> bool {
+) -> Collected {
     for &node in content {
+        if out_of_time(deadline) {
+            return Collected::OutOfTime;
+        }
         let parent = node.parent().filter(|_| pattern.combined);
         let Some(parent) = parent else {
-            if !content_ranges(node, pattern.include_children, deadline, ranges) {
-                return false;
+            match content_ranges(node, pattern.include_children, deadline, ranges) {
+                Collected::All => continue,
+                stopped => return stopped,
             }
-            continue;
         };
         if !combined.insert((pattern_ix, parent.id())) {
             continue;
         }
         let mut cursor = parent.walk();
         for sibling in parent.children(&mut cursor) {
-            let in_time = if sibling.kind_id() == node.kind_id() {
+            let collected = if sibling.kind_id() == node.kind_id() {
                 content_ranges(sibling, pattern.include_children, deadline, ranges)
+            } else if out_of_time(deadline) {
+                Collected::OutOfTime
             } else {
-                !out_of_time(deadline)
+                Collected::All
             };
-            if !in_time {
-                return false;
+            if collected != Collected::All {
+                return collected;
             }
         }
     }
-    true
+    Collected::All
 }
 
 /// Adds `node`'s bytes to `ranges`, leaving out its named children's unless
 /// `include_children`. Anonymous children are the host grammar's view of the
-/// content's own punctuation, so they stay. Returns false, with only some
-/// added, if `deadline` passes first.
+/// content's own punctuation, so they stay. Stops, with only some added, if
+/// `deadline` passes first or `ranges` would grow past [`MAX_LAYER_RANGES`].
 fn content_ranges(
     node: Node,
     include_children: bool,
     deadline: Option<Instant>,
     ranges: &mut Vec<Range<usize>>,
-) -> bool {
+) -> Collected {
     if out_of_time(deadline) {
-        return false;
+        return Collected::OutOfTime;
     }
+    let mut push = |range: Range<usize>| {
+        if ranges.len() == MAX_LAYER_RANGES {
+            return false;
+        }
+        ranges.push(range);
+        true
+    };
     let mut start = node.start_byte();
     if !include_children {
         let mut cursor = node.walk();
         for child in node.named_children(&mut cursor) {
             if out_of_time(deadline) {
-                return false;
+                return Collected::OutOfTime;
             }
-            if start < child.start_byte() {
-                ranges.push(start..child.start_byte());
+            if start < child.start_byte() && !push(start..child.start_byte()) {
+                return Collected::TooMany;
             }
             start = start.max(child.end_byte());
         }
     }
-    if start < node.end_byte() {
-        ranges.push(start..node.end_byte());
+    if start < node.end_byte() && !push(start..node.end_byte()) {
+        return Collected::TooMany;
     }
-    true
+    Collected::All
+}
+
+/// Notes that an injection of `language` stays plain for having too many
+/// ranges. Leaving it plain is no less complete: it would be every time.
+fn too_many(language: &Language) {
+    log::debug!(
+        "{}: an injection with over {MAX_LAYER_RANGES} ranges stays plain",
+        language.name()
+    );
 }
 
 /// From the start of the first of `ranges` to the end of the last.
@@ -624,11 +717,19 @@ fn moved(range: &Range<usize>, edit: &InputEdit) -> Range<usize> {
 }
 
 /// The non-empty parts of `ranges` inside `within`. Both are sorted and
-/// don't overlap.
-fn intersect(ranges: &[Range<usize>], within: &[Range<usize>]) -> Vec<Range<usize>> {
+/// don't overlap. `None` if `deadline` passes first: it's checked at each
+/// of `ranges`, and the time between checks is bounded by `within`'s length.
+fn intersect(
+    ranges: &[Range<usize>],
+    within: &[Range<usize>],
+    deadline: Option<Instant>,
+) -> Option<Vec<Range<usize>>> {
     let mut parts = Vec::new();
     let mut first = 0;
     for range in ranges {
+        if out_of_time(deadline) {
+            return None;
+        }
         while within
             .get(first)
             .is_some_and(|outer| outer.end <= range.start)
@@ -645,7 +746,7 @@ fn intersect(ranges: &[Range<usize>], within: &[Range<usize>]) -> Vec<Range<usiz
             }
         }
     }
-    parts
+    Some(parts)
 }
 
 #[cfg(test)]
