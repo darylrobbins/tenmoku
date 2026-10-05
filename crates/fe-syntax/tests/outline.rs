@@ -195,6 +195,21 @@ fn rust_items_nest_under_impls_traits_and_modules() {
         Some((Trait, "Draw".to_owned()))
     );
     assert_eq!(item(&outline, "name").kind, Method);
+    let output = item(&outline, "Output");
+    assert_eq!(output.kind, Type);
+    assert_eq!(parent(&outline, output), Some((Trait, "Draw".to_owned())));
+
+    // A signature is a Method in an impl, and a Function elsewhere. The
+    // impl's matches both patterns but is listed once.
+    let declared = item(&outline, "declared");
+    assert_eq!(declared.kind, Method);
+    assert_eq!(
+        parent(&outline, declared),
+        Some((Impl, "impl Foo".to_owned()))
+    );
+    let abs = item(&outline, "abs");
+    assert_eq!(abs.kind, Function);
+    assert_eq!(parent(&outline, abs), None);
 
     let helper = item(&outline, "helper");
     assert_eq!(helper.kind, Function);
@@ -349,6 +364,95 @@ body
         parent(&outline, &outline.items[5]),
         Some((Heading(1), "E".into()))
     );
+}
+
+/// The depth, kind and name of each item.
+fn headings(outline: &Outline) -> Vec<(u32, OutlineKind, &str)> {
+    (outline.items.iter())
+        .map(|item| (item.depth, item.kind, item.name.as_str()))
+        .collect()
+}
+
+#[test]
+fn markdown_sections_hold_setext_and_empty_headings() {
+    use OutlineKind::Heading;
+    let text = "\
+A
+===
+
+## B
+
+# C
+
+D
+=
+
+#
+
+## E
+
+Title #
+-------
+";
+    let outline = outline_of("markdown", text);
+    assert_eq!(
+        headings(&outline),
+        [
+            (0, Heading(1), "A"),
+            (1, Heading(2), "B"),
+            (0, Heading(1), "C"),
+            (0, Heading(1), "D"),
+            (0, Heading(1), ""),
+            (1, Heading(2), "E"),
+            (1, Heading(2), "Title #"),
+        ]
+    );
+    // A section runs to the next heading of the same or a higher level, in
+    // either form.
+    let at = |heading: &str| text.find(heading).unwrap();
+    let ranges: Vec<_> = (outline.items.iter())
+        .map(|item| item.range.clone())
+        .collect();
+    assert_eq!(
+        ranges,
+        [
+            0..at("# C"),
+            at("## B")..at("# C"),
+            at("# C")..at("D\n"),
+            at("D\n")..at("#\n"),
+            at("#\n")..text.len(),
+            at("## E")..at("Title"),
+            at("Title")..text.len(),
+        ]
+    );
+    assert_eq!(outline.item_at(at("## B") + 5), Some(1));
+    assert_eq!(outline.item_at(text.len() - 1), Some(6));
+
+    // An empty heading's name is empty, after its marker.
+    let empty = &outline.items[4];
+    assert_eq!(empty.name_range, at("#\n") + 1..at("#\n") + 1);
+    let levels = outline_of("markdown", "#\n##\n###\n####\n#####\n######\n");
+    let expected: Vec<_> = (1..=6)
+        .map(|level| (level - 1, Heading(level as u8), ""))
+        .collect();
+    assert_eq!(headings(&levels), expected);
+}
+
+#[test]
+fn atx_closing_sequences_are_left_out_of_names() {
+    let long = "x".repeat(198);
+    let text = format!(
+        "# T #\n\n# T ##   \n\n# T2 \\#\n\n# a # #\n\n# a#\n\n# ##\n\n# {long} #y\n\nS #\n--\n"
+    );
+    let outline = outline_of("markdown", &text);
+    let names: Vec<_> = (outline.items.iter())
+        .map(|item| item.name.as_str())
+        .collect();
+    // Hashes cut by the 200-char limit stay: they don't end the heading.
+    let cut = format!("{long} #");
+    assert_eq!(names, ["T", "T", "T2 \\#", "a #", "a#", "", &cut, "S #"]);
+    let only_hashes = &outline.items[5];
+    assert!(only_hashes.name_range.is_empty());
 }
 
 #[test]

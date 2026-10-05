@@ -1,12 +1,13 @@
 Constant "Limit" 5:7-5:17
-Constant "Red" 8:2-8:12
-Constant "Green" 9:2-9:7
-Struct "Point" 12:6-14:2
-Interface "Shape" 16:6-19:2
-  Method "Area" 17:2-17:16
-  Method "Name" 18:2-18:15
-Type "Celsius" 21:6-21:21
-Type "Alias" 23:6-23:19
-Method "Area" 25:1-27:2
-Method "Name" 29:1-31:2
-Function "main" 33:1-36:2
+Constant "Width, Height" 7:7-7:27
+Constant "Red" 10:2-10:12
+Constant "Green" 11:2-11:7
+Struct "Point" 14:6-16:2
+Interface "Shape" 18:6-21:2
+  Method "Area" 19:2-19:16
+  Method "Name" 20:2-20:15
+Type "Celsius" 23:6-23:21
+Type "Alias" 25:6-25:19
+Method "Area" 27:1-29:2
+Method "Name" 31:1-33:2
+Function "main" 35:1-38:2

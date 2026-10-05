@@ -27,6 +27,10 @@ public class Shapes {
     }
 
     record Point(int x, int y) {
+        Point {
+            assert x >= 0;
+        }
+
         int sum() {
             return x + y;
         }

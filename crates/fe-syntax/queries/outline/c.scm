@@ -1,15 +1,9 @@
 ;; outline query, ours; capture convention of tree-sitter tags
 
-; Through up to two pointer declarators: int *f(void), char **g(void).
-(function_definition
-  declarator: [
-    (function_declarator declarator: (identifier) @name)
-    (pointer_declarator
-      declarator: (function_declarator declarator: (identifier) @name))
-    (pointer_declarator
-      declarator: (pointer_declarator
-        declarator: (function_declarator declarator: (identifier) @name)))
-  ]) @definition.function
+; A declarator captured as @name stands for the identifier it declares,
+; through any chain of pointer, array, function and parenthesized
+; declarators: int ***f(void), void (*signal(int, void (*)(int)))(int).
+(function_definition declarator: (_) @name) @definition.function
 
 ; Only with a body: struct foo *p; isn't a definition.
 (struct_specifier name: (type_identifier) @name body: (_)) @definition.struct
@@ -18,11 +12,10 @@
 
 (enum_specifier name: (type_identifier) @name body: (_)) @definition.enum
 
+; typedef int A, B; is one item named A, B.
 (type_definition
-  declarator: [
-    (type_identifier) @name
-    (pointer_declarator declarator: (type_identifier) @name)
-  ]) @definition.type
+  declarator: (_) @name
+  ("," declarator: (_) @name)*) @definition.type
 
 (preproc_def name: (identifier) @name) @definition.macro
 

@@ -4,6 +4,8 @@ import "fmt"
 
 const Limit = 10
 
+const Width, Height = 3, 4
+
 const (
 	Red = iota
 	Green

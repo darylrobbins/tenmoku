@@ -17,6 +17,9 @@
 
 (method_elem name: (field_identifier) @name) @definition.method
 
+; const A, B = 1, 2 is one item named A, B.
 (source_file
   (const_declaration
-    (const_spec name: (identifier) @name) @definition.constant))
+    (const_spec
+      name: (identifier) @name
+      ("," name: (identifier) @name)*) @definition.constant))

@@ -12,6 +12,8 @@ mod shapes {
     }
 
     pub trait Draw {
+        type Output;
+
         fn draw(&self) -> String;
 
         fn name(&self) -> &str {
@@ -45,10 +47,16 @@ impl<T: Clone> shapes::Draw
 }
 
 impl Foo {
+    fn declared();
+
     #[inline]
     pub const fn new() -> Self {
         Foo
     }
+}
+
+extern "C" {
+    fn abs(input: i32) -> i32;
 }
 
 type Pair = (u32, u32);

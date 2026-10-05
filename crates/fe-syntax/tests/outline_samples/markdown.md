@@ -21,3 +21,21 @@ Setext heading
 --------------
 
 Body.
+
+Setext title
+============
+
+## Under the setext title
+
+#
+
+### Under an empty heading
+
+Hash # in a setext title #
+==========================
+
+> # Quoted
+>
+> Body.
+
+# After the quote

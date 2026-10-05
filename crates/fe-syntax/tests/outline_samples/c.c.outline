@@ -7,6 +7,12 @@ Type "node_t" 18:1-20:10
 Struct "value" 22:1-25:2
 Enum "color" 27:1-30:2
 Type "ulong" 32:1-32:29
-Function "add" 34:1-36:2
-Function "name" 38:1-40:2
-Function "main" 42:1-45:2
+Type "numbers" 34:1-34:24
+Type "callback" 36:1-36:31
+Type "pair_a, pair_b" 38:1-38:28
+Function "add" 40:1-42:2
+Function "name" 44:1-46:2
+Function "names" 48:1-50:2
+Function "twice" 52:1-54:2
+Function "handler" 56:1-58:2
+Function "main" 60:1-63:2

@@ -4,7 +4,10 @@
 ; pattern, so they win on the same node.
 (impl_item
   body: (declaration_list
-    (function_item name: (identifier) @name) @definition.method))
+    [
+      (function_item name: (identifier) @name)
+      (function_signature_item name: (identifier) @name)
+    ] @definition.method))
 
 (trait_item
   body: (declaration_list
@@ -14,6 +17,9 @@
     ] @definition.method))
 
 (function_item name: (identifier) @name) @definition.function
+
+; As in an extern block.
+(function_signature_item name: (identifier) @name) @definition.function
 
 (mod_item name: (identifier) @name) @definition.module
 
@@ -29,6 +35,8 @@
 (impl_item "impl" @name type: (_) @name) @definition.impl
 
 (type_item name: (type_identifier) @name) @definition.type
+
+(associated_type name: (type_identifier) @name) @definition.type
 
 (const_item name: (identifier) @name) @definition.constant
 
