@@ -9,7 +9,7 @@ use std::{
 
 use fe_buffer::Text;
 use fe_display::{
-    CharWidth, LongRows,
+    CharWidth, LongRows, MAX_CLUSTER_BYTES,
     layout::{
         self, Frame, FrameInput, FrameStyles, MeasuredLine, Rect, StyleRun, StyledSpan,
         TextMeasure, Vec2,
@@ -195,7 +195,7 @@ const MAX_CACHED_CLUSTERS: usize = 4096;
 /// wrap and long rows. Shapes each char and multi-char cluster once, so
 /// fallback fonts are measured too, and so are clusters drawn as one glyph,
 /// such as emoji sequences. Clusters are cached by a hash of their text, so
-/// a long one (thousands of stacked combining marks) isn't kept.
+/// a long one isn't kept.
 #[derive(Clone)]
 pub(crate) struct GlyphWidths {
     text_system: Arc<TextSystem>,
@@ -233,10 +233,17 @@ impl CharWidth for GlyphWidths {
             .or_insert_with(|| text_system.layout_width(*font_id, *font_size, ch).into())
     }
 
+    /// Shapes `cluster` whole, unless it's longer than
+    /// [`MAX_CLUSTER_BYTES`], such as thousands of stacked combining marks:
+    /// then it sums its chars' widths rather than shape it, as the row index
+    /// does for such clusters, so the work stays bounded.
     fn cluster_width(&mut self, cluster: &str) -> f32 {
         let mut chars = cluster.chars();
         if let (Some(ch), None) = (chars.next(), chars.next()) {
             return self.char_width(ch);
+        }
+        if cluster.len() > MAX_CLUSTER_BYTES {
+            return cluster.chars().map(|ch| self.char_width(ch)).sum();
         }
         let key = {
             let mut hasher = DefaultHasher::new();
@@ -277,15 +284,15 @@ mod glyph_width_tests {
     use super::*;
 
     #[gpui::test]
-    fn clusters_are_shaped_whole_however_long(cx: &mut TestAppContext) {
+    fn clusters_are_shaped_whole_up_to_the_limit(cx: &mut TestAppContext) {
         let text_system = cx.text_system().clone();
         let font = gpui::font("Menlo");
         let mut widths = GlyphWidths::new(text_system.clone(), &font, px(13.));
         let shaper = WindowTextSystem::new(text_system);
-        for cluster in [
-            "e\u{301}".to_string(),
-            format!("a{}", "\u{20dd}".repeat(150)),
-        ] {
+        // A combining enclosing circle is 3 bytes.
+        let longest = format!("a{}", "\u{20dd}".repeat((MAX_CLUSTER_BYTES - 1) / 3));
+        assert_eq!(longest.len(), MAX_CLUSTER_BYTES);
+        for cluster in ["e\u{301}".to_string(), longest] {
             let run = TextRun {
                 len: cluster.len(),
                 font: font.clone(),
@@ -303,6 +310,12 @@ mod glyph_width_tests {
         // Cached by hash: neither cluster's text is kept.
         assert_eq!(widths.clusters.len(), 2);
         assert_eq!(widths.cluster_width("x"), widths.char_width('x'));
+        assert_eq!(widths.clusters.len(), 2);
+
+        // A longer one is measured char by char, not shaped or cached.
+        let long = format!("a{}", "\u{20dd}".repeat(1 << 16));
+        let summed = long.chars().map(|ch| widths.char_width(ch)).sum::<f32>();
+        assert_eq!(widths.cluster_width(&long), summed);
         assert_eq!(widths.clusters.len(), 2);
     }
 }

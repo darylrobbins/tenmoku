@@ -17,8 +17,9 @@ use crate::{CharWidth, DisplayMap, DisplayRow, ExpandedRow, LongRows, RowIndex, 
 
 /// Longest row that is shaped whole. Of a longer row (minified files, data
 /// dumps), only a slice around the view is shaped, rather than stalling a
-/// frame; with soft wrap on, such a row is still to be wrapped and only its
-/// first this many bytes are shaped.
+/// frame, and never more than this many bytes of it at once; with soft wrap
+/// on, such a row is still to be wrapped and only its first this many bytes
+/// are shaped. Bytes are buffer bytes: tabs expand when shaped.
 pub const MAX_SHAPED_ROW_BYTES: usize = 8 * 1024;
 
 /// How far past each side of the view a long row's slice reaches, in ems.
@@ -607,28 +608,35 @@ pub fn layout_frame<M: TextMeasure>(
                 // drawn at least half as wide, relative to the index, as the
                 // slice's. Nothing shaped so far bounds how narrow the text
                 // after it is drawn, so if the text still ends short of the
-                // view's right edge, the third and last shape takes the rest
-                // of the row: that covers the view or reaches the row's end,
-                // whatever the shaper does.
-                let row_end = display_row.range.end;
+                // view's right edge, the third and last shape takes as much
+                // as a slice may hold: up to the row's end or
+                // `MAX_SHAPED_ROW_BYTES`, whichever is nearer. Shaping stays
+                // bounded whatever the shaper does; text drawn so narrow that
+                // even that ends short of the view leaves the rest of the
+                // view blank for the frame.
                 let shaped = f64::from(layout.line.width());
                 let short = view.end + slice_margin - (slice.start_x + shaped);
-                if short > 0. && slice.range.end < row_end {
+                let limit = if short > 0. {
+                    index.slice_limit(slice.range.start, widths)
+                } else {
+                    slice.range.end
+                };
+                if slice.range.end < limit {
                     slice = if shaped > 0. {
                         let indexed = index.x_for_offset(slice.range.end, widths) - slice.start_x;
                         index.widen(&slice, 2. * short * indexed / shaped, widths)
                     } else {
                         // Text shaped to nothing gives no ratio.
                         RowSlice {
-                            range: slice.range.start..row_end,
+                            range: slice.range.start..limit,
                             ..slice
                         }
                     };
                     layout = shape_slice(&slice);
                     if slice.start_x + f64::from(layout.line.width()) < view.end
-                        && slice.range.end < row_end
+                        && slice.range.end < limit
                     {
-                        slice.range.end = row_end;
+                        slice.range.end = limit;
                         layout = shape_slice(&slice);
                     }
                 }
@@ -862,5 +870,7 @@ mod cluster_row_tests;
 mod fold_gutter_tests;
 #[cfg(test)]
 mod long_row_tests;
+#[cfg(test)]
+mod slice_cap_tests;
 #[cfg(test)]
 mod tests;

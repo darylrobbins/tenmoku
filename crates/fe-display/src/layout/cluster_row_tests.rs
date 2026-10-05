@@ -14,18 +14,20 @@ use super::{
 use crate::long_row::CHUNK;
 
 const TEXT_WIDTH: f32 = WIDTH - GUTTER;
-const FAMILY: &str = "👨\u{200d}👩\u{200d}👧\u{200d}👦";
-const E_ACUTE: &str = "e\u{301}";
+pub(super) const FAMILY: &str = "👨\u{200d}👩\u{200d}👧\u{200d}👦";
+pub(super) const E_ACUTE: &str = "e\u{301}";
 
-fn cluster_advance(cluster: &str) -> f32 {
+pub(super) fn cluster_advance(cluster: &str) -> f32 {
     advance(cluster.chars().next().expect("not empty"))
 }
 
 /// Measures clusters whole, counting calls.
 #[derive(Default)]
-struct Clusters {
+pub(super) struct Clusters {
     chars: usize,
     clusters: usize,
+    /// The longest cluster measured.
+    pub(super) longest: usize,
 }
 
 impl CharWidth for Clusters {
@@ -36,6 +38,7 @@ impl CharWidth for Clusters {
 
     fn cluster_width(&mut self, cluster: &str) -> f32 {
         self.clusters += 1;
+        self.longest = self.longest.max(cluster.len());
         cluster_advance(cluster)
     }
 }
@@ -278,9 +281,11 @@ fn short_slice_is_widened() {
     let row = format!("abc{FAMILY}d{E_ACUTE}").repeat(1000);
     let mut editor = Editor::new(&row);
     let row_width = 1000. * 7. * CELL;
-    // The shaper draws everything a half to a twentieth as wide as the
-    // index measures it, in a narrow and a wide editor.
-    for (scale, width) in [(0.5, WIDTH), (0.25, WIDTH), (0.5, 4070.), (0.05, 4070.)] {
+    // The shaper draws everything a half to a tenth as wide as the index
+    // measures it, in a narrow and a wide editor. (A tenth in the wide one
+    // needs a slice longer than `MAX_SHAPED_ROW_BYTES`, which is capped:
+    // `slices_cover_the_view_however_narrowing_changes` checks that.)
+    for (scale, width) in [(0.5, WIDTH), (0.25, WIDTH), (0.5, 4070.), (0.1, WIDTH)] {
         editor.width = width;
         let text_width = width - GUTTER;
         for scroll_x in [row_width / 2., row_width - 3. * text_width, f32::MAX] {
@@ -346,18 +351,21 @@ fn clicks_outside_the_slice_land_on_cluster_boundaries() {
 #[test]
 fn clicks_past_a_narrowed_row_land_on_its_end() {
     // Drawn narrower than indexed, a slice that runs to the row's end stops
-    // short of the view, scrolled to the row's start or its end. A click
-    // past its text is past the row.
+    // short of the view, scrolled to the row's end. A click past its text is
+    // past the row. At the row's start, the slice is as long as a slice may
+    // be and still stops short, so a click past its text lands where the
+    // index puts it: 50 px past 500 `a`s and 307 families shaped 3114 px
+    // wide.
     let row = format!("{}{}", "a".repeat(500), FAMILY.repeat(400));
     let mut editor = Editor::new(&row);
     editor.width = 4070.;
-    for scroll_x in [0., f32::MAX] {
+    for (scroll_x, end, click) in [(f32::MAX, row.len(), row.len()), (0., 8175, 316)] {
         let shaper = &mut Shaper {
             cluster_scale: 0.1,
             ..Shaper::new(0.5)
         };
         let frame = editor.lay_out(0, scroll_x, false, shaper, &mut Vec::new());
-        assert_eq!(frame.rows[0].shown().end, row.len());
+        assert_eq!(frame.rows[0].shown().end, end);
         let position = Vec2 {
             x: frame.view_x(shaped(&frame.rows[0]).end) + 50.,
             y: LINE / 2.,
@@ -366,66 +374,8 @@ fn clicks_past_a_narrowed_row_land_on_its_end() {
         let text = editor.display.text();
         let widths = &mut Clusters::default();
         let offset = frame.offset_at(text, position, &mut editor.long_rows, widths);
-        assert_eq!(offset, row.len(), "at {scroll_x}");
+        assert_eq!(offset, click, "at {scroll_x}");
     }
-}
-
-#[test]
-fn long_clusters_stay_whole() {
-    // A 301-byte cluster within a chunk, and one longer than a chunk, which
-    // crosses a mark.
-    let tail = format!("ab{FAMILY}c{E_ACUTE}").repeat(30);
-    let mut row = format!("xy{}", tail);
-    let short = row.len();
-    row += &format!("a{}", "\u{301}".repeat(150));
-    row += &tail;
-    let long = row.len();
-    row += &format!("z{}", "\u{301}".repeat(CHUNK * 3 / 2));
-    row += &tail;
-
-    let text = Text::new(&row);
-    let mut boundaries = vec![(0, 0.)];
-    let mut x = 0.;
-    for (ix, cluster) in row.grapheme_indices(true) {
-        x += f64::from(cluster_advance(cluster));
-        boundaries.push((ix + cluster.len(), x));
-    }
-    let is_boundary = |offset| boundaries.iter().any(|&(at, _)| at == offset);
-    assert!(is_boundary(short + 301) && !is_boundary(short + 257));
-    assert!(is_boundary(long) && is_boundary(long + 1 + 3 * CHUNK));
-
-    let measure = &mut Clusters::default();
-    let mut index = RowIndex::new(&text, 0..row.len(), 4, measure);
-    for pair in boundaries.windows(2) {
-        let [(offset, x), (next, next_x)] = [pair[0], pair[1]];
-        assert_eq!(index.x_for_offset(offset, measure), x, "x of {offset}");
-        assert_eq!(index.offset_for_x(x, measure), offset);
-        assert_eq!(index.offset_for_x(next_x.next_down(), measure), offset);
-        assert_eq!(index.next_boundary(offset, measure), next);
-    }
-    assert_eq!(index.width(measure), x);
-
-    // Inside either, offsets clamp to its start. The long one is measured
-    // once, not again for each query inside it.
-    let x_of = |offset| {
-        boundaries
-            .iter()
-            .find(|b| b.0 == offset)
-            .expect("a boundary")
-            .1
-    };
-    for at in (short + 1..short + 301).step_by(2) {
-        assert_eq!(index.x_for_offset(at, measure), x_of(short));
-    }
-    let scanned = index.scanned();
-    let long_x = x_of(long);
-    for at in (long + 1..long + 1 + 3 * CHUNK).step_by(2) {
-        assert_eq!(index.x_for_offset(at, measure), long_x);
-        assert_eq!(index.next_boundary(at, measure), long + 1 + 3 * CHUNK);
-    }
-    let slice = index.slice(long_x + 2.0..long_x + 8., 0., measure);
-    assert_eq!(slice.range, long..long + 1 + 3 * CHUNK);
-    assert_eq!(index.scanned(), scanned);
 }
 
 #[test]
@@ -504,21 +454,24 @@ fn slices_cover_the_view_however_narrowing_changes() {
         shown.end < row.len() && end >= 4000. + 320.,
         "{shown:?} to {end}"
     );
-    // At a tenth, the second shape still ends short of the view, so the
-    // third takes the rest of the row.
+    // At a tenth, the first widening is as long as a slice may be, the
+    // `a`s and the families that fit in `MAX_SHAPED_ROW_BYTES`, and still
+    // ends short of the view, whose rest is left blank.
+    let capped = 0..500 + (MAX_SHAPED_ROW_BYTES - 500) / FAMILY.len() * FAMILY.len();
     let (row_shapes, shown, end) = lay_out(0.5, 0.1);
-    assert_eq!((row_shapes, shown), (3, 0..row.len()));
-    assert!(end >= 4000.);
+    assert_eq!((row_shapes, shown), (2, capped.clone()));
+    assert!(end < 4000.);
     // A slice shaped to nothing gives no ratio to widen by: the first
-    // widening takes the rest of the row.
+    // widening is as long as a slice may be.
     let (row_shapes, shown, _) = lay_out(0., 0.);
-    assert_eq!((row_shapes, shown), (2, 0..row.len()));
+    assert_eq!((row_shapes, shown), (2, capped));
 
     // Rows whose narrowing changes once, twice or all along them, with
     // ASCII or clusters the narrower, down to clusters drawn as nothing.
     // Each is scrolled to put changes near its start and far along it in
     // the view, at its right edge, in its margin, and past it, where the
-    // first widening reaches or doesn't.
+    // first widening reaches or doesn't. A slice covers the view, or it
+    // reaches the row's end or is as long as a slice may be.
     let rows = [
         format!("{}{}", "a".repeat(1500), FAMILY.repeat(2000)),
         format!(
@@ -540,6 +493,11 @@ fn slices_cover_the_view_however_narrowing_changes() {
     for row in &rows {
         let mut editor = Editor::new(row);
         editor.width = 4070.;
+        let boundaries: Vec<usize> = row
+            .grapheme_indices(true)
+            .map(|(ix, _)| ix)
+            .chain([row.len()])
+            .collect();
         // The x of each change between single chars and clusters.
         let mut changes = Vec::new();
         let mut x = 0.;
@@ -574,12 +532,17 @@ fn slices_cover_the_view_however_narrowing_changes() {
                 let row = &frame.rows[0];
                 let view_end = f64::from(frame.scroll.x) + text_width;
                 let shaped = shaped(row);
-                let context =
-                    format!("{shaped:?} reaches {view_end}, {scale}/{cluster_scale} at {scroll_x}");
-                assert!(
-                    shaped.end >= view_end || row.shown().end == row.end,
-                    "{context}"
+                let shown = row.shown();
+                let context = format!(
+                    "{shaped:?} ({shown:?}) reaches {view_end}, {scale}/{cluster_scale} at {scroll_x}"
                 );
+                assert!(shown.len() <= MAX_SHAPED_ROW_BYTES, "{context}");
+                if shaped.end < view_end && shown.end < row.end {
+                    // The last cluster boundary within the cap.
+                    let cap = shown.start + MAX_SHAPED_ROW_BYTES;
+                    let limit = boundaries[boundaries.partition_point(|&at| at <= cap) - 1];
+                    assert_eq!(shown.end, limit, "{context}");
+                }
                 let row_shapes = shaper.shaped.iter().filter(|&&len| len > 8).count();
                 assert!(
                     (1..=3).contains(&row_shapes),

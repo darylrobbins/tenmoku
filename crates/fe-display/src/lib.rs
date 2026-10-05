@@ -14,7 +14,7 @@ mod wrap_map;
 pub use display_map::{DisplayMap, DisplayRow, WRAP_SLICE_BYTES};
 pub use fe_text::Bias;
 pub use fold_map::Fold;
-pub use long_row::{LongRows, RowIndex, RowSlice};
+pub use long_row::{LongRows, MAX_CLUSTER_BYTES, RowIndex, RowSlice};
 
 /// Measures chars for soft wrapping, in the unit of the wrap width (the UI
 /// uses pixels).
