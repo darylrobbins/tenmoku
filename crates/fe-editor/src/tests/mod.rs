@@ -4,6 +4,7 @@ mod commands;
 mod fold_candidates;
 mod laws;
 mod pending_wrap;
+mod shared_buffer;
 
 /// Builds a model from text where `|` marks carets and `[`…`]` selections
 /// (head at `]`).

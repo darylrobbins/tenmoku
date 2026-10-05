@@ -3,9 +3,11 @@
 //! Must never depend on GPUI.
 
 use std::{
+    cell::{Ref, RefCell, RefMut},
     io,
     ops::{Range, RangeInclusive},
     path::{Path, PathBuf},
+    rc::Rc,
 };
 
 use fe_buffer::{
@@ -56,8 +58,25 @@ impl Movement {
     }
 }
 
+/// One view's editing state over a buffer. Models made by
+/// [`EditorModel::split`] share one buffer, and with it the text, undo history
+/// and dirty state; each keeps its own selections, folds and wrap.
+///
+/// Another model's edits reach this one when it catches up: on
+/// [`EditorModel::sync_display`] (which the UI calls every frame), when an
+/// edit through [`EditorModel::buffer_mut`] ends, and before any command
+/// that moves or edits the selections or computes its own positions.
+///
+/// Reads through `&self` can't catch up. They show the model consistently
+/// as of its last catch-up: [`EditorModel::text`], [`EditorModel::snapshot`],
+/// [`EditorModel::display`], [`EditorModel::selections`] and
+/// [`EditorModel::copy_text`] all agree. Methods that take positions or rows
+/// from the caller read them in those same coordinates, since that's what
+/// the caller was shown.
 pub struct EditorModel {
-    buffer: Buffer,
+    buffer: Rc<RefCell<Buffer>>,
+    /// The buffer as of this model's last catch-up.
+    snapshot: BufferSnapshot,
     selections: SelectionSet,
     /// Char column, within its display row, each selection's head tries to
     /// keep while moving vertically.
@@ -81,10 +100,12 @@ pub struct EditorModel {
 impl EditorModel {
     pub fn new(mut buffer: Buffer, path: Option<PathBuf>) -> Self {
         let events = buffer.subscribe();
-        let selections = SelectionSet::caret(buffer.current(), 0);
-        let display = DisplayMap::new(buffer.current(), 4);
+        let snapshot = buffer.snapshot();
+        let selections = SelectionSet::caret(&snapshot, 0);
+        let display = DisplayMap::new(&snapshot, 4);
         Self {
-            buffer,
+            buffer: Rc::new(RefCell::new(buffer)),
+            snapshot,
             selections,
             goals: Vec::new(),
             tab_size: 4,
@@ -104,6 +125,39 @@ impl EditorModel {
         let file = std::fs::File::open(path)?;
         let buffer = Buffer::from_reader(io::BufReader::with_capacity(256 * 1024, file))?;
         Ok(Self::new(buffer, Some(path.to_path_buf())))
+    }
+
+    /// A second model over the same buffer, for a split: same path, tab size,
+    /// wrap and selections, but its own display rows with nothing folded.
+    /// Its char widths are [`Monospace`] until set.
+    pub fn split(&self) -> EditorModel {
+        let (events, snapshot) = {
+            let mut buffer = self.buffer.borrow_mut();
+            (buffer.subscribe(), buffer.snapshot())
+        };
+        let mut model = Self {
+            buffer: Rc::clone(&self.buffer),
+            display: DisplayMap::new(&snapshot, self.tab_size),
+            snapshot,
+            selections: self.selections.clone(),
+            goals: Vec::new(),
+            tab_size: self.tab_size,
+            path: self.path.clone(),
+            events,
+            widths: Box::new(Monospace),
+            soft_wrap: self.soft_wrap,
+            wrap_width: self.wrap_width,
+            origin: Origin::User,
+            transactions: None,
+        };
+        model.apply_wrap();
+        model
+    }
+
+    /// Whether `other` edits the same buffer, made from this one (or it from
+    /// this) by [`EditorModel::split`].
+    pub fn shares_buffer_with(&self, other: &EditorModel) -> bool {
+        Rc::ptr_eq(&self.buffer, &other.buffer)
     }
 
     /// Saves atomically: writes a new file beside the target and renames it
@@ -140,12 +194,12 @@ impl EditorModel {
             temp.as_file().set_permissions(permissions)?;
         }
         let mut out = io::BufWriter::new(temp);
-        self.buffer.write_to(&mut out)?;
+        self.buffer.borrow().write_to(&mut out)?;
         let temp = out.into_inner().map_err(|error| error.into_error())?;
         temp.as_file().sync_all()?;
         // Dropping `temp` on any error above deletes it.
         temp.persist(&target).map_err(|error| error.error)?;
-        self.buffer.did_save();
+        self.buffer.borrow_mut().did_save();
         Ok(())
     }
 
@@ -153,20 +207,33 @@ impl EditorModel {
         self.path.as_deref()
     }
 
-    pub fn buffer(&self) -> &Buffer {
-        &self.buffer
+    /// The shared buffer, as it is now. Don't hold the borrow across calls
+    /// into this or another model of the buffer.
+    pub fn buffer(&self) -> Ref<'_, Buffer> {
+        self.buffer.borrow()
     }
 
-    pub fn buffer_mut(&mut self) -> &mut Buffer {
-        &mut self.buffer
+    /// The shared buffer, to edit directly. Dropping the guard catches this
+    /// model up; don't hold it across calls into another model of the
+    /// buffer.
+    pub fn buffer_mut(&mut self) -> BufferMut<'_> {
+        BufferMut {
+            buffer: Some(self.buffer.borrow_mut()),
+            snapshot: &mut self.snapshot,
+            display: &mut self.display,
+            widths: &mut self.widths,
+            events: &self.events,
+        }
     }
 
+    /// The buffer as of the last catch-up (see [`EditorModel`]).
     pub fn snapshot(&self) -> &BufferSnapshot {
-        self.buffer.current()
+        &self.snapshot
     }
 
+    /// The text as of the last catch-up (see [`EditorModel`]).
     pub fn text(&self) -> &Text {
-        self.buffer.text()
+        self.snapshot.text()
     }
 
     pub fn tab_size(&self) -> usize {
@@ -179,17 +246,29 @@ impl EditorModel {
         self.wrap_near_cursor();
     }
 
-    /// The display rows, as of the last [`EditorModel::sync_display`].
-    /// The model syncs after its own edits; call that after editing
-    /// through [`EditorModel::buffer_mut`].
+    /// The display rows, as of the last catch-up (see [`EditorModel`]).
     pub fn display(&self) -> &DisplayMap {
         &self.display
     }
 
-    /// Brings the display rows up to date with the buffer. Wrapping rows
-    /// still pending is [`EditorModel::wrap_pending`]'s job.
+    /// Catches up with the buffer: takes in edits made through other models
+    /// or [`EditorModel::buffer_mut`], bringing the display rows up to date.
+    /// Wrapping rows still pending is [`EditorModel::wrap_pending`]'s job.
     pub fn sync_display(&mut self) {
-        self.display.sync(self.buffer.current(), &mut *self.widths);
+        self.refresh();
+        // Nothing reads events outside undo and redo, which drain them
+        // first; this keeps them from piling up while others edit.
+        self.events.drain();
+    }
+
+    /// Takes a new snapshot and syncs the display rows to it, if the buffer
+    /// moved on. Leaves the events for the caller.
+    fn refresh(&mut self) {
+        let current = refreshed(&self.buffer.borrow(), &self.snapshot);
+        if let Some(current) = current {
+            self.snapshot = current;
+            self.display.sync(&self.snapshot, &mut *self.widths);
+        }
     }
 
     /// Measures chars for soft wrap; [`Monospace`] until set.
@@ -280,9 +359,14 @@ impl EditorModel {
     /// Folds the rows each selection spans or, for a caret, the fold
     /// `candidate_at` gives for its row, else the indented block it heads or
     /// is in. Carets folded away move to the fold's header.
+    ///
+    /// `candidate_at` gives rows of [`EditorModel::text`]: those folds are
+    /// made there and then caught up with the buffer. Indented blocks are
+    /// found in the buffer as it is now.
     pub fn fold(&mut self, candidate_at: &dyn Fn(u32) -> Option<RangeInclusive<u32>>) {
-        self.sync_display();
         let text = self.text().clone();
+        let shown = self.snapshot.version();
+        let mut unfolded = Vec::new();
         for selection in self.selections() {
             let start = text.offset_to_point(selection.range.start);
             let end = text.offset_to_point(selection.range.end);
@@ -294,44 +378,59 @@ impl EditorModel {
             let rows = if last > start.row {
                 Some(start.row..=last)
             } else {
-                candidate_at(start.row).or_else(|| indented_block(&text, start.row, self.tab_size))
+                candidate_at(start.row)
             };
-            if let Some(rows) = rows {
+            match rows {
+                Some(rows) => _ = self.display.fold(rows),
+                None => unfolded.push(selection.range.start),
+            }
+        }
+        self.sync_display();
+        let text = self.text().clone();
+        for offset in unfolded {
+            let offset = self.snapshot.map_offset(offset, Bias::Left, shown);
+            let row = text.offset_to_point(offset).row;
+            if let Some(rows) = indented_block(&text, row, self.tab_size) {
                 self.display.fold(rows);
             }
         }
         self.move_folded_carets();
     }
 
-    /// Folds every one of `candidates`, or with none, every indented block.
-    /// Carets folded away move to the fold's header.
+    /// Folds every one of `candidates`, rows of [`EditorModel::text`], or
+    /// with none, every indented block in the buffer as it is now. Carets
+    /// folded away move to the fold's header.
     pub fn fold_all(&mut self, candidates: impl IntoIterator<Item = RangeInclusive<u32>>) {
-        self.sync_display();
         let mut candidates = candidates.into_iter().peekable();
         if candidates.peek().is_some() {
             self.display.fold_many(candidates);
+            self.sync_display();
         } else {
+            self.sync_display();
             let blocks = indented_blocks(self.text(), self.tab_size);
             self.display.fold_many(blocks);
         }
         self.move_folded_carets();
     }
 
-    /// Folds `rows` behind their first. Carets folded away move to it.
+    /// Folds `rows`, rows of [`EditorModel::text`], behind their first.
+    /// Carets folded away move to it.
     pub fn fold_rows(&mut self, rows: RangeInclusive<u32>) {
-        self.sync_display();
         self.display.fold(rows);
+        self.sync_display();
         self.move_folded_carets();
     }
 
-    /// Unfolds the folds whose header or hidden rows overlap `rows`.
+    /// Unfolds the folds whose header or hidden rows overlap `rows`, rows of
+    /// [`EditorModel::text`].
     pub fn unfold_rows(&mut self, rows: RangeInclusive<u32>) {
-        self.sync_display();
         self.display.unfold(rows);
+        self.sync_display();
     }
 
     /// Unfolds the folds on the rows of each selection.
     pub fn unfold(&mut self) {
+        self.sync_display();
         for selection in self.selections() {
             let start = self.text().offset_to_point(selection.range.start).row;
             let end = self.text().offset_to_point(selection.range.end).row;
@@ -378,12 +477,13 @@ impl EditorModel {
     }
 
     pub fn is_dirty(&self) -> bool {
-        self.buffer.is_dirty()
+        self.buffer.borrow().is_dirty()
     }
 
-    /// The selections, sorted by position.
+    /// The selections, sorted by position, in [`EditorModel::text`]'s
+    /// offsets.
     pub fn selections(&self) -> Vec<ResolvedSelection> {
-        self.selections.resolve(self.buffer.current())
+        self.selections.resolve(&self.snapshot)
     }
 
     /// The selection that scrolling follows: the last one.
@@ -398,10 +498,11 @@ impl EditorModel {
         ExpandedRow::new(&self.text().row_to_string(row), self.tab_size)
     }
 
-    /// Replaces all selections. They're sorted and overlapping ones merged.
+    /// Replaces all selections, given in [`EditorModel::text`]'s offsets.
+    /// They're sorted and overlapping ones merged.
     pub fn set_selections(&mut self, selections: impl IntoIterator<Item = ResolvedSelection>) {
         self.goals.clear();
-        self.selections = SelectionSet::from_resolved(self.buffer.current(), selections);
+        self.selections = SelectionSet::from_resolved(&self.snapshot, selections);
     }
 
     /// Places a single caret.
@@ -430,6 +531,7 @@ impl EditorModel {
     }
 
     pub fn select_all(&mut self) {
+        self.sync_display();
         let len = self.text().len();
         self.select_range(0..len, false);
     }
@@ -666,6 +768,7 @@ impl EditorModel {
 
     /// Replaces every selection with `text` and leaves a caret after each.
     pub fn insert(&mut self, text: &str) {
+        self.sync_display();
         let selections = self.selections();
         let edits = selections
             .iter()
@@ -676,6 +779,7 @@ impl EditorModel {
     /// Like [`EditorModel::insert`], but if `text` has one line per selection,
     /// each selection gets its own line.
     pub fn paste(&mut self, text: &str) {
+        self.sync_display();
         let selections = self.selections();
         let lines: Vec<&str> = text.lines().collect();
         if selections.len() > 1 && lines.len() == selections.len() {
@@ -692,6 +796,7 @@ impl EditorModel {
 
     /// Inserts a line break, copying the current row's indentation.
     pub fn newline(&mut self) {
+        self.sync_display();
         let edits = self
             .selections()
             .into_iter()
@@ -707,6 +812,7 @@ impl EditorModel {
 
     /// Inserts spaces up to the next tab stop at each caret.
     pub fn tab(&mut self) {
+        self.sync_display();
         let edits = self
             .selections()
             .into_iter()
@@ -736,6 +842,7 @@ impl EditorModel {
 
     /// Deletes each selection, or for carets the range `around` gives.
     fn delete_with(&mut self, around: impl Fn(&Self, usize) -> Range<usize>) {
+        self.sync_display();
         let edits = self
             .selections()
             .into_iter()
@@ -779,6 +886,7 @@ impl EditorModel {
 
     /// Copies, then deletes the selections (or caret rows).
     pub fn cut(&mut self) -> String {
+        self.sync_display();
         let (copied, whole_rows) = self.copy_text();
         if whole_rows {
             let edits = self
@@ -794,15 +902,17 @@ impl EditorModel {
     }
 
     pub fn undo(&mut self) -> Result<Option<TransactionId>, UndoError> {
-        self.events.drain();
-        let result = self.buffer.undo(|origin| *origin == self.origin);
+        self.sync_display();
+        let ours = &self.origin;
+        let result = self.buffer.borrow_mut().undo(|origin| origin == ours);
         self.place_carets_after_history_change(EditKind::Undo);
         self.produced(result)
     }
 
     pub fn redo(&mut self) -> Result<Option<TransactionId>, UndoError> {
-        self.events.drain();
-        let result = self.buffer.redo(|origin| *origin == self.origin);
+        self.sync_display();
+        let ours = &self.origin;
+        let result = self.buffer.borrow_mut().redo(|origin| origin == ours);
         self.place_carets_after_history_change(EditKind::Redo);
         self.produced(result)
     }
@@ -835,7 +945,7 @@ impl EditorModel {
     }
 
     fn place_carets_after_history_change(&mut self, kind: EditKind) {
-        self.sync_display();
+        self.refresh();
         let last = self
             .events
             .drain()
@@ -879,16 +989,58 @@ impl EditorModel {
             carets.push(caret(start + text.len()));
             delta += text.len() as isize - range.len() as isize;
         }
-        self.events.drain();
-        let id = self.buffer.edit(merged, self.origin.clone());
+        let id = self.buffer.borrow_mut().edit(merged, self.origin.clone());
         if let (Some(id), Some(transactions)) = (id, &mut self.transactions) {
             transactions.push(id);
         }
-        self.events.drain();
         self.sync_display();
         self.goals.clear();
         self.set_selections(carets);
     }
+}
+
+/// The shared buffer, borrowed for editing by [`EditorModel::buffer_mut`].
+/// Dropping it catches the model up with the edits made through it.
+pub struct BufferMut<'a> {
+    /// `None` only while dropping.
+    buffer: Option<RefMut<'a, Buffer>>,
+    snapshot: &'a mut BufferSnapshot,
+    display: &'a mut DisplayMap,
+    widths: &'a mut Box<dyn CharWidth>,
+    events: &'a Subscription,
+}
+
+impl std::ops::Deref for BufferMut<'_> {
+    type Target = Buffer;
+
+    fn deref(&self) -> &Buffer {
+        self.buffer.as_ref().expect("borrowed until dropped")
+    }
+}
+
+impl std::ops::DerefMut for BufferMut<'_> {
+    fn deref_mut(&mut self) -> &mut Buffer {
+        self.buffer.as_mut().expect("borrowed until dropped")
+    }
+}
+
+impl Drop for BufferMut<'_> {
+    fn drop(&mut self) {
+        let buffer = self.buffer.take().expect("dropped once");
+        let current = refreshed(&buffer, self.snapshot);
+        // Measuring may read the buffer through another model.
+        drop(buffer);
+        if let Some(current) = current {
+            *self.snapshot = current;
+            self.display.sync(self.snapshot, &mut **self.widths);
+        }
+        self.events.drain();
+    }
+}
+
+/// `buffer`'s current snapshot, if it moved on from `snapshot`.
+fn refreshed(buffer: &Buffer, snapshot: &BufferSnapshot) -> Option<BufferSnapshot> {
+    (buffer.version() != snapshot.version()).then(|| buffer.snapshot())
 }
 
 fn caret(offset: usize) -> ResolvedSelection {
