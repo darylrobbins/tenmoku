@@ -35,6 +35,8 @@ typedef int numbers[4];
 
 typedef void (*callback)(int);
 
+typedef void (/* note */*noted_callback)(int);
+
 typedef int pair_a, pair_b;
 
 static int add(int a, int b) {
@@ -51,6 +53,10 @@ char ***names(void) {
 
 int (twice)(int x) {
     return 2 * x;
+}
+
+int (/* note */thrice)(int x) {
+    return 3 * x;
 }
 
 void (*handler(int sig, void (*fallback)(int)))(int) {

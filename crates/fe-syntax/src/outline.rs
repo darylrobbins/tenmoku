@@ -187,6 +187,9 @@ impl OutlineJob {
         let mut found: Vec<Found> = Vec::new();
         let mut by_node: HashMap<usize, usize> = HashMap::new();
         let mut truncated = false;
+        // Once truncated, the sections still open: headings past the cap
+        // aren't listed, but they end those sections.
+        let mut open: Option<OpenSections> = None;
         while let Some(found_match) = matches.next() {
             let mut item: Option<(OutlineKind, Node)> = None;
             let mut name: Option<Range<usize>> = None;
@@ -205,24 +208,30 @@ impl OutlineJob {
             let Some((kind, node)) = item else {
                 continue;
             };
-            let mut section = None;
+            let section = match kind {
+                OutlineKind::Heading(level) => Some(Section::of(node, level)),
+                _ => None,
+            };
+            if let Some(open) = &open {
+                if let Some(section) = section {
+                    open.close(&mut found, node.start_byte(), section);
+                }
+                continue;
+            }
             let name_range = match kind {
                 // Headings come from tree-sitter-md, whose node kinds these
                 // are.
-                OutlineKind::Heading(level) => {
-                    section = Some(Section::of(node, level));
-                    match name {
-                        Some(name) if node.kind() == "atx_heading" => {
-                            without_closing_sequence(text, name)
-                        }
-                        Some(name) => name,
-                        // An empty ATX heading.
-                        None => {
-                            let marker = node.child(0).map_or(node.start_byte(), |m| m.end_byte());
-                            marker..marker
-                        }
+                OutlineKind::Heading(_) => match name {
+                    Some(name) if node.kind() == "atx_heading" => {
+                        without_closing_sequence(text, name)
                     }
-                }
+                    Some(name) => name,
+                    // An empty ATX heading.
+                    None => {
+                        let marker = node.child(0).map_or(node.start_byte(), |m| m.end_byte());
+                        marker..marker
+                    }
+                },
                 _ => match name {
                     Some(name) => name,
                     None => continue,
@@ -251,7 +260,15 @@ impl OutlineJob {
             }
             if found.len() == MAX_OUTLINE_ITEMS {
                 truncated = true;
-                break;
+                let sections = extend_to_sections(&mut found);
+                if sections.is_empty() {
+                    break;
+                }
+                if let Some(section) = section {
+                    sections.close(&mut found, node.start_byte(), section);
+                }
+                open = Some(sections);
+                continue;
             }
             by_node.insert(node.id(), found.len());
             found.push(Found {
@@ -262,7 +279,9 @@ impl OutlineJob {
                 section,
             });
         }
-        extend_to_sections(&mut found);
+        if !truncated {
+            extend_to_sections(&mut found);
+        }
         // By start, longer first, so a parent comes before its children.
         found.sort_by_key(|found| (found.range.start, std::cmp::Reverse(found.range.end)));
         let mut items: Vec<OutlineItem> = Vec::with_capacity(found.len());
@@ -334,8 +353,10 @@ impl Section {
 
 /// Gives each heading the range of its section: from the heading to the
 /// next heading of the same or a higher level in its container, else to
-/// the container's end. Ranges found this way nest, as levels do.
-fn extend_to_sections(found: &mut [Found]) {
+/// the container's end. Ranges found this way nest, as levels do. Returns
+/// the headings whose sections reach their container's end, for headings
+/// past the cap to end.
+fn extend_to_sections(found: &mut [Found]) -> OpenSections {
     let mut headings: Vec<(usize, Section)> = (found.iter().enumerate())
         .filter_map(|(ix, found)| Some((ix, found.section?)))
         .collect();
@@ -355,6 +376,30 @@ fn extend_to_sections(found: &mut [Found]) {
         }
         stack.push((ix, section.level));
     }
+    open.retain(|_, stack| !stack.is_empty());
+    OpenSections(open)
+}
+
+/// The headings of each container whose sections are still open, outermost
+/// first, as indexes into the found items and levels.
+struct OpenSections(HashMap<usize, Vec<(usize, u8)>>);
+
+impl OpenSections {
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Ends the open sections that a heading at `start`, which isn't listed,
+    /// ends. They stay open for others, since such headings may come in any
+    /// order.
+    fn close(&self, found: &mut [Found], start: usize, section: Section) {
+        for &(ix, level) in self.0.get(&section.container).into_iter().flatten() {
+            let range = &mut found[ix].range;
+            if section.level <= level && range.start < start {
+                range.end = range.end.min(start);
+            }
+        }
+    }
 }
 
 /// `a` and `b` and everything between.
@@ -368,10 +413,13 @@ fn merge(a: Range<usize>, b: Range<usize>) -> Range<usize> {
 fn declared_name(mut node: Node) -> Node {
     while node.kind().ends_with("_declarator") {
         let inner = node.child_by_field_name("declarator").or_else(|| {
-            // Parenthesized and attributed declarators have no field.
+            // Parenthesized and attributed declarators have no field. Their
+            // other named children are modifiers, attributes and comments.
             let mut cursor = node.walk();
-            node.named_children(&mut cursor)
-                .find(|child| !matches!(child.kind(), "ms_call_modifier" | "attribute_declaration"))
+            node.named_children(&mut cursor).find(|child| {
+                let kind = child.kind();
+                kind.ends_with("_declarator") || kind.ends_with("identifier")
+            })
         });
         match inner {
             Some(inner) => node = inner,
@@ -412,25 +460,28 @@ fn name(text: &Text, range: Range<usize>) -> String {
 /// An ATX heading's content without its closing sequence, as in `## D ##`:
 /// the `#`s at the end when a space comes before them, or when they're all
 /// there is, and the spaces around them. CommonMark leaves them out of the
-/// heading; the grammar keeps them in its content.
+/// heading; the grammar keeps them in its content. Only spaces and tabs
+/// count here: `# T #` followed by a nonbreaking space keeps its `#`.
 fn without_closing_sequence(text: &Text, content: Range<usize>) -> Range<usize> {
-    // The end of the last char other than whitespace and, when that char
-    // ends a run of #s after a space, the end of the text before the run.
+    // The end of the last char other than a space or tab and, when that
+    // char ends a run of #s after a space, the end of the text before the
+    // run.
     let mut end = content.start;
     let mut run: Option<usize> = None;
     let mut offset = content.start;
     let mut after_space = true;
     for chunk in chunks(text, content.clone()) {
         for c in String::from_utf8_lossy(chunk).chars() {
+            let space = matches!(c, ' ' | '\t');
             if c == '#' {
                 if after_space {
                     run = Some(end);
                 }
-            } else if !c.is_whitespace() {
+            } else if !space {
                 run = None;
             }
             offset += c.len_utf8();
-            after_space = c.is_whitespace();
+            after_space = space;
             if !after_space {
                 end = offset;
             }

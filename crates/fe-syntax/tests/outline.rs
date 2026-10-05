@@ -453,6 +453,39 @@ fn atx_closing_sequences_are_left_out_of_names() {
     assert_eq!(names, ["T", "T", "T2 \\#", "a #", "a#", "", &cut, "S #"]);
     let only_hashes = &outline.items[5];
     assert!(only_hashes.name_range.is_empty());
+
+    // Only spaces and tabs set a closing sequence apart, not a nonbreaking
+    // space before or after it.
+    let outline = outline_of("markdown", "# T\u{a0}#\n\n# T #\u{a0}\n\n# T\t#\t\n");
+    let names: Vec<_> = (outline.items.iter())
+        .map(|item| item.name.as_str())
+        .collect();
+    assert_eq!(names, ["T #", "T #", "T"]);
+}
+
+#[test]
+fn omitted_headings_end_sections() {
+    // The cap leaves out the last two headings, which still end the
+    // sections of the listed ones.
+    let mut text = "# top\n".to_owned();
+    for ix in 1..MAX_OUTLINE_ITEMS {
+        writeln!(text, "## s{ix}").unwrap();
+    }
+    text.push_str("## same\nbody\n# higher\ntail\n");
+    let outline = outline_of("markdown", &text);
+    assert!(outline.truncated);
+    assert_eq!(outline.items.len(), MAX_OUTLINE_ITEMS);
+    let at = |s: &str| text.find(s).unwrap();
+    let last = outline.items.last().unwrap();
+    assert_eq!(last.name, format!("s{}", MAX_OUTLINE_ITEMS - 1));
+    assert_eq!(last.range.end, at("## same"));
+    assert_eq!(outline.items[0].range, 0..at("# higher"));
+    assert_eq!(
+        outline.item_at(at("## same") - 1),
+        Some(MAX_OUTLINE_ITEMS - 1)
+    );
+    assert_eq!(outline.item_at(at("body")), Some(0));
+    assert_eq!(outline.item_at(at("tail")), None);
 }
 
 #[test]
