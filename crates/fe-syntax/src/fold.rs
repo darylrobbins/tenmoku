@@ -614,11 +614,10 @@ impl Candidates<'_> {
         let first = match self.class(node) {
             Class::Node => node.start_position().row,
             Class::Body => {
-                let header = std::iter::successors(node.prev_sibling(), Node::prev_sibling)
-                    .find(|node| !node.is_extra());
-                match header {
+                let parent = node.parent()?;
+                match header(parent, node) {
                     Some(header) => header.end_position().row,
-                    None => node.parent()?.start_position().row,
+                    None => parent.start_position().row,
                 }
             }
             Class::Other | Class::Closer => return None,
@@ -710,6 +709,30 @@ impl Candidates<'_> {
     }
 }
 
+/// The last of `parent`'s children before `node` that isn't an extra, such
+/// as a comment. One pass forward over them: `Node::prev_sibling` rescans
+/// the earlier siblings on each call, so stepping back over many comments
+/// with it takes time quadratic in their number.
+fn header<'tree>(parent: Node<'tree>, node: Node<'tree>) -> Option<Node<'tree>> {
+    let mut cursor = parent.walk();
+    if !cursor.goto_first_child() {
+        return None;
+    }
+    let mut header = None;
+    loop {
+        let child = cursor.node();
+        if child == node {
+            return header;
+        }
+        if !child.is_extra() {
+            header = Some(child);
+        }
+        if !cursor.goto_next_sibling() {
+            return header;
+        }
+    }
+}
+
 /// The last child of the cursor's node with any text, leaving the cursor on
 /// it.
 fn last_child<'tree>(cursor: &mut TreeCursor<'tree>) -> Option<Node<'tree>> {
@@ -727,6 +750,8 @@ fn last_child<'tree>(cursor: &mut TreeCursor<'tree>) -> Option<Node<'tree>> {
     }
 }
 
+#[cfg(test)]
+mod large_prefix_tests;
 #[cfg(test)]
 mod lookup_tests;
 #[cfg(test)]
