@@ -591,3 +591,72 @@ fn slices_cover_the_view_however_narrowing_changes() {
         }
     }
 }
+
+/// Proportional ASCII, with each multi-char cluster narrower than its first
+/// char.
+struct NarrowClusters;
+
+impl CharWidth for NarrowClusters {
+    fn char_width(&mut self, ch: char) -> f32 {
+        if ch == 'i' { 3. } else { advance(ch) }
+    }
+
+    fn cluster_width(&mut self, _: &str) -> f32 {
+        2.
+    }
+}
+
+#[test]
+fn proportional_ascii_finds_narrower_clusters() {
+    // Combining marks on narrow and wide ASCII, alone, in runs and among
+    // plain ASCII.
+    let mut row = E_ACUTE.repeat(3000);
+    let pieces = format!("ab{E_ACUTE}ci\u{301}i{E_ACUTE}{E_ACUTE}de");
+    while row.len() < 3 * CHUNK {
+        row += &pieces;
+    }
+    let text = Text::new(&row);
+    let measure = &mut NarrowClusters;
+    let mut boundaries = vec![(0, 0.)];
+    let mut x = 0.;
+    for (ix, cluster) in row.grapheme_indices(true) {
+        x += f64::from(if cluster.chars().nth(1).is_some() {
+            measure.cluster_width(cluster)
+        } else {
+            measure.char_width(cluster.chars().next().expect("not empty"))
+        });
+        boundaries.push((ix + cluster.len(), x));
+    }
+
+    let mut index = RowIndex::new(&text, 0..row.len(), 4, measure);
+    // A query inside the first cluster finds its start, not the char past
+    // it.
+    assert_eq!(index.offset_for_x(2., measure), 3);
+    assert_eq!(index.slice(0.0..5., 0., measure).range, 0..9);
+    // The first view scans little.
+    index.slice(0.0..800., 200., measure);
+    assert!(index.scanned() <= 4 * CHUNK, "{} scanned", index.scanned());
+
+    for pair in boundaries.windows(2) {
+        let [(offset, x), (next, next_x)] = [pair[0], pair[1]];
+        assert_eq!(index.x_for_offset(offset, measure), x, "x of {offset}");
+        assert_eq!(index.offset_for_x(x, measure), offset);
+        assert_eq!(index.offset_for_x((x + next_x) / 2., measure), offset);
+        assert_eq!(index.offset_for_x(next_x.next_down(), measure), offset);
+        assert_eq!(index.next_boundary(offset, measure), next);
+    }
+    assert_eq!(index.width(measure), x);
+
+    let is_boundary = |offset| boundaries.iter().any(|&(at, _)| at == offset);
+    for left in (0..(x as usize)).step_by(97) {
+        let left = left as f64;
+        for (view, margin) in [(5., 0.), (f64::from(TEXT_WIDTH), 200.)] {
+            let slice = index.slice(left..left + view, margin, measure);
+            assert!(is_boundary(slice.range.start), "{slice:?}");
+            assert!(is_boundary(slice.range.end), "{slice:?}");
+            assert!(slice.start_x <= (left - margin).max(0.), "{slice:?}");
+            let end_x = index.x_for_offset(slice.range.end, measure);
+            assert!(end_x >= left + view + margin || end_x == x, "{slice:?}");
+        }
+    }
+}

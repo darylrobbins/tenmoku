@@ -368,7 +368,8 @@ impl RowIndex {
     /// target, it's `Err` with the last cluster boundary it's sure of: before
     /// the first char that isn't printable ASCII, or, if the char at `stop`
     /// (short of `bound`) extends the last one, as a combining mark does,
-    /// before that one.
+    /// before that one. So too before a char that crosses an x target but
+    /// is extended, since its cluster may be narrower than it.
     fn walk_ascii(
         &self,
         from: Position,
@@ -421,6 +422,12 @@ impl RowIndex {
                         && next_x > target_x
                     {
                         self.count(chars + 1);
+                        // A combining mark after it may make its cluster
+                        // narrower than it, so segment from its start.
+                        let after = from.offset + chars + 1;
+                        if after < stop && self.extends_cluster(after) {
+                            return Err(position(chars, x));
+                        }
                         return Ok(position(chars, x));
                     }
                     (chars, x, last_x) = (chars + 1, next_x, x);
