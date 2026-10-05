@@ -1692,6 +1692,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "fe-buffer",
+ "fe-syntax",
  "log",
  "proptest",
  "rand 0.9.5",
