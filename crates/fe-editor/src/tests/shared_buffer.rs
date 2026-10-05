@@ -199,3 +199,207 @@ fn catching_up_holds_no_borrow_while_measuring() {
     assert_eq!(counts.get().1, 0);
     assert_eq!(b.display().row_count(), 3);
 }
+
+/// An edit for [`EditsOnce`] to make.
+type Hook = Rc<RefCell<Option<Box<dyn FnOnce()>>>>;
+
+/// Measures like [`Monospace`], but the first non-ASCII char measured while
+/// an edit is hooked makes it, as a width that edited through another model
+/// would.
+struct EditsOnce(Hook);
+
+impl CharWidth for EditsOnce {
+    fn char_width(&mut self, ch: char) -> f32 {
+        let edit = if ch.is_ascii() {
+            None
+        } else {
+            self.0.borrow_mut().take()
+        };
+        if let Some(edit) = edit {
+            edit();
+        }
+        1.
+    }
+}
+
+/// `a`, shared so a width can edit through it, and a split of it whose
+/// widths run the edits hooked on the returned hook.
+fn split_with_hook(a: EditorModel) -> (Rc<RefCell<EditorModel>>, EditorModel, Hook) {
+    let a = Rc::new(RefCell::new(a));
+    let mut b = a.borrow().split();
+    let hook = Hook::default();
+    b.set_char_widths(Box::new(EditsOnce(hook.clone())));
+    // Wrapping is what measures; nothing is long enough to wrap.
+    b.set_soft_wrap(true);
+    (a, b, hook)
+}
+
+/// Hooks `a` inserting `text` at its carets.
+fn hook_insert(hook: &Hook, a: &Rc<RefCell<EditorModel>>, text: &'static str) {
+    let a = a.clone();
+    *hook.borrow_mut() = Some(Box::new(move || a.borrow_mut().insert(text)));
+}
+
+#[test]
+fn edits_made_while_catching_up_are_caught_up_with() {
+    let (a, mut b, hook) = split_with_hook(parse("|foo"));
+    b.set_cursor(3);
+    a.borrow_mut().insert("ą");
+    // Measuring "ą" while b catches up puts "Z" after it.
+    hook_insert(&hook, &a, "Z");
+    b.insert("X");
+    assert_eq!(render(&b), "ąZfooX|");
+
+    // The same when an edit through the buffer ends.
+    a.borrow_mut().insert("ć");
+    hook_insert(&hook, &a, "W");
+    let len = b.buffer().len();
+    b.buffer_mut().edit([(len..len, "!")], Origin::User);
+    assert_eq!(b.snapshot().version(), b.buffer().version());
+    assert_eq!(b.text().to_string(), "ąZćWfooX!");
+    assert_eq!(b.display().row(0).range, 0..b.text().len());
+    assert!(b.events.drain().is_empty());
+}
+
+/// Hooks an edit through `a`'s buffer, not as the user, so it leaves the
+/// user's undo alone.
+fn hook_edit(hook: &Hook, a: &Rc<RefCell<EditorModel>>, offset: usize, text: &'static str) {
+    let a = a.clone();
+    *hook.borrow_mut() = Some(Box::new(move || {
+        a.borrow_mut()
+            .buffer_mut()
+            .edit([(offset..offset, text)], Origin::Lsp);
+    }));
+}
+
+#[test]
+fn carets_follow_edits_made_while_catching_up() {
+    let (a, mut b, hook) = split_with_hook(parse("ą|foo"));
+    b.set_cursor(5);
+    // Measuring "ąfooX" after b's edit puts "Z" before its caret.
+    hook_edit(&hook, &a, 2, "Z");
+    b.insert("X");
+    assert_eq!(render(&b), "ąZfooX|");
+
+    // Likewise measuring "ąZfoo" after undoing "X".
+    hook_edit(&hook, &a, 2, "Y");
+    b.undo().unwrap();
+    assert_eq!(render(&b), "ąYZfoo|");
+}
+
+#[test]
+fn counted_moves_start_from_the_caught_up_carets() {
+    let mut a = parse("foo|");
+    let mut b = a.split();
+    a.set_cursor(0);
+    a.insert("x");
+    // b shows its caret at 3, and is at 4 once caught up: one move left
+    // lands back on 3, which mustn't look like a move that went nowhere.
+    let invocation = fe_command::Invocation::of("editor.move")
+        .unwrap()
+        .args(serde_json::json!({"motion": "left", "count": 2}))
+        .context(commands::context());
+    let mut host = commands::HeadlessHost::default();
+    commands::registry()
+        .dispatch(
+            &mut commands::EditorTarget::new(&mut b, &mut host),
+            &invocation,
+        )
+        .unwrap();
+    assert_eq!(render(&b), "xf|oo");
+}
+
+#[test]
+fn fold_finds_the_selected_rows_in_the_current_text() {
+    let mut a = parse("[top\n    one\n]    two\nend");
+    let mut b = a.split();
+    a.set_cursor(4);
+    a.insert("    extra\n");
+    b.fold(&|_| None);
+    assert_eq!(b.display().folds(), [fe_display::Fold { start: 0, end: 2 }]);
+
+    // A selection's start stays after text inserted at it.
+    let mut a = parse("top\n[def] a():\n    one\nend");
+    let mut b = a.split();
+    a.set_cursor(4);
+    a.insert("x\n");
+    b.fold(&|_| None);
+    assert_eq!(b.display().folds(), [fe_display::Fold { start: 2, end: 3 }]);
+}
+
+#[test]
+fn catching_up_on_edits_around_a_fold_keeps_it() {
+    for through_buffer in [false, true] {
+        let mut a = parse("|top\ndef a():\n    one\n    two\nend");
+        let mut b = a.split();
+        b.fold_rows(1..=3);
+        a.insert("above\n");
+        a.set_cursor(a.text().len());
+        a.insert("!");
+        if through_buffer {
+            b.buffer_mut().edit([(0..0, "#")], Origin::User);
+        } else {
+            b.sync_display();
+        }
+        assert_eq!(
+            b.display().folds(),
+            [fe_display::Fold { start: 2, end: 4 }],
+            "through_buffer: {through_buffer}"
+        );
+
+        // An edit inside it still unfolds it.
+        a.sync_display();
+        a.set_cursor(0);
+        a.insert("x\n");
+        a.set_cursor(a.text().row_start(5));
+        a.insert("x");
+        b.sync_display();
+        assert_eq!(b.display().folds(), []);
+    }
+}
+
+#[test]
+fn batched_catch_up_folds_as_catching_up_after_each_edit_does() {
+    type Edit = fn(&mut EditorModel);
+    let cases: [(&str, Edit); 8] = [
+        ("cut the row above", |a| {
+            a.set_cursor(0);
+            a.cut();
+        }),
+        ("replace the row above", |a| a.select_range(0..4, false)),
+        ("join the row above", |a| a.select_range(3..4, false)),
+        ("rename the header", |a| a.select_range(8..9, false)),
+        ("split the header", |a| {
+            a.set_cursor(4);
+            a.insert("\n# c");
+        }),
+        ("replace across the header's start", |a| {
+            a.select_range(0..6, false)
+        }),
+        ("prefix the header", |a| {
+            a.set_cursor(4);
+            a.insert("# ");
+        }),
+        ("edit a hidden row", |a| {
+            a.set_cursor(15);
+            a.insert("!");
+        }),
+    ];
+    for (name, edit) in cases {
+        let mut a = parse("top\ndef a():\n    one\n    two\nend");
+        let (mut batched, mut each) = (a.split(), a.split());
+        batched.fold_rows(1..=3);
+        each.fold_rows(1..=3);
+        edit(&mut a);
+        if !a.selections()[0].range.is_empty() {
+            a.insert("X");
+        }
+        each.sync_display();
+        // And an edit below the fold, so there are two batches to take in.
+        a.set_cursor(a.text().len());
+        a.insert("!");
+        each.sync_display();
+        batched.sync_display();
+        assert_eq!(batched.display().folds(), each.display().folds(), "{name}");
+    }
+}

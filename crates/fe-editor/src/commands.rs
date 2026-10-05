@@ -441,6 +441,9 @@ pub fn registry() -> Registry<Editor> {
             "Move",
             |target: &mut EditorTarget<'_>, actor: &Actor, args: MoveArgs| {
                 run_as(target, actor, |model, _| {
+                    // Caught up first, so the selections compared are
+                    // those moving would start from.
+                    model.sync_display();
                     for _ in 0..args.count.min(MAX_MOVE_COUNT) {
                         let before = model.selections();
                         model.move_cursors(args.motion.into(), args.extend);

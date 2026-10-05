@@ -11,8 +11,8 @@ use std::{
 };
 
 use fe_buffer::{
-    Bias, Buffer, BufferEvent, BufferSnapshot, EditKind, Origin, ResolvedSelection, SelectionSet,
-    Subscription, Text, TransactionId, UndoError,
+    Bias, Buffer, BufferEvent, BufferSnapshot, EditKind, Origin, ResolvedSelection, Selection,
+    SelectionSet, Subscription, Text, TransactionId, UndoError,
 };
 use fe_display::{CharWidth, DisplayMap, ExpandedRow, Monospace, WRAP_SLICE_BYTES};
 use unicode_segmentation::UnicodeSegmentation;
@@ -219,6 +219,7 @@ impl EditorModel {
     pub fn buffer_mut(&mut self) -> BufferMut<'_> {
         BufferMut {
             buffer: Some(self.buffer.borrow_mut()),
+            shared: &self.buffer,
             snapshot: &mut self.snapshot,
             display: &mut self.display,
             widths: &mut self.widths,
@@ -264,11 +265,12 @@ impl EditorModel {
     /// Takes a new snapshot and syncs the display rows to it, if the buffer
     /// moved on. Leaves the events for the caller.
     fn refresh(&mut self) {
-        let current = refreshed(&self.buffer.borrow(), &self.snapshot);
-        if let Some(current) = current {
-            self.snapshot = current;
-            self.display.sync(&self.snapshot, &mut *self.widths);
-        }
+        catch_up(
+            &self.buffer,
+            &mut self.snapshot,
+            &mut self.display,
+            &mut *self.widths,
+        );
     }
 
     /// Measures chars for soft wrap; [`Monospace`] until set.
@@ -360,37 +362,34 @@ impl EditorModel {
     /// `candidate_at` gives for its row, else the indented block it heads or
     /// is in. Carets folded away move to the fold's header.
     ///
-    /// `candidate_at` gives rows of [`EditorModel::text`]: those folds are
-    /// made there and then caught up with the buffer. Indented blocks are
-    /// found in the buffer as it is now.
+    /// `candidate_at` gives rows of [`EditorModel::text`], for the row the
+    /// caret is shown on: those folds are made there and then caught up
+    /// with the buffer. Selected rows and indented blocks are found in the
+    /// buffer as it is now.
     pub fn fold(&mut self, candidate_at: &dyn Fn(u32) -> Option<RangeInclusive<u32>>) {
-        let text = self.text().clone();
-        let shown = self.snapshot.version();
-        let mut unfolded = Vec::new();
-        for selection in self.selections() {
-            let start = text.offset_to_point(selection.range.start);
-            let end = text.offset_to_point(selection.range.end);
-            let last = if end.row > start.row && end.column == 0 {
-                end.row - 1
+        let shown = self.snapshot.clone();
+        let latest = self.buffer.borrow().snapshot();
+        let mut after_catch_up = Vec::new();
+        for selection in self.selections.iter() {
+            let candidate = if selected_rows(&latest, selection).is_some() {
+                None
             } else {
-                end.row
+                let offset = shown.resolve(&selection.start);
+                candidate_at(shown.text().offset_to_point(offset).row)
             };
-            let rows = if last > start.row {
-                Some(start.row..=last)
-            } else {
-                candidate_at(start.row)
-            };
-            match rows {
+            match candidate {
                 Some(rows) => _ = self.display.fold(rows),
-                None => unfolded.push(selection.range.start),
+                None => after_catch_up.push(*selection),
             }
         }
         self.sync_display();
         let text = self.text().clone();
-        for offset in unfolded {
-            let offset = self.snapshot.map_offset(offset, Bias::Left, shown);
-            let row = text.offset_to_point(offset).row;
-            if let Some(rows) = indented_block(&text, row, self.tab_size) {
+        for selection in after_catch_up {
+            let rows = selected_rows(&self.snapshot, &selection).or_else(|| {
+                let offset = self.snapshot.resolve(&selection.start);
+                indented_block(&text, text.offset_to_point(offset).row, self.tab_size)
+            });
+            if let Some(rows) = rows {
                 self.display.fold(rows);
             }
         }
@@ -945,7 +944,6 @@ impl EditorModel {
     }
 
     fn place_carets_after_history_change(&mut self, kind: EditKind) {
-        self.refresh();
         let last = self
             .events
             .drain()
@@ -959,10 +957,16 @@ impl EditorModel {
                 } if event_kind == kind => Some(edits),
                 _ => None,
             });
-        if let Some(edits) = last {
+        // Anchored before catching up, whose measuring may edit the buffer
+        // through another model.
+        let carets = last.map(|edits| {
+            let snapshot = self.buffer.borrow().snapshot();
+            SelectionSet::from_resolved(&snapshot, edits.iter().map(|edit| caret(edit.new.end)))
+        });
+        self.sync_display();
+        if let Some(carets) = carets {
             self.goals.clear();
-            let carets: Vec<_> = edits.iter().map(|edit| caret(edit.new.end)).collect();
-            self.set_selections(carets);
+            self.selections = carets;
         }
     }
 
@@ -989,13 +993,19 @@ impl EditorModel {
             carets.push(caret(start + text.len()));
             delta += text.len() as isize - range.len() as isize;
         }
-        let id = self.buffer.borrow_mut().edit(merged, self.origin.clone());
-        if let (Some(id), Some(transactions)) = (id, &mut self.transactions) {
-            transactions.push(id);
-        }
+        // Anchored before catching up, whose measuring may edit the buffer
+        // through another model.
+        let carets = {
+            let mut buffer = self.buffer.borrow_mut();
+            let id = buffer.edit(merged, self.origin.clone());
+            if let (Some(id), Some(transactions)) = (id, &mut self.transactions) {
+                transactions.push(id);
+            }
+            SelectionSet::from_resolved(&buffer.snapshot(), carets)
+        };
         self.sync_display();
         self.goals.clear();
-        self.set_selections(carets);
+        self.selections = carets;
     }
 }
 
@@ -1004,6 +1014,7 @@ impl EditorModel {
 pub struct BufferMut<'a> {
     /// `None` only while dropping.
     buffer: Option<RefMut<'a, Buffer>>,
+    shared: &'a RefCell<Buffer>,
     snapshot: &'a mut BufferSnapshot,
     display: &'a mut DisplayMap,
     widths: &'a mut Box<dyn CharWidth>,
@@ -1026,21 +1037,129 @@ impl std::ops::DerefMut for BufferMut<'_> {
 
 impl Drop for BufferMut<'_> {
     fn drop(&mut self) {
-        let buffer = self.buffer.take().expect("dropped once");
-        let current = refreshed(&buffer, self.snapshot);
-        // Measuring may read the buffer through another model.
-        drop(buffer);
-        if let Some(current) = current {
-            *self.snapshot = current;
-            self.display.sync(self.snapshot, &mut **self.widths);
-        }
+        // Measuring may read or edit the buffer through another model.
+        drop(self.buffer.take().expect("dropped once"));
+        catch_up(self.shared, self.snapshot, self.display, &mut **self.widths);
         self.events.drain();
     }
 }
 
-/// `buffer`'s current snapshot, if it moved on from `snapshot`.
-fn refreshed(buffer: &Buffer, snapshot: &BufferSnapshot) -> Option<BufferSnapshot> {
-    (buffer.version() != snapshot.version()).then(|| buffer.snapshot())
+/// Brings `snapshot` and the `display` rows synced to it up to date with
+/// `buffer`. Measuring chars may edit the buffer through another model, so
+/// this goes on until the buffer stays put while the rows are synced.
+///
+/// When several edit batches are taken in at once, the display merges them
+/// into one edit spanning them all, which would unfold folds between them;
+/// those no edit touched are folded again.
+fn catch_up(
+    buffer: &RefCell<Buffer>,
+    snapshot: &mut BufferSnapshot,
+    display: &mut DisplayMap,
+    widths: &mut dyn CharWidth,
+) {
+    loop {
+        let current = {
+            let buffer = buffer.borrow();
+            if buffer.version() == snapshot.version() {
+                return;
+            }
+            buffer.snapshot()
+        };
+        let untouched: Vec<_> = if current.edits_since(snapshot.version()).nth(1).is_some() {
+            display
+                .folds()
+                .iter()
+                .filter_map(|fold| untouched_rows(snapshot, &current, fold.start..=fold.end))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        *snapshot = current;
+        display.sync(snapshot, widths);
+        if !untouched.is_empty() {
+            display.fold_many(untouched);
+        }
+    }
+}
+
+/// Where `rows` of `old`'s text are in `new`'s, unless the edits made in
+/// between would each have unfolded them, as [`DisplayMap::sync`] decides
+/// for one batch: they edited a row after the first, or split or joined
+/// the first. Whole rows inserted or deleted right before them move them.
+///
+/// Rows of the texts between are unknown, so an edit replacing text across
+/// the first row's start counts as unfolding them, and one replacing just
+/// the line break before it as moving them, even where syncing after each
+/// edit would decide otherwise.
+fn untouched_rows(
+    old: &BufferSnapshot,
+    new: &BufferSnapshot,
+    rows: RangeInclusive<u32>,
+) -> Option<RangeInclusive<u32>> {
+    let text = old.text();
+    let (first, last) = (*rows.start(), *rows.end());
+    if last >= text.row_count() {
+        return None;
+    }
+    // The first row's start, before and after text inserted there, its line
+    // break, and the end of the last row.
+    let mut before = text.row_start(first);
+    let mut after = before;
+    let mut first_end = before + text.row_len(first) as usize;
+    let mut end = text.row_start(last) + text.row_len(last) as usize;
+    for batch in new.edits_since(old.version()) {
+        // Touching the first row's line break or anything after it, up to
+        // the end of the last row, edits a row after the first.
+        let touches_rest = |edit: &fe_buffer::Edit| {
+            let (start, stop) = (edit.old.start, edit.old.end);
+            start <= end && (stop > first_end || (start == stop && start > first_end))
+        };
+        if batch.iter().any(touches_rest) {
+            return None;
+        }
+        before = map_through(batch, before, Bias::Left)?;
+        after = map_through(batch, after, Bias::Right)?;
+        first_end = map_through(batch, first_end, Bias::Right)?;
+        end = map_through(batch, end, Bias::Left)?;
+    }
+    // The first row is still whole if it starts where it did, or where the
+    // text inserted at its start did.
+    let text = new.text();
+    let first = text.offset_to_point(first_end).row;
+    let start = text.row_start(first);
+    (start == before || start == after).then(|| first..=text.offset_to_point(end).row)
+}
+
+/// Maps `offset` through one edit batch, `bias` picking the side of text
+/// inserted at it. `None` if an edit replaced a range it's inside.
+fn map_through(batch: &[fe_buffer::Edit], offset: usize, bias: Bias) -> Option<usize> {
+    let mut shift = 0isize;
+    for edit in batch {
+        let (start, stop) = (edit.old.start, edit.old.end);
+        if stop < offset || (stop == offset && (start < stop || bias == Bias::Right)) {
+            shift += edit.new.len() as isize - edit.old.len() as isize;
+        } else if start < offset {
+            return None;
+        } else {
+            break;
+        }
+    }
+    offset.checked_add_signed(shift)
+}
+
+/// The rows `selection` spans in `snapshot`, if it spans more than one. A
+/// selection ending at a row's start leaves that row out.
+fn selected_rows(snapshot: &BufferSnapshot, selection: &Selection) -> Option<RangeInclusive<u32>> {
+    let range = snapshot.resolve_range(&(selection.start..selection.end));
+    let text = snapshot.text();
+    let start = text.offset_to_point(range.start);
+    let end = text.offset_to_point(range.end);
+    let last = if end.row > start.row && end.column == 0 {
+        end.row - 1
+    } else {
+        end.row
+    };
+    (last > start.row).then_some(start.row..=last)
 }
 
 fn caret(offset: usize) -> ResolvedSelection {
