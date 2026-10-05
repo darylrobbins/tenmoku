@@ -190,6 +190,11 @@ impl EditorView {
         cx: &mut Context<Self>,
     ) {
         window.focus(&self.focus, cx);
+        if self.toggle_fold_at(event.position) {
+            self.drag = None;
+            cx.notify();
+            return;
+        }
         let offset = self.offset_for_position(event.position);
         self.marked = None;
         match event.click_count {
@@ -213,6 +218,34 @@ impl EditorView {
             }
         }
         self.changed(cx);
+    }
+
+    /// Of a fold toggle or marker under a window position in the last frame,
+    /// unfolds its row if it's folded or folds its candidate if not. Carets
+    /// the fold hides move to its header, as with the keyboard. Returns
+    /// whether there was one there.
+    fn toggle_fold_at(&mut self, position: Point<Pixels>) -> bool {
+        let Some(layout) = &self.layout else {
+            return false;
+        };
+        let at = layout.to_frame(position);
+        let Some(area) = layout
+            .frame
+            .fold_click_areas()
+            .find(|area| area.rect.contains(at))
+        else {
+            return false;
+        };
+        let row = area.buffer_row;
+        if area.folded {
+            self.model.unfold_rows(row..=row);
+        } else if let Some(candidate) = synced_syntax(&self.syntax, &self.model)
+            .and_then(|syntax| fe_syntax::fold_range_at(syntax, row))
+            .filter(|candidate| *candidate.start() == row)
+        {
+            self.model.fold_rows(candidate);
+        }
+        true
     }
 
     fn on_mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {

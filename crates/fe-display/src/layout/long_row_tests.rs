@@ -105,7 +105,14 @@ impl Editor {
                 active_line_number: "active",
             },
         };
-        layout_frame(&input, measure, &mut self.long_rows, widths, highlights)
+        layout_frame(
+            &input,
+            measure,
+            &mut self.long_rows,
+            widths,
+            highlights,
+            |_| Vec::new(),
+        )
     }
 
     fn offset_at(&mut self, frame: &Frame<Line>, x: f32) -> usize {

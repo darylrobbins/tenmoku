@@ -16,13 +16,18 @@ use fe_display::{
 };
 use fe_syntax::{Syntax, SyntaxDriver};
 use gpui::{
-    App, Bounds, ContentMask, DecorationRun, Element, ElementId, ElementInputHandler, Entity, Font,
-    FontId, GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId, LineLayout, Pixels,
-    Point, Style, TextAlign, TextRun, TextSystem, Window, WindowTextSystem, fill, point, px,
-    relative, size,
+    App, Bounds, ContentMask, CursorStyle, DecorationRun, Element, ElementId, ElementInputHandler,
+    Entity, Font, FontId, GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId,
+    IntoElement, LayoutId, LineLayout, Pixels, Point, Style, TextAlign, TextRun, TextSystem,
+    Window, WindowTextSystem, fill, point, px, relative, size,
 };
 
 use crate::{EditorTheme, EditorView, FrameTiming};
+
+/// The gutter's chevron on a folded row, which unfolds it.
+const FOLDED_CHEVRON: &str = "›";
+/// The gutter's chevron on a row that can fold.
+const UNFOLDED_CHEVRON: &str = "⌄";
 
 /// What one frame laid out: kept by the view for hit testing and IME.
 pub(crate) struct FrameLayout {
@@ -36,6 +41,10 @@ pub(crate) struct FrameLayout {
     long_rows: LongRows,
     glyph_widths: GlyphWidths,
     tab_size: usize,
+    /// The fold toggles' chevrons: folded, then unfolded.
+    chevrons: [Line; 2],
+    /// Over the fold toggles and markers, which show a pointing hand.
+    clickable: Vec<Hitbox>,
     /// When prepaint started and how long it took, for [`FrameTiming`].
     prepaint_started: Instant,
     prepaint_took: Duration,
@@ -360,7 +369,25 @@ impl Element for EditorElement {
             &mut long_rows,
             &mut glyph_widths,
             |range| styled_highlights(syntax, theme, range),
+            |rows| fold_headers(syntax, rows),
         );
+        let chevrons = [FOLDED_CHEVRON, UNFOLDED_CHEVRON].map(|chevron| {
+            let run = StyleRun {
+                len: chevron.len(),
+                style: theme.gutter_foreground,
+            };
+            shaper.shape(chevron, &[run])
+        });
+        let to_window = |rect: Rect| {
+            Bounds::new(
+                bounds.origin + point(px(rect.x), px(rect.y)),
+                size(px(rect.width), px(rect.height)),
+            )
+        };
+        let clickable = frame
+            .fold_click_areas()
+            .map(|area| window.insert_hitbox(to_window(area.rect), HitboxBehavior::Normal))
+            .collect();
 
         let scroll = point(px(frame.scroll.x), px(frame.scroll.y));
         self.view.update(cx, |view, cx| {
@@ -374,6 +401,8 @@ impl Element for EditorElement {
             long_rows,
             glyph_widths,
             tab_size,
+            chevrons,
+            clickable,
             prepaint_started: started,
             prepaint_took: started.elapsed(),
         })
@@ -420,9 +449,13 @@ impl Element for EditorElement {
                         let origin = layout.to_window(frame.line_origin(row));
                         row.line.paint(origin, line_height, window, cx);
                     }
-                    for (origin, marker) in &frame.fold_markers {
-                        let origin = layout.to_window(*origin);
-                        marker.paint(origin, line_height, window, cx);
+                    for marker in &frame.fold_markers {
+                        let rect = marker.rect;
+                        let origin = layout.to_window(Vec2 {
+                            x: rect.x,
+                            y: rect.y,
+                        });
+                        marker.line.paint(origin, line_height, window, cx);
                     }
                     if focus.is_focused(window) {
                         for &cursor in &frame.cursors {
@@ -434,7 +467,19 @@ impl Element for EditorElement {
             for (origin, number) in &frame.line_numbers {
                 number.paint(layout.to_window(*origin), line_height, window, cx);
             }
+            for toggle in &frame.fold_toggles {
+                let chevron = &layout.chevrons[usize::from(!toggle.folded)];
+                let rect = toggle.rect;
+                let origin = layout.to_window(Vec2 {
+                    x: rect.x + (rect.width - chevron.width()) / 2.,
+                    y: rect.y,
+                });
+                chevron.paint(origin, line_height, window, cx);
+            }
         });
+        for hitbox in &layout.clickable {
+            window.set_cursor_style(CursorStyle::PointingHand, hitbox);
+        }
 
         let painted_at = Instant::now();
         let timing = FrameTiming {
@@ -448,6 +493,19 @@ impl Element for EditorElement {
             view.frame_timings.record(timing);
         });
     }
+}
+
+/// The buffer rows in `rows` that head a fold candidate of the syntax tree.
+fn fold_headers(syntax: Option<&Syntax>, rows: Range<u32>) -> Vec<u32> {
+    let Some(syntax) = syntax else {
+        return Vec::new();
+    };
+    let mut headers: Vec<u32> = fe_syntax::fold_ranges(syntax, rows)
+        .into_iter()
+        .map(|range| *range.start())
+        .collect();
+    headers.dedup();
+    headers
 }
 
 /// The highlights in `range` that the theme colours.

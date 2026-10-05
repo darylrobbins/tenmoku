@@ -1,6 +1,6 @@
 //! Lays out one frame of an editor: scrolling, the visible display rows and
-//! their style runs, selection and cursor rectangles, line numbers and fold
-//! markers.
+//! their style runs, selection and cursor rectangles, line numbers, fold
+//! toggles and fold markers.
 //!
 //! This is plain arithmetic over a [`TextMeasure`], so it runs without a
 //! window. The UI implements the trait with its text shaper, then paints what
@@ -43,6 +43,20 @@ pub struct Rect {
 }
 
 impl Rect {
+    /// Whether `point` is inside, counting the top and left edges.
+    pub fn contains(&self, point: Vec2) -> bool {
+        (self.x..self.x + self.width).contains(&point.x)
+            && (self.y..self.y + self.height).contains(&point.y)
+    }
+
+    /// The part inside `other`, if any.
+    pub fn intersect(&self, other: Rect) -> Option<Rect> {
+        let (x0, y0) = (self.x.max(other.x), self.y.max(other.y));
+        let x1 = (self.x + self.width).min(other.x + other.width);
+        let y1 = (self.y + self.height).min(other.y + other.height);
+        (x0 < x1 && y0 < y1).then(|| Self::from_corners(x0, y0, x1, y1))
+    }
+
     fn from_corners(x0: f32, y0: f32, x1: f32, y1: f32) -> Self {
         Self {
             x: x0,
@@ -138,8 +152,29 @@ pub struct Frame<L> {
     pub selections: Vec<Rect>,
     pub cursors: Vec<Rect>,
     pub line_numbers: Vec<(Vec2, L)>,
+    /// Chevrons in the gutter of the rows that can fold or are folded.
+    pub fold_toggles: Vec<FoldToggle>,
     /// [`FOLD_MARKER`]s after rows with folded rows below.
-    pub fold_markers: Vec<(Vec2, L)>,
+    pub fold_markers: Vec<FoldMarker<L>>,
+}
+
+/// Where a chevron that folds or unfolds a buffer row goes: in the gutter
+/// between its line number and the text.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct FoldToggle {
+    pub rect: Rect,
+    pub buffer_row: u32,
+    /// The row heads a fold; otherwise it heads a fold candidate.
+    pub folded: bool,
+}
+
+/// A [`FOLD_MARKER`] after a folded row.
+#[derive(Clone, Debug)]
+pub struct FoldMarker<L> {
+    /// Covers the marker, where it's painted.
+    pub rect: Rect,
+    pub buffer_row: u32,
+    pub line: L,
 }
 
 /// A display row: all of a buffer row or, soft wrapped, part of it.
@@ -294,6 +329,32 @@ impl<L: MeasuredLine> Frame<L> {
         }
     }
 
+    /// Where clicks fold or unfold rows: the fold toggles, then the fold
+    /// markers as folded toggles, each clipped to what's shown of it.
+    pub fn fold_click_areas(&self) -> impl Iterator<Item = FoldToggle> + '_ {
+        let bounds = Rect {
+            x: 0.,
+            y: 0.,
+            width: self.width,
+            height: self.height,
+        };
+        let markers = self.fold_markers.iter().map(|marker| FoldToggle {
+            rect: marker.rect,
+            buffer_row: marker.buffer_row,
+            folded: true,
+        });
+        let text = self.text_bounds();
+        (self
+            .fold_toggles
+            .iter()
+            .map(move |toggle| (*toggle, bounds)))
+        .chain(markers.map(move |marker| (marker, text)))
+        .filter_map(|(area, shown)| {
+            let rect = area.rect.intersect(shown)?;
+            Some(FoldToggle { rect, ..area })
+        })
+    }
+
     /// The buffer offset under `position`. Rows outside this frame (dragging
     /// past an edge) clamp to its first or last row, and positions past the
     /// end of a soft-wrapped row stay on it. `long_rows` and `widths` are
@@ -364,14 +425,17 @@ pub fn wrap_width(width: f32, buffer_rows: u32, em: f32) -> f32 {
 /// Lays out the rows visible in `input`, shaping them with `measure`.
 /// `highlights` returns the styled spans within a buffer range, sorted; it's
 /// called once per run of consecutive visible rows, and once per slice of a
-/// long row. `long_rows` holds the indexes of long rows, measured with
-/// `widths`, from frame to frame.
+/// long row. `fold_candidates` returns the buffer rows within a range that
+/// head a fold candidate; it's called once, with the visible buffer rows.
+/// `long_rows` holds the indexes of long rows, measured with `widths`, from
+/// frame to frame.
 pub fn layout_frame<M: TextMeasure>(
     input: &FrameInput<M::Style>,
     measure: &mut M,
     long_rows: &mut LongRows,
     widths: &mut dyn CharWidth,
     mut highlights: impl FnMut(Range<usize>) -> Vec<StyledSpan<M::Style>>,
+    fold_candidates: impl FnOnce(Range<u32>) -> Vec<u32>,
 ) -> Frame<M::Line> {
     let FrameInput {
         display,
@@ -602,9 +666,12 @@ pub fn layout_frame<M: TextMeasure>(
         };
         measure.shape(text, &[run])
     };
-    let line_numbers = rows
-        .iter()
-        .filter(|row| row.start == text.row_start(row.buffer_row))
+    // Rows that start their buffer row.
+    let first_rows = || {
+        rows.iter()
+            .filter(|row| row.start == text.row_start(row.buffer_row))
+    };
+    let line_numbers = first_rows()
         .map(|row| {
             let style = if active_buffer_rows.binary_search(&row.buffer_row).is_ok() {
                 &styles.active_line_number
@@ -623,11 +690,44 @@ pub fn layout_frame<M: TextMeasure>(
         .into_iter()
         .map(|ix| {
             let row = &rows[ix];
-            let origin = Vec2 {
-                x: x_at(row, row.end) + em,
-                y: row_top(row.row),
-            };
-            (origin, shape(FOLD_MARKER, &styles.line_number))
+            let line = shape(FOLD_MARKER, &styles.line_number);
+            FoldMarker {
+                rect: Rect {
+                    x: x_at(row, row.end) + em,
+                    y: row_top(row.row),
+                    width: line.width(),
+                    height: line_height,
+                },
+                buffer_row: row.buffer_row,
+                line,
+            }
+        })
+        .collect();
+
+    let visible_buffer_rows = match (rows.first(), rows.last()) {
+        (Some(first), Some(last)) => first.buffer_row..last.buffer_row + 1,
+        _ => 0..0,
+    };
+    let mut candidates = fold_candidates(visible_buffer_rows);
+    candidates.sort_unstable();
+    // A header wrapped onto several rows is folded even when the row that
+    // shows its marker is out of view.
+    let heads_fold = |buffer_row: u32| {
+        buffer_row + 1 < text.row_count() && display.hidden_rows(buffer_row + 1).is_some()
+    };
+    let fold_toggles = first_rows()
+        .filter_map(|row| {
+            let folded = heads_fold(row.buffer_row);
+            (folded || candidates.binary_search(&row.buffer_row).is_ok()).then(|| FoldToggle {
+                rect: Rect {
+                    x: text_left - em * 2.,
+                    y: row_top(row.row),
+                    width: em * 2.,
+                    height: line_height,
+                },
+                buffer_row: row.buffer_row,
+                folded,
+            })
         })
         .collect();
 
@@ -644,6 +744,7 @@ pub fn layout_frame<M: TextMeasure>(
         selections: selection_rects,
         cursors,
         line_numbers,
+        fold_toggles,
         fold_markers,
     }
 }
@@ -713,6 +814,8 @@ pub fn row_runs<S: Clone>(
     runs
 }
 
+#[cfg(test)]
+mod fold_gutter_tests;
 #[cfg(test)]
 mod long_row_tests;
 #[cfg(test)]

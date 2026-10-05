@@ -142,6 +142,7 @@ fn lay_out_display(
         &mut LongRows::default(),
         &mut Mono,
         highlights,
+        |_| Vec::new(),
     );
     (frame, display.text().clone())
 }
@@ -449,7 +450,7 @@ fn folded_rows() {
     let markers: Vec<_> = frame
         .fold_markers
         .iter()
-        .map(|(at, line)| (at.x, at.y, line.text.as_str()))
+        .map(|marker| (marker.rect.x, marker.rect.y, marker.line.text.as_str()))
         .collect();
     assert_eq!(markers, [(GUTTER + 90., 0., FOLD_MARKER)]);
     // The selection covers the header's line break, which hides the folded
