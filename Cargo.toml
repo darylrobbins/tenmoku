@@ -16,6 +16,7 @@ publish = false
 # Internal crates.
 fe-text = { path = "crates/fe-text" }
 fe-buffer = { path = "crates/fe-buffer" }
+fe-command = { path = "crates/fe-command" }
 fe-display = { path = "crates/fe-display" }
 fe-editor = { path = "crates/fe-editor" }
 fe-gpui = { path = "crates/fe-gpui" }
@@ -35,6 +36,10 @@ sum-tree = { package = "gpui-pre-sum-tree", version = "=0.3.7" }
 image = { version = "0.25", default-features = false, features = ["png"] }
 libc = "0.2"
 log = "0.4"
+# Command args, invocation records and their schemas (all already in the lock through gpui).
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 tempfile = "3"
 thiserror = "2"
 unicode-segmentation = "1"
@@ -43,6 +48,7 @@ unicode-segmentation = "1"
 proptest = "1"
 criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
 rand = "0.9"
+toml = "1"
 
 # Tree-sitter and grammars (all MIT; each grammar's license and queries audited
 # when added, see THIRD_PARTY.md).

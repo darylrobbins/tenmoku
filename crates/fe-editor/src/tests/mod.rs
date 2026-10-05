@@ -1,5 +1,6 @@
 use super::*;
 
+mod commands;
 mod fold_candidates;
 mod laws;
 mod pending_wrap;

@@ -15,6 +15,8 @@ use fe_buffer::{
 use fe_display::{CharWidth, DisplayMap, ExpandedRow, Monospace, WRAP_SLICE_BYTES};
 use unicode_segmentation::UnicodeSegmentation;
 
+pub mod commands;
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Movement {
     Left,
@@ -69,6 +71,11 @@ pub struct EditorModel {
     soft_wrap: bool,
     /// The width to wrap at when soft wrap is on, in `widths`' unit.
     wrap_width: f32,
+    /// Who edits and undoes: the invoking actor while a command runs (see
+    /// [`EditorModel::run_as`]), the user otherwise.
+    origin: Origin,
+    /// The transactions the running command produced; `None` outside one.
+    transactions: Option<Vec<TransactionId>>,
 }
 
 impl EditorModel {
@@ -87,6 +94,8 @@ impl EditorModel {
             widths: Box::new(Monospace),
             soft_wrap: false,
             wrap_width: 80.,
+            origin: Origin::User,
+            transactions: None,
         }
     }
 
@@ -786,15 +795,42 @@ impl EditorModel {
 
     pub fn undo(&mut self) -> Result<Option<TransactionId>, UndoError> {
         self.events.drain();
-        let result = self.buffer.undo(|origin| *origin == Origin::User);
+        let result = self.buffer.undo(|origin| *origin == self.origin);
         self.place_carets_after_history_change(EditKind::Undo);
-        result
+        self.produced(result)
     }
 
     pub fn redo(&mut self) -> Result<Option<TransactionId>, UndoError> {
         self.events.drain();
-        let result = self.buffer.redo(|origin| *origin == Origin::User);
+        let result = self.buffer.redo(|origin| *origin == self.origin);
         self.place_carets_after_history_change(EditKind::Redo);
+        self.produced(result)
+    }
+
+    /// Runs `f` with edits, undo and redo acting as `origin` rather than
+    /// the user. Returns its result and the transactions it produced: those
+    /// it edited in, and those it undid or redid.
+    pub(crate) fn run_as<R>(
+        &mut self,
+        origin: Origin,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> (R, Vec<TransactionId>) {
+        let outer = std::mem::replace(&mut self.origin, origin);
+        let outer_transactions = self.transactions.replace(Vec::new());
+        let result = f(self);
+        self.origin = outer;
+        let transactions = std::mem::replace(&mut self.transactions, outer_transactions);
+        (result, transactions.unwrap_or_default())
+    }
+
+    /// Notes an undo's or redo's transaction for [`EditorModel::run_as`].
+    fn produced(
+        &mut self,
+        result: Result<Option<TransactionId>, UndoError>,
+    ) -> Result<Option<TransactionId>, UndoError> {
+        if let (Ok(Some(id)), Some(transactions)) = (&result, &mut self.transactions) {
+            transactions.push(*id);
+        }
         result
     }
 
@@ -820,7 +856,8 @@ impl EditorModel {
         }
     }
 
-    /// Applies one edit per selection (as a single user transaction) and puts
+    /// Applies one edit per selection (as a single transaction, from the
+    /// user unless a command runs as someone else) and puts
     /// a caret at the end of each edit's new text.
     fn apply_with_carets(&mut self, mut edits: Vec<(Range<usize>, String)>) {
         edits.sort_by_key(|(range, _)| range.start);
@@ -843,7 +880,10 @@ impl EditorModel {
             delta += text.len() as isize - range.len() as isize;
         }
         self.events.drain();
-        self.buffer.edit(merged, Origin::User);
+        let id = self.buffer.edit(merged, self.origin.clone());
+        if let (Some(id), Some(transactions)) = (id, &mut self.transactions) {
+            transactions.push(id);
+        }
         self.events.drain();
         self.sync_display();
         self.goals.clear();

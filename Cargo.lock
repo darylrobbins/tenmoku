@@ -1649,6 +1649,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fe-command"
+version = "0.1.0"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
 name = "fe-display"
 version = "0.1.0"
 dependencies = [
@@ -1666,9 +1677,13 @@ name = "fe-editor"
 version = "0.1.0"
 dependencies = [
  "fe-buffer",
+ "fe-command",
  "fe-display",
  "proptest",
  "rand 0.9.5",
+ "schemars",
+ "serde",
+ "serde_json",
  "tempfile",
  "unicode-segmentation",
 ]
