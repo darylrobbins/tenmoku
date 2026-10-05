@@ -85,6 +85,15 @@ size_exclude = ["**/tests/**", "**/tests.rs", "**/testdata/**", "**/golden/**", 
 # third-party notices, the toolchain pin, CI and the policy itself.
 human_paths = ["regatta.toml", ".github/workflows/**", "Cargo.lock", "deny.toml", "THIRD_PARTY.md", "NOTICE", "CLEAN_ROOM.md", "rust-toolchain.toml"]
 
+[scopes]
+# Any task may add lines to these without claiming them, so tasks that add a crate or a
+# dependency run in parallel; a change to an existing line is still a scope expansion.
+# Regatta's four defaults are repeated because setting the key replaces them.
+shared_append_only = [
+  "docs/recovery.md", "docs/compat.md", "docs/recovery/**", "docs/compat/**",
+  "Cargo.toml", "Cargo.lock", "crates/fastedit/Cargo.toml",
+]
+
 [caps]
 # Lanes share one target dir (see top), so each costs little disk; builds queue on its lock.
 lanes_max = 3
