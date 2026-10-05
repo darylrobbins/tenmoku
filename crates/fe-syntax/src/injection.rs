@@ -383,7 +383,22 @@ impl Painter<'_> {
         let (text, deadline) = (self.text, self.deadline);
         // Each match's pattern, content nodes and language node.
         let mut matches = Vec::new();
+        // Set once the deadline passes or the matches are capped. A split
+        // tree can have a root per short statement, each queried too briefly
+        // for tree-sitter's progress callback to check the deadline, so the
+        // remaining roots are skipped rather than queried.
+        let mut stopped = false;
         for_each_query_root(tree, &self.range, query.local_patterns, |cursor, node| {
+            if stopped {
+                return;
+            }
+            if out_of_time(deadline) {
+                stopped = true;
+                self.complete = false;
+                return;
+            }
+            #[cfg(test)]
+            QUERIED_ROOTS.set(QUERIED_ROOTS.get() + 1);
             let source = |node: Node| chunks(text, node.byte_range());
             let mut progress = |_: &_| until(deadline);
             let options = QueryCursorOptions::new().progress_callback(&mut progress);
@@ -402,6 +417,7 @@ impl Painter<'_> {
                 let name = captured(query.language).next();
                 matches.push((found.pattern_index, content, name));
             }
+            stopped |= matches.len() == MAX_INJECTIONS;
         });
 
         if matches.len() == MAX_INJECTIONS {
@@ -749,5 +765,13 @@ fn intersect(
     Some(parts)
 }
 
+#[cfg(test)]
+thread_local! {
+    /// How many query roots [`Painter::find`] has queried on this thread.
+    static QUERIED_ROOTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+mod root_traversal_tests;
 #[cfg(test)]
 mod tests;
