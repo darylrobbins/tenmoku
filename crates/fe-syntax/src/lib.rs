@@ -21,6 +21,7 @@ mod fold;
 mod highlight;
 mod injection;
 mod language;
+mod parse_limit;
 mod syntax;
 
 pub use detect::{detect_language_name, language_name_for_shebang};
@@ -31,7 +32,8 @@ pub use language::{
     Language, language_by_name, language_for_path, language_name_for_path, language_names,
     loaded_language,
 };
-pub use syntax::{MAX_PARSE_BYTES, ParseJob, Parsed, Syntax};
+pub use parse_limit::TREE_BUDGET_BYTES;
+pub use syntax::{ParseJob, Parsed, Syntax};
 
 #[cfg(test)]
 mod tests;

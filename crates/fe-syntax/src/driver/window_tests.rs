@@ -12,9 +12,14 @@ use fe_buffer::{Buffer, Origin};
 use super::tests::{ManualSpawner, rust};
 use crate::*;
 
-/// Rust over [`MAX_PARSE_BYTES`].
+/// The parse limit of Rust, the language of every buffer here.
+fn limit() -> usize {
+    rust().parse_limit()
+}
+
+/// Rust over its parse limit.
 fn huge_rust() -> Buffer {
-    Buffer::new(&"fn f() {}\n".repeat(MAX_PARSE_BYTES / 10 + 100_000))
+    Buffer::new(&"fn f() {}\n".repeat(limit() / 10 + 100_000))
 }
 
 /// A driver that may parse on the calling thread for as long as it likes.
@@ -96,10 +101,7 @@ fn a_full_parse_and_a_window_never_run_at_once() {
     assert_eq!(spawner.pending(), 1);
 
     // Pasting pushes the file over the limit while the full parse runs.
-    buffer.edit(
-        [(0..0, "fn f() {}\n".repeat(MAX_PARSE_BYTES / 10))],
-        Origin::User,
-    );
+    buffer.edit([(0..0, "fn f() {}\n".repeat(limit() / 10))], Origin::User);
     driver.sync(buffer.current(), screen(0), &mut spawner);
     assert_eq!(spawner.spawned, 1);
     // The full parse is no use now; the window starts as it lands.

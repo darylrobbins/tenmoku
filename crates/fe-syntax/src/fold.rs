@@ -22,8 +22,8 @@ use crate::Syntax;
 
 /// The rows of the foldable nodes starting in `rows`, sorted, each spanning
 /// at least two rows. Only the part of the tree overlapping `rows` is walked.
-/// None without a tree: no language, a file over
-/// [`crate::MAX_PARSE_BYTES`], or before the first parse.
+/// None without a tree: no language, a file over its language's
+/// parse limit, or before the first parse.
 pub fn fold_ranges(syntax: &Syntax, rows: Range<u32>) -> Vec<RangeInclusive<u32>> {
     let mut ranges = Vec::new();
     for_each_candidate(syntax, rows.clone(), rows, |range| ranges.push(range));

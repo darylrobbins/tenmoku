@@ -2,7 +2,8 @@
 //!
 //! Sizes:
 //! - 10k lines: a typical large source file;
-//! - just under [`MAX_PARSE_BYTES`]: the largest file that is highlighted;
+//! - just under the language's parse limit: the largest file that is
+//!   highlighted;
 //! - 1M lines: full parse only. Every 1M-line corpus here is over the parse
 //!   limit, so the editor shows it unhighlighted; the number says what
 //!   highlighting it would cost.
@@ -21,7 +22,7 @@ use std::{
 
 use criterion::{BatchSize, BenchmarkId, Criterion, criterion_group, criterion_main};
 use fe_buffer::{Buffer, Origin};
-use fe_syntax::{MAX_PARSE_BYTES, Syntax, language_by_name};
+use fe_syntax::{Syntax, language_by_name};
 use rand::{Rng, SeedableRng, rngs::StdRng};
 
 mod support;
@@ -180,8 +181,9 @@ fn benches(c: &mut Criterion) {
         group.measurement_time(Duration::from_secs(4));
 
         // Reparse and highlight where the editor highlights.
-        let limit = MAX_PARSE_BYTES - 1024;
-        let at_limit = format!("{}MB", MAX_PARSE_BYTES / (1024 * 1024));
+        let parse_limit = language.parse_limit();
+        let limit = parse_limit - 1024;
+        let at_limit = format!("{:.1}MB", parse_limit as f64 / (1024.0 * 1024.0));
         for (size, text) in [
             ("10k lines", corpus(10_000, usize::MAX)),
             (at_limit.as_str(), corpus(usize::MAX, limit)),

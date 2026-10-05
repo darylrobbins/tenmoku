@@ -2,15 +2,15 @@ use std::ops::Range;
 
 use fe_buffer::{Buffer, Origin};
 
-use super::{FAULT, MAX_PARSE_BYTES, WINDOW_BYTES};
+use super::{FAULT, WINDOW_BYTES};
 use crate::{HighlightSpan, Syntax, language_by_name};
 
 /// One line of Rust, with multibyte chars so windows can end mid-char.
 const ITEM: &str = "fn é(x: u32) -> &'static str { let s = \"a\\n\"; s } // ü\n";
 
-/// `item` repeated until the text is over [`MAX_PARSE_BYTES`].
+/// `item` repeated until the text is over Rust's parse limit.
 fn over_limit(item: &str) -> String {
-    item.repeat(MAX_PARSE_BYTES / item.len() + 1)
+    item.repeat(language_by_name("rust").unwrap().parse_limit() / item.len() + 1)
 }
 
 fn syntax(buffer: &Buffer) -> Syntax {

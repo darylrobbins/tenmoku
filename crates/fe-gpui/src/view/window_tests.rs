@@ -6,10 +6,15 @@ use crate::*;
 
 const ROW: &str = "fn f() {}\n";
 
+/// The parse limit of Rust, the language of every file here.
+fn rust_limit() -> usize {
+    fe_syntax::language_by_name("rust").unwrap().parse_limit()
+}
+
 /// An editor on `text`, a Rust file over the parse limit, once its language
 /// has loaded.
 fn editor(text: String, cx: &mut TestAppContext) -> (Entity<EditorView>, &mut VisualTestContext) {
-    assert!(text.len() > fe_syntax::MAX_PARSE_BYTES);
+    assert!(text.len() > rust_limit());
     cx.update(init);
     let (view, cx) = cx.add_window_view(move |_, cx| {
         let model = EditorModel::new(Buffer::new(&text), Some("main.rs".into()));

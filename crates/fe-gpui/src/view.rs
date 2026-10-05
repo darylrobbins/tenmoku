@@ -522,7 +522,11 @@ movement_actions! {
 impl Render for EditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_syntax(cx);
-        if self.model.snapshot().len() > fe_syntax::MAX_PARSE_BYTES {
+        // With no syntax there's no window to ask for.
+        let windowed = self.syntax.as_ref().is_some_and(|driver| {
+            self.model.snapshot().len() > driver.syntax().language().parse_limit()
+        });
+        if windowed {
             // This frame may scroll; once it's painted, ask for a window
             // around what it shows.
             cx.defer_in(window, |view, _, cx| view.sync_syntax(cx));

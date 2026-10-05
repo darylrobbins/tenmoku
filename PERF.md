@@ -63,15 +63,16 @@ which is enough for these targets.
 | Target | Result | |
 |---|---|---|
 | 1M-line file interactive in < 500 ms | Since T8 the read starts at the top of `main`, and a 33 MB file is on the first frame: presented at 200 ms median from process start. Before, the file was shown at 297–339 ms for 33 MB and 271–310 ms for 100 MB. See [startup](#startup) and [background loading](#background-loading) | ✅ |
-| Memory ≤ 1.5× file size | Unhighlighted: 100 MB file costs 1.46–1.47×, 33 MB 1.45–1.48×, over an empty editor at file shown (footprint and resident). The read peaks no higher. **Highlighted: a 16 MB Rust file costs 630 MB more than the same file unhighlighted (~39×)** | ❌ for highlighted files |
+| Memory ≤ 1.5× file size (the text only), plus a syntax tree of ≤ 300 MB | Text: a 100 MB file costs 1.46–1.47×, 33 MB 1.45–1.48×, over an empty editor at file shown (footprint and resident). The read peaks no higher. Tree: each language's parse limit is set so its typical tree stays under 300 MB (see [tree memory](#tree-memory)). Measured before the limits, at the old 16 MB limit: a highlighted 16 MB Rust file cost 630 MB more than the same file unhighlighted (~39×) | ✅ text; tree capped per language, not re-measured |
 | Scrolling holds 120 fps | Smooth scrolling: 120 fps on every file, 0–1 missed vsyncs in 600 frames. Jump scrolling: 119–120 fps, but a highlighted 16 MB file spends 6.5 ms p50 in prepaint and misses 14 vsyncs | ✅, little headroom when highlighted |
 | Idle CPU near zero | 0.8–0.95% of a core, no frames painted | ✅ |
 | UI never blocks on a parse | A frame tries at most 1 ms of reparse, then moves it to a background thread | ✅ by design; see reparse below |
 
-Every 1M-line file tried is over `MAX_PARSE_BYTES` (16 MB), so the 1M-line
-runs are unhighlighted. The largest highlighted file is 16 MB (486k lines of
-Rust). The limit has since dropped to 8 MB (see [tree memory](#tree-memory)),
-so files like the 16 MB rows below are no longer highlighted.
+Every 1M-line file tried is over every language's parse limit (a global
+16 MB when measured), so the 1M-line runs are unhighlighted. The largest
+highlighted file was 16 MB (486k lines of Rust). Each language now has its own
+limit, 3.5 to 10 MiB (see [tree memory](#tree-memory)), so files like the
+16 MB rows below are no longer highlighted.
 
 ### Background loading
 
@@ -136,6 +137,9 @@ than the same file as plain text. The difference is shaping each row in many
 coloured runs instead of one.
 
 ### Memory (physical footprint)
+
+The 16 MB rows were measured at the old 16 MB global parse limit, and not
+re-measured since.
 
 | File | At first frame | After scrolling |
 |---|---|---|
@@ -375,7 +379,9 @@ time.
 
 Files where one node has about a million children: a JSON array of numbers,
 the same with single digits (the most elements that fit), and Markdown
-paragraphs. Each is filled to just under `MAX_PARSE_BYTES`. The cost is one
+paragraphs. Each was filled to just under the old 8 MB global parse limit; the
+bench now fills each to its language's limit, so Markdown is ~3.5 MiB (the
+numbers below are unchanged). The cost is one
 60-row highlight, scrolled a row at a time, measured 2026-10-03.
 
 | File | Start | Middle | End | Unscrolled |
@@ -404,7 +410,7 @@ to −32,768, so `has_nwl = cur_row > row` misses that newline, and the line get
 error nodes. The same happens again every 65,536 lines after that. Any YAML
 was affected, not just lists: 32,768 lines of `- item N`, `- a` or `kN: N`
 parsed clean, and 32,769 didn't. A 100k-line list got an ERROR root, as did
-the largest list under `MAX_PARSE_BYTES` (607k items, 8 MB), so highlighting
+the largest list under the old 8 MB parse limit (607k items, 8 MB), so highlighting
 stopped past the first screen. The count is lines, not bytes or items: 20k
 items separated by blank lines (40k lines) failed too. Upstream:
 [tree-sitter-yaml#49](https://github.com/tree-sitter-grammars/tree-sitter-yaml/issues/49),
@@ -433,9 +439,23 @@ across a parse:
 | Markdown, short paragraphs (8 MB) | 85× |
 
 Memory grows linearly with size, and with the number of nodes more than the
-number of bytes. `MAX_PARSE_BYTES` is now 8 MB, down from 16 MB. That keeps a
-code file's tree near 300 MB, and the worst case above under 800 MB; at
-16 MB, trees reached 0.6–1.5 GB.
+number of bytes. The tree gets an absolute budget of 300 MB, and each
+language's parse limit is `floor(300 MiB / ratio)`, with the largest typical
+ratio above for the language. The constants in
+`crates/fe-syntax/src/parse_limit.rs` come from this section's ratios; they
+aren't measured at runtime.
+
+| Language | Ratio (row above) | Parse limit |
+|---|---|---|
+| Rust | 40× (generated items) | 7,864,320 B (7.5 MiB) |
+| JSON | 30× (pretty-printed objects) | 10,485,760 B (10 MiB) |
+| Markdown | 85× (short paragraphs) | 3,700,856 B (~3.5 MiB) |
+| every other language | 40× (not measured; the Rust ratio) | 7,864,320 B |
+
+The limits bound the tree of a typical file, not the worst: a JSON array of
+single digits (96×) still reaches ~960 MB at 10 MiB. Above its limit, a file
+has no tree and a 32 KB window around the viewport is highlighted. The limit
+was a global 16 MB, then 8 MB, before this; at 16 MB trees reached 0.6–1.5 GB.
 
 ## Not measured yet
 

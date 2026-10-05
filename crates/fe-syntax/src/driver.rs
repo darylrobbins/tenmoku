@@ -5,7 +5,7 @@ use std::{
 
 use fe_buffer::{BufferSnapshot, Version};
 
-use crate::{MAX_PARSE_BYTES, ParseJob, Parsed, Syntax};
+use crate::{ParseJob, Parsed, Syntax};
 
 /// Runs [`ParseJob`]s off the calling thread. A UI implements it with its
 /// executor; tests run the jobs when they choose.
@@ -28,7 +28,7 @@ pub trait Spawner {
 /// result is edited forward and used, and the next sync reparses whatever
 /// changed meanwhile. Dropping the driver cancels the background parse.
 ///
-/// A file over [`MAX_PARSE_BYTES`] is highlighted through a window around the
+/// A file over its language's parse limit is highlighted through a window around the
 /// visible text (see [`Syntax::window_job`]), always parsed in the
 /// background. While one window parses, the last keeps highlighting, and
 /// syncs only record the viewport; when it lands, [`SyntaxDriver::finish`]
@@ -83,7 +83,7 @@ impl<T> SyntaxDriver<T> {
 
     /// Catches the tree up with `snapshot`: reparses within the budget, or
     /// else starts a background parse with `spawner` unless one is running.
-    /// For a file over [`MAX_PARSE_BYTES`], starts a window parse around
+    /// For a file over the language's parse limit, starts a window parse around
     /// `visible`, the byte range on screen, unless the window covers it.
     pub fn sync<S: Spawner<Task = T>>(
         &mut self,
@@ -103,7 +103,7 @@ impl<T> SyntaxDriver<T> {
         if self.task.is_some() {
             return;
         }
-        if snapshot.len() > MAX_PARSE_BYTES {
+        if snapshot.len() > self.syntax.language().parse_limit() {
             self.sync_window(spawner);
             return;
         }

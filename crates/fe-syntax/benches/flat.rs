@@ -1,6 +1,7 @@
 //! Highlighting cost on huge flat files, where one node has about a million
 //! children: JSON arrays and a Markdown file of paragraphs, each filled to
-//! just under [`MAX_PARSE_BYTES`], the largest file the editor highlights.
+//! just under its language's parse limit, the largest file the editor
+//! highlights.
 //!
 //! A highlight is 60 rows, about one screen, at the start, middle and end of
 //! the file. A cost that grows with position would show up there. An
@@ -14,7 +15,7 @@ use std::{hint::black_box, time::Duration};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use fe_buffer::Buffer;
-use fe_syntax::{MAX_PARSE_BYTES, Syntax, language_by_name};
+use fe_syntax::{Syntax, language_by_name};
 
 mod support;
 
@@ -23,12 +24,15 @@ const VISIBLE_ROWS: u32 = 60;
 const SCROLLED_ROWS: u32 = 32;
 
 /// `header`, then lines from `line(n)` until the next would bring the text
-/// within a kilobyte of the parse limit, then `footer`.
-fn fill(header: &str, footer: &str, line: impl Fn(usize) -> String) -> String {
+/// within a kilobyte of `language`'s parse limit, then `footer`.
+fn fill(language: &str, header: &str, footer: &str, line: impl Fn(usize) -> String) -> String {
+    let limit = language_by_name(language)
+        .expect("language is compiled in")
+        .parse_limit();
     let mut text = String::from(header);
     for n in 0.. {
         let next = line(n);
-        if text.len() + next.len() + footer.len() > MAX_PARSE_BYTES - 1024 {
+        if text.len() + next.len() + footer.len() > limit - 1024 {
             break;
         }
         text += &next;
@@ -41,18 +45,18 @@ fn benches(c: &mut Criterion) {
         (
             "json",
             "json numbers",
-            fill("[\n", "  0\n]\n", |n| format!("  {n},\n")),
+            fill("json", "[\n", "  0\n]\n", |n| format!("  {n},\n")),
         ),
         // The most elements that fit.
         (
             "json",
             "json zeros",
-            fill("[\n", "0\n]\n", |_| "0,\n".into()),
+            fill("json", "[\n", "0\n]\n", |_| "0,\n".into()),
         ),
         (
             "markdown",
             "markdown paragraphs",
-            fill("", "", |n| format!("Paragraph {n}.\n\n")),
+            fill("markdown", "", "", |n| format!("Paragraph {n}.\n\n")),
         ),
     ];
 

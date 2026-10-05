@@ -18,14 +18,7 @@ use crate::{
     injection::{self, Layers},
 };
 
-/// Files larger than this are shown without highlighting. A tree costs about
-/// 30× its source in memory for JSON, 35–40× for Rust and 70× for Markdown,
-/// and up to 100× for the densest text, such as a JSON array of single digits
-/// (the benches print it). At 8 MB a code file's tree stays near 300 MB, and
-/// the worst under 800 MB.
-pub const MAX_PARSE_BYTES: usize = 8 * 1024 * 1024;
-
-/// How much of a file over [`MAX_PARSE_BYTES`] is parsed around the visible
+/// How much of a file over its language's [`Language::parse_limit`] is parsed around the visible
 /// text (see [`Syntax::window_job`]). At the densest measured tree, 96× its
 /// source, a window's tree stays near 3 MB.
 const WINDOW_BYTES: usize = 32 * 1024;
@@ -56,7 +49,7 @@ const QUERY_BUDGET: Duration = if cfg!(any(test, feature = "no-query-budget")) {
 /// grammars have inputs whose parse never ends (the TSX ones in
 /// `fuzz/regressions/syntax_edits`), from scratch as well as incrementally.
 ///
-/// A release-build full parse of a file at [`MAX_PARSE_BYTES`] takes 0.85 s
+/// A release-build full parse of a file at the old 8 MB limit took 0.85 s
 /// for 8 MB of Rust and 1.7 s for 8 MB of dense JSON, the slowest measured.
 /// [`FULL_PARSE_CAP`] is 5 s, about 3× that, so no legitimate file is cut
 /// off. An incremental parse that overruns [`INCREMENTAL_PARSE_CAP`] is
@@ -94,7 +87,7 @@ impl Cache {
 /// edited text. Reparsing happens either on the calling thread within a time
 /// budget ([`Syntax::parse_within`]) or anywhere via a [`ParseJob`].
 ///
-/// A file over [`MAX_PARSE_BYTES`] has no tree. Instead, a window of it
+/// A file over its language's [`Language::parse_limit`] has no tree. Instead, a window of it
 /// around the visible text can be parsed with [`Syntax::window_job`]; that
 /// highlights approximately, as if the file started at the window.
 ///
@@ -188,7 +181,7 @@ impl Syntax {
                 cache.layers.edit(edit);
             }
         }
-        if !mapped || snapshot.len() > MAX_PARSE_BYTES {
+        if !mapped || snapshot.len() > self.language.parse_limit() {
             // Too big to parse whole: only a window highlights, and the
             // layers it needs are parsed afresh.
             if self.tree.take().is_some() || !mapped {
@@ -202,7 +195,7 @@ impl Syntax {
 
     /// Whether the tree is missing or hasn't been reparsed since the last edit.
     pub fn needs_parse(&self) -> bool {
-        self.snapshot.len() <= MAX_PARSE_BYTES
+        self.snapshot.len() <= self.language.parse_limit()
             && self.parsed != Some(self.version())
             && !self.failed.get()
     }
@@ -253,7 +246,7 @@ impl Syntax {
         }
     }
 
-    /// For a file over [`MAX_PARSE_BYTES`], a parse of the 32 KB
+    /// For a file over the language's parse limit, a parse of the 32 KB
     /// around `visible`, which can run on any thread. Pass the result to
     /// [`Syntax::finish`]. `None` for a smaller file, one given up on, or
     /// when the window would hold no row start to begin at, as in the middle
@@ -265,7 +258,7 @@ impl Syntax {
     /// wrongly.
     pub fn window_job(&self, visible: Range<usize>) -> Option<ParseJob> {
         let text = self.snapshot.text();
-        if text.len() <= MAX_PARSE_BYTES || self.failed.get() {
+        if text.len() <= self.language.parse_limit() || self.failed.get() {
             return None;
         }
         let middle = (visible.start.min(text.len()) + visible.end.min(text.len())) / 2;
@@ -309,10 +302,10 @@ impl Syntax {
             && version <= self.version()
             && if parsed.window.is_some() {
                 // Another window at the same version is for another view.
-                self.snapshot.len() > MAX_PARSE_BYTES
+                self.snapshot.len() > self.language.parse_limit()
                     && self.window_parsed.is_none_or(|current| current <= version)
             } else {
-                self.snapshot.len() <= MAX_PARSE_BYTES
+                self.snapshot.len() <= self.language.parse_limit()
                     && self.parsed.is_none_or(|current| current < version)
             };
         if !usable || self.failed.get() {

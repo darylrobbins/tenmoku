@@ -59,7 +59,8 @@ Complications:
   bytes. The view must validate or lossily decode per chunk, and split on
   char boundaries. Files that are not valid UTF-8 are the common case for
   logs; they should open as lossy per chunk rather than be refused.
-- **Syntax.** `MAX_PARSE_BYTES` is 8 MiB, so no mapped file is ever parsed;
+- **Syntax.** every language's parse limit is at most 10 MiB, so no mapped file is ever
+  parsed;
   `fe-syntax` only has to accept "no highlighting". No work needed there
   beyond not requiring a `Text`.
 - **Wrap and folds.** `wrap_map` over 50 M lines must be lazy (viewport
