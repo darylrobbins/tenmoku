@@ -78,10 +78,6 @@ const CLOSERS: &[&str] = &[
 /// own.
 const COMMENT_CLOSERS: &[&str] = &["*/", "-->", "=end", "]]"];
 
-/// How many comments a body after `rows` may follow its header by and
-/// still be found.
-const MAX_EXTRAS: usize = 16;
-
 const JAVASCRIPT: &[&str] = &[
     "statement_block",
     "class_body",
@@ -561,6 +557,9 @@ fn for_each_candidate(
             if !past(cursor.node()) {
                 continue;
             }
+            if let Some(range) = candidates.after(&cursor) {
+                found(range);
+            }
             cursor.goto_parent();
         }
         // On to the next node overlapping `rows`: a later sibling, or one of
@@ -570,14 +569,7 @@ fn for_each_candidate(
                 if !past(cursor.node()) {
                     continue 'nodes;
                 }
-                // A body after a header ending in `rows` folds from it, even
-                // with comments between them.
-                let body = std::iter::successors(Some(cursor.node()), Node::next_sibling)
-                    .take(MAX_EXTRAS + 1)
-                    .find(|node| !node.is_extra());
-                if let Some(range) = body.and_then(|body| candidates.of(body))
-                    && rows.contains(range.start())
-                {
+                if let Some(range) = candidates.after(&cursor) {
                     found(range);
                 }
             }
@@ -602,6 +594,18 @@ impl Candidates<'_> {
             .get(node.kind_id() as usize)
             .copied()
             .unwrap_or(Class::Other)
+    }
+
+    /// The candidate of the first node past `rows`, at the cursor or after
+    /// comments following it, for a body whose header ends in `self.starts`.
+    fn after(&self, cursor: &TreeCursor) -> Option<RangeInclusive<u32>> {
+        let mut cursor = cursor.clone();
+        while cursor.node().is_extra() {
+            if !cursor.goto_next_sibling() {
+                return None;
+            }
+        }
+        self.of(cursor.node())
     }
 
     /// The rows `node` folds, if it's foldable, starts in `self.starts`
@@ -671,8 +675,13 @@ impl Candidates<'_> {
             .chunks_in_range(range)
             .flat_map(str::chars)
             .skip_while(|ch| ch.is_whitespace());
-        let row: String = chars.by_ref().take(16).collect();
-        chars.next().is_none() && COMMENT_CLOSERS.contains(&row.trim_end())
+        // Longer than any closer, so a long first word isn't collected.
+        let word: String = chars
+            .by_ref()
+            .take_while(|ch| !ch.is_whitespace())
+            .take(5)
+            .collect();
+        COMMENT_CLOSERS.contains(&word.as_str()) && chars.all(char::is_whitespace)
     }
 
     /// Whether `point` has only whitespace before it on its row.
@@ -718,5 +727,7 @@ fn last_child<'tree>(cursor: &mut TreeCursor<'tree>) -> Option<Node<'tree>> {
     }
 }
 
+#[cfg(test)]
+mod lookup_tests;
 #[cfg(test)]
 mod tests;
