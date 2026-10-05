@@ -39,3 +39,22 @@ fn sql_numeric_forms() {
         assert!(has(&spans, text, highlight), "{text}: {spans:?}");
     }
 }
+
+#[test]
+fn sql_signed_numbers_with_extras() {
+    let text = "SELECT - 1e3, + 1.5e-2, - /* c */ 0xFF, -\n 7, - 'x', -1;";
+    let spans = highlighted("sql", text);
+    for (text, highlight) in [
+        (" 1e3", "number"),
+        (" 1.5e-2", "number"),
+        (" 0xFF", "number"),
+        ("\n 7", "number"),
+        ("1", "number"),
+        ("'x'", "string"),
+    ] {
+        assert!(has(&spans, text, highlight), "{text}: {spans:?}");
+    }
+    let strings = spans.iter().filter(|(_, h)| *h == "string").count();
+    assert_eq!(strings, 1, "{spans:?}");
+    assert!(has(&spans, "/* c */", "comment"), "{spans:?}");
+}

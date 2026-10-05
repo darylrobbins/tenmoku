@@ -6,10 +6,11 @@
 ;
 ; The crate's patterns are written for Neovim's Lua patterns, so as regexes
 ; they never matched and every number was a string. Later patterns win over
-; earlier ones on the same node.
+; earlier ones on the same node. The optional sign is a separate token in the
+; grammar, so whitespace and comments may sit between it and the digits.
 
 ((literal) @number
-  (#match? @number "^[-+]?(0[xX][0-9A-Fa-f]+(_[0-9A-Fa-f]+)*|0[oO][0-7]+(_[0-7]+)*|0[bB][01]+(_[01]+)*|\\d+(_\\d+)*(e[+-]?\\d+(_\\d+)*)?)$"))
+  (#match? @number "^([-+]([ \\t\\r\\n]|--[^\\n]*\\n|/\\*([^*]|\\*+[^*/])*\\*+/)*)?(0[xX][0-9A-Fa-f]+(_[0-9A-Fa-f]+)*|0[oO][0-7]+(_[0-7]+)*|0[bB][01]+(_[01]+)*|\\d+(_\\d+)*(e[+-]?\\d+(_\\d+)*)?)$"))
 
 ((literal) @float
-  (#match? @float "^[-+]?((\\d+(_\\d+)*)?[.]\\d+(_\\d+)*(e[+-]?\\d+(_\\d+)*)?|\\d+(_\\d+)*[.](e[+-]?\\d+(_\\d+)*)?)$"))
+  (#match? @float "^([-+]([ \\t\\r\\n]|--[^\\n]*\\n|/\\*([^*]|\\*+[^*/])*\\*+/)*)?((\\d+(_\\d+)*)?[.]\\d+(_\\d+)*(e[+-]?\\d+(_\\d+)*)?|\\d+(_\\d+)*[.](e[+-]?\\d+(_\\d+)*)?)$"))
