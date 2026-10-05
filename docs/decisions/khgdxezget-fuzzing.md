@@ -24,7 +24,7 @@ card T12.
   against exactly these versions.
 - YAML is the vendored `vendor/tree-sitter-yaml` the editor ships. The root
   workspace's `[patch.crates-io]` doesn't reach `fuzz/`, so `fuzz/Cargo.toml`
-  repeats it. Runs before the last one used registry 0.7.2, without the
+  repeats it. Runs before 13f6e28 used registry 0.7.2, without the
   vendored scanner fix.
 - syntax_edits builds fe-syntax with its `no-query-budget` feature, so
   highlight queries always run to completion, as in fe-syntax's own tests.
@@ -49,7 +49,7 @@ f1fe5fd, after rebasing again onto T20's five (Swift, Kotlin, SQL,
 Dockerfile, Make). The vendored-YAML run found nothing in YAML, and neither
 later run found anything in the eleven new grammars.
 The 22-language run's rate is lower because the gate's fast stages ran
-alongside it. Its run rate is lower than the first
+alongside it. The f2ec93a final run's rate is lower than the first
 harness's because highlight queries now run unbudgeted, and inputs reach
 4 KB. buffer_edits hasn't changed since its run. None of the runs hit an
 ASan report or an abort.
@@ -217,7 +217,8 @@ Markdown's block tree matches. The difference is in the injected
 `markdown_inline` layer, which fe-syntax keeps and edits between
 highlights. It reproduces with the inline grammar alone, so fe-syntax's
 layer handling isn't at fault. All 9 Markdown crash inputs fail the same way
-(highlights differ, trees equal); I minimized and analyzed one of them.
+(highlights differ, trees equal); every Markdown input was minimized (see the mapping table), and one was
+analysed in depth for the upstream draft.
 
 Draft upstream issue (tree-sitter-grammars/tree-sitter-markdown):
 
