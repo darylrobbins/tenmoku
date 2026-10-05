@@ -1,0 +1,11 @@
+Class "Greeter" 3:8-15:2
+  Method "constructor" 4:3-6:4
+  Method "greet" 8:3-10:4
+  Method "create" 12:3-14:4
+Function "add" 17:1-19:2
+Function "count" 21:1-23:2
+Function "square" 25:7-25:28
+Function "cube" 26:5-28:2
+Function "legacy" 29:5-29:33
+Function "handler" 31:14-34:2
+  Function "local" 32:9-32:28

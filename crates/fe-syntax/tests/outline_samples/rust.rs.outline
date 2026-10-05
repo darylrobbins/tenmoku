@@ -1,0 +1,20 @@
+Module "shapes" 4:1-26:2
+  Struct "Foo" 5:5-7:6
+  Enum "Kind" 9:5-12:6
+  Trait "Draw" 14:5-20:6
+    Method "draw" 15:9-15:34
+    Method "name" 17:9-19:10
+  Struct "Bits" 22:5-25:6
+Struct "Foo" 28:1-28:16
+Impl "impl Display for Foo" 30:1-34:2
+  Method "fmt" 31:5-33:6
+Impl "impl<T: Clone> shapes::Draw for shapes::Foo<T>" 36:1-45:2
+  Method "draw" 39:5-44:6
+    Function "helper" 40:9-42:10
+Impl "impl Foo" 47:1-52:2
+  Method "new" 49:5-51:6
+Type "Pair" 54:1-54:24
+Constant "LIMIT" 56:1-56:25
+Constant "GREETING" 58:1-58:33
+Macro "square" 60:1-64:2
+Function "main" 66:1-68:2

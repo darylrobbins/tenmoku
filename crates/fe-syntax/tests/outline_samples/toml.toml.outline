@@ -1,0 +1,5 @@
+Table "package" 3:1-7:1
+Table "dependencies.serde" 7:1-10:1
+Table "\"quoted key\"" 10:1-13:1
+Table "bin" 13:1-16:1
+Table "bin" 16:1-18:1

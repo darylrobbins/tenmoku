@@ -1,0 +1,17 @@
+title = "demo"
+
+[package]
+name = "fastedit"
+version = "0.1.0"
+
+[dependencies.serde]
+version = "1"
+
+["quoted key"]
+x = 1
+
+[[bin]]
+name = "fe"
+
+[[bin]]
+name = "fe-cli"

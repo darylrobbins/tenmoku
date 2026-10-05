@@ -1,0 +1,8 @@
+Interface "Props" 3:1-6:2
+  Method "onClick" 5:3-5:18
+Type "State" 8:1-8:32
+Enum "Mode" 10:1-13:2
+Class "Counter" 15:1-19:2
+  Method "render" 16:3-18:4
+Function "App" 21:14-23:2
+Function "Header" 25:8-27:2

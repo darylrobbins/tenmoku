@@ -1,0 +1,12 @@
+Macro "LIMIT" 3:1-4:1
+Macro "SQUARE" 4:1-5:1
+Struct "point" 6:1-9:2
+Type "size" 13:1-16:8
+Type "node_t" 18:1-20:10
+  Struct "node" 18:9-20:2
+Struct "value" 22:1-25:2
+Enum "color" 27:1-30:2
+Type "ulong" 32:1-32:29
+Function "add" 34:1-36:2
+Function "name" 38:1-40:2
+Function "main" 42:1-45:2
