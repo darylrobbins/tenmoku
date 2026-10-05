@@ -11,6 +11,7 @@ publish.workspace = true
 fe-buffer.workspace = true
 fe-text.workspace = true
 sum-tree.workspace = true
+unicode-segmentation.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true

@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    hash::{DefaultHasher, Hash, Hasher},
     mem,
     ops::Range,
     sync::Arc,
@@ -187,14 +188,22 @@ impl TextMeasure for Shaper {
     }
 }
 
-/// Char widths in the editor font, in pixels, for soft wrap and long rows.
-/// Shapes each char once, so fallback fonts are measured too.
+/// Clusters [`GlyphWidths`] holds before it drops them all.
+const MAX_CACHED_CLUSTERS: usize = 4096;
+
+/// Char and grapheme cluster widths in the editor font, in pixels, for soft
+/// wrap and long rows. Shapes each char and multi-char cluster once, so
+/// fallback fonts are measured too, and so are clusters drawn as one glyph,
+/// such as emoji sequences. Clusters are cached by a hash of their text, so
+/// a long one (thousands of stacked combining marks) isn't kept.
 #[derive(Clone)]
 pub(crate) struct GlyphWidths {
     text_system: Arc<TextSystem>,
+    font: Font,
     font_id: FontId,
     font_size: Pixels,
     cache: HashMap<char, f32>,
+    clusters: HashMap<u64, f32>,
 }
 
 impl GlyphWidths {
@@ -202,8 +211,10 @@ impl GlyphWidths {
         Self {
             font_id: text_system.resolve_font(font),
             text_system,
+            font: font.clone(),
             font_size,
             cache: HashMap::new(),
+            clusters: HashMap::new(),
         }
     }
 }
@@ -215,10 +226,84 @@ impl CharWidth for GlyphWidths {
             font_id,
             font_size,
             cache,
+            ..
         } = self;
         *cache
             .entry(ch)
             .or_insert_with(|| text_system.layout_width(*font_id, *font_size, ch).into())
+    }
+
+    fn cluster_width(&mut self, cluster: &str) -> f32 {
+        let mut chars = cluster.chars();
+        if let (Some(ch), None) = (chars.next(), chars.next()) {
+            return self.char_width(ch);
+        }
+        let key = {
+            let mut hasher = DefaultHasher::new();
+            cluster.hash(&mut hasher);
+            hasher.finish()
+        };
+        if let Some(&width) = self.clusters.get(&key) {
+            return width;
+        }
+        if self.clusters.len() >= MAX_CACHED_CLUSTERS {
+            self.clusters.clear();
+        }
+        // A text system of its own, whose line cache goes with it, rather
+        // than a window's, which would keep each cluster until its frame
+        // ends.
+        let shaper = WindowTextSystem::new(self.text_system.clone());
+        let run = TextRun {
+            len: cluster.len(),
+            font: self.font.clone(),
+            color: Hsla::default(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        let width = shaper
+            .layout_line(cluster, self.font_size, &[run], None)
+            .width
+            .into();
+        self.clusters.insert(key, width);
+        width
+    }
+}
+
+#[cfg(test)]
+mod glyph_width_tests {
+    use gpui::TestAppContext;
+
+    use super::*;
+
+    #[gpui::test]
+    fn clusters_are_shaped_whole_however_long(cx: &mut TestAppContext) {
+        let text_system = cx.text_system().clone();
+        let font = gpui::font("Menlo");
+        let mut widths = GlyphWidths::new(text_system.clone(), &font, px(13.));
+        let shaper = WindowTextSystem::new(text_system);
+        for cluster in [
+            "e\u{301}".to_string(),
+            format!("a{}", "\u{20dd}".repeat(150)),
+        ] {
+            let run = TextRun {
+                len: cluster.len(),
+                font: font.clone(),
+                color: Hsla::default(),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            let whole: f32 = shaper
+                .layout_line(&cluster, px(13.), &[run], None)
+                .width
+                .into();
+            assert_eq!(widths.cluster_width(&cluster), whole);
+        }
+        // Cached by hash: neither cluster's text is kept.
+        assert_eq!(widths.clusters.len(), 2);
+        assert_eq!(widths.cluster_width("x"), widths.char_width('x'));
+        assert_eq!(widths.clusters.len(), 2);
     }
 }
 

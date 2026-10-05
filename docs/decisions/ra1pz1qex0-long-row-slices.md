@@ -42,30 +42,51 @@ scans 10 MB). That's once per buffer version.
 
 ## Known limitation: additive metrics
 
-Accepted 2026-10-03 (review finding F1, option A). The row index adds up
-each char's width measured alone, but GPUI shapes the slice in context.
-Where shaping changes widths, the two disagree, and the error grows along
-the row:
+Accepted 2026-10-03 (review finding F1, option A), then narrowed by T41.
+The row index adds up widths measured out of context, but GPUI shapes the
+slice in context. Where shaping changes widths, the two disagree, and the
+error grows along the row.
 
-- **What drifts:** ZWJ emoji sequences (a family emoji is one 17 px glyph
-  shaped, but 68 px summed in Menlo at 13 px), combining marks, and
-  Arabic and Indic scripts, whose joined and conjunct forms differ from
-  the chars measured alone.
-- **What you see:** the slice is drawn at the index's x but comes out
-  narrower or wider than the index says. Far along such a row, the text
-  can fall short of the view or miss it entirely, leaving it blank, and
-  after moving to the row's end, autoscroll can leave the caret off
-  screen. Clicks and carets near the slice's ends land a little off.
 - **What's exact:** monospace ASCII, the minified-file and data-dump case,
-  where shaped and summed widths are the same.
-- **Shared with soft wrap:** T-20's wrap points use the same additive
-  metrics. There, a mismatch only moves a wrap point; it doesn't build up
-  along the row.
-
-A cluster-aware index is the fix, carried by T41. It measures grapheme clusters
-as units, shaped and cached, and widens a slice whose shaped width falls
-short of the view. It fixes emoji sequences and combining marks; Arabic
-and Indic would still drift slightly.
+  and, since T41, emoji sequences and combining marks. The index walks
+  extended grapheme clusters and measures each multi-char cluster as a
+  unit (`CharWidth::cluster_width`, which GPUI shapes in the editor font
+  and caches), so a family emoji counts as its one 17 px glyph, not 68 px
+  of parts. Checkpoints sit on cluster boundaries, and offsets inside a
+  cluster clamp to its start. A cluster that crosses a 4 KB mark gets a
+  checkpoint at its start too, so even one longer than a chunk (thousands
+  of stacked combining marks) is measured once, not on every query. GPUI
+  shapes every cluster whole, caching widths by a hash of the cluster's
+  text. A slice always ends on cluster boundaries, so one with such a
+  cluster in view shapes all of it; GPUI's line cache keeps that shaping
+  from frame to frame while the slice stays put, but each frame still
+  copies the cluster's text.
+- **The safeguard:** if a shaped slice still ends short of the view's
+  right edge plus the slice margin, and the row goes on, `layout_frame`
+  widens it and shapes it again, at most twice per row per frame. The
+  first widening adds twice the shortfall times the ratio of indexed to
+  shaped width over the slice. If the slice is drawn at r times the width
+  the index measures, that covers the view and margin whenever the text
+  it adds is drawn at r/2 or more, so narrowing that's even along the row,
+  at any ratio, needs no more. Nothing already shaped bounds how narrow
+  the text after it is drawn, though. So if the text still ends short of
+  the view's right edge, the second widening takes the rest of the row (as
+  the first does if the slice shaped to nothing), and the slice's text
+  covers the view or reaches the row's end, whatever the shaper does. That
+  third shape costs as much as shaping the rest of the row; only text
+  past the slice drawn at under r/2 needs it.
+- **What still drifts:** Arabic and Indic scripts, slightly. Their joined
+  and conjunct forms depend on neighbouring clusters, so measuring each
+  cluster alone still misses. Carets, clicks and autoscroll outside the
+  slice can land a little off far along such a row. The safeguard keeps a
+  slice's text over the view unless the slice runs to the row's end.
+  There, text drawn narrower than indexed ends before the index's end of
+  the row, so scrolling can pass the text, and autoscroll to the row's end
+  leaves the caret left of where it aimed (off screen only for text drawn
+  far narrower than indexed). A click past the text lands on the row's
+  end.
+- **Shared with soft wrap:** T-20's wrap points still sum char widths. There,
+  a mismatch only moves a wrap point; it doesn't build up along the row.
 
 ## Notes
 

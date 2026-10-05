@@ -1658,6 +1658,7 @@ dependencies = [
  "gpui-pre-sum-tree",
  "proptest",
  "rand 0.9.5",
+ "unicode-segmentation",
 ]
 
 [[package]]

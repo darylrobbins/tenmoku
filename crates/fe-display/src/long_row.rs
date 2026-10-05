@@ -14,17 +14,18 @@ use std::{collections::HashMap, ops::Range};
 
 use fe_buffer::{BufferId, BufferSnapshot, Version};
 use fe_text::{Bias, Text};
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::CharWidth;
 
 /// Bytes between checkpoints.
-const CHUNK: usize = 4 * 1024;
+pub(crate) const CHUNK: usize = 4 * 1024;
 
 /// Rows [`LongRows`] holds before it drops those the last two frames
 /// didn't use.
 const MAX_CACHED_ROWS: usize = 128;
 
-/// A char boundary in a row.
+/// A grapheme cluster boundary in a row.
 #[derive(Copy, Clone, Debug, PartialEq)]
 struct Position {
     offset: usize,
@@ -32,25 +33,40 @@ struct Position {
     /// [`crate::ExpandedRow`] does.
     column: usize,
     x: f64,
+    /// On a checkpoint, that it starts a cluster which ends at the next
+    /// checkpoint, so queries inside the cluster needn't measure it again.
+    cluster: bool,
 }
 
 /// Where a walk along a row stops.
 #[derive(Copy, Clone)]
 enum Target {
-    /// At this char boundary.
+    /// At the last cluster boundary at or before this offset.
     Offset(usize),
-    /// At the last char boundary at or before this x.
+    /// At the first cluster boundary at or after this offset.
+    AtOrAfter(usize),
+    /// At the last cluster boundary at or before this x.
     X(f64),
 }
 
-/// Checkpoints every 4 KB along one buffer row, each holding a char
-/// boundary's display column and x. They're measured lazily, only as far
-/// along the row as a query needs, so a query costs at most a chunk of
-/// measuring once the row is indexed up to it.
+/// Checkpoints along one buffer row, each on the first grapheme cluster
+/// boundary at or after a 4 KB mark and holding its display column and x.
+/// A cluster that crosses a mark gets a checkpoint at its start too, so
+/// even a cluster longer than a chunk (thousands of stacked combining marks)
+/// is measured only once.
+/// They're measured lazily, only as far along the row as a query needs, so
+/// a query costs at most a chunk of measuring once the row is indexed up to
+/// it.
+///
+/// Clusters are measured as units: a multi-char cluster with
+/// [`CharWidth::cluster_width`], any other char with
+/// [`CharWidth::char_width`]. Offsets inside a cluster clamp to its start,
+/// and offsets found are cluster boundaries.
 ///
 /// Queries take the measurer the index was made with. Printable ASCII is
-/// measured once; when it's all one width (a monospace font), chunks of only
-/// printable ASCII advance without per-char work.
+/// measured once, and never segmented: each of its chars is a cluster of its
+/// own. When it's all one width (a monospace font), runs of it advance
+/// without per-char work.
 pub struct RowIndex {
     text: Text,
     end: usize,
@@ -69,7 +85,7 @@ pub struct RowIndex {
 /// The part of a row to shape for a view, from [`RowIndex::slice`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct RowSlice {
-    /// Buffer offsets, on char boundaries.
+    /// Buffer offsets, on grapheme cluster boundaries.
     pub range: Range<usize>,
     /// The x of `range.start`.
     pub start_x: f64,
@@ -104,6 +120,7 @@ impl RowIndex {
                 offset: range.start,
                 column: 0,
                 x: 0.,
+                cluster: false,
             }],
             #[cfg(test)]
             scanned: Default::default(),
@@ -114,7 +131,13 @@ impl RowIndex {
         self.checkpoints[0].offset..self.end
     }
 
-    /// The x of `offset`, which is clamped to the row and onto a char
+    /// Bytes looked at so far.
+    #[cfg(test)]
+    pub(crate) fn scanned(&self) -> usize {
+        self.scanned.get()
+    }
+
+    /// The x of `offset`, which is clamped to the row and onto a cluster
     /// boundary towards the start.
     pub fn x_for_offset(&mut self, offset: usize, measure: &mut dyn CharWidth) -> f64 {
         self.locate(offset, measure).x
@@ -126,8 +149,8 @@ impl RowIndex {
         self.locate(offset, measure).column
     }
 
-    /// The last char boundary at or before `x`: the start of the char under
-    /// it, or the row's end past it.
+    /// The last cluster boundary at or before `x`: the start of the cluster
+    /// under it, or the row's end past it.
     pub fn offset_for_x(&mut self, x: f64, measure: &mut dyn CharWidth) -> usize {
         self.locate_x(x, measure).offset
     }
@@ -137,8 +160,8 @@ impl RowIndex {
         self.locate(self.end, measure).x
     }
 
-    /// The part of the row to shape to show `x_range`: from a char boundary
-    /// at or left of `x_range.start - margin` to one at or right of
+    /// The part of the row to shape to show `x_range`: from a cluster
+    /// boundary at or left of `x_range.start - margin` to one at or right of
     /// `x_range.end + margin`, clamped to the row.
     pub fn slice(
         &mut self,
@@ -147,12 +170,7 @@ impl RowIndex {
         measure: &mut dyn CharWidth,
     ) -> RowSlice {
         let start = self.locate_x(x_range.start - margin, measure);
-        let end_x = x_range.end + margin;
-        let mut end = self.locate_x(end_x, measure).offset;
-        if self.x_for_offset(end, measure) < end_x && end < self.end {
-            // Include the char that crosses `end_x`.
-            end = self.text.clip_offset(end + 1, Bias::Right);
-        }
+        let end = self.boundary_at_or_after_x(x_range.end + margin, measure);
         RowSlice {
             range: start.offset..end.max(start.offset),
             start_x: start.x,
@@ -160,47 +178,94 @@ impl RowIndex {
         }
     }
 
+    /// `slice` with its end moved right by at least `by`, to the first
+    /// cluster boundary that far along, clamped to the row. For a slice
+    /// shaped narrower than the index measures it.
+    pub fn widen(&mut self, slice: &RowSlice, by: f64, measure: &mut dyn CharWidth) -> RowSlice {
+        let end_x = self.x_for_offset(slice.range.end, measure) + by;
+        let end = self.boundary_at_or_after_x(end_x, measure);
+        RowSlice {
+            range: slice.range.start..end.max(slice.range.end),
+            ..slice.clone()
+        }
+    }
+
+    /// The cluster boundary after the one `offset` clamps to, or the row's
+    /// end.
+    pub fn next_boundary(&mut self, offset: usize, measure: &mut dyn CharWidth) -> usize {
+        let at = self.locate(offset, measure);
+        self.boundary_after(at, measure)
+    }
+
+    /// The first cluster boundary at or after `x`, or the row's end.
+    fn boundary_at_or_after_x(&mut self, x: f64, measure: &mut dyn CharWidth) -> usize {
+        let at = self.locate_x(x, measure);
+        if at.x >= x {
+            return at.offset;
+        }
+        // Include the cluster that crosses `x`.
+        self.boundary_after(at, measure)
+    }
+
+    /// The cluster boundary after `at`, or the row's end.
+    fn boundary_after(&mut self, at: Position, measure: &mut dyn CharWidth) -> usize {
+        if at.offset == self.end {
+            return at.offset;
+        }
+        let ix = self.checkpoints.partition_point(|c| c.offset <= at.offset);
+        if self.checkpoints[ix - 1].offset == at.offset && self.checkpoints[ix - 1].cluster {
+            return self.checkpoints[ix].offset;
+        }
+        let bound = self.bound_after(at.offset);
+        let next_char = self.text.clip_offset(at.offset + 1, Bias::Right);
+        self.walk(at, bound, Target::AtOrAfter(next_char), measure)
+            .offset
+    }
+
     fn locate(&mut self, offset: usize, measure: &mut dyn CharWidth) -> Position {
         let offset = self
             .text
             .clip_offset(offset.clamp(self.range().start, self.end), Bias::Left);
-        while let Some(next) = self.next_checkpoint()
-            && next <= offset
+        while let Some(mark) = self.next_mark()
+            && mark <= offset
         {
-            self.measure_chunk(next, measure);
+            self.measure_chunk(mark, measure);
         }
         let ix = self.checkpoints.partition_point(|at| at.offset <= offset) - 1;
-        self.walk(
-            self.checkpoints[ix],
-            offset,
-            Target::Offset(offset),
-            measure,
-        )
+        if self.checkpoints[ix].cluster {
+            return self.checkpoints[ix];
+        }
+        let bound = self.bound_after(self.checkpoints[ix].offset);
+        self.walk(self.checkpoints[ix], bound, Target::Offset(offset), measure)
     }
 
     fn locate_x(&mut self, x: f64, measure: &mut dyn CharWidth) -> Position {
-        while let Some(next) = self.next_checkpoint()
+        if x < 0. {
+            return self.checkpoints[0];
+        }
+        while let Some(mark) = self.next_mark()
             && self.checkpoints.last().is_some_and(|last| last.x <= x)
         {
-            self.measure_chunk(next, measure);
+            self.measure_chunk(mark, measure);
         }
-        let ix = self
-            .checkpoints
-            .partition_point(|at| at.x <= x)
-            .saturating_sub(1);
-        // Left of the row's start, there may be no checkpoint after it yet.
-        let bound = self
-            .checkpoints
-            .get(ix + 1)
-            .map(|at| at.offset)
-            .or_else(|| self.next_checkpoint())
-            .unwrap_or(self.end);
+        let ix = self.checkpoints.partition_point(|at| at.x <= x) - 1;
+        if self.checkpoints[ix].cluster {
+            return self.checkpoints[ix];
+        }
+        let bound = self.bound_after(self.checkpoints[ix].offset);
         self.walk(self.checkpoints[ix], bound, Target::X(x), measure)
     }
 
-    /// The end of the chunk after the last checkpoint, unless the row is
+    /// The checkpoint after `offset`, or the row's end: a cluster boundary
+    /// that walks from `offset` can stop at.
+    fn bound_after(&self, offset: usize) -> usize {
+        let ix = self.checkpoints.partition_point(|at| at.offset <= offset);
+        self.checkpoints.get(ix).map_or(self.end, |at| at.offset)
+    }
+
+    /// The 4 KB mark the next checkpoint goes at or after, unless the row is
     /// measured to its end.
-    fn next_checkpoint(&self) -> Option<usize> {
+    fn next_mark(&self) -> Option<usize> {
         let last = self.checkpoints.last()?.offset;
         (last < self.end).then(|| {
             self.text
@@ -208,13 +273,29 @@ impl RowIndex {
         })
     }
 
-    fn measure_chunk(&mut self, end: usize, measure: &mut dyn CharWidth) {
+    fn measure_chunk(&mut self, mark: usize, measure: &mut dyn CharWidth) {
         let last = *self.checkpoints.last().expect("the row's start");
-        let next = self.walk(last, end, Target::Offset(end), measure);
+        let before = self.walk(last, self.end, Target::Offset(mark), measure);
+        if before.offset < mark {
+            // A cluster crosses the mark: mark its start.
+            if before.offset == last.offset {
+                self.checkpoints
+                    .last_mut()
+                    .expect("the row's start")
+                    .cluster = true;
+            } else {
+                self.checkpoints.push(Position {
+                    cluster: true,
+                    ..before
+                });
+            }
+        }
+        let next = self.walk(before, self.end, Target::AtOrAfter(mark), measure);
         self.checkpoints.push(next);
     }
 
-    /// Measures from `from` towards `bound` (a char boundary) until `target`.
+    /// Measures from `from` towards `bound` until `target`. Both are cluster
+    /// boundaries.
     fn walk(
         &self,
         from: Position,
@@ -222,17 +303,94 @@ impl RowIndex {
         target: Target,
         measure: &mut dyn CharWidth,
     ) -> Position {
-        let bound = match target {
-            Target::Offset(offset) => bound.min(offset),
+        let stop = match target {
+            Target::Offset(offset) | Target::AtOrAfter(offset) => bound.min(offset),
             Target::X(_) => bound,
         };
-        if let Some(advance) = self.advance
-            && self.is_printable_ascii(from.offset..bound)
-        {
-            let len = bound - from.offset;
+        let from = match self.walk_ascii(from, bound, stop, target) {
+            Ok(at) => return at,
+            Err(at) => at,
+        };
+
+        // Segment the rest a window at a time. A window's last cluster may go
+        // on past it, so it's left to the next window, which starts on its
+        // boundary.
+        let reach = |at: usize| match target {
+            Target::Offset(offset) | Target::AtOrAfter(offset) => offset.saturating_sub(at) + 64,
+            Target::X(_) => 1024,
+        };
+        let mut at = from;
+        let mut window = reach(at.offset);
+        loop {
+            let end = self
+                .text
+                .clip_offset((at.offset + window).min(bound), Bias::Right);
+            let text = self.text.slice_to_string(at.offset..end);
+            self.count(text.len());
+            let started = at.offset;
+            let mut clusters = Clusters::new(&text).peekable();
+            while let Some(cluster) = clusters.next() {
+                match target {
+                    Target::Offset(offset) if at.offset + cluster.len() > offset => return at,
+                    Target::AtOrAfter(offset) if at.offset >= offset => return at,
+                    _ => {}
+                }
+                if end < bound && clusters.peek().is_none() {
+                    break;
+                }
+                let (columns, next_x) = self.measure_cluster(cluster, at, measure);
+                if let Target::X(x) = target
+                    && next_x > x
+                {
+                    return at;
+                }
+                at = Position {
+                    offset: at.offset + cluster.len(),
+                    column: at.column + columns,
+                    x: next_x,
+                    cluster: false,
+                };
+            }
+            if end == bound {
+                return at;
+            }
+            window = if at.offset == started {
+                window * 2
+            } else {
+                reach(at.offset)
+            };
+        }
+    }
+
+    /// Walks printable ASCII from `from` towards `stop` until `target`. Its
+    /// chars are each a cluster of their own, so it needn't be segmented, and
+    /// when they're all one width, it's walked in one step. Short of the
+    /// target, it's `Err` with the last cluster boundary it's sure of: before
+    /// the first char that isn't printable ASCII, or, if the char at `stop`
+    /// (short of `bound`) extends the last one, as a combining mark does,
+    /// before that one.
+    fn walk_ascii(
+        &self,
+        from: Position,
+        bound: usize,
+        stop: usize,
+        target: Target,
+    ) -> Result<Position, Position> {
+        let position = |chars: usize, x: f64| Position {
+            offset: from.offset + chars,
+            column: from.column + chars,
+            x,
+            cluster: false,
+        };
+        // The chars walked, the x after them, and the x before the last.
+        let (chars, x, last_x) = if let Some(advance) = self.advance {
+            if !self.is_printable_ascii(from.offset..stop) {
+                return Err(from);
+            }
+            let len = stop - from.offset;
             let x_at = |chars: usize| from.x + chars as f64 * advance;
             let chars = match target {
-                Target::Offset(_) => len,
+                Target::Offset(_) | Target::AtOrAfter(_) => len,
                 Target::X(x) => {
                     // The quotient is exact while x is (see the module docs),
                     // but correct it against `x_at` in case it isn't.
@@ -246,50 +404,162 @@ impl RowIndex {
                     chars
                 }
             };
-            return Position {
-                offset: from.offset + chars,
-                column: from.column + chars,
-                x: x_at(chars),
-            };
-        }
-        let mut at = from;
-        for chunk in self.text.chunks_in_range(from.offset..bound) {
-            #[cfg(test)]
-            self.scanned.set(self.scanned.get() + chunk.len());
-            for ch in chunk.chars() {
-                let (columns, next_x) = if ch == '\t' {
-                    // A tab is drawn as spaces, so add their widths one by
-                    // one, as measuring the expanded row does.
-                    let columns = self.tab_size - at.column % self.tab_size;
-                    let space = self.ascii[usize::from(b' ')];
-                    (columns, (0..columns).fold(at.x, |x, _| x + space))
-                } else if ch.is_ascii() {
-                    (1, at.x + self.ascii[ch as usize])
-                } else {
-                    (1, at.x + f64::from(measure.char_width(ch)))
-                };
-                if let Target::X(x) = target
-                    && next_x > x
-                {
-                    return at;
+            (chars, x_at(chars), x_at(chars.saturating_sub(1)))
+        } else {
+            let (mut chars, mut x, mut last_x) = (0usize, from.x, from.x);
+            for chunk in self.text.chunks_in_range(from.offset..stop) {
+                for &byte in chunk.as_bytes() {
+                    if !matches!(byte, b' '..=b'~') {
+                        // It may extend the char before, which is measured
+                        // again with it.
+                        let sure = chars.saturating_sub(1);
+                        self.count(sure);
+                        return Err(position(sure, last_x));
+                    }
+                    let next_x = x + self.ascii[usize::from(byte)];
+                    if let Target::X(target_x) = target
+                        && next_x > target_x
+                    {
+                        self.count(chars + 1);
+                        return Ok(position(chars, x));
+                    }
+                    (chars, x, last_x) = (chars + 1, next_x, x);
                 }
-                at = Position {
-                    offset: at.offset + ch.len_utf8(),
-                    column: at.column + columns,
-                    x: next_x,
-                };
             }
+            self.count(chars);
+            (chars, x, last_x)
+        };
+        if chars > 0 && from.offset + chars == stop && stop < bound && self.extends_cluster(stop) {
+            return Err(position(chars - 1, last_x));
         }
-        at
+        Ok(position(chars, x))
+    }
+
+    /// The display columns of `cluster`, which starts at `at`, and the x
+    /// after it.
+    fn measure_cluster(
+        &self,
+        cluster: &str,
+        at: Position,
+        measure: &mut dyn CharWidth,
+    ) -> (usize, f64) {
+        let mut chars = cluster.chars();
+        let ch = chars.next().expect("clusters aren't empty");
+        if chars.next().is_some() {
+            return (
+                cluster.chars().count(),
+                at.x + f64::from(measure.cluster_width(cluster)),
+            );
+        }
+        if ch == '\t' {
+            // A tab is drawn as spaces, so add their widths one by one, as
+            // measuring the expanded row does.
+            let columns = self.tab_size - at.column % self.tab_size;
+            let space = self.ascii[usize::from(b' ')];
+            (columns, (0..columns).fold(at.x, |x, _| x + space))
+        } else if ch.is_ascii() {
+            (1, at.x + self.ascii[ch as usize])
+        } else {
+            (1, at.x + f64::from(measure.char_width(ch)))
+        }
+    }
+
+    /// Whether the char at `offset`, after a printable ASCII char, continues
+    /// that char's cluster, as a combining mark does.
+    fn extends_cluster(&self, offset: usize) -> bool {
+        let (Some(before), Some(after)) = (
+            self.text.char_at(offset - 1),
+            self.text.char_at(offset).filter(|_| offset < self.end),
+        ) else {
+            return false;
+        };
+        let pair: String = [before, after].into_iter().collect();
+        pair.graphemes(true).nth(1).is_none()
     }
 
     fn is_printable_ascii(&self, range: Range<usize>) -> bool {
-        #[cfg(test)]
-        self.scanned.set(self.scanned.get() + range.len());
+        self.count(range.len());
         self.text
             .chunks_in_range(range)
             .all(|chunk| chunk.bytes().all(|byte| matches!(byte, b' '..=b'~')))
     }
+
+    /// Counts bytes looked at, in tests.
+    fn count(&self, bytes: usize) {
+        #[cfg(test)]
+        self.scanned.set(self.scanned.get() + bytes);
+        #[cfg(not(test))]
+        let _ = bytes;
+    }
+}
+
+/// The grapheme clusters of text that starts on a cluster boundary. Only
+/// the stretches around chars that may join others are segmented.
+struct Clusters<'a> {
+    rest: &'a str,
+    segmented: Option<unicode_segmentation::Graphemes<'a>>,
+}
+
+impl<'a> Clusters<'a> {
+    fn new(text: &'a str) -> Self {
+        Self {
+            rest: text,
+            segmented: None,
+        }
+    }
+}
+
+impl<'a> Iterator for Clusters<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<&'a str> {
+        if let Some(cluster) = self.segmented.as_mut().and_then(Iterator::next) {
+            return Some(cluster);
+        }
+        self.segmented = None;
+        // Up to the next pair of chars that each are a cluster of their own.
+        let mut chars = self.rest.char_indices();
+        let (_, first) = chars.next()?;
+        let mut end = self.rest.len();
+        let mut own = is_own_cluster(first);
+        for (ix, ch) in chars {
+            let next_own = is_own_cluster(ch);
+            if own && next_own {
+                end = ix;
+                break;
+            }
+            own = next_own;
+        }
+        let (stretch, rest) = self.rest.split_at(end);
+        self.rest = rest;
+        if stretch.len() == first.len_utf8() {
+            return Some(stretch);
+        }
+        self.segmented = Some(stretch.graphemes(true));
+        self.next()
+    }
+}
+
+/// Whether `ch` is in a range of chars that never join a neighbour into a
+/// grapheme cluster: no combining marks, joiners, prepended or Hangul jamo
+/// or regional indicators. Between two such chars there's always a cluster
+/// boundary, so [`Clusters`] needn't segment there. Conservative: it's
+/// false for some chars that never join too.
+fn is_own_cluster(ch: char) -> bool {
+    matches!(ch,
+        '\0'..='\u{2ff}'
+        | '\u{370}'..='\u{482}'
+        | '\u{3040}'..='\u{3098}'
+        | '\u{30a0}'..='\u{30ff}'
+        | '\u{3400}'..='\u{4dbf}'
+        | '\u{4e00}'..='\u{9fff}'
+        | '\u{f900}'..='\u{faff}'
+        | '\u{ff01}'..='\u{ff9d}'
+        | '\u{1f300}'..='\u{1f3fa}'
+        | '\u{1f400}'..='\u{1faff}'
+        | '\u{20000}'..='\u{3ffff}')
+    // A CR joins a following LF; rows have no LF, but be exact anyway.
+    && ch != '\r'
 }
 
 /// The [`RowIndex`]es of long rows of one buffer version, kept from frame to
@@ -427,22 +697,28 @@ mod tests {
     ) -> Result<(), TestCaseError> {
         let (text, range) = middle_row(row);
         let expanded = ExpandedRow::new(row, tab_size);
-        // (offset, column, x) of every char boundary, summing widths over the
-        // expanded prefix.
+        // (offset, column, x) of every cluster boundary, summing widths over
+        // the expanded prefix, with each multi-char cluster measured whole.
         let mut boundaries = vec![(range.start, 0, 0.)];
         let (mut display, mut column, mut x) = (0, 0, 0.);
-        for (ix, ch) in row.char_indices() {
-            let end = if ch == '\t' {
+        for (ix, cluster) in row.grapheme_indices(true) {
+            let end = if cluster == "\t" {
                 expanded.to_display(ix + 1)
             } else {
-                display + ch.len_utf8()
+                display + cluster.len()
             };
-            for ch in expanded.text()[display..end].chars() {
-                column += 1;
-                x += f64::from(measure.char_width(ch));
+            let shown = &expanded.text()[display..end];
+            if cluster.chars().nth(1).is_some() {
+                column += cluster.chars().count();
+                x += f64::from(measure.cluster_width(shown));
+            } else {
+                for ch in shown.chars() {
+                    column += 1;
+                    x += f64::from(measure.char_width(ch));
+                }
             }
             display = end;
-            boundaries.push((range.start + ix + ch.len_utf8(), column, x));
+            boundaries.push((range.start + ix + cluster.len(), column, x));
         }
 
         let mut index = RowIndex::new(&text, range.clone(), tab_size, measure);
@@ -454,12 +730,16 @@ mod tests {
             prop_assert_eq!(index.column_for_offset(offset, measure), column);
             if let Some(&(next, ..)) = boundaries.get(ix + 1) {
                 prop_assert!(index.x_for_offset(next, measure) >= x);
+                // Offsets inside a cluster clamp to its start.
+                for inside in (offset + 1..next).filter(|&at| text.is_char_boundary(at)) {
+                    prop_assert_eq!(index.x_for_offset(inside, measure), x);
+                }
             }
             // The last boundary at or before x, at and around boundaries.
             for x in [x.next_down(), x, x + 0.25] {
                 let found = index.offset_for_x(x, measure);
                 let at = boundaries.partition_point(|b| b.0 < found);
-                prop_assert_eq!(boundaries[at].0, found, "{} is a char boundary", found);
+                prop_assert_eq!(boundaries[at].0, found, "{} is a cluster boundary", found);
                 prop_assert!(at == 0 || index.x_for_offset(found, measure) <= x);
                 if let Some(&(next, ..)) = boundaries.get(at + 1) {
                     prop_assert!(

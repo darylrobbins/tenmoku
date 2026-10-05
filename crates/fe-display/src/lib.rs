@@ -20,6 +20,14 @@ pub use long_row::{LongRows, RowIndex, RowSlice};
 /// uses pixels).
 pub trait CharWidth {
     fn char_width(&mut self, ch: char) -> f32;
+
+    /// The width of a grapheme cluster of more than one char, such as an
+    /// emoji sequence or a letter with combining marks, which a shaper may
+    /// draw narrower or wider than its chars measured alone. Sums their
+    /// widths unless overridden.
+    fn cluster_width(&mut self, cluster: &str) -> f32 {
+        cluster.chars().map(|ch| self.char_width(ch)).sum()
+    }
 }
 
 /// Every char one unit wide, so the wrap width counts chars. For headless

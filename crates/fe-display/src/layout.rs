@@ -252,19 +252,18 @@ impl<L: MeasuredLine> RowLayout<L> {
     }
 
     /// The buffer offset closest to `x` (from column 0) in this row.
-    fn offset_for_x(
-        &self,
-        text: &Text,
-        x: f64,
-        long_rows: &mut LongRows,
-        widths: &mut dyn CharWidth,
-    ) -> usize {
+    fn offset_for_x(&self, x: f64, long_rows: &mut LongRows, widths: &mut dyn CharWidth) -> usize {
         let line_x = x - self.start_x();
-        if (line_x < 0. || line_x > f64::from(self.line.width()))
+        // Past the shaped text, the index finds the offset, unless the
+        // shaped text runs to the row's end that way: then x is past the
+        // row, even where the index measures the row wider than it's drawn.
+        let shown = self.shown();
+        if (line_x < 0. && shown.start > self.start
+            || line_x > f64::from(self.line.width()) && shown.end < self.end)
             && let Some(index) = self.index(long_rows)
         {
             let before = index.offset_for_x(x, widths);
-            let after = text.clip_offset(before + 1, Bias::Right).min(self.end);
+            let after = index.next_boundary(before, widths).min(self.end);
             let past = x - index.x_for_offset(before, widths);
             return if after > before && index.x_for_offset(after, widths) - x < past {
                 after
@@ -273,7 +272,7 @@ impl<L: MeasuredLine> RowLayout<L> {
             };
         }
         let display = self.line.index_for_x(line_x as f32);
-        self.shown().start + self.expanded.to_buffer(display, Bias::Left)
+        shown.start + self.expanded.to_buffer(display, Bias::Left)
     }
 }
 
@@ -382,7 +381,7 @@ impl<L: MeasuredLine> Frame<L> {
             return 0;
         };
         let x = f64::from(position.x - self.text_left) + f64::from(self.scroll.x);
-        let offset = row.offset_for_x(text, x, long_rows, widths);
+        let offset = row.offset_for_x(x, long_rows, widths);
         if !row.last && offset >= row.end {
             return text.clip_offset(row.end - 1, Bias::Left).max(row.start);
         }
@@ -425,8 +424,9 @@ pub fn wrap_width(width: f32, buffer_rows: u32, em: f32) -> f32 {
 /// Lays out the rows visible in `input`, shaping them with `measure`.
 /// `highlights` returns the styled spans within a buffer range, sorted; it's
 /// called once per run of consecutive visible rows, and once per slice of a
-/// long row. `fold_candidates` returns the buffer rows within a range that
-/// head a fold candidate; it's called once, with the visible buffer rows.
+/// long row, again each time the slice is widened. `fold_candidates` returns
+/// the buffer rows within a range that head a fold candidate; it's called
+/// once, with the visible buffer rows.
 /// `long_rows` holds the indexes of long rows, measured with `widths`, from
 /// frame to frame.
 pub fn layout_frame<M: TextMeasure>(
@@ -586,11 +586,53 @@ pub fn layout_frame<M: TextMeasure>(
         .map(|row| match row {
             Ok(row) => row,
             Err((row, display_row)) => {
-                let slice = long_rows
-                    .index(snapshot, display_row.buffer_row, tab_size, widths)
-                    .slice(view.clone(), slice_margin, widths);
-                let spans = highlights(slice.range.clone());
-                shape_row(measure, row, display_row, Some(slice), &spans)
+                let index = long_rows.index(snapshot, display_row.buffer_row, tab_size, widths);
+                let mut slice = index.slice(view.clone(), slice_margin, widths);
+                let mut shape_slice = |slice: &RowSlice| {
+                    let spans = highlights(slice.range.clone());
+                    shape_row(
+                        measure,
+                        row,
+                        display_row.clone(),
+                        Some(slice.clone()),
+                        &spans,
+                    )
+                };
+                let mut layout = shape_slice(&slice);
+                // Where the shaper draws the slice narrower than the index
+                // measures it (contextual forms the index doesn't know), its
+                // text ends short of the view. Widen it by twice the
+                // shortfall, in index units per shaped unit over the slice,
+                // which covers the view and margin if the text added is
+                // drawn at least half as wide, relative to the index, as the
+                // slice's. Nothing shaped so far bounds how narrow the text
+                // after it is drawn, so if the text still ends short of the
+                // view's right edge, the third and last shape takes the rest
+                // of the row: that covers the view or reaches the row's end,
+                // whatever the shaper does.
+                let row_end = display_row.range.end;
+                let shaped = f64::from(layout.line.width());
+                let short = view.end + slice_margin - (slice.start_x + shaped);
+                if short > 0. && slice.range.end < row_end {
+                    slice = if shaped > 0. {
+                        let indexed = index.x_for_offset(slice.range.end, widths) - slice.start_x;
+                        index.widen(&slice, 2. * short * indexed / shaped, widths)
+                    } else {
+                        // Text shaped to nothing gives no ratio.
+                        RowSlice {
+                            range: slice.range.start..row_end,
+                            ..slice
+                        }
+                    };
+                    layout = shape_slice(&slice);
+                    if slice.start_x + f64::from(layout.line.width()) < view.end
+                        && slice.range.end < row_end
+                    {
+                        slice.range.end = row_end;
+                        layout = shape_slice(&slice);
+                    }
+                }
+                layout
             }
         })
         .collect();
@@ -814,6 +856,8 @@ pub fn row_runs<S: Clone>(
     runs
 }
 
+#[cfg(test)]
+mod cluster_row_tests;
 #[cfg(test)]
 mod fold_gutter_tests;
 #[cfg(test)]
