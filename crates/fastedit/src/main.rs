@@ -17,12 +17,10 @@ use fe_buffer::Buffer;
 use fe_editor::EditorModel;
 use fe_gpui::{EditorTheme, EditorView};
 use gpui::{
-    App, AppContext as _, Context, Entity, Focusable as _, IntoElement, KeyBinding,
-    ParentElement as _, Render, Styled as _, TitlebarOptions, Window, WindowBounds, WindowHandle,
-    WindowOptions, actions, div, px, rgb, size,
+    App, AppContext as _, Context, Entity, Focusable as _, IntoElement, ParentElement as _, Render,
+    Styled as _, TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, div, px, rgb,
+    size,
 };
-
-actions!(fastedit, [Quit]);
 
 const WELCOME: &str = "\
 fastedit
@@ -248,8 +246,6 @@ fn main() {
     application.run(move |cx: &mut App| {
         startup.app = Some(Instant::now());
         fe_gpui::init(cx);
-        cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
-        cx.on_action(|_: &Quit, cx| cx.quit());
         cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {
                 cx.quit();

@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 fe-buffer.workspace = true
+fe-command.workspace = true
 fe-display.workspace = true
 fe-editor.workspace = true
 fe-syntax.workspace = true
@@ -20,6 +21,8 @@ gpui = { workspace = true, features = ["test-support"] }
 # The screenshots example renders with the real Metal platform.
 gpui_platform = { workspace = true, features = ["test-support"] }
 image.workspace = true
+# Invocations recorded in tests go through JSON, as a macro or log would.
+serde_json.workspace = true
 
 # Golden screenshots of the editor view (TESTING.md, "Screenshots"). Built as a
 # test so the gate runs the pixel-comparison unit tests; rendering only happens

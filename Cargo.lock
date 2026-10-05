@@ -1693,6 +1693,7 @@ name = "fe-gpui"
 version = "0.1.0"
 dependencies = [
  "fe-buffer",
+ "fe-command",
  "fe-display",
  "fe-editor",
  "fe-syntax",
@@ -1700,6 +1701,7 @@ dependencies = [
  "gpui-pre-platform",
  "image",
  "log",
+ "serde_json",
 ]
 
 [[package]]

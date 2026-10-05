@@ -2,13 +2,13 @@ use std::{ops::Range, time::Duration};
 
 use fe_buffer::{Anchor, Bias, BufferSnapshot};
 use fe_display::layout::RowLayout;
-use fe_editor::{EditorModel, Movement};
+use fe_editor::EditorModel;
 use fe_syntax::{Language, ParseJob, Spawner, Syntax, SyntaxDriver};
 use gpui::{
-    App, AppContext as _, Bounds, ClipboardItem, Context, CursorStyle, EntityInputHandler,
-    FocusHandle, Focusable, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement as _, Pixels, Point, Render, ScrollWheelEvent,
-    Styled as _, Task, UTF16Selection, Window, div, px,
+    App, AppContext as _, Bounds, Context, CursorStyle, EntityInputHandler, FocusHandle, Focusable,
+    InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ParentElement as _, Pixels, Point, Render, ScrollWheelEvent, Styled as _, Task,
+    UTF16Selection, Window, div, px,
 };
 
 use crate::{
@@ -159,17 +159,12 @@ impl EditorView {
     }
 
     /// Call after anything that moves the cursor or changes the text.
-    fn changed(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn changed(&mut self, cx: &mut Context<Self>) {
         self.autoscroll = true;
         cx.notify();
     }
 
-    fn movement(&mut self, movement: Movement, extend: bool, cx: &mut Context<Self>) {
-        self.model.move_cursors(movement, extend);
-        self.changed(cx);
-    }
-
-    fn page_rows(&self) -> u32 {
+    pub(crate) fn page_rows(&self) -> u32 {
         self.layout.as_ref().map_or(20, |layout| {
             layout.frame.visible_rows().saturating_sub(2).max(1)
         })
@@ -293,64 +288,6 @@ impl EditorView {
         cx.notify();
     }
 
-    /// Folds by the syntax tree's blocks where it has one at a caret's row.
-    fn fold(&mut self, _: &Fold, _: &mut Window, cx: &mut Context<Self>) {
-        let syntax = synced_syntax(&self.syntax, &self.model);
-        self.model
-            .fold(&|row| syntax.and_then(|syntax| fe_syntax::fold_range_at(syntax, row)));
-        self.changed(cx);
-    }
-
-    /// Folds every block of the syntax tree, or with none, every indented
-    /// block.
-    fn fold_all(&mut self, _: &FoldAll, _: &mut Window, cx: &mut Context<Self>) {
-        let rows = 0..self.model.text().row_count();
-        let candidates = synced_syntax(&self.syntax, &self.model)
-            .map(|syntax| fe_syntax::fold_ranges(syntax, rows))
-            .unwrap_or_default();
-        self.model.fold_all(candidates);
-        self.changed(cx);
-    }
-
-    fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
-        let (text, _) = self.model.copy_text();
-        cx.write_to_clipboard(ClipboardItem::new_string(text));
-    }
-
-    fn cut(&mut self, _: &Cut, _: &mut Window, cx: &mut Context<Self>) {
-        let text = self.model.cut();
-        cx.write_to_clipboard(ClipboardItem::new_string(text));
-        self.changed(cx);
-    }
-
-    fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
-        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-            self.model.paste(&text);
-            self.changed(cx);
-        }
-    }
-
-    fn undo(&mut self, _: &Undo, _: &mut Window, cx: &mut Context<Self>) {
-        if let Err(error) = self.model.undo() {
-            log::error!("undo failed: {error}");
-        }
-        self.changed(cx);
-    }
-
-    fn redo(&mut self, _: &Redo, _: &mut Window, cx: &mut Context<Self>) {
-        if let Err(error) = self.model.redo() {
-            log::error!("redo failed: {error}");
-        }
-        self.changed(cx);
-    }
-
-    fn save(&mut self, _: &Save, _: &mut Window, cx: &mut Context<Self>) {
-        if let Err(error) = self.model.save() {
-            log::error!("save failed: {error}");
-        }
-        cx.notify();
-    }
-
     fn utf16_range(&self, range: &Range<usize>) -> Range<usize> {
         let text = self.model.text();
         text.offset_to_utf16(range.start)..text.offset_to_utf16(range.end)
@@ -434,7 +371,7 @@ fn shown_text<L>(rows: &[RowLayout<L>]) -> Range<usize> {
 }
 
 /// The syntax tree, if it's been edited to match `model`'s text.
-fn synced_syntax<'a>(
+pub(crate) fn synced_syntax<'a>(
     syntax: &'a Option<SyntaxDriver<Task<()>>>,
     model: &EditorModel,
 ) -> Option<&'a Syntax> {
@@ -479,46 +416,6 @@ impl Spawner for ParseSpawner<'_, '_> {
     }
 }
 
-macro_rules! movement_actions {
-    ($($action:ident => $movement:expr, $extend:expr;)*) => {
-        impl EditorView {
-            fn bind_movements(div: gpui::Stateful<gpui::Div>, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
-                div$(.on_action(cx.listener(|this, _: &$action, _, cx| {
-                    let movement = $movement(this.page_rows());
-                    this.movement(movement, $extend, cx)
-                })))*
-            }
-        }
-    };
-}
-
-movement_actions! {
-    MoveLeft => |_| Movement::Left, false;
-    MoveRight => |_| Movement::Right, false;
-    MoveUp => |_| Movement::Up, false;
-    MoveDown => |_| Movement::Down, false;
-    MoveWordLeft => |_| Movement::WordLeft, false;
-    MoveWordRight => |_| Movement::WordRight, false;
-    MoveLineStart => |_| Movement::LineStart, false;
-    MoveLineEnd => |_| Movement::LineEnd, false;
-    MoveDocumentStart => |_| Movement::DocumentStart, false;
-    MoveDocumentEnd => |_| Movement::DocumentEnd, false;
-    PageUp => Movement::PageUp, false;
-    PageDown => Movement::PageDown, false;
-    SelectLeft => |_| Movement::Left, true;
-    SelectRight => |_| Movement::Right, true;
-    SelectUp => |_| Movement::Up, true;
-    SelectDown => |_| Movement::Down, true;
-    SelectWordLeft => |_| Movement::WordLeft, true;
-    SelectWordRight => |_| Movement::WordRight, true;
-    SelectLineStart => |_| Movement::LineStart, true;
-    SelectLineEnd => |_| Movement::LineEnd, true;
-    SelectDocumentStart => |_| Movement::DocumentStart, true;
-    SelectDocumentEnd => |_| Movement::DocumentEnd, true;
-    SelectPageUp => Movement::PageUp, true;
-    SelectPageDown => Movement::PageDown, true;
-}
-
 impl Render for EditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_syntax(cx);
@@ -531,7 +428,7 @@ impl Render for EditorView {
             // around what it shows.
             cx.defer_in(window, |view, _, cx| view.sync_syntax(cx));
         }
-        let div = div()
+        div()
             .id("editor")
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus)
@@ -542,51 +439,8 @@ impl Render for EditorView {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_scroll_wheel(cx.listener(Self::on_scroll))
-            .on_action(cx.listener(|this, _: &SelectAll, _, cx| {
-                this.model.select_all();
-                this.changed(cx);
-            }))
-            .on_action(cx.listener(|this, _: &Backspace, _, cx| {
-                this.model.backspace();
-                this.changed(cx);
-            }))
-            .on_action(cx.listener(|this, _: &Delete, _, cx| {
-                this.model.delete_forward();
-                this.changed(cx);
-            }))
-            .on_action(cx.listener(|this, _: &DeleteWordLeft, _, cx| {
-                this.model.delete_word_left();
-                this.changed(cx);
-            }))
-            .on_action(cx.listener(|this, _: &Newline, _, cx| {
-                this.model.newline();
-                this.changed(cx);
-            }))
-            .on_action(cx.listener(|this, _: &Tab, _, cx| {
-                this.model.tab();
-                this.changed(cx);
-            }))
-            .on_action(cx.listener(Self::fold))
-            .on_action(cx.listener(Self::fold_all))
-            .on_action(cx.listener(|this, _: &Unfold, _, cx| {
-                this.model.unfold();
-                this.changed(cx);
-            }))
-            .on_action(cx.listener(|this, _: &UnfoldAll, _, cx| {
-                this.model.unfold_all();
-                this.changed(cx);
-            }))
-            .on_action(cx.listener(|this, _: &ToggleSoftWrap, _, cx| {
-                this.model.toggle_soft_wrap();
-                this.changed(cx);
-            }))
-            .on_action(cx.listener(Self::copy))
-            .on_action(cx.listener(Self::cut))
-            .on_action(cx.listener(Self::paste))
-            .on_action(cx.listener(Self::undo))
-            .on_action(cx.listener(Self::redo))
-            .on_action(cx.listener(Self::save));
-        Self::bind_movements(div, cx).child(EditorElement::new(cx.entity()))
+            .on_action(cx.listener(Self::on_run_command))
+            .child(EditorElement::new(cx.entity()))
     }
 }
 
@@ -640,10 +494,12 @@ impl EntityInputHandler for EditorView {
         let range = range_utf16
             .map(|range| self.range_from_utf16(&range))
             .or_else(|| self.marked_range());
-        if let Some(range) = range {
-            self.model.select_range(range, false);
-        }
-        // With no explicit range this types at every cursor.
+        let Some(range) = range else {
+            // Typing, at every cursor: recorded like any key binding.
+            self.type_text(text, cx);
+            return;
+        };
+        self.model.select_range(range, false);
         self.model.insert(text);
         self.marked = None;
         self.changed(cx);
