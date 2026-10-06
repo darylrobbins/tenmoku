@@ -1635,6 +1635,7 @@ dependencies = [
  "fe-buffer",
  "fe-config",
  "fe-gpui",
+ "fe-ui",
  "fe-workbench",
  "gpui-pre",
  "gpui-pre-platform",

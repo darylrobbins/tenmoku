@@ -208,7 +208,7 @@ fn main() {
     let settings: Arc<Settings> = store.settings().clone();
     let keymap = load_keymap();
 
-    let application = gpui_platform::application();
+    let application = gpui_platform::application().with_assets(fe_ui::Assets);
     startup.platform = Some(Instant::now());
     application.run(move |cx: &mut App| {
         startup.app = Some(Instant::now());

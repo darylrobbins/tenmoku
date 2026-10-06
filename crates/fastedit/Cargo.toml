@@ -12,6 +12,7 @@ async-channel.workspace = true
 fe-buffer.workspace = true
 fe-config.workspace = true
 fe-gpui.workspace = true
+fe-ui.workspace = true
 fe-workbench.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true

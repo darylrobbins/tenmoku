@@ -10,3 +10,9 @@ Licensed under the Apache License, Version 2.0.
 gpui-kit (soft wrap and folding, adapted in crates/fe-display)
 Copyright 2024 - 2026 Longbridge.
 Licensed under the Apache License, Version 2.0.
+
+Lucide icons (unmodified, in crates/fe-ui/assets/icons)
+Copyright (c) 2026 Lucide Icons and Contributors.
+Licensed under the ISC License.
+Icons derived from Feather: Copyright (c) 2013-present Cole Bemis.
+Licensed under the MIT License.

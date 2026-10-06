@@ -105,6 +105,28 @@ was read for the rule, not copied: see `earlier_patterns_win` in
 implement tree-sitter's documented `@injection.*` captures and `#set!`
 properties; no code was copied or adapted for them.
 
+## Icons
+
+| Our path | Source | Tag / commit | License | Files |
+|---|---|---|---|---|
+| `crates/fe-ui/assets/icons/` | [lucide-icons/lucide](https://github.com/lucide-icons/lucide) `icons/` | 1.52.0 @ `500620a2e8123f8d1db191538886dc0c223f69a9` | ISC (Feather-derived icons: MIT) | `arrow-left.svg`, `arrow-right.svg`, `chevron-right.svg`, `columns-2.svg`, `container.svg`, `database.svg`, `ellipsis.svg`, `file.svg`, `file-archive.svg`, `file-braces.svg`, `file-code.svg`, `file-cog.svg`, `file-diff.svg`, `file-image.svg`, `file-key.svg`, `file-lock.svg`, `file-music.svg`, `file-spreadsheet.svg`, `file-symlink.svg`, `file-terminal.svg`, `file-text.svg`, `file-video-camera.svg`, `files.svg`, `folder.svg`, `folder-open.svg`, `git-branch.svg`, `list-tree.svg`, `package.svg`, `rows-2.svg`, `scale.svg`, `search.svg` |
+
+The 31 SVGs are copied unmodified, compiled into `fe-ui` with `include_bytes!`.
+Lucide is ISC, "Copyright (c) 2026 Lucide Icons and Contributors". Icons derived
+from Feather are MIT, "Copyright (c) 2013-present Cole Bemis". Of ours, these are
+Feather-derived:
+
+- named in Lucide's `LICENSE` Feather list: `arrow-left`, `arrow-right`,
+  `chevron-right`, `database`, `search`, `columns-2` (listed under its old name
+  `columns`) and `ellipsis` (listed as `more-horizontal`);
+- not in that list, but crediting Feather's author `colebemis` as a contributor
+  in `icons/<name>.json` at the commit, so treated as MIT too: `file`, `file-text`,
+  `folder`, `git-branch` and `package`.
+
+The rest are ISC only. Lucide's `LICENSE`, which carries both notices, is
+copied beside them as `crates/fe-ui/assets/icons/LICENSE` and must ship with
+the binary's notices.
+
 ## Shipped MPL-2.0 dependencies (unmodified)
 
 MPL-2.0 requires telling recipients where to get the source of these crates.
