@@ -71,7 +71,8 @@ pub(crate) fn refresh(cx: &mut App) {
                     };
                     if let Some(keys) = command.shortcut(&keymap) {
                         let keys = keys.to_string();
-                        if gpui::Keystroke::parse(&keys).is_ok() {
+                        let keystroke = gpui::Keystroke::parse(&keys);
+                        if keystroke.as_ref().is_ok_and(native) {
                             // Display only: macOS reads a menu item's key
                             // equivalent from GPUI's keymap, so the shortcut
                             // must be bound there. No element sets
@@ -83,6 +84,10 @@ pub(crate) fn refresh(cx: &mut App) {
                                 action.clone(),
                                 Some(KEY_CONTEXT),
                             ));
+                        } else if keystroke.is_ok() {
+                            log::debug!(
+                                "menu shortcut {keys} has no native key equivalent; not shown"
+                            );
                         } else {
                             log::debug!("menu shortcut {keys} isn't a GPUI keystroke; not shown");
                         }
@@ -114,6 +119,70 @@ pub(crate) fn refresh(cx: &mut App) {
     cx.set_menus(menus);
 }
 
+/// The keys gpui-pre-macos 0.3.7's `key_to_native` converts for a key
+/// equivalent. Any other key reaches AppKit as its name, so only a single
+/// character is shown as itself.
+const NATIVE_KEYS: [&str; 48] = [
+    "space",
+    "backspace",
+    "escape",
+    "up",
+    "down",
+    "left",
+    "right",
+    "pageup",
+    "pagedown",
+    "home",
+    "end",
+    "delete",
+    "insert",
+    "f1",
+    "f2",
+    "f3",
+    "f4",
+    "f5",
+    "f6",
+    "f7",
+    "f8",
+    "f9",
+    "f10",
+    "f11",
+    "f12",
+    "f13",
+    "f14",
+    "f15",
+    "f16",
+    "f17",
+    "f18",
+    "f19",
+    "f20",
+    "f21",
+    "f22",
+    "f23",
+    "f24",
+    "f25",
+    "f26",
+    "f27",
+    "f28",
+    "f29",
+    "f30",
+    "f31",
+    "f32",
+    "f33",
+    "f34",
+    "f35",
+];
+
+/// Whether `keystroke` reaches AppKit as itself. GPUI's macOS menu builder
+/// drops the fn modifier and passes an unconverted key, such as `enter` or
+/// `tab`, by name; AppKit could then run the item on keys `fe-keymap`
+/// doesn't bind to it, such as `cmd-s` for `cmd-fn-s`.
+fn native(keystroke: &gpui::Keystroke) -> bool {
+    let mut chars = keystroke.key.chars();
+    let one_char = chars.next().is_some() && chars.next().is_none();
+    !keystroke.modifiers.function && (one_char || NATIVE_KEYS.contains(&keystroke.key.as_str()))
+}
+
 fn gpui_os_action(action: OsAction) -> gpui::OsAction {
     match action {
         OsAction::Cut => gpui::OsAction::Cut,
@@ -126,7 +195,8 @@ fn gpui_os_action(action: OsAction) -> gpui::OsAction {
 }
 
 /// Runs the chosen item as a key would, in the active window's focused
-/// context; with no window, through the app's commands, in no context.
+/// context; with no window, through the app's commands, in no context. If
+/// that window closes before it runs, only an `app` command runs, windowless.
 fn choose(command: &MenuCommand, cx: &mut App) {
     let Some(item) = cx
         .try_global::<Installed>()
@@ -142,14 +212,29 @@ fn choose(command: &MenuCommand, cx: &mut App) {
     };
     // GPUI has the window out while it dispatches this action to it, so
     // it's updated once that's over.
+    let command = command.clone();
     cx.defer(move |cx| {
         let ran = handle.update(cx, |_, window, cx| {
             let stack = keymap::context_stack(&window.context_stack());
             keymap::dispatch(item.invocation(&stack), window, cx);
         });
         if ran.is_err() {
-            // It closed meanwhile.
-            commands::dispatch_app(&item.invocation(&ContextStack::new()), cx);
+            // It closed meanwhile. Only an app-wide command still applies:
+            // a window one would act on whichever window is active now.
+            let invocation = item.invocation(&ContextStack::new());
+            if invocation.command.namespace() == "app" {
+                commands::dispatch_app(&invocation, cx);
+            } else {
+                log::debug!(
+                    "menu item {} > {}: its window closed",
+                    command.menu,
+                    command.item
+                );
+            }
         }
     });
 }
+
+#[cfg(test)]
+#[path = "menu_native_tests.rs"]
+mod native_tests;
