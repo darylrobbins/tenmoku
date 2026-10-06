@@ -11,6 +11,7 @@ cargo bench -p fe-syntax                          # parse, reparse, highlight (~
 cargo bench -p fe-syntax -- 10k                   # just the 10k-line cases
 cargo bench -p fe-syntax --bench flat             # highlighting huge flat files (~2 min)
 cargo bench -p fe-buffer                          # load and edit (M1)
+cargo bench -p fe-project --bench tree            # project tree open, expand, apply (~1 min)
 cargo build --release -p fastedit
 target/release/fastedit --perf path/to/file       # open, scroll, memory, idle; then quits
 ```
@@ -456,6 +457,44 @@ The limits bound the tree of a typical file, not the worst: a JSON array of
 single digits (96×) still reaches ~960 MB at 10 MiB. Above its limit, a file
 has no tree and a 32 KB window around the viewport is highlighted. The limit
 was a global 16 MB, then 8 MB, before this; at 16 MB trees reached 0.6–1.5 GB.
+
+## Project tree (`cargo bench -p fe-project --bench tree`)
+
+The fixture is `fe_project::fixture::generate` with 10 directories of 10,000
+empty files (100,000 files), plus a `.gitignore` and the directory it
+ignores. One run, measured 2026-10-05 (load average about 8 from other
+lanes). Medians:
+
+| Case | Time |
+|---|---|
+| `open` of the root (lists 11 entries) | 0.19 ms |
+| `expand` of a 10,000-file directory | 13 ms |
+| `apply` of a 1,000-path batch into a loaded, expanded directory | 4.5 ms |
+
+`expand` is the listing plus storing it. Most of it is the listing
+(`Listing::run`). It reads the directory through a handle (about as long as
+`std::fs::read_dir`), matches each entry against the ignore rules in scope
+(git's global excludes included), and sorts the entries case-insensitively.
+Each of the three took roughly a third, in a timing run under load. Interleaved
+in one process, a listing took 10 to 20% less than the `ignore` crate's walker
+plus the same sort, which it replaced. Each listing opens `/` and every
+directory down to the one it lists, checking the root and those below it
+against the tree's identities, before reading and again after. It reads the
+ignore files of each directory through its handle. For the fixture's
+temporary directory that is about 30 opens, under 0.1 ms. `open` costs a
+little over half what it did with the walker, mostly because git's global
+excludes are now read once per tree instead of by every listing. The UI is
+meant to run the listing on a background thread and only `fill` on its own.
+
+The `apply` batch is 1,000 files that exist and are already in the tree, as
+a build touching files would send. The directories on the way are opened once
+per batch, a component at a time from `/` without following symlinks, and
+checked to still be the directories the tree has, spelling included. The
+ignore rules in force are read through them. Then each path costs one
+`getattrlistat` (the entry's type, device, inode and on-disk name, without
+following symlinks) and an ignore check, about 4.5 µs, and nothing changes.
+Paths under directories that aren't loaded or are ignored cost no IO
+(`changes_outside_loaded_directories_do_no_io`).
 
 ## Not measured yet
 

@@ -21,6 +21,7 @@ fe-display = { path = "crates/fe-display" }
 fe-editor = { path = "crates/fe-editor" }
 fe-gpui = { path = "crates/fe-gpui" }
 fe-syntax = { path = "crates/fe-syntax" }
+fe-project = { path = "crates/fe-project" }
 
 # GPUI comes from the `gpui-pre-*` crates.io snapshots of Zed (Apache-2.0).
 # 0.3.7 is zed@1a28cff. Every snapshot crate must be bumped together; to move to
@@ -31,6 +32,10 @@ gpui = { package = "gpui-pre", version = "=0.3.7" }
 # that toolchain (`xcodebuild -downloadComponent MetalToolchain`) to save startup time.
 gpui_platform = { package = "gpui-pre-platform", version = "=0.3.7", features = ["font-kit", "runtime_shaders"] }
 sum-tree = { package = "gpui-pre-sum-tree", version = "=0.3.7" }
+
+# Project tree: gitignore-aware directory listing and file watching.
+ignore = "0.4"
+notify = "8"
 
 # PNG decode/encode for the fe-gpui screenshot goldens (already in the lock through gpui).
 image = { version = "0.25", default-features = false, features = ["png"] }
