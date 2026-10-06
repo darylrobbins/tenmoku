@@ -3,6 +3,7 @@
 //! Fixtures are `fe_project::fixture` trees in a temporary directory.
 
 mod launch;
+mod pane_cycle;
 mod project_panel;
 mod quick_open;
 mod tabs;

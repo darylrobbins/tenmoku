@@ -213,10 +213,12 @@ impl Pane {
         window.focus(&tab.editor.focus_handle(cx), cx);
     }
 
-    /// Activates the next tab, or with `back` the previous one, wrapping.
+    /// Activates the next tab, or with `back` the previous one, wrapping. A
+    /// sole tab activates itself, so it too replaces a file being read or a
+    /// read error.
     pub fn cycle(&mut self, back: bool, window: &mut Window, cx: &mut App) {
         let count = self.tabs.len();
-        if count > 1 {
+        if count > 0 {
             let ix = if back {
                 self.active + count - 1
             } else {
