@@ -13,7 +13,9 @@
 //!
 //! A chord belongs to the window and focused element it started in. It is
 //! abandoned, neither run nor typed, once focus leaves that element, the
-//! window closes, or a keystroke comes from anywhere else.
+//! window closes, or a keystroke comes from anywhere else. Focus that
+//! leaves and comes back before the next frame is drawn goes unseen; see
+//! `PendingChord::start`.
 
 use std::{sync::Arc, time::Duration};
 
@@ -89,6 +91,25 @@ impl PendingChord {
             cx.background_executor().timer(CHORD_TIMEOUT).await;
             cx.update(|cx| on_timeout(handle, cx));
         });
+        // Known limit: focus that moves away and back with no draw in
+        // between, A -> B -> A, isn't seen, and the chord carries on in A.
+        // GPUI reports focus changes only at draw time, by comparing the
+        // focus path of the frame drawn before with the new one; that's
+        // when `on_focus_out`, `on_focus` and `on_focus_lost` fire. The
+        // generation `Window::focus` bumps synchronously, `focus_generation`,
+        // is `pub(crate)` in gpui-pre 0.3.7, so nothing here sees each move
+        // as it happens.
+        //
+        // No keystroke can make that round trip while a chord is pending:
+        // each one continues the chord, swallowed, or ends it before
+        // anything runs or propagates. A modifier pressed alone is the one
+        // exception, and nothing in fastedit moves focus on one. What's left
+        // is a mouse, timer or menu moving focus away and back within one
+        // frame.
+        //
+        // The fix is a focus generation checked on continuation, timeout
+        // and replay. Lift this limit once GPUI exposes a synchronous focus
+        // signal, or once every focus move goes through a wrapper of ours.
         let focus_out = window.focused(cx).map(|focus| {
             // Dropped with the chord, so it fires only for this one.
             window.on_focus_out(&focus, cx, |_, _, cx| {
