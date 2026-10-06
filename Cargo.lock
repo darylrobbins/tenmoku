@@ -1847,6 +1847,7 @@ dependencies = [
  "fe-gpui",
  "fe-keymap",
  "fe-project",
+ "fe-syntax",
  "fe-ui",
  "gpui-pre",
  "log",

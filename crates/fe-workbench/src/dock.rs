@@ -1,5 +1,5 @@
-//! The right dock: one panel at a time, the project tree or project search,
-//! picked from a strip of tabs at its top. Switching keeps each panel's
+//! The right dock: one panel at a time, the project tree, project search or
+//! the outline, picked from a strip of tabs at its top. Switching keeps each panel's
 //! state, and the dock can be hidden.
 //!
 //! Its commands, and the search panel's, are those of [`init`]'s registry:
@@ -19,7 +19,7 @@ use gpui::{
 };
 
 use crate::{
-    PANEL_WIDTH, ProjectPanel,
+    OutlinePanel, PANEL_WIDTH, ProjectPanel,
     search_panel::{self, SearchPanel},
 };
 
@@ -28,11 +28,13 @@ use crate::{
 pub enum DockPanel {
     Project,
     Search,
+    Outline,
 }
 
 pub struct Dock {
     project: Entity<ProjectPanel>,
     search: Entity<SearchPanel>,
+    outline: Entity<OutlinePanel>,
     active: DockPanel,
     visible: bool,
     ui: UiTheme,
@@ -41,10 +43,16 @@ pub struct Dock {
 
 impl Dock {
     /// Shows `project` first.
-    pub fn new(project: Entity<ProjectPanel>, search: Entity<SearchPanel>, ui: UiTheme) -> Self {
+    pub fn new(
+        project: Entity<ProjectPanel>,
+        search: Entity<SearchPanel>,
+        outline: Entity<OutlinePanel>,
+        ui: UiTheme,
+    ) -> Self {
         Self {
             project,
             search,
+            outline,
             active: DockPanel::Project,
             visible: true,
             ui,
@@ -58,6 +66,10 @@ impl Dock {
 
     pub fn search(&self) -> &Entity<SearchPanel> {
         &self.search
+    }
+
+    pub fn outline(&self) -> &Entity<OutlinePanel> {
+        &self.outline
     }
 
     /// The panel shown while the dock is visible.
@@ -111,7 +123,7 @@ impl Dock {
     }
 
     /// Focuses `fallback` if the search panel, now hidden, has focus.
-    fn leave_search(&self, fallback: &FocusHandle, window: &mut Window, cx: &mut App) {
+    pub(crate) fn leave_search(&self, fallback: &FocusHandle, window: &mut Window, cx: &mut App) {
         let input = self.search.read(cx).input().focus_handle(cx);
         if input.contains_focused(window, cx) {
             window.focus(fallback, cx);
@@ -133,6 +145,7 @@ impl Render for Dock {
         let tabs = [
             (DockPanel::Project, "Project"),
             (DockPanel::Search, "Search"),
+            (DockPanel::Outline, "Outline"),
         ]
         .map(|(panel, label)| {
             fe_ui::Tab::new(("dock-tab", panel as usize), label, &self.ui)
@@ -142,6 +155,7 @@ impl Render for Dock {
         let body = match self.active {
             DockPanel::Project => self.project.clone().into_any_element(),
             DockPanel::Search => self.search.clone().into_any_element(),
+            DockPanel::Outline => self.outline.clone().into_any_element(),
         };
         div()
             .w(PANEL_WIDTH)

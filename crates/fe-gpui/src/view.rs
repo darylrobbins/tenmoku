@@ -136,6 +136,12 @@ impl EditorView {
         self.syntax.as_ref().map(SyntaxDriver::syntax)
     }
 
+    /// Whether the language the view was opened or set with is still loading
+    /// in the background, the buffer plain text until it's ready.
+    pub fn is_loading_language(&self) -> bool {
+        self.language_task.is_some()
+    }
+
     pub fn model(&self) -> &EditorModel {
         &self.model
     }

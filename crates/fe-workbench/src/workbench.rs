@@ -1,5 +1,5 @@
-//! The window shell: the editor pane, with the dock (the project panel or
-//! search) on the right.
+//! The window shell: the editor pane, with the dock (the project panel,
+//! search or the outline) on the right.
 
 use std::path::{Path, PathBuf};
 
@@ -14,7 +14,8 @@ use gpui::{
 };
 
 use crate::{
-    Dock, KEY_CONTEXT, Pane, Picker, ProjectPanel, QuickOpen, SearchPanel, dock,
+    Dock, DockPanel, KEY_CONTEXT, OutlinePanel, Pane, Picker, ProjectPanel, QuickOpen, SearchPanel,
+    dock, outline_panel,
     picker::{self, PaletteOp},
     project_panel::PanelEvent,
 };
@@ -103,7 +104,8 @@ impl Workbench {
         });
         let dock = cx.new(|cx| {
             let search = cx.new(|cx| SearchPanel::new(root.clone(), pane.downgrade(), ui, cx));
-            Dock::new(panel.clone(), search, ui)
+            let outline = cx.new(|_| OutlinePanel::new(ui));
+            Dock::new(panel.clone(), search, outline, ui)
         });
         let quick_open = cx.new(|cx| {
             let delegate = QuickOpen::new(root, pane.downgrade(), ui);
@@ -169,7 +171,7 @@ impl Workbench {
         &self.panel
     }
 
-    /// The right dock, which shows the project panel or search.
+    /// The right dock, which shows the project panel, search or the outline.
     pub fn dock(&self) -> &Entity<Dock> {
         &self.dock
     }
@@ -209,6 +211,20 @@ impl Workbench {
         self.pane.read(cx).active_editor()
     }
 
+    /// Tells the outline which editor is active, if that changed. Every tab
+    /// change redraws, though not every one notifies (focusing an open tab
+    /// only focuses it), so the workbench calls it as it renders. With
+    /// splits, it's the active pane's active editor.
+    fn follow_active_editor(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let editor = self.active_editor(cx).cloned();
+        let outline = self.dock.read(cx).outline().clone();
+        outline.update(cx, |outline, cx| outline.set_editor(editor.as_ref(), cx));
+        // The editor reparses as it renders, which notifies no one.
+        cx.defer_in(window, move |_, _, cx| {
+            outline.update(cx, OutlinePanel::frame_drawn)
+        });
+    }
+
     /// Opens the host's read of the launch file, `Ok(None)` being a new
     /// file; see [`Launch::file`].
     pub fn file_read(
@@ -239,6 +255,13 @@ impl Workbench {
                 return self.toggle_quick_open(window, cx);
             }
             let fallback = self.focus_handle(cx);
+            if outline_panel::shows(run, cx) {
+                // Focus stays where it is, unless on search's hidden input.
+                return self.dock.update(cx, |dock, cx| {
+                    dock.show(DockPanel::Outline, cx);
+                    dock.leave_search(&fallback, window, cx);
+                });
+            }
             let done = dock::op(run, cx).is_some_and(|op| {
                 self.dock
                     .update(cx, |dock, cx| dock.run(op, &fallback, window, cx))
@@ -273,6 +296,7 @@ impl Focusable for Workbench {
 impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         window.set_window_title(&self.pane.read(cx).title(cx));
+        self.follow_active_editor(window, cx);
         div()
             .key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::on_run_command))

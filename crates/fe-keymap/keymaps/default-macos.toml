@@ -321,6 +321,11 @@ command = "dock.toggle"
 context = "workbench"
 
 [[bindings]]
+keys = "cmd-shift-o"
+command = "outline.show"
+context = "workbench"
+
+[[bindings]]
 keys = "alt-cmd-r"
 command = "search.toggle_regex"
 context = "search_panel"

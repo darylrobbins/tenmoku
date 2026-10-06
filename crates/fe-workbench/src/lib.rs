@@ -11,6 +11,7 @@
 
 mod dock;
 pub mod loader;
+mod outline_panel;
 mod pane;
 mod picker;
 mod project_panel;
@@ -24,9 +25,11 @@ use dock::DockCommands;
 use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry, Value};
 use fe_keymap::{CatalogError, CommandCatalog};
 use gpui::{App, Global, Window};
+use outline_panel::OutlineCommands;
 use picker::PaletteCommands;
 
 pub use dock::{Dock, DockPanel};
+pub use outline_panel::OutlinePanel;
 pub use pane::{Pane, Tab};
 pub use picker::{Picker, PickerDelegate};
 pub use project_panel::{PANEL_WIDTH, PanelEvent, ProjectPanel};
@@ -58,6 +61,7 @@ pub fn init(cx: &mut App) {
     cx.set_global(Commands(Rc::new(new_registry())));
     picker::init(cx);
     dock::init(cx);
+    outline_panel::init(cx);
 }
 
 fn registry(cx: &App) -> Option<Rc<Registry<WorkbenchCommands>>> {
@@ -100,6 +104,7 @@ pub fn command_catalog() -> Box<dyn CommandCatalog> {
         workbench: new_registry(),
         palette: picker::registry(),
         dock: dock::registry(),
+        outline: outline_panel::registry(),
         rest: fe_gpui::commands::command_catalog(),
     })
 }
@@ -108,6 +113,7 @@ struct Catalog {
     workbench: Registry<WorkbenchCommands>,
     palette: Registry<PaletteCommands>,
     dock: Registry<DockCommands>,
+    outline: Registry<OutlineCommands>,
     rest: Box<dyn CommandCatalog>,
 }
 
@@ -116,7 +122,10 @@ impl CommandCatalog for Catalog {
         match self.workbench.check(command, args) {
             Err(CatalogError::UnknownCommand) => match self.palette.check(command, args) {
                 Err(CatalogError::UnknownCommand) => match self.dock.check(command, args) {
-                    Err(CatalogError::UnknownCommand) => self.rest.check(command, args),
+                    Err(CatalogError::UnknownCommand) => match self.outline.check(command, args) {
+                        Err(CatalogError::UnknownCommand) => self.rest.check(command, args),
+                        result => result,
+                    },
                     result => result,
                 },
                 result => result,

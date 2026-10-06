@@ -1,0 +1,467 @@
+//! The outline on the right dock: the active editor's symbols, in pre-order
+//! and indented by depth, which jump to their name when clicked.
+//!
+//! The workbench says which editor is active ([`OutlinePanel::set_editor`]);
+//! the panel observes it, and refreshes when its [`Syntax`] has a tree
+//! reparsed at another version than the outline shown. The editor catches
+//! its syntax up with its text as it renders, which notifies no one, so when
+//! the syntax trailed the text the panel looks again once the frame is drawn
+//! ([`OutlinePanel::frame_drawn`]), shown or not.
+//!
+//! A refresh builds the [`fe_syntax::OutlineJob`] here, cloning the tree and
+//! the text, and runs it on the background executor. At most one runs at a
+//! time: refreshes meanwhile only mark the panel dirty, and one follow-up
+//! runs when it lands. Until then the last outline of the tab stays on
+//! screen, so the panel never blanks between keystrokes.
+
+use std::{ops::Range, rc::Rc};
+
+use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry};
+use fe_gpui::{EditorView, commands::RunCommand};
+use fe_syntax::{Language, MAX_OUTLINE_ITEMS, NoOutline, Outline, Syntax};
+use fe_ui::{TreeRow, UiTheme};
+use gpui::{
+    App, AppContext as _, Context, Entity, EntityId, Focusable as _, Global, IntoElement,
+    ParentElement as _, Render, Styled as _, Subscription, Task, UniformListScrollHandle,
+    WeakEntity, Window, div, prelude::FluentBuilder as _, px, uniform_list,
+};
+
+use crate::PANEL_WIDTH;
+
+/// What the panel says in place of, or under, the outline.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Status {
+    NoFile,
+    PlainText,
+    /// The language, which has no outline query.
+    Unsupported(&'static str),
+    TooLarge,
+    /// The outline, or the last one while the next is found: "Parsing…"
+    /// before the first.
+    Outline,
+}
+
+pub struct OutlinePanel {
+    editor: Option<WeakEntity<EditorView>>,
+    status: Status,
+    /// The active editor's last outline, and the language it's of.
+    outline: Option<(Outline, &'static Language)>,
+    /// Moves on with each outline shown and each editor followed, so a
+    /// click on a row of another can't land.
+    generation: u64,
+    /// The job in flight.
+    job: Option<Task<()>>,
+    /// Whether a refresh came while the job ran, to run again when it lands.
+    dirty: bool,
+    /// Whether the last refresh found the syntax trailing the text, or not
+    /// reparsed: the editor catches up as it renders.
+    behind: bool,
+    scroll: UniformListScrollHandle,
+    ui: UiTheme,
+    #[cfg(test)]
+    counters: TestCounters,
+    _observe: Option<Subscription>,
+}
+
+impl OutlinePanel {
+    /// A panel following no editor.
+    pub fn new(ui: UiTheme) -> Self {
+        Self {
+            editor: None,
+            status: Status::NoFile,
+            outline: None,
+            generation: 0,
+            job: None,
+            dirty: false,
+            behind: false,
+            scroll: UniformListScrollHandle::new(),
+            ui,
+            #[cfg(test)]
+            counters: TestCounters::default(),
+            _observe: None,
+        }
+    }
+
+    /// Follows `editor`, the active tab's, or none. The hook for "the active
+    /// editor changed": the workbench calls it as it renders, for its pane;
+    /// with splits, for the active pane. Following another editor drops the
+    /// outline shown; a job still running for the last one lands, unshown.
+    pub fn set_editor(&mut self, editor: Option<&Entity<EditorView>>, cx: &mut Context<Self>) {
+        if editor.map(Entity::entity_id) == self.editor_id() {
+            return;
+        }
+        self.editor = editor.map(Entity::downgrade);
+        self._observe = editor.map(|editor| {
+            cx.observe(editor, |panel, _, cx| {
+                panel.refresh(cx);
+                cx.notify();
+            })
+        });
+        self.outline = None;
+        self.generation += 1;
+        self.scroll.scroll_to_item(0, gpui::ScrollStrategy::Top);
+        self.refresh(cx);
+        cx.notify();
+    }
+
+    fn editor_id(&self) -> Option<EntityId> {
+        self.editor.as_ref().map(|editor| editor.entity_id())
+    }
+
+    /// Updates the status from the editor's syntax, and starts a job if its
+    /// tree is parsed at another version than the outline shown.
+    fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.behind = false;
+        let Some(editor) = self.editor.as_ref().and_then(WeakEntity::upgrade) else {
+            self.status = Status::NoFile;
+            return;
+        };
+        let view = editor.read(cx);
+        let Some(syntax) = view.syntax() else {
+            self.status = if view.is_loading_language() {
+                Status::Outline
+            } else {
+                Status::PlainText
+            };
+            return;
+        };
+        self.behind = syntax.version() != view.model().snapshot().version();
+        let job = match fe_syntax::outline_job(syntax) {
+            Ok(job) => job,
+            Err(NoOutline::NotParsed) => {
+                self.status = Status::Outline;
+                self.behind = true;
+                return;
+            }
+            Err(NoOutline::Unsupported) => {
+                self.status = Status::Unsupported(syntax.language().name());
+                return;
+            }
+            Err(NoOutline::TooLarge) => {
+                self.status = Status::TooLarge;
+                return;
+            }
+        };
+        self.status = Status::Outline;
+        if self.shows(syntax) {
+            return;
+        }
+        if self.job.is_some() {
+            self.dirty = true;
+            return;
+        }
+        let language = syntax.language();
+        let editor = editor.entity_id();
+        #[cfg(test)]
+        let ran = self.counters.started(cx);
+        let found = cx.background_spawn(async move {
+            #[cfg(test)]
+            ran();
+            job.run()
+        });
+        self.job = Some(cx.spawn(async move |panel, cx| {
+            let outline = found.await;
+            panel
+                .update(cx, |panel, cx| panel.landed(editor, outline, language, cx))
+                .ok();
+        }));
+    }
+
+    /// Refreshes once a frame is drawn if the last refresh found the editor
+    /// behind, as its render may have caught up. The workbench calls it after
+    /// every frame.
+    pub(crate) fn frame_drawn(&mut self, cx: &mut Context<Self>) {
+        if !self.behind {
+            return;
+        }
+        let status = self.status;
+        self.refresh(cx);
+        if self.status != status {
+            cx.notify();
+        }
+    }
+
+    /// Whether the outline shown is of `syntax`'s language and version.
+    fn shows(&self, syntax: &Syntax) -> bool {
+        self.outline.as_ref().is_some_and(|(outline, language)| {
+            outline.version == syntax.version() && std::ptr::eq(*language, syntax.language())
+        })
+    }
+
+    /// Shows a job's outline if it's of the editor still followed, then runs
+    /// the follow-up a refresh asked for meanwhile.
+    fn landed(
+        &mut self,
+        editor: EntityId,
+        outline: Outline,
+        language: &'static Language,
+        cx: &mut Context<Self>,
+    ) {
+        self.job = None;
+        if self.editor_id() == Some(editor) {
+            self.outline = Some((outline, language));
+            self.generation += 1;
+        }
+        if std::mem::take(&mut self.dirty) {
+            self.refresh(cx);
+        }
+        cx.notify();
+    }
+
+    /// The outline's items, if it's shown.
+    fn items(&self) -> &[fe_syntax::OutlineItem] {
+        match (&self.status, &self.outline) {
+            (Status::Outline, Some((outline, _))) => &outline.items,
+            _ => &[],
+        }
+    }
+
+    /// What shows in place of the items, if anything.
+    fn message(&self) -> Option<String> {
+        Some(match self.status {
+            Status::NoFile => "No file open".into(),
+            Status::PlainText => "No outline for plain text".into(),
+            Status::Unsupported(language) => format!("No outline for {language}"),
+            Status::TooLarge => "File too large for an outline".into(),
+            Status::Outline => match &self.outline {
+                None => "Parsing…".into(),
+                Some((outline, _)) if outline.items.is_empty() => "No symbols".into(),
+                Some(_) => return None,
+            },
+        })
+    }
+
+    /// The footer under a capped outline.
+    fn footer(&self) -> Option<String> {
+        let truncated = self.status == Status::Outline
+            && self
+                .outline
+                .as_ref()
+                .is_some_and(|(outline, _)| outline.truncated);
+        truncated.then(|| format!("Showing the first {} symbols", thousands(MAX_OUTLINE_ITEMS)))
+    }
+
+    /// Selects item `ix`'s name start, if it's still `generation`'s, in the
+    /// editor followed, and focuses it. `select_and_reveal` clamps an offset
+    /// the buffer has moved past since.
+    fn jump(&mut self, generation: u64, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if generation != self.generation {
+            return;
+        }
+        let Some(start) = self.items().get(ix).map(|item| item.name_range.start) else {
+            return;
+        };
+        let Some(editor) = self.editor.as_ref().and_then(WeakEntity::upgrade) else {
+            return;
+        };
+        editor.update(cx, |editor, cx| editor.select_and_reveal(start..start, cx));
+        window.focus(&editor.focus_handle(cx), cx);
+    }
+
+    fn render_rows(&mut self, range: Range<usize>, cx: &mut Context<Self>) -> Vec<TreeRow> {
+        #[cfg(test)]
+        self.counters.built.push(range.clone());
+        let generation = self.generation;
+        let items = self.items();
+        range
+            .filter_map(|ix| {
+                let item = items.get(ix)?;
+                Some(
+                    TreeRow::new(("outline-row", ix), item.name.clone(), &self.ui)
+                        .depth(item.depth as usize)
+                        .on_click(cx.listener(move |panel, _, window, cx| {
+                            panel.jump(generation, ix, window, cx)
+                        })),
+                )
+            })
+            .collect()
+    }
+}
+
+/// `n` with commas between groups of three digits.
+fn thousands(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (ix, digit) in digits.chars().enumerate() {
+        if ix > 0 && (digits.len() - ix).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(digit);
+    }
+    out
+}
+
+impl Render for OutlinePanel {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(test)]
+        self.counters.built.clear();
+        let ui = self.ui;
+        let count = self.items().len();
+        // Each outline's rows have their own IDs, so a click pressed on a
+        // row of the last one doesn't land on this one's.
+        let list = uniform_list(
+            ("outline-rows", self.generation as usize),
+            count,
+            cx.processor(|panel, range, _, cx| panel.render_rows(range, cx)),
+        )
+        .track_scroll(&self.scroll)
+        .flex_1();
+        let muted = |text: String| {
+            div()
+                .flex_none()
+                .px_3()
+                .py_2()
+                .text_color(ui.muted_text)
+                .child(text)
+        };
+        div()
+            .w(PANEL_WIDTH)
+            .h_full()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .border_l_1()
+            .border_color(ui.border)
+            .bg(ui.panel_background)
+            .text_color(ui.text)
+            .text_size(px(12.))
+            .when_some(self.message(), |panel, message| panel.child(muted(message)))
+            .child(list)
+            .when_some(self.footer(), |panel, footer| panel.child(muted(footer)))
+    }
+}
+
+/// The [`CommandTarget`] of the outline's command: whether it ran.
+pub(crate) struct OutlineCommands;
+
+impl CommandTarget for OutlineCommands {
+    type Tx = ();
+    type Target<'a> = bool;
+}
+
+struct Commands(Rc<Registry<OutlineCommands>>);
+
+impl Global for Commands {}
+
+/// Registers `outline.show`.
+pub(crate) fn init(cx: &mut App) {
+    cx.set_global(Commands(Rc::new(registry())));
+}
+
+pub(crate) fn registry() -> Registry<OutlineCommands> {
+    let mut registry = Registry::new();
+    registry
+        .register(
+            "outline.show",
+            "Show Outline",
+            |shown: &mut bool, _: &Actor| {
+                *shown = true;
+                Ok(Dispatched::new(Effect::Notify))
+            },
+        )
+        .expect("the outline command ID is valid")
+        .context(ContextPredicate::identifier(crate::KEY_CONTEXT));
+    registry
+}
+
+/// Whether `run` is `outline.show`, in a context where it applies.
+pub(crate) fn shows(run: &RunCommand, cx: &App) -> bool {
+    let Some(commands) = cx.try_global::<Commands>() else {
+        return false;
+    };
+    let registry = commands.0.clone();
+    if registry.get(&run.0.command).is_none() {
+        return false;
+    }
+    let mut shown = false;
+    if let Err(error) = registry.dispatch(&mut shown, &run.0) {
+        log::warn!("{error}");
+    }
+    shown
+}
+
+/// What the tests count.
+#[cfg(test)]
+#[derive(Default)]
+struct TestCounters {
+    /// The row ranges the last frame built.
+    built: Vec<Range<usize>>,
+    /// Jobs started.
+    started: usize,
+    /// Jobs that ran, and of them those that ran off the main thread.
+    ran: std::sync::Arc<std::sync::Mutex<(usize, usize)>>,
+}
+
+#[cfg(test)]
+impl TestCounters {
+    /// Counts a job started, and returns what the job calls as it runs.
+    fn started(&mut self, cx: &App) -> impl FnOnce() + Send + 'static {
+        self.started += 1;
+        let ran = self.ran.clone();
+        let executor = cx.background_executor().clone();
+        move || {
+            let mut ran = ran.lock().unwrap();
+            ran.0 += 1;
+            ran.1 += usize::from(!executor.is_main_thread());
+        }
+    }
+}
+
+#[cfg(test)]
+impl OutlinePanel {
+    /// The rows shown, as `(depth, name)`.
+    pub(crate) fn rows(&self) -> Vec<(u32, String)> {
+        self.items()
+            .iter()
+            .map(|item| (item.depth, item.name.clone()))
+            .collect()
+    }
+
+    /// The outline shown, if any.
+    pub(crate) fn outline(&self) -> Option<&Outline> {
+        self.outline.as_ref().map(|(outline, _)| outline)
+    }
+
+    /// What shows in place of the rows, if anything.
+    pub(crate) fn message_text(&self) -> Option<String> {
+        self.message()
+    }
+
+    pub(crate) fn footer_text(&self) -> Option<String> {
+        self.footer()
+    }
+
+    /// The row ranges the last frame built.
+    pub(crate) fn built(&self) -> Vec<Range<usize>> {
+        self.counters.built.clone()
+    }
+
+    /// Jobs started.
+    pub(crate) fn jobs_started(&self) -> usize {
+        self.counters.started
+    }
+
+    /// Jobs that ran, and of them those that ran off the main thread.
+    pub(crate) fn jobs_ran(&self) -> (usize, usize) {
+        *self.counters.ran.lock().unwrap()
+    }
+
+    /// Where the list was laid out in the last frame.
+    pub(crate) fn list_bounds(&self) -> gpui::Bounds<gpui::Pixels> {
+        self.scroll.0.borrow().base_handle.bounds()
+    }
+
+    /// Where row `ix` was laid out in the last frame, from the list's bounds,
+    /// scroll offset and measured row height.
+    pub(crate) fn row_bounds(&self, ix: usize) -> Option<gpui::Bounds<gpui::Pixels>> {
+        let count = self.items().len();
+        let state = self.scroll.0.borrow();
+        let list = state.base_handle.bounds();
+        let height = state.last_item_size?.contents.height / count as f32;
+        let top = list.origin.y + state.base_handle.offset().y + height * ix as f32;
+        Some(gpui::Bounds::new(
+            gpui::point(list.origin.x, top),
+            gpui::size(list.size.width, height),
+        ))
+    }
+}
