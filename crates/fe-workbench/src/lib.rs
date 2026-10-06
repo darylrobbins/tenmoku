@@ -1,10 +1,11 @@
 //! fastedit's window shell, for any host: [`Workbench`] puts the editor
-//! tabs ([`Pane`]) beside the lazy file tree on the right dock
-//! ([`ProjectPanel`]).
+//! tabs ([`Pane`]s, split side by side or stacked in a [`PaneGroup`])
+//! beside the lazy file tree on the right dock ([`ProjectPanel`]).
 //!
 //! Its commands (`workbench.close_tab`, `workbench.next_tab`,
-//! `workbench.previous_tab`) are `fe-command` commands in the
-//! [`KEY_CONTEXT`] context, registered by [`init`] and bound in
+//! `workbench.previous_tab`, on the active pane, and the `pane.*` ones) are
+//! `fe-command` commands in the [`KEY_CONTEXT`] context, registered by
+//! [`init`] and bound in
 //! `fe-keymap`'s default keymap. A keystroke reaches them as a
 //! [`fe_gpui::commands::RunCommand`] that the focused editor doesn't know
 //! and propagates.
@@ -13,6 +14,7 @@ mod dock;
 pub mod loader;
 mod outline_panel;
 mod pane;
+mod pane_group;
 mod picker;
 mod project_panel;
 mod quick_open;
@@ -26,11 +28,13 @@ use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Reg
 use fe_keymap::{CatalogError, CommandCatalog};
 use gpui::{App, Global, Window};
 use outline_panel::OutlineCommands;
+use pane_group::PaneCommands;
 use picker::PaletteCommands;
 
 pub use dock::{Dock, DockPanel};
 pub use outline_panel::OutlinePanel;
-pub use pane::{Pane, Tab};
+pub use pane::{Pane, PaneEvent, Tab};
+pub use pane_group::{Axis, Direction, Member, PaneGroup};
 pub use picker::{Picker, PickerDelegate};
 pub use project_panel::{PANEL_WIDTH, PanelEvent, ProjectPanel};
 pub use quick_open::QuickOpen;
@@ -62,6 +66,7 @@ pub fn init(cx: &mut App) {
     picker::init(cx);
     dock::init(cx);
     outline_panel::init(cx);
+    pane_group::init(cx);
 }
 
 fn registry(cx: &App) -> Option<Rc<Registry<WorkbenchCommands>>> {
@@ -105,6 +110,7 @@ pub fn command_catalog() -> Box<dyn CommandCatalog> {
         palette: picker::registry(),
         dock: dock::registry(),
         outline: outline_panel::registry(),
+        panes: pane_group::registry(),
         rest: fe_gpui::commands::command_catalog(),
     })
 }
@@ -114,6 +120,7 @@ struct Catalog {
     palette: Registry<PaletteCommands>,
     dock: Registry<DockCommands>,
     outline: Registry<OutlineCommands>,
+    panes: Registry<PaneCommands>,
     rest: Box<dyn CommandCatalog>,
 }
 
@@ -123,7 +130,12 @@ impl CommandCatalog for Catalog {
             Err(CatalogError::UnknownCommand) => match self.palette.check(command, args) {
                 Err(CatalogError::UnknownCommand) => match self.dock.check(command, args) {
                     Err(CatalogError::UnknownCommand) => match self.outline.check(command, args) {
-                        Err(CatalogError::UnknownCommand) => self.rest.check(command, args),
+                        Err(CatalogError::UnknownCommand) => {
+                            match self.panes.check(command, args) {
+                                Err(CatalogError::UnknownCommand) => self.rest.check(command, args),
+                                result => result,
+                            }
+                        }
                         result => result,
                     },
                     result => result,

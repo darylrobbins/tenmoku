@@ -345,3 +345,60 @@ context = "search_panel"
 keys = "enter"
 command = "text_input.submit"
 context = "search_panel && text_input"
+
+# Panes, as VS Code binds them. The cmd-k chords sit beside the editor's
+# cmd-k cmd-0 and cmd-k cmd-j: a chord's second key picks the binding.
+[[bindings]]
+keys = "cmd-\\"
+command = "pane.split_right"
+context = "workbench"
+
+[[bindings]]
+keys = "cmd-k cmd-\\"
+command = "pane.split_down"
+context = "workbench"
+
+[[bindings]]
+keys = "cmd-k cmd-left"
+command = "pane.focus_left"
+context = "workbench"
+
+[[bindings]]
+keys = "cmd-k cmd-right"
+command = "pane.focus_right"
+context = "workbench"
+
+[[bindings]]
+keys = "cmd-k cmd-up"
+command = "pane.focus_up"
+context = "workbench"
+
+[[bindings]]
+keys = "cmd-k cmd-down"
+command = "pane.focus_down"
+context = "workbench"
+
+[[bindings]]
+keys = "ctrl-cmd-left"
+command = "pane.move_tab_left"
+context = "workbench"
+
+[[bindings]]
+keys = "ctrl-cmd-right"
+command = "pane.move_tab_right"
+context = "workbench"
+
+[[bindings]]
+keys = "ctrl-cmd-up"
+command = "pane.move_tab_up"
+context = "workbench"
+
+[[bindings]]
+keys = "ctrl-cmd-down"
+command = "pane.move_tab_down"
+context = "workbench"
+
+[[bindings]]
+keys = "cmd-k cmd-w"
+command = "pane.close"
+context = "workbench"

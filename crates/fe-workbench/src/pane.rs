@@ -1,10 +1,12 @@
 //! The editor pane: a tab per open file, the active one's editor below.
 
 use std::{
+    cell::{Cell, RefCell},
     collections::HashMap,
     io,
     ops::Range,
     path::{Path, PathBuf},
+    rc::Rc,
 };
 
 use fe_buffer::{Bias, Buffer};
@@ -12,8 +14,9 @@ use fe_editor::EditorModel;
 use fe_gpui::{EditorSettings, EditorTheme, EditorView, SettingsEvent};
 use fe_ui::{TabBar, UiTheme};
 use gpui::{
-    App, AppContext as _, Context, Entity, FocusHandle, Focusable, InteractiveElement as _,
-    IntoElement, ParentElement as _, Render, ScrollHandle, Styled as _, Task, Window, div,
+    App, AppContext as _, Bounds, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Render, ScrollHandle,
+    Styled as _, Subscription, Task, WeakEntity, Window, canvas, div,
 };
 
 use crate::loader;
@@ -23,6 +26,21 @@ pub struct Tab {
     /// `None` for a buffer that was never saved, such as the welcome text.
     pub path: Option<PathBuf>,
     pub editor: Entity<EditorView>,
+    /// Re-renders (and retitles) the pane holding the tab whenever its
+    /// editor changes.
+    _changed: Subscription,
+}
+
+/// Every pane of a workbench, each pane included, so a pane can see what
+/// the others show.
+pub(crate) type Peers = Rc<RefCell<Vec<WeakEntity<Pane>>>>;
+
+/// What a pane tells the workbench.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaneEvent {
+    /// A mouse button went down in the pane, or a file it was reading
+    /// landed and took focus, so it's the active pane now.
+    Activated,
 }
 
 pub struct Pane {
@@ -46,6 +64,13 @@ pub struct Pane {
     /// Focused when there's no editor, so the pane's commands still apply.
     focus: FocusHandle,
     tab_scroll: ScrollHandle,
+    /// Where the last frame laid the pane out.
+    bounds: Rc<Cell<Bounds<Pixels>>>,
+    /// The workbench's panes; a lone pane's has nothing in it.
+    peers: Peers,
+    id: EntityId,
+    /// Whether the pane's last tab closed: see [`Pane::take_emptied`].
+    emptied: bool,
 }
 
 impl Pane {
@@ -67,7 +92,46 @@ impl Pane {
             ui,
             focus: cx.focus_handle(),
             tab_scroll: ScrollHandle::new(),
+            bounds: Rc::default(),
+            peers: Peers::default(),
+            id: cx.entity_id(),
+            emptied: false,
         }
+    }
+
+    /// A pane like this one, empty, opening editors as it does.
+    pub(crate) fn new_peer(&self, cx: &mut Context<Self>) -> Self {
+        let mut pane = Self::new(self.theme.clone(), self.settings.clone(), self.ui, cx);
+        pane.peers = self.peers.clone();
+        pane
+    }
+
+    /// Joins the workbench's panes, `peers`.
+    pub(crate) fn set_peers(&mut self, peers: Peers) {
+        self.peers = peers;
+    }
+
+    /// Where the last frame laid the pane out; zero-sized before that.
+    pub fn bounds(&self) -> Bounds<Pixels> {
+        self.bounds.get()
+    }
+
+    /// Whether the pane's last tab closed, and no file has opened in it
+    /// since or is being read into it. Asking clears it once it's true.
+    pub(crate) fn take_emptied(&mut self) -> bool {
+        if !self.tabs.is_empty() {
+            self.emptied = false;
+        }
+        let emptied = self.emptied && self.opening.is_none();
+        if emptied {
+            self.emptied = false;
+        }
+        emptied
+    }
+
+    /// Whether the pane is reading `path` to show it.
+    pub(crate) fn is_opening(&self, path: &Path) -> bool {
+        self.opening.as_deref() == Some(path)
     }
 
     /// The theme editors open with.
@@ -121,8 +185,7 @@ impl Pane {
     /// Opens `model` in a new tab and shows it, without focusing it.
     pub fn add(&mut self, model: EditorModel, cx: &mut Context<Self>) {
         let editor = self.new_editor(model, cx);
-        let path = editor.read(cx).model().path().map(Path::to_owned);
-        self.tabs.push(Tab { path, editor });
+        self.push_tab(editor, cx);
         self.active = self.tabs.len() - 1;
         self.error = None;
         cx.notify();
@@ -149,6 +212,14 @@ impl Pane {
             self.activate(ix, window, cx);
             if let Some(reveal) = reveal {
                 reveal.select(&self.tabs[ix].editor, cx);
+            }
+            return;
+        }
+        if let Some(model) = self.peer_model(&path, cx) {
+            self.add(model, cx);
+            self.activate(self.tabs.len() - 1, window, cx);
+            if let Some(reveal) = reveal {
+                reveal.select(&self.tabs[self.active].editor, cx);
             }
             return;
         }
@@ -185,7 +256,8 @@ impl Pane {
     }
 
     /// Opens a finished read of `path` (`Ok(None)` is a new file) in a new
-    /// tab, unless it's open already. The tab is shown and focused if it's
+    /// tab, unless it's open already; if another pane has it open by now,
+    /// the tab shares that pane's buffer instead. The tab is shown and focused if it's
     /// the file opened last, or if the pane shows nothing else (no tab,
     /// read or error); an error is shown in the tab's place, with the pane
     /// focused, only for the file opened last. So an older read never hides
@@ -208,17 +280,16 @@ impl Pane {
             Ok(buffer) => {
                 let open = self.position(&path);
                 let ix = open.unwrap_or_else(|| {
-                    let model =
-                        EditorModel::new(buffer.unwrap_or_else(|| Buffer::new("")), Some(path));
-                    let editor = self.new_editor(model, cx);
-                    self.tabs.push(Tab {
-                        path: editor.read(cx).model().path().map(Path::to_owned),
-                        editor,
+                    let model = self.peer_model(&path, cx).unwrap_or_else(|| {
+                        EditorModel::new(buffer.unwrap_or_else(|| Buffer::new("")), Some(path))
                     });
+                    let editor = self.new_editor(model, cx);
+                    self.push_tab(editor, cx);
                     self.tabs.len() - 1
                 });
                 if last || empty {
                     self.activate(ix, window, cx);
+                    cx.emit(PaneEvent::Activated);
                 }
                 if let Some((_, reveal)) = reveal {
                     reveal.select(&self.tabs[ix].editor, cx);
@@ -229,6 +300,7 @@ impl Pane {
                 if last {
                     self.error = Some(format!("Cannot open {}: {error}", path.display()));
                     window.focus(&self.focus, cx);
+                    cx.emit(PaneEvent::Activated);
                 }
             }
         }
@@ -264,27 +336,84 @@ impl Pane {
 
     /// Closes the active tab and activates its right neighbour, or the left
     /// one if it was last. A tab with unsaved changes stays open (until
-    /// there are save prompts).
+    /// there are save prompts), unless another tab, in this pane or
+    /// another, shows its buffer: the changes live on there.
     pub fn close_active(&mut self, window: &mut Window, cx: &mut App) {
         let Some(tab) = self.tabs.get(self.active) else {
             return;
         };
         let model = tab.editor.read(cx).model();
-        if model.is_dirty() {
+        if model.is_dirty() && !self.shown_elsewhere(&tab.editor, cx) {
             log::warn!(
                 "not closing {}: it has unsaved changes",
                 file_name(model.path())
             );
             return;
         }
-        self.tabs.remove(self.active);
+        self.take_active(window, cx);
+    }
+
+    /// Removes the active tab, for a close or a move, and activates its
+    /// right neighbour, or the left one if it was last. With none left, the
+    /// pane is focused and, unless a file is being read into it, emptied.
+    pub(crate) fn take_active(&mut self, window: &mut Window, cx: &mut App) -> Option<Tab> {
+        if self.active >= self.tabs.len() {
+            return None;
+        }
+        let tab = self.tabs.remove(self.active);
         self.error = None;
         if self.tabs.is_empty() {
             self.active = 0;
+            self.emptied = true;
             window.focus(&self.focus, cx);
         } else {
             self.activate(self.active.min(self.tabs.len() - 1), window, cx);
         }
+        Some(tab)
+    }
+
+    /// Adds `tab`, moved from another pane, and shows and focuses it.
+    pub(crate) fn insert(&mut self, tab: Tab, window: &mut Window, cx: &mut Context<Self>) {
+        self.push_tab(tab.editor, cx);
+        self.activate(self.tabs.len() - 1, window, cx);
+        cx.notify();
+    }
+
+    /// Whether a tab other than `editor`'s, in this pane or another, shows
+    /// its buffer.
+    pub(crate) fn shown_elsewhere(&self, editor: &Entity<EditorView>, cx: &App) -> bool {
+        let model = editor.read(cx).model();
+        self.tabs.iter().any(|tab| {
+            tab.editor != *editor && tab.editor.read(cx).model().shares_buffer_with(model)
+        }) || self.shown_in_peers(model, cx)
+    }
+
+    /// Whether a tab in another pane shows `model`'s buffer.
+    pub(crate) fn shown_in_peers(&self, model: &EditorModel, cx: &App) -> bool {
+        self.peer_tabs(cx, |tab| {
+            tab.editor.read(cx).model().shares_buffer_with(model)
+        })
+        .is_some()
+    }
+
+    /// A model over the buffer of another pane's tab for `path`, if one has
+    /// it open.
+    fn peer_model(&self, path: &Path, cx: &App) -> Option<EditorModel> {
+        let editor = self.peer_tabs(cx, |tab| tab.path.as_deref() == Some(path))?;
+        Some(editor.read(cx).model().split())
+    }
+
+    /// The editor of the first tab in another pane that `pick`s it.
+    fn peer_tabs(&self, cx: &App, pick: impl Fn(&Tab) -> bool) -> Option<Entity<EditorView>> {
+        let peers = self.peers.borrow();
+        peers
+            .iter()
+            .filter(|peer| peer.entity_id() != self.id)
+            .filter_map(WeakEntity::upgrade)
+            .find_map(|peer| {
+                let tab = peer.read(cx).tabs.iter().find(|tab| pick(tab))?;
+                Some(tab.editor.clone())
+            })
     }
 
     /// Applies reloaded settings to the open editors and to editors yet to
@@ -299,7 +428,7 @@ impl Pane {
         cx.notify();
     }
 
-    fn position(&self, path: &Path) -> Option<usize> {
+    pub(crate) fn position(&self, path: &Path) -> Option<usize> {
         self.tabs
             .iter()
             .position(|tab| tab.path.as_deref() == Some(path))
@@ -313,10 +442,17 @@ impl Pane {
             model.set_soft_wrap(self.settings.soft_wrap);
         }
         let theme = self.theme.clone();
-        let editor = cx.new(|cx| EditorView::new(model, theme, cx));
-        // Re-render (and retitle) whenever the editor changes.
-        cx.observe(&editor, |_, _, cx| cx.notify()).detach();
-        editor
+        cx.new(|cx| EditorView::new(model, theme, cx))
+    }
+
+    fn push_tab(&mut self, editor: Entity<EditorView>, cx: &mut Context<Self>) {
+        let path = editor.read(cx).model().path().map(Path::to_owned);
+        let changed = cx.observe(&editor, |_, _, cx| cx.notify());
+        self.tabs.push(Tab {
+            path,
+            editor,
+            _changed: changed,
+        });
     }
 
     fn message(&self, text: String) -> gpui::AnyElement {
@@ -373,6 +509,8 @@ impl Pane {
     }
 }
 
+impl EventEmitter<PaneEvent> for Pane {}
+
 impl Focusable for Pane {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus.clone()
@@ -408,14 +546,23 @@ impl Render for Pane {
         } else {
             self.message("No open files".into())
         };
+        let bounds = self.bounds.clone();
+        let layout = canvas(move |laid_out, _, _| bounds.set(laid_out), |_, _, _, _| {})
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full();
         div()
             .track_focus(&self.focus)
+            .capture_any_mouse_down(cx.listener(|_, _, _, cx| cx.emit(PaneEvent::Activated)))
+            .relative()
             .flex_1()
             .min_w_0()
             .h_full()
             .flex()
             .flex_col()
             .bg(self.ui.background)
+            .child(layout)
             .child(tab_bar)
             .child(div().flex_1().min_h_0().child(body))
     }

@@ -143,6 +143,11 @@ impl SearchPanel {
         &self.pane
     }
 
+    /// Opens matches in `pane` from now on: the active one, as it changes.
+    pub(crate) fn set_pane(&mut self, pane: WeakEntity<Pane>) {
+        self.pane = pane;
+    }
+
     /// The query the input and options make.
     pub fn query(&self, cx: &gpui::App) -> SearchQuery {
         SearchQuery {

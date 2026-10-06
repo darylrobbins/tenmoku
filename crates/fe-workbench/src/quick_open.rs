@@ -117,6 +117,11 @@ impl QuickOpen {
         }
     }
 
+    /// Opens paths in `pane` from now on: the active one, as it changes.
+    pub(crate) fn set_pane(&mut self, pane: WeakEntity<Pane>) {
+        self.pane = pane;
+    }
+
     /// The row for match `ix`: its path, the matched chars highlighted.
     pub fn label(&self, ix: usize) -> Option<HighlightedLabel> {
         let found = self.matches.get(ix)?;
