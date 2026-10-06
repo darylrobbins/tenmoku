@@ -37,6 +37,8 @@ sum-tree = { package = "gpui-pre-sum-tree", version = "=0.3.7" }
 # Project tree: gitignore-aware directory listing and file watching.
 ignore = "0.4"
 notify = "8"
+# Cmd-P fuzzy matching of project paths (MIT; no runtime dependencies by default).
+frizbee = "0.13"
 
 # The host's channel from the config watcher to the main thread (already in
 # the lock through gpui).

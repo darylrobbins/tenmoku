@@ -25,7 +25,7 @@ use std::{
 };
 
 use ignore::{
-    Match,
+    Match, WalkBuilder,
     gitignore::{Gitignore, GitignoreBuilder},
 };
 
@@ -286,7 +286,7 @@ pub(crate) fn tick(clock: &AtomicU64) -> u64 {
 /// and `.git/info/exclude`, then those of each directory above it up to `/`.
 ///
 /// This is the `ignore` crate's `WalkBuilder` with `parents(true)`,
-/// `hidden(false)` and `require_git(false)`, built from files read through
+/// `hidden(false)` and `require_git(false)` (see [`walk_builder`]), built from files read through
 /// directory handles. For a path, the nearest `.ignore` rule that matches
 /// decides, else the nearest `.gitignore` rule, else the nearest
 /// `.git/info/exclude` rule, else git's global excludes. Ignore files are
@@ -348,6 +348,33 @@ impl Rules {
             .or(global.matched(path, is_dir))
             .is_ignore()
     }
+}
+
+/// The `ignore` crate's walker over `dir` with the settings [`Rules`] mirrors,
+/// for walks that need every file at once ([`crate::FinderIndex`]). `.git` is
+/// never entered. Symlinks aren't followed.
+pub(crate) fn walk_builder(dir: &Path) -> WalkBuilder {
+    let mut builder = WalkBuilder::new(dir);
+    builder
+        .hidden(false)
+        .parents(true)
+        .require_git(false)
+        // As `FileTree`: unit tests don't depend on this machine's git
+        // configuration.
+        .git_global(!cfg!(test))
+        .filter_entry(|entry| !is_git_dir(entry.file_name()));
+    builder
+}
+
+/// git's global excludes (`core.excludesFile`), as the walker reads them,
+/// for checking paths one at a time with [`Rules::ignores`]. None in unit
+/// tests.
+pub(crate) fn global_excludes() -> Arc<Gitignore> {
+    Arc::new(if cfg!(test) {
+        Gitignore::empty()
+    } else {
+        Gitignore::global().0
+    })
 }
 
 /// The rules in an ignore file, which apply below `dir`. Read as

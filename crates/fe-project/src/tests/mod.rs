@@ -7,6 +7,7 @@ use tempfile::TempDir;
 
 use crate::{listing, *};
 
+mod finder;
 mod large;
 mod tree;
 mod watcher;

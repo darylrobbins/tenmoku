@@ -12,6 +12,7 @@ cargo bench -p fe-syntax -- 10k                   # just the 10k-line cases
 cargo bench -p fe-syntax --bench flat             # highlighting huge flat files (~2 min)
 cargo bench -p fe-buffer                          # load and edit (M1)
 cargo bench -p fe-project --bench tree            # project tree open, expand, apply (~1 min)
+cargo bench -p fe-project --bench finder          # Cmd-P walk and queries over 100k paths (~1 min)
 cargo build --release -p fastedit
 target/release/fastedit --perf path/to/file       # open, scroll, memory, idle; then quits
 ```
@@ -495,6 +496,40 @@ ignore rules in force are read through them. Then each path costs one
 following symlinks) and an ignore check, about 4.5 µs, and nothing changes.
 Paths under directories that aren't loaded or are ignored cost no IO
 (`changes_outside_loaded_directories_do_no_io`).
+
+## Finder (`cargo bench -p fe-project --bench finder`)
+
+The plan's target is first Cmd-P results in under 50 ms on 100k files. The
+walk is `FinderIndex::walk` over `fe_project::fixture::generate` with 100
+directories of 1,000 empty files (100,000 files), plus a `.gitignore` and
+the directory it ignores, into a new index. The queries run over 100,000
+in-memory paths shaped like `crates/fe-editor-0/src/view/motion_buffer_42.rs`
+(`FinderIndex::from_paths`), with limit 50, and each returns a full page of
+50. One run, measured 2026-10-05 with a load average of 31 to 35 from other
+lanes. Medians:
+
+| Case | Time | Budget |
+|---|---|---|
+| walk of 100,000 files, into the index | 86 ms | none (background) |
+| query, 1 char (`e`) | 3.0 ms | 50 ms |
+| query, 3 chars (`edv`) | 5.2 ms | 50 ms |
+| query, 8 chars (`editview`) | 6.1 ms | 50 ms |
+| query, 20 chars (`crates/editor/viewrs`) | 5.2 ms | 50 ms |
+
+Nothing is asserted. The machine was busy, so the query times are noisy. A
+run five minutes earlier gave 1.5 ms for the 3- and 8-char queries.
+
+The walk runs on a background thread, and each walker thread sends its paths
+every 1,024 files. Cmd-P therefore has results long before the walk ends,
+over the paths indexed so far.
+
+A query first matches every file name with frizbee's `match_list`. A file
+name match outranks any full-path match, so the full paths are matched only
+when fewer than 50 file names match. A needle with a `/` can't match a file
+name and goes straight to the full paths. The best 50 candidates are picked
+without sorting the rest, and only they get match indices
+(`match_one_indices`). Single-threaded matching takes about a tenth of the
+budget, so `match_list_parallel` wasn't needed and isn't benched.
 
 ## Not measured yet
 
