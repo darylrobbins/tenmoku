@@ -13,6 +13,7 @@ cargo bench -p fe-syntax --bench flat             # highlighting huge flat files
 cargo bench -p fe-buffer                          # load and edit (M1)
 cargo bench -p fe-project --bench tree            # project tree open, expand, apply (~1 min)
 cargo bench -p fe-project --bench finder          # Cmd-P walk and queries over 100k paths (~1 min)
+cargo bench -p fe-gpui --bench keystroke          # keystroke to presented frame, by stage (~20 s)
 cargo build --release -p fastedit
 target/release/fastedit --perf path/to/file       # open, scroll, memory, idle; then quits
 ```
@@ -531,6 +532,95 @@ without sorting the rest, and only they get match indices
 (`match_one_indices`). Single-threaded matching takes about a tenth of the
 budget, so `match_list_parallel` wasn't needed and isn't benched.
 
-## Not measured yet
+## Typing latency (`cargo bench -p fe-gpui --bench keystroke`)
 
-- Typing latency (keystroke to paint; target p50 < 4 ms, p99 < 8 ms).
+The plan's target is keystroke to paint under 4 ms at p50 and 8 ms at p99.
+The bench dispatches a keystroke through the real keymap and input handling
+into a focused `EditorView`, in a 1200×800 headless GPUI window with the real
+macOS text system and GPUI's headless Metal renderer, and times it until the
+frame showing it has been drawn and presented. No window is put on screen, so
+a locked screen doesn't matter. The harness is
+`crates/fe-gpui/benches/keystroke/harness.rs`; between keystrokes it undoes
+the keystroke and settles background work, untimed.
+
+| Stage | From | To | What it covers |
+|---|---|---|---|
+| `dispatch` | before the keystroke | the view's first notification | keymap matching, the action or text-input handler, the model edit |
+| `pre_layout` | notification | the editor's prepaint starts | the view's render, which brings the syntax tree up to date (the in-frame reparse, up to its 1 ms budget), and GPUI's layout of the element tree |
+| `prepaint` | | | the editor's layout: scrolling, highlighting, shaping the visible rows |
+| `paint` | | | the editor's paint |
+| `draw_rest` | | the window's draw returns | the rest of GPUI's draw, including anything between the editor's prepaint and its paint |
+| `present` | | the scene is committed | encoding the scene and committing it to the GPU, as presenting to a window does, without waiting for the GPU |
+
+Cases: `type/small` types `x` inside a word in 60 lines of highlighted Rust;
+`type/10k-rust` the same in 10,002 lines, around line 5,000; `type/1m-plain`
+types `x` in 1M lines of plain text (33 MB, no language), mid-file;
+`move/10k-rust` presses `right` in the 10k-line Rust file, the path with no
+edit.
+
+One run on an M3 Max MacBook Pro (36 GB, macOS 27.0), 2026-10-05 at
+`9c08650`, built into a private `CARGO_TARGET_DIR`. Other lanes were
+building: the load average was 21 to 27. p50 / p99 in milliseconds, over the
+measured samples of each case:
+
+**`type/small`**, 5,100 samples:
+
+| Stage | p50 | p99 |
+|---|---|---|
+| dispatch | 0.004 | 0.010 |
+| pre_layout | 0.010 | 0.017 |
+| prepaint | 0.161 | 0.204 |
+| paint | 0.079 | 0.097 |
+| draw_rest | 0.036 | 0.049 |
+| present | 0.022 | 0.058 |
+| **total** | **0.315** | **0.419** |
+
+**`type/10k-rust`**, 2,550 samples:
+
+| Stage | p50 | p99 |
+|---|---|---|
+| dispatch | 0.004 | 0.018 |
+| pre_layout | 0.584 | 0.939 |
+| prepaint | 0.171 | 0.255 |
+| paint | 0.084 | 0.106 |
+| draw_rest | 0.041 | 0.066 |
+| present | 0.028 | 0.103 |
+| **total** | **0.915** | **1.413** |
+
+**`type/1m-plain`**, 7,650 samples:
+
+| Stage | p50 | p99 |
+|---|---|---|
+| dispatch | 0.004 | 0.009 |
+| pre_layout | 0.002 | 0.003 |
+| prepaint | 0.048 | 0.062 |
+| paint | 0.087 | 0.104 |
+| draw_rest | 0.043 | 0.054 |
+| present | 0.021 | 0.048 |
+| **total** | **0.209** | **0.272** |
+
+**`move/10k-rust`**, 7,650 samples:
+
+| Stage | p50 | p99 |
+|---|---|---|
+| dispatch | 0.003 | 0.006 |
+| pre_layout | 0.002 | 0.005 |
+| prepaint | 0.048 | 0.068 |
+| paint | 0.084 | 0.105 |
+| draw_rest | 0.039 | 0.054 |
+| present | 0.022 | 0.051 |
+| **total** | **0.201** | **0.266** |
+
+Every case fits the budget, with a p50 between 5% and 23% of 4 ms and a p99
+between 3% and 18% of 8 ms, so no stage is over. The largest stage is
+`pre_layout` in `type/10k-rust`: the reparse of the edited Rust file, inside
+its 1 ms in-frame budget. An edit to highlighted text also costs about
+0.12 ms more `prepaint` than a caret move in the same file or an edit to
+plain text, from highlighting the visible rows again. The first keystroke after the
+editor opens is slower (2.1 ms for `type/small` in a `--test` run, mostly
+`dispatch` and `present`); criterion's warm-up keeps it out of the numbers.
+
+This is the baseline before the keymap engine (card 4b): re-run the bench
+after it lands and compare. The numbers leave out OS event delivery, waiting
+for vsync, the compositor, scan-out and the GPU's own time, which need a real
+screen, and typing while a background parse runs.

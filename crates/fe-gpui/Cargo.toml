@@ -18,6 +18,7 @@ gpui.workspace = true
 log.workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 # The screenshots example renders with the real Metal platform.
 gpui_platform = { workspace = true, features = ["test-support"] }
@@ -31,6 +32,11 @@ serde_json.workspace = true
 [[example]]
 name = "screenshots"
 test = true
+
+# Keystroke-to-frame latency by stage, headless (PERF.md, "Typing latency").
+[[bench]]
+name = "keystroke"
+harness = false
 
 [lints]
 workspace = true
