@@ -15,7 +15,10 @@
 use std::{collections::HashMap, ops::Range, sync::OnceLock};
 
 use fe_buffer::{Text, Version};
-use tree_sitter::{Node, Query, QueryCursor, StreamingIterator as _, Tree};
+use tree_sitter::{
+    Node, Query, QueryCapture, QueryCursor, QueryPredicate, QueryPredicateArg,
+    StreamingIterator as _, Tree,
+};
 
 use crate::{Language, Syntax, syntax::chunks};
 
@@ -241,13 +244,19 @@ impl OutlineJob {
         // aren't listed, but they end those sections.
         let mut open: Option<OpenSections> = None;
         while let Some(found_match) = matches.next() {
+            let captures = found_match.captures();
+            let predicates = &compiled.predicates[found_match.pattern_index];
+            if !predicates.iter().all(|predicate| predicate.holds(captures)) {
+                continue;
+            }
             let mut item: Option<(OutlineKind, Node)> = None;
             let mut name: Option<Range<usize>> = None;
             let mut names_function = false;
-            for capture in found_match.captures() {
-                match compiled.kinds[capture.index as usize] {
-                    Some(kind) => item = Some((kind, capture.node)),
-                    None => {
+            for capture in captures {
+                match compiled.captures[capture.index as usize] {
+                    Capture::Item(kind) => item = Some((kind, capture.node)),
+                    Capture::Other => {}
+                    Capture::Name => {
                         let declared = declared_name(capture.node);
                         names_function |= declares_function(declared);
                         let range = declared.byte_range();
@@ -488,14 +497,258 @@ fn declared_name(mut node: Node) -> Node {
 }
 
 /// Whether `name`, the node [`declared_name`] found, names a C function:
-/// `f` in `int *f(void)`, but not `fp` in `int (*fp)(void)`, a pointer to
-/// one.
+/// `f` in `int *f(void)` and `int f [[deprecated]] (void)`, but not `fp` in
+/// `int (*fp)(void)`, a pointer to one.
 fn declares_function(name: Node) -> bool {
     let mut parent = name.parent();
-    while let Some(node) = parent.filter(|node| node.kind() == "parenthesized_declarator") {
+    while let Some(node) = parent.filter(|node| {
+        matches!(
+            node.kind(),
+            "parenthesized_declarator" | "attributed_declarator"
+        )
+    }) {
         parent = node.parent();
     }
     parent.is_some_and(|node| node.kind() == "function_declarator")
+}
+
+/// A predicate of ours on a captured node, which the definitions queries use
+/// where a pattern can't say what they mean: a scope seen through any number
+/// of wrappers, or a node a pattern can't exclude.
+struct Predicate {
+    capture: u32,
+    test: Test,
+}
+
+enum Test {
+    /// `(#scope? @node kind...)`: the scope of @node, a C declaration, is
+    /// one of the kinds. That's its nearest ancestor other than preprocessor
+    /// conditionals and a struct's or union's member list. A struct or union
+    /// without a name is no scope, so its members don't match.
+    Scope(Vec<Box<str>>),
+    /// `(#destructured? @node)`: @node is a name a JavaScript destructuring
+    /// pattern binds, at any depth, in a declaration at the top of the
+    /// program, exported or not: a and c in `const { a, b: c } = o;`, but
+    /// not b, a key.
+    Destructured,
+    /// `(#non-function? @node)`: @node, a JavaScript variable declarator,
+    /// isn't bound to a function or generator expression, also through
+    /// parentheses and TypeScript's type assertions.
+    NonFunction,
+    /// `(#chained? @node kind)`: @node, a Python name, is a target of a
+    /// chained assignment, x or y in `x = y = 1`, in a statement directly
+    /// in the scope of that kind: `module` or a `class_definition`'s body.
+    Chained(Box<str>),
+    /// `(#unchained? @node)`: @node, a Python assignment, isn't chained:
+    /// its value isn't another assignment.
+    Unchained,
+    /// `(#unpacked? @node kind)`: @node, a Python name, is in a tuple or
+    /// list a statement directly in the scope of that kind assigns to, a in
+    /// `a, *b = 1, 2`, also when that assignment is chained.
+    Unpacked(Box<str>),
+}
+
+impl Predicate {
+    /// The predicate, if it's one of ours with the arguments it takes.
+    fn new(predicate: &QueryPredicate) -> Option<Self> {
+        let (QueryPredicateArg::Capture(capture), args) = predicate.args.split_first()? else {
+            return None;
+        };
+        let args: Vec<Box<str>> = (args.iter())
+            .map(|arg| match arg {
+                QueryPredicateArg::String(arg) => Some(arg.clone()),
+                QueryPredicateArg::Capture(_) => None,
+            })
+            .collect::<Option<_>>()?;
+        let scope = || match &args[..] {
+            [kind] => Some(kind.clone()),
+            _ => None,
+        };
+        let test = match &*predicate.operator {
+            "scope?" if !args.is_empty() => Test::Scope(args),
+            "destructured?" if args.is_empty() => Test::Destructured,
+            "non-function?" if args.is_empty() => Test::NonFunction,
+            "chained?" => Test::Chained(scope()?),
+            "unchained?" if args.is_empty() => Test::Unchained,
+            "unpacked?" => Test::Unpacked(scope()?),
+            _ => return None,
+        };
+        Some(Self {
+            capture: *capture,
+            test,
+        })
+    }
+
+    /// Whether the match with these captures meets the predicate. One whose
+    /// node wasn't captured doesn't.
+    fn holds(&self, captures: &[QueryCapture]) -> bool {
+        let Some(node) = (captures.iter())
+            .find(|capture| capture.index == self.capture)
+            .map(|capture| capture.node)
+        else {
+            return false;
+        };
+        match &self.test {
+            Test::Scope(kinds) => {
+                c_scope(node).is_some_and(|scope| kinds.iter().any(|kind| **kind == *scope.kind()))
+            }
+            Test::Destructured => destructured(node),
+            Test::NonFunction => !bound_to_function(node),
+            Test::Chained(scope) => assigned(node, false)
+                .is_some_and(|(statement, chained)| chained && statement_in(statement, scope)),
+            Test::Unchained => !chains(node),
+            Test::Unpacked(scope) => {
+                assigned(node, true).is_some_and(|(statement, _)| statement_in(statement, scope))
+            }
+        }
+    }
+}
+
+/// `node`'s field in `parent` is `field`.
+fn is_field(parent: Node, field: &str, node: Node) -> bool {
+    parent.child_by_field_name(field) == Some(node)
+}
+
+/// The scope [`Test::Scope`] describes.
+fn c_scope(node: Node) -> Option<Node> {
+    let mut scope = node.parent()?;
+    while matches!(
+        scope.kind(),
+        "preproc_if"
+            | "preproc_ifdef"
+            | "preproc_elif"
+            | "preproc_elifdef"
+            | "preproc_else"
+            | "field_declaration_list"
+    ) {
+        scope = scope.parent()?;
+    }
+    let anonymous = matches!(scope.kind(), "struct_specifier" | "union_specifier")
+        && scope.child_by_field_name("name").is_none();
+    (!anonymous).then_some(scope)
+}
+
+/// See [`Test::Destructured`].
+fn destructured(name: Node) -> bool {
+    let mut node = name;
+    let mut patterns = 0;
+    let declarator = loop {
+        let Some(parent) = node.parent() else {
+            return false;
+        };
+        let binds = match parent.kind() {
+            "object_pattern" | "array_pattern" | "rest_pattern" => true,
+            "pair_pattern" => is_field(parent, "value", node),
+            "assignment_pattern" | "object_assignment_pattern" => is_field(parent, "left", node),
+            "variable_declarator" if is_field(parent, "name", node) => break parent,
+            _ => false,
+        };
+        if !binds {
+            return false;
+        }
+        patterns += 1;
+        node = parent;
+    };
+    let Some(declaration) = declarator.parent() else {
+        return false;
+    };
+    let mut parent = declaration.parent();
+    if let Some(export) = parent.filter(|node| node.kind() == "export_statement") {
+        parent = export.parent();
+    }
+    patterns > 0
+        && matches!(
+            declaration.kind(),
+            "lexical_declaration" | "variable_declaration"
+        )
+        && parent.is_some_and(|node| node.kind() == "program")
+}
+
+/// Whether the JavaScript variable declarator `declarator` is bound to a
+/// function. See [`Test::NonFunction`].
+fn bound_to_function(declarator: Node) -> bool {
+    let mut value = declarator.child_by_field_name("value");
+    while let Some(node) = value {
+        let mut cursor = node.walk();
+        let mut children = node
+            .named_children(&mut cursor)
+            .filter(|child| child.kind() != "comment");
+        value = match node.kind() {
+            "parenthesized_expression"
+            | "as_expression"
+            | "satisfies_expression"
+            | "non_null_expression" => children.next(),
+            // <F>(() => 1): the type comes first.
+            "type_assertion" => children.last(),
+            kind => {
+                return matches!(
+                    kind,
+                    "arrow_function" | "function_expression" | "generator_function"
+                );
+            }
+        };
+    }
+    false
+}
+
+/// The statement assigning to the Python name `name`, and whether its
+/// assignment is chained. `unpacked` says whether `name` is in a tuple or
+/// list target, at any depth, rather than the whole target.
+fn assigned(name: Node, unpacked: bool) -> Option<(Node, bool)> {
+    let mut node = name;
+    let mut parent = node.parent()?;
+    if unpacked {
+        if !is_pattern(parent) {
+            return None;
+        }
+        while is_pattern(parent) {
+            node = parent;
+            parent = node.parent()?;
+        }
+    }
+    if parent.kind() != "assignment" || !is_field(parent, "left", node) {
+        return None;
+    }
+    let mut assignment = parent;
+    loop {
+        let parent = assignment.parent()?;
+        if parent.kind() != "assignment" {
+            break;
+        }
+        if !is_field(parent, "right", assignment) {
+            return None;
+        }
+        assignment = parent;
+    }
+    let statement = assignment.parent()?;
+    (statement.kind() == "expression_statement").then_some((statement, chains(assignment)))
+}
+
+/// Whether the Python assignment `assignment`'s value is another
+/// assignment, as in `x = y = 1`.
+fn chains(assignment: Node) -> bool {
+    (assignment.child_by_field_name("right")).is_some_and(|right| right.kind() == "assignment")
+}
+
+fn is_pattern(node: Node) -> bool {
+    matches!(
+        node.kind(),
+        "pattern_list" | "tuple_pattern" | "list_pattern" | "list_splat_pattern"
+    )
+}
+
+/// Whether the Python statement `statement` is directly in a scope of kind
+/// `scope`: in the module, or in the body of a class definition.
+fn statement_in(statement: Node, scope: &str) -> bool {
+    let Some(parent) = statement.parent() else {
+        return false;
+    };
+    match parent.kind() {
+        "block" => parent
+            .parent()
+            .is_some_and(|owner| owner.kind() == scope && is_field(owner, "body", parent)),
+        kind => kind == scope,
+    }
 }
 
 /// The text of `range` with whitespace runs collapsed to one space, trimmed
@@ -575,9 +828,22 @@ struct OutlineQuery {
 
 struct Compiled {
     query: Query,
-    /// What each capture is, by capture index: an item's kind, or `None`
-    /// for `@name`.
-    kinds: Vec<Option<OutlineKind>>,
+    /// What each capture is, by capture index.
+    captures: Vec<Capture>,
+    /// Each pattern's predicates of ours, by pattern index. Tree-sitter
+    /// checks its own, such as `#match?`.
+    predicates: Vec<Vec<Predicate>>,
+}
+
+/// What a query capture is.
+#[derive(Clone, Copy)]
+enum Capture {
+    /// `@definition.<kind>`, on the item's node.
+    Item(OutlineKind),
+    /// `@name`, on its name.
+    Name,
+    /// `@_<anything>`, on a node only predicates look at.
+    Other,
 }
 
 impl OutlineQuery {
@@ -608,23 +874,44 @@ impl OutlineQuery {
             .get_or_init(|| self.compile(language, "symbols", &[self.parts, self.definitions]))
     }
 
-    /// A query that doesn't compile, or has a capture other than `@name` and
-    /// `@definition.<kind>`, is a bug: it panics naming the language.
+    /// A query that doesn't compile, has a capture other than `@name`,
+    /// `@definition.<kind>` and `@_<anything>`, or a predicate neither
+    /// tree-sitter nor [`Predicate`] knows, is a bug: it panics naming the
+    /// language.
     fn compile(&self, language: &Language, what: &str, parts: &[&[&str]]) -> Compiled {
         let source = parts.concat().concat();
         let query = Query::new(&language.grammar, &source)
             .unwrap_or_else(|error| panic!("{} {what} query: {error}", self.language));
-        let kinds = query
+        let captures = query
             .capture_names()
             .iter()
             .map(|&capture| match capture {
-                "name" => None,
-                _ => Some(OutlineKind::from_capture(capture).unwrap_or_else(|| {
+                "name" => Capture::Name,
+                _ if capture.starts_with('_') => Capture::Other,
+                _ => Capture::Item(OutlineKind::from_capture(capture).unwrap_or_else(|| {
                     panic!("{} {what} query: unknown capture @{capture}", self.language)
                 })),
             })
             .collect();
-        Compiled { query, kinds }
+        let predicates = (0..query.pattern_count())
+            .map(|pattern| {
+                (query.general_predicates(pattern).iter())
+                    .map(|predicate| {
+                        Predicate::new(predicate).unwrap_or_else(|| {
+                            panic!(
+                                "{} {what} query: unknown predicate #{}",
+                                self.language, predicate.operator
+                            )
+                        })
+                    })
+                    .collect()
+            })
+            .collect();
+        Compiled {
+            query,
+            captures,
+            predicates,
+        }
     }
 }
 

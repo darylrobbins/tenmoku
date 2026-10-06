@@ -9,5 +9,7 @@ Variable "current" 18:5-18:19
 Variable "legacy" 19:5-19:15
 Variable "timeout" 20:14-20:26
 Variable "mode" 21:12-21:24
+Variable "a" 22:9-22:10
+Variable "b" 22:12-22:13
 Function "handler" 24:7-24:30
 Function "main" 26:1-29:2

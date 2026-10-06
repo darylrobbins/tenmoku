@@ -9,6 +9,12 @@
   body: (class_body
     (public_field_definition name: (_) @name) @definition.field))
 
+; A class expression with a name: class Named { x = 1 }.
+(class
+  name: (_)
+  body: (class_body
+    (public_field_definition name: (_) @name) @definition.field))
+
 (interface_declaration
   body: (interface_body
     (property_signature name: (_) @name) @definition.field))

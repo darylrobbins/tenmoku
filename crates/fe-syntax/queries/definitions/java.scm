@@ -25,4 +25,10 @@
     (constant_declaration
       declarator: (variable_declarator name: (identifier) @name) @definition.field)))
 
+; An annotation type's: @interface Marker { int LIMIT = 1; }.
+(annotation_type_declaration
+  body: (annotation_type_body
+    (constant_declaration
+      declarator: (variable_declarator name: (identifier) @name) @definition.field)))
+
 (enum_constant name: (identifier) @name) @definition.variant

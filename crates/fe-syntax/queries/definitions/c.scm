@@ -2,31 +2,39 @@
 ; Follows outline/c.scm in the symbols query.
 
 ; A declarator captured as @name stands for the identifier it declares, as
-; in the outline query. Each declarator of int a, *b; is its own item.
+; in the outline query. Each declarator of int a, *b; is its own item. Only
+; declarators count: the grammar also puts calling conventions, as in
+; int __stdcall h(void);, and assembly labels, as in
+; int real __asm__("real");, in the declarator field.
 
-; Fields of a named struct or union. An anonymous one's aren't listed.
-(struct_specifier
-  name: (_)
-  body: (field_declaration_list
-    (field_declaration declarator: (_) @name @definition.field)))
-
-(union_specifier
-  name: (_)
-  body: (field_declaration_list
-    (field_declaration declarator: (_) @name @definition.field)))
+; Fields of a named struct or union, also in any preprocessor branch of its
+; body, however nested. An anonymous one's aren't listed: #scope? sees
+; through the conditionals and rejects a struct or union without a name.
+((field_declaration
+  declarator: [
+    (field_identifier)
+    (pointer_declarator)
+    (array_declarator)
+    (function_declarator)
+    (parenthesized_declarator)
+    (attributed_declarator)
+  ] @name @definition.field) @_declaration
+  (#scope? @_declaration struct_specifier union_specifier))
 
 (enumerator name: (identifier) @name) @definition.variant
 
-; A file-scope declaration, also inside an include guard or another #if at
-; the top. A prototype, int f(void);, is left out: one whose declarator
-; declares a function isn't listed as a variable.
-(translation_unit
-  (declaration declarator: (_) @name @definition.variable))
-
-(translation_unit
-  [
-    (preproc_if
-      (declaration declarator: (_) @name @definition.variable))
-    (preproc_ifdef
-      (declaration declarator: (_) @name @definition.variable))
-  ])
+; A file-scope declaration, also in any branch of an #if, #ifdef, #elif or
+; #else at the top, however nested, such as an include guard. A prototype,
+; int f(void);, is left out: one whose declarator declares a function isn't
+; listed as a variable.
+((declaration
+  declarator: [
+    (identifier)
+    (init_declarator)
+    (pointer_declarator)
+    (array_declarator)
+    (function_declarator)
+    (parenthesized_declarator)
+    (attributed_declarator)
+  ] @name @definition.variable) @_declaration
+  (#scope? @_declaration translation_unit))
