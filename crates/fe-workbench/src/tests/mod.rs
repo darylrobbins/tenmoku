@@ -13,6 +13,7 @@ mod search_panel;
 mod search_panel_cancel;
 mod search_panel_followups;
 mod splits;
+mod splits_followups;
 mod tabs;
 mod tree_keys;
 

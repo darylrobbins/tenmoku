@@ -13,7 +13,7 @@ use fe_ui::UiTheme;
 use gpui::{
     App, AppContext as _, Context, DismissEvent, Entity, EntityId, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _, Subscription,
-    Window, div, prelude::FluentBuilder as _, px,
+    WeakEntity, Window, div, prelude::FluentBuilder as _, px,
 };
 
 use crate::{
@@ -91,6 +91,9 @@ pub struct Workbench {
     palette: bool,
     /// The editor whose file the project panel last revealed.
     revealed: Option<EntityId>,
+    /// The launch file the host is reading, and the pane it opens in, until
+    /// [`Workbench::file_read`] hands it over.
+    launch_read: Option<(PathBuf, WeakEntity<Pane>)>,
     ui: UiTheme,
     _subscriptions: [Subscription; 3],
 }
@@ -110,6 +113,10 @@ impl Workbench {
         let ui = UiTheme::default_dark();
         let welcome = launch.root.is_none() && launch.file.is_none();
         let root = launch.root.clone();
+        let launch_read = match &launch.file {
+            Some((path, None)) => Some(path.clone()),
+            _ => None,
+        };
         let panel = cx.new(|cx| ProjectPanel::new(launch.root, ui, cx));
         let pane = cx.new(|cx| {
             let mut pane = Pane::new(theme, settings, ui, cx);
@@ -185,6 +192,7 @@ impl Workbench {
             quick_open,
             palette: false,
             revealed: None,
+            launch_read: launch_read.map(|path| (path, pane.downgrade())),
             ui,
             _subscriptions: [open, dismissed, left],
         };
@@ -444,7 +452,11 @@ impl Workbench {
             if self.editors.contains_key(&other.entity_id()) {
                 self.echoes.insert(other.entity_id());
             }
-            other.update(cx, |_, cx| cx.notify());
+            // Caught up now, so it reparses for the edit as it renders.
+            other.update(cx, |other, cx| {
+                other.model_mut().sync_display();
+                cx.notify();
+            });
         }
     }
 
@@ -525,8 +537,10 @@ impl Workbench {
     }
 
     /// Opens the host's read of the launch file, `Ok(None)` being a new
-    /// file, in the pane showing it being read, else the active pane; see
-    /// [`Launch::file`].
+    /// file, in the pane it was launched in, whatever that pane has shown
+    /// since; see [`Launch::file`]. If that pane has closed, the read is
+    /// dropped. Any other read opens in the pane showing it being read, else
+    /// the active pane.
     pub fn file_read(
         &mut self,
         path: PathBuf,
@@ -534,13 +548,24 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let pane = self
-            .panes
-            .panes()
-            .into_iter()
-            .find(|pane| pane.read(cx).is_opening(&path))
-            .unwrap_or(&self.active)
-            .clone();
+        let pane = match self.launch_read.take_if(|(launched, _)| *launched == path) {
+            Some((_, pane)) => {
+                let open = self.panes.panes();
+                let pane = pane.upgrade().filter(|pane| open.contains(&pane));
+                let Some(pane) = pane else {
+                    log::info!("not opening {}: its pane closed", path.display());
+                    return;
+                };
+                pane
+            }
+            None => self
+                .panes
+                .panes()
+                .into_iter()
+                .find(|pane| pane.read(cx).is_opening(&path))
+                .unwrap_or(&self.active)
+                .clone(),
+        };
         pane.update(cx, |pane, cx| pane.file_read(path, result, window, cx));
     }
 
