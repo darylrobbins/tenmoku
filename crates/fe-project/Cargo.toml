@@ -9,6 +9,9 @@ publish.workspace = true
 
 [dependencies]
 frizbee.workspace = true
+grep-matcher.workspace = true
+grep-regex.workspace = true
+grep-searcher.workspace = true
 ignore.workspace = true
 libc.workspace = true
 notify.workspace = true
@@ -23,6 +26,10 @@ harness = false
 
 [[bench]]
 name = "finder"
+harness = false
+
+[[bench]]
+name = "search"
 harness = false
 
 [lints]

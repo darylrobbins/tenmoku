@@ -9,6 +9,7 @@ use crate::{listing, *};
 
 mod finder;
 mod large;
+mod search;
 mod tree;
 mod watcher;
 

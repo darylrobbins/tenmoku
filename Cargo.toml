@@ -40,6 +40,13 @@ ignore = "0.4"
 notify = "8"
 # Cmd-P fuzzy matching of project paths (MIT; no runtime dependencies by default).
 frizbee = "0.13"
+# Project search: ripgrep's searcher and regex matcher, without the `grep`
+# facade (which adds grep-printer and grep-cli). Unlicense OR MIT. Cargo.lock
+# holds their encoding_rs at 0.8.35: the releases after it add simdutf8 and
+# multiversion, which T65 didn't vet.
+grep-matcher = "0.1"
+grep-regex = "0.1"
+grep-searcher = "0.1"
 
 # The host's channel from the config watcher to the main thread (already in
 # the lock through gpui).
