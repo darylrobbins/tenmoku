@@ -365,11 +365,12 @@ impl EditorModel {
     /// `candidate_at` gives rows of [`EditorModel::text`], for the row the
     /// caret is shown on: those folds are made there and then caught up
     /// with the buffer. Selected rows and indented blocks are found in the
-    /// buffer as it is now.
+    /// buffer as it is once caught up, and a selection spanning rows then
+    /// folds them whether or not it got a candidate.
     pub fn fold(&mut self, candidate_at: &dyn Fn(u32) -> Option<RangeInclusive<u32>>) {
         let shown = self.snapshot.clone();
         let latest = self.buffer.borrow().snapshot();
-        let mut after_catch_up = Vec::new();
+        let mut selections = Vec::new();
         for selection in self.selections.iter() {
             let candidate = if selected_rows(&latest, selection).is_some() {
                 None
@@ -377,17 +378,19 @@ impl EditorModel {
                 let offset = shown.resolve(&selection.start);
                 candidate_at(shown.text().offset_to_point(offset).row)
             };
-            match candidate {
-                Some(rows) => _ = self.display.fold(rows),
-                None => after_catch_up.push(*selection),
+            let has_candidate = candidate.is_some();
+            if let Some(rows) = candidate {
+                self.display.fold(rows);
             }
+            selections.push((*selection, has_candidate));
         }
         self.sync_display();
         let text = self.text().clone();
-        for selection in after_catch_up {
+        for (selection, has_candidate) in selections {
             let rows = selected_rows(&self.snapshot, &selection).or_else(|| {
                 let offset = self.snapshot.resolve(&selection.start);
-                indented_block(&text, text.offset_to_point(offset).row, self.tab_size)
+                let row = text.offset_to_point(offset).row;
+                (!has_candidate).then(|| indented_block(&text, row, self.tab_size))?
             });
             if let Some(rows) = rows {
                 self.display.fold(rows);
@@ -1071,8 +1074,9 @@ impl Drop for BufferMut<'_> {
 /// this goes on until the buffer stays put while the rows are synced.
 ///
 /// When several edit batches are taken in at once, the display merges them
-/// into one edit spanning them all, which would unfold folds between them;
-/// those no edit touched are folded again.
+/// into one edit spanning them all, which would decide folds for the merged
+/// edit rather than for each batch; the folds are set to those
+/// [`surviving_folds`] finds instead.
 fn catch_up(
     buffer: &RefCell<Buffer>,
     snapshot: &mut BufferSnapshot,
@@ -1087,86 +1091,348 @@ fn catch_up(
             }
             buffer.snapshot()
         };
-        let untouched: Vec<_> = if current.edits_since(snapshot.version()).nth(1).is_some() {
-            display
-                .folds()
-                .iter()
-                .filter_map(|fold| untouched_rows(snapshot, &current, fold.start..=fold.end))
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let batched = current.edits_since(snapshot.version()).nth(1).is_some();
+        let folds = (batched && !display.folds().is_empty())
+            .then(|| surviving_folds(snapshot, &current, display.folds()));
         *snapshot = current;
         display.sync(snapshot, widths);
-        if !untouched.is_empty() {
-            display.fold_many(untouched);
+        if let Some(folds) = folds {
+            display.unfold_all();
+            display.fold_many(folds);
         }
     }
 }
 
-/// Where `rows` of `old`'s text are in `new`'s, unless the edits made in
-/// between would each have unfolded them, as [`DisplayMap::sync`] decides
-/// for one batch: they edited a row after the first, or split or joined
-/// the first. Whole rows inserted or deleted right before them move them.
+/// Where `folds`, rows of `old`'s text, are in `new`'s: those syncing after
+/// each edit batch in between would have kept. As [`DisplayMap::sync`]
+/// decides for one batch, a fold goes when an edit touches a row it hides,
+/// or touches its header and adds or removes line breaks.
 ///
-/// Rows of the texts between are unknown, so an edit replacing text across
-/// the first row's start counts as unfolding them, and one replacing just
-/// the line break before it as moving them, even where syncing after each
-/// edit would decide otherwise.
-fn untouched_rows(
+/// Only the first and last texts are known; those in between are pieced
+/// together from them. Text inserted and deleted again in between is never
+/// seen, so a fold whose fate depends on it is unfolded.
+fn surviving_folds(
     old: &BufferSnapshot,
     new: &BufferSnapshot,
-    rows: RangeInclusive<u32>,
-) -> Option<RangeInclusive<u32>> {
+    folds: &[fe_display::Fold],
+) -> Vec<RangeInclusive<u32>> {
+    let batches: Vec<&[fe_buffer::Edit]> = new
+        .edits_since(old.version())
+        .map(|batch| &**batch)
+        .collect();
+    let known = Known::new(old.text(), new.text(), &batches);
     let text = old.text();
-    let (first, last) = (*rows.start(), *rows.end());
-    if last >= text.row_count() {
-        return None;
+    let mut live: Vec<FoldSpan> = folds
+        .iter()
+        .filter(|fold| fold.end < text.row_count())
+        .map(|fold| {
+            let hidden = text.row_start(fold.start + 1);
+            let end = text.row_start(fold.end) + text.row_len(fold.end) as usize;
+            FoldSpan {
+                header: text.row_start(fold.start),
+                hidden,
+                hidden_len: end - hidden,
+            }
+        })
+        .collect();
+    let mut pieces = vec![Piece {
+        start: 0,
+        len: text.len(),
+        source: Source::Old(0),
+    }];
+    for (index, batch) in batches.iter().enumerate() {
+        let next = splice(&pieces, index, batch);
+        live.retain_mut(|fold| fold.follow(batch, &known.at(&pieces), &known.at(&next)));
+        pieces = next;
     }
-    // The first row's start, before and after text inserted there, its line
-    // break, and the end of the last row.
-    let mut before = text.row_start(first);
-    let mut after = before;
-    let mut first_end = before + text.row_len(first) as usize;
-    let mut end = text.row_start(last) + text.row_len(last) as usize;
-    for batch in new.edits_since(old.version()) {
-        // Touching the first row's line break or anything after it, up to
-        // the end of the last row, edits a row after the first.
-        let touches_rest = |edit: &fe_buffer::Edit| {
-            let (start, stop) = (edit.old.start, edit.old.end);
-            start <= end && (stop > first_end || (start == stop && start > first_end))
-        };
-        if batch.iter().any(touches_rest) {
-            return None;
-        }
-        before = map_through(batch, before, Bias::Left)?;
-        after = map_through(batch, after, Bias::Right)?;
-        first_end = map_through(batch, first_end, Bias::Right)?;
-        end = map_through(batch, end, Bias::Left)?;
-    }
-    // The first row is still whole if it starts where it did, or where the
-    // text inserted at its start did.
     let text = new.text();
-    let first = text.offset_to_point(first_end).row;
-    let start = text.row_start(first);
-    (start == before || start == after).then(|| first..=text.offset_to_point(end).row)
+    live.iter()
+        .map(|fold| {
+            let header = text.offset_to_point(fold.hidden - 1).row;
+            header..=text.offset_to_point(fold.hidden + fold.hidden_len).row
+        })
+        .collect()
 }
 
-/// Maps `offset` through one edit batch, `bias` picking the side of text
-/// inserted at it. `None` if an edit replaced a range it's inside.
-fn map_through(batch: &[fe_buffer::Edit], offset: usize, bias: Bias) -> Option<usize> {
-    let mut shift = 0isize;
-    for edit in batch {
-        let (start, stop) = (edit.old.start, edit.old.end);
-        if stop < offset || (stop == offset && (start < stop || bias == Bias::Right)) {
-            shift += edit.new.len() as isize - edit.old.len() as isize;
-        } else if start < offset {
-            return None;
-        } else {
-            break;
+/// A fold followed through edit batches by offset: its header row's
+/// start, and the start and length of the rows it hides.
+struct FoldSpan {
+    header: usize,
+    hidden: usize,
+    hidden_len: usize,
+}
+
+impl FoldSpan {
+    /// Follows one batch, from the text `before` it to the one `after`.
+    /// Returns false if syncing after it would drop the fold, or might.
+    fn follow(&mut self, batch: &[fe_buffer::Edit], before: &Pieced, after: &Pieced) -> bool {
+        let (header, hidden) = (self.header, self.hidden);
+        let end = hidden + self.hidden_len;
+        let first = batch.partition_point(|edit| edit.old.end < header);
+        let shift = |edits: &[fe_buffer::Edit]| {
+            edits
+                .iter()
+                .map(|edit| edit.new.len() as isize - edit.old.len() as isize)
+                .sum::<isize>()
+        };
+        let touching = batch[first..]
+            .iter()
+            .take_while(|edit| edit.old.start <= end);
+        let mut touched = false;
+        for edit in touching {
+            touched = true;
+            // An edit touches the rows its ends are on, except the row
+            // that one replacing whole rows ends at the start of.
+            if edit.old.start >= hidden || edit.old.end > hidden {
+                return false;
+            }
+            let whole = || {
+                Some(
+                    before.is_row_start(edit.old.start)?
+                        && before.is_row_start(edit.old.end)?
+                        && after.is_row_start(edit.new.start)?
+                        && after.is_row_start(edit.new.end)?,
+                )
+            };
+            let same_rows = || {
+                Some(before.line_breaks(edit.old.clone())? == after.line_breaks(edit.new.clone())?)
+            };
+            let kept = if edit.old.end == hidden {
+                // Ending at the first hidden row's start, it touches that
+                // row unless it replaces whole rows, the header's included.
+                whole() == Some(true) && same_rows() == Some(true)
+            } else if edit.old.end == header {
+                // Whole rows before the header move it; otherwise the edit
+                // touches it.
+                whole() == Some(true) || same_rows() == Some(true)
+            } else {
+                same_rows() == Some(true)
+            };
+            if !kept {
+                return false;
+            }
+        }
+        if !touched {
+            let shift = shift(&batch[..first]);
+            self.header = header
+                .checked_add_signed(shift)
+                .expect("shifted by edits before");
+            self.hidden = hidden
+                .checked_add_signed(shift)
+                .expect("shifted by edits before");
+            return true;
+        }
+        let before_hidden = batch.partition_point(|edit| edit.old.end <= hidden);
+        self.hidden = hidden
+            .checked_add_signed(shift(&batch[..before_hidden]))
+            .expect("shifted by edits before");
+        match after.row_start_before(self.hidden - 1) {
+            Some(header) => {
+                self.header = header;
+                true
+            }
+            None => false,
         }
     }
-    offset.checked_add_signed(shift)
+}
+
+/// Where a run of an intermediate text's bytes came from.
+#[derive(Copy, Clone, Debug)]
+enum Source {
+    /// The first text, from this offset.
+    Old(usize),
+    /// The text batch `batch` inserted, from this offset in the text it
+    /// left.
+    Inserted { batch: usize, at: usize },
+}
+
+impl Source {
+    fn skip(self, bytes: usize) -> Source {
+        match self {
+            Source::Old(offset) => Source::Old(offset + bytes),
+            Source::Inserted { batch, at } => Source::Inserted {
+                batch,
+                at: at + bytes,
+            },
+        }
+    }
+}
+
+/// A run of an intermediate text: `len` bytes from `start`.
+#[derive(Copy, Clone, Debug)]
+struct Piece {
+    start: usize,
+    len: usize,
+    source: Source,
+}
+
+/// `pieces`, a text that covers them in order, after edit batch `batch`.
+fn splice(pieces: &[Piece], batch: usize, edits: &[fe_buffer::Edit]) -> Vec<Piece> {
+    let mut out: Vec<Piece> = Vec::with_capacity(pieces.len() + 2 * edits.len());
+    let push = |out: &mut Vec<Piece>, len: usize, source: Source| {
+        if len > 0 {
+            let start = out.last().map_or(0, |piece| piece.start + piece.len);
+            out.push(Piece { start, len, source });
+        }
+    };
+    let copy = |out: &mut Vec<Piece>, range: Range<usize>| {
+        let first = pieces.partition_point(|piece| piece.start + piece.len <= range.start);
+        for piece in &pieces[first..] {
+            if piece.start >= range.end {
+                break;
+            }
+            let from = range.start.max(piece.start);
+            let to = range.end.min(piece.start + piece.len);
+            push(out, to - from, piece.source.skip(from - piece.start));
+        }
+    };
+    let mut copied = 0;
+    for edit in edits {
+        copy(&mut out, copied..edit.old.start);
+        push(
+            &mut out,
+            edit.new.len(),
+            Source::Inserted {
+                batch,
+                at: edit.new.start,
+            },
+        );
+        copied = edit.old.end;
+    }
+    let len = pieces.last().map_or(0, |piece| piece.start + piece.len);
+    copy(&mut out, copied..len);
+    out
+}
+
+/// What is known of the texts between edit batches: the first text, and
+/// the runs of inserted text that last into the final one.
+struct Known<'a> {
+    old: &'a Text,
+    new: &'a Text,
+    /// Per batch, the runs of its inserted text in the final text, by
+    /// offset in the text it left: (offset, length, final offset).
+    inserted: Vec<Vec<(usize, usize, usize)>>,
+}
+
+impl<'a> Known<'a> {
+    fn new(old: &'a Text, new: &'a Text, batches: &[&[fe_buffer::Edit]]) -> Self {
+        let mut pieces = vec![Piece {
+            start: 0,
+            len: old.len(),
+            source: Source::Old(0),
+        }];
+        for (index, batch) in batches.iter().enumerate() {
+            pieces = splice(&pieces, index, batch);
+        }
+        let mut inserted = vec![Vec::new(); batches.len()];
+        for piece in pieces {
+            if let Source::Inserted { batch, at } = piece.source {
+                inserted[batch].push((at, piece.len, piece.start));
+            }
+        }
+        for runs in &mut inserted {
+            runs.sort_unstable();
+        }
+        Known { old, new, inserted }
+    }
+
+    fn at<'b>(&'b self, pieces: &'b [Piece]) -> Pieced<'b> {
+        Pieced {
+            known: self,
+            pieces,
+        }
+    }
+}
+
+/// An intermediate text, as `pieces`.
+struct Pieced<'a> {
+    known: &'a Known<'a>,
+    pieces: &'a [Piece],
+}
+
+impl Pieced<'_> {
+    /// The known runs covering `range`, in order, as ranges of the first
+    /// text (`false`) or the final one (`true`); `None` for unknown bytes.
+    fn runs(&self, range: Range<usize>) -> Vec<Option<(bool, Range<usize>)>> {
+        let mut runs = Vec::new();
+        let first = self
+            .pieces
+            .partition_point(|piece| piece.start + piece.len <= range.start);
+        for piece in &self.pieces[first..] {
+            if piece.start >= range.end {
+                break;
+            }
+            let from = range.start.max(piece.start) - piece.start;
+            let to = range.end.min(piece.start + piece.len) - piece.start;
+            match piece.source.skip(from) {
+                Source::Old(offset) => runs.push(Some((false, offset..offset + to - from))),
+                Source::Inserted { batch, at } => {
+                    let end = at + to - from;
+                    let mut reached = at;
+                    let inserted = &self.known.inserted[batch];
+                    let first = inserted.partition_point(|&(start, len, _)| start + len <= at);
+                    for &(start, len, offset) in &inserted[first..] {
+                        if start >= end {
+                            break;
+                        }
+                        if start > reached {
+                            runs.push(None);
+                        }
+                        let (from, to) = (reached.max(start), end.min(start + len));
+                        runs.push(Some((true, offset + from - start..offset + to - start)));
+                        reached = to;
+                    }
+                    if reached < end {
+                        runs.push(None);
+                    }
+                }
+            }
+        }
+        runs
+    }
+
+    fn text(&self, last: bool) -> &Text {
+        if last { self.known.new } else { self.known.old }
+    }
+
+    /// The line breaks in `range`, if known.
+    fn line_breaks(&self, range: Range<usize>) -> Option<u32> {
+        let mut breaks = 0;
+        for run in self.runs(range) {
+            let (last, range) = run?;
+            let text = self.text(last);
+            breaks += text.offset_to_point(range.end).row - text.offset_to_point(range.start).row;
+        }
+        Some(breaks)
+    }
+
+    /// Whether `offset` starts a row, if known.
+    fn is_row_start(&self, offset: usize) -> Option<bool> {
+        if offset == 0 {
+            return Some(true);
+        }
+        Some(self.line_breaks(offset - 1..offset)? == 1)
+    }
+
+    /// The start of the row `offset` is on, if known.
+    fn row_start_before(&self, offset: usize) -> Option<usize> {
+        let mut end = offset;
+        let before = self.pieces.partition_point(|piece| piece.start < offset);
+        for piece in self.pieces[..before].iter().rev() {
+            let start = piece.start;
+            for run in self.runs(start..end).into_iter().rev() {
+                let (last, range) = run?;
+                let text = self.text(last);
+                let row_start = text.row_start(text.offset_to_point(range.end).row);
+                if row_start > range.start {
+                    return Some(end - (range.end - row_start));
+                }
+                end -= range.len();
+            }
+            end = start;
+        }
+        Some(0)
+    }
 }
 
 /// The rows `selection` spans in `snapshot`, if it spans more than one. A

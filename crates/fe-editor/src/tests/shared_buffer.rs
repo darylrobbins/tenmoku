@@ -1,5 +1,6 @@
 use std::{
     cell::{Cell, RefCell},
+    ops::Range,
     rc::Rc,
 };
 
@@ -361,45 +362,107 @@ fn catching_up_on_edits_around_a_fold_keeps_it() {
 #[test]
 fn batched_catch_up_folds_as_catching_up_after_each_edit_does() {
     type Edit = fn(&mut EditorModel);
-    let cases: [(&str, Edit); 8] = [
-        ("cut the row above", |a| {
-            a.set_cursor(0);
-            a.cut();
-        }),
-        ("replace the row above", |a| a.select_range(0..4, false)),
-        ("join the row above", |a| a.select_range(3..4, false)),
-        ("rename the header", |a| a.select_range(8..9, false)),
-        ("split the header", |a| {
-            a.set_cursor(4);
-            a.insert("\n# c");
-        }),
-        ("replace across the header's start", |a| {
-            a.select_range(0..6, false)
-        }),
-        ("prefix the header", |a| {
-            a.set_cursor(4);
-            a.insert("# ");
-        }),
-        ("edit a hidden row", |a| {
-            a.set_cursor(15);
-            a.insert("!");
-        }),
-    ];
-    for (name, edit) in cases {
-        let mut a = parse("top\ndef a():\n    one\n    two\nend");
-        let (mut batched, mut each) = (a.split(), a.split());
-        batched.fold_rows(1..=3);
-        each.fold_rows(1..=3);
-        edit(&mut a);
-        if !a.selections()[0].range.is_empty() {
-            a.insert("X");
-        }
-        each.sync_display();
-        // And an edit below the fold, so there are two batches to take in.
-        a.set_cursor(a.text().len());
-        a.insert("!");
-        each.sync_display();
-        batched.sync_display();
-        assert_eq!(batched.display().folds(), each.display().folds(), "{name}");
+    fn replace(a: &mut EditorModel, range: Range<usize>, text: &str) {
+        a.select_range(range, false);
+        a.insert(text);
     }
+    let cases: [(&str, &[Edit]); 14] = [
+        (
+            "cut the row above",
+            &[|a| {
+                a.set_cursor(0);
+                a.cut();
+            }],
+        ),
+        ("replace the row above", &[|a| replace(a, 0..4, "X")]),
+        ("join the row above", &[|a| replace(a, 3..4, "X")]),
+        ("rename the header", &[|a| replace(a, 8..9, "X")]),
+        ("split the header", &[|a| replace(a, 4..4, "\n# c")]),
+        (
+            "replace across the header's start",
+            &[|a| replace(a, 0..6, "X")],
+        ),
+        ("prefix the header", &[|a| replace(a, 4..4, "# ")]),
+        ("edit a hidden row", &[|a| replace(a, 15..15, "!")]),
+        (
+            "replace the header's row",
+            &[|a| replace(a, 4..13, "renamed():\n")],
+        ),
+        (
+            "replace the row above with a row and a prefix",
+            &[|a| replace(a, 0..4, "new\nprefix ")],
+        ),
+        (
+            "replace rows through the header's",
+            &[|a| replace(a, 0..13, "a\nb\n")],
+        ),
+        (
+            "split the header, then rejoin it",
+            &[|a| replace(a, 6..6, "\n"), |a| replace(a, 6..7, "")],
+        ),
+        (
+            "join the header, then split it again",
+            &[|a| replace(a, 12..13, ""), |a| replace(a, 12..12, "\n")],
+        ),
+        (
+            "insert rows above, then edit the header",
+            &[|a| replace(a, 0..0, "x\ny\n"), |a| replace(a, 8..8, "z")],
+        ),
+    ];
+    for (name, steps) in cases {
+        for through_buffer in [false, true] {
+            let mut a = parse("top\ndef a():\n    one\n    two\nend");
+            let (mut batched, mut each) = (a.split(), a.split());
+            batched.fold_rows(1..=3);
+            each.fold_rows(1..=3);
+            for step in steps {
+                step(&mut a);
+                each.sync_display();
+            }
+            // And an edit below the fold, so there are batches to take in
+            // after the fold's.
+            let len = a.text().len();
+            replace(&mut a, len..len, "!");
+            each.sync_display();
+            if through_buffer {
+                drop(batched.buffer_mut());
+            } else {
+                batched.sync_display();
+            }
+            assert_eq!(
+                batched.display().folds(),
+                each.display().folds(),
+                "{name}, through_buffer: {through_buffer}"
+            );
+        }
+    }
+    // The cases that keep it.
+    let kept = |steps: &[Edit]| {
+        let mut a = parse("top\ndef a():\n    one\n    two\nend");
+        let mut b = a.split();
+        b.fold_rows(1..=3);
+        for step in steps {
+            step(&mut a);
+        }
+        b.sync_display();
+        !b.display().folds().is_empty()
+    };
+    assert!(kept(&[|a| replace(a, 4..13, "renamed():\n")]));
+    assert!(kept(&[
+        |a| replace(a, 0..4, "new\nprefix "),
+        |a| replace(a, 0..0, "!")
+    ]));
+}
+
+#[test]
+fn fold_folds_the_rows_a_selection_spans_once_caught_up() {
+    let (a, mut b, hook) = split_with_hook(parse("ąx\n    y\nend"));
+    b.select_range(0..3, false);
+    a.borrow_mut().set_cursor(0);
+    a.borrow_mut().insert("Z");
+    // Measuring "Ząx" while b catches up splits the selected row.
+    hook_edit(&hook, &a, 3, "\n");
+    b.fold(&|row| (row == 0).then_some(0..=1));
+    assert_eq!(b.text().to_string(), "Zą\nx\n    y\nend");
+    assert_eq!(b.display().folds(), [fe_display::Fold { start: 0, end: 1 }]);
 }
