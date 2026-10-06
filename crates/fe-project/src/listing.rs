@@ -375,8 +375,8 @@ impl Rules {
 }
 
 /// The `ignore` crate's walker over `dir`, filtered by [`Rules`] as listings
-/// are, for walks that need every file at once ([`crate::FinderIndex`],
-/// [`crate::search`]). Its own filters are off: no configuration of them
+/// are, for [`crate::search`]'s walk. ([`crate::FinderIndex`] walks through
+/// directory handles instead.) Its own filters are off: no configuration of them
 /// stops at a repository nested below a directory that isn't in one, nor
 /// follows a submodule's `.git` file. `.git` is never entered. Symlinks
 /// aren't followed.
@@ -545,7 +545,7 @@ fn open_file(dir: &File, name: &str) -> Option<File> {
 
 /// The names in an open directory, with their kinds where the file system
 /// reports them, read through the handle.
-fn read_dir(dir: &File) -> io::Result<Vec<(OsString, Option<EntryKind>)>> {
+pub(crate) fn read_dir(dir: &File) -> io::Result<Vec<(OsString, Option<EntryKind>)>> {
     /// Closes the stream when dropped.
     struct Stream(*mut libc::DIR);
     impl Drop for Stream {

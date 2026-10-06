@@ -7,26 +7,27 @@ use std::{
     ffi::{OsStr, OsString},
     fs::{self, File},
     io,
+    num::NonZero,
     ops::Bound,
     os::unix::ffi::OsStrExt,
     path::{Component, Path, PathBuf},
     sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
+        Arc, Condvar, Mutex, MutexGuard, PoisonError,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc,
     },
     thread,
 };
 
 use frizbee::{CaseMatching, Config, Matcher, SortStrategy};
-use ignore::{WalkState, gitignore::Gitignore};
+use ignore::gitignore::Gitignore;
 
 use crate::{
     FsChange,
     listing::{self, Access, EntryKind, Identity, Rules},
 };
 
-/// Paths a walk worker collects before sending them on.
+/// Paths a walk thread collects before sending them on.
 const BATCH: usize = 1024;
 
 /// Added to the score of a match within the file name, so that it ranks above
@@ -290,32 +291,42 @@ impl FinderIndex {
     /// paths relative to `root`, for [`FinderIndex::extend`]. Returns whether
     /// the walk ran to the end; it stops early once `cancel` is set.
     ///
-    /// Runs the `ignore` crate's parallel walker, whose threads are scoped to
-    /// this call. `sink` is called on the calling thread, which the caller
-    /// owns: typically a background thread that sends the batches on to the
-    /// index.
+    /// Walks with `FileTree`'s file system protections, as do the walks
+    /// [`FinderIndex::apply`] makes of new directories and of the root.
+    /// `root`, which may be relative or reached through symlinks, is
+    /// resolved once, here; [`FinderIndex::apply`] uses the root resolved by
+    /// [`FinderIndex::new`] and doesn't resolve it again, so a root since
+    /// swapped for a symlink has nothing to walk. The root is opened a
+    /// component at a time from `/`, and each directory below it through
+    /// its parent's handle, never following a symlink: a directory swapped
+    /// for a symlink while the walk is under way isn't followed out of the
+    /// project. Ignore files are read through the same handles, only when
+    /// they are regular files, and opened without following a symlink or
+    /// waiting on a FIFO. Each directory's rules are read once, on top of
+    /// its parent's. The walk keeps a bounded number of directories open,
+    /// however deep the tree.
     ///
-    /// Known limits of that walker, which lacks `FileTree`'s file system
-    /// protections (a handle-based walker is follow-up T91). They hold for
-    /// this walk and for the walks [`FinderIndex::apply`] makes of new
-    /// directories and of the root:
-    ///
-    /// - Ignore files are opened with a plain `File::open`, which follows
-    ///   symlinks: a symlinked `.gitignore` or `.ignore` is obeyed, where
-    ///   `FileTree` skips it.
-    /// - An ignore file that is a FIFO blocks the walk until something
-    ///   writes to it, and `cancel` isn't seen meanwhile. A walk from `apply`
-    ///   then blocks its caller.
-    /// - Directories are listed by path. A directory swapped for a symlink
-    ///   while the walk is under way can lead it outside the project, and
-    ///   the files there are indexed.
+    /// The walk runs on threads scoped to this call. `sink` is called on the
+    /// calling thread, which the caller owns: typically a background thread
+    /// that sends the batches on to the index.
     pub fn walk(
         root: impl AsRef<Path>,
         cancel: Arc<AtomicBool>,
         sink: impl FnMut(Vec<PathBuf>),
     ) -> bool {
-        let root = root.as_ref();
-        walk_dir(root, root, &cancel, sink)
+        if cancel.load(Ordering::Relaxed) {
+            return false;
+        }
+        // Resolved once, here: rules are read and matched by canonical
+        // paths, as the tree's are. A root that can't be reached has
+        // nothing to walk.
+        let Some(root) = fs::canonicalize(root).ok() else {
+            return true;
+        };
+        let Some(start) = Start::root(&root) else {
+            return true;
+        };
+        walk_dir(&root, start, &listing::global_excludes(), &cancel, sink)
     }
 
     /// Adds a batch of paths, relative to the root, from
@@ -508,8 +519,6 @@ impl FinderIndex {
     ///   for the root's `.gitignore`.
     /// - The walk and the disk race: a path that changes while a walk reads
     ///   its directory can be indexed as it was, until its next event.
-    /// - Its walks share [`FinderIndex::walk`]'s known limits: symlinked and
-    ///   FIFO ignore files, and directories swapped for symlinks mid-walk.
     pub fn apply(&mut self, changes: &[FsChange]) {
         if !self.complete {
             self.pending.extend(changes.iter().cloned());
@@ -604,8 +613,16 @@ impl FinderIndex {
             }
             EntryKind::Dir => {
                 self.remove(rel);
-                let root = self.root.clone();
-                walk_dir(&root, &root.join(rel), &AtomicBool::new(false), |batch| {
+                // Opened through its parent's handle: gone, or replaced by a
+                // symlink, since it was looked up, it has nothing to walk.
+                let dir = listing::open_at(level.dir, name, Access::Read).ok()?;
+                let start = Start {
+                    dir,
+                    rel: rel.to_path_buf(),
+                    rules: level.rules.cloned(),
+                };
+                let (root, global) = (self.root.clone(), self.global.clone());
+                walk_dir(&root, start, &global, &AtomicBool::new(false), |batch| {
                     self.extend(batch)
                 });
                 self.stats.walks += 1;
@@ -627,11 +644,18 @@ impl FinderIndex {
     fn rescan(&mut self) {
         self.items.clear();
         self.keys.clear();
-        self.root_id = self.find_root();
-        let root = self.root.clone();
-        walk_dir(&root, &root, &AtomicBool::new(false), |batch| {
-            self.extend(batch)
-        });
+        // The root as found (not resolved again): one replaced by a symlink
+        // isn't followed, and has nothing to walk.
+        let start = Start::root(&self.root);
+        self.root_id = start
+            .as_ref()
+            .and_then(|start| listing::identity(&start.dir).ok());
+        if let Some(start) = start {
+            let (root, global) = (self.root.clone(), self.global.clone());
+            walk_dir(&root, start, &global, &AtomicBool::new(false), |batch| {
+                self.extend(batch)
+            });
+        }
         self.stats.walks += 1;
     }
 
@@ -704,32 +728,88 @@ impl FinderIndex {
     }
 }
 
-/// Walks `dir`, under `root`, handing its files to `sink` as paths relative
-/// to `root`. Returns whether the walk ran to the end.
+/// Where a walk starts: a directory open for reading, its path relative to
+/// the walk's root, and the rules in force in the directory above it.
+struct Start {
+    dir: File,
+    rel: PathBuf,
+    rules: Option<Arc<Rules>>,
+}
+
+impl Start {
+    /// Opens directory `root`, absolute, a component at a time from `/`
+    /// without following a symlink, with the rules of the directories above
+    /// it. `None` if it can't be reached.
+    fn root(root: &Path) -> Option<Start> {
+        let mut dirs = listing::open_dirs(root, Access::Read).ok()?;
+        let dir = dirs.pop().expect("`/` is always opened");
+        let rules = root.parent().and_then(|parent| Rules::chain(&dirs, parent));
+        Some(Start {
+            dir,
+            rel: PathBuf::new(),
+            rules,
+        })
+    }
+}
+
+/// Walks `start`, under `root` (canonical), handing its files to `sink` as
+/// paths relative to `root`. Returns whether the walk ran to the end.
+///
+/// Threads scoped to this call share a stack of directories still to read.
+/// Each directory is opened through its parent's handle without following a
+/// symlink, then its ignore files are read through it on top of its
+/// parent's rules, and its entries read through it. `sink` is called on the
+/// calling thread.
+///
+/// A directory's handle is kept open while its subdirectories wait to be
+/// read, but at most [`MAX_HELD`] are kept: past that, a subdirectory is
+/// opened again from the start directory, a component at a time and still
+/// without following a symlink, when its turn comes. So a deep tree doesn't
+/// hold a descriptor per level.
 fn walk_dir(
     root: &Path,
-    dir: &Path,
+    start: Start,
+    global: &Gitignore,
     cancel: &AtomicBool,
     mut sink: impl FnMut(Vec<PathBuf>),
 ) -> bool {
     if cancel.load(Ordering::Relaxed) {
         return false;
     }
+    let threads = thread::available_parallelism()
+        .map_or(1, NonZero::get)
+        .min(MAX_THREADS);
+    let held = Arc::new(AtomicUsize::new(0));
+    let base = Arc::new(Held::new(start.dir, &held));
+    let queue = Queue {
+        state: Mutex::new(QueueState {
+            stack: vec![Work {
+                dir: Dir::Open(base.clone()),
+                rel: start.rel.clone(),
+                rules: start.rules,
+            }],
+            busy: 0,
+            failed: false,
+        }),
+        changed: Condvar::new(),
+    };
     let (tx, rx) = mpsc::channel();
-    let walker = listing::walk_builder(dir).build_parallel();
     thread::scope(|scope| {
-        scope.spawn(|| {
-            walker.run(|| {
-                let mut worker = Worker {
-                    root,
-                    batch: Vec::new(),
-                    tx: tx.clone(),
-                    cancel,
-                };
-                Box::new(move |entry| worker.visit(entry))
-            });
-            drop(tx);
-        });
+        for _ in 0..threads {
+            let mut walker = Walker {
+                root,
+                base: &base.file,
+                base_rel: &start.rel,
+                held: &held,
+                global,
+                cancel,
+                queue: &queue,
+                batch: Vec::new(),
+                tx: tx.clone(),
+            };
+            scope.spawn(move || walker.run());
+        }
+        drop(tx);
         for batch in rx {
             if cancel.load(Ordering::Relaxed) {
                 break;
@@ -740,37 +820,226 @@ fn walk_dir(
     !cancel.load(Ordering::Relaxed)
 }
 
-/// One walker thread's state. Sends what it has left when dropped.
-struct Worker<'a> {
-    root: &'a Path,
-    batch: Vec<PathBuf>,
-    tx: mpsc::Sender<Vec<PathBuf>>,
-    cancel: &'a AtomicBool,
+/// At most this many threads walk, as for the `ignore` crate's walker.
+const MAX_THREADS: usize = 12;
+
+/// At most this many directory handles are kept open for subdirectories
+/// waiting to be read (besides the start directory and those being read).
+const MAX_HELD: usize = 32;
+
+/// A directory to read.
+struct Work {
+    dir: Dir,
+    /// Relative to the walk's root.
+    rel: PathBuf,
+    /// The rules in force in the directory above it.
+    rules: Option<Arc<Rules>>,
 }
 
-impl Worker<'_> {
-    fn visit(&mut self, entry: Result<ignore::DirEntry, ignore::Error>) -> WalkState {
-        if self.cancel.load(Ordering::Relaxed) {
-            return WalkState::Quit;
+enum Dir {
+    /// Open for reading.
+    Open(Arc<Held>),
+    /// The entry of this name in an open directory, opened when its turn
+    /// comes.
+    At(Arc<Held>, OsString),
+    /// Opened from the start directory when its turn comes, by its path.
+    Below,
+}
+
+/// An open directory handle, counted while open.
+struct Held {
+    file: File,
+    count: Arc<AtomicUsize>,
+}
+
+impl Held {
+    fn new(file: File, count: &Arc<AtomicUsize>) -> Held {
+        count.fetch_add(1, Ordering::Relaxed);
+        Held {
+            file,
+            count: count.clone(),
         }
-        // Unreadable entries are skipped, as the tree shows nothing for them.
-        let Ok(entry) = entry else {
-            return WalkState::Continue;
-        };
-        let is_file = entry
-            .file_type()
-            .is_some_and(|kind| !kind.is_dir() && !kind.is_symlink());
-        if let (true, Ok(rel)) = (is_file, entry.path().strip_prefix(self.root)) {
-            self.batch.push(rel.to_path_buf());
-            if self.batch.len() >= BATCH {
-                let _ = self.tx.send(std::mem::take(&mut self.batch));
-            }
-        }
-        WalkState::Continue
     }
 }
 
-impl Drop for Worker<'_> {
+impl Drop for Held {
+    fn drop(&mut self) {
+        self.count.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+/// The directories a walk has yet to read, shared by its threads.
+struct Queue {
+    state: Mutex<QueueState>,
+    /// Signalled when work is added or the walk ends.
+    changed: Condvar,
+}
+
+struct QueueState {
+    stack: Vec<Work>,
+    /// Threads reading a directory, which may add more.
+    busy: usize,
+    /// Set when a thread panicked, so the others stop too and the panic
+    /// reaches the caller rather than leaving them waiting.
+    failed: bool,
+}
+
+/// One walk thread. Sends what it has left when dropped.
+struct Walker<'a> {
+    root: &'a Path,
+    /// The start directory, and its path relative to `root`.
+    base: &'a File,
+    base_rel: &'a Path,
+    held: &'a Arc<AtomicUsize>,
+    global: &'a Gitignore,
+    cancel: &'a AtomicBool,
+    queue: &'a Queue,
+    batch: Vec<PathBuf>,
+    tx: mpsc::Sender<Vec<PathBuf>>,
+}
+
+/// Hands a read directory's subdirectories to the stack and marks its
+/// thread idle, when dropped: also when reading it panicked, which stops
+/// the walk.
+struct Finished<'a> {
+    queue: &'a Queue,
+    found: Option<Vec<Work>>,
+}
+
+impl Drop for Finished<'_> {
+    fn drop(&mut self) {
+        let mut state = lock(self.queue);
+        match self.found.take() {
+            Some(found) => state.stack.extend(found),
+            None => state.failed = true,
+        }
+        state.busy -= 1;
+        self.queue.changed.notify_all();
+    }
+}
+
+fn lock(queue: &Queue) -> MutexGuard<'_, QueueState> {
+    queue.state.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+impl Walker<'_> {
+    fn run(&mut self) {
+        while let Some(work) = self.next() {
+            let mut finished = Finished {
+                queue: self.queue,
+                found: None,
+            };
+            finished.found = Some(self.read(work));
+        }
+    }
+
+    /// The next directory to read, waiting for one while others are being
+    /// read, or `None` once there are none left or the walk is cancelled.
+    fn next(&self) -> Option<Work> {
+        let mut state = lock(self.queue);
+        loop {
+            if self.cancel.load(Ordering::Relaxed) || state.failed {
+                return None;
+            }
+            if let Some(work) = state.stack.pop() {
+                state.busy += 1;
+                return Some(work);
+            }
+            if state.busy == 0 {
+                return None;
+            }
+            state = self
+                .queue
+                .changed
+                .wait(state)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+    }
+
+    /// Opens a directory, without following a symlink anywhere on the way.
+    fn open(&self, dir: Dir, rel: &Path) -> io::Result<Arc<Held>> {
+        let file = match dir {
+            Dir::Open(dir) => return Ok(dir),
+            Dir::At(parent, name) => listing::open_at(&parent.file, &name, Access::Read)?,
+            Dir::Below => {
+                let names: Vec<&OsStr> = rel
+                    .strip_prefix(self.base_rel)
+                    .expect("under the start directory")
+                    .iter()
+                    .collect();
+                let (last, above) = names.split_last().expect("below the start directory");
+                let mut at = None;
+                for name in above {
+                    let parent = at.as_ref().unwrap_or(self.base);
+                    at = Some(listing::open_at(parent, name, Access::Search)?);
+                }
+                listing::open_at(at.as_ref().unwrap_or(self.base), last, Access::Read)?
+            }
+        };
+        Ok(Arc::new(Held::new(file, self.held)))
+    }
+
+    /// Reads one directory: its files go to the batch, and its directories
+    /// are returned to be read. A directory that can't be opened (gone,
+    /// replaced by a symlink, or unreadable) has nothing to read.
+    fn read(&mut self, work: Work) -> Vec<Work> {
+        let Ok(dir) = self.open(work.dir, &work.rel) else {
+            return Vec::new();
+        };
+        let path = self.root.join(&work.rel);
+        let rules = Rules::load(work.rules, &dir.file, &path);
+        let Ok(names) = listing::read_dir(&dir.file) else {
+            return Vec::new();
+        };
+        let mut found = Vec::new();
+        for (name, kind) in names {
+            if self.cancel.load(Ordering::Relaxed) {
+                break;
+            }
+            if listing::is_git_dir(&name) {
+                continue;
+            }
+            let kind = match kind {
+                Some(kind) => kind,
+                // The file system didn't say; an entry gone since is skipped.
+                None => match listing::stat_at(&dir.file, &name) {
+                    Ok(stat) => stat.kind,
+                    Err(_) => continue,
+                },
+            };
+            let is_dir = kind == EntryKind::Dir;
+            if rules.ignores(self.global, &path.join(&name), is_dir) {
+                continue;
+            }
+            let rel = work.rel.join(&name);
+            match kind {
+                EntryKind::File => {
+                    self.batch.push(rel);
+                    if self.batch.len() >= BATCH {
+                        let _ = self.tx.send(std::mem::take(&mut self.batch));
+                    }
+                }
+                EntryKind::Dir => found.push(Work {
+                    dir: Dir::At(dir.clone(), name),
+                    rel,
+                    rules: Some(rules.clone()),
+                }),
+                // Never followed.
+                EntryKind::Symlink => {}
+            }
+        }
+        // Keep this directory open for its subdirectories only while few
+        // others are; it is closed once the last of them is opened.
+        if !found.is_empty() && self.held.load(Ordering::Relaxed) > MAX_HELD {
+            for work in &mut found {
+                work.dir = Dir::Below;
+            }
+        }
+        found
+    }
+}
+
+impl Drop for Walker<'_> {
     fn drop(&mut self) {
         if !self.batch.is_empty() && !self.cancel.load(Ordering::Relaxed) {
             let _ = self.tx.send(std::mem::take(&mut self.batch));

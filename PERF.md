@@ -507,21 +507,34 @@ directories of 1,000 empty files (100,000 files), plus a `.gitignore` and
 the directory it ignores, into a new index. The queries run over 100,000
 in-memory paths shaped like `crates/fe-editor-0/src/view/motion_buffer_42.rs`
 (`FinderIndex::from_paths`), with limit 50, and each returns a full page of
-50. One run, measured 2026-10-05 with a load average of 31 to 35 from other
-lanes. Medians:
+50. One run, measured 2026-10-06 on the 14-core M3 Max with a load average
+of 5 to 10 from other lanes. Medians:
 
 | Case | Time | Budget |
 |---|---|---|
-| walk of 100,000 files, into the index | 86 ms | none (background) |
-| query, 1 char (`e`) | 3.0 ms | 50 ms |
-| query, 3 chars (`edv`) | 5.2 ms | 50 ms |
-| query, 8 chars (`editview`) | 6.1 ms | 50 ms |
-| query, 20 chars (`crates/editor/viewrs`) | 5.2 ms | 50 ms |
+| walk of 100,000 files, into the index | 73 ms | none (background) |
+| query, 1 char (`e`) | 2.0 ms | 50 ms |
+| query, 3 chars (`edv`) | 1.3 ms | 50 ms |
+| query, 8 chars (`editview`) | 1.4 ms | 50 ms |
+| query, 20 chars (`crates/editor/viewrs`) | 2.3 ms | 50 ms |
 
-Nothing is asserted. The machine was busy, so the query times are noisy. A
-run five minutes earlier gave 1.5 ms for the 3- and 8-char queries.
+Nothing is asserted. The first run, 2026-10-05, gave 86 ms for the walk and
+3.0 to 6.1 ms for the queries, with a load average of 31 to 35.
 
-The walk runs on a background thread, and each walker thread sends its paths
+Since T91 the walk goes through directory handles, as `FileTree` lists: each
+directory is opened through its parent's handle without following a
+symlink, and its ignore files are read through it once, on top of its
+parent's rules. It replaced the `ignore` crate's `WalkBuilder`, which lists
+directories by path. Measured back to back on 2026-10-06, the handle walk
+took 73 and 78 ms where the `WalkBuilder` walk took 95 and 96 ms. Both use up
+to 12 threads. The walk keeps at most 32 directories open for subdirectories
+still to read. Past that (only in a tree more than 32 levels deep, with
+directories left to read at each level) a directory is opened again from
+where the walk started, a level at a time. That costs one `openat` per level
+of depth: about 1.3 s more over three walks of a tree 100 levels deep with
+40 directories at each level (`a_deep_tree_is_walked_without_a_handle_per_level`).
+
+The walk runs on a background thread, and each walk thread sends its paths
 every 1,024 files. Cmd-P therefore has results long before the walk ends,
 over the paths indexed so far.
 
