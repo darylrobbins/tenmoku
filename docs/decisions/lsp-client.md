@@ -1655,6 +1655,8 @@ dependency beyond §2's.
 
 Recommendation: **(a)**.
 
+**Decided (user, 2026-10-06): (a).**
+
 **Q2. Does fastedit ever install or bundle language servers?**
 
 - **(a) Never in M4.** Servers come from `PATH`, from `[lsp.servers.*]
@@ -1670,6 +1672,8 @@ Recommendation: **(a)**.
 
 Recommendation: **(a)**, revisited when the host's packaging is known. The host
 probably wants to own this anyway (Q1).
+
+**Decided (user, 2026-10-06): (a).**
 
 **Q3. May a core crate depend on tokio?**
 
@@ -1688,6 +1692,8 @@ probably wants to own this anyway (Q1).
 
 Recommendation: **(a)**.
 
+**Decided (user, 2026-10-06): (a).**
+
 **Q4. When do real-server tests run in CI?**
 
 - **(a) Nightly and on demand** (`schedule` plus `workflow_dispatch` in
@@ -1700,6 +1706,8 @@ Recommendation: **(a)**.
   regressions wait until someone runs it.
 
 Recommendation: **(a)**. The gate stays free of Node and network either way.
+
+**Decided (user, 2026-10-06): (a).**
 
 **Q5. Which TypeScript server is the default?**
 
@@ -1714,6 +1722,8 @@ Recommendation: **(a)**. The gate stays free of Node and network either way.
 
 Recommendation: **(c)**.
 
+**Decided (user, 2026-10-06): (c).**
+
 **Q6. When do servers start?**
 
 - **(a) Lazily, when the first file of their language opens.** Downstream:
@@ -1723,6 +1733,8 @@ Recommendation: **(c)**.
   for languages never looked at.
 
 Recommendation: **(a)**. Search covers the gap.
+
+**Decided (user, 2026-10-06): (a).**
 
 **Q7. Do language servers start in a workspace nobody has marked as trusted?**
 
@@ -1745,6 +1757,8 @@ repository may execute that repository's code by design. rust-analyzer runs
 Recommendation: **(c)**, which is (a) for standalone fastedit. A
 workspace-trust feature can come later and lift the project-layer filter per
 root.
+
+**Decided (user, 2026-10-06): (c).**
 
 ## 10. Unanswered
 
