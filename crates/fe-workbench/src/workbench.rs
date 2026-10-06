@@ -128,10 +128,24 @@ impl Workbench {
                 cx.notify();
             },
         );
-        let left = cx.on_blur(&quick_open.focus_handle(cx), window, |workbench, _, cx| {
-            workbench.palette = false;
-            cx.notify();
-        });
+        // Left for another element, or the window deactivated: GPUI blurs
+        // then too, focus staying on the input. That's dismissed as Escape
+        // would be, so focus doesn't stay on an input no longer drawn.
+        let left = cx.on_blur(
+            &quick_open.focus_handle(cx),
+            window,
+            |workbench, window, cx| {
+                if !workbench.palette {
+                    return;
+                }
+                let picker = workbench.quick_open.clone();
+                if picker.focus_handle(cx).is_focused(window) {
+                    picker.update(cx, |picker, cx| picker.dismiss(window, cx));
+                }
+                workbench.palette = false;
+                cx.notify();
+            },
+        );
         // Retitles the window whenever a tab changes.
         let retitle = cx.observe(&pane, |_, _, cx| cx.notify());
         Self {

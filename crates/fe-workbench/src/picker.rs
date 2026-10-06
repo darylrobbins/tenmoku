@@ -12,10 +12,10 @@ use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Reg
 use fe_gpui::commands::RunCommand;
 use fe_ui::{PaletteFrame, ROW_HEIGHT, TextInput, TextInputEvent, UiTheme};
 use gpui::{
-    AnyElement, App, AppContext as _, Context, DismissEvent, Entity, EventEmitter, FocusHandle,
-    Focusable, Global, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    ScrollStrategy, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
-    UniformListScrollHandle, Window, div, prelude::FluentBuilder as _, uniform_list,
+    AnyElement, App, AppContext as _, Context, DismissEvent, ElementId, Entity, EventEmitter,
+    FocusHandle, Focusable, Global, InteractiveElement as _, IntoElement, ParentElement as _,
+    Render, ScrollStrategy, SharedString, StatefulInteractiveElement as _, Styled as _,
+    Subscription, UniformListScrollHandle, Window, div, prelude::FluentBuilder as _, uniform_list,
 };
 
 /// The key context a picker's element sets.
@@ -32,10 +32,16 @@ pub trait PickerDelegate: Sized + 'static {
 
     fn match_count(&self) -> usize;
 
+    /// Match `ix`'s identity, distinct among the matches. Its row's element
+    /// and click follow it rather than the row's position, so a click
+    /// pressed on one match never picks another the results moved there.
+    fn match_id(&self, ix: usize) -> SharedString;
+
     fn render_match(&self, ix: usize, selected: bool, cx: &App) -> AnyElement;
 
-    /// Match `ix` was picked. The picker is dismissed afterwards.
-    fn confirm(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>);
+    /// Match `ix` was picked: whether it's taken, the picker then being
+    /// dismissed. A refused pick leaves the picker open.
+    fn confirm(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) -> bool;
 
     /// The picker was dismissed without a pick.
     fn dismissed(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>);
@@ -113,9 +119,17 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     pub fn confirm(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
-        if ix < self.delegate.match_count() {
-            self.delegate.confirm(ix, window, cx);
+        if ix < self.delegate.match_count() && self.delegate.confirm(ix, window, cx) {
             cx.emit(DismissEvent);
+        }
+    }
+
+    /// Confirms the match a clicked row showed, wherever it is now, or
+    /// nothing if it's gone.
+    fn confirm_id(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let count = self.delegate.match_count();
+        if let Some(ix) = (0..count).find(|&ix| self.delegate.match_id(ix) == id) {
+            self.confirm(ix, window, cx);
         }
     }
 
@@ -144,8 +158,9 @@ impl<D: PickerDelegate> Picker<D> {
         range
             .map(|ix| {
                 let selected = ix == self.selected;
+                let id = self.delegate.match_id(ix);
                 div()
-                    .id(ix)
+                    .id(ElementId::Name(id.clone()))
                     .h(ROW_HEIGHT)
                     .px_3()
                     .flex()
@@ -154,12 +169,29 @@ impl<D: PickerDelegate> Picker<D> {
                     .when(selected, |row| row.bg(self.ui.row_selected))
                     .hover(|row| row.bg(self.ui.row_hover))
                     .on_click(
-                        cx.listener(move |picker, _, window, cx| picker.confirm(ix, window, cx)),
+                        cx.listener(move |picker, _, window, cx| {
+                            picker.confirm_id(&id, window, cx)
+                        }),
                     )
                     .child(self.delegate.render_match(ix, selected, cx))
                     .into_any_element()
             })
             .collect()
+    }
+
+    /// Where row `ix` was laid out in the last frame, from the list's
+    /// bounds, scroll offset and measured row height.
+    #[cfg(test)]
+    pub(crate) fn row_bounds(&self, ix: usize) -> Option<gpui::Bounds<gpui::Pixels>> {
+        let count = self.delegate.match_count();
+        let state = self.scroll.0.borrow();
+        let list = state.base_handle.bounds();
+        let height = state.last_item_size?.contents.height / count as f32;
+        let top = list.origin.y + state.base_handle.offset().y + height * ix as f32;
+        Some(gpui::Bounds::new(
+            gpui::point(list.origin.x, top),
+            gpui::size(list.size.width, height),
+        ))
     }
 }
 

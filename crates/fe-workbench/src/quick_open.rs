@@ -8,9 +8,12 @@
 //! The index sits behind a mutex, and every query, walk batch and watcher
 //! batch reaches it off the main thread. One query runs at a time: one
 //! typed meanwhile waits in its place, replacing any already waiting, and
-//! results for text the input no longer holds are dropped.
+//! results for text the input no longer holds are dropped. Until the input's
+//! text has results, the rows shown are another query's, and picking one is
+//! refused; opening clears them.
 
 use std::{
+    fmt::Write as _,
     mem,
     path::PathBuf,
     sync::{
@@ -60,8 +63,8 @@ pub struct QuickOpen {
     applying: Option<Task<()>>,
     /// The input's text, as last given to `update_matches`.
     query: String,
-    /// What `matches` are for.
-    shown: String,
+    /// What `matches` are for: `None` once cleared on opening.
+    shown: Option<String>,
     matches: Vec<FinderMatch>,
     /// The query to run once the running one is done.
     pending: Option<String>,
@@ -89,7 +92,7 @@ impl QuickOpen {
             held: Vec::new(),
             applying: None,
             query: String::new(),
-            shown: String::new(),
+            shown: None,
             matches: Vec::new(),
             pending: None,
             querying: None,
@@ -103,9 +106,12 @@ impl QuickOpen {
     }
 
     /// The palette is opening, with `previous_focus` focused until now.
-    /// Starts building the index the first time.
+    /// Clears the last opening's rows, and starts building the index the
+    /// first time.
     pub fn opened(&mut self, previous_focus: Option<FocusHandle>, cx: &mut Context<Picker<Self>>) {
         self.previous_focus = previous_focus;
+        self.matches.clear();
+        self.shown = None;
         if matches!(self.build, Build::NotStarted) {
             self.walk(cx);
         }
@@ -240,8 +246,8 @@ impl QuickOpen {
                     let quick_open = &mut picker.delegate;
                     quick_open.querying = None;
                     if quick_open.query == query {
-                        let new_query =
-                            mem::replace(&mut quick_open.shown, query) != quick_open.query;
+                        let new_query = quick_open.shown.as_ref() != Some(&query);
+                        quick_open.shown = Some(query);
                         quick_open.matches = matches;
                         picker.matches_updated(new_query, cx);
                     }
@@ -266,6 +272,13 @@ impl QuickOpen {
         self.status().unwrap_or_default().to_string()
     }
 
+    /// Shows `matches` as the input's, as a query's results would.
+    #[cfg(test)]
+    pub(crate) fn show_matches(&mut self, matches: Vec<FinderMatch>) {
+        self.shown = Some(self.query.clone());
+        self.matches = matches;
+    }
+
     #[cfg(test)]
     pub(crate) fn held(&self) -> usize {
         self.held.len()
@@ -288,6 +301,20 @@ impl PickerDelegate for QuickOpen {
         self.matches.len()
     }
 
+    /// The path on disk, losslessly, as `path` is lossy: as is if it's
+    /// UTF-8, else a NUL, which no path holds, then its bytes in hex.
+    fn match_id(&self, ix: usize) -> SharedString {
+        let relative = self.matches[ix].relative.as_os_str();
+        if let Some(path) = relative.to_str() {
+            return path.to_owned().into();
+        }
+        let mut id = String::from("\0");
+        for byte in relative.as_encoded_bytes() {
+            write!(id, "{byte:02x}").expect("writing to a String");
+        }
+        id.into()
+    }
+
     fn render_match(&self, ix: usize, _: bool, _: &App) -> AnyElement {
         self.label(ix).map_or_else(
             || gpui::Empty.into_any_element(),
@@ -296,16 +323,20 @@ impl PickerDelegate for QuickOpen {
     }
 
     /// Opens the file as a tree click does: in a focused tab, or by
-    /// activating its tab if it's open.
-    fn confirm(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) {
+    /// activating its tab if it's open. Refused while the rows are another
+    /// query's than the input's.
+    fn confirm(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Picker<Self>>) -> bool {
         let (Some(root), Some(found)) = (&self.root, self.matches.get(ix)) else {
-            return;
+            return false;
         };
+        if self.shown.as_ref() != Some(&self.query) {
+            return false;
+        }
         let path = root.join(&found.relative);
         self.previous_focus = None;
         self.pane
             .update(cx, |pane, cx| pane.open(path, window, cx))
-            .ok();
+            .is_ok()
     }
 
     fn dismissed(&mut self, window: &mut Window, cx: &mut Context<Picker<Self>>) {
