@@ -79,11 +79,16 @@ when = { paths = ["**/Cargo.toml", "Cargo.lock", "deny.toml"] }
 
 [merge]
 strategy = "squash"
-max_changed_lines = 1000
+# The only approval the user wants (2026-10-05) is for licenses that would stop fastedit being
+# sold commercially. The gate's cargo-deny check fails any dependency whose license isn't on
+# deny.toml's permissive allowlist, so widening that allowlist is the one path that needs a
+# person. Regatta also always asks for regatta.toml and .github/workflows/**.
+max_changed_lines = 1000000
 size_exclude = ["**/tests/**", "**/tests.rs", "**/testdata/**", "**/golden/**", "docs/**", "**/*.md", "**/proptest-regressions/**"]
-# Licensing is a person's call (CLEAN_ROOM.md): new dependencies, the deny allowlist,
-# third-party notices, the toolchain pin, CI and the policy itself.
-human_paths = ["regatta.toml", ".github/workflows/**", "Cargo.lock", "deny.toml", "THIRD_PARTY.md", "NOTICE", "CLEAN_ROOM.md", "rust-toolchain.toml"]
+human_paths = ["deny.toml"]
+human_flags = []
+dependencies = "auto"
+adoption = "auto"
 
 [scopes]
 # Any task may add lines to these without claiming them, so tasks that add a crate or a
