@@ -100,6 +100,19 @@ pub fn extract(root: &Path, rel: &Path) -> Result<FileSymbols, Skipped> {
 
 /// [`extract`] with `root` already canonical, as a build resolves it once.
 pub(crate) fn extract_in(root: &Path, rel: &Path) -> Result<FileSymbols, Skipped> {
+    extract_with(root, rel, |syntax| {
+        syntax.finish(syntax.parse_job().run());
+    })
+}
+
+/// [`extract_in`], parsing with `parse`, which leaves the tree unparsed to
+/// give up (as [`Syntax::parse_until`] does when out of time): the file is
+/// then [`Skipped::ParseFailed`].
+pub(crate) fn extract_with(
+    root: &Path,
+    rel: &Path,
+    parse: impl FnOnce(&mut Syntax),
+) -> Result<FileSymbols, Skipped> {
     let language = symbols_language(rel)
         .and_then(language_by_name)
         .ok_or(Skipped::Unsupported)?;
@@ -126,7 +139,7 @@ pub(crate) fn extract_in(root: &Path, rel: &Path) -> Result<FileSymbols, Skipped
     }
     let buffer = read(file, limit)?;
     let mut syntax = Syntax::new(language, buffer.current());
-    syntax.finish(syntax.parse_job().run());
+    parse(&mut syntax);
     let outline = symbols(&syntax).map_err(|err| match err {
         NoOutline::TooLarge => Skipped::TooLarge,
         NoOutline::Unsupported | NoOutline::NotParsed => Skipped::ParseFailed,
@@ -197,7 +210,7 @@ fn read(mut file: fs::File, limit: usize) -> Result<Buffer, Skipped> {
 /// Whether an outline item of this kind is a definition. An `impl` is a
 /// header over its methods, and headings and tables aren't code; their
 /// children still count.
-fn is_symbol(kind: OutlineKind) -> bool {
+pub(crate) fn is_symbol(kind: OutlineKind) -> bool {
     !matches!(
         kind,
         OutlineKind::Impl | OutlineKind::Heading(_) | OutlineKind::Table

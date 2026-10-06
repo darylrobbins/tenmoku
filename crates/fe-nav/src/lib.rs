@@ -10,6 +10,13 @@
 //! - [`build`] walks the project as its tree shows it
 //!   ([`fe_project::FinderIndex::walk`]) and extracts files on worker
 //!   threads, handing batches to a sink that extends an index.
+//! - [`NavigationProvider`] is the seam navigation answers come through:
+//!   by search here, precisely from a language server elsewhere.
+//!   [`Navigation`] routes each request to the best provider ready for its
+//!   language.
+//! - [`SearchNavigation`] answers go-to-definition and workspace symbols
+//!   from a [`SymbolIndex`], with a capped text search while it's
+//!   incomplete.
 //!
 //! Like [`fe_project::search`], nothing here owns an executor: the caller
 //! runs [`build`] on a background thread of its own, and the workers are
@@ -20,8 +27,15 @@
 mod build;
 mod extract;
 mod index;
+mod provider;
+mod search;
 
 pub use build::{BuildOptions, BuildSummary, MAX_BATCH_FILES, SkipCounts, build};
 pub use extract::{FileSymbols, Skipped, Symbol, extract};
 pub use fe_syntax::OutlineKind;
 pub use index::{IndexStats, SymbolIndex, SymbolMatch, SymbolRef};
+pub use provider::{
+    Answer, Definition, Definitions, Location, NavError, NavRequest, Navigation,
+    NavigationProvider, Precision, Readiness, Tier, WorkspaceSymbol,
+};
+pub use search::{SearchNavigation, SearchStats};
