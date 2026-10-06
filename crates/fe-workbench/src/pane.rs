@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use fe_buffer::Buffer;
+use fe_buffer::{Bias, Buffer};
 use fe_editor::EditorModel;
 use fe_gpui::{EditorSettings, EditorTheme, EditorView, SettingsEvent};
 use fe_ui::{TabBar, UiTheme};
@@ -91,6 +91,15 @@ impl Pane {
             return None;
         }
         self.tabs.get(self.active).map(|tab| &tab.editor)
+    }
+
+    /// What gets focus when focus leaves a hidden panel: the active editor,
+    /// or else the pane.
+    pub(crate) fn focus_target(&self, cx: &App) -> FocusHandle {
+        match self.active_editor() {
+            Some(editor) => editor.focus_handle(cx),
+            None => self.focus.clone(),
+        }
     }
 
     /// The window title: the active tab's file name, marked if it has
@@ -327,17 +336,23 @@ impl Pane {
 pub(crate) struct Reveal {
     /// 0-based.
     pub row: u32,
-    /// Byte range in the row.
+    /// Byte range in the row's text as the editor decodes it, where an
+    /// invalid UTF-8 sequence is a U+FFFD. The search splits lines at `\n`
+    /// only, and the editor at a lone `\r` too, so after one of those the
+    /// row is off.
     pub columns: Range<usize>,
 }
 
 impl Reveal {
-    /// Selects the range, against the editor's text as it is now, and
-    /// scrolls to it; `select_and_reveal` clamps a stale one.
+    /// Selects the range, widened to char boundaries (a byte match can
+    /// split a char), against the editor's text as it is now, and scrolls
+    /// to it; `select_and_reveal` clamps a stale one.
     fn select(&self, editor: &Entity<EditorView>, cx: &mut App) {
         editor.update(cx, |editor, cx| {
-            let start = editor.model().text().row_start(self.row);
-            let range = start + self.columns.start..start + self.columns.end;
+            let text = editor.model().text();
+            let start = text.row_start(self.row);
+            let range = text.clip_offset(start + self.columns.start, Bias::Left)
+                ..text.clip_offset(start + self.columns.end, Bias::Right);
             editor.select_and_reveal(range, cx);
         });
     }

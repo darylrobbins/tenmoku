@@ -92,11 +92,7 @@ impl Dock {
         cx: &mut Context<Self>,
     ) -> bool {
         match op {
-            DockOp::ShowSearch => {
-                self.show(DockPanel::Search, cx);
-                let input = self.search.read(cx).input().focus_handle(cx);
-                window.focus(&input, cx);
-            }
+            DockOp::ShowSearch => self.show_search(window, cx),
             DockOp::ShowProject => {
                 self.show(DockPanel::Project, cx);
                 self.leave_search(fallback, window, cx);
@@ -113,6 +109,27 @@ impl Dock {
             }
         }
         true
+    }
+
+    /// Shows `panel` as its header tab does: as the commands that show it
+    /// do, with the pane's focus target as the fallback.
+    fn switch(&mut self, panel: DockPanel, window: &mut Window, cx: &mut Context<Self>) {
+        if panel == DockPanel::Search {
+            return self.show_search(window, cx);
+        }
+        self.show(panel, cx);
+        let pane = self.search.read(cx).pane().upgrade();
+        if let Some(pane) = pane {
+            let fallback = pane.read(cx).focus_target(cx);
+            self.leave_search(&fallback, window, cx);
+        }
+    }
+
+    /// Shows search, focusing its input.
+    fn show_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show(DockPanel::Search, cx);
+        let input = self.search.read(cx).input().focus_handle(cx);
+        window.focus(&input, cx);
     }
 
     /// Shows the dock with `panel`.
@@ -150,7 +167,7 @@ impl Render for Dock {
         .map(|(panel, label)| {
             fe_ui::Tab::new(("dock-tab", panel as usize), label, &self.ui)
                 .active(panel == self.active)
-                .on_click(cx.listener(move |dock, _, _, cx| dock.show(panel, cx)))
+                .on_click(cx.listener(move |dock, _, window, cx| dock.switch(panel, window, cx)))
         });
         let body = match self.active {
             DockPanel::Project => self.project.clone().into_any_element(),

@@ -8,10 +8,18 @@
 //! the background, its batches coming over a channel to a foreground task
 //! that appends them, in arrival order, so rows never move while results
 //! stream in. Dropping the panel cancels the run.
+//!
+//! The panel keeps each line's ranges and preview start as offsets in the
+//! line's lossy decoding, which is what the preview and the editor's text
+//! are made of, rather than in its bytes on disk as the search gives them:
+//! see [`decode_offsets`].
 
 use std::{
+    fs::{self, File},
+    io,
     ops::Range,
-    path::PathBuf,
+    os::unix::fs::FileExt as _,
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -22,7 +30,7 @@ use fe_gpui::commands::RunCommand;
 use fe_project::{FileMatches, LineMatch, SearchError, SearchOptions, SearchQuery, SearchSummary};
 use fe_ui::{HighlightedLabel, ROW_HEIGHT, TextInput, TextInputEvent, ToggleButton, UiTheme};
 use gpui::{
-    AnyElement, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement,
+    AnyElement, AppContext as _, Context, ElementId, Entity, InteractiveElement as _, IntoElement,
     ParentElement as _, Render, ScrollHandle, SharedString, StatefulInteractiveElement as _,
     Styled as _, Subscription, Task, UniformListScrollHandle, WeakEntity, Window, div,
     prelude::FluentBuilder as _, px, uniform_list,
@@ -130,6 +138,11 @@ impl SearchPanel {
         &self.input
     }
 
+    /// The pane matches open in.
+    pub(crate) fn pane(&self) -> &WeakEntity<Pane> {
+        &self.pane
+    }
+
     /// The query the input and options make.
     pub fn query(&self, cx: &gpui::App) -> SearchQuery {
         SearchQuery {
@@ -143,14 +156,7 @@ impl SearchPanel {
     /// Cancels the running search and starts a new one for the query,
     /// unless it's empty: that clears the results.
     pub fn run(&mut self, cx: &mut Context<Self>) {
-        self.cancel.store(true, Ordering::Relaxed);
-        self.cancel = Arc::default();
-        self.generation += 1;
-        self.running = None;
-        self.files.clear();
-        self.rows.clear();
-        self.scroll.scroll_to_item(0, gpui::ScrollStrategy::Top);
-        cx.notify();
+        let generation = self.restart(cx);
         let query = self.query(cx);
         if query.pattern.is_empty() {
             self.status = Status::Idle;
@@ -161,12 +167,12 @@ impl SearchPanel {
             return;
         };
         self.status = Status::Searching;
-        let generation = self.generation;
         let options = self.options.clone();
         let cancel = self.cancel.clone();
         let (sender, batches) = async_channel::unbounded();
         let search = cx.background_spawn(async move {
-            fe_project::search(&root, &query, &options, cancel, |batch| {
+            fe_project::search(&root, &query, &options, cancel, |mut batch| {
+                batch.iter_mut().for_each(decode_offsets);
                 sender.send_blocking((generation, batch)).ok();
             })
         });
@@ -183,6 +189,20 @@ impl SearchPanel {
                 .update(cx, |panel, cx| panel.finished(generation, result, cx))
                 .ok();
         }));
+    }
+
+    /// Cancels the running search and clears its results, for a new
+    /// generation, which it returns.
+    fn restart(&mut self, cx: &mut Context<Self>) -> u64 {
+        self.cancel.store(true, Ordering::Relaxed);
+        self.cancel = Arc::default();
+        self.generation += 1;
+        self.running = None;
+        self.files.clear();
+        self.rows.clear();
+        self.scroll.scroll_to_item(0, gpui::ScrollStrategy::Top);
+        cx.notify();
+        self.generation
     }
 
     fn append(&mut self, generation: u64, batch: Vec<FileMatches>, cx: &mut Context<Self>) {
@@ -312,10 +332,13 @@ impl SearchPanel {
         self.built.push(range.clone());
         let ui = self.ui;
         let generation = self.generation;
+        // A row's identity is its generation's too, so one pressed before a
+        // rerun isn't clicked as the row that replaced it.
+        let name = SharedString::from(format!("result-{generation}"));
         range
             .map(|ix| {
                 let row = div()
-                    .id(("result", ix))
+                    .id(ElementId::NamedInteger(name.clone(), ix as u64))
                     .h(ROW_HEIGHT)
                     .w_full()
                     .px_3()
@@ -372,20 +395,191 @@ fn count(n: usize, noun: &str) -> String {
 }
 
 /// A line's preview, its matches highlighted: shifted by `preview_start`,
-/// clipped to the preview and widened to its char boundaries.
+/// clipped to the preview and widened to its char boundaries, and then
+/// merged where they overlap, as two byte matches in one char do.
 fn line_label(line: &LineMatch, ui: &UiTheme) -> HighlightedLabel {
     let preview = &line.preview;
     let shift = |offset: usize| offset.saturating_sub(line.preview_start).min(preview.len());
-    let highlights = line
-        .ranges
-        .iter()
-        .filter_map(|range| {
-            let start = preview.floor_char_boundary(shift(range.start));
-            let end = preview.ceil_char_boundary(shift(range.end));
-            (start < end).then_some(start..end)
-        })
-        .collect();
+    let mut highlights: Vec<Range<usize>> = Vec::new();
+    for range in &line.ranges {
+        let start = preview.floor_char_boundary(shift(range.start));
+        let end = preview.ceil_char_boundary(shift(range.end));
+        if start >= end {
+            continue;
+        }
+        // The ranges are in order, so only the last can overlap.
+        match highlights.last_mut() {
+            Some(last) if start < last.end => last.end = last.end.max(end),
+            _ => highlights.push(start..end),
+        }
+    }
     HighlightedLabel::new(preview.clone(), highlights, ui)
+}
+
+/// Rewrites the ranges and preview starts of `file`'s lines from byte
+/// offsets in the lines on disk to offsets in their lossy decoding, which
+/// the previews and the editor's text are made of: there, each invalid
+/// sequence (1 to 3 bytes) is a 3-byte U+FFFD. An offset inside a char or an
+/// invalid sequence goes to its start, or to its end for a range's end.
+///
+/// The lines are read again for it, though only those whose offsets could
+/// differ: the ones whose preview has a U+FFFD, or doesn't hold the line
+/// from its start to its last match's end (which must then be valid UTF-8).
+/// A line whose bytes no longer decode to its preview, the file having
+/// changed since, is left as the search gave it, as is a UTF-16 file, whose
+/// offsets are in the UTF-8 it was searched as.
+///
+/// That's one more read of each such line, up to its last match, from a file
+/// just searched, on the search's thread.
+fn decode_offsets(file: &mut FileMatches) {
+    let mut lines = file
+        .lines
+        .iter_mut()
+        .filter(|line| may_shift(line))
+        .peekable();
+    if lines.peek().is_none() {
+        return;
+    }
+    let Ok(source) = open_regular(&file.path) else {
+        return;
+    };
+    let mut bom = [0; 2];
+    if matches!(source.read_at(&mut bom, 0), Ok(2)) && matches!(bom, [0xFF, 0xFE] | [0xFE, 0xFF]) {
+        return;
+    }
+    for line in lines {
+        let end = line.ranges.iter().map(|range| range.end).max().unwrap_or(0);
+        let preview_end = line.preview_start + line.preview.len();
+        // A decoded unit is never smaller than its bytes, so the preview's
+        // bytes end by `preview_end`; and 3 more bytes settle the unit at
+        // the end, as no unit is longer than 4.
+        if let Ok(bytes) = read_line(&source, line.line_offset, end.max(preview_end) + 3) {
+            decode_line(&bytes, line);
+        }
+    }
+}
+
+/// Whether `line`'s offsets could be other than its decoding's.
+fn may_shift(line: &LineMatch) -> bool {
+    let end = line.ranges.iter().map(|range| range.end).max().unwrap_or(0);
+    line.preview_start > 0
+        || end > line.preview.len()
+        || line.preview.contains(char::REPLACEMENT_CHARACTER)
+}
+
+/// Opens the regular file at `path` for reading, without following a link
+/// or waiting on a FIFO that has taken its place since it was searched.
+#[cfg(target_os = "macos")]
+fn open_regular(path: &Path) -> io::Result<File> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+    // O_NOFOLLOW | O_NONBLOCK, as macOS has them.
+    const FLAGS: i32 = 0x0100 | 0x0004;
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FLAGS)
+        .open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(io::ErrorKind::InvalidInput.into());
+    }
+    Ok(file)
+}
+
+/// Elsewhere, where those flags differ, nothing: the offsets stay as the
+/// search gave them.
+#[cfg(not(target_os = "macos"))]
+fn open_regular(_: &Path) -> io::Result<File> {
+    Err(io::ErrorKind::Unsupported.into())
+}
+
+/// Up to `len` bytes of the line at `offset` in `source`, short of its
+/// `\n`.
+fn read_line(source: &File, offset: u64, len: usize) -> io::Result<Vec<u8>> {
+    let mut bytes = vec![0; len];
+    let mut read = 0;
+    while read < len {
+        match source.read_at(&mut bytes[read..], offset + read as u64) {
+            Ok(0) => break,
+            Ok(n) => read += n,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(error),
+        }
+    }
+    bytes.truncate(read);
+    if let Some(newline) = bytes.iter().position(|&byte| byte == b'\n') {
+        bytes.truncate(newline);
+    }
+    Ok(bytes)
+}
+
+/// Moves `line`'s offsets from `bytes`, the start of the line, to their
+/// lossy decoding, if `bytes` from the preview's start decode to its
+/// preview and hold its matches.
+fn decode_line(bytes: &[u8], line: &mut LineMatch) {
+    let end = line.ranges.iter().map(|range| range.end).max().unwrap_or(0);
+    let start = line.preview_start;
+    if bytes.len() < end || bytes.len() < start {
+        return;
+    }
+    let window = &bytes[start..bytes.len().min(start + line.preview.len() + 3)];
+    if !String::from_utf8_lossy(window).starts_with(&line.preview) {
+        return;
+    }
+    // Each offset, and whether it rounds up: the preview's start both ways,
+    // as it must be where a unit starts, then each range's ends.
+    let mut offsets = vec![(start, false), (start, true)];
+    offsets.extend(
+        line.ranges
+            .iter()
+            .flat_map(|range| [(range.start, false), (range.end, true)]),
+    );
+    let decoded = decode(bytes, &offsets);
+    if decoded[0] != decoded[1] {
+        return;
+    }
+    line.preview_start = decoded[0];
+    let (ends, _) = decoded[2..].as_chunks::<2>();
+    for (range, &[start, end]) in line.ranges.iter_mut().zip(ends) {
+        *range = start..end;
+    }
+}
+
+/// `offsets`, byte offsets in `bytes` and whether each rounds up, as offsets
+/// in `bytes`' lossy decoding: one inside a char or an invalid sequence goes
+/// to the start of its decoding, or its end if it rounds up.
+pub(crate) fn decode(bytes: &[u8], offsets: &[(usize, bool)]) -> Vec<usize> {
+    // Each unit's length in `bytes`, then decoded: a char, or an invalid
+    // sequence that decodes to U+FFFD.
+    let mut units = bytes
+        .utf8_chunks()
+        .flat_map(|chunk| {
+            let chars = chunk.valid().chars().map(|c| (c.len_utf8(), c.len_utf8()));
+            let invalid = chunk.invalid().len();
+            let replaced =
+                (invalid > 0).then_some((invalid, char::REPLACEMENT_CHARACTER.len_utf8()));
+            chars.chain(replaced)
+        })
+        .peekable();
+    let mut order: Vec<usize> = (0..offsets.len()).collect();
+    order.sort_by_key(|&ix| offsets[ix].0);
+    let mut decoded = vec![0; offsets.len()];
+    // Where the next unit starts, in `bytes` and decoded.
+    let (mut at, mut out) = (0, 0);
+    for ix in order {
+        let (offset, up) = offsets[ix];
+        while let Some(&(len, size)) = units.peek() {
+            if at + len > offset {
+                break;
+            }
+            at += len;
+            out += size;
+            units.next();
+        }
+        decoded[ix] = match units.peek() {
+            Some(&(_, size)) if up && at < offset => out + size,
+            _ => out,
+        };
+    }
+    decoded
 }
 
 impl Drop for SearchPanel {
@@ -472,6 +666,14 @@ pub(crate) enum ShownRow {
 
 #[cfg(test)]
 impl SearchPanel {
+    /// Starts a generation whose results are `files` at once, as a search
+    /// that finishes before the next frame would.
+    pub(crate) fn rerun_with(&mut self, files: Vec<FileMatches>, cx: &mut Context<Self>) {
+        let generation = self.restart(cx);
+        self.append(generation, files, cx);
+        self.status = Status::Done(SearchSummary::default());
+    }
+
     /// Sets how much a search searches: walker threads, and the match cap.
     pub(crate) fn set_options(&mut self, options: SearchOptions) {
         self.options = options;
