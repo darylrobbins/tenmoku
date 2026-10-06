@@ -1,0 +1,23 @@
+[package]
+name = "fe-nav"
+description = "Search-based navigation: an index of the project's definitions. Must not depend on GPUI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fe-buffer.workspace = true
+fe-project.workspace = true
+fe-syntax.workspace = true
+frizbee.workspace = true
+# `O_NONBLOCK`, so opening a file swapped for a FIFO doesn't hang a build
+# (already in the lock through fe-project).
+libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -26,6 +26,7 @@ fe-config = { path = "crates/fe-config" }
 fe-keymap = { path = "crates/fe-keymap" }
 fe-ui = { path = "crates/fe-ui" }
 fe-workbench = { path = "crates/fe-workbench" }
+fe-nav = { path = "crates/fe-nav" }
 
 # GPUI comes from the `gpui-pre-*` crates.io snapshots of Zed (Apache-2.0).
 # 0.3.7 is zed@1a28cff. Every snapshot crate must be bumped together; to move to
