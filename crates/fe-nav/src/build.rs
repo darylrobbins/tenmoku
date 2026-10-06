@@ -7,13 +7,13 @@
 //! batches it for the sink. Both queues are bounded: a slow sink holds up
 //! extraction, and slow extraction holds up the walk, so what's waiting is
 //! at most [`PATH_QUEUE`] paths and [`DONE_QUEUE`] files, besides the batch
-//! being filled and one file per worker. Only the walk's own threads, in
-//! `fe_project`, keep going: they list paths ahead, at most every path of
-//! the project, as the finder's index holds anyway.
+//! being filled and one file per worker. The walk's own threads, in
+//! `fe_project`, hold up too, while the walk thread is blocked queueing:
+//! they list at most a few of [`FinderIndex::walk`]'s batches ahead.
 //!
 //! When the receiving end of a queue goes, because extraction stopped for
 //! a cancel or a panic, whatever was blocked sending to it gives up, so a
-//! build always ends.
+//! build always ends, and the walk's threads stop with it.
 
 use std::{
     fs,
@@ -21,7 +21,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering, fence},
         mpsc::{self, Receiver, RecvTimeoutError, SyncSender},
     },
     thread,
@@ -197,10 +197,9 @@ where
 /// Lists the project's paths and queues those whose language has
 /// definitions, until the walk ends, it's cancelled or extraction stops.
 fn walk(root: &Path, cancel: &Arc<AtomicBool>, counters: &Counters, paths: SyncSender<PathBuf>) {
-    let mut stopped = false;
     FinderIndex::walk(root, cancel.clone(), |batch| {
         for rel in batch {
-            if stopped || cancelled(cancel) {
+            if cancelled(cancel) {
                 return;
             }
             counters.seen.fetch_add(1, Ordering::Relaxed);
@@ -209,9 +208,15 @@ fn walk(root: &Path, cancel: &Arc<AtomicBool>, counters: &Counters, paths: SyncS
                 continue;
             }
             // Blocks while the queue is full; fails once extraction has
-            // stopped and dropped the receiver.
+            // stopped and dropped the receiver. Short of a cancel, only a
+            // panic stops it: panicking here too stops the walk's threads
+            // at once, rather than after listing the rest of the project,
+            // and the scope passes extraction's panic on.
             if paths.send(rel).is_err() {
-                stopped = true;
+                // Sees the cancel a worker saw before it dropped the
+                // receiver, which the failed send may have read relaxed.
+                fence(Ordering::Acquire);
+                assert!(cancelled(cancel), "extraction stopped");
                 return;
             }
             counters.queued.fetch_add(1, Ordering::Relaxed);

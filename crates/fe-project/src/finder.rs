@@ -30,6 +30,10 @@ use crate::{
 /// Paths a walk thread collects before sending them on.
 const BATCH: usize = 1024;
 
+/// Batches a walk keeps queued for its sink. Once that many wait, a walk
+/// thread with another blocks until the sink takes one.
+pub(crate) const QUEUED: usize = 2;
+
 /// Added to the score of a match within the file name, so that it ranks above
 /// every match that spans directories (whose scores fit in a `u16`).
 const NAME_TIER: u32 = 1 << 16;
@@ -351,24 +355,20 @@ impl FinderIndex {
     /// The walk runs on threads scoped to this call. `sink` is called on the
     /// calling thread, which the caller owns: typically a background thread
     /// that sends the batches on to the index.
+    ///
+    /// A slow sink holds the walk up: at most two batches wait for it, and
+    /// a walk thread with another full batch blocks until it takes one. So
+    /// besides the batch `sink` has, what's listed and waiting is at most
+    /// two batches, one blocked per thread, and each thread's batch being
+    /// filled. Once `cancel` is set, the walk ends as soon as `sink`
+    /// returns; a thread blocked meanwhile gives up then. A panic in `sink`
+    /// stops the walk's threads too, before it reaches the caller.
     pub fn walk(
         root: impl AsRef<Path>,
         cancel: Arc<AtomicBool>,
         sink: impl FnMut(Vec<PathBuf>),
     ) -> bool {
-        if cancel.load(Ordering::Relaxed) {
-            return false;
-        }
-        // Resolved once, here: rules are read and matched by canonical
-        // paths, as the tree's are. A root that can't be reached has
-        // nothing to walk.
-        let Some(root) = fs::canonicalize(root).ok() else {
-            return true;
-        };
-        let Some(start) = Start::root(&root) else {
-            return true;
-        };
-        walk_dir(&root, start, &listing::global_excludes(), &cancel, sink)
+        walk_root(root.as_ref(), &cancel, &Walked::default(), sink)
     }
 
     /// Adds a batch of paths, relative to the root, from
@@ -664,7 +664,8 @@ impl FinderIndex {
                     rules: level.rules.cloned(),
                 };
                 let (root, global) = (self.root.clone(), self.global.clone());
-                walk_dir(&root, start, &global, &AtomicBool::new(false), |batch| {
+                let never = AtomicBool::new(false);
+                walk_dir(&root, start, &global, &never, &Walked::default(), |batch| {
                     self.extend(batch)
                 });
                 self.stats.walks += 1;
@@ -694,7 +695,8 @@ impl FinderIndex {
             .and_then(|start| listing::identity(&start.dir).ok());
         if let Some(start) = start {
             let (root, global) = (self.root.clone(), self.global.clone());
-            walk_dir(&root, start, &global, &AtomicBool::new(false), |batch| {
+            let never = AtomicBool::new(false);
+            walk_dir(&root, start, &global, &never, &Walked::default(), |batch| {
                 self.extend(batch)
             });
         }
@@ -770,6 +772,59 @@ impl FinderIndex {
     }
 }
 
+/// What [`walk_root`] counts, for tests.
+#[derive(Debug)]
+pub(crate) struct Walked {
+    /// Paths per batch.
+    pub(crate) batch: usize,
+    /// Files listed so far, sent on or not.
+    pub(crate) listed: AtomicUsize,
+}
+
+impl Default for Walked {
+    fn default() -> Walked {
+        Walked::with_batch(BATCH)
+    }
+}
+
+impl Walked {
+    pub(crate) fn with_batch(batch: usize) -> Walked {
+        Walked {
+            batch,
+            listed: AtomicUsize::new(0),
+        }
+    }
+}
+
+/// [`FinderIndex::walk`], in batches of `walked.batch` paths, counting the
+/// files listed into `walked`.
+pub(crate) fn walk_root(
+    root: &Path,
+    cancel: &AtomicBool,
+    walked: &Walked,
+    sink: impl FnMut(Vec<PathBuf>),
+) -> bool {
+    if cancel.load(Ordering::Relaxed) {
+        return false;
+    }
+    // Resolved once, here: rules are read and matched by canonical paths, as
+    // the tree's are. A root that can't be reached has nothing to walk.
+    let Some(root) = fs::canonicalize(root).ok() else {
+        return true;
+    };
+    let Some(start) = Start::root(&root) else {
+        return true;
+    };
+    walk_dir(
+        &root,
+        start,
+        &listing::global_excludes(),
+        cancel,
+        walked,
+        sink,
+    )
+}
+
 /// Where a walk starts: a directory open for reading, its path relative to
 /// the walk's root, and the rules in force in the directory above it.
 struct Start {
@@ -803,6 +858,12 @@ impl Start {
 /// parent's rules, and its entries read through it. `sink` is called on the
 /// calling thread.
 ///
+/// The threads send their batches over a channel bounded at [`QUEUED`], so
+/// a slow sink stalls them. Once the walk is cancelled (checked whenever
+/// `sink` returns) or `sink` panics, the calling thread drops its end and
+/// stops the walk: a thread blocked sending fails, and the others stop at
+/// their next entry.
+///
 /// A directory's handle is kept open while its subdirectories wait to be
 /// read, but at most [`MAX_HELD`] are kept: past that, a subdirectory is
 /// opened again from the start directory, a component at a time and still
@@ -813,14 +874,13 @@ fn walk_dir(
     start: Start,
     global: &Gitignore,
     cancel: &AtomicBool,
+    walked: &Walked,
     mut sink: impl FnMut(Vec<PathBuf>),
 ) -> bool {
     if cancel.load(Ordering::Relaxed) {
         return false;
     }
-    let threads = thread::available_parallelism()
-        .map_or(1, NonZero::get)
-        .min(MAX_THREADS);
+    let threads = walk_threads();
     let held = Arc::new(AtomicUsize::new(0));
     let base = Arc::new(Held::new(start.dir, &held));
     let queue = Queue {
@@ -831,11 +891,11 @@ fn walk_dir(
                 rules: start.rules,
             }],
             busy: 0,
-            failed: false,
         }),
         changed: Condvar::new(),
+        stopped: AtomicBool::new(false),
     };
-    let (tx, rx) = mpsc::channel();
+    let (tx, rx) = mpsc::sync_channel(QUEUED);
     thread::scope(|scope| {
         for _ in 0..threads {
             let mut walker = Walker {
@@ -846,12 +906,17 @@ fn walk_dir(
                 global,
                 cancel,
                 queue: &queue,
+                walked,
                 batch: Vec::new(),
                 tx: tx.clone(),
             };
             scope.spawn(move || walker.run());
         }
         drop(tx);
+        // However the loop is left, by a cancel or a panic in `sink`, the
+        // threads stop: those blocked sending fail, as the loop owns the
+        // receiver, and the others stop at their next entry.
+        let _stop = StopOnDrop(&queue);
         for batch in rx {
             if cancel.load(Ordering::Relaxed) {
                 break;
@@ -864,6 +929,13 @@ fn walk_dir(
 
 /// At most this many threads walk, as for the `ignore` crate's walker.
 const MAX_THREADS: usize = 12;
+
+/// How many threads a walk runs.
+pub(crate) fn walk_threads() -> usize {
+    thread::available_parallelism()
+        .map_or(1, NonZero::get)
+        .min(MAX_THREADS)
+}
 
 /// At most this many directory handles are kept open for subdirectories
 /// waiting to be read (besides the start directory and those being read).
@@ -910,20 +982,45 @@ impl Drop for Held {
     }
 }
 
+/// Stops a walk's threads when dropped.
+struct StopOnDrop<'a>(&'a Queue);
+
+impl Drop for StopOnDrop<'_> {
+    fn drop(&mut self) {
+        self.0.stop();
+    }
+}
+
 /// The directories a walk has yet to read, shared by its threads.
 struct Queue {
     state: Mutex<QueueState>,
     /// Signalled when work is added or the walk ends.
     changed: Condvar,
+    /// Set when a thread panicked, so the others stop too and the panic
+    /// reaches the caller rather than leaving them waiting, or when the
+    /// calling thread stopped taking batches.
+    stopped: AtomicBool,
+}
+
+impl Queue {
+    fn stopped(&self) -> bool {
+        self.stopped.load(Ordering::Relaxed)
+    }
+
+    /// Stops the walk: every thread finishes what it's reading, without
+    /// listing more, and none takes another directory.
+    fn stop(&self) {
+        self.stopped.store(true, Ordering::Relaxed);
+        // Under the lock, so a thread about to wait sees the flag first.
+        let _state = lock(self);
+        self.changed.notify_all();
+    }
 }
 
 struct QueueState {
     stack: Vec<Work>,
     /// Threads reading a directory, which may add more.
     busy: usize,
-    /// Set when a thread panicked, so the others stop too and the panic
-    /// reaches the caller rather than leaving them waiting.
-    failed: bool,
 }
 
 /// One walk thread. Sends what it has left when dropped.
@@ -936,8 +1033,9 @@ struct Walker<'a> {
     global: &'a Gitignore,
     cancel: &'a AtomicBool,
     queue: &'a Queue,
+    walked: &'a Walked,
     batch: Vec<PathBuf>,
-    tx: mpsc::Sender<Vec<PathBuf>>,
+    tx: mpsc::SyncSender<Vec<PathBuf>>,
 }
 
 /// Hands a read directory's subdirectories to the stack and marks its
@@ -950,11 +1048,12 @@ struct Finished<'a> {
 
 impl Drop for Finished<'_> {
     fn drop(&mut self) {
-        let mut state = lock(self.queue);
-        match self.found.take() {
-            Some(found) => state.stack.extend(found),
-            None => state.failed = true,
+        let found = self.found.take();
+        if found.is_none() {
+            self.queue.stop();
         }
+        let mut state = lock(self.queue);
+        state.stack.extend(found.into_iter().flatten());
         state.busy -= 1;
         self.queue.changed.notify_all();
     }
@@ -980,7 +1079,7 @@ impl Walker<'_> {
     fn next(&self) -> Option<Work> {
         let mut state = lock(self.queue);
         loop {
-            if self.cancel.load(Ordering::Relaxed) || state.failed {
+            if self.cancel.load(Ordering::Relaxed) || self.queue.stopped() {
                 return None;
             }
             if let Some(work) = state.stack.pop() {
@@ -1035,7 +1134,7 @@ impl Walker<'_> {
         };
         let mut found = Vec::new();
         for (name, kind) in names {
-            if self.cancel.load(Ordering::Relaxed) {
+            if self.cancel.load(Ordering::Relaxed) || self.queue.stopped() {
                 break;
             }
             if listing::is_git_dir(&name) {
@@ -1056,9 +1155,10 @@ impl Walker<'_> {
             let rel = work.rel.join(&name);
             match kind {
                 EntryKind::File => {
+                    self.walked.listed.fetch_add(1, Ordering::Relaxed);
                     self.batch.push(rel);
-                    if self.batch.len() >= BATCH {
-                        let _ = self.tx.send(std::mem::take(&mut self.batch));
+                    if self.batch.len() >= self.walked.batch {
+                        self.send();
                     }
                 }
                 EntryKind::Dir => found.push(Work {
@@ -1081,10 +1181,21 @@ impl Walker<'_> {
     }
 }
 
+impl Walker<'_> {
+    /// Sends the batch, waiting while the channel is full. Once the calling
+    /// thread has stopped taking batches, stops the walk instead.
+    fn send(&mut self) {
+        let batch = std::mem::take(&mut self.batch);
+        if self.tx.send(batch).is_err() {
+            self.queue.stop();
+        }
+    }
+}
+
 impl Drop for Walker<'_> {
     fn drop(&mut self) {
-        if !self.batch.is_empty() && !self.cancel.load(Ordering::Relaxed) {
-            let _ = self.tx.send(std::mem::take(&mut self.batch));
+        if !self.batch.is_empty() && !self.cancel.load(Ordering::Relaxed) && !self.queue.stopped() {
+            self.send();
         }
     }
 }

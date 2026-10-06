@@ -615,6 +615,71 @@ fn errno() -> *mut c_int {
     unsafe { libc::__errno_location() }
 }
 
+/// Opens the file at `rel` under directory `root` for reading, never
+/// following a symlink, so a path listed in the project can't be led out of
+/// it by a swap made after it was listed.
+///
+/// `root` is opened a component at a time from `/` (relative to the current
+/// directory, if it is relative), and each component of `rel` through its
+/// parent's handle, all without following a symlink: canonicalize a root
+/// reached through one first. A symlink at a component of `rel`, or a
+/// file where a directory should be, fails with [`io::ErrorKind::NotFound`],
+/// as if nothing were there. A root that can't be reached so fails with the
+/// error its open gave: [`io::ErrorKind::NotADirectory`] for a symlink, or
+/// [`io::ErrorKind::InvalidInput`] for a `..` in it. `rel` must be
+/// relative and name something below `root`: an absolute path, or one with a
+/// `..` component, fails with [`io::ErrorKind::InvalidInput`].
+///
+/// The file is opened non-blocking, so a FIFO doesn't wait for a writer. It
+/// may be anything but a symlink, such as a directory or a FIFO: check its
+/// metadata before reading.
+pub fn open_file_under(root: &Path, rel: &Path) -> io::Result<File> {
+    let invalid = |what| io::Error::new(io::ErrorKind::InvalidInput, what);
+    let mut names = Vec::new();
+    for component in rel.components() {
+        match component {
+            Component::Normal(name) => names.push(name),
+            Component::CurDir => {}
+            Component::ParentDir => return Err(invalid("`..` in a path under a root")),
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(invalid("an absolute path under a root"));
+            }
+        }
+    }
+    let Some((last, above)) = names.split_last() else {
+        return Err(invalid("no file named under a root"));
+    };
+    let root = std::path::absolute(root)?;
+    let mut dir = match open_dirs(&root, Access::Search) {
+        Ok(mut dirs) => dirs.pop().expect("`/` is always opened"),
+        Err(unreached) => return Err(unreached.err),
+    };
+    for name in above {
+        dir = open_at(&dir, name, Access::Search).map_err(|err| {
+            // A symlink opened as a directory without following it fails as
+            // not a directory, like a file does.
+            if err.raw_os_error() == Some(libc::ENOTDIR) {
+                not_found("a symlink or a file on the way")
+            } else {
+                err
+            }
+        })?;
+    }
+    let flags = libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC;
+    open_raw(dir.as_raw_fd(), last, flags).map_err(|err| {
+        // `O_NOFOLLOW` fails on a symlink with `ELOOP`.
+        if err.raw_os_error() == Some(libc::ELOOP) {
+            not_found("a symlink")
+        } else {
+            err
+        }
+    })
+}
+
+fn not_found(what: &str) -> io::Error {
+    io::Error::new(io::ErrorKind::NotFound, what)
+}
+
 pub(crate) fn is_git_dir(name: &OsStr) -> bool {
     name == ".git"
 }

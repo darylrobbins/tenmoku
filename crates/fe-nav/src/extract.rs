@@ -4,7 +4,6 @@ use std::{
     fs,
     io::{self, Read},
     ops::Range,
-    os::unix::fs::{MetadataExt, OpenOptionsExt},
     path::{Path, PathBuf},
     time::SystemTime,
 };
@@ -83,12 +82,13 @@ pub(crate) fn symbols_language(rel: &Path) -> Option<&'static str> {
 /// Reads `root/rel` as the editor's loader does and lists its definitions,
 /// parsing it whole on this thread.
 ///
-/// The file is opened without following a symlink or blocking on a FIFO,
-/// and must be a regular file. It must also be the file `rel` names inside
-/// the root with no symlink on the way: a directory swapped for a symlink
-/// after the walk listed `rel` would otherwise lead outside the project, or
-/// into an ignored directory. Such a file, like a `rel` that climbs out with
-/// `..`, is [`Skipped::Unreadable`] with [`io::ErrorKind::NotFound`].
+/// The file is opened with [`fe_project::open_file_under`]: from the root a
+/// component at a time, following no symlink, and without blocking on a
+/// FIFO. It must be a regular file. So a directory swapped for a symlink
+/// after the walk listed `rel`, whenever the swap happens, can't lead
+/// outside the project or into an ignored directory. Such a path, like a
+/// `rel` that climbs out with `..` or is absolute, is
+/// [`Skipped::Unreadable`] with [`io::ErrorKind::NotFound`].
 ///
 /// Its length is checked against the language's parse limit before anything
 /// is read, and no more than the limit is read, so a file that grows
@@ -117,21 +117,17 @@ pub(crate) fn extract_with(
         .and_then(language_by_name)
         .ok_or(Skipped::Unsupported)?;
     let unreadable = |err: io::Error| Skipped::Unreadable(err.kind());
-    let path = root.join(rel);
-    let file = fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-        .open(&path)
-        .map_err(unreadable)?;
+    let file = fe_project::open_file_under(root, rel).map_err(|err| match err.kind() {
+        // A path that isn't below the root names nothing in it.
+        io::ErrorKind::InvalidInput => Skipped::Unreadable(io::ErrorKind::NotFound),
+        kind => Skipped::Unreadable(kind),
+    })?;
     let metadata = file.metadata().map_err(unreadable)?;
     if metadata.is_dir() {
         return Err(Skipped::Unreadable(io::ErrorKind::IsADirectory));
     }
     if !metadata.is_file() {
         return Err(Skipped::Unreadable(io::ErrorKind::InvalidInput));
-    }
-    if !names_opened(&path, &metadata).map_err(unreadable)? {
-        return Err(Skipped::Unreadable(io::ErrorKind::NotFound));
     }
     let limit = language.parse_limit();
     if metadata.len() > limit as u64 {
@@ -167,19 +163,6 @@ pub(crate) fn extract_with(
         symbols,
         truncated: outline.truncated,
     })
-}
-
-/// Whether `path`, under a canonical root, reaches the file opened (whose
-/// metadata is `opened`) with no symlink and no `..` on the way. Checked
-/// after opening: the open may have followed a directory since swapped for
-/// a symlink, and if it's been swapped back, the file `path` names now is
-/// another one than was opened.
-fn names_opened(path: &Path, opened: &fs::Metadata) -> io::Result<bool> {
-    if fs::canonicalize(path)? != path {
-        return Ok(false);
-    }
-    let named = fs::symlink_metadata(path)?;
-    Ok(named.dev() == opened.dev() && named.ino() == opened.ino())
 }
 
 /// Reads at most `limit` bytes of `file` into a buffer, as the loader

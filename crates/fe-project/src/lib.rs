@@ -13,6 +13,8 @@
 //!   from the same batches.
 //! - [`search()`] searches the contents of the files the tree shows, with
 //!   ripgrep's searcher, streaming capped and cancellable results.
+//! - [`open_file_under`] opens a path the tree or the finder listed without
+//!   following a symlink, for readers of the project's files.
 //!
 //! This crate must never depend on GPUI.
 
@@ -25,7 +27,7 @@ mod tree;
 mod watcher;
 
 pub use finder::{FinderIndex, FinderMatch, FinderStats};
-pub use listing::{Entry, EntryKind, Listed, Listing};
+pub use listing::{Entry, EntryKind, Listed, Listing, open_file_under};
 pub use search::{
     FileMatches, LineMatch, SearchError, SearchOptions, SearchQuery, SearchSummary, search,
 };
