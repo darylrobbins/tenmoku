@@ -1,0 +1,287 @@
+name: fastedit-task
+description: A board task to an approved design, parallel test-first items, CI, up to 3 Codex review rounds, then a PR. All in the run's own worktree.
+start: brainstorm
+inputs:
+  baseRef: { type: string, default: main }
+defaults:
+  tier: standard
+  harness: claude
+  worktree: run
+  budget: { usd: 25 }
+nodes:
+  brainstorm:
+    type: agent
+    profile: fastedit-readonly
+    agent: architect
+    tier: deep
+    prompt: |
+      Propose the architecture for the board task in your context. Read the
+      code it touches first. Weigh two or three approaches, recommend one, and
+      write a brief a person can approve in five minutes:
+
+      - Approach: what changes, crate by crate, and why this design.
+      - Alternatives: each one considered, and why it lost.
+      - Interfaces: new or changed public types and signatures.
+      - Tests: what proves each acceptance criterion.
+      - Risks and open questions.
+
+      Keep it under a page. Don't write code.
+    context:
+      include: [{ task: true }, { notebook: true }, { files: ["docs/**/*.md"], maxTokens: 6000 }]
+      index: [{ repoMap: true }]
+      budgetTokens: 24000
+    output:
+      artifact: { name: brief }
+
+  revise-brief:
+    type: agent
+    profile: fastedit-readonly
+    agent: architect
+    tier: deep
+    prompt: |
+      A person reviewed the design brief in your context and asked for a
+      revision. Rewrite the brief to address every point in their note, keeping
+      the same sections, and list at the top what changed and why.
+
+      Their note: {{ nodes.approval.output.text }}
+    context:
+      include: [{ task: true }, { artifact: brief }]
+      index: [{ repoMap: true }]
+      budgetTokens: 24000
+    output:
+      artifact: { name: brief }
+
+  approval:
+    type: human
+    join: any
+    ask: Approve this design? Choose revise and add a note to send it back.
+    show: [{ artifact: brief }]
+    options: [approve, revise, stop]
+    route: driver
+
+  plan:
+    type: agent
+    profile: fastedit-readonly
+    tier: deep
+    session: fresh
+    skills: [writing-plans]
+    prompt: Split the approved brief into independent implementation items, following the writing-plans skill.
+    context:
+      include: [{ task: true }, { artifact: brief }]
+      index: [{ repoMap: true }]
+      budgetTokens: 16000
+    output:
+      schema:
+        type: object
+        required: [items]
+        properties:
+          items:
+            type: array
+            minItems: 1
+            maxItems: 6
+            items:
+              type: object
+              required: [title, spec, crates, paths, tests]
+              properties:
+                title: { type: string }
+                spec: { type: string }
+                crates: { type: array, minItems: 1, items: { type: string, pattern: "^[A-Za-z0-9_-]+$" } }
+                paths: { type: array, minItems: 1, items: { type: string } }
+                tests: { type: string }
+
+  implement:
+    type: map
+    over: nodes.plan.output.items
+    maxParallel: 3
+    worktree: item
+    body: implement-item
+
+  ci:
+    type: check
+    join: any
+    run: BASE_REF={{ inputs.baseRef }} scripts/paddock-check.sh ci
+    expect: pass
+
+  fix-ci:
+    type: agent
+    profile: fastedit-worker
+    join: any
+    tier: fast   # entered through a tier: up retry, so the first attempt runs at standard
+    skills: [rust-tdd]
+    prompt: |
+      `scripts/paddock-check.sh ci` fails on the merged work; its output is in
+      your context. Fix the cause in the implementation, commit, and rerun it
+      until it prints CI OK. Locked tests stay as they are.
+    context:
+      include: [{ task: true }, { artifact: brief }, { check: ci, tail: 200 }]
+      budgetTokens: 16000
+
+  blocked:
+    type: human
+    ask: CI still fails after the fix attempts. Give it another round, or stop the run?
+    show: [{ check: ci, tail: 80 }]
+    options: [retry, stop]
+    route: driver
+
+  review:
+    type: agent
+    profile: fastedit-review
+    prompt: |
+      Review this branch's diff against {{ inputs.baseRef }} for the board task
+      in your context, judged against its acceptance criteria and the approved
+      brief. Look for correctness bugs, unmet criteria, missing tests, races and
+      error handling. Don't edit files.
+
+      Set verdict to "fail" if any finding is a blocker or major, else "pass".
+      Put every finding in report as markdown, one per entry, each with an
+      id (F1, F2, ...), severity, file:line, the issue, and the fix.
+    context:
+      include: [{ task: true }, { artifact: brief }, { diff: { base: inputs.baseRef } }]
+      budgetTokens: 40000
+    output:
+      schema:
+        type: object
+        required: [verdict, summary, report]
+        properties:
+          verdict: { enum: [pass, fail] }
+          summary: { type: string }
+          report: { type: string }
+
+  address-review:
+    type: agent
+    profile: fastedit-worker
+    join: any
+    tier: fast   # entered through a tier: up retry: rounds run standard, deep, deep
+    skills: [rust-tdd]
+    prompt: |
+      The review failed. Fix every blocker and major finding below, and the
+      minor ones where the fix is cheap. Commit, then run
+      `scripts/paddock-check.sh ci` until it prints CI OK. If you disagree with
+      a finding, don't change the code: say why in your final message, naming
+      the finding's id.
+
+      {{ nodes.review.output.report }}
+    context:
+      include: [{ task: true }, { artifact: brief }]
+      budgetTokens: 24000
+
+  review-gate:
+    type: human
+    ask: "Review still fails after 3 rounds: {{ nodes.review.output.summary }}. Ship as is, run another round, or stop?"
+    options: [ship, another-round, stop]
+    route: driver
+
+  finish:
+    type: pr
+    join: any
+    title: "{{ run.task }}"
+
+  stopped:
+    type: end
+    join: any
+    status: stopped
+
+edges:
+  - brainstorm -> approval
+  - approval -> plan               when: output.choice == "approve"
+  - approval -> revise-brief       when: output.choice == "revise"    retry: { max: 5 }
+  - approval -> stopped            when: output.choice == "stop"
+  - revise-brief -> approval
+
+  - plan -> implement
+  - implement -> ci
+
+  - ci -> review                   when: result == "pass"
+  - ci -> fix-ci                   when: result == "fail"   retry: { max: 2, tier: up }
+  - ci -> blocked                  when: result == "fail"
+  - fix-ci -> ci
+  - blocked -> fix-ci              when: output.choice == "retry"     retry: { max: 3, tier: up }
+  - blocked -> stopped             when: output.choice == "stop"
+
+  - review -> finish               when: output.verdict == "pass"
+  - review -> address-review       when: output.verdict == "fail"   retry: { max: 3, tier: up }
+  - review -> review-gate          when: output.verdict == "fail"
+  - address-review -> ci
+  - review-gate -> finish          when: output.choice == "ship"
+  - review-gate -> address-review  when: output.choice == "another-round"   retry: { max: 3, tier: up }
+  - review-gate -> stopped         when: output.choice == "stop"
+
+subgraphs:
+  implement-item:
+    nodes:
+      write-tests:
+        type: agent
+        profile: fastedit-worker
+        tier: standard
+        skills: [rust-tdd]
+        prompt: |
+          Write the failing tests for this item, following the rust-tdd skill,
+          and finish only once `scripts/paddock-check.sh red {{ item.crates | join(" ") }}`
+          prints RED OK.
+
+          Item: {{ item.title }}
+          Spec: {{ item.spec }}
+          Behaviours to pin down: {{ item.tests }}
+          Files you own: {{ item.paths | join(", ") }}
+        context:
+          include: [{ files: "{{ item.paths }}", maxTokens: 8000 }, { check: red, tail: 120 }]
+          index: [{ artifact: brief }, { task: true }]
+
+      red:
+        type: check
+        run: scripts/paddock-check.sh red {{ item.crates | join(" ") }}
+        expect: pass
+
+      implement:
+        type: agent
+        profile: fastedit-worker
+        tier: standard
+        skills: [rust-tdd]
+        prompt: &implement |
+          Make the failing tests for this item pass without changing them,
+          following the rust-tdd skill. Finish only once
+          `scripts/paddock-check.sh green {{ item.crates | join(" ") }}` prints GREEN OK.
+
+          Item: {{ item.title }}
+          Spec: {{ item.spec }}
+          Files you own: {{ item.paths | join(", ") }}
+        context:
+          include: [{ check: red, tail: 120 }, { check: green, tail: 150 }]
+          index: [{ artifact: brief }, { task: true }]
+
+      green:
+        type: check
+        run: scripts/paddock-check.sh green {{ item.crates | join(" ") }}
+        expect: pass
+
+      implement-deep:
+        type: agent
+        profile: fastedit-worker
+        tier: deep
+        skills: [rust-tdd]
+        prompt: *implement
+        context:
+          include: [{ check: red, tail: 120 }, { check: green-deep, tail: 150 }, { check: green, tail: 150 }]
+          index: [{ artifact: brief }, { task: true }]
+
+      green-deep:
+        type: check
+        run: scripts/paddock-check.sh green {{ item.crates | join(" ") }}
+        expect: pass
+
+      done:
+        type: end
+        status: done
+        join: any
+
+    edges:
+      - write-tests -> red
+      - red -> write-tests            when: result == "fail"   retry: { max: 2 }
+      - red -> implement              when: result == "pass"
+      - implement -> green
+      - green -> implement            when: result == "fail"   retry: { max: 2 }
+      - green -> implement-deep       when: result == "fail"
+      - implement-deep -> green-deep
+      - green-deep -> implement-deep  when: result == "fail"   retry: { max: 2 }
+      - green -> done                 when: result == "pass"
+      - green-deep -> done            when: result == "pass"
