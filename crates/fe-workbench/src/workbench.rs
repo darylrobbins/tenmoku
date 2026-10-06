@@ -19,8 +19,9 @@ use gpui::{
 use crate::{
     Dock, DockPanel, KEY_CONTEXT, OutlinePanel, Pane, PaneGroup, Picker, ProjectPanel, QuickOpen,
     SearchPanel, dock, outline_panel,
-    pane::{PaneEvent, Peers, file_name},
-    pane_group::{self, Direction, PaneOp},
+    pane::{PaneEvent, Peers, TabId, file_name},
+    pane_drag::TabDropped,
+    pane_group::{self, Destination, Direction, PaneOp},
     picker::{self, PaletteOp},
     project_panel::{self, PanelEvent, PanelOp},
 };
@@ -78,8 +79,8 @@ pub struct Workbench {
     active: Entity<Pane>,
     /// `panes`' panes, which each of them sees.
     peers: Peers,
-    /// Per pane: its notifications and its events.
-    pane_subscriptions: HashMap<EntityId, [Subscription; 2]>,
+    /// Per pane: its notifications, its events and tabs dropped on it.
+    pane_subscriptions: HashMap<EntityId, [Subscription; 3]>,
     /// Per open editor: its notifications, passed on to the editors that
     /// share its buffer.
     editors: HashMap<EntityId, Subscription>,
@@ -220,6 +221,10 @@ impl Workbench {
         &self.panes
     }
 
+    pub(crate) fn pane_group_mut(&mut self) -> &mut PaneGroup {
+        &mut self.panes
+    }
+
     /// Joins `pane` to the workbench's: it sees the others, and retitles
     /// the window, closes once emptied and becomes active on a click.
     fn watch(&mut self, pane: &Entity<Pane>, window: &mut Window, cx: &mut Context<Self>) {
@@ -235,8 +240,19 @@ impl Workbench {
                 PaneEvent::Activated => {}
             },
         );
+        let dropped = cx.subscribe_in(
+            pane,
+            window,
+            |workbench, _, dropped: &TabDropped, window, cx| {
+                let Some(source) = dropped.dragged.pane.upgrade() else {
+                    return;
+                };
+                let (tab, destination) = (dropped.dragged.tab, dropped.destination.clone());
+                workbench.move_tab_to(&source, tab, destination, window, cx);
+            },
+        );
         self.pane_subscriptions
-            .insert(pane.entity_id(), [changed, events]);
+            .insert(pane.entity_id(), [changed, events, dropped]);
         self.sync_peers();
     }
 
@@ -317,58 +333,48 @@ impl Workbench {
         new
     }
 
-    /// Moves the active tab to the pane in `direction`, opening one there
-    /// if there's none. If that pane shows the file already, its tab is
-    /// activated and the moved one closes, as long as its unsaved changes
-    /// live on in another tab. A pane the move empties closes.
+    /// Moves the active tab to the pane in `direction`, or to a pane split
+    /// that way if there's none: see [`PaneGroup::move_tab`].
     fn move_tab(&mut self, direction: Direction, window: &mut Window, cx: &mut Context<Self>) {
         let source = self.active.clone();
-        let Some(ix) = source.read(cx).active() else {
+        let pane = source.read(cx);
+        let Some(ix) = pane.active() else {
             return;
         };
-        if source.read(cx).active_editor().is_none() {
+        if pane.active_editor().is_none() {
             // A file being read, or a read error, shows in the tab's place.
             return;
         }
-        let target = match self.panes.neighbour(&source, direction, cx) {
-            Some(target) => target,
-            None => self.new_pane(direction, window, cx),
+        let tab = pane.tabs()[ix].id();
+        let destination = match self.panes.neighbour(&source, direction, cx) {
+            Some(pane) => Destination::Pane { pane, index: None },
+            None => Destination::Split {
+                pane: source.clone(),
+                direction,
+            },
         };
-        let tab = &source.read(cx).tabs()[ix];
-        let shown = tab
-            .path
-            .as_deref()
-            .and_then(|path| target.read(cx).position(path));
-        if let Some(shown) = shown {
-            let source_pane = source.read(cx);
-            let model = tab.editor.read(cx).model();
-            if model.is_dirty() && !source_pane.shown_elsewhere(&tab.editor, cx) {
-                log::warn!(
-                    "not moving {}: it has unsaved changes, and {direction:?} shows another copy",
-                    file_name(model.path())
-                );
-                return;
-            }
-            source.update(cx, |pane, cx| {
-                pane.take_active(window, cx);
-                cx.notify();
-            });
-            target.update(cx, |pane, cx| {
-                pane.activate(shown, window, cx);
-                cx.notify();
-            });
-        } else {
-            let tab = source.update(cx, |pane, cx| {
-                cx.notify();
-                pane.take_active(window, cx)
-            });
-            if let Some(tab) = tab {
-                target.update(cx, |pane, cx| pane.insert(tab, window, cx));
-            }
+        self.move_tab_to(&source, tab, destination, window, cx);
+    }
+
+    /// Moves `tab` from `source` to `destination`, by key or drop, then
+    /// activates the pane it went to and closes `source` if that emptied it.
+    fn move_tab_to(
+        &mut self,
+        source: &Entity<Pane>,
+        tab: TabId,
+        destination: Destination,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((target, new)) = self.panes.move_tab(source, tab, destination, window, cx) else {
+            return;
+        };
+        if new {
+            self.watch(&target, window, cx);
         }
         self.activate(target, window, cx);
         if source.update(cx, |pane, _| pane.take_emptied()) {
-            self.close_pane(&source, window, cx);
+            self.close_pane(source, window, cx);
         }
         self.track_editors(cx);
     }
@@ -650,7 +656,7 @@ impl Render for Workbench {
             .bg(self.ui.background)
             .text_color(self.ui.text)
             .text_size(px(12.))
-            .child(self.panes.render(&self.ui))
+            .child(self.panes.render(&self.ui, cx))
             .child(self.dock.clone())
             .when(self.palette, |root| root.child(self.quick_open.clone()))
     }

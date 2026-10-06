@@ -14,12 +14,19 @@ use fe_editor::EditorModel;
 use fe_gpui::{EditorSettings, EditorTheme, EditorView, SettingsEvent};
 use fe_ui::{TabBar, UiTheme};
 use gpui::{
-    App, AppContext as _, Bounds, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Render, ScrollHandle,
-    Styled as _, Subscription, Task, WeakEntity, Window, canvas, div,
+    App, AppContext as _, Bounds, Context, DragMoveEvent, Entity, EntityId, EventEmitter,
+    FocusHandle, Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Pixels,
+    Point, Render, ScrollHandle, Styled as _, Subscription, Task, WeakEntity, Window, canvas, div,
 };
 
-use crate::loader;
+use crate::{
+    loader,
+    pane_drag::{self, DraggedTab, DropTarget, DropZone, TabDropped, TabGhost},
+};
+
+/// A tab's ID, which stays with it as tabs open, close and move: its
+/// editor's.
+pub(crate) type TabId = EntityId;
 
 /// An open file.
 pub struct Tab {
@@ -29,6 +36,12 @@ pub struct Tab {
     /// Re-renders (and retitles) the pane holding the tab whenever its
     /// editor changes.
     _changed: Subscription,
+}
+
+impl Tab {
+    pub(crate) fn id(&self) -> TabId {
+        self.editor.entity_id()
+    }
 }
 
 /// Every pane of a workbench, each pane included, so a pane can see what
@@ -66,6 +79,12 @@ pub struct Pane {
     tab_scroll: ScrollHandle,
     /// Where the last frame laid the pane out.
     bounds: Rc<Cell<Bounds<Pixels>>>,
+    /// Where it laid out the content below the tab bar.
+    content_bounds: Rc<Cell<Bounds<Pixels>>>,
+    /// Where a tab dragged over the pane would drop.
+    hover: Option<DropTarget>,
+    /// Where the last frame laid out the drop marker or overlay.
+    hint_bounds: Rc<Cell<Bounds<Pixels>>>,
     /// The workbench's panes; a lone pane's has nothing in it.
     peers: Peers,
     id: EntityId,
@@ -93,6 +112,9 @@ impl Pane {
             focus: cx.focus_handle(),
             tab_scroll: ScrollHandle::new(),
             bounds: Rc::default(),
+            content_bounds: Rc::default(),
+            hover: None,
+            hint_bounds: Rc::default(),
             peers: Peers::default(),
             id: cx.entity_id(),
             emptied: false,
@@ -350,33 +372,131 @@ impl Pane {
             );
             return;
         }
-        self.take_active(window, cx);
+        self.take(self.active, window, cx);
     }
 
-    /// Removes the active tab, for a close or a move, and activates its
-    /// right neighbour, or the left one if it was last. With none left, the
-    /// pane is focused and, unless a file is being read into it, emptied.
-    pub(crate) fn take_active(&mut self, window: &mut Window, cx: &mut App) -> Option<Tab> {
-        if self.active >= self.tabs.len() {
+    /// Removes tab `ix`, for a close or a move. If it was active, its right
+    /// neighbour is activated, or the left one if it was last. With none
+    /// left, the pane is focused and, unless a file is being read into it,
+    /// emptied.
+    pub(crate) fn take(&mut self, ix: usize, window: &mut Window, cx: &mut App) -> Option<Tab> {
+        if ix >= self.tabs.len() {
             return None;
         }
-        let tab = self.tabs.remove(self.active);
-        self.error = None;
+        let tab = self.tabs.remove(ix);
         if self.tabs.is_empty() {
             self.active = 0;
+            self.error = None;
             self.emptied = true;
             window.focus(&self.focus, cx);
-        } else {
+        } else if ix == self.active {
+            self.error = None;
             self.activate(self.active.min(self.tabs.len() - 1), window, cx);
+        } else if ix < self.active {
+            self.active -= 1;
         }
         Some(tab)
     }
 
-    /// Adds `tab`, moved from another pane, and shows and focuses it.
-    pub(crate) fn insert(&mut self, tab: Tab, window: &mut Window, cx: &mut Context<Self>) {
+    /// Adds `tab`, moved from another pane, at `index` or else at the end,
+    /// and shows and focuses it.
+    pub(crate) fn insert(
+        &mut self,
+        tab: Tab,
+        index: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.push_tab(tab.editor, cx);
-        self.activate(self.tabs.len() - 1, window, cx);
+        let tab = self.tabs.pop().expect("just pushed");
+        let ix = index.map_or(self.tabs.len(), |index| index.min(self.tabs.len()));
+        self.tabs.insert(ix, tab);
+        self.activate(ix, window, cx);
         cx.notify();
+    }
+
+    /// Moves tab `ix` to before the tab now at `index`, or else to the end,
+    /// and shows and focuses it.
+    pub(crate) fn reorder(
+        &mut self,
+        ix: usize,
+        index: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let to = match index {
+            Some(index) if index > ix => index - 1,
+            Some(index) => index,
+            None => self.tabs.len() - 1,
+        };
+        let tab = self.tabs.remove(ix);
+        let to = to.min(self.tabs.len());
+        self.tabs.insert(to, tab);
+        self.activate(to, window, cx);
+        cx.notify();
+    }
+
+    /// Where a tab dragged to `at` would drop: in the tab bar, or on the
+    /// content area, by the last frame's layout.
+    fn drop_target(&self, at: Point<Pixels>) -> Option<DropTarget> {
+        if !self.bounds().contains(&at) {
+            return None;
+        }
+        let content = self.content_bounds.get();
+        if content.contains(&at) {
+            return Some(DropTarget::Content(DropZone::at(content, at)));
+        }
+        Some(DropTarget::TabBar(pane_drag::insertion(
+            &self.tab_layout(),
+            at.x,
+        )))
+    }
+
+    /// Where the last frame laid out each tab, scrolled as it shows.
+    fn tab_layout(&self) -> Vec<Bounds<Pixels>> {
+        let scrolled = self.tab_scroll.offset();
+        (0..self.tabs.len())
+            .map_while(|ix| self.tab_scroll.bounds_for_item(ix))
+            .map(|tab| Bounds::new(tab.origin + scrolled, tab.size))
+            .collect()
+    }
+
+    /// A tab dropped on the pane at `at`: the workbench moves it.
+    fn dropped(&mut self, dragged: &DraggedTab, at: Point<Pixels>, cx: &mut Context<Self>) {
+        self.hover = None;
+        cx.notify();
+        let Some(target) = self.drop_target(at) else {
+            return;
+        };
+        cx.emit(TabDropped {
+            dragged: dragged.clone(),
+            destination: target.destination(cx.entity()),
+        });
+    }
+
+    /// The drop marker in the tab bar, or the overlay on the content, for
+    /// where a hovering tab would drop.
+    fn drop_hint(&self) -> Option<gpui::AnyElement> {
+        let origin = self.bounds().origin;
+        let (hint, fill) = match self.hover? {
+            DropTarget::TabBar(index) => {
+                let marker = pane_drag::marker(&self.tab_layout(), index, self.bounds());
+                (marker, self.ui.drop_target)
+            }
+            DropTarget::Content(zone) => {
+                let overlay = zone.overlay(self.bounds(), self.content_bounds.get());
+                (overlay, self.ui.drop_target.opacity(0.2))
+            }
+        };
+        let element = div()
+            .absolute()
+            .left(hint.left() - origin.x)
+            .top(hint.top() - origin.y)
+            .w(hint.size.width)
+            .h(hint.size.height)
+            .bg(fill)
+            .child(record(&self.hint_bounds));
+        Some(element.into_any_element())
     }
 
     /// Whether a tab other than `editor`'s, in this pane or another, shows
@@ -507,9 +627,27 @@ impl Pane {
     pub(crate) fn tab_bounds(&self, ix: usize) -> Option<gpui::Bounds<gpui::Pixels>> {
         self.tab_scroll.bounds_for_item(ix)
     }
+
+    /// Where the content below the tab bar was laid out in the last frame.
+    pub(crate) fn content_bounds(&self) -> Bounds<Pixels> {
+        self.content_bounds.get()
+    }
+
+    /// Where a hovering tab would drop.
+    pub(crate) fn hovered_drop(&self) -> Option<DropTarget> {
+        self.hover
+    }
+
+    /// Where the last frame laid out the drop marker or overlay, if one
+    /// showed.
+    pub(crate) fn drop_hint_bounds(&self) -> Option<Bounds<Pixels>> {
+        self.hover.map(|_| self.hint_bounds.get())
+    }
 }
 
 impl EventEmitter<PaneEvent> for Pane {}
+
+impl EventEmitter<TabDropped> for Pane {}
 
 impl Focusable for Pane {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -519,10 +657,25 @@ impl Focusable for Pane {
 
 impl Render for Pane {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let dragging = cx.has_active_drag();
+        if !dragging {
+            self.hover = None;
+        }
+        let pane = cx.entity().downgrade();
+        let ui = self.ui;
         let tabs = self.tabs.iter().enumerate().map(|(ix, tab)| {
             let dirty = tab.editor.read(cx).model().is_dirty();
-            fe_ui::Tab::new(("tab", ix), file_name(tab.path.as_deref()), &self.ui)
+            let label = file_name(tab.path.as_deref());
+            let dragged = DraggedTab {
+                pane: pane.clone(),
+                tab: tab.id(),
+            };
+            fe_ui::Tab::new(("tab", ix), label.clone(), &self.ui)
                 .dirty(dirty)
+                .on_drag(dragged, move |_, _, _, cx| {
+                    cx.new(|_| TabGhost(label.clone().into(), ui))
+                })
+                .on_drop(cx.listener(Self::on_drop))
                 .active(ix == self.active)
                 .on_click(cx.listener(move |pane, _, window, cx| {
                     pane.activate(ix, window, cx);
@@ -536,6 +689,7 @@ impl Render for Pane {
         });
         let tab_bar = TabBar::new("tabs", &self.ui)
             .track_scroll(&self.tab_scroll)
+            .on_drop(cx.listener(Self::on_drop))
             .children(tabs);
         let body = if let Some(path) = &self.opening {
             self.message(format!("Loading {}…", file_name(Some(path))))
@@ -546,15 +700,28 @@ impl Render for Pane {
         } else {
             self.message("No open files".into())
         };
-        let bounds = self.bounds.clone();
-        let layout = canvas(move |laid_out, _, _| bounds.set(laid_out), |_, _, _, _| {})
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full();
+        // Over the editor while dragging, so it takes drops before the
+        // editor's mouse handlers see them.
+        let drop_layer = dragging.then(|| {
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .on_drop(cx.listener(Self::on_drop))
+        });
         div()
             .track_focus(&self.focus)
             .capture_any_mouse_down(cx.listener(|_, _, _, cx| cx.emit(PaneEvent::Activated)))
+            .on_drag_move(
+                cx.listener(|pane, event: &DragMoveEvent<DraggedTab>, _, cx| {
+                    let target = pane.drop_target(event.event.position);
+                    if target != pane.hover {
+                        pane.hover = target;
+                        cx.notify();
+                    }
+                }),
+            )
             .relative()
             .flex_1()
             .min_w_0()
@@ -562,8 +729,33 @@ impl Render for Pane {
             .flex()
             .flex_col()
             .bg(self.ui.background)
-            .child(layout)
+            .child(record(&self.bounds))
             .child(tab_bar)
-            .child(div().flex_1().min_h_0().child(body))
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .child(record(&self.content_bounds))
+                    .child(body)
+                    .children(drop_layer),
+            )
+            .children(self.drop_hint())
     }
+}
+
+impl Pane {
+    fn on_drop(&mut self, dragged: &DraggedTab, window: &mut Window, cx: &mut Context<Self>) {
+        self.dropped(dragged, window.mouse_position(), cx);
+    }
+}
+
+/// Fills its parent, recording where it's laid out in `bounds`.
+fn record(bounds: &Rc<Cell<Bounds<Pixels>>>) -> impl IntoElement {
+    let bounds = bounds.clone();
+    canvas(move |laid_out, _, _| bounds.set(laid_out), |_, _, _, _| {})
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
 }

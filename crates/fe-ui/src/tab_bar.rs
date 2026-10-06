@@ -1,7 +1,8 @@
 use gpui::{
-    App, ClickEvent, ElementId, InteractiveElement as _, IntoElement, ParentElement as _,
-    RenderOnce, ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Window,
-    div, prelude::FluentBuilder as _, px,
+    App, ClickEvent, Div, ElementId, Entity, InteractiveElement as _, IntoElement,
+    ParentElement as _, Pixels, Point, Render, RenderOnce, ScrollHandle, SharedString, Stateful,
+    StatefulInteractiveElement as _, StyleRefinement, Styled as _, Window, div,
+    prelude::FluentBuilder as _, px,
 };
 
 use crate::{ClickHandler, UiTheme};
@@ -15,6 +16,16 @@ pub struct TabBar {
     tabs: Vec<Tab>,
     theme: UiTheme,
     scroll: Option<ScrollHandle>,
+    drag: DragHooks,
+}
+
+/// Drag and drop handlers, kept until the element they go on is built.
+type DragHooks = Vec<Box<dyn FnOnce(Stateful<Div>) -> Stateful<Div>>>;
+
+fn apply(element: Stateful<Div>, hooks: DragHooks) -> Stateful<Div> {
+    hooks
+        .into_iter()
+        .fold(element, |element, hook| hook(element))
 }
 
 impl TabBar {
@@ -24,7 +35,27 @@ impl TabBar {
             tabs: Vec::new(),
             theme: *theme,
             scroll: None,
+            drag: Vec::new(),
         }
+    }
+
+    /// Called when a `T` is dropped on the bar outside its tabs (or on a tab
+    /// with no [`Tab::on_drop`] of its own), such as after the last tab.
+    pub fn on_drop<T: 'static>(
+        mut self,
+        handler: impl Fn(&T, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.drag.push(Box::new(|bar| bar.on_drop(handler)));
+        self
+    }
+
+    /// Restyles the bar while a `T` is dragged over it.
+    pub fn drag_over<T: 'static>(
+        mut self,
+        style: impl Fn(StyleRefinement, &T, &mut Window, &mut App) -> StyleRefinement + 'static,
+    ) -> Self {
+        self.drag.push(Box::new(|bar| bar.drag_over(style)));
+        self
     }
 
     pub fn children(mut self, tabs: impl IntoIterator<Item = Tab>) -> Self {
@@ -53,6 +84,7 @@ impl RenderOnce for TabBar {
             .border_b_1()
             .border_color(self.theme.border)
             .when_some(self.scroll, |bar, scroll| bar.track_scroll(&scroll))
+            .map(|bar| apply(bar, self.drag))
             .children(self.tabs)
     }
 }
@@ -68,6 +100,7 @@ pub struct Tab {
     theme: UiTheme,
     on_click: Option<ClickHandler>,
     on_close: Option<ClickHandler>,
+    drag: DragHooks,
 }
 
 impl Tab {
@@ -80,6 +113,7 @@ impl Tab {
             theme: *theme,
             on_click: None,
             on_close: None,
+            drag: Vec::new(),
         }
     }
 
@@ -108,6 +142,36 @@ impl Tab {
         handler: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_close = Some(Box::new(handler));
+        self
+    }
+
+    /// Makes the tab draggable: moving the pointer more than 2 px with the
+    /// button down starts a drag of `value`, drawn as the view `ghost`
+    /// makes, which follows the pointer.
+    pub fn on_drag<T: 'static, W: Render>(
+        mut self,
+        value: T,
+        ghost: impl Fn(&T, Point<Pixels>, &mut Window, &mut App) -> Entity<W> + 'static,
+    ) -> Self {
+        self.drag.push(Box::new(|tab| tab.on_drag(value, ghost)));
+        self
+    }
+
+    /// Called when a `T` is dropped on the tab.
+    pub fn on_drop<T: 'static>(
+        mut self,
+        handler: impl Fn(&T, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.drag.push(Box::new(|tab| tab.on_drop(handler)));
+        self
+    }
+
+    /// Restyles the tab while a `T` is dragged over it.
+    pub fn drag_over<T: 'static>(
+        mut self,
+        style: impl Fn(StyleRefinement, &T, &mut Window, &mut App) -> StyleRefinement + 'static,
+    ) -> Self {
+        self.drag.push(Box::new(|tab| tab.drag_over(style)));
         self
     }
 }
@@ -158,5 +222,6 @@ impl RenderOnce for Tab {
             .child(div().whitespace_nowrap().child(self.label))
             .child(close)
             .when_some(self.on_click, |tab, on_click| tab.on_click(on_click))
+            .map(|tab| apply(tab, self.drag))
     }
 }
