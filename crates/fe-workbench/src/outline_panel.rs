@@ -10,9 +10,12 @@
 //!
 //! A refresh builds the [`fe_syntax::OutlineJob`] here, cloning the tree and
 //! the text, and runs it on the background executor. At most one runs at a
-//! time: refreshes meanwhile only mark the panel dirty, and one follow-up
-//! runs when it lands. Until then the last outline of the tab stays on
-//! screen, so the panel never blanks between keystrokes.
+//! time: refreshes meanwhile only update the status, and the panel refreshes
+//! again when it lands, which starts the follow-up if the syntax moved on.
+//! Until then the last outline of the tab stays on screen, so the panel
+//! never blanks between keystrokes. A job's outline shows only if the editor
+//! is still of its language: one set to another language and back meanwhile
+//! keeps the outline shown.
 
 use std::{ops::Range, rc::Rc};
 
@@ -51,8 +54,6 @@ pub struct OutlinePanel {
     generation: u64,
     /// The job in flight.
     job: Option<Task<()>>,
-    /// Whether a refresh came while the job ran, to run again when it lands.
-    dirty: bool,
     /// Whether the last refresh found the syntax trailing the text, or not
     /// reparsed: the editor catches up as it renders.
     behind: bool,
@@ -72,7 +73,6 @@ impl OutlinePanel {
             outline: None,
             generation: 0,
             job: None,
-            dirty: false,
             behind: false,
             scroll: UniformListScrollHandle::new(),
             ui,
@@ -147,7 +147,6 @@ impl OutlinePanel {
             return;
         }
         if self.job.is_some() {
-            self.dirty = true;
             return;
         }
         let language = syntax.language();
@@ -188,8 +187,9 @@ impl OutlinePanel {
         })
     }
 
-    /// Shows a job's outline if it's of the editor still followed, then runs
-    /// the follow-up a refresh asked for meanwhile.
+    /// Shows a job's outline if it's of the editor still followed, in the
+    /// language it's still of, then refreshes: the syntax may have moved on
+    /// while the job ran, or been set to another language and back.
     fn landed(
         &mut self,
         editor: EntityId,
@@ -198,13 +198,17 @@ impl OutlinePanel {
         cx: &mut Context<Self>,
     ) {
         self.job = None;
-        if self.editor_id() == Some(editor) {
+        let current = self
+            .editor
+            .as_ref()
+            .and_then(WeakEntity::upgrade)
+            .filter(|current| current.entity_id() == editor)
+            .and_then(|current| current.read(cx).syntax().map(Syntax::language));
+        if current.is_some_and(|current| std::ptr::eq(current, language)) {
             self.outline = Some((outline, language));
             self.generation += 1;
         }
-        if std::mem::take(&mut self.dirty) {
-            self.refresh(cx);
-        }
+        self.refresh(cx);
         cx.notify();
     }
 

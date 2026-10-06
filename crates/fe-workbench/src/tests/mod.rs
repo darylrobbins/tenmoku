@@ -4,6 +4,7 @@
 
 mod launch;
 mod outline_panel;
+mod outline_panel_followups;
 mod pane_cycle;
 mod project_panel;
 mod quick_open;
