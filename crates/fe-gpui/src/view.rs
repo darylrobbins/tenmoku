@@ -185,6 +185,26 @@ impl EditorView {
         cx.notify();
     }
 
+    /// The host API for "go to" jumps (search results, outline, later
+    /// go-to-def): selects `range`, head at its end, and scrolls it into view
+    /// on the next frame as caret movement does. Offsets that are stale, past
+    /// the buffer or inside a char are clamped to the char boundary on their
+    /// left, a reversed range is normalised, and a fold hiding the start is
+    /// opened. It doesn't focus the view.
+    pub fn select_and_reveal(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
+        let text = self.model.text();
+        let start = text.clip_offset(range.start, Bias::Left);
+        let end = text.clip_offset(range.end, Bias::Left);
+        let range = start.min(end)..start.max(end);
+        let row = text.offset_to_point(range.start).row;
+        self.model.unfold_rows(row..=row);
+        self.model.set_selections([fe_buffer::ResolvedSelection {
+            range,
+            reversed: false,
+        }]);
+        self.changed(cx);
+    }
+
     pub(crate) fn page_rows(&self) -> u32 {
         self.layout.as_ref().map_or(20, |layout| {
             layout.frame.visible_rows().saturating_sub(2).max(1)
@@ -590,3 +610,6 @@ mod language_tests;
 
 #[cfg(test)]
 mod window_tests;
+
+#[cfg(test)]
+mod reveal_tests;
