@@ -867,7 +867,9 @@ fn bound_to_function(declarator: Node) -> bool {
             "parenthesized_expression"
             | "as_expression"
             | "satisfies_expression"
-            | "non_null_expression" => children.next(),
+            | "non_null_expression"
+            // (function <T>(x: T) {})<string>: the function comes first.
+            | "instantiation_expression" => children.next(),
             // <F>(() => 1): the type comes first.
             "type_assertion" => children.last(),
             kind => {
