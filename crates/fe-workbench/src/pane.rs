@@ -3,6 +3,7 @@
 use std::{
     collections::HashMap,
     io,
+    ops::Range,
     path::{Path, PathBuf},
 };
 
@@ -36,6 +37,8 @@ pub struct Pane {
     /// Why the file opened last couldn't be read, shown in the active tab's
     /// place until another tab is shown.
     error: Option<String>,
+    /// What to select in the file opened last once its editor exists.
+    reveal: Option<(PathBuf, Reveal)>,
     theme: EditorTheme,
     /// For editors yet to open.
     settings: EditorSettings,
@@ -58,6 +61,7 @@ impl Pane {
             opening: None,
             reads: HashMap::new(),
             error: None,
+            reveal: None,
             theme,
             settings,
             ui,
@@ -119,10 +123,27 @@ impl Pane {
     /// background and opens it in a new tab, focused, once read. Meanwhile
     /// the pane is focused, as the editor it showed is hidden.
     pub fn open(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_at(path, None, window, cx);
+    }
+
+    /// [`Pane::open`], then selects `reveal` in the file's editor: at once if
+    /// it's open, else once it's read, if it's still the file opened last.
+    pub(crate) fn open_at(
+        &mut self,
+        path: PathBuf,
+        reveal: Option<Reveal>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.reveal = None;
         if let Some(ix) = self.position(&path) {
             self.activate(ix, window, cx);
+            if let Some(reveal) = reveal {
+                reveal.select(&self.tabs[ix].editor, cx);
+            }
             return;
         }
+        self.reveal = reveal.map(|reveal| (path.clone(), reveal));
         self.opening = Some(path.clone());
         self.error = None;
         window.focus(&self.focus, cx);
@@ -173,6 +194,7 @@ impl Pane {
             self.opening = None;
         }
         let empty = self.active().is_none() && self.opening.is_none() && self.error.is_none();
+        let reveal = self.reveal.take_if(|(at, _)| last && *at == path);
         match result {
             Ok(buffer) => {
                 let open = self.position(&path);
@@ -188,6 +210,9 @@ impl Pane {
                 });
                 if last || empty {
                     self.activate(ix, window, cx);
+                }
+                if let Some((_, reveal)) = reveal {
+                    reveal.select(&self.tabs[ix].editor, cx);
                 }
             }
             Err(error) => {
@@ -293,6 +318,28 @@ impl Pane {
             .text_color(self.ui.muted_text)
             .child(text)
             .into_any_element()
+    }
+}
+
+/// A range to select in a file, by row, as a search match gives it: so it
+/// lands right whatever the file's line endings.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Reveal {
+    /// 0-based.
+    pub row: u32,
+    /// Byte range in the row.
+    pub columns: Range<usize>,
+}
+
+impl Reveal {
+    /// Selects the range, against the editor's text as it is now, and
+    /// scrolls to it; `select_and_reveal` clamps a stale one.
+    fn select(&self, editor: &Entity<EditorView>, cx: &mut App) {
+        editor.update(cx, |editor, cx| {
+            let start = editor.model().text().row_start(self.row);
+            let range = start + self.columns.start..start + self.columns.end;
+            editor.select_and_reveal(range, cx);
+        });
     }
 }
 

@@ -1,4 +1,5 @@
-//! The window shell: the editor pane, with the project panel docked right.
+//! The window shell: the editor pane, with the dock (the project panel or
+//! search) on the right.
 
 use std::path::{Path, PathBuf};
 
@@ -13,7 +14,7 @@ use gpui::{
 };
 
 use crate::{
-    KEY_CONTEXT, Pane, Picker, ProjectPanel, QuickOpen,
+    Dock, KEY_CONTEXT, Pane, Picker, ProjectPanel, QuickOpen, SearchPanel, dock,
     picker::{self, PaletteOp},
     project_panel::PanelEvent,
 };
@@ -65,6 +66,7 @@ pub fn resolve_launch(arg: Option<PathBuf>) -> Launch {
 
 pub struct Workbench {
     panel: Entity<ProjectPanel>,
+    dock: Entity<Dock>,
     pane: Entity<Pane>,
     quick_open: Entity<Picker<QuickOpen>>,
     /// Whether the quick-open palette shows.
@@ -98,6 +100,10 @@ impl Workbench {
                 Some((path, None)) => pane.opening(path, cx),
             }
             pane
+        });
+        let dock = cx.new(|cx| {
+            let search = cx.new(|cx| SearchPanel::new(root.clone(), pane.downgrade(), ui, cx));
+            Dock::new(panel.clone(), search, ui)
         });
         let quick_open = cx.new(|cx| {
             let delegate = QuickOpen::new(root, pane.downgrade(), ui);
@@ -150,6 +156,7 @@ impl Workbench {
         let retitle = cx.observe(&pane, |_, _, cx| cx.notify());
         Self {
             panel,
+            dock,
             pane,
             quick_open,
             palette: false,
@@ -160,6 +167,11 @@ impl Workbench {
 
     pub fn panel(&self) -> &Entity<ProjectPanel> {
         &self.panel
+    }
+
+    /// The right dock, which shows the project panel or search.
+    pub fn dock(&self) -> &Entity<Dock> {
+        &self.dock
     }
 
     pub fn pane(&self) -> &Entity<Pane> {
@@ -217,15 +229,22 @@ impl Workbench {
             .update(cx, |pane, cx| pane.reload_settings(event, cx));
     }
 
-    /// Runs a `workbench.*` command or a palette toggle; others go on to
-    /// the app.
+    /// Runs a `workbench.*` command, a palette toggle or a dock command;
+    /// others go on to the app.
     fn on_run_command(&mut self, run: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
         let Some(registry) =
             crate::registry(cx).filter(|registry| registry.get(&run.0.command).is_some())
         else {
-            match picker::op(run, cx) {
-                Some(PaletteOp::ToggleQuickOpen) => self.toggle_quick_open(window, cx),
-                _ => cx.propagate(),
+            if picker::op(run, cx) == Some(PaletteOp::ToggleQuickOpen) {
+                return self.toggle_quick_open(window, cx);
+            }
+            let fallback = self.focus_handle(cx);
+            let done = dock::op(run, cx).is_some_and(|op| {
+                self.dock
+                    .update(cx, |dock, cx| dock.run(op, &fallback, window, cx))
+            });
+            if !done {
+                cx.propagate();
             }
             return;
         };
@@ -264,7 +283,7 @@ impl Render for Workbench {
             .text_color(self.ui.text)
             .text_size(px(12.))
             .child(self.pane.clone())
-            .child(self.panel.clone())
+            .child(self.dock.clone())
             .when(self.palette, |root| root.child(self.quick_open.clone()))
     }
 }

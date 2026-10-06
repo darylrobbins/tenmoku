@@ -304,3 +304,39 @@ context = "text_input"
 keys = "cmd-v"
 command = "text_input.paste"
 context = "text_input"
+
+[[bindings]]
+keys = "cmd-shift-f"
+command = "search.show"
+context = "workbench"
+
+[[bindings]]
+keys = "cmd-shift-e"
+command = "dock.show_project"
+context = "workbench"
+
+[[bindings]]
+keys = "cmd-b"
+command = "dock.toggle"
+context = "workbench"
+
+[[bindings]]
+keys = "alt-cmd-r"
+command = "search.toggle_regex"
+context = "search_panel"
+
+[[bindings]]
+keys = "alt-cmd-c"
+command = "search.toggle_case"
+context = "search_panel"
+
+[[bindings]]
+keys = "alt-cmd-w"
+command = "search.toggle_whole_word"
+context = "search_panel"
+
+# Only in search's input: the palettes' Enter is `picker.confirm`.
+[[bindings]]
+keys = "enter"
+command = "text_input.submit"
+context = "search_panel && text_input"

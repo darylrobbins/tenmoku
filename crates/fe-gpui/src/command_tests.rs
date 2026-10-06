@@ -56,14 +56,20 @@ fn table_is_the_only_binding_source(cx: &mut TestAppContext) {
     // its rows. GPUI's own keymap stays empty.
     let keymap = default_keymap();
     let bindings = keymap.bindings();
-    // 47 for the editor and the app, 14 for fe-workbench.
-    assert_eq!(bindings.len(), 61);
+    // 47 for the editor and the app, 21 for fe-workbench.
+    assert_eq!(bindings.len(), 68);
     let editor = fe_editor::commands::context();
     let workbench = |binding: &fe_keymap::Binding| {
         let context = binding.context.as_ref().map(ToString::to_string);
         matches!(
             context.as_deref(),
-            Some("workbench" | "picker" | "text_input")
+            Some(
+                "workbench"
+                    | "picker"
+                    | "text_input"
+                    | "search_panel"
+                    | "search_panel && text_input"
+            )
         )
     };
     let others: Vec<_> = bindings
