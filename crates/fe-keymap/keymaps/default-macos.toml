@@ -249,3 +249,58 @@ context = "workbench"
 keys = "cmd-shift-["
 command = "workbench.previous_tab"
 context = "workbench"
+
+[[bindings]]
+keys = "cmd-p"
+command = "quick_open.toggle"
+context = "workbench"
+
+[[bindings]]
+keys = "up"
+command = "picker.select_prev"
+context = "picker"
+
+[[bindings]]
+keys = "ctrl-p"
+command = "picker.select_prev"
+context = "picker"
+
+[[bindings]]
+keys = "down"
+command = "picker.select_next"
+context = "picker"
+
+[[bindings]]
+keys = "ctrl-n"
+command = "picker.select_next"
+context = "picker"
+
+[[bindings]]
+keys = "enter"
+command = "picker.confirm"
+context = "picker"
+
+[[bindings]]
+keys = "escape"
+command = "picker.dismiss"
+context = "picker"
+
+[[bindings]]
+keys = "backspace"
+command = "text_input.backspace"
+context = "text_input"
+
+[[bindings]]
+keys = "alt-backspace"
+command = "text_input.delete_word_left"
+context = "text_input"
+
+[[bindings]]
+keys = "cmd-backspace"
+command = "text_input.clear"
+context = "text_input"
+
+[[bindings]]
+keys = "cmd-v"
+command = "text_input.paste"
+context = "text_input"

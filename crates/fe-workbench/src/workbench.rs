@@ -7,11 +7,16 @@ use fe_editor::EditorModel;
 use fe_gpui::{EditorSettings, EditorTheme, EditorView, SettingsEvent, commands::RunCommand};
 use fe_ui::UiTheme;
 use gpui::{
-    App, AppContext as _, Context, Entity, FocusHandle, Focusable, InteractiveElement as _,
-    IntoElement, ParentElement as _, Render, Styled as _, Subscription, Window, div, px,
+    App, AppContext as _, Context, DismissEvent, Entity, FocusHandle, Focusable,
+    InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _, Subscription,
+    Window, div, prelude::FluentBuilder as _, px,
 };
 
-use crate::{KEY_CONTEXT, Pane, ProjectPanel, project_panel::PanelEvent};
+use crate::{
+    KEY_CONTEXT, Pane, Picker, ProjectPanel, QuickOpen,
+    picker::{self, PaletteOp},
+    project_panel::PanelEvent,
+};
 
 /// Shown in a tab when fastedit starts with nothing to open.
 pub const WELCOME: &str = "\
@@ -61,8 +66,11 @@ pub fn resolve_launch(arg: Option<PathBuf>) -> Launch {
 pub struct Workbench {
     panel: Entity<ProjectPanel>,
     pane: Entity<Pane>,
+    quick_open: Entity<Picker<QuickOpen>>,
+    /// Whether the quick-open palette shows.
+    palette: bool,
     ui: UiTheme,
-    _subscriptions: [Subscription; 2],
+    _subscriptions: [Subscription; 4],
 }
 
 impl Workbench {
@@ -79,6 +87,7 @@ impl Workbench {
     ) -> Self {
         let ui = UiTheme::default_dark();
         let welcome = launch.root.is_none() && launch.file.is_none();
+        let root = launch.root.clone();
         let panel = cx.new(|cx| ProjectPanel::new(launch.root, ui, cx));
         let pane = cx.new(|cx| {
             let mut pane = Pane::new(theme, settings, ui, cx);
@@ -90,20 +99,48 @@ impl Workbench {
             }
             pane
         });
-        let open = cx.subscribe_in(&panel, window, |workbench, _, event, window, cx| {
-            let PanelEvent::OpenFile(path) = event;
-            let path = path.clone();
-            workbench
-                .pane
-                .update(cx, |pane, cx| pane.open(path, window, cx));
+        let quick_open = cx.new(|cx| {
+            let delegate = QuickOpen::new(root, pane.downgrade(), ui);
+            Picker::new(delegate, "Go to file…", ui, cx)
+        });
+        let open = cx.subscribe_in(
+            &panel,
+            window,
+            |workbench, _, event, window, cx| match event {
+                PanelEvent::OpenFile(path) => workbench
+                    .pane
+                    .update(cx, |pane, cx| pane.open(path.clone(), window, cx)),
+                PanelEvent::FsChanged(changes) => workbench
+                    .quick_open
+                    .update(cx, |picker, cx| picker.delegate.fs_changed(changes, cx)),
+            },
+        );
+        // Hidden once picked from, dismissed or left: focus is elsewhere by
+        // then, unless nothing was focused before it opened.
+        let dismissed = cx.subscribe_in(
+            &quick_open,
+            window,
+            |workbench, picker, _: &DismissEvent, window, cx| {
+                if picker.focus_handle(cx).is_focused(window) {
+                    window.focus(&workbench.focus_handle(cx), cx);
+                }
+                workbench.palette = false;
+                cx.notify();
+            },
+        );
+        let left = cx.on_blur(&quick_open.focus_handle(cx), window, |workbench, _, cx| {
+            workbench.palette = false;
+            cx.notify();
         });
         // Retitles the window whenever a tab changes.
         let retitle = cx.observe(&pane, |_, _, cx| cx.notify());
         Self {
             panel,
             pane,
+            quick_open,
+            palette: false,
             ui,
-            _subscriptions: [open, retitle],
+            _subscriptions: [open, retitle, dismissed, left],
         }
     }
 
@@ -113,6 +150,31 @@ impl Workbench {
 
     pub fn pane(&self) -> &Entity<Pane> {
         &self.pane
+    }
+
+    /// The quick-open palette, shown while [`Workbench::palette_open`].
+    pub fn quick_open(&self) -> &Entity<Picker<QuickOpen>> {
+        &self.quick_open
+    }
+
+    pub fn palette_open(&self) -> bool {
+        self.palette
+    }
+
+    /// Shows the quick-open palette, focused, or dismisses it.
+    fn toggle_quick_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let show = !self.palette;
+        let previous = window.focused(cx);
+        self.quick_open.update(cx, |picker, cx| {
+            if show {
+                picker.delegate.opened(previous, cx);
+                picker.show(window, cx);
+            } else {
+                picker.dismiss(window, cx);
+            }
+        });
+        self.palette = show;
+        cx.notify();
     }
 
     /// The active tab's editor, unless a file being read or a read error
@@ -141,12 +203,16 @@ impl Workbench {
             .update(cx, |pane, cx| pane.reload_settings(event, cx));
     }
 
-    /// Runs a `workbench.*` command; others go on to the app.
+    /// Runs a `workbench.*` command or a palette toggle; others go on to
+    /// the app.
     fn on_run_command(&mut self, run: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
         let Some(registry) =
             crate::registry(cx).filter(|registry| registry.get(&run.0.command).is_some())
         else {
-            cx.propagate();
+            match picker::op(run, cx) {
+                Some(PaletteOp::ToggleQuickOpen) => self.toggle_quick_open(window, cx),
+                _ => cx.propagate(),
+            }
             return;
         };
         let result = self.pane.update(cx, |pane, cx| {
@@ -177,6 +243,7 @@ impl Render for Workbench {
         div()
             .key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::on_run_command))
+            .relative()
             .size_full()
             .flex()
             .bg(self.ui.background)
@@ -184,5 +251,6 @@ impl Render for Workbench {
             .text_size(px(12.))
             .child(self.pane.clone())
             .child(self.panel.clone())
+            .when(self.palette, |root| root.child(self.quick_open.clone()))
     }
 }

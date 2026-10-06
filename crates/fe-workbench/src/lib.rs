@@ -11,7 +11,9 @@
 
 pub mod loader;
 mod pane;
+mod picker;
 mod project_panel;
+mod quick_open;
 mod workbench;
 
 use std::rc::Rc;
@@ -19,9 +21,12 @@ use std::rc::Rc;
 use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry, Value};
 use fe_keymap::{CatalogError, CommandCatalog};
 use gpui::{App, Global, Window};
+use picker::PaletteCommands;
 
 pub use pane::{Pane, Tab};
+pub use picker::{Picker, PickerDelegate};
 pub use project_panel::{PANEL_WIDTH, PanelEvent, ProjectPanel};
+pub use quick_open::QuickOpen;
 pub use workbench::{Launch, WELCOME, Workbench, resolve_launch};
 
 /// The key context the workbench's root element sets.
@@ -46,6 +51,7 @@ impl Global for Commands {}
 /// Registers the workbench's commands. Call after [`fe_gpui::init`].
 pub fn init(cx: &mut App) {
     cx.set_global(Commands(Rc::new(new_registry())));
+    picker::init(cx);
 }
 
 fn registry(cx: &App) -> Option<Rc<Registry<WorkbenchCommands>>> {
@@ -86,19 +92,24 @@ fn new_registry() -> Registry<WorkbenchCommands> {
 pub fn command_catalog() -> Box<dyn CommandCatalog> {
     Box::new(Catalog {
         workbench: new_registry(),
+        palette: picker::registry(),
         rest: fe_gpui::commands::command_catalog(),
     })
 }
 
 struct Catalog {
     workbench: Registry<WorkbenchCommands>,
+    palette: Registry<PaletteCommands>,
     rest: Box<dyn CommandCatalog>,
 }
 
 impl CommandCatalog for Catalog {
     fn check(&self, command: &fe_command::CommandId, args: &Value) -> Result<(), CatalogError> {
         match self.workbench.check(command, args) {
-            Err(CatalogError::UnknownCommand) => self.rest.check(command, args),
+            Err(CatalogError::UnknownCommand) => match self.palette.check(command, args) {
+                Err(CatalogError::UnknownCommand) => self.rest.check(command, args),
+                result => result,
+            },
             result => result,
         }
     }

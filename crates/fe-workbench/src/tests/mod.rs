@@ -4,6 +4,7 @@
 
 mod launch;
 mod project_panel;
+mod quick_open;
 mod tabs;
 
 use std::{cell::Cell, path::Path, rc::Rc};

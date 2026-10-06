@@ -23,6 +23,8 @@ pub const PANEL_WIDTH: gpui::Pixels = px(240.);
 pub enum PanelEvent {
     /// A file row was clicked.
     OpenFile(PathBuf),
+    /// A watcher batch came, for others that follow the disk too.
+    FsChanged(Vec<FsChange>),
 }
 
 enum State {
@@ -151,6 +153,7 @@ impl ProjectPanel {
     /// Brings the tree up to date with a batch from the file watcher, then
     /// lists again any shown directory it says may have missed something.
     pub fn apply_fs_changes(&mut self, changes: &[FsChange], cx: &mut Context<Self>) {
+        cx.emit(PanelEvent::FsChanged(changes.to_vec()));
         let State::Open(tree) = &mut self.state else {
             return;
         };

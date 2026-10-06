@@ -152,12 +152,13 @@ fn text_and_caret(view: &Entity<EditorView>, cx: &mut TestAppContext) -> (String
 
 #[gpui::test]
 fn default_keymap_matches_the_old_table(cx: &mut TestAppContext) {
-    // fe-workbench's commands (the `workbench` context) are checked by its
-    // own catalog, which fe-gpui can't depend on.
+    // fe-workbench's commands (the `workbench`, `picker` and `text_input`
+    // contexts) are checked by its own catalog, which fe-gpui can't depend
+    // on.
     let store = KeymapStore::load(DEFAULT_MACOS, None, None);
     assert_eq!(store.diagnostics(), []);
     let bindings = store.keymap().bindings();
-    assert_eq!(bindings.len(), 50);
+    assert_eq!(bindings.len(), 61);
     for (binding, &(keys, command, context)) in bindings.iter().zip(OLD_TABLE) {
         assert_eq!(binding.keys, KeySequence::parse(keys).unwrap(), "{command}");
         assert_eq!(binding.command.as_str(), command, "{keys}");
@@ -167,12 +168,16 @@ fn default_keymap_matches_the_old_table(cx: &mut TestAppContext) {
     // Each command but the workbench's checks out.
     let catalog = crate::commands::command_catalog();
     let workbench = |binding: &&fe_keymap::Binding| {
-        binding.context.as_ref().map(ToString::to_string).as_deref() == Some("workbench")
+        let context = binding.context.as_ref().map(ToString::to_string);
+        matches!(
+            context.as_deref(),
+            Some("workbench" | "picker" | "text_input")
+        )
     };
     for binding in bindings.iter().filter(|binding| !workbench(binding)) {
         assert_eq!(catalog.check(&binding.command, &binding.args), Ok(()));
     }
-    assert_eq!(bindings.iter().filter(workbench).count(), 3);
+    assert_eq!(bindings.iter().filter(workbench).count(), 14);
 
     cx.update(|cx| init_with_keymap(cx, store.keymap().clone()));
     let issues = cx.update(|cx| keymap_report(cx));
