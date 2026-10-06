@@ -56,8 +56,8 @@ fn table_is_the_only_binding_source(cx: &mut TestAppContext) {
     // its rows. GPUI's own keymap stays empty.
     let keymap = default_keymap();
     let bindings = keymap.bindings();
-    // 47 for the editor and the app, 38 for fe-workbench.
-    assert_eq!(bindings.len(), 85);
+    // 52 for the editor and the app, 38 for fe-workbench.
+    assert_eq!(bindings.len(), 90);
     let editor = fe_editor::commands::context();
     let workbench = |binding: &fe_keymap::Binding| {
         let context = binding.context.as_ref().map(ToString::to_string);
@@ -84,7 +84,19 @@ fn table_is_the_only_binding_source(cx: &mut TestAppContext) {
             )
         })
         .collect();
-    assert_eq!(others, [("cmd-q".to_string(), "app.quit", true)]);
+    let context_free = [
+        ("cmd-q", "app.quit"),
+        ("cmd-h", "app.hide"),
+        ("alt-cmd-h", "app.hide_others"),
+        ("cmd-m", "window.minimize"),
+        ("ctrl-cmd-f", "window.toggle_fullscreen"),
+        ("cmd-shift-w", "window.close"),
+    ]
+    .map(|(keys, command)| {
+        let keys = fe_keymap::KeySequence::parse(keys).unwrap().to_string();
+        (keys, command, true)
+    });
+    assert_eq!(others, context_free);
     for binding in bindings {
         assert_eq!(binding.invocation(&editor).source, Source::Keyboard);
     }

@@ -236,6 +236,26 @@ keys = "cmd-q"
 command = "app.quit"
 
 [[bindings]]
+keys = "cmd-h"
+command = "app.hide"
+
+[[bindings]]
+keys = "alt-cmd-h"
+command = "app.hide_others"
+
+[[bindings]]
+keys = "cmd-m"
+command = "window.minimize"
+
+[[bindings]]
+keys = "ctrl-cmd-f"
+command = "window.toggle_fullscreen"
+
+[[bindings]]
+keys = "cmd-shift-w"
+command = "window.close"
+
+[[bindings]]
 keys = "cmd-w"
 command = "workbench.close_tab"
 context = "workbench"

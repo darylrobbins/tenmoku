@@ -7,8 +7,8 @@
 use std::{ops::Range, ops::RangeInclusive, rc::Rc};
 
 use fe_command::{
-    Actor, CommandError, CommandId, CommandTarget, DispatchError, Dispatched, Effect, Invocation,
-    Registry, Source, Value,
+    Actor, CommandError, CommandId, CommandTarget, ContextPredicate, DispatchError, Dispatched,
+    Effect, Invocation, Registry, Source, Value,
 };
 use fe_editor::commands::{Editor, EditorHost, EditorTarget};
 use fe_keymap::{CatalogError, CommandCatalog};
@@ -50,15 +50,49 @@ thread_local! {
     static EDITOR_COMMANDS: Rc<Registry<Editor>> = Rc::new(fe_editor::commands::registry());
 }
 
-/// The app commands.
+type AppCommand = fn(&mut App);
+
+/// The app commands, in no context. The window ones act on the active
+/// window, and do nothing without one.
 fn app_registry() -> Registry<AppCommands> {
     let mut app = Registry::new();
-    app.register("app.quit", "Quit", |cx: &mut &mut App, _: &Actor| {
-        cx.quit();
-        Ok(Dispatched::new(Effect::Nothing))
-    })
-    .expect("app command IDs are valid and distinct");
+    let commands: [(&str, &str, AppCommand); 8] = [
+        ("app.quit", "Quit", |cx| cx.quit()),
+        ("app.hide", "Hide fastedit", |cx| cx.hide()),
+        ("app.hide_others", "Hide Others", |cx| cx.hide_other_apps()),
+        ("app.show_all", "Show All", |cx| cx.unhide_other_apps()),
+        ("window.minimize", "Minimize", |cx| {
+            on_active_window(cx, |window| window.minimize_window())
+        }),
+        ("window.zoom", "Zoom", |cx| {
+            on_active_window(cx, |window| window.zoom_window())
+        }),
+        ("window.toggle_fullscreen", "Toggle Full Screen", |cx| {
+            on_active_window(cx, |window| window.toggle_fullscreen())
+        }),
+        ("window.close", "Close Window", |cx| {
+            on_active_window(cx, |window| window.remove_window())
+        }),
+    ];
+    for (id, title, run) in commands {
+        app.register(id, title, move |cx: &mut &mut App, _: &Actor| {
+            run(cx);
+            Ok(Dispatched::new(Effect::Nothing))
+        })
+        .expect("app command IDs are valid and distinct");
+    }
     app
+}
+
+/// Runs `f` on the active window, if any, once the current dispatch is
+/// over: a key or menu item runs its command while GPUI has that window
+/// out for the dispatch, so it can't be updated until then.
+fn on_active_window(cx: &mut App, f: fn(&mut Window)) {
+    if let Some(handle) = cx.active_window() {
+        cx.defer(move |cx| {
+            handle.update(cx, |_, window, _| f(window)).ok();
+        });
+    }
 }
 
 /// The editor's and the app's commands, to check keymap bindings against:
@@ -120,8 +154,9 @@ fn notify_observers(invocation: &Invocation, cx: &App) {
     }
 }
 
-/// Runs an app command. Reached by whatever no focused view handled.
-fn dispatch_app(invocation: &Invocation, cx: &mut App) {
+/// Runs an app command. Reached by whatever no focused view handled, and
+/// by a menu item chosen with no window open.
+pub(crate) fn dispatch_app(invocation: &Invocation, cx: &mut App) {
     let Some(registry) = cx
         .try_global::<Commands>()
         .map(|commands| commands.app.clone())
@@ -179,11 +214,18 @@ impl EditorView {
         self.run_command(run.0.clone(), cx);
     }
 
-    /// Runs `invocation` on this editor, in its context. An ID the editor
-    /// doesn't know propagates, still in that context, to the app's
-    /// commands.
+    /// Runs `invocation` on this editor, in its context: the stack it was
+    /// dispatched in, such as `[workbench, editor]` from a key or a menu,
+    /// if the editor's frame is in it, or else the editor's frame alone. An
+    /// ID the editor doesn't know propagates, still in that context, to the
+    /// app's commands.
     fn run_command(&mut self, invocation: Invocation, cx: &mut Context<Self>) {
-        let invocation = invocation.context(fe_editor::commands::context());
+        let in_editor = ContextPredicate::identifier(fe_editor::commands::CONTEXT);
+        let invocation = if in_editor.eval(&invocation.context) {
+            invocation
+        } else {
+            invocation.context(fe_editor::commands::context())
+        };
         let registry = EDITOR_COMMANDS.with(Rc::clone);
         let page_rows = self.page_rows();
         let syntax = synced_syntax(&self.syntax, &self.model);

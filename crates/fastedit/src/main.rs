@@ -16,7 +16,7 @@ use fe_buffer::Buffer;
 use fe_config::{ConfigWatcher, Diagnostic, Settings, SettingsStore};
 use fe_gpui::{
     EditorTheme,
-    fe_keymap::{self, KeymapStore},
+    fe_keymap::{self, KeymapStore, MenuBar},
 };
 use fe_workbench::{Workbench, loader};
 use gpui::{
@@ -88,6 +88,17 @@ fn load_keymap() -> KeymapStore {
     );
     log_diagnostics(store.diagnostics());
     store
+}
+
+/// Sets the built-in menu bar, checked against every command. Its
+/// shortcuts follow the keymap: hot reload reinstalls it.
+fn install_menus(cx: &mut App) {
+    let catalog = fe_workbench::command_catalog();
+    let (menus, diagnostics) = MenuBar::default_macos(Some(&*catalog));
+    log_diagnostics(&diagnostics);
+    if let Some(menus) = menus {
+        fe_gpui::menu::install(cx, menus);
+    }
 }
 
 /// Logs what [`fe_gpui::keymap_report`] finds in the keymap in use.
@@ -214,6 +225,7 @@ fn main() {
         startup.app = Some(Instant::now());
         fe_gpui::init_with_keymap(cx, keymap.keymap().clone());
         fe_workbench::init(cx);
+        install_menus(cx);
         log_keymap_report(cx);
         cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {

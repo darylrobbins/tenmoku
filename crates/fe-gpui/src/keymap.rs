@@ -158,10 +158,20 @@ pub(crate) fn init(keymap: Arc<Keymap>, cx: &mut App) {
 /// Swaps the keymap, as on hot reload, dropping any chord in progress.
 /// `keymap` is the defaults with the user's layer over them, as
 /// [`fe_keymap::KeymapStore`] builds it: each layer's last good version.
+/// Menus [`crate::menu::install`]ed are reinstalled, so their shortcuts
+/// follow; without any, it touches neither GPUI's menus nor its keymap.
 pub fn set_user_keymap(cx: &mut App, keymap: impl Into<Arc<Keymap>>) {
     let input = cx.global_mut::<KeyInput>();
     input.matcher.set_keymap(keymap);
     input.pending = None;
+    crate::menu::refresh(cx);
+}
+
+/// The keymap keys are matched against: empty before [`crate::init`].
+pub(crate) fn current(cx: &App) -> Arc<Keymap> {
+    cx.try_global::<KeyInput>()
+        .map(|input| input.matcher.keymap().clone())
+        .unwrap_or_default()
 }
 
 /// The keymap's issues ([`Keymap::report_with`]) in the one context there
@@ -264,8 +274,8 @@ fn on_timeout(handle: AnyWindowHandle, cx: &mut App) {
 }
 
 /// Runs `invocation` on the focused element, synchronously, as GPUI's own
-/// keymap did; without one, on the window.
-fn dispatch(invocation: Invocation, window: &mut Window, cx: &mut App) {
+/// keymap did; without one, on the window. Menu items run through it too.
+pub(crate) fn dispatch(invocation: Invocation, window: &mut Window, cx: &mut App) {
     let action = RunCommand(invocation);
     match window.focused(cx) {
         Some(focus) => focus.dispatch_action(&action, window, cx),

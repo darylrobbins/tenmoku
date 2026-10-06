@@ -2,7 +2,8 @@
 //!
 //! [`EditorView`] owns an [`fe_editor::EditorModel`] and turns input into
 //! commands, run through `fe-command`'s registries ([`commands`]); keys are
-//! matched by `fe-keymap` ([`keymap`]);
+//! matched by `fe-keymap` ([`keymap`]), which also gives the menu bar
+//! ([`menu`]) its shortcuts;
 //! [`element::EditorElement`] lays out the visible rows with
 //! [`fe_display::layout`], shaping them with GPUI and colouring them by
 //! `fe-syntax`, then paints the result.
@@ -10,6 +11,7 @@
 pub mod commands;
 mod element;
 pub mod keymap;
+pub mod menu;
 mod timing;
 mod view;
 
@@ -39,6 +41,13 @@ pub fn init(cx: &mut App) {
 pub fn init_with_keymap(cx: &mut App, keymap: impl Into<std::sync::Arc<fe_keymap::Keymap>>) {
     commands::init(cx);
     keymap::init(keymap.into(), cx);
+}
+
+/// The keymap keys are matched against, the defaults with the user's layer
+/// over them: for menus' shortcuts ([`menu`]) and tooltips. Empty before
+/// [`init`].
+pub fn current_keymap(cx: &App) -> std::sync::Arc<fe_keymap::Keymap> {
+    keymap::current(cx)
 }
 
 /// Colours and metrics for the editor. The metrics come from
@@ -154,6 +163,8 @@ mod command_tests;
 mod fold_gutter_tests;
 #[cfg(test)]
 mod keymap_tests;
+#[cfg(test)]
+mod menu_tests;
 #[cfg(test)]
 mod settings_tests;
 #[cfg(test)]
