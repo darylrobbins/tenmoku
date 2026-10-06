@@ -712,3 +712,29 @@ fn previews_agree_with_decoding_the_whole_line() {
         }
     }
 }
+
+#[test]
+fn searches_from_a_relative_root_filter_as_from_an_absolute_one() {
+    let (_dir, root) = temp();
+    write(
+        &root,
+        &[
+            (".gitignore", b"*.log\n"),
+            ("a.rs", b"needle\n"),
+            ("b.log", b"needle\n"),
+            ("sub/c.rs", b"needle\n"),
+        ],
+    );
+    let query = SearchQuery::literal("needle");
+    for options in [threads(1), threads(0)] {
+        for from in [root.clone(), relative(&root)] {
+            let (batches, _) = run(&from, &query, &options);
+            assert_eq!(
+                rels(&files(batches)),
+                ["a.rs", "sub/c.rs"],
+                "{}",
+                from.display()
+            );
+        }
+    }
+}

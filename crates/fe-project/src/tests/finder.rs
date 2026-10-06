@@ -100,12 +100,15 @@ fn walk_indexes_every_unignored_file() {
             ".ignore",
             "README.md",
             "src/deep/er/mod.rs",
+            // `src` is a repository of its own, where the root's `.gitignore`
+            // doesn't apply, as in git.
+            "src/deep/er/notes.log",
             "src/main.rs",
             "src/vendor/.gitignore",
             "src/vendor/kept.rs",
         ]
     );
-    assert_eq!(index.progress(), (8, true));
+    assert_eq!(index.progress(), (9, true));
 }
 
 #[test]
@@ -504,4 +507,82 @@ fn names_that_are_not_utf8_are_lossy_with_the_real_path_kept() {
     let mut index = FinderIndex::from_paths([lossy, Path::new("é/x.rs")]);
     assert_eq!(all(&mut index), ["é/x.rs", "\u{fffd}/x.rs"]);
     assert_eq!(found(&mut index, "x"), ["é/x.rs", "\u{fffd}/x.rs"]);
+}
+
+#[test]
+fn walks_filter_as_the_tree_does_across_repositories() {
+    // Outside any repository `.gitignore` files apply, but not in a
+    // repository below; a submodule's `.git` file leads to its
+    // `info/exclude`. The walk, `apply` and the tree agree.
+    let (_dir, root) = temp();
+    make(
+        &root,
+        &[
+            ".gitignore",
+            "a.txt",
+            "b.rs",
+            "nested/.git/HEAD",
+            "nested/keep.txt",
+            "nested/deep/also.txt",
+            "outer/.git/HEAD",
+            "outer/.git/modules/sub/HEAD",
+            "outer/.git/modules/sub/info/exclude",
+            "outer/c.txt",
+            "outer/sub/x.rs",
+            "outer/sub/y.rs",
+        ],
+    );
+    fs::write(root.join(".gitignore"), "*.txt\n").unwrap();
+    fs::write(root.join("outer/.git/modules/sub/info/exclude"), "x.rs\n").unwrap();
+    fs::write(root.join("outer/sub/.git"), "gitdir: ../.git/modules/sub\n").unwrap();
+    let expected = [
+        ".gitignore",
+        "b.rs",
+        "nested/deep/also.txt",
+        "nested/keep.txt",
+        "outer/c.txt",
+        "outer/sub/y.rs",
+    ];
+    let mut index = walked(&root);
+    assert_eq!(all(&mut index), expected);
+
+    let mut tree = FileTree::open(&root, TreeOptions::default()).unwrap();
+    for dir in ["nested", "nested/deep", "outer", "outer/sub"] {
+        tree.expand(tree.find(dir).unwrap());
+    }
+    let mut files: Vec<String> = (0..tree.row_count())
+        .filter_map(|ix| tree.rows(ix..ix + 1).next())
+        .filter(|row| row.kind == EntryKind::File)
+        .map(|row| {
+            let path = tree.path(row.id).unwrap();
+            path.strip_prefix(&root)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    files.sort();
+    assert_eq!(files, expected);
+
+    let mut index = FinderIndex::new(&root);
+    index.finish();
+    let paths: Vec<FsChange> = [".gitignore", "a.txt", "b.rs", "nested", "outer"]
+        .iter()
+        .map(|path| FsChange::Path(root.join(path)))
+        .collect();
+    index.apply(&paths);
+    assert_eq!(all(&mut index), expected);
+}
+
+#[test]
+fn walks_from_a_relative_root_filter_as_from_an_absolute_one() {
+    let (_dir, root) = temp();
+    make(
+        &root,
+        &[".gitignore", "a.rs", "b.log", "sub/c.rs", "sub/d.log"],
+    );
+    fs::write(root.join(".gitignore"), "*.log\n").unwrap();
+    let expected = [".gitignore", "a.rs", "sub/c.rs"];
+    assert_eq!(all(&mut walked(&root)), expected);
+    assert_eq!(all(&mut walked(&relative(&root))), expected);
 }

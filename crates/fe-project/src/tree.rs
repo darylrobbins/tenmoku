@@ -345,8 +345,16 @@ impl FileTree {
     ///   listed yet stores it. Either way, unless the run ended before the
     ///   stored listing started, it may also have read something newer, so
     ///   [`FileTree::listing`] returns `Some` for `id` again: run that too.
+    ///   A directory that owes a listing so is news for those above it too:
+    ///   a listing of one of them started before then is older than it.
     /// - So it does if `apply` dropped a change to the unlisted directory (or
-    ///   rescanned) since: the result is stored but may miss it.
+    ///   rescanned, even if the rescan was cut short) since: the result is
+    ///   stored but may miss it.
+    /// - If the directory's ignore flag changed since the listing was made
+    ///   (a listing of its parent stored meanwhile reclassified it), the
+    ///   result classified its entries by the old flag. It is discarded, and
+    ///   `listing` offers the directory again. So it does for a listed
+    ///   directory whose flag a stored listing of its parent changes.
     /// - If the path no longer held the directory (it was deleted, replaced,
     ///   or replaced by a symlink), the node is removed. But if since the run
     ///   started anything looked at the directory or its parent (`apply` saw
@@ -377,15 +385,23 @@ impl FileTree {
         let Some(node) = self.get(id).filter(|node| node.kind == EntryKind::Dir) else {
             return;
         };
+        // The run classified entries by an ignore flag the directory no
+        // longer has (a listing of its parent changed it since the listing
+        // was made): what it read is unusable, and a fresh listing is owed.
+        let misjudged = listed.parent_ignored != node.ignored;
         // Something newer than this run's start is known of the directory or
-        // below it. Unless the run ended before what is stored started, it
-        // may also have read something newer than what is stored.
-        let behind = listed.seq < node.listed_seq || listed.seq < node.applied_seq;
-        let owes = behind && listed.done > node.listed_seq;
+        // below it, or may be: a rescan (even one cut short) or a root cut
+        // off since, which no event may report. Unless the run ended before
+        // what is stored started, it may also have read something newer than
+        // what is stored. (A listing of the root that started before a cut
+        // so can't be the one that finds it again.)
+        let barrier = node.listed_seq.max(node.applied_seq);
+        let behind = listed.seq < barrier.max(self.rescan_seq).max(self.cut_seq);
+        let owes = misjudged || (behind && listed.done > node.listed_seq);
         // A listed directory keeps what is stored; one that isn't stores it.
         let older = listed.seq < node.listed_seq || (behind && node.children.is_some());
         let obsolete = listed.lost == Some(Lost::Itself) && self.seen_since(id, listed.seq);
-        if !older && !obsolete {
+        if !older && !obsolete && !misjudged {
             let mut changed = Vec::new();
             self.take(id, listed, &mut changed);
             for dir in changed {
@@ -393,8 +409,11 @@ impl FileTree {
             }
         }
         if owes && self.get(id).is_some() {
+            // Also news for the directories above: a listing of one that
+            // started before now may have missed `id` while it was away, and
+            // mustn't drop it, with what it owes.
             let now = self.now();
-            self.node_mut(id).dropped_seq = now;
+            self.dropped(id, now);
         }
         self.finish();
     }
@@ -476,8 +495,16 @@ impl FileTree {
             .iter()
             .any(|change| matches!(change, FsChange::Rescan))
         {
+            // The root's own path still says what became of it.
+            let root_reported = changes.iter().any(|change| match change {
+                FsChange::Path(path) => self
+                    .relative(path)
+                    .is_some_and(|rel| rel.components().next().is_none()),
+                FsChange::Rescan => false,
+            });
             self.rescan_seq = self.now();
-            self.rescan(self.root_id, &mut pass.changed, &mut HashSet::new(), false);
+            let (changed, listed) = (&mut pass.changed, &mut HashSet::new());
+            self.rescan(self.root_id, changed, listed, root_reported);
         } else {
             // In order, so a directory's paths come together and it is
             // opened once, with only the directories on the way to it open.
@@ -916,11 +943,15 @@ impl FileTree {
                     let seq = self.now();
                     for slot in &mut self.slots {
                         if let Some(node) = &mut slot.node
-                            && node.parent.is_some()
                             && node.kind == EntryKind::Dir
                         {
-                            node.dropped_seq = seq;
+                            // The root too is newer than a listing of it that
+                            // started before then, which mustn't drop
+                            // directories that owe a listing.
                             node.applied_seq = node.applied_seq.max(seq);
+                            if node.parent.is_some() {
+                                node.dropped_seq = seq;
+                            }
                         }
                     }
                     owes = listed.seq < self.cut_seq;
@@ -943,7 +974,7 @@ impl FileTree {
         self.touched(dir, listed.done);
         if owes {
             let now = self.now();
-            self.node_mut(dir).dropped_seq = now;
+            self.dropped(dir, now);
         }
         if self.store(dir, listed.result) {
             changed.push(dir);
@@ -994,6 +1025,9 @@ impl FileTree {
         let old = node.children.take().unwrap_or_default();
         let mut old = old.into_iter().peekable();
         let mut children = Vec::with_capacity(entries.len());
+        // Listed directories whose ignore flag changed: their children were
+        // classified by the old one.
+        let mut reclassified = Vec::new();
         for entry in entries {
             let mut kept = None;
             while let Some(&id) = old.peek() {
@@ -1032,6 +1066,9 @@ impl FileTree {
                         node.id = entry.id;
                     }
                     if node.kind != entry.kind || node.ignored != entry.ignored {
+                        if node.ignored != entry.ignored && node.children.is_some() {
+                            reclassified.push(id);
+                        }
                         node.kind = entry.kind;
                         node.ignored = entry.ignored;
                         changed = true;
@@ -1056,6 +1093,12 @@ impl FileTree {
             changed = true;
         }
         self.node_mut(dir).children = Some(children);
+        if !reclassified.is_empty() {
+            let now = self.now();
+            for id in reclassified {
+                self.dropped(id, now);
+            }
+        }
         changed
     }
 

@@ -10,22 +10,23 @@
 
 use std::{
     cmp::Ordering,
+    collections::HashMap,
     ffi::{CStr, CString, OsStr, OsString, c_int},
     fs::File,
-    io::{self, BufRead, BufReader},
+    io::{self, BufRead, BufReader, Read},
     os::{
         fd::{FromRawFd, IntoRawFd, OwnedFd, RawFd},
         unix::{ffi::OsStrExt, fs::MetadataExt, io::AsRawFd},
     },
     path::{Component, Path, PathBuf},
     sync::{
-        Arc,
+        Arc, Mutex, PoisonError,
         atomic::{AtomicU64, Ordering as AtomicOrdering},
     },
 };
 
 use ignore::{
-    Match, WalkBuilder,
+    DirEntry, Match, WalkBuilder,
     gitignore::{Gitignore, GitignoreBuilder},
 };
 
@@ -87,6 +88,9 @@ pub struct Listed {
     pub(crate) id: Option<Identity>,
     /// Set if the path no longer led to the directory the listing was for.
     pub(crate) lost: Option<Lost>,
+    /// The ignore flag the run inherited from the directory, as the tree had
+    /// it when the listing was made: stale if the tree's flag has changed.
+    pub(crate) parent_ignored: bool,
 }
 
 /// Why a path no longer leads to the directory a listing was for.
@@ -137,6 +141,7 @@ impl Listing {
                 done,
                 id: Some(id),
                 lost: None,
+                parent_ignored: self.parent_ignored,
             },
             Err(err) => Listed {
                 result: Err(err),
@@ -144,6 +149,7 @@ impl Listing {
                 done,
                 id: None,
                 lost,
+                parent_ignored: self.parent_ignored,
             },
         }
     }
@@ -283,19 +289,31 @@ pub(crate) fn tick(clock: &AtomicU64) -> u64 {
 }
 
 /// The ignore rules in force in one directory: its `.ignore`, `.gitignore`
-/// and `.git/info/exclude`, then those of each directory above it up to `/`.
+/// and git's `info/exclude`, then those of each directory above it up to `/`.
 ///
-/// This is the `ignore` crate's `WalkBuilder` with `parents(true)`,
-/// `hidden(false)` and `require_git(false)` (see [`walk_builder`]), built from files read through
-/// directory handles. For a path, the nearest `.ignore` rule that matches
-/// decides, else the nearest `.gitignore` rule, else the nearest
-/// `.git/info/exclude` rule, else git's global excludes. Ignore files are
-/// opened without following symlinks (as git, since 2.32, opens in-tree
-/// `.gitignore` files).
+/// For a path, the nearest `.ignore` rule that matches decides, else the
+/// nearest `.gitignore` rule, else the nearest `info/exclude` rule, else
+/// git's global excludes. `.gitignore` and `info/exclude` rules are taken
+/// from the nearest repository (a directory holding `.git` or `.jj`) and
+/// those below it only, as git takes them; `.ignore` rules from every
+/// directory. Outside any repository `.gitignore` files apply too.
+///
+/// This is the `ignore` crate's `WalkBuilder` with `parents(true)` and
+/// `hidden(false)`, with `require_git(true)` inside a repository and
+/// `require_git(false)` outside any, but for a `.git` file without a
+/// `commondir` (a submodule's), which the walker doesn't follow. It is built
+/// from files read through directory handles. Ignore files are opened without following
+/// symlinks (as git, since 2.32, opens in-tree `.gitignore` files). A linked
+/// worktree's or submodule's `.git` file is followed to its repository's
+/// `info/exclude`, a directory at a time without following symlinks either;
+/// a `.git` symlink isn't, though it marks a repository.
 pub(crate) struct Rules {
     ignore: Gitignore,
     gitignore: Gitignore,
     exclude: Gitignore,
+    /// Whether the directory is a repository's top: the rules of those above
+    /// it, but for `.ignore`, don't apply in it.
+    repository: bool,
     parent: Option<Arc<Rules>>,
 }
 
@@ -303,14 +321,17 @@ impl Rules {
     /// Reads the ignore files of directory `dir`, open at `path`, through its
     /// handle, on top of `parent`'s rules.
     pub(crate) fn load(parent: Option<Arc<Rules>>, dir: &File, path: &Path) -> Arc<Rules> {
-        let exclude = open_at(dir, OsStr::new(".git"), Access::Search)
-            .and_then(|git| open_at(&git, OsStr::new("info"), Access::Search))
-            .ok()
+        let exclude = common_git_dir(dir)
+            .and_then(|git| open_at(&git, OsStr::new("info"), Access::Search).ok())
             .and_then(|info| open_file(&info, "exclude"));
+        let repository = [".git", ".jj"]
+            .into_iter()
+            .any(|name| stat_at(dir, OsStr::new(name)).is_ok());
         Arc::new(Rules {
             ignore: parse(path, open_file(dir, ".ignore")),
             gitignore: parse(path, open_file(dir, ".gitignore")),
             exclude: parse(path, exclude),
+            repository,
             parent,
         })
     }
@@ -329,17 +350,20 @@ impl Rules {
     /// Whether `path`, an entry of the directory (absolute), is ignored.
     pub(crate) fn ignores(&self, global: &Gitignore, path: &Path, is_dir: bool) -> bool {
         let (mut ignore, mut gitignore, mut exclude) = (Match::None, Match::None, Match::None);
+        // Past the nearest repository's top, only `.ignore` rules apply.
+        let mut in_repository = true;
         let mut at = Some(self);
         while let Some(rules) = at {
             if ignore.is_none() {
                 ignore = rules.ignore.matched(path, is_dir);
             }
-            if gitignore.is_none() {
+            if in_repository && gitignore.is_none() {
                 gitignore = rules.gitignore.matched(path, is_dir);
             }
-            if exclude.is_none() {
+            if in_repository && exclude.is_none() {
                 exclude = rules.exclude.matched(path, is_dir);
             }
+            in_repository &= !rules.repository;
             at = rules.parent.as_deref();
         }
         ignore
@@ -350,25 +374,85 @@ impl Rules {
     }
 }
 
-/// The `ignore` crate's walker over `dir` with the settings [`Rules`] mirrors,
-/// for walks that need every file at once ([`crate::FinderIndex`]). `.git` is
-/// never entered. Symlinks aren't followed.
+/// The `ignore` crate's walker over `dir`, filtered by [`Rules`] as listings
+/// are, for walks that need every file at once ([`crate::FinderIndex`],
+/// [`crate::search`]). Its own filters are off: no configuration of them
+/// stops at a repository nested below a directory that isn't in one, nor
+/// follows a submodule's `.git` file. `.git` is never entered. Symlinks
+/// aren't followed.
 pub(crate) fn walk_builder(dir: &Path) -> WalkBuilder {
+    // Rules are read and matched by canonical paths, as the tree's are,
+    // whatever spelling of `dir` the walk reports entries under.
+    let canonical = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    let filter = WalkFilter {
+        walked: dir.to_path_buf(),
+        canonical,
+        global: global_excludes(),
+        rules: Mutex::new(HashMap::new()),
+    };
     let mut builder = WalkBuilder::new(dir);
     builder
-        .hidden(false)
-        .parents(true)
-        .require_git(false)
-        // As `FileTree`: unit tests don't depend on this machine's git
-        // configuration.
-        .git_global(!cfg!(test))
-        .filter_entry(|entry| !is_git_dir(entry.file_name()));
+        .standard_filters(false)
+        .filter_entry(move |entry| filter.keeps(entry));
     builder
 }
 
-/// git's global excludes (`core.excludesFile`), as the walker reads them,
-/// for checking paths one at a time with [`Rules::ignores`]. None in unit
-/// tests.
+/// [`Rules`] for a walk, read a directory at a time as it enters them.
+struct WalkFilter {
+    /// The directory walked, as given (perhaps relative).
+    walked: PathBuf,
+    /// Its canonical path.
+    canonical: PathBuf,
+    global: Arc<Gitignore>,
+    /// The rules in force in each directory entered, by path.
+    rules: Mutex<HashMap<PathBuf, Arc<Rules>>>,
+}
+
+impl WalkFilter {
+    fn keeps(&self, entry: &DirEntry) -> bool {
+        if is_git_dir(entry.file_name()) {
+            return false;
+        }
+        if entry.depth() == 0 {
+            return true;
+        }
+        let rel = entry
+            .path()
+            .strip_prefix(&self.walked)
+            .unwrap_or(entry.path());
+        let path = self.canonical.join(rel);
+        let Some(dir) = path.parent() else {
+            return true;
+        };
+        let is_dir = entry.file_type().is_some_and(|kind| kind.is_dir());
+        // A directory that can't be opened now (gone since it was read, say)
+        // has nothing to keep.
+        self.rules(dir)
+            .is_some_and(|rules| !rules.ignores(&self.global, &path, is_dir))
+    }
+
+    /// The rules in force in `dir`, read through handles opened from `/`
+    /// without following symlinks, on top of its parent's if the walk has
+    /// them.
+    fn rules(&self, dir: &Path) -> Option<Arc<Rules>> {
+        let lock = || self.rules.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(rules) = lock().get(dir) {
+            return Some(rules.clone());
+        }
+        let dirs = open_dirs(dir, Access::Search).ok()?;
+        let parent = dir.parent().and_then(|parent| lock().get(parent).cloned());
+        let rules = match parent {
+            Some(parent) => Rules::load(Some(parent), dirs.last()?, dir),
+            None => Rules::chain(&dirs, dir)?,
+        };
+        lock().insert(dir.to_path_buf(), rules.clone());
+        Some(rules)
+    }
+}
+
+/// git's global excludes (`core.excludesFile`), as the `ignore` crate reads
+/// them, for checking paths with [`Rules::ignores`]. None in unit tests, so
+/// they don't depend on this machine's git configuration.
 pub(crate) fn global_excludes() -> Arc<Gitignore> {
     Arc::new(if cfg!(test) {
         Gitignore::empty()
@@ -398,6 +482,54 @@ fn parse(dir: &Path, file: Option<File>) -> Gitignore {
         let _ = builder.add_line(None, line);
     }
     builder.build().unwrap_or_else(|_| Gitignore::empty())
+}
+
+/// The repository directory whose `info/exclude` applies in `dir`, if `dir`
+/// holds `.git`: that directory, or for a `.git` file (a linked worktree's or
+/// a submodule's), the directory it names, or the common directory that one
+/// names in its `commondir` file, as git resolves them. Each is opened a
+/// directory at a time without following symlinks.
+fn common_git_dir(dir: &File) -> Option<File> {
+    if let Ok(git) = open_at(dir, OsStr::new(".git"), Access::Search) {
+        return Some(git);
+    }
+    let git_dir = first_line(open_file(dir, ".git")?)?;
+    let git_dir = open_path(dir, Path::new(git_dir.strip_prefix("gitdir: ")?)).ok()?;
+    match open_file(&git_dir, "commondir").and_then(first_line) {
+        Some(common) => open_path(&git_dir, Path::new(&common)).ok(),
+        None => Some(git_dir),
+    }
+}
+
+/// The first line of `file`, without trailing whitespace, if it is UTF-8.
+fn first_line(file: File) -> Option<String> {
+    let line = BufReader::new(file.take(4096)).lines().next()?.ok()?;
+    Some(line.trim_end().to_owned())
+}
+
+/// Opens directory `path`, absolute (from `/`) or relative to `dir`, a
+/// component at a time (`..` included) without following symlinks.
+fn open_path(dir: &File, path: &Path) -> io::Result<File> {
+    let mut at = if path.is_absolute() {
+        open_raw(libc::AT_FDCWD, OsStr::new("/"), dir_flags(Access::Search))?
+    } else {
+        dir.try_clone()?
+    };
+    for component in path.components() {
+        let name = match component {
+            Component::Normal(name) => name,
+            Component::ParentDir => OsStr::new(".."),
+            Component::CurDir | Component::RootDir => continue,
+            Component::Prefix(_) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "not a plain path",
+                ));
+            }
+        };
+        at = open_at(&at, name, Access::Search)?;
+    }
+    Ok(at)
 }
 
 /// Opens regular file `name` in `dir` for reading, not through a symlink.

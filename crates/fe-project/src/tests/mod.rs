@@ -108,6 +108,19 @@ fn swap_for_dir(path: &Path) {
     fs::create_dir(path).unwrap();
 }
 
+/// `path`, absolute, as a path relative to the current directory (which no
+/// test changes).
+fn relative(path: &Path) -> PathBuf {
+    let cwd = std::env::current_dir().unwrap();
+    let ups = cwd
+        .components()
+        .filter(|component| matches!(component, std::path::Component::Normal(_)))
+        .count();
+    let mut rel: PathBuf = std::iter::repeat_n("..", ups).collect();
+    rel.push(path.strip_prefix("/").unwrap());
+    rel
+}
+
 fn aside(path: &Path) -> PathBuf {
     let mut aside = path.as_os_str().to_os_string();
     aside.push(".aside");

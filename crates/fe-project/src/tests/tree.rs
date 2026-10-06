@@ -1757,67 +1757,93 @@ fn apply_reads_rules_through_the_directory_it_checked() {
     }
 }
 
-#[test]
-fn listings_and_apply_filter_as_the_ignore_walker_does() {
-    // What `ignore::WalkBuilder`, configured as the listing's rules are
-    // described, finds in `dir`: the entries kept, and those it filters.
-    let walk = |dir: &Path| {
-        let names = |filtered: bool| {
-            let mut builder = ignore::WalkBuilder::new(dir);
-            builder.max_depth(Some(1)).follow_links(false);
-            if filtered {
-                // Without git's global excludes, as unit tests run the tree.
-                builder
-                    .parents(true)
-                    .hidden(false)
-                    .require_git(false)
-                    .git_global(false);
-            } else {
-                builder.standard_filters(false);
-            }
-            let mut names: Vec<String> = builder
-                .build()
-                .map(Result::unwrap)
-                .filter(|entry| entry.depth() == 1 && entry.file_name() != ".git")
-                .map(|entry| entry.file_name().to_string_lossy().into_owned())
-                .collect();
-            names.sort();
-            names
-        };
-        let kept = names(true);
-        let filtered: Vec<String> = names(false)
-            .into_iter()
-            .filter(|name| !kept.contains(name))
+/// What the `ignore` crate's walker, configured as the listing's rules are
+/// described, finds in `dir`: the entries kept, and those it filters. Inside
+/// a repository it takes git's rules from that repository only, and outside
+/// any it takes `.gitignore` files too.
+fn walk(dir: &Path) -> (Vec<String>, Vec<String>) {
+    let in_repository = dir
+        .ancestors()
+        .any(|dir| dir.join(".git").exists() || dir.join(".jj").exists());
+    let names = |filtered: bool| {
+        let mut builder = ignore::WalkBuilder::new(dir);
+        builder.max_depth(Some(1)).follow_links(false);
+        if filtered {
+            // Without git's global excludes, as unit tests run the tree.
+            builder
+                .parents(true)
+                .hidden(false)
+                .require_git(in_repository)
+                .git_global(false);
+        } else {
+            builder.standard_filters(false);
+        }
+        let mut names: Vec<String> = builder
+            .build()
+            .map(Result::unwrap)
+            .filter(|entry| entry.depth() == 1 && entry.file_name() != ".git")
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
             .collect();
-        (kept, filtered)
+        names.sort();
+        names
     };
-    // Every listed directory that isn't ignored, against the walker.
-    let check = |tree: &FileTree| {
-        let mut dirs = vec![tree.root()];
-        while let Some(dir) = dirs.pop() {
-            let (mut kept, mut ignored) = (Vec::new(), Vec::new());
-            for &child in tree.children(dir).unwrap() {
-                let row = tree.row(child).unwrap();
-                let name = row.name.to_string_lossy().into_owned();
-                if row.ignored {
-                    ignored.push(name);
-                } else {
-                    if tree.children(child).is_some() {
-                        dirs.push(child);
-                    }
-                    kept.push(name);
+    let kept = names(true);
+    let filtered: Vec<String> = names(false)
+        .into_iter()
+        .filter(|name| !kept.contains(name))
+        .collect();
+    (kept, filtered)
+}
+
+/// Checks every listed directory of `tree` that isn't ignored against
+/// [`walk`].
+fn check_against_walker(tree: &FileTree) {
+    let mut dirs = vec![tree.root()];
+    while let Some(dir) = dirs.pop() {
+        let (mut kept, mut ignored) = (Vec::new(), Vec::new());
+        for &child in tree.children(dir).unwrap() {
+            let row = tree.row(child).unwrap();
+            let name = row.name.to_string_lossy().into_owned();
+            if row.ignored {
+                ignored.push(name);
+            } else {
+                if tree.children(child).is_some() {
+                    dirs.push(child);
                 }
-            }
-            kept.sort();
-            ignored.sort();
-            let path = tree.path(dir).unwrap();
-            let (walked, filtered) = walk(&path);
-            assert_eq!(kept, walked, "{}", path.display());
-            if tree.options().show_ignored {
-                assert_eq!(ignored, filtered, "{}", path.display());
+                kept.push(name);
             }
         }
-    };
+        kept.sort();
+        ignored.sort();
+        let path = tree.path(dir).unwrap();
+        let (walked, filtered) = walk(&path);
+        assert_eq!(kept, walked, "{}", path.display());
+        if tree.options().show_ignored {
+            assert_eq!(ignored, filtered, "{}", path.display());
+        }
+    }
+}
+
+/// Opens `root` with each of `expand` expanded and checks it against the
+/// walker; then makes `created` and checks again once `apply` has
+/// classified them.
+fn check_listings_and_apply(root: &Path, show_ignored: bool, expand: &[&str], created: &[&str]) {
+    let mut tree = FileTree::open(root, TreeOptions { show_ignored }).unwrap();
+    for dir in expand {
+        tree.expand(id(&tree, dir));
+    }
+    check_against_walker(&tree);
+    make(root, created);
+    let batch: Vec<_> = created
+        .iter()
+        .map(|path| FsChange::Path(root.join(path.trim_end_matches('/'))))
+        .collect();
+    tree.apply(&batch);
+    check_against_walker(&tree);
+}
+
+#[test]
+fn listings_and_apply_filter_as_the_ignore_walker_does() {
     for show_ignored in [false, true] {
         let (_dir, root) = temp();
         make(
@@ -1860,13 +1886,8 @@ fn listings_and_apply_filter_as_the_ignore_walker_does() {
         fs::write(root.join("sub/.gitignore"), "!*.log\nlocal/\n").unwrap();
         fs::write(root.join(".git/info/exclude"), "excluded.txt\n").unwrap();
 
-        let mut tree = FileTree::open(&root, TreeOptions { show_ignored }).unwrap();
-        for dir in ["a", "docs", "docs/one", "docs/two", "sub", "sub/deep"] {
-            tree.expand(id(&tree, dir));
-        }
-        check(&tree);
-
-        // Entries created since, as `apply` classifies them.
+        let expand = ["a", "docs", "docs/one", "docs/two", "sub", "sub/deep"];
+        // And entries created since, as `apply` classifies them.
         let created = [
             "new.log",
             "new.gen",
@@ -1879,13 +1900,7 @@ fn listings_and_apply_filter_as_the_ignore_walker_does() {
             "sub/deep/new.tmp",
             "sub/deep/new.txt",
         ];
-        make(&root, &created);
-        let batch: Vec<_> = created
-            .iter()
-            .map(|path| FsChange::Path(root.join(path.trim_end_matches('/'))))
-            .collect();
-        tree.apply(&batch);
-        check(&tree);
+        check_listings_and_apply(&root, show_ignored, &expand, &created);
     }
 }
 
@@ -1945,4 +1960,345 @@ fn ignore_files_are_not_followed_or_waited_on() {
     assert!(mkfifo.success());
     let tree = FileTree::open(&root, TreeOptions::default()).unwrap();
     assert_eq!(layout(&tree), ["@ .gitignore", ".ignore", "a.txt", "b.log"]);
+}
+
+#[test]
+fn ignore_rules_stop_at_the_nearest_repository() {
+    for show_ignored in [false, true] {
+        // A project that is a repository of its own, inside another one
+        // whose `.gitignore` and `info/exclude` don't apply in it, though its
+        // `.ignore` does. It holds a nested repository and a linked worktree
+        // of a third one, whose `.git` file leads to that one's
+        // `info/exclude`.
+        let (_dir, base) = temp();
+        let root = base.join("proj");
+        make(
+            &base,
+            &[
+                ".git/HEAD",
+                ".git/info/exclude",
+                ".gitignore",
+                ".ignore",
+                "main/.git/HEAD",
+                "main/.git/info/exclude",
+                "main/.git/worktrees/wt/commondir",
+                "proj/.git/HEAD",
+                "proj/.gitignore",
+                "proj/keep.txt",
+                "proj/notes.md",
+                "proj/outer.rs",
+                "proj/app.log",
+                "proj/plain/a.txt",
+                "proj/plain/b.log",
+                "proj/inner/.git/HEAD",
+                "proj/inner/.git/info/exclude",
+                "proj/inner/app.log",
+                "proj/inner/keep.txt",
+                "proj/inner/mine.rs",
+                "proj/inner/x.md",
+                "proj/inner/deep/y.log",
+                "proj/wt/app.log",
+                "proj/wt/linked.rs",
+                "proj/wt/other.txt",
+                "main/.git/worktrees/wt2/commondir",
+                "proj/wt2/kept.rs",
+                "proj/wt2/linked.rs",
+            ],
+        );
+        fs::write(base.join(".gitignore"), "*.txt\n").unwrap();
+        fs::write(base.join(".ignore"), "*.md\n").unwrap();
+        fs::write(base.join(".git/info/exclude"), "outer.rs\n").unwrap();
+        fs::write(root.join(".gitignore"), "*.log\n").unwrap();
+        fs::write(root.join("inner/.git/info/exclude"), "mine.rs\n").unwrap();
+        fs::write(base.join("main/.git/info/exclude"), "linked.rs\n").unwrap();
+        fs::write(base.join("main/.git/worktrees/wt/commondir"), "../..\n").unwrap();
+        let gitdir = base.join("main/.git/worktrees/wt");
+        fs::write(
+            root.join("wt/.git"),
+            format!("gitdir: {}\n", gitdir.display()),
+        )
+        .unwrap();
+        // Another, with `..` in both absolute paths.
+        let gitdir = base.join("main/../main/.git/worktrees/wt2");
+        let common = base.join("main/.git/worktrees/wt2/../..");
+        fs::write(
+            root.join("wt2/.git"),
+            format!("gitdir: {}\n", gitdir.display()),
+        )
+        .unwrap();
+        fs::write(
+            base.join("main/.git/worktrees/wt2/commondir"),
+            format!("{}\n", common.display()),
+        )
+        .unwrap();
+        let expand = ["plain", "inner", "inner/deep", "wt", "wt2"];
+        let created = [
+            "new.txt",
+            "new.log",
+            "new.md",
+            "plain/new.log",
+            "inner/new.log",
+            "inner/deep/new.log",
+            "wt/new.log",
+            "wt/new.txt",
+        ];
+        check_listings_and_apply(&root, show_ignored, &expand, &created);
+        let mut tree = FileTree::open(&root, TreeOptions::default()).unwrap();
+        for dir in expand {
+            tree.expand(id(&tree, dir));
+        }
+        assert_eq!(
+            layout(&tree),
+            [
+                "v inner",
+                "  v deep",
+                "    new.log",
+                "    y.log",
+                "  app.log",
+                "  keep.txt",
+                "  new.log",
+                "v plain",
+                "  a.txt",
+                "v wt",
+                "  app.log",
+                "  new.log",
+                "  new.txt",
+                "  other.txt",
+                "v wt2",
+                "  kept.rs",
+                ".gitignore",
+                "keep.txt",
+                "new.txt",
+                "outer.rs",
+            ]
+        );
+
+        // Outside any repository `.gitignore` files apply, but not in a
+        // repository below.
+        let (_dir, root) = temp();
+        make(
+            &root,
+            &[".gitignore", "a.log", "nested/.git/HEAD", "nested/b.log"],
+        );
+        fs::write(root.join(".gitignore"), "*.log\n").unwrap();
+        check_listings_and_apply(&root, show_ignored, &["nested"], &["c.log", "nested/c.log"]);
+    }
+}
+
+#[test]
+fn retry_markers_keep_the_directories_above_from_dropping_them() {
+    use std::{cell::RefCell, rc::Rc};
+
+    let (_dir, base) = temp();
+    let root = base.join("up/proj");
+    make(&root, &["p/c/old.txt", "v/", "w/"]);
+    let mut tree = FileTree::open(&root, TreeOptions::default()).unwrap();
+
+    // Two overlapping refreshes of `p/c`, the inner one stored first: the
+    // outer one is discarded, and `c` owes a refresh. A refresh of `p` that
+    // started before then, while `c` was away for a moment, is older than
+    // that, and mustn't drop `c` with what it owes.
+    let p = list_owing(&mut tree, &root, "p");
+    let c = list_owing(&mut tree, &root, "p/c");
+    let inner = Rc::new(RefCell::new(None));
+    let hook = {
+        let (inner, mut listing) = (inner.clone(), tree.listing(c));
+        move |point| {
+            if point == Point::Read
+                && let Some(listing) = listing.take()
+            {
+                *inner.borrow_mut() = Some(listing.run());
+            }
+        }
+    };
+    let outer = tree.listing(c).unwrap();
+    let outer = with_hook(hook, || outer.run());
+    tree.fill(c, inner.take().unwrap());
+    assert!(tree.listing(c).is_none());
+    let refresh = tree.listing(p).unwrap();
+    let away = root.join("p/c");
+    fs::rename(&away, aside(&away)).unwrap();
+    let stale = refresh.run();
+    swap_back_dir(&away);
+    tree.fill(c, outer);
+    assert!(tree.listing(c).is_some());
+    tree.fill(p, stale);
+    assert_eq!(tree.find("p/c"), Some(c));
+    assert!(tree.listing(c).is_some() && tree.listing(p).is_some());
+    for dir in [p, c] {
+        let listing = tree.listing(dir).unwrap();
+        tree.fill(dir, listing.run());
+    }
+    assert!(tree.find("p/c/old.txt").is_some() && tree.find("p/c/late.txt").is_some());
+    assert!(tree.listing(p).is_none() && tree.listing(c).is_none());
+
+    // A refresh of `p` run while `c` was away, filled after a listing of
+    // another directory found the root cut off, and before the root is
+    // found again: changes may have gone unreported since, `c`'s return
+    // among them, so the refresh is older than that.
+    {
+        let (_dir, base) = temp();
+        let root = base.join("up/proj");
+        make(&root, &["p/c/old.txt", "w/"]);
+        let mut tree = FileTree::open(&root, TreeOptions::default()).unwrap();
+        let p = list_owing(&mut tree, &root, "p");
+        let c = id(&tree, "p/c");
+        tree.expand(c);
+        let refresh = tree.listing(p).unwrap();
+        let away = root.join("p/c");
+        fs::rename(&away, aside(&away)).unwrap();
+        let stale = refresh.run();
+        swap_back_dir(&away);
+        let up = base.join("up");
+        fs::rename(&up, aside(&up)).unwrap();
+        let w = id(&tree, "w");
+        let cut = tree.listing(w).unwrap().run();
+        assert_eq!(cut.lost, Some(Lost::Root));
+        tree.fill(w, cut);
+        swap_back_dir(&up);
+        tree.fill(p, stale);
+        assert_eq!(tree.find("p/c"), Some(c));
+        assert!(tree.find("p/c/old.txt").is_some());
+        assert!(tree.listing(p).is_some());
+    }
+
+    // A refresh of `p` run while `c` was away, filled after a rescan that
+    // the root, cut off, cut short: that rescan was news for everything.
+    {
+        let (_dir, base) = temp();
+        let root = base.join("up/proj");
+        make(&root, &["p/c/old.txt"]);
+        let mut tree = FileTree::open(&root, TreeOptions::default()).unwrap();
+        let p = list_owing(&mut tree, &root, "p");
+        let c = id(&tree, "p/c");
+        tree.expand(c);
+        let refresh = tree.listing(p).unwrap();
+        let away = root.join("p/c");
+        fs::rename(&away, aside(&away)).unwrap();
+        let stale = refresh.run();
+        swap_back_dir(&away);
+        let up = base.join("up");
+        fs::rename(&up, aside(&up)).unwrap();
+        tree.apply(&[FsChange::Rescan]);
+        swap_back_dir(&up);
+        tree.fill(p, stale);
+        assert_eq!(tree.find("p/c"), Some(c));
+        assert!(tree.find("p/c/old.txt").is_some());
+    }
+
+    // The root found again by one listing, and another, started after that
+    // one but before it was stored, that saw `v` away for a moment: the
+    // recovery marks `v` as owing a listing, and the root as newer than the
+    // second listing, which mustn't drop `v`.
+    let (v, w) = (id(&tree, "v"), id(&tree, "w"));
+    let up = base.join("up");
+    fs::rename(&up, aside(&up)).unwrap();
+    let cut = tree.listing(w).unwrap().run();
+    assert_eq!(cut.lost, Some(Lost::Root));
+    tree.fill(w, cut);
+    swap_back_dir(&up);
+    let (first, second) = (
+        tree.listing(tree.root()).unwrap(),
+        tree.listing(tree.root()).unwrap(),
+    );
+    let found = first.run();
+    let away = root.join("v");
+    fs::rename(&away, aside(&away)).unwrap();
+    let stale = second.run();
+    swap_back_dir(&away);
+    tree.fill(tree.root(), found);
+    tree.fill(tree.root(), stale);
+    assert_eq!(tree.find("v"), Some(v));
+    assert!(tree.listing(v).is_some());
+    assert!(tree.listing(tree.root()).is_some());
+    let listing = tree.listing(tree.root()).unwrap();
+    tree.fill(tree.root(), listing.run());
+    assert_eq!(tree.find("v"), Some(v));
+    assert!(tree.listing(tree.root()).is_none());
+
+    // A listing of the root that ran before the root was cut off again
+    // (while `v`, loaded, was away for a moment), filled after: it can't
+    // be the one that finds the root again, and doesn't drop `v`.
+    tree.expand(v);
+    let w = list_owing(&mut tree, &root, "w");
+    fs::rename(&up, aside(&up)).unwrap();
+    let cut = tree.listing(w).unwrap().run();
+    tree.fill(w, cut);
+    swap_back_dir(&up);
+    let early = tree.listing(tree.root()).unwrap();
+    let away = root.join("v");
+    fs::rename(&away, aside(&away)).unwrap();
+    let early = early.run();
+    swap_back_dir(&away);
+    fs::rename(&up, aside(&up)).unwrap();
+    let cut = tree.listing(w).unwrap().run();
+    assert_eq!(cut.lost, Some(Lost::Root));
+    tree.fill(w, cut);
+    swap_back_dir(&up);
+    tree.fill(tree.root(), early);
+    assert_eq!(tree.find("v"), Some(v));
+    assert!(tree.listing(tree.root()).is_some());
+}
+
+#[test]
+fn a_rescan_with_the_roots_own_path_drops_a_deleted_project() {
+    // FSEvents reports the root's own path when a directory above it is
+    // deleted, perhaps with a rescan in the same batch: the tree drops
+    // everything rather than keep ghosts, and rescans keep it so.
+    let (_dir, base) = temp();
+    let root = base.join("up/proj");
+    make(&root, &["d/y.txt", "x.txt"]);
+    let mut tree = FileTree::open(&root, TreeOptions::default()).unwrap();
+    tree.expand(id(&tree, "d"));
+    fs::remove_dir_all(base.join("up")).unwrap();
+    tree.apply(&[FsChange::Path(root.clone()), FsChange::Rescan]);
+    assert_eq!(tree.row_count(), 0);
+    assert_eq!(tree.stats().loaded_entries, 0);
+    tree.apply(&[FsChange::Rescan]);
+    let listing = tree.listing(tree.root()).unwrap();
+    tree.fill(tree.root(), listing.run());
+    assert_eq!(tree.row_count(), 0);
+}
+
+#[test]
+fn listings_made_before_their_ignore_flag_changed_are_listed_again() {
+    // A listing of an unlisted directory, made before a rescan changed
+    // whether the directory is ignored, and run after it: it classified the
+    // entries by the old flag, so it isn't stored, and the directory is
+    // offered again. Both ways: `a` becomes ignored, `b` stops being.
+    let (_dir, root) = temp();
+    make(&root, &[".gitignore", "a/f.txt", "b/g.txt"]);
+    fs::write(root.join(".gitignore"), "b/\n").unwrap();
+    let mut tree = FileTree::open(&root, TreeOptions { show_ignored: true }).unwrap();
+    let (a, b) = (id(&tree, "a"), id(&tree, "b"));
+    let (early_a, early_b) = (tree.listing(a).unwrap(), tree.listing(b).unwrap());
+    fs::write(root.join(".gitignore"), "a/\n").unwrap();
+    tree.apply(&[FsChange::Rescan]);
+    assert!(tree.row(a).unwrap().ignored && !tree.row(b).unwrap().ignored);
+    for (dir, early) in [(a, early_a), (b, early_b)] {
+        tree.fill(dir, early.run());
+        assert!(tree.children(dir).is_none());
+        let listing = tree.listing(dir).unwrap();
+        tree.fill(dir, listing.run());
+        assert!(tree.listing(dir).is_none());
+    }
+    assert!(tree.row(id(&tree, "a/f.txt")).unwrap().ignored);
+    assert!(!tree.row(id(&tree, "b/g.txt")).unwrap().ignored);
+
+    // A listed directory whose flag a stored listing of its parent changes:
+    // its children were classified by the old flag, so it is offered again.
+    make(&root, &["p/.gitignore", "p/c/f.txt"]);
+    tree.apply(&changes(&root, &["p"]));
+    let p = list_owing(&mut tree, &root, "p");
+    let c = id(&tree, "p/c");
+    tree.expand(c);
+    fs::write(root.join("p/.gitignore"), "c/\n").unwrap();
+    tree.apply(&changes(&root, &["p/.gitignore"]));
+    let listing = tree.listing(p).unwrap();
+    tree.fill(p, listing.run());
+    assert!(tree.row(c).unwrap().ignored);
+    let listing = tree.listing(c).unwrap();
+    tree.fill(c, listing.run());
+    assert!(tree.row(id(&tree, "p/c/f.txt")).unwrap().ignored);
+    assert!(tree.listing(c).is_none());
 }
