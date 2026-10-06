@@ -8,11 +8,12 @@
 
 use std::ops::{Range, RangeInclusive};
 
-use fe_buffer::{Origin, TransactionId};
+use fe_buffer::{Origin, ResolvedSelection, Text, TransactionId, Version};
 use fe_command::{
     Actor, CommandError, CommandTarget, ContextFrame, ContextPredicate, ContextStack, Dispatched,
     Effect, Registry,
 };
+use fe_display::Fold;
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
@@ -520,14 +521,41 @@ fn run_as(
     Ok(Dispatched::new(effect).with_transactions(transactions))
 }
 
-/// What a command can change that the view shows: the text (by version),
-/// the selections, the folds and the wrap.
-fn shown(model: &EditorModel) -> impl PartialEq + use<> {
-    (
-        model.snapshot().version(),
-        model.selections(),
-        model.display().folds().to_vec(),
-        model.soft_wrap(),
-        model.display().row_count(),
-    )
+/// What a command can change that the view shows: the text, the
+/// selections, the folds and the wrap.
+#[derive(PartialEq)]
+struct Shown {
+    text: ShownText,
+    selections: Vec<ResolvedSelection>,
+    folds: Vec<Fold>,
+    soft_wrap: bool,
+    rows: u32,
+}
+
+fn shown(model: &EditorModel) -> Shown {
+    Shown {
+        text: ShownText(model.snapshot().version(), model.text().clone()),
+        selections: model.selections(),
+        folds: model.display().folds().to_vec(),
+        soft_wrap: model.soft_wrap(),
+        rows: model.display().row_count(),
+    }
+}
+
+/// The text at a version. Every applied batch advances the version, even
+/// one that puts back what was there (undoing a replacement of `x` by `x`),
+/// so the same version is the same text but different versions are
+/// compared by content. Cloning the text is cheap; it shares the rope.
+struct ShownText(Version, Text);
+
+impl PartialEq for ShownText {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+            || (self.1.len() == other.1.len()
+                && self
+                    .1
+                    .chunks()
+                    .flat_map(str::bytes)
+                    .eq(other.1.chunks().flat_map(str::bytes)))
+    }
 }

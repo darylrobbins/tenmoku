@@ -629,3 +629,18 @@ fn commands_that_change_nothing_report_nothing() {
         assert_eq!(dispatched.effect, effect, "{command}");
     }
 }
+
+#[test]
+fn undoing_and_redoing_a_replacement_by_the_same_text_reports_nothing() {
+    let mut model = parse("x|");
+    model.buffer_mut().edit([(0..1, "x")], Origin::User);
+    let before = state(&model);
+    let mut host = HeadlessHost::new();
+    for command in ["editor.undo", "editor.redo"] {
+        let dispatched = dispatch(&mut model, &mut host, command, Value::Null);
+        assert_eq!(dispatched.effect, Effect::Nothing, "{command}");
+        // The transaction undone or redone is still reported.
+        assert_eq!(dispatched.transactions.len(), 1, "{command}");
+        assert_eq!(state(&model), before, "{command}");
+    }
+}
