@@ -21,9 +21,9 @@ pub use highlighted_label::{HighlightedLabel, char_ranges};
 pub use palette::{PALETTE_WIDTH, PaletteFrame};
 pub use tab_bar::{TAB_HEIGHT, Tab, TabBar};
 pub use text_input::{TextInput, TextInputEvent};
-pub use theme::UiTheme;
+pub use theme::{ROW_HEIGHT, UiTheme};
 pub use toggle_button::ToggleButton;
-pub use tree_row::{ROW_HEIGHT, TreeRow};
+pub use tree_row::{CHEVRON_WIDTH, ICON_SIZE, TREE_INDENT, TreeRow};
 
 #[cfg(test)]
 mod tests;

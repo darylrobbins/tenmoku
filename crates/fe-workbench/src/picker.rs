@@ -22,7 +22,7 @@ use gpui::{
 pub(crate) const KEY_CONTEXT: &str = "picker";
 
 /// Rows shown before the list scrolls.
-const VISIBLE_ROWS: usize = 12;
+pub(crate) const VISIBLE_ROWS: usize = 12;
 
 /// What a [`Picker`] picks from.
 pub trait PickerDelegate: Sized + 'static {
@@ -177,6 +177,12 @@ impl<D: PickerDelegate> Picker<D> {
                     .into_any_element()
             })
             .collect()
+    }
+
+    /// Where the list was laid out in the last frame.
+    #[cfg(test)]
+    pub(crate) fn list_bounds(&self) -> gpui::Bounds<gpui::Pixels> {
+        self.scroll.0.borrow().base_handle.bounds()
     }
 
     /// Where row `ix` was laid out in the last frame, from the list's

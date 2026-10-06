@@ -17,7 +17,7 @@ use std::{
 use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry};
 use fe_gpui::commands::RunCommand;
 use fe_project::{EntryKind, FileTree, FsChange, Listed, NodeId, ProjectWatcher, TreeOptions};
-use fe_ui::{TreeRow, UiTheme};
+use fe_ui::{Icon, TreeRow, UiTheme, file_icon, folder_icon};
 use gpui::{
     App, AppContext as _, Context, EventEmitter, FocusHandle, Focusable, Global,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, ScrollStrategy, Styled as _,
@@ -523,10 +523,16 @@ impl ProjectPanel {
         }
     }
 
-    fn render_rows(&mut self, range: Range<usize>, cx: &mut Context<Self>) -> Vec<TreeRow> {
+    fn render_rows(
+        &mut self,
+        range: Range<usize>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<TreeRow> {
         let State::Open(tree) = &self.state else {
             return Vec::new();
         };
+        let focused = self.focus.contains_focused(window, cx);
         #[cfg(test)]
         self.built.push(range.clone());
         let mut seen = None;
@@ -539,16 +545,20 @@ impl ProjectPanel {
                 if selected {
                     seen = Some(ix);
                 }
-                let mut element = TreeRow::new(
-                    ("row", ix),
-                    row.name.to_string_lossy().into_owned(),
-                    &self.theme,
-                )
-                .depth(row.depth)
-                .ignored(row.ignored)
-                .error(row.error.is_some())
-                .selected(selected)
-                .on_click(cx.listener(move |panel, _, _, cx| panel.click(id, cx)));
+                let name = row.name.to_string_lossy();
+                let icon = match row.kind {
+                    EntryKind::Dir => folder_icon(row.expanded),
+                    EntryKind::Symlink => Icon::FileSymlink,
+                    EntryKind::File => file_icon(&name),
+                };
+                let mut element = TreeRow::new(("row", ix), name.into_owned(), &self.theme)
+                    .depth(row.depth)
+                    .icon(icon)
+                    .focused(focused)
+                    .ignored(row.ignored)
+                    .error(row.error.is_some())
+                    .selected(selected)
+                    .on_click(cx.listener(move |panel, _, _, cx| panel.click(id, cx)));
                 if row.kind == EntryKind::Dir {
                     element = element.directory(row.expanded);
                 }
@@ -596,7 +606,7 @@ impl Render for ProjectPanel {
             State::Open(tree) => uniform_list(
                 "project-rows",
                 tree.row_count(),
-                cx.processor(|panel, range, _, cx| panel.render_rows(range, cx)),
+                cx.processor(|panel, range, window, cx| panel.render_rows(range, window, cx)),
             )
             .track_scroll(&self.scroll)
             .flex_1()

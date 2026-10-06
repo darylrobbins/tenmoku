@@ -16,6 +16,7 @@ mod splits;
 mod splits_followups;
 mod tabs;
 mod tree_keys;
+mod tree_style;
 
 use std::{cell::Cell, path::Path, rc::Rc};
 
