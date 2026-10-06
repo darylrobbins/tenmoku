@@ -59,12 +59,21 @@ fn set_language_highlights_an_untitled_buffer(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn switching_language_mid_parse_discards_the_old_parse(cx: &mut TestAppContext) {
-    // Loaded up front so the view parses as soon as it opens; big enough
-    // that the first parse goes to the background.
-    fe_syntax::language_by_name("rust");
+    // Loaded up front so the view parses as soon as it opens.
+    let rust = fe_syntax::language_by_name("rust").expect("rust loads");
     let (view, cx) = editor("fn f() {}\n", Some("main.rs"), cx);
     view.update(cx, |view, cx| {
-        let text = "fn f() {}\n".repeat(20_000);
+        // A clock that moves a second on at each read is always over the sync
+        // budget, so the Rust parse goes to the background whatever the load.
+        let start = std::time::Instant::now();
+        let elapsed = std::cell::Cell::new(std::time::Duration::ZERO);
+        let clock = move || {
+            elapsed.set(elapsed.get() + std::time::Duration::from_secs(1));
+            start + elapsed.get()
+        };
+        view.syntax =
+            Some(crate::view::syntax_driver(rust, view.model.snapshot()).with_clock(clock));
+        let text = "fn f() {}\n".repeat(200);
         view.model.select_all();
         view.model.insert(&text);
         view.sync_syntax(cx);
