@@ -2,8 +2,9 @@
 
 use std::{
     collections::HashSet,
+    convert::Infallible,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, mpsc},
+    sync::{Arc, Mutex, PoisonError, mpsc},
     thread,
 };
 
@@ -21,12 +22,14 @@ use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 /// The first batch names every file, before any event: a file may have
 /// changed between loading it and starting to watch. A batch that starts
 /// watching another directory also names every file, as registering one can
-/// drop events meanwhile (notify restarts its FSEvents stream).
+/// drop events meanwhile (notify restarts its FSEvents stream). For the same
+/// reason, every file's links are resolved again after registering, until
+/// they lead to no directory not yet watched.
 ///
-/// A directory that doesn't exist isn't watched, so creating a missing
-/// config directory takes a restart. Symlinked directories are resolved
-/// when the watcher starts or when a file's own links change. The watcher
-/// never creates directories.
+/// A directory that doesn't exist isn't watched, and is logged, so creating
+/// a missing config directory takes a restart. Symlinked directories are
+/// resolved when the watcher starts or when a file's own links change. The
+/// watcher never creates directories.
 ///
 /// Dropping the watcher stops it and waits for the thread.
 pub struct ConfigWatcher {
@@ -37,14 +40,27 @@ pub struct ConfigWatcher {
 impl ConfigWatcher {
     pub fn new(
         files: Vec<PathBuf>,
-        mut sink: impl FnMut(Vec<PathBuf>) + Send + 'static,
+        sink: impl FnMut(Vec<PathBuf>) + Send + 'static,
     ) -> notify::Result<ConfigWatcher> {
-        let (mut tracker, first) = Tracker::new(files);
+        Self::with_hook(files, sink, |_| {})
+    }
+
+    /// [`ConfigWatcher::new`], calling `registered` with each directory
+    /// just after it's watched.
+    pub(crate) fn with_hook(
+        files: Vec<PathBuf>,
+        mut sink: impl FnMut(Vec<PathBuf>) + Send + 'static,
+        mut registered: impl FnMut(&Path) + Send + 'static,
+    ) -> notify::Result<ConfigWatcher> {
+        let mut tracker = Tracker::new(files);
         let (tx, rx) = mpsc::channel::<notify::Result<Event>>();
         let mut watcher = notify::recommended_watcher(tx)?;
-        for dir in &first.new_dirs {
+        tracker.register(|dir| {
             watcher.watch(dir, RecursiveMode::NonRecursive)?;
-        }
+            registered(dir);
+            Ok::<_, notify::Error>(())
+        })?;
+        let first = tracker.files();
         let watcher = Arc::new(Mutex::new(watcher));
         // Weak, so dropping the ConfigWatcher drops the watcher, whose
         // sender ends the thread.
@@ -52,29 +68,30 @@ impl ConfigWatcher {
         let thread = thread::Builder::new()
             .name("config-watcher".into())
             .spawn(move || {
-                if !first.files.is_empty() {
-                    sink(first.files);
+                if !first.is_empty() {
+                    sink(first);
                 }
                 // Ends when the watcher, which owns the sender, is dropped.
                 while let Ok(event) = rx.recv() {
                     let mut events = vec![event];
                     events.extend(rx.try_iter());
-                    let batch = tracker.batch(&events);
-                    // Registered before the sink reads anything.
-                    if !batch.new_dirs.is_empty()
-                        && let Some(watcher) = weak.upgrade()
-                    {
-                        let mut watcher = watcher
+                    // Directories are registered before the sink reads
+                    // anything.
+                    let files = tracker.batch(&events, |dir| {
+                        let Some(watcher) = weak.upgrade() else {
+                            return;
+                        };
+                        let result = watcher
                             .lock()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner());
-                        for dir in &batch.new_dirs {
-                            if let Err(error) = watcher.watch(dir, RecursiveMode::NonRecursive) {
-                                log::warn!("not watching {}: {error}", dir.display());
-                            }
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .watch(dir, RecursiveMode::NonRecursive);
+                        if let Err(error) = result {
+                            log::warn!("not watching {}: {error}", dir.display());
                         }
-                    }
-                    if !batch.files.is_empty() {
-                        sink(batch.files);
+                        registered(dir);
+                    });
+                    if !files.is_empty() {
+                        sink(files);
                     }
                 }
             })?;
@@ -97,15 +114,6 @@ impl Drop for ConfigWatcher {
 /// Symlinks followed before giving up on a loop, as the OS does.
 const MAX_LINKS: usize = 40;
 
-/// What to do about some events.
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct Batch {
-    /// The files to report, in order, once each.
-    pub(crate) files: Vec<PathBuf>,
-    /// Directories to start watching before reporting them.
-    pub(crate) new_dirs: Vec<PathBuf>,
-}
-
 /// Which files events concern, and which directories to watch for them.
 pub(crate) struct Tracker {
     files: Vec<PathBuf>,
@@ -114,29 +122,62 @@ pub(crate) struct Tracker {
     /// directory canonicalized, if that exists, as events name them (/var is
     /// /private/var on macOS).
     chains: Vec<Vec<PathBuf>>,
-    /// Directories watched, or about to be.
+    /// Directories watched.
     dirs: HashSet<PathBuf>,
+    /// Directories the chains need that couldn't be watched, logged once.
+    unwatched: HashSet<PathBuf>,
 }
 
 impl Tracker {
-    /// A tracker for `files`, and the first batch: every file, and the
-    /// directories to watch.
-    pub(crate) fn new(files: Vec<PathBuf>) -> (Self, Batch) {
-        let mut tracker = Self {
+    /// A tracker for `files`, watching nothing yet: see
+    /// [`Tracker::register`].
+    pub(crate) fn new(files: Vec<PathBuf>) -> Self {
+        Self {
             chains: files.iter().map(|file| chain(file)).collect(),
             files,
             dirs: HashSet::new(),
-        };
-        let new_dirs = tracker.new_dirs();
-        let files = tracker.in_order(|_| true);
-        (tracker, Batch { files, new_dirs })
+            unwatched: HashSet::new(),
+        }
     }
 
-    /// The files `events` may have changed, re-resolving their symlinks, and
-    /// any directories their links now lead to. Dropped events and rescans
-    /// may have changed any file, and so may anything during the
-    /// registration of new directories, so either reports every file.
-    pub(crate) fn batch(&mut self, events: &[notify::Result<Event>]) -> Batch {
+    /// Every file, in order, once each.
+    pub(crate) fn files(&self) -> Vec<PathBuf> {
+        self.in_order(|_| true)
+    }
+
+    /// Watches, with `watch`, each existing directory the chains need that
+    /// isn't watched yet. Events during the registration may be lost, links
+    /// included, so after it every chain is resolved again, and any
+    /// directory they now need is watched in turn, until none is: each
+    /// round watches more, or stops. Returns whether any was watched.
+    pub(crate) fn register<E>(
+        &mut self,
+        mut watch: impl FnMut(&Path) -> Result<(), E>,
+    ) -> Result<bool, E> {
+        let mut any = false;
+        loop {
+            let new_dirs = self.new_dirs();
+            if new_dirs.is_empty() {
+                return Ok(any);
+            }
+            for dir in &new_dirs {
+                watch(dir)?;
+            }
+            any = true;
+            self.chains = self.files.iter().map(|file| chain(file)).collect();
+        }
+    }
+
+    /// The files `events` may have changed, re-resolving their symlinks and
+    /// watching, with `watch`, any directories their links now lead to.
+    /// Dropped events and rescans may have changed any file, and so may
+    /// anything during the registration of new directories, so either
+    /// reports every file.
+    pub(crate) fn batch(
+        &mut self,
+        events: &[notify::Result<Event>],
+        mut watch: impl FnMut(&Path),
+    ) -> Vec<PathBuf> {
         let mut changed = vec![false; self.files.len()];
         for event in events {
             match event {
@@ -159,24 +200,15 @@ impl Tracker {
                 self.chains[index] = chain(&self.files[index]);
             }
         }
-        let mut new_dirs = self.new_dirs();
-        if new_dirs.is_empty() {
-            let files = self.in_order(|index| changed[index]);
-            return Batch { files, new_dirs };
+        let Ok(registered) = self.register(|dir| {
+            watch(dir);
+            Ok::<_, Infallible>(())
+        });
+        if registered {
+            self.files()
+        } else {
+            self.in_order(|index| changed[index])
         }
-        // Events during the registration may be lost, links included, so
-        // every chain is resolved again, until no more directories are
-        // needed: each round adds one, or stops.
-        loop {
-            self.chains = self.files.iter().map(|file| chain(file)).collect();
-            let more = self.new_dirs();
-            if more.is_empty() {
-                break;
-            }
-            new_dirs.extend(more);
-        }
-        let files = self.in_order(|_| true);
-        Batch { files, new_dirs }
     }
 
     fn in_order(&self, include: impl Fn(usize) -> bool) -> Vec<PathBuf> {
@@ -190,16 +222,26 @@ impl Tracker {
     }
 
     /// Existing directories the chains need that aren't watched yet; they
-    /// count as watched from now on.
+    /// count as watched from now on. Missing or inaccessible ones are
+    /// logged, once each.
     fn new_dirs(&mut self) -> Vec<PathBuf> {
         let mut new_dirs = Vec::new();
         for path in self.chains.iter().flatten() {
-            if let Some(dir) = path.parent()
-                && !self.dirs.contains(dir)
-                && dir.is_dir()
-            {
+            let Some(dir) = path.parent() else {
+                continue;
+            };
+            if self.dirs.contains(dir) {
+                continue;
+            }
+            if dir.is_dir() {
                 self.dirs.insert(dir.to_owned());
                 new_dirs.push(dir.to_owned());
+            } else if self.unwatched.insert(dir.to_owned()) {
+                log::info!(
+                    "not watching {}: it's missing or inaccessible, so creating it \
+                     takes a restart for settings to reload",
+                    dir.display()
+                );
             }
         }
         new_dirs

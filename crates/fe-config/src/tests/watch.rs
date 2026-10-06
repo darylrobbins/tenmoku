@@ -2,7 +2,8 @@
 //! Each change gets a fresh watcher, started after its fixture is loaded, so
 //! no batch from an earlier change can stand in for it. Waits are bounded by
 //! [`TIMEOUT`], and no duration is asserted. Multi-step symlink changes feed
-//! a [`Tracker`] events directly instead.
+//! a [`Tracker`] events directly instead, with a hook standing in for
+//! changes made while a directory is registered.
 
 use std::{
     fs,
@@ -17,10 +18,7 @@ use notify::{
     event::{CreateKind, Flag, ModifyKind},
 };
 
-use crate::{
-    ConfigWatcher, SettingsStore,
-    watch::{Batch, Tracker},
-};
+use crate::{ConfigWatcher, SettingsStore, watch::Tracker};
 
 /// An upper bound only: FSEvents may take a while on a busy machine.
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -136,6 +134,39 @@ fn event(kind: EventKind, path: &Path) -> notify::Result<Event> {
     Ok(Event::new(kind).add_path(path.to_owned()))
 }
 
+/// The directories `tracker` starts watching, calling `during` with each.
+fn start(tracker: &mut Tracker, mut during: impl FnMut(&Path)) -> Vec<PathBuf> {
+    let mut watched = Vec::new();
+    let Ok(_) = tracker.register(|dir| {
+        watched.push(dir.to_owned());
+        during(dir);
+        Ok::<_, std::convert::Infallible>(())
+    });
+    watched
+}
+
+/// The files `tracker` reports for `events`, and the directories it starts
+/// watching, calling `during` with each.
+fn feed(
+    tracker: &mut Tracker,
+    events: &[notify::Result<Event>],
+    mut during: impl FnMut(&Path),
+) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let mut watched = Vec::new();
+    let files = tracker.batch(events, |dir| {
+        watched.push(dir.to_owned());
+        during(dir);
+    });
+    (files, watched)
+}
+
+/// Points the symlink `link` at `target`, replacing it atomically.
+fn retarget(link: &Path, target: &Path) {
+    let temp = link.with_extension("toml.tmp");
+    symlink(target, &temp).unwrap();
+    fs::rename(&temp, link).unwrap();
+}
+
 #[test]
 fn tracker_follows_symlink_changes() {
     let temp = tempfile::tempdir().unwrap();
@@ -152,73 +183,133 @@ fn tracker_follows_symlink_changes() {
     let files = vec![link.clone(), other.clone()];
     let modify = EventKind::Modify(ModifyKind::Any);
     let create = EventKind::Create(CreateKind::File);
+    let none = |_: &Path| {};
 
-    let (mut tracker, first) = Tracker::new(files.clone());
-    assert_eq!(
-        first,
-        Batch {
-            files: files.clone(),
-            new_dirs: vec![dir.clone(), a.clone()],
-        }
-    );
+    let mut tracker = Tracker::new(files.clone());
+    assert_eq!(tracker.files(), files);
+    assert_eq!(start(&mut tracker, none), [dir.clone(), a.clone()]);
     // The target edited.
-    let batch = tracker.batch(&[event(modify, &target)]);
-    assert_eq!(batch.files, vec![link.clone()]);
-    assert!(batch.new_dirs.is_empty());
-    assert!(
-        tracker
-            .batch(&[event(modify, &dir.join("unrelated"))])
-            .files
-            .is_empty()
-    );
+    let batch = feed(&mut tracker, &[event(modify, &target)], none);
+    assert_eq!(batch, (vec![link.clone()], vec![]));
+    let unrelated = [event(modify, &dir.join("unrelated"))];
+    assert_eq!(feed(&mut tracker, &unrelated, none), (vec![], vec![]));
 
     // The target replaced by a link to a missing file elsewhere: watching
     // that directory names every file, as registering it can drop events.
     let dangling = b.join("settings.toml");
     fs::remove_file(&target).unwrap();
     symlink(&dangling, &target).unwrap();
-    let batch = tracker.batch(&[event(create, &target)]);
-    assert_eq!(
-        batch,
-        Batch {
-            files: files.clone(),
-            new_dirs: vec![b.clone()],
-        }
-    );
+    let batch = feed(&mut tracker, &[event(create, &target)], none);
+    assert_eq!(batch, (files.clone(), vec![b.clone()]));
     // The missing target created.
     fs::write(&dangling, "").unwrap();
-    let batch = tracker.batch(&[event(create, &dangling)]);
-    assert_eq!(batch.files, vec![link.clone()]);
-    assert!(batch.new_dirs.is_empty());
+    let batch = feed(&mut tracker, &[event(create, &dangling)], none);
+    assert_eq!(batch, (vec![link.clone()], vec![]));
 
     // The link itself replaced by a link elsewhere, then that target edited.
     let elsewhere = settings_in(&c, "");
-    let temp_link = dir.join("settings.toml.tmp");
-    symlink(&elsewhere, &temp_link).unwrap();
-    fs::rename(&temp_link, &link).unwrap();
-    let batch = tracker.batch(&[event(create, &link)]);
-    assert_eq!(batch.new_dirs, vec![c.clone()]);
-    let batch = tracker.batch(&[event(modify, &elsewhere)]);
-    assert_eq!(batch.files, vec![link.clone()]);
-
-    // A new directory re-resolves every file: another's link may have
-    // changed while it was registered.
-    let other_target = settings_in(&b, "");
-    let d = dir.join("d");
-    fs::create_dir(&d).unwrap();
-    let d_target = settings_in(&d, "");
-    symlink(&other_target, &other).unwrap();
-    fs::remove_file(&elsewhere).unwrap();
-    symlink(&d_target, &elsewhere).unwrap();
-    let batch = tracker.batch(&[event(create, &elsewhere)]);
-    assert_eq!(batch.files, files);
-    assert_eq!(batch.new_dirs, vec![d.clone()]);
-    let batch = tracker.batch(&[event(modify, &other_target)]);
-    assert_eq!(batch.files, vec![other.clone()]);
+    retarget(&link, &elsewhere);
+    let batch = feed(&mut tracker, &[event(create, &link)], none);
+    assert_eq!(batch, (files.clone(), vec![c.clone()]));
+    let batch = feed(&mut tracker, &[event(modify, &elsewhere)], none);
+    assert_eq!(batch, (vec![link.clone()], vec![]));
 
     // Rescans and errors may have changed anything.
     let rescan = Ok(Event::new(EventKind::Other).set_flag(Flag::Rescan));
-    assert_eq!(tracker.batch(&[rescan]).files, files);
+    assert_eq!(feed(&mut tracker, &[rescan], none).0, files);
     let error = Err(notify::Error::generic("dropped"));
-    assert_eq!(tracker.batch(&[error]).files, files);
+    assert_eq!(feed(&mut tracker, &[error], none).0, files);
+}
+
+/// Another file's link changing while a directory is registered, its event
+/// lost, is followed all the same: every link is resolved again after
+/// registering, at startup and later.
+#[test]
+fn tracker_resolves_links_after_registering() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().canonicalize().unwrap();
+    let [a, b, c, d, e] = ["a", "b", "c", "d", "e"].map(|name| dir.join(name));
+    for sub in [&a, &b, &c, &d, &e] {
+        fs::create_dir(sub).unwrap();
+    }
+    let (user, project) = (dir.join("user.toml"), dir.join("project.toml"));
+    symlink(settings_in(&a, ""), &user).unwrap();
+    symlink(settings_in(&b, ""), &project).unwrap();
+    let files = vec![user.clone(), project.clone()];
+    let modify = EventKind::Modify(ModifyKind::Any);
+    let create = EventKind::Create(CreateKind::File);
+
+    // At startup, registering the user target's directory, the project
+    // link moves to c.
+    let mut tracker = Tracker::new(files.clone());
+    let to_c = settings_in(&c, "");
+    let watched = start(&mut tracker, |watched| {
+        if watched == a {
+            retarget(&project, &to_c);
+        }
+    });
+    assert_eq!(watched, [dir.clone(), a.clone(), b.clone(), c.clone()]);
+    let batch = feed(&mut tracker, &[event(modify, &to_c)], |_| {});
+    assert_eq!(batch, (vec![project.clone()], vec![]));
+
+    // Later, the user link moves to d, and registering d, the project link
+    // moves to e.
+    let to_e = settings_in(&e, "");
+    retarget(&user, &settings_in(&d, ""));
+    let batch = feed(&mut tracker, &[event(create, &user)], |watched| {
+        if watched == d {
+            retarget(&project, &to_e);
+        }
+    });
+    assert_eq!(batch, (files.clone(), vec![d.clone(), e.clone()]));
+    let batch = feed(&mut tracker, &[event(modify, &to_e)], |_| {});
+    assert_eq!(batch, (vec![project.clone()], vec![]));
+}
+
+/// The same at startup with a real watcher: an edit to the project link's
+/// new target is seen.
+#[test]
+fn watcher_follows_links_changed_while_registering() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().canonicalize().unwrap();
+    let [user_dir, a, project_dir, b, c] =
+        ["user", "a", "project", "b", "c"].map(|name| dir.join(name));
+    for sub in [&user_dir, &a, &project_dir, &b, &c] {
+        fs::create_dir(sub).unwrap();
+    }
+    let user = user_dir.join("settings.toml");
+    let project = project_dir.join("settings.toml");
+    symlink(settings_in(&a, ""), &user).unwrap();
+    symlink(settings_in(&b, "editor.font_size = 13\n"), &project).unwrap();
+    let to_c = settings_in(&c, "editor.font_size = 13\n");
+    let mut store = SettingsStore::load(Some(user.clone()), Some(project.clone()));
+
+    // The project link moves before its directory is watched, so no event
+    // can report it.
+    let (tx, batches) = mpsc::channel();
+    let hook_a = a.clone();
+    let (hook_project, hook_c) = (project.clone(), to_c.clone());
+    let _watcher = ConfigWatcher::with_hook(
+        store.paths(),
+        move |batch| {
+            tx.send(batch).ok();
+        },
+        move |watched| {
+            if watched == hook_a {
+                retarget(&hook_project, &hook_c);
+            }
+        },
+    )
+    .unwrap();
+    let batch = || batches.recv_timeout(TIMEOUT).expect("a batch in time");
+    assert_eq!(batch(), [user, project.clone()]);
+    fs::write(&to_c, "editor.font_size = 18\n").unwrap();
+    loop {
+        let batch = batch();
+        assert_eq!(batch, [project.as_path()]);
+        store.reload(&batch);
+        if store.settings().editor.font_size == 18. {
+            return;
+        }
+    }
 }
