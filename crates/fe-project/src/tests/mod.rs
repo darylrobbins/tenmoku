@@ -9,6 +9,7 @@ use crate::{listing, *};
 
 mod finder;
 mod finder_backpressure;
+mod finder_delta;
 mod finder_followups;
 mod finder_walk_safety;
 mod large;

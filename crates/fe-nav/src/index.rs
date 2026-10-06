@@ -4,6 +4,7 @@
 use std::{
     cmp::Ordering,
     collections::{BinaryHeap, HashMap, HashSet},
+    fmt, fs,
     mem::size_of,
     ops::Range,
     path::{Path, PathBuf},
@@ -11,10 +12,11 @@ use std::{
     time::SystemTime,
 };
 
+use fe_project::{FileSetDelta, FinderIndex, FsChange};
 use fe_syntax::OutlineKind;
 use frizbee::{CaseMatching, Config, Matcher, SortStrategy};
 
-use crate::{FileSymbols, Symbol};
+use crate::{Extracted, FileSymbols, Symbol, extract::symbols_language};
 
 /// No name: a symbol without a container.
 const NONE: u32 = u32::MAX;
@@ -29,9 +31,31 @@ const NONE: u32 = u32::MAX;
 ///
 /// It's `Send + Sync`, so it can be shared behind an `RwLock` and queried
 /// while a [`crate::build`] extends it.
+///
+/// Watcher batches keep it current, re-extracting only the files that
+/// changed, without holding the index while parsing:
+///
+/// 1. [`SymbolIndex::plan`] applies a batch of [`FsChange`]s (under the
+///    lock), drops the symbols of files gone, and returns the files to
+///    extract again as a [`Reindex`]. While building, a batch is held for
+///    [`SymbolIndex::finish`], which returns its `Reindex` then.
+/// 2. The caller extracts them, with [`crate::extract_all`] from
+///    [`SymbolIndex::canonical_root`], without the lock.
+/// 3. [`SymbolIndex::update`] (under the lock again) puts the results in.
+///
+/// A file that changes again while it's extracted is caught by its next
+/// batch, which compares its length and modification time again.
+/// Reindexes are meant to be updated in the order they were planned (one
+/// background thread taking them in turn); a batch may still be planned
+/// while an earlier one is being extracted.
+///
+/// Which files exist, and which the project ignores, is a
+/// [`FinderIndex`]'s business: the index keeps one as its file set, fed by
+/// [`SymbolIndex::extend`] and kept current by `plan`.
 #[derive(Debug)]
 pub struct SymbolIndex {
     root: PathBuf,
+    file_set: FileSet,
     /// By file id; `None` for a free id, reused by the next file added.
     files: Vec<Option<File>>,
     free_files: Vec<u32>,
@@ -43,6 +67,29 @@ pub struct SymbolIndex {
     /// Names with at least one symbol, rather than only containers.
     distinct_names: usize,
     complete: bool,
+}
+
+/// The files that exist and aren't ignored, as watcher batches report
+/// them.
+struct FileSet(FinderIndex);
+
+impl fmt::Debug for FileSet {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (files, complete) = self.0.progress();
+        f.debug_struct("FileSet")
+            .field("files", &files)
+            .field("complete", &complete)
+            .finish()
+    }
+}
+
+/// The files a watcher batch, or the end of a build, asks to extract
+/// again: from [`SymbolIndex::plan`] or [`SymbolIndex::finish`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Reindex {
+    /// Relative to the root, sorted: each is new or changed, and its
+    /// language has definitions.
+    pub extract: Vec<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -163,14 +210,17 @@ pub struct IndexStats {
     /// Distinct symbol names (containers that name no symbol don't count).
     pub distinct_names: usize,
     /// The memory the index holds, estimated from its collections'
-    /// capacities and strings.
+    /// capacities and strings. Its file set, a [`FinderIndex`] of the
+    /// project's paths, isn't counted.
     pub approx_bytes: usize,
 }
 
 impl SymbolIndex {
     pub fn new(root: impl Into<PathBuf>) -> Self {
+        let root = root.into();
         Self {
-            root: root.into(),
+            file_set: FileSet(FinderIndex::new(&root)),
+            root,
             files: Vec::new(),
             free_files: Vec::new(),
             by_rel: HashMap::new(),
@@ -185,6 +235,13 @@ impl SymbolIndex {
     /// The root the files' paths are relative to.
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// The root as the file set resolved it, once, when the index was made:
+    /// canonical, as watchers report paths. [`crate::extract_all`] reads
+    /// from it, so a root swapped for a symlink since isn't followed.
+    pub fn canonical_root(&self) -> &Path {
+        self.file_set.0.root_path()
     }
 
     /// Adds a batch of files. A file already in the index, by its relative
@@ -203,6 +260,7 @@ impl SymbolIndex {
             .filter_map(|rel| self.by_rel.get(rel.as_path()).copied())
             .collect();
         self.drop_files(&replaced);
+        self.file_set.0.extend(order.iter().cloned());
         for rel in order {
             if let Some(file) = last.remove(&rel) {
                 self.insert(file);
@@ -234,9 +292,63 @@ impl SymbolIndex {
         ids.len()
     }
 
-    /// Marks the build complete, once its last batch is in.
-    pub fn finish(&mut self) {
+    /// Marks the build complete, once its last batch is in. Returns the
+    /// files to extract again for batches planned while building, whose
+    /// removed files' symbols are dropped here; see [`SymbolIndex::plan`].
+    pub fn finish(&mut self) -> Reindex {
         self.complete = true;
+        let delta = self.file_set.0.finish();
+        self.reindex(delta)
+    }
+
+    /// Applies a batch of changes from a [`fe_project::ProjectWatcher`] to
+    /// the file set, as [`FinderIndex::apply`] does, with its ignore rules
+    /// and its limits. Drops the symbols of every file it removed, and
+    /// returns the files to extract again: those it added or found
+    /// changed whose language has definitions, and which aren't indexed
+    /// or whose length or modification time differs from what was
+    /// indexed ([`SymbolIndex::file_state`]).
+    ///
+    /// While building (before [`SymbolIndex::finish`]) the batch is held,
+    /// and the `Reindex` is empty: `finish` returns it.
+    ///
+    /// Runs on the caller's thread, which holds the index meanwhile: it
+    /// checks each changed path on disk, and walks a new directory, or the
+    /// whole root for a [`FsChange::Rescan`].
+    pub fn plan(&mut self, changes: &[FsChange]) -> Reindex {
+        let delta = self.file_set.0.apply(changes);
+        self.reindex(delta)
+    }
+
+    /// Puts in the files a [`Reindex`] asked for, once extracted. A file
+    /// that couldn't be extracted now, for any [`crate::Skipped`] reason,
+    /// has its old symbols dropped. A file the file set no longer holds,
+    /// because a batch planned since removed it, is left out (and its
+    /// symbols dropped), so a late result can't bring it back.
+    ///
+    /// Use this rather than [`SymbolIndex::extend`] for a `Reindex`'s
+    /// results: `extend` is the build's sink, and adds every file it gets
+    /// to the file set, so a late result would bring a deleted file back.
+    ///
+    /// The results of a cancelled [`crate::extract_all`] leave out the
+    /// files it didn't start, which keep their old symbols: extract the
+    /// whole `Reindex` again rather than dropping it.
+    pub fn update(&mut self, extracted: Extracted) {
+        let mut dead: Vec<u32> = (extracted.failed.iter())
+            .filter_map(|(rel, _)| self.by_rel.get(rel.as_path()).copied())
+            .collect();
+        let mut files = Vec::with_capacity(extracted.files.len());
+        for file in extracted.files {
+            if self.file_set.0.contains(&file.rel) {
+                files.push(file);
+            } else if let Some(&id) = self.by_rel.get(file.rel.as_path()) {
+                dead.push(id);
+            }
+        }
+        dead.sort_unstable();
+        dead.dedup();
+        self.drop_files(&dead);
+        self.extend(files);
     }
 
     pub fn is_complete(&self) -> bool {
@@ -377,6 +489,36 @@ impl SymbolIndex {
         }
     }
 
+    /// Drops the symbols of the files `delta` removed, and lists the files
+    /// it added or changed that need extracting.
+    fn reindex(&mut self, delta: FileSetDelta) -> Reindex {
+        let mut removed: Vec<u32> = (delta.removed.iter())
+            .filter_map(|rel| self.by_rel.get(rel.as_path()).copied())
+            .collect();
+        if delta.rescanned {
+            // The repair for anything missed: whatever the walk didn't find
+            // goes, whether or not the file set held it.
+            removed.extend(
+                (self.by_rel.iter())
+                    .filter(|(rel, _)| !self.file_set.0.contains(rel))
+                    .map(|(_, &id)| id),
+            );
+            removed.sort_unstable();
+            removed.dedup();
+        }
+        self.drop_files(&removed);
+        let root = self.file_set.0.root_path();
+        let extract = (delta.present.into_iter())
+            .filter(|rel| {
+                symbols_language(rel).is_some()
+                    && self
+                        .file_state(rel)
+                        .is_none_or(|indexed| disk_state(root, rel) != Some(indexed))
+            })
+            .collect();
+        Reindex { extract }
+    }
+
     fn file(&self, id: u32) -> &File {
         self.files[id as usize]
             .as_ref()
@@ -511,6 +653,15 @@ impl SymbolIndex {
             self.free_files.push(id);
         }
     }
+}
+
+/// The length and modification time of the regular file `root/rel`, as
+/// [`FileSymbols`] records them, or `None` if it isn't one.
+fn disk_state(root: &Path, rel: &Path) -> Option<(u64, Option<SystemTime>)> {
+    let metadata = fs::symlink_metadata(root.join(rel)).ok()?;
+    metadata
+        .is_file()
+        .then(|| (metadata.len(), metadata.modified().ok()))
 }
 
 /// A symbol [`SymbolIndex::fuzzy`] may return, ordered best first: by

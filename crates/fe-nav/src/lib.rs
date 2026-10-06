@@ -10,6 +10,9 @@
 //! - [`build`] walks the project as its tree shows it
 //!   ([`fe_project::FinderIndex::walk`]) and extracts files on worker
 //!   threads, handing batches to a sink that extends an index.
+//! - [`SymbolIndex::plan`] keeps it current from watcher batches, naming
+//!   the files to extract again ([`extract_all`]) for
+//!   [`SymbolIndex::update`].
 //! - [`NavigationProvider`] is the seam navigation answers come through:
 //!   by search here, precisely from a language server elsewhere.
 //!   [`Navigation`] routes each request to the best provider ready for its
@@ -30,10 +33,12 @@ mod index;
 mod provider;
 mod search;
 
-pub use build::{BuildOptions, BuildSummary, MAX_BATCH_FILES, SkipCounts, build};
+pub use build::{
+    BuildOptions, BuildSummary, Extracted, MAX_BATCH_FILES, SkipCounts, build, extract_all,
+};
 pub use extract::{FileSymbols, Skipped, Symbol, extract};
 pub use fe_syntax::OutlineKind;
-pub use index::{IndexStats, SymbolIndex, SymbolMatch, SymbolRef};
+pub use index::{IndexStats, Reindex, SymbolIndex, SymbolMatch, SymbolRef};
 pub use provider::{
     Answer, Definition, Definitions, Location, NavError, NavRequest, Navigation,
     NavigationProvider, Precision, Readiness, Tier, WorkspaceSymbol,

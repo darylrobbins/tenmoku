@@ -64,6 +64,34 @@ pub struct FinderStats {
     pub indices_computed: u64,
 }
 
+/// What a [`FinderIndex::apply`] or [`FinderIndex::finish`] changed in the
+/// index: paths relative to the root, sorted, without duplicates.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FileSetDelta {
+    /// Paths indexed after the change that it added or added again: those
+    /// the batch named, and those found walking a directory it named. A
+    /// modified file is added again, so it is here.
+    pub present: Vec<PathBuf>,
+    /// Paths that were indexed before the change and aren't after it.
+    pub removed: Vec<PathBuf>,
+    /// Whether the whole root was walked again, for a [`FsChange::Rescan`]
+    /// or a root found replaced. `present` then holds every path indexed.
+    pub rescanned: bool,
+}
+
+/// What `insert` and `remove_key` record while a batch is applied, until
+/// it's turned into a [`FileSetDelta`].
+#[derive(Debug, Default)]
+struct Recorded {
+    on: bool,
+    present: Vec<PathBuf>,
+    removed: Vec<PathBuf>,
+    /// The keys added while recording: removing one again isn't reported,
+    /// since it wasn't indexed before.
+    added: HashSet<Box<[u8]>>,
+    rescanned: bool,
+}
+
 /// An indexed path.
 #[derive(Debug)]
 struct Item {
@@ -118,6 +146,11 @@ impl Item {
 
     fn file_name(&self) -> &str {
         &self.path[self.name as usize..]
+    }
+
+    /// The real relative path.
+    fn rel(&self) -> PathBuf {
+        PathBuf::from(OsStr::from_bytes(self.real_bytes()))
     }
 }
 
@@ -286,6 +319,8 @@ pub struct FinderIndex {
     /// `None` while it is missing. A root found replaced, or back, is walked
     /// again.
     root_id: Option<Identity>,
+    /// What `apply` changed, kept while building for `finish`.
+    recorded: Recorded,
 }
 
 impl FinderIndex {
@@ -304,6 +339,7 @@ impl FinderIndex {
             stats: FinderStats::default(),
             global: listing::global_excludes(),
             root_id: None,
+            recorded: Recorded::default(),
         };
         index.root_id = index.find_root();
         index
@@ -383,15 +419,25 @@ impl FinderIndex {
     /// [`FinderIndex::apply`] got while building are applied again, since a
     /// batch read before a change may have arrived after it; a
     /// [`FsChange::Rescan`] among them walks the whole root, here.
-    pub fn finish(&mut self) {
+    ///
+    /// Returns what those changes did to the index, with what applying
+    /// them while building did (which `apply` didn't report then); once
+    /// complete, an empty delta.
+    pub fn finish(&mut self) -> FileSetDelta {
         if self.complete {
-            return;
+            return FileSetDelta::default();
         }
         self.complete = true;
         let pending: Vec<FsChange> = std::mem::take(&mut self.pending).into_iter().collect();
-        if !pending.is_empty() {
-            self.apply(&pending);
+        if pending.is_empty() {
+            return self.take_delta();
         }
+        self.apply(&pending)
+    }
+
+    /// Whether `rel`, relative to the root, is indexed.
+    pub fn contains(&self, rel: impl AsRef<Path>) -> bool {
+        self.keys.contains_key(&key_of(rel.as_ref()))
     }
 
     /// How many paths are indexed, and whether the index is complete.
@@ -561,7 +607,41 @@ impl FinderIndex {
     ///   for the root's `.gitignore`.
     /// - The walk and the disk race: a path that changes while a walk reads
     ///   its directory can be indexed as it was, until its next event.
-    pub fn apply(&mut self, changes: &[FsChange]) {
+    ///
+    /// Returns what the batch changed in the index. While building, that
+    /// is an empty delta: [`FinderIndex::finish`] reports it instead.
+    pub fn apply(&mut self, changes: &[FsChange]) -> FileSetDelta {
+        self.recorded.on = true;
+        self.apply_changes(changes);
+        self.recorded.on = false;
+        if !self.complete {
+            return FileSetDelta::default();
+        }
+        self.take_delta()
+    }
+
+    /// What was recorded since the last delta, as a delta.
+    fn take_delta(&mut self) -> FileSetDelta {
+        let Recorded {
+            mut present,
+            mut removed,
+            rescanned,
+            ..
+        } = std::mem::take(&mut self.recorded);
+        present.sort();
+        present.dedup();
+        present.retain(|rel| self.contains(rel));
+        removed.sort();
+        removed.dedup();
+        removed.retain(|rel| !self.contains(rel));
+        FileSetDelta {
+            present,
+            removed,
+            rescanned,
+        }
+    }
+
+    fn apply_changes(&mut self, changes: &[FsChange]) {
         if !self.complete {
             self.pending.extend(changes.iter().cloned());
         }
@@ -577,8 +657,7 @@ impl FinderIndex {
             Err(err) => {
                 if listing::is_absent(&err) {
                     // Gone, perhaps only for a moment: walked again once back.
-                    self.items.clear();
-                    self.keys.clear();
+                    self.clear();
                     self.root_id = None;
                 }
                 return;
@@ -685,8 +764,8 @@ impl FinderIndex {
 
     /// Drops everything and walks the root again.
     fn rescan(&mut self) {
-        self.items.clear();
-        self.keys.clear();
+        self.clear();
+        self.recorded.rescanned = true;
         // The root as found (not resolved again): one replaced by a symlink
         // isn't followed, and has nothing to walk.
         let start = Start::root(&self.root);
@@ -725,11 +804,35 @@ impl FinderIndex {
 
     fn insert(&mut self, rel: &Path) {
         let key = key_of(rel);
+        if self.recorded.on {
+            self.recorded.present.push(rel.to_path_buf());
+        }
         if self.keys.contains_key(&key) {
+            // Handed over again by the build (`extend`) since a batch added
+            // it: indexed before any later removal.
+            if !self.recorded.on {
+                self.recorded.added.remove(&key);
+            }
             return;
+        }
+        if self.recorded.on {
+            self.recorded.added.insert(key.clone());
         }
         self.keys.insert(key, to_u32(self.items.len()));
         self.items.push(Item::new(rel));
+    }
+
+    /// Removes every path.
+    fn clear(&mut self) {
+        if self.recorded.on {
+            for item in &self.items {
+                if !self.recorded.added.remove(&item.key()) {
+                    self.recorded.removed.push(item.rel());
+                }
+            }
+        }
+        self.items.clear();
+        self.keys.clear();
     }
 
     /// Removes `rel` and every path under it.
@@ -765,7 +868,10 @@ impl FinderIndex {
             return;
         };
         let ix = ix as usize;
-        self.items.swap_remove(ix);
+        let item = self.items.swap_remove(ix);
+        if self.recorded.on && !self.recorded.added.remove(key) {
+            self.recorded.removed.push(item.rel());
+        }
         if let Some(moved) = self.items.get(ix) {
             *self.keys.get_mut(&moved.key()).expect("indexed") = to_u32(ix);
         }

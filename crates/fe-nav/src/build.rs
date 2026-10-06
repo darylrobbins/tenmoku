@@ -350,6 +350,83 @@ impl<F: FnMut(Vec<FileSymbols>)> Out<'_, F> {
     }
 }
 
+/// What [`extract_all`] read, for [`crate::SymbolIndex::update`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Extracted {
+    pub files: Vec<FileSymbols>,
+    /// The files that couldn't be extracted, and why.
+    pub failed: Vec<(PathBuf, Skipped)>,
+}
+
+/// Extracts the files at `paths`, relative to `root`, as [`crate::extract`]
+/// does, for a [`crate::Reindex`]: on `threads` threads scoped to the call
+/// (0 means half the available cores, at least 1; 1 extracts on the
+/// calling thread), in `paths`' order. Run it without holding the index.
+///
+/// `root` is [`crate::SymbolIndex::canonical_root`], the root the index's
+/// file set was resolved to once, and isn't resolved again here: each file
+/// is opened from it a component at a time without following a symlink,
+/// so a root replaced by a symlink since (to a directory outside the
+/// project) fails as [`Skipped::Unreadable`] rather than being followed.
+/// A root reached through a symlink fails the same way, so don't pass
+/// [`crate::SymbolIndex::root`].
+///
+/// Every result is held until the end, so for a long list, such as a
+/// rescan's, extract and [`crate::SymbolIndex::update`] it in chunks (of
+/// [`MAX_BATCH_FILES`], say), which also keeps each update short.
+///
+/// `cancel` is checked before each file; once it's set, the files not yet
+/// started are left out of both lists, so nothing tells their symbols are
+/// stale: extract the whole `Reindex` again later.
+pub fn extract_all(
+    root: impl AsRef<Path>,
+    paths: &[PathBuf],
+    threads: usize,
+    cancel: &AtomicBool,
+) -> Extracted {
+    let mut out = Extracted::default();
+    if paths.is_empty() || cancelled(cancel) {
+        return out;
+    }
+    let root = root.as_ref();
+    let next = AtomicUsize::new(0);
+    // Takes the next path until none are left or the cancel is set.
+    let work = || {
+        let mut done = Vec::new();
+        while !cancelled(cancel) {
+            let ix = next.fetch_add(1, Ordering::Relaxed);
+            let Some(rel) = paths.get(ix) else {
+                break;
+            };
+            done.push((ix, extract_in(root, rel)));
+        }
+        done
+    };
+    let threads = (BuildOptions { threads }.worker_threads()).min(paths.len());
+    let mut done = if threads == 1 {
+        work()
+    } else {
+        thread::scope(|scope| {
+            let workers: Vec<_> = (0..threads).map(|_| scope.spawn(work)).collect();
+            (workers.into_iter())
+                .flat_map(|worker| {
+                    worker
+                        .join()
+                        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+                })
+                .collect()
+        })
+    };
+    done.sort_unstable_by_key(|&(ix, _)| ix);
+    for (ix, result) in done {
+        match result {
+            Ok(file) => out.files.push(file),
+            Err(skipped) => out.failed.push((paths[ix].clone(), skipped)),
+        }
+    }
+    out
+}
+
 fn cancelled(cancel: &AtomicBool) -> bool {
     cancel.load(Ordering::Relaxed)
 }
