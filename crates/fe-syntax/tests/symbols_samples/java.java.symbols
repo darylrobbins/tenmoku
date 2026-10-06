@@ -1,0 +1,16 @@
+Class "Account" 3:1-38:2
+  Field "LIMIT" 4:29-4:39
+  Field "owner" 5:20-5:25
+  Field "bank" 5:27-5:31
+  Field "history" 6:19-6:26
+  Method "Account" 8:5-15:6
+    Method "run" 13:13-13:33
+  Method "balance" 17:5-20:6
+  Enum "Status" 22:5-29:6
+    Variant "OPEN" 23:9-23:13
+    Variant "CLOSED" 24:9-26:10
+    Field "code" 28:27-28:35
+  Interface "Limits" 31:5-33:6
+    Field "MAX" 32:13-32:22
+  Class "Pair" 35:5-37:6
+    Field "count" 36:20-36:25

@@ -1,0 +1,25 @@
+Macro "DEMO_H" 4:1-5:1
+Variable "shared" 5:12-5:18
+Struct "point" 8:1-16:2
+  Field "x" 9:9-9:10
+  Field "y" 9:12-9:13
+  Field "label" 10:10-10:16
+  Field "callback" 11:9-11:25
+  Field "flags" 12:14-12:19
+  Field "inner" 15:7-15:12
+Struct "value" 18:1-21:2
+  Field "i" 19:9-19:10
+  Field "f" 20:11-20:12
+Enum "color" 23:1-26:2
+  Variant "RED" 24:5-24:8
+  Variant "GREEN" 25:5-25:14
+Variant "ANON_A" 28:8-28:14
+Variant "ANON_B" 28:16-28:22
+Type "size" 30:1-32:8
+Variable "g" 34:5-34:6
+Variable "counter" 35:12-35:23
+Variable "cursor" 35:25-35:32
+Variable "names" 36:12-36:21
+Variable "handler" 37:5-37:20
+Variable "origin" 40:14-40:26
+Function "add" 42:1-45:2

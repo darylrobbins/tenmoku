@@ -6,6 +6,11 @@
 //! nothing is parsed again. The queries follow the capture convention of
 //! tree-sitter tags: `@definition.<kind>` on the item's node and `@name` on
 //! its name. Symbols in injected layers aren't listed.
+//!
+//! [`symbols`] lists every definition, for a tags index: the outline plus
+//! what an outline leaves out, such as fields, enum variants and module-level
+//! variables. Those come from `queries/definitions/`, run after the outline
+//! query as one query.
 
 use std::{collections::HashMap, ops::Range, sync::OnceLock};
 
@@ -23,6 +28,7 @@ const MAX_NAME_CHARS: usize = 200;
 
 /// What an [`OutlineItem`] is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum OutlineKind {
     Module,
     Class,
@@ -39,6 +45,13 @@ pub enum OutlineKind {
     Table,
     /// A heading of level 1 to 6.
     Heading(u8),
+    /// A field of a struct, union, class or interface. Only [`symbols`]
+    /// lists these, as it does the next two.
+    Field,
+    /// An enum's variant, member or constant.
+    Variant,
+    /// A module-level variable.
+    Variable,
 }
 
 impl OutlineKind {
@@ -61,6 +74,9 @@ impl OutlineKind {
             "constant" => Self::Constant,
             "macro" => Self::Macro,
             "table" => Self::Table,
+            "field" => Self::Field,
+            "variant" => Self::Variant,
+            "variable" => Self::Variable,
             _ => match kind.strip_prefix("heading.")?.parse() {
                 Ok(level @ 1..=6) => Self::Heading(level),
                 _ => return None,
@@ -132,10 +148,13 @@ pub enum NoOutline {
     NotParsed,
 }
 
-/// Finding an outline, which can run on any thread. See [`outline_job`].
+/// Finding an outline or symbols, which can run on any thread. See
+/// [`outline_job`] and [`symbols_job`].
 pub struct OutlineJob {
     language: &'static Language,
     query: &'static OutlineQuery,
+    /// Whether to run the symbols query rather than the outline query.
+    symbols: bool,
     tree: Tree,
     text: Text,
     version: Version,
@@ -144,8 +163,44 @@ pub struct OutlineJob {
 /// The work of [`outline`], to run on another thread: it holds a clone of
 /// the tree and the text, so `syntax` can go on being edited meanwhile.
 pub fn outline_job(syntax: &Syntax) -> Result<OutlineJob, NoOutline> {
+    job(syntax, false)
+}
+
+/// The outline of `syntax`'s current text, found on this thread.
+pub fn outline(syntax: &Syntax) -> Result<Outline, NoOutline> {
+    Ok(outline_job(syntax)?.run())
+}
+
+/// Whether the language with this name has an outline query.
+pub fn outline_supported(language_name: &str) -> bool {
+    query_for(language_name).is_some()
+}
+
+/// The work of [`symbols`], to run on another thread, as [`outline_job`].
+pub fn symbols_job(syntax: &Syntax) -> Result<OutlineJob, NoOutline> {
+    job(syntax, true)
+}
+
+/// Every definition in `syntax`'s current text, found on this thread: the
+/// [`outline`]'s items, with the same kinds, names and ranges, plus fields,
+/// enum variants and module-level variables. Nesting, names, the cap and
+/// the errors follow the outline's rules. Languages without a definitions
+/// query, such as markdown and toml, are [`NoOutline::Unsupported`].
+pub fn symbols(syntax: &Syntax) -> Result<Outline, NoOutline> {
+    Ok(symbols_job(syntax)?.run())
+}
+
+/// Whether the language with this name has a definitions query, for
+/// [`symbols`].
+pub fn symbols_supported(language_name: &str) -> bool {
+    query_for(language_name).is_some_and(|query| !query.definitions.is_empty())
+}
+
+fn job(syntax: &Syntax, symbols: bool) -> Result<OutlineJob, NoOutline> {
     let language = syntax.language();
-    let query = query_for(language.name()).ok_or(NoOutline::Unsupported)?;
+    let query = query_for(language.name())
+        .filter(|query| !symbols || !query.definitions.is_empty())
+        .ok_or(NoOutline::Unsupported)?;
     if syntax.failed() {
         return Err(NoOutline::Unsupported);
     }
@@ -159,26 +214,21 @@ pub fn outline_job(syntax: &Syntax) -> Result<OutlineJob, NoOutline> {
     Ok(OutlineJob {
         language,
         query,
+        symbols,
         tree,
         text: syntax.text().clone(),
         version: syntax.version(),
     })
 }
 
-/// The outline of `syntax`'s current text, found on this thread.
-pub fn outline(syntax: &Syntax) -> Result<Outline, NoOutline> {
-    Ok(outline_job(syntax)?.run())
-}
-
-/// Whether the language with this name has an outline query.
-pub fn outline_supported(language_name: &str) -> bool {
-    query_for(language_name).is_some()
-}
-
 impl OutlineJob {
-    /// Runs the outline query once over the whole tree.
+    /// Runs the outline or symbols query once over the whole tree.
     pub fn run(self) -> Outline {
-        let compiled = self.query.compiled(self.language);
+        let compiled = if self.symbols {
+            self.query.symbols(self.language)
+        } else {
+            self.query.outline(self.language)
+        };
         let text = &self.text;
         let mut cursor = QueryCursor::new();
         // Predicates like `#match?` read node text straight from the rope.
@@ -193,11 +243,14 @@ impl OutlineJob {
         while let Some(found_match) = matches.next() {
             let mut item: Option<(OutlineKind, Node)> = None;
             let mut name: Option<Range<usize>> = None;
+            let mut names_function = false;
             for capture in found_match.captures() {
                 match compiled.kinds[capture.index as usize] {
                     Some(kind) => item = Some((kind, capture.node)),
                     None => {
-                        let range = declared_name(capture.node).byte_range();
+                        let declared = declared_name(capture.node);
+                        names_function |= declares_function(declared);
+                        let range = declared.byte_range();
                         name = Some(match name {
                             Some(name) => merge(name, range),
                             None => range,
@@ -208,6 +261,11 @@ impl OutlineJob {
             let Some((kind, node)) = item else {
                 continue;
             };
+            // A C prototype, int f(void);, declares a function, not a
+            // variable, and isn't a definition.
+            if kind == OutlineKind::Variable && names_function {
+                continue;
+            }
             let section = match kind {
                 OutlineKind::Heading(level) => Some(Section::of(node, level)),
                 _ => None,
@@ -429,6 +487,17 @@ fn declared_name(mut node: Node) -> Node {
     node
 }
 
+/// Whether `name`, the node [`declared_name`] found, names a C function:
+/// `f` in `int *f(void)`, but not `fp` in `int (*fp)(void)`, a pointer to
+/// one.
+fn declares_function(name: Node) -> bool {
+    let mut parent = name.parent();
+    while let Some(node) = parent.filter(|node| node.kind() == "parenthesized_declarator") {
+        parent = node.parent();
+    }
+    parent.is_some_and(|node| node.kind() == "function_declarator")
+}
+
 /// The text of `range` with whitespace runs collapsed to one space, trimmed
 /// and cut at [`MAX_NAME_CHARS`].
 fn name(text: &Text, range: Range<usize>) -> String {
@@ -493,11 +562,15 @@ fn without_closing_sequence(text: &Text, content: Range<usize>) -> Range<usize> 
     }
 }
 
-/// One language's outline query, in parts concatenated in order.
+/// One language's outline query, in parts concatenated in order, and its
+/// definitions query, which follows them in the symbols query.
 struct OutlineQuery {
     language: &'static str,
     parts: &'static [&'static str],
-    compiled: OnceLock<Compiled>,
+    /// Empty when the language has no symbols.
+    definitions: &'static [&'static str],
+    outline: OnceLock<Compiled>,
+    symbols: OnceLock<Compiled>,
 }
 
 struct Compiled {
@@ -508,58 +581,102 @@ struct Compiled {
 }
 
 impl OutlineQuery {
-    const fn new(language: &'static str, parts: &'static [&'static str]) -> Self {
+    const fn new(
+        language: &'static str,
+        parts: &'static [&'static str],
+        definitions: &'static [&'static str],
+    ) -> Self {
         Self {
             language,
             parts,
-            compiled: OnceLock::new(),
+            definitions,
+            outline: OnceLock::new(),
+            symbols: OnceLock::new(),
         }
     }
 
-    /// The query compiled for `language`'s grammar, on first use. A query
-    /// that doesn't compile, or has a capture other than `@name` and
+    /// The outline query compiled for `language`'s grammar, on first use.
+    fn outline(&self, language: &Language) -> &Compiled {
+        (self.outline).get_or_init(|| self.compile(language, "outline", &[self.parts]))
+    }
+
+    /// The outline query followed by the definitions query, compiled as
+    /// one on first use. The outline's patterns come first, so they win on
+    /// the nodes both capture and every outline item keeps its kind.
+    fn symbols(&self, language: &Language) -> &Compiled {
+        (self.symbols)
+            .get_or_init(|| self.compile(language, "symbols", &[self.parts, self.definitions]))
+    }
+
+    /// A query that doesn't compile, or has a capture other than `@name` and
     /// `@definition.<kind>`, is a bug: it panics naming the language.
-    fn compiled(&self, language: &Language) -> &Compiled {
-        self.compiled.get_or_init(|| {
-            let source = self.parts.concat();
-            let query = Query::new(&language.grammar, &source)
-                .unwrap_or_else(|error| panic!("{} outline query: {error}", self.language));
-            let kinds = query
-                .capture_names()
-                .iter()
-                .map(|&capture| match capture {
-                    "name" => None,
-                    _ => Some(OutlineKind::from_capture(capture).unwrap_or_else(|| {
-                        panic!(
-                            "{} outline query: unknown capture @{capture}",
-                            self.language
-                        )
-                    })),
-                })
-                .collect();
-            Compiled { query, kinds }
-        })
+    fn compile(&self, language: &Language, what: &str, parts: &[&[&str]]) -> Compiled {
+        let source = parts.concat().concat();
+        let query = Query::new(&language.grammar, &source)
+            .unwrap_or_else(|error| panic!("{} {what} query: {error}", self.language));
+        let kinds = query
+            .capture_names()
+            .iter()
+            .map(|&capture| match capture {
+                "name" => None,
+                _ => Some(OutlineKind::from_capture(capture).unwrap_or_else(|| {
+                    panic!("{} {what} query: unknown capture @{capture}", self.language)
+                })),
+            })
+            .collect();
+        Compiled { query, kinds }
     }
 }
 
 const JAVASCRIPT: &str = include_str!("../queries/outline/javascript.scm");
 const TYPESCRIPT: &str = include_str!("../queries/outline/typescript.scm");
+const JAVASCRIPT_DEFINITIONS: &str = include_str!("../queries/definitions/javascript.scm");
+const TYPESCRIPT_DEFINITIONS: &str = include_str!("../queries/definitions/typescript.scm");
 
-/// The outline queries, by language name.
+/// The outline and definitions queries, by language name.
 static QUERIES: [OutlineQuery; 10] = [
-    OutlineQuery::new("rust", &[include_str!("../queries/outline/rust.scm")]),
-    OutlineQuery::new("python", &[include_str!("../queries/outline/python.scm")]),
-    OutlineQuery::new("javascript", &[JAVASCRIPT]),
-    OutlineQuery::new("typescript", &[JAVASCRIPT, TYPESCRIPT]),
-    OutlineQuery::new("tsx", &[JAVASCRIPT, TYPESCRIPT]),
-    OutlineQuery::new("go", &[include_str!("../queries/outline/go.scm")]),
-    OutlineQuery::new("java", &[include_str!("../queries/outline/java.scm")]),
-    OutlineQuery::new("c", &[include_str!("../queries/outline/c.scm")]),
+    OutlineQuery::new(
+        "rust",
+        &[include_str!("../queries/outline/rust.scm")],
+        &[include_str!("../queries/definitions/rust.scm")],
+    ),
+    OutlineQuery::new(
+        "python",
+        &[include_str!("../queries/outline/python.scm")],
+        &[include_str!("../queries/definitions/python.scm")],
+    ),
+    OutlineQuery::new("javascript", &[JAVASCRIPT], &[JAVASCRIPT_DEFINITIONS]),
+    OutlineQuery::new(
+        "typescript",
+        &[JAVASCRIPT, TYPESCRIPT],
+        &[JAVASCRIPT_DEFINITIONS, TYPESCRIPT_DEFINITIONS],
+    ),
+    OutlineQuery::new(
+        "tsx",
+        &[JAVASCRIPT, TYPESCRIPT],
+        &[JAVASCRIPT_DEFINITIONS, TYPESCRIPT_DEFINITIONS],
+    ),
+    OutlineQuery::new(
+        "go",
+        &[include_str!("../queries/outline/go.scm")],
+        &[include_str!("../queries/definitions/go.scm")],
+    ),
+    OutlineQuery::new(
+        "java",
+        &[include_str!("../queries/outline/java.scm")],
+        &[include_str!("../queries/definitions/java.scm")],
+    ),
+    OutlineQuery::new(
+        "c",
+        &[include_str!("../queries/outline/c.scm")],
+        &[include_str!("../queries/definitions/c.scm")],
+    ),
     OutlineQuery::new(
         "markdown",
         &[include_str!("../queries/outline/markdown.scm")],
+        &[],
     ),
-    OutlineQuery::new("toml", &[include_str!("../queries/outline/toml.scm")]),
+    OutlineQuery::new("toml", &[include_str!("../queries/outline/toml.scm")], &[]),
 ];
 
 fn query_for(language_name: &str) -> Option<&'static OutlineQuery> {

@@ -1,0 +1,23 @@
+Interface "Options" 1:8-5:2
+  Field "timeout" 2:3-2:18
+  Field "name" 3:3-3:25
+  Method "run" 4:3-4:14
+Type "Point" 7:1-10:3
+  Field "x" 8:3-8:12
+  Field "y" 9:3-9:12
+Enum "Direction" 12:1-16:2
+  Variant "Up" 13:3-13:5
+  Variant "Down" 14:3-14:11
+  Variant "\"Left\"" 15:3-15:9
+Class "Base" 18:1-21:2
+  Field "id" 19:3-19:27
+  Method "describe" 20:3-20:30
+Class "Service" 23:1-34:2
+  Field "retries" 24:3-24:22
+  Field "instances" 25:3-25:36
+  Method "constructor" 27:3-29:4
+  Method "describe" 31:3-33:4
+Variable "DEFAULT_TIMEOUT" 36:14-36:34
+Variable "counter" 37:5-37:24
+Function "make" 38:7-38:53
+Function "run" 40:1-43:2

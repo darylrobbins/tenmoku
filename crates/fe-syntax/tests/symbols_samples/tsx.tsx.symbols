@@ -1,0 +1,11 @@
+Interface "Props" 1:1-4:2
+  Field "title" 2:3-2:16
+  Field "count" 3:3-3:17
+Enum "Mode" 6:1-9:2
+  Variant "Light" 7:3-7:8
+  Variant "Dark" 8:3-8:7
+Class "Counter" 11:1-17:2
+  Field "state" 12:3-12:23
+  Method "render" 14:3-16:4
+Variable "theme" 19:14-19:31
+Function "App" 21:8-24:2

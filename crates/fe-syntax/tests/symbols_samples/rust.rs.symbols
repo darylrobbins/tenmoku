@@ -1,0 +1,21 @@
+Struct "Point" 3:1-6:2
+  Field "x" 4:5-4:15
+  Field "y" 5:5-5:11
+Struct "Wrapper" 8:1-8:32
+Struct "Unit" 10:1-10:17
+Struct "Bits" 12:1-15:2
+  Field "int" 13:5-13:13
+  Field "float" 14:5-14:15
+Enum "Shape" 18:1-23:2
+  Variant "Empty" 19:5-19:10
+  Variant "Circle" 20:5-20:16
+  Variant "Rect" 21:5-21:37
+  Variant "Coded" 22:5-22:14
+Constant "ORIGIN" 25:1-25:48
+Constant "COUNTER" 27:1-27:29
+Impl "impl fmt::Display for Point" 29:1-33:2
+  Method "fmt" 30:5-32:6
+Module "inner" 35:1-39:2
+  Struct "Nested" 36:5-38:6
+    Field "depth" 37:9-37:25
+Function "main" 41:1-44:2
