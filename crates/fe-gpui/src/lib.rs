@@ -12,6 +12,7 @@ mod element;
 mod timing;
 mod view;
 
+pub use fe_config::{EditorSettings, SettingsEvent};
 use fe_syntax::Highlight;
 use gpui::{App, Hsla, Pixels, SharedString, font, px, rgb, rgba};
 
@@ -29,8 +30,9 @@ pub fn init(cx: &mut App) {
     commands::init(cx);
 }
 
-/// Colours and metrics for the editor. Hard-coded until themes land (M5).
-#[derive(Clone, Debug)]
+/// Colours and metrics for the editor. The metrics come from
+/// [`EditorSettings`]; the colours are hard-coded until themes land (M5).
+#[derive(Clone, Debug, PartialEq)]
 pub struct EditorTheme {
     pub font_family: SharedString,
     pub font_size: Pixels,
@@ -49,24 +51,16 @@ pub struct EditorTheme {
 }
 
 impl EditorTheme {
-    /// A dark theme using the first installed font of a preferred list.
+    /// The dark theme with the default settings: the first installed font
+    /// of a preferred list.
     pub fn default_dark(cx: &App) -> Self {
-        // Resolving a family loads just that family, which the first frame
-        // needs anyway; listing every installed font took ~70 ms at launch.
-        // A missing family resolves to a fallback font under another name.
-        let text_system = cx.text_system();
-        let installed = |family: &str| {
-            let id = text_system.resolve_font(&font(family));
-            text_system
-                .get_font_for_id(id)
-                .is_some_and(|resolved| resolved.family == family)
-        };
-        let font_family = ["JetBrains Mono", "SF Mono", "Menlo"]
-            .into_iter()
-            .find(|family| installed(family))
-            .unwrap_or("Menlo");
-        Self {
-            font_family: font_family.into(),
+        Self::from_settings(&EditorSettings::default(), cx)
+    }
+
+    /// The dark theme with the font and metrics of `settings`.
+    pub fn from_settings(settings: &EditorSettings, cx: &App) -> Self {
+        let mut theme = Self {
+            font_family: SharedString::default(),
             font_size: px(13.),
             line_height: 1.6,
             background: rgb(0x16181d).into(),
@@ -103,7 +97,16 @@ impl EditorTheme {
                 ("type", rgb(0xe5c07b).into()),
                 ("variable.builtin", rgb(0xe06c75).into()),
             ]),
-        }
+        };
+        theme.set_metrics(settings, cx);
+        theme
+    }
+
+    /// Takes the font family, size and line height from `settings`.
+    pub fn set_metrics(&mut self, settings: &EditorSettings, cx: &App) {
+        self.font_family = font_family(settings, cx);
+        self.font_size = px(settings.font_size as f32);
+        self.line_height = settings.line_height as f32;
     }
 
     pub fn syntax_color(&self, highlight: Highlight) -> Option<Hsla> {
@@ -111,9 +114,34 @@ impl EditorTheme {
     }
 }
 
+/// The font family `settings` names, or else the first installed of a
+/// preferred list.
+fn font_family(settings: &EditorSettings, cx: &App) -> SharedString {
+    if let Some(family) = &settings.font_family {
+        return family.clone().into();
+    }
+    // Resolving a family loads just that family, which the first frame
+    // needs anyway; listing every installed font took ~70 ms at launch.
+    // A missing family resolves to a fallback font under another name.
+    let text_system = cx.text_system();
+    let installed = |family: &str| {
+        let id = text_system.resolve_font(&font(family));
+        text_system
+            .get_font_for_id(id)
+            .is_some_and(|resolved| resolved.family == family)
+    };
+    ["JetBrains Mono", "SF Mono", "Menlo"]
+        .into_iter()
+        .find(|family| installed(family))
+        .unwrap_or("Menlo")
+        .into()
+}
+
 #[cfg(test)]
 mod command_tests;
 #[cfg(test)]
 mod fold_gutter_tests;
+#[cfg(test)]
+mod settings_tests;
 #[cfg(test)]
 mod tests;

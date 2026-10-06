@@ -1,0 +1,63 @@
+{
+  "$defs": {
+    "EditorSettings": {
+      "description": "Settings for the text editor.",
+      "properties": {
+        "font_family": {
+          "description": "The font family. Unset, the first installed of JetBrains Mono, SF Mono\nand Menlo.",
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "font_size": {
+          "default": 13.0,
+          "description": "The font size, in points.",
+          "format": "double",
+          "maximum": 72.0,
+          "minimum": 6.0,
+          "type": "number"
+        },
+        "line_height": {
+          "default": 1.6,
+          "description": "The line height, as a multiple of the font size.",
+          "format": "double",
+          "maximum": 3.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "soft_wrap": {
+          "default": false,
+          "description": "Whether long lines wrap at the window's edge. `alt-z` toggles it per\neditor.",
+          "type": "boolean"
+        },
+        "tab_size": {
+          "default": 4,
+          "description": "How many columns a tab advances to the next multiple of.",
+          "format": "uint",
+          "maximum": 16,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "fastedit's settings, as written in `settings.toml`.",
+  "properties": {
+    "editor": {
+      "$ref": "#/$defs/EditorSettings",
+      "default": {
+        "font_size": 13.0,
+        "line_height": 1.6,
+        "soft_wrap": false,
+        "tab_size": 4
+      },
+      "description": "The text editor."
+    }
+  },
+  "title": "Settings",
+  "type": "object"
+}

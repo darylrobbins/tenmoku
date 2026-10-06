@@ -67,12 +67,7 @@ enum Drag {
 impl EditorView {
     /// An editor for `model`, highlighted according to its file's language.
     pub fn new(mut model: EditorModel, theme: EditorTheme, cx: &mut Context<Self>) -> Self {
-        let font = gpui::font(theme.font_family.clone());
-        model.set_char_widths(Box::new(GlyphWidths::new(
-            cx.text_system().clone(),
-            &font,
-            theme.font_size,
-        )));
+        model.set_char_widths(glyph_widths(&theme, cx));
         let mut view = Self {
             model,
             theme,
@@ -143,6 +138,32 @@ impl EditorView {
 
     pub fn model(&self) -> &EditorModel {
         &self.model
+    }
+
+    /// Takes the font family, size and line height, the tab size and the
+    /// soft-wrap widths from `settings`, and redraws. Soft wrap itself is
+    /// left alone: see [`EditorView::reload_settings`].
+    pub fn apply_settings(&mut self, settings: &EditorSettings, cx: &mut Context<Self>) {
+        self.theme.set_metrics(settings, cx);
+        self.model.set_char_widths(glyph_widths(&self.theme, cx));
+        if self.model.tab_size() != settings.tab_size {
+            self.model.set_tab_size(settings.tab_size);
+        }
+        cx.notify();
+    }
+
+    /// Applies a reload's settings. Soft wrap changes only if the reload
+    /// changed it, so a reload of anything else keeps the editor's `alt-z`
+    /// toggle.
+    pub fn reload_settings(&mut self, event: &SettingsEvent, cx: &mut Context<Self>) {
+        let (settings, previous) = (&event.settings.editor, &event.previous.editor);
+        if settings == previous {
+            return;
+        }
+        self.apply_settings(settings, cx);
+        if settings.soft_wrap != previous.soft_wrap {
+            self.model.set_soft_wrap(settings.soft_wrap);
+        }
     }
 
     pub fn model_mut(&mut self) -> &mut EditorModel {
@@ -353,6 +374,16 @@ impl EditorView {
             .as_ref()
             .map(|range| self.model.snapshot().resolve_range(range))
     }
+}
+
+/// Measures chars in `theme`'s font, for soft wrap.
+fn glyph_widths(theme: &EditorTheme, cx: &App) -> Box<GlyphWidths> {
+    let font = gpui::font(theme.font_family.clone());
+    Box::new(GlyphWidths::new(
+        cx.text_system().clone(),
+        &font,
+        theme.font_size,
+    ))
 }
 
 /// The text a frame shows, to parse a window around: of its longest run of

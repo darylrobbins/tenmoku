@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 fe-buffer.workspace = true
 fe-command.workspace = true
+fe-config.workspace = true
 fe-display.workspace = true
 fe-editor.workspace = true
 fe-syntax.workspace = true

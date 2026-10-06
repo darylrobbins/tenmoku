@@ -8,14 +8,16 @@ mod perf;
 
 use std::{
     path::{Path, PathBuf},
+    sync::Arc,
     time::Instant,
 };
 
 use perf::Startup;
 
 use fe_buffer::Buffer;
+use fe_config::{ConfigWatcher, Diagnostic, Settings, SettingsEvent, SettingsStore};
 use fe_editor::EditorModel;
-use fe_gpui::{EditorTheme, EditorView};
+use fe_gpui::{EditorSettings, EditorTheme, EditorView};
 use gpui::{
     App, AppContext as _, Context, Entity, Focusable as _, IntoElement, ParentElement as _, Render,
     Styled as _, TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, div, px, rgb,
@@ -39,6 +41,8 @@ enum Content {
 struct Workbench {
     content: Content,
     theme: EditorTheme,
+    /// For editors yet to open.
+    settings: EditorSettings,
 }
 
 impl Workbench {
@@ -46,6 +50,7 @@ impl Workbench {
     fn new(
         file: Option<(PathBuf, Option<Buffer>)>,
         theme: EditorTheme,
+        settings: EditorSettings,
         cx: &mut Context<Self>,
     ) -> Self {
         let model = match file {
@@ -55,21 +60,30 @@ impl Workbench {
                 return Self {
                     content: Content::Loading { path },
                     theme,
+                    settings,
                 };
             }
         };
-        let editor = Self::new_editor(model, theme.clone(), cx);
+        let editor = Self::new_editor(model, theme.clone(), &settings, cx);
         Self {
             content: Content::Ready { editor },
             theme,
+            settings,
         }
     }
 
     fn new_editor(
-        model: EditorModel,
+        mut model: EditorModel,
         theme: EditorTheme,
+        settings: &EditorSettings,
         cx: &mut Context<Self>,
     ) -> Entity<EditorView> {
+        if model.tab_size() != settings.tab_size {
+            model.set_tab_size(settings.tab_size);
+        }
+        if model.soft_wrap() != settings.soft_wrap {
+            model.set_soft_wrap(settings.soft_wrap);
+        }
         let editor = cx.new(|cx| EditorView::new(model, theme, cx));
         // Re-render (and retitle) whenever the editor changes.
         cx.observe(&editor, |_, _, cx| cx.notify()).detach();
@@ -78,9 +92,20 @@ impl Workbench {
 
     /// Replaces the loading placeholder with the editor and focuses it.
     fn show(&mut self, model: EditorModel, window: &mut Window, cx: &mut Context<Self>) {
-        let editor = Self::new_editor(model, self.theme.clone(), cx);
+        let editor = Self::new_editor(model, self.theme.clone(), &self.settings, cx);
         window.focus(&editor.focus_handle(cx), cx);
         self.content = Content::Ready { editor };
+        cx.notify();
+    }
+
+    /// Applies reloaded settings to the open editor and to editors yet to
+    /// open.
+    fn reload_settings(&mut self, event: &SettingsEvent, cx: &mut Context<Self>) {
+        self.settings = event.settings.editor.clone();
+        self.theme.set_metrics(&self.settings, cx);
+        if let Some(editor) = self.editor() {
+            editor.update(cx, |editor, cx| editor.reload_settings(event, cx));
+        }
         cx.notify();
     }
 
@@ -191,6 +216,69 @@ fn open_in_background(
     .detach();
 }
 
+/// The settings store: the user's settings file and, with a file to open,
+/// the project's, rooted at the file's directory.
+fn load_settings(file: Option<&Path>) -> SettingsStore {
+    let root = file
+        .and_then(|file| std::path::absolute(file).ok())
+        .and_then(|file| file.parent().map(Path::to_owned));
+    let project = root.map(|root| fe_config::project_settings_path(&root));
+    let store = SettingsStore::load(fe_config::user_settings_path(), project);
+    log_diagnostics(store.diagnostics());
+    store
+}
+
+fn log_diagnostics(diagnostics: &[Diagnostic]) {
+    for diagnostic in diagnostics {
+        if diagnostic.is_error() {
+            log::error!("{diagnostic}");
+        } else {
+            log::warn!("{diagnostic}");
+        }
+    }
+}
+
+/// Watches the settings files, applying each change to the window's editors
+/// on the main thread. Diagnostics are logged when they change. The
+/// watcher's first batch names every file, so a save made since `store`
+/// loaded applies too.
+fn watch_settings(mut store: SettingsStore, window: WindowHandle<Workbench>, cx: &mut App) {
+    let (sender, batches) = async_channel::unbounded();
+    let watcher = ConfigWatcher::new(store.paths(), move |batch| {
+        sender.send_blocking(batch).ok();
+    });
+    let watcher = match watcher {
+        Ok(watcher) => watcher,
+        Err(error) => {
+            log::warn!("settings won't reload when changed: {error}");
+            return;
+        }
+    };
+    cx.spawn(async move |cx| {
+        // Watching for as long as this task runs.
+        let _watcher = watcher;
+        while let Ok(batch) = batches.recv().await {
+            let previous = store.diagnostics().to_vec();
+            let Some(event) = store.reload(&batch) else {
+                continue;
+            };
+            if event.diagnostics != previous {
+                log_diagnostics(&event.diagnostics);
+            }
+            if *event.settings != *event.previous {
+                log::info!("settings reloaded");
+            }
+            let applied = window.update(cx, |workbench, _, cx| {
+                workbench.reload_settings(&event, cx);
+            });
+            if applied.is_err() {
+                break;
+            }
+        }
+    })
+    .detach();
+}
+
 /// Logs to stderr: warnings and errors, and fastedit's own info. `RUST_LOG`
 /// sets one level for everything instead (`debug`, `trace`, …).
 struct StderrLogger {
@@ -240,6 +328,8 @@ fn main() {
         .into_iter()
         .next()
         .map(|path| loader::start(PathBuf::from(path)));
+    let store = load_settings(reading.as_ref().map(loader::Reading::path));
+    let settings: Arc<Settings> = store.settings().clone();
 
     let application = gpui_platform::application();
     startup.platform = Some(Instant::now());
@@ -253,7 +343,7 @@ fn main() {
         })
         .detach();
 
-        let theme = EditorTheme::default_dark(cx);
+        let theme = EditorTheme::from_settings(&settings.editor, cx);
         let window = cx
             .open_window(
                 WindowOptions {
@@ -273,7 +363,8 @@ fn main() {
                             .map(|read| loaded(reading.path(), read, started));
                         (reading.path().to_owned(), buffer)
                     });
-                    let workbench = cx.new(|cx| Workbench::new(file, theme, cx));
+                    let editor_settings = settings.editor.clone();
+                    let workbench = cx.new(|cx| Workbench::new(file, theme, editor_settings, cx));
                     // Focus before the window's first draw: focusing after
                     // it would make the first frame request draw again.
                     let focus = workbench
@@ -299,6 +390,9 @@ fn main() {
         if loading && let Some(reading) = reading {
             open_in_background(reading, window, started, cx);
         }
+        // Not before the window opens: watching isn't needed for the first
+        // frame.
+        watch_settings(store, window, cx);
         cx.activate(true);
     });
 }

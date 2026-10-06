@@ -1612,7 +1612,9 @@ dependencies = [
 name = "fastedit"
 version = "0.1.0"
 dependencies = [
+ "async-channel",
  "fe-buffer",
+ "fe-config",
  "fe-editor",
  "fe-gpui",
  "gpui-pre",
@@ -1670,6 +1672,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "fe-config"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "log",
+ "notify",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
 name = "fe-display"
 version = "0.1.0"
 dependencies = [
@@ -1704,6 +1720,7 @@ version = "0.1.0"
 dependencies = [
  "fe-buffer",
  "fe-command",
+ "fe-config",
  "fe-display",
  "fe-editor",
  "fe-syntax",

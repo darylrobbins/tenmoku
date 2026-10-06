@@ -22,6 +22,7 @@ fe-editor = { path = "crates/fe-editor" }
 fe-gpui = { path = "crates/fe-gpui" }
 fe-syntax = { path = "crates/fe-syntax" }
 fe-project = { path = "crates/fe-project" }
+fe-config = { path = "crates/fe-config" }
 
 # GPUI comes from the `gpui-pre-*` crates.io snapshots of Zed (Apache-2.0).
 # 0.3.7 is zed@1a28cff. Every snapshot crate must be bumped together; to move to
@@ -36,6 +37,10 @@ sum-tree = { package = "gpui-pre-sum-tree", version = "=0.3.7" }
 # Project tree: gitignore-aware directory listing and file watching.
 ignore = "0.4"
 notify = "8"
+
+# The host's channel from the config watcher to the main thread (already in
+# the lock through gpui).
+async-channel = "2"
 
 # PNG decode/encode for the fe-gpui screenshot goldens (already in the lock through gpui).
 image = { version = "0.25", default-features = false, features = ["png"] }
