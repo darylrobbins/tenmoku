@@ -15,11 +15,14 @@ use fe_editor::EditorModel;
 use fe_keymap::{
     DEFAULT_KEYMAP_PATH, DEFAULT_MACOS, KeySequence, Keymap, KeymapIssue, KeymapLayer, KeymapStore,
 };
-use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
+use gpui::{
+    AnyWindowHandle, AppContext as _, Context, Entity, Focusable as _, IntoElement,
+    ParentElement as _, Render, Styled as _, TestAppContext, VisualTestContext, Window, div,
+};
 
 use crate::{
     EditorTheme, EditorView, init_with_keymap,
-    keymap::{CHORD_TIMEOUT, context_stack},
+    keymap::{CHORD_TIMEOUT, chord_pending, context_stack},
     keymap_report, set_user_keymap,
 };
 
@@ -95,6 +98,16 @@ fn with_user_layer(user: &str) -> Keymap {
     Keymap::from_layers([default.expect("the default keymap loads"), user.unwrap()])
 }
 
+/// An editor showing `text` with a caret at `caret`.
+fn new_editor(text: &str, caret: usize, cx: &mut Context<EditorView>) -> EditorView {
+    let mut model = EditorModel::new(Buffer::new(text), None);
+    model.set_selections(vec![ResolvedSelection {
+        range: caret..caret,
+        reversed: false,
+    }]);
+    EditorView::new(model, EditorTheme::default_dark(cx), cx)
+}
+
 /// A focused editor showing `text` with a caret at `caret`, matching keys
 /// against `keymap`, in a headless window.
 fn editor<'a>(
@@ -105,24 +118,17 @@ fn editor<'a>(
 ) -> (Entity<EditorView>, &'a mut VisualTestContext) {
     cx.update(|cx| init_with_keymap(cx, keymap));
     let text = text.to_owned();
-    let (view, cx) = cx.add_window_view(move |_, cx| {
-        let mut model = EditorModel::new(Buffer::new(&text), None);
-        model.set_selections(vec![ResolvedSelection {
-            range: caret..caret,
-            reversed: false,
-        }]);
-        EditorView::new(model, EditorTheme::default_dark(cx), cx)
-    });
+    let (view, cx) = cx.add_window_view(move |_, cx| new_editor(&text, caret, cx));
     cx.update(|window, cx| window.focus(&view.focus_handle(cx), cx));
     cx.run_until_parked();
     (view, cx)
 }
 
 /// The invocations run from now on.
-fn record(cx: &mut VisualTestContext) -> Rc<RefCell<Vec<Invocation>>> {
+fn record(cx: &mut TestAppContext) -> Rc<RefCell<Vec<Invocation>>> {
     let seen = Rc::new(RefCell::new(Vec::new()));
     let sink = seen.clone();
-    cx.update(|_, cx| {
+    cx.update(|cx| {
         crate::commands::observe_invocations(cx, move |invocation| {
             sink.borrow_mut().push(invocation.clone());
         });
@@ -137,7 +143,7 @@ fn commands(seen: &RefCell<Vec<Invocation>>) -> Vec<String> {
         .collect()
 }
 
-fn text_and_caret(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> (String, usize) {
+fn text_and_caret(view: &Entity<EditorView>, cx: &mut TestAppContext) -> (String, usize) {
     view.update(cx, |view, _| {
         let model = view.model();
         (model.text().to_string(), model.selections()[0].range.end)
@@ -324,4 +330,193 @@ fn window_context_reaches_the_matcher(cx: &mut TestAppContext) {
     assert_eq!(commands(&seen), Vec::<String>::new());
     let selection = view.update(cx, |view, _| view.model().selections()[0].range.clone());
     assert_eq!(selection, 1..1);
+}
+
+/// `cmd-k` alone selects all, after the chord timeout: a chord prefix that
+/// runs if the chord is ended rather than abandoned. `g g` goes to the
+/// start: a prefix that is typed if the chord fails.
+const PREFIXES: &str = r#"
+[[bindings]]
+keys = "cmd-k"
+command = "editor.select_all"
+context = "editor"
+
+[[bindings]]
+keys = "g g"
+command = "editor.move_document_start"
+context = "editor"
+"#;
+
+/// The folded line ranges.
+fn folds(view: &Entity<EditorView>, cx: &mut TestAppContext) -> Vec<(u32, u32)> {
+    view.update(cx, |view, _| {
+        let folds = view.model().display().folds();
+        folds.iter().map(|fold| (fold.start, fold.end)).collect()
+    })
+}
+
+/// Waits out the chord timeout, twice over.
+fn time_out(cx: &mut TestAppContext) {
+    cx.executor().advance_clock(CHORD_TIMEOUT * 2);
+    cx.run_until_parked();
+}
+
+/// A focused editor showing `text`, with the caret at its end, in a window
+/// of its own.
+fn editor_window(cx: &mut TestAppContext, text: &str) -> (AnyWindowHandle, Entity<EditorView>) {
+    let window = cx.add_window(|_, cx| new_editor(text, text.len(), cx));
+    let view = window
+        .update(cx, |view, window, cx| {
+            window.focus(&view.focus_handle(cx), cx);
+            cx.entity()
+        })
+        .unwrap();
+    cx.run_until_parked();
+    (window.into(), view)
+}
+
+#[gpui::test]
+fn a_chord_belongs_to_its_window(cx: &mut TestAppContext) {
+    cx.update(|cx| init_with_keymap(cx, with_user_layer(PREFIXES)));
+    let (a, a_view) = editor_window(cx, "a:\n  b");
+    let (b, b_view) = editor_window(cx, "c:\n  d");
+    let seen = record(cx);
+
+    // cmd-0 in b doesn't complete a's cmd-k, and a's cmd-k never runs.
+    cx.simulate_keystrokes(a, "cmd-k");
+    cx.simulate_keystrokes(b, "cmd-0");
+    time_out(cx);
+    assert_eq!(commands(&seen), Vec::<String>::new());
+    assert_eq!(folds(&a_view, cx), []);
+    assert_eq!(folds(&b_view, cx), []);
+
+    // A prefix in b isn't typed into a.
+    cx.simulate_keystrokes(b, "g");
+    cx.simulate_keystrokes(a, "g");
+    time_out(cx);
+    assert_eq!(text_and_caret(&a_view, cx), ("a:\n  bg".into(), 7));
+    assert_eq!(text_and_caret(&b_view, cx), ("c:\n  d".into(), 6));
+    commands(&seen);
+
+    // Closing a abandons its chord: cmd-0 in b doesn't complete it.
+    cx.simulate_keystrokes(a, "cmd-k");
+    assert!(cx.update(|cx| chord_pending(cx)));
+    cx.update_window(a, |_, window, _| window.remove_window())
+        .unwrap();
+    cx.run_until_parked();
+    assert!(!cx.update(|cx| chord_pending(cx)));
+    cx.simulate_keystrokes(b, "cmd-0");
+    time_out(cx);
+    assert_eq!(commands(&seen), Vec::<String>::new());
+    assert_eq!(folds(&b_view, cx), []);
+
+    // b's own chord still runs.
+    cx.simulate_keystrokes(b, "cmd-k cmd-0");
+    assert_eq!(commands(&seen), ["editor.fold_all"]);
+    assert_eq!(folds(&b_view, cx), [(0, 1)]);
+}
+
+/// Two editors side by side, in one window.
+struct Pair {
+    left: Entity<EditorView>,
+    right: Entity<EditorView>,
+}
+
+impl Render for Pair {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .flex()
+            .child(self.left.clone())
+            .child(self.right.clone())
+    }
+}
+
+#[gpui::test]
+fn a_chord_belongs_to_its_focused_element(cx: &mut TestAppContext) {
+    cx.update(|cx| init_with_keymap(cx, with_user_layer(PREFIXES)));
+    let (pair, cx) = cx.add_window_view(|_, cx| Pair {
+        left: cx.new(|cx| new_editor("a:\n  b", 6, cx)),
+        right: cx.new(|cx| new_editor("c:\n  d", 6, cx)),
+    });
+    let (left, right) = pair.update(cx, |pair, _| (pair.left.clone(), pair.right.clone()));
+    // Then draws, as the next frame would, which reports the focus change.
+    let focus = |view: &Entity<EditorView>, cx: &mut VisualTestContext| {
+        cx.update(|window, cx| {
+            window.focus(&view.focus_handle(cx), cx);
+            window.draw(cx).clear(cx);
+        });
+        cx.run_until_parked();
+    };
+    // Focus events are only reported in the active window.
+    cx.update(|window, _| window.activate_window());
+    focus(&left, cx);
+    let seen = record(cx);
+
+    // Started in left, cmd-k is neither completed in right nor run there
+    // on timeout.
+    cx.simulate_keystrokes("cmd-k");
+    focus(&right, cx);
+    cx.simulate_keystrokes("cmd-0");
+    time_out(cx);
+    focus(&left, cx);
+    cx.simulate_keystrokes("cmd-k");
+    focus(&right, cx);
+    time_out(cx);
+    assert_eq!(commands(&seen), Vec::<String>::new());
+    assert_eq!(folds(&right, cx), []);
+
+    // A prefix isn't typed into right.
+    focus(&left, cx);
+    cx.simulate_keystrokes("g");
+    focus(&right, cx);
+    time_out(cx);
+    assert_eq!(text_and_caret(&left, cx).0, "a:\n  b");
+    assert_eq!(text_and_caret(&right, cx).0, "c:\n  d");
+
+    // Focus that leaves and comes back abandons the chord too.
+    focus(&left, cx);
+    cx.simulate_keystrokes("cmd-k");
+    assert!(cx.update(|_, cx| chord_pending(cx)));
+    focus(&right, cx);
+    assert!(!cx.update(|_, cx| chord_pending(cx)));
+    focus(&left, cx);
+    cx.simulate_keystrokes("cmd-0");
+    time_out(cx);
+    assert_eq!(commands(&seen), Vec::<String>::new());
+    assert_eq!(folds(&left, cx), []);
+
+    // Kept in one element, it runs.
+    cx.simulate_keystrokes("cmd-k cmd-0");
+    assert_eq!(commands(&seen), ["editor.fold_all"]);
+    assert_eq!(folds(&left, cx), [(0, 1)]);
+}
+
+#[gpui::test]
+fn unsupported_keys_fail_a_chord(cx: &mut TestAppContext) {
+    let (view, cx) = editor(cx, with_user_layer(PREFIXES), "a:\n  b", 6);
+    let seen = record(cx);
+
+    // f21, which fe-keymap has no name for, ends cmd-k: cmd-0 after it is
+    // a fresh keystroke, and cmd-k doesn't run on timeout.
+    cx.simulate_keystrokes("cmd-k f21 cmd-0");
+    assert_eq!(folds(&view, cx), []);
+    cx.simulate_keystrokes("cmd-k f21");
+    time_out(cx);
+    assert_eq!(commands(&seen), Vec::<String>::new());
+
+    // A prefix it ends is typed at once.
+    cx.simulate_keystrokes("g f21");
+    assert_eq!(text_and_caret(&view, cx), ("a:\n  bg".into(), 7));
+    time_out(cx);
+    assert_eq!(text_and_caret(&view, cx), ("a:\n  bg".into(), 7));
+    commands(&seen);
+
+    // A modifier pressed alone leaves the chord be.
+    cx.simulate_keystrokes("cmd-k");
+    cx.simulate_modifiers_change(gpui::Modifiers::shift());
+    cx.simulate_modifiers_change(gpui::Modifiers::none());
+    cx.simulate_keystrokes("cmd-0");
+    assert_eq!(commands(&seen), ["editor.fold_all"]);
+    assert_eq!(folds(&view, cx), [(0, 1)]);
 }
