@@ -19,8 +19,8 @@ use std::{
 };
 
 use fe_gpui::{EditorView, FrameTiming};
+use fe_workbench::Workbench;
 
-use crate::Workbench;
 use gpui::{
     App, Entity, Keystroke, Modifiers, PlatformInput, ScrollDelta, ScrollWheelEvent, TouchPhase,
     Window, point, px, size,
@@ -176,12 +176,12 @@ fn tick(run: Rc<RefCell<Run>>, window: &mut Window, cx: &mut App) {
             // first frame request, which runs this callback first. Nothing
             // else swaps the placeholder for the editor in between, so if
             // it's still here, it's what gets presented.
-            state.placeholder_first = Some(state.workbench.read(cx).editor().is_none());
+            state.placeholder_first = Some(state.workbench.read(cx).active_editor(cx).is_none());
         }
         note_frame_request(&run, &mut state, cx);
     }
     if state.editor.is_none() {
-        state.editor = state.workbench.read(cx).editor().cloned();
+        state.editor = state.workbench.read(cx).active_editor(cx).cloned();
         if let Some(editor) = &state.editor {
             state.file_bytes = editor.read(cx).model().text().len();
         }
@@ -412,7 +412,8 @@ fn wrap_step(run: Rc<RefCell<Run>>, step: usize, window: &mut Window, cx: &mut A
             );
         }
         WrapStep::Narrower | WrapStep::Wider => {
-            let theme = &run.borrow().workbench.read(cx).theme;
+            let workbench = run.borrow().workbench.clone();
+            let theme = workbench.read(cx).pane().read(cx).theme();
             let text_system = window.text_system();
             let font_id = text_system.resolve_font(&gpui::font(theme.font_family.clone()));
             let em = text_system

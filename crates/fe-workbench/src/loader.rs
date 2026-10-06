@@ -1,6 +1,8 @@
-//! Reads the opened file off the main thread, so the window paints first.
-//! The read starts at the top of `main`, so a small file is usually read by
-//! the time the window is built, and is on its first frame.
+//! Reads files off the main thread. The host's launch file is read by
+//! [`start`], at the top of `main`, so the window paints first and a small
+//! file is usually read by the time the window is built, and is on its first
+//! frame. Files opened from the project panel are read by [`read`] on GPUI's
+//! background executor.
 //!
 //! Only the [`Buffer`] crosses threads: `EditorModel` isn't `Send` (it holds
 //! its char widths as a `Box<dyn CharWidth>`), so the main thread builds it.
@@ -18,7 +20,7 @@ use fe_buffer::Buffer;
 
 /// Reads `path` into a buffer the way `EditorModel::open` does. A missing
 /// file is `Ok(None)`: a new file, which saving creates.
-pub(crate) fn read(path: PathBuf) -> io::Result<Option<Buffer>> {
+pub fn read(path: PathBuf) -> io::Result<Option<Buffer>> {
     let file = match File::open(&path) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -28,19 +30,19 @@ pub(crate) fn read(path: PathBuf) -> io::Result<Option<Buffer>> {
 }
 
 /// A read running on its own thread.
-pub(crate) struct Reading {
+pub struct Reading {
     path: PathBuf,
     done: mpsc::Receiver<Read>,
 }
 
 /// A finished read: what [`read`] returned, and when.
-pub(crate) struct Read {
-    pub(crate) result: io::Result<Option<Buffer>>,
-    pub(crate) at: Instant,
+pub struct Read {
+    pub result: io::Result<Option<Buffer>>,
+    pub at: Instant,
 }
 
 /// Starts reading `path` on a new thread.
-pub(crate) fn start(path: PathBuf) -> Reading {
+pub fn start(path: PathBuf) -> Reading {
     let (sender, done) = mpsc::sync_channel(1);
     let reader_path = path.clone();
     thread::Builder::new()
@@ -59,17 +61,17 @@ pub(crate) fn start(path: PathBuf) -> Reading {
 }
 
 impl Reading {
-    pub(crate) fn path(&self) -> &Path {
+    pub fn path(&self) -> &Path {
         &self.path
     }
 
     /// The read, if it has finished. It's returned once.
-    pub(crate) fn try_finish(&self) -> Option<Read> {
+    pub fn try_finish(&self) -> Option<Read> {
         self.done.try_recv().ok()
     }
 
     /// Waits for the read to finish; don't call it on the main thread.
-    pub(crate) fn finish(self) -> Read {
+    pub fn finish(self) -> Read {
         self.done.recv().expect("the reader thread panicked")
     }
 }

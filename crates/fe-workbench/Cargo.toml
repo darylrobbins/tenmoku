@@ -1,0 +1,28 @@
+[package]
+name = "fe-workbench"
+description = "fastedit's window shell: a project tree on the right dock and editor tabs."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-channel.workspace = true
+fe-buffer.workspace = true
+fe-command.workspace = true
+fe-config.workspace = true
+fe-editor.workspace = true
+fe-gpui.workspace = true
+fe-keymap.workspace = true
+fe-project.workspace = true
+fe-ui.workspace = true
+gpui.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true

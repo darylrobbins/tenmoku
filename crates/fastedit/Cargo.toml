@@ -11,15 +11,12 @@ publish.workspace = true
 async-channel.workspace = true
 fe-buffer.workspace = true
 fe-config.workspace = true
-fe-editor.workspace = true
 fe-gpui.workspace = true
+fe-workbench.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
 libc.workspace = true
 log.workspace = true
-
-[dev-dependencies]
-tempfile.workspace = true
 
 [lints]
 workspace = true

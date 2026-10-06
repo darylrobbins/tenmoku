@@ -234,3 +234,18 @@ context = "editor"
 [[bindings]]
 keys = "cmd-q"
 command = "app.quit"
+
+[[bindings]]
+keys = "cmd-w"
+command = "workbench.close_tab"
+context = "workbench"
+
+[[bindings]]
+keys = "cmd-shift-]"
+command = "workbench.next_tab"
+context = "workbench"
+
+[[bindings]]
+keys = "cmd-shift-["
+command = "workbench.previous_tab"
+context = "workbench"

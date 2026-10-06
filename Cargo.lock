@@ -1634,13 +1634,12 @@ dependencies = [
  "async-channel",
  "fe-buffer",
  "fe-config",
- "fe-editor",
  "fe-gpui",
+ "fe-workbench",
  "gpui-pre",
  "gpui-pre-platform",
  "libc",
  "log",
- "tempfile",
 ]
 
 [[package]]
@@ -1827,6 +1826,31 @@ dependencies = [
  "proptest",
  "rand 0.9.5",
  "ropey",
+]
+
+[[package]]
+name = "fe-ui"
+version = "0.1.0"
+dependencies = [
+ "gpui-pre",
+]
+
+[[package]]
+name = "fe-workbench"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "fe-buffer",
+ "fe-command",
+ "fe-config",
+ "fe-editor",
+ "fe-gpui",
+ "fe-keymap",
+ "fe-project",
+ "fe-ui",
+ "gpui-pre",
+ "log",
+ "tempfile",
 ]
 
 [[package]]

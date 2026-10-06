@@ -1,0 +1,15 @@
+[package]
+name = "fe-ui"
+description = "fastedit's UI primitives for GPUI, styled by theme tokens."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# GPUI only: no workspace crate, so any host can use these.
+[dependencies]
+gpui.workspace = true
+
+[lints]
+workspace = true
