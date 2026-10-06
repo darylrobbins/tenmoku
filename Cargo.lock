@@ -1732,6 +1732,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "fe-keymap"
+version = "0.1.0"
+dependencies = [
+ "fe-command",
+ "fe-config",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
 name = "fe-project"
 version = "0.1.0"
 dependencies = [

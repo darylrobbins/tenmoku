@@ -1,0 +1,554 @@
+//! Keymap files and the keymap layered from them.
+//!
+//! A keymap file is a flat list of bindings:
+//!
+//! ```toml
+//! [[bindings]]
+//! keys = "cmd-k cmd-0"
+//! command = "editor.fold_all"
+//! context = "editor"                                 # optional; omitted = everywhere
+//! args = { motion = "word_left", extend = true }     # optional
+//!
+//! [[bindings]]                                       # unbind
+//! keys = "alt-z"
+//! context = "editor"
+//! command = ""
+//! ```
+
+use std::{
+    borrow::Borrow,
+    fmt,
+    ops::Range,
+    path::{Path, PathBuf},
+    rc::Rc,
+    sync::Arc,
+};
+
+use fe_command::{
+    CommandId, CommandTarget, ContextPredicate, ContextStack, DispatchError, Invocation, Registry,
+    Value,
+};
+use fe_config::{Diagnostic, Layer, Severity};
+use toml::de::{DeTable, DeValue};
+
+use crate::keystroke::KeySequence;
+
+/// Where something is in a keymap file.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Location {
+    pub file: PathBuf,
+    /// 1-based.
+    pub line: usize,
+    /// 1-based, in chars.
+    pub column: usize,
+}
+
+impl fmt::Display for Location {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}:{}", self.file.display(), self.line, self.column)
+    }
+}
+
+/// One `[[bindings]]` entry of a keymap file that loaded cleanly.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Entry {
+    pub keys: KeySequence,
+    /// `None` binds them everywhere.
+    pub context: Option<ContextPredicate>,
+    /// `None` for `command = ""`, which unbinds the keys.
+    pub command: Option<CommandId>,
+    /// `Null` when the entry has none.
+    pub args: Value,
+    /// The entry's `[[bindings]]` header, or its inline table.
+    pub location: Location,
+}
+
+/// A keymap file's entries, in order.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct KeymapLayer {
+    pub path: PathBuf,
+    pub entries: Vec<Entry>,
+}
+
+/// A command a binding runs, with its args, and where it came from.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Binding {
+    pub keys: KeySequence,
+    pub context: Option<ContextPredicate>,
+    pub command: CommandId,
+    /// `Null` when the entry has none.
+    pub args: Value,
+    /// The index of the layer it came from in [`Keymap::from_layers`]:
+    /// 0 for the defaults.
+    pub layer: usize,
+    pub location: Location,
+}
+
+impl Binding {
+    /// How deep in `stack` the binding applies, or `None` if its context
+    /// doesn't hold there. A binding without a context has depth 0. Any
+    /// other's depth is the length of the shortest prefix of the stack, from
+    /// the outermost frame inward, that satisfies its predicate: the frame
+    /// it needs. So in `[workbench, editor]`, `editor` is at depth 2 and
+    /// `workbench` at depth 1. (An identifier holds if any frame has it, so
+    /// every match holds on the whole stack; the shortest prefix is what
+    /// tells them apart.)
+    pub fn depth(&self, stack: &ContextStack) -> Option<usize> {
+        let Some(predicate) = &self.context else {
+            return Some(0);
+        };
+        if !predicate.eval(stack) {
+            return None;
+        }
+        let frames = stack.frames();
+        let depth = (1..=frames.len()).find(|&len| {
+            let prefix: ContextStack = frames[..len].iter().cloned().collect();
+            predicate.eval(&prefix)
+        });
+        Some(depth.unwrap_or(0))
+    }
+
+    /// What pressing its keys asks for, in `stack`.
+    pub fn invocation(&self, stack: &ContextStack) -> Invocation {
+        Invocation::new(self.command.clone())
+            .args(self.args.clone())
+            .source(fe_command::Source::Keyboard)
+            .context(stack.clone())
+    }
+}
+
+/// The effective bindings, in the order they were read: each layer top to
+/// bottom, the defaults first.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Keymap {
+    bindings: Vec<Binding>,
+}
+
+impl Keymap {
+    /// Applies the layers' entries in order, defaults first. An entry with
+    /// `command = ""` removes every earlier binding with the same keys and
+    /// the same context; others are added. A later binding with the same
+    /// keys and context as an earlier one wins over it, but both are kept
+    /// for [`Keymap::report`].
+    pub fn from_layers<L: Borrow<KeymapLayer>>(layers: impl IntoIterator<Item = L>) -> Self {
+        let mut bindings: Vec<Binding> = Vec::new();
+        for (layer_ix, layer) in layers.into_iter().enumerate() {
+            for entry in &layer.borrow().entries {
+                match &entry.command {
+                    None => bindings.retain(|binding| {
+                        !binding.same_keys_and_context(&entry.keys, &entry.context)
+                    }),
+                    Some(command) => bindings.push(Binding {
+                        keys: entry.keys.clone(),
+                        context: entry.context.clone(),
+                        command: command.clone(),
+                        args: entry.args.clone(),
+                        layer: layer_ix,
+                        location: entry.location.clone(),
+                    }),
+                }
+            }
+        }
+        Self { bindings }
+    }
+
+    /// Every binding, in the order read, including those a later one
+    /// with the same keys and context overrides.
+    pub fn bindings(&self) -> &[Binding] {
+        &self.bindings
+    }
+
+    /// The bindings that run `command`, in the order read, leaving out those
+    /// a later binding overrides: for menus and the palette.
+    pub fn bindings_for(&self, command: &CommandId) -> Vec<&Binding> {
+        self.bindings
+            .iter()
+            .enumerate()
+            .filter(|(ix, binding)| &binding.command == command && !self.is_overridden(*ix))
+            .map(|(_, binding)| binding)
+            .collect()
+    }
+
+    /// The binding that overrides the one at `ix`: the last later one with
+    /// the same keys and context.
+    pub(crate) fn overrider(&self, ix: usize) -> Option<usize> {
+        let binding = &self.bindings[ix];
+        (ix + 1..self.bindings.len()).rev().find(|&later| {
+            self.bindings[later].same_keys_and_context(&binding.keys, &binding.context)
+        })
+    }
+
+    pub(crate) fn is_overridden(&self, ix: usize) -> bool {
+        self.overrider(ix).is_some()
+    }
+}
+
+impl Binding {
+    fn same_keys_and_context(
+        &self,
+        keys: &KeySequence,
+        context: &Option<ContextPredicate>,
+    ) -> bool {
+        &self.keys == keys && &self.context == context
+    }
+}
+
+/// The commands that exist and the args they take, to check bindings
+/// against. [`Registry`] is one.
+pub trait CommandCatalog {
+    fn check(&self, command: &CommandId, args: &Value) -> Result<(), CatalogError>;
+}
+
+/// Why a [`CommandCatalog`] rejected a binding's command.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CatalogError {
+    UnknownCommand,
+    BadArgs(String),
+}
+
+/// Checks with [`Registry::validate_args`], whatever context the command
+/// applies in.
+impl<T: CommandTarget> CommandCatalog for Registry<T> {
+    fn check(&self, command: &CommandId, args: &Value) -> Result<(), CatalogError> {
+        match self.validate_args(command, args) {
+            Ok(_) => Ok(()),
+            Err(DispatchError::UnknownCommand(_)) => Err(CatalogError::UnknownCommand),
+            Err(DispatchError::BadArgs { message, .. }) => Err(CatalogError::BadArgs(message)),
+            // `validate_args` checks nothing else.
+            Err(error @ (DispatchError::NotInContext { .. } | DispatchError::Failed { .. })) => {
+                Err(CatalogError::BadArgs(error.to_string()))
+            }
+        }
+    }
+}
+
+impl<C: CommandCatalog + ?Sized> CommandCatalog for &C {
+    fn check(&self, command: &CommandId, args: &Value) -> Result<(), CatalogError> {
+        (**self).check(command, args)
+    }
+}
+
+impl<C: CommandCatalog + ?Sized> CommandCatalog for Box<C> {
+    fn check(&self, command: &CommandId, args: &Value) -> Result<(), CatalogError> {
+        (**self).check(command, args)
+    }
+}
+
+impl<C: CommandCatalog + ?Sized> CommandCatalog for Rc<C> {
+    fn check(&self, command: &CommandId, args: &Value) -> Result<(), CatalogError> {
+        (**self).check(command, args)
+    }
+}
+
+impl<C: CommandCatalog + ?Sized> CommandCatalog for Arc<C> {
+    fn check(&self, command: &CommandId, args: &Value) -> Result<(), CatalogError> {
+        (**self).check(command, args)
+    }
+}
+
+impl KeymapLayer {
+    /// Parses a keymap file's `source`, read from `path`. Returns the layer
+    /// if it has no errors, and the diagnostics either way.
+    ///
+    /// Errors, each at the offending token: a syntax error, an entry that
+    /// isn't a table or misses `keys` or `command`, a value of the wrong
+    /// type, a bad keystroke, a bad context predicate, a malformed command
+    /// ID, and, with a `catalog`, args it rejects. A command the catalog
+    /// doesn't know is a warning, and only that entry is dropped: it may come
+    /// from an extension that isn't loaded yet. Unknown keys are warnings.
+    pub fn parse(
+        path: &Path,
+        source: &str,
+        catalog: Option<&dyn CommandCatalog>,
+    ) -> (Option<Self>, Vec<Diagnostic>) {
+        let mut layer = Layer::default();
+        layer.path = path.to_owned();
+        layer.source = source.to_owned();
+        let mut parser = EntryParser {
+            layer,
+            catalog,
+            diagnostics: Vec::new(),
+        };
+        let entries = parser.parse();
+        let EntryParser {
+            layer, diagnostics, ..
+        } = parser;
+        let ok = !diagnostics.iter().any(Diagnostic::is_error);
+        let parsed = ok.then_some(KeymapLayer {
+            path: layer.path,
+            entries,
+        });
+        (parsed, diagnostics)
+    }
+}
+
+struct EntryParser<'a> {
+    /// The file's path and source, for diagnostics.
+    layer: Layer,
+    catalog: Option<&'a dyn CommandCatalog>,
+    diagnostics: Vec<Diagnostic>,
+}
+
+/// One `[[bindings]]` entry's fields and their spans.
+struct Fields<'a, 'i> {
+    table: &'a DeTable<'i>,
+    values: &'a toml::Table,
+    span: Range<usize>,
+}
+
+impl EntryParser<'_> {
+    fn parse(&mut self) -> Vec<Entry> {
+        let source = self.layer.source.clone();
+        let document = match DeTable::parse(&source) {
+            Ok(document) => document,
+            Err(error) => {
+                let offset = error.span().map_or(0, |span| span.start);
+                self.error(None, offset, error.message().trim_end().to_owned());
+                return Vec::new();
+            }
+        };
+        let values: toml::Table = match source.parse() {
+            Ok(values) => values,
+            // Such as an integer too big for an i64.
+            Err(error) => {
+                let offset = error.span().map_or(0, |span| span.start);
+                self.error(None, offset, error.message().trim_end().to_owned());
+                return Vec::new();
+            }
+        };
+        let document = document.get_ref();
+        self.unknown_keys(document, &["bindings"], "");
+        let Some(bindings) = document.get("bindings") else {
+            return Vec::new();
+        };
+        let (DeValue::Array(items), Some(toml::Value::Array(item_values))) =
+            (bindings.get_ref(), values.get("bindings"))
+        else {
+            let message = format!(
+                "expected an array of tables, found {}",
+                bindings.get_ref().type_str()
+            );
+            self.error(Some("bindings"), bindings.span().start, message);
+            return Vec::new();
+        };
+        let mut entries = Vec::new();
+        for (ix, (item, item_values)) in items.iter().zip(item_values).enumerate() {
+            let key = format!("bindings[{ix}]");
+            match (item.get_ref(), item_values) {
+                (DeValue::Table(table), toml::Value::Table(values)) => {
+                    let fields = Fields {
+                        table,
+                        values,
+                        span: item.span(),
+                    };
+                    entries.extend(self.entry(&key, &fields));
+                }
+                _ => {
+                    let message = format!("expected a table, found {}", item.get_ref().type_str());
+                    self.error(Some(&key), item.span().start, message);
+                }
+            }
+        }
+        entries
+    }
+
+    /// The entry, or `None` if it has errors or is dropped.
+    fn entry(&mut self, key: &str, fields: &Fields<'_, '_>) -> Option<Entry> {
+        self.unknown_keys(fields.table, &["keys", "command", "context", "args"], key);
+        let errors = self.error_count();
+        let keys = self
+            .string(key, fields, "keys", true)
+            .and_then(|(text, span)| {
+                KeySequence::parse(&text)
+                    .map_err(|error| {
+                        let offset = self.inner_offset(&span, &text, error.offset);
+                        self.error(Some(&format!("{key}.keys")), offset, error.message);
+                    })
+                    .ok()
+            });
+        let command = self
+            .string(key, fields, "command", true)
+            .and_then(|(text, span)| {
+                if text.is_empty() {
+                    return Some(None);
+                }
+                CommandId::parse(&text)
+                    .map_err(|error| {
+                        let message = format!("{}: {}", error.reason, error.id);
+                        self.error(Some(&format!("{key}.command")), span.start, message);
+                    })
+                    .ok()
+                    .map(Some)
+            });
+        let context = match self.string(key, fields, "context", false) {
+            None => None,
+            Some((text, span)) => match ContextPredicate::parse(&text) {
+                Ok(predicate) => Some(predicate),
+                Err(error) => {
+                    let offset = self.inner_offset(&span, &text, error.offset);
+                    self.error(Some(&format!("{key}.context")), offset, error.to_string());
+                    None
+                }
+            },
+        };
+        let args = match (fields.table.get("args"), fields.values.get("args")) {
+            (Some(spanned), Some(value)) => match value {
+                toml::Value::Table(_) => match serde_json::to_value(value) {
+                    Ok(args) => Some((args, spanned.span())),
+                    Err(error) => {
+                        self.error(
+                            Some(&format!("{key}.args")),
+                            spanned.span().start,
+                            error.to_string(),
+                        );
+                        None
+                    }
+                },
+                value => {
+                    let message = format!("expected a table, found {}", value.type_str());
+                    self.error(Some(&format!("{key}.args")), spanned.span().start, message);
+                    None
+                }
+            },
+            _ => None,
+        };
+        if self.error_count() > errors {
+            return None;
+        }
+        let (keys, command) = (keys?, command?);
+        let (args, args_span) = match args {
+            Some((args, span)) => (args, Some(span)),
+            None => (Value::Null, None),
+        };
+        if let (Some(command), Some(catalog)) = (&command, self.catalog) {
+            let command_span = fields.table.get("command").map(|value| value.span());
+            match catalog.check(command, &args) {
+                Ok(()) => {}
+                Err(CatalogError::UnknownCommand) => {
+                    let offset = command_span.map_or(fields.span.start, |span| span.start);
+                    let message = format!("unknown command {command}; the binding is ignored");
+                    self.push(
+                        Severity::Warning,
+                        Some(&format!("{key}.command")),
+                        offset,
+                        message,
+                    );
+                    return None;
+                }
+                Err(CatalogError::BadArgs(message)) => {
+                    let (field, span) = match args_span {
+                        Some(span) => ("args", Some(span)),
+                        None => ("command", command_span),
+                    };
+                    let offset = span.map_or(fields.span.start, |span| span.start);
+                    let message = format!("bad args for {command}: {message}");
+                    self.error(Some(&format!("{key}.{field}")), offset, message);
+                    return None;
+                }
+            }
+        }
+        Some(Entry {
+            keys,
+            context,
+            command,
+            args,
+            location: self.location(fields.span.start),
+        })
+    }
+
+    /// The string `name` of the entry and its span. Missing, it's an error
+    /// if `required`; of another type, it's an error.
+    fn string(
+        &mut self,
+        key: &str,
+        fields: &Fields<'_, '_>,
+        name: &str,
+        required: bool,
+    ) -> Option<(String, Range<usize>)> {
+        let Some(spanned) = fields.table.get(name) else {
+            if required {
+                self.error(Some(key), fields.span.start, format!("missing `{name}`"));
+            }
+            return None;
+        };
+        match fields.values.get(name) {
+            Some(toml::Value::String(text)) => Some((text.clone(), spanned.span())),
+            value => {
+                let found = value.map_or("nothing", toml::Value::type_str);
+                let message = format!("expected a string, found {found}");
+                self.error(
+                    Some(&format!("{key}.{name}")),
+                    spanned.span().start,
+                    message,
+                );
+                None
+            }
+        }
+    }
+
+    /// Warns about each key of `table` not in `known`, at the key.
+    fn unknown_keys(&mut self, table: &DeTable<'_>, known: &[&str], prefix: &str) {
+        let mut unknown: Vec<_> = table
+            .iter()
+            .filter(|(key, _)| !known.contains(&key.get_ref().as_ref()))
+            .map(|(key, _)| (key.span().start, key.get_ref().to_string()))
+            .collect();
+        unknown.sort();
+        for (offset, name) in unknown {
+            let key = match prefix {
+                "" => name,
+                prefix => format!("{prefix}.{name}"),
+            };
+            self.push(
+                Severity::Warning,
+                Some(&key),
+                offset,
+                "unknown key, ignored".into(),
+            );
+        }
+    }
+
+    /// The offset in the file of byte `offset` of the string `text`, whose
+    /// value is at `span`: inside the quotes if the string is written
+    /// without escapes, else the value's start.
+    fn inner_offset(&self, span: &Range<usize>, text: &str, offset: usize) -> usize {
+        let written = &self.layer.source[span.clone()];
+        let plain = ['"', '\''].iter().any(|&quote| {
+            written.len() == text.len() + 2
+                && written.starts_with(quote)
+                && written.ends_with(quote)
+                && &written[1..written.len() - 1] == text
+        });
+        if plain {
+            span.start + 1 + offset
+        } else {
+            span.start
+        }
+    }
+
+    fn location(&self, offset: usize) -> Location {
+        let at = self
+            .layer
+            .diagnostic_at(Severity::Warning, None, offset, String::new());
+        Location {
+            file: at.file,
+            line: at.line,
+            column: at.column,
+        }
+    }
+
+    fn error_count(&self) -> usize {
+        self.diagnostics.iter().filter(|d| d.is_error()).count()
+    }
+
+    fn error(&mut self, key: Option<&str>, offset: usize, message: String) {
+        self.push(Severity::Error, key, offset, message);
+    }
+
+    fn push(&mut self, severity: Severity, key: Option<&str>, offset: usize, message: String) {
+        let diagnostic =
+            self.layer
+                .diagnostic_at(severity, key.map(str::to_owned), offset, message);
+        self.diagnostics.push(diagnostic);
+    }
+}

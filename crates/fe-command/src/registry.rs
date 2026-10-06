@@ -253,6 +253,23 @@ impl<T: CommandTarget> Registry<T> {
         Ok(&entry.meta)
     }
 
+    /// Checks that `command` exists and accepts `args`, whatever context it
+    /// applies in: for checking a keymap binding before it's ever pressed.
+    pub fn validate_args(
+        &self,
+        command: &CommandId,
+        args: &Value,
+    ) -> Result<&CommandMeta, DispatchError> {
+        let entry = self
+            .entry(command)
+            .ok_or_else(|| DispatchError::UnknownCommand(command.clone()))?;
+        (entry.check_args)(args).map_err(|message| DispatchError::BadArgs {
+            command: command.clone(),
+            message,
+        })?;
+        Ok(&entry.meta)
+    }
+
     fn applicable(&self, invocation: &Invocation) -> Result<&Entry<T>, DispatchError> {
         let command = &invocation.command;
         let entry = self

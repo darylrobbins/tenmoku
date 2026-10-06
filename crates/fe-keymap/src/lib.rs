@@ -1,0 +1,24 @@
+//! Keystrokes, chords and the keymap: parsing keystrokes such as
+//! `cmd-shift-left`, layering keymap files (built-in defaults, then the
+//! user's `keymap.toml`), matching keystrokes as they're pressed against the
+//! bindings whose context holds, and reporting bindings that hide or delay
+//! each other. Headless: the host feeds it keystrokes and context stacks and
+//! runs its chord timer. Must never depend on GPUI.
+
+mod keymap;
+mod keystroke;
+mod load;
+mod matcher;
+mod report;
+
+pub use keymap::{Binding, CatalogError, CommandCatalog, Entry, Keymap, KeymapLayer, Location};
+pub use keystroke::{Key, KeySequence, Keystroke, KeystrokeError, Modifiers};
+pub use load::{
+    DEFAULT_KEYMAP_PATH, KEYMAP_FILE, KeymapEvent, KeymapStore, load_keymap, load_keymap_layer,
+    user_keymap_path,
+};
+pub use matcher::{KeyOutcome, Matcher};
+pub use report::KeymapIssue;
+
+#[cfg(test)]
+mod tests;
