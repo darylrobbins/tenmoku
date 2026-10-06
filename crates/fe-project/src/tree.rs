@@ -359,10 +359,11 @@ impl FileTree {
     ///   or replaced by a symlink), the node is removed. But if since the run
     ///   started anything looked at the directory or its parent (`apply` saw
     ///   its path or updated either's children, or a listing of either was
-    ///   stored, as a rescan stores), the result is discarded instead: the
-    ///   directory may be back. The node stays, and `listing` still offers
-    ///   it; the watcher's event for the path removes it if it is really
-    ///   gone.
+    ///   stored, as a rescan stores), or a rescan (even one cut short) or a
+    ///   root cut off may have missed news of it, the result is discarded
+    ///   instead: the directory may be back. The node stays, and `listing`
+    ///   still offers it; the watcher's event for the path removes it if it
+    ///   is really gone.
     /// - If the listing couldn't get past a directory above it (missing,
     ///   another directory, or a symlink, perhaps only for a moment), what
     ///   the node has loaded stays as it was; a node with nothing loaded
@@ -428,11 +429,16 @@ impl FileTree {
 
     /// Whether after time `seq` anything looked at directory `id` or its
     /// parent: `apply` saw its path, applied or dropped a change in either,
-    /// or a listing of either that started then was stored.
+    /// or a listing of either that started then was stored. Or whether
+    /// something may have looked without saying so: a rescan, even one cut
+    /// short before reaching either, or a result that saw the root cut off,
+    /// while changes may have gone unreported.
     fn seen_since(&self, id: NodeId, seq: u64) -> bool {
         let seen = |node: &Node| node.listed_seq.max(node.applied_seq).max(node.dropped_seq) > seq;
         let node = self.node(id);
-        seen(node) || node.parent.is_some_and(|parent| seen(self.node(parent)))
+        self.rescan_seq.max(self.cut_seq) > seq
+            || seen(node)
+            || node.parent.is_some_and(|parent| seen(self.node(parent)))
     }
 
     /// Lists `id` if needed (blocking) and shows its children.

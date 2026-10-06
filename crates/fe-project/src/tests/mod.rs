@@ -12,6 +12,7 @@ mod finder_walk_safety;
 mod large;
 mod search;
 mod tree;
+mod tree_root_loss;
 mod watcher;
 
 /// A temporary directory and its canonical path (on macOS `/var` is a link to
