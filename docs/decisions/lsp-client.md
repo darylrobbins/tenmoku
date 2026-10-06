@@ -117,8 +117,19 @@ outside `deny.toml`'s allowlist.
   - The server's actor drains each document's subscription itself.
   - It keeps the last 32 sent versions' texts, to decode diagnostics and
     replies against the exact text they refer to.
-  - Diagnostic events carry session and incarnation ids, so stale ones are
-    rejected.
+  - Diagnostic events carry session and incarnation ids. Opens set the
+    document's active `(session, incarnation)`, guarded by a per-buffer open
+    generation so a stale open can't reactivate a closed buffer; closes and
+    session ends retire it.
+    - The UI applies a `Diagnostics` only if its identity is the active one
+      and hasn't been cleared, so stale ones are rejected even before
+      anything newer arrives.
+    - A `DiagnosticsCleared` is emitted after retirement, so it is never
+      checked against the active identity. It empties the set only if the
+      set carries that identity, and records the identity as cleared.
+  - Unversioned diagnostics are dropped unless a named, verified
+    server-specific guarantee fixes the text they were computed on,
+    including across a reopen. No server has one yet.
   - Saves are barriers that become `didSave`.
 - **Large files.** Never sync a file over 50 MB, or one opened as the
   read-only view for very large files.
@@ -438,6 +449,7 @@ pub struct ServerSpec {
     pub settings: serde_json::Value,  // answers workspace/configuration
     pub readiness: ReadinessMode,     // ServerStatus | Progress; §3.4
     pub ready_ignores_progress: Vec<String>, // token prefixes; §3.4
+    pub unversioned_diagnostics: UnversionedDiagnostics, // Drop; §4.1
 }
 
 /// A running server's transport. Client → server bytes go to `input`.
@@ -985,18 +997,28 @@ incarnation of the URI:
    belongs to an earlier incarnation (lower than the incarnation's first
    version), or it is newer than anything sent (impossible; logged). Drop it.
    The server republishes after the next change.
-4. **Unversioned** (the protocol allows omitting the version).
-   - Accepted **only while the incarnation has sent exactly one text**, its
-     `didOpen`, with no `didChange` yet. Then there is only one text it can
-     have been computed on.
-   - Dropped once any `didChange` has gone out. The server may have computed
-     it on any version sent so far, and the order of the two directions
-     doesn't say which.
+4. **Unversioned** (LSP 3.17 makes `version` optional, and the notification
+   carries no incarnation id either). **Dropped**, whatever the incarnation
+   has sent so far.
+   - Even "before the first `didChange`" doesn't fix the text. After a
+     close and reopen, a publication the server computed on the earlier
+     incarnation's text can arrive after the new `didOpen` and before its
+     first `didChange`. Nothing in it says which incarnation it belongs to,
+     and the order of the two directions doesn't either.
+   - The only exception is a **named, verified server-specific guarantee**
+     that fixes which text an unversioned publication was computed on,
+     including one computed before a close and delivered after the reopen.
+     It is recorded in the server's spec as
+     `unversioned_diagnostics: UnversionedDiagnostics`, which is `Drop` by
+     default; any other value names the guarantee and cites where it was
+     verified (the server's source and a card 7 or card 10 test). "The
+     server publishes in order" or "it publishes soon after an edit" is not
+     such a guarantee. No server has one today: whether any of the three
+     omits the version is unchecked (§10).
 
    The diagnostics already shown stay, anchored and moving with the edits,
-   until a versioned or unambiguous publication replaces them. Whether any of
-   the three servers omits the version is unchecked (§10). If one does, its
-   diagnostics stop updating after the first edit, a visible but safe
+   until a versioned publication replaces them. A server that never versions
+   its publications therefore shows no diagnostics, a visible but safe
    failure, and card 7 then decides on a server-specific remedy.
 5. **No current incarnation** (never opened, already closed, or a restart in
    progress). Ignore it. Workspace-wide diagnostics are out of M4 (§7).
@@ -1009,33 +1031,109 @@ incarnation of the URI:
 - `LspEvent::DiagnosticsCleared { buffer, session, incarnation, server }` is
   emitted at `didClose` and when a session ends.
 
-The UI keeps, per buffer and server, the `(session, incarnation)` it has
-accepted. It applies the two events like this:
+**The active identity.** Comparing an event only with identities the UI has
+already accepted isn't enough: after a restart or a reopen, an old event still
+queued in the channel arrives before any event of the new identity, and
+nothing newer has been accepted to compare it with. So the UI checks each
+`Diagnostics` against the **current active `(session, incarnation)`** for
+its (buffer, server), which lifecycle changes set, not diagnostic delivery.
+(`DiagnosticsCleared` is handled separately, below.)
 
-- It **rejects** any event whose `(session, incarnation)` is older than the one
-  it has accepted. Both ids only grow, so "older" is a comparison.
-- A `DiagnosticsCleared` empties that server's set for the buffer.
-- On applying a `Diagnostics`, it rebases each range with
-  `BufferSnapshot::map_offset(offset, bias, version)` (`snapshot.rs:166`), then
-  stores them as anchors in the `DiagnosticSet` (§7). A version below the
-  buffer's edit-log floor is dropped.
+`LspManager` keeps that table behind a mutex shared with the server actors,
+and the UI reads it with `LspManager::active_identity(buffer, server) ->
+Option<(SessionId, IncarnationId)>`. Under the same lock it keeps, per
+buffer, an **open generation**: a `u64` that `LspManager::open(buffer)` and
+`LspManager::close(buffer)` each bump on the calling (UI) thread, and that
+an open buffer carries. Every open the actor performs, the first one and
+the re-opens after a restart, carries the generation it was issued under.
+Only lifecycle changes write the table:
+
+- **Open.** Under the lock, the actor first checks that the buffer is still
+  open **and** that its generation is still the one the open carries. If
+  so, it inserts the new `(session, incarnation)`, and only then sends that
+  incarnation's `didOpen`. If not, a `close` (or a close and reopen) got
+  there first: the open is stale, so it inserts nothing, sends no
+  `didOpen`, and forgets it. So no diagnostic of an identity can be decoded
+  before the identity is active, and an open still pending when the buffer
+  closes can't undo the close's retirement. Ids never being reused doesn't
+  cover that case; the generation check does.
+- **Close retires the identity.** `LspManager::close(buffer)` bumps the
+  generation and removes the buffer's entries in one critical section on
+  the calling (UI) thread, before the actor even sends `didClose`.
+- **An actor's own close retires only its own identity.** When the actor
+  closes a document itself (a file that outgrew the size limit), it doesn't
+  bump the generation: only the manager's `open` and `close` do. Under the
+  lock, it removes the (buffer, server) entry only if the buffer's
+  generation is still the one that incarnation was opened under **and** the
+  entry is still that incarnation's `(session, incarnation)`. Otherwise the
+  UI has closed, or closed and reopened, the buffer since the actor drained
+  the oversized edit. That close already retired the identity, so the stale
+  close changes no shared state and can't invalidate the newer open, active
+  or still pending. Either way it finishes its own incarnation, and the
+  document isn't re-opened, on a restart either, until it is back under the
+  limit.
+- **Session end retires every identity of that session.** On a crash, a
+  shutdown, a give-up or a recycle, the actor removes the entries whose
+  session is its own, and no others, as soon as it sees the transport close
+  or decides to stop, before it emits anything else.
+
+Ids are never reused, so a retired identity never becomes active again.
+
+The UI applies the two events like this:
+
+- A **`Diagnostics`** is applied only if its `(session, incarnation)` **equals
+  the active identity** at delivery, and isn't one the UI has seen cleared.
+  Anything else is rejected: an old session's or incarnation's event, one
+  queued before a close, and one arriving after its `DiagnosticsCleared`.
+  On applying, it rebases each range with
+  `BufferSnapshot::map_offset(offset, bias, version)` (`snapshot.rs:166`),
+  then stores them as anchors in the `DiagnosticSet` (§7), recording the
+  identity they came from. A version below the buffer's edit-log floor is
+  dropped.
+- A **`DiagnosticsCleared`** is emitted after its identity was retired, so it
+  is never active. It empties that server's set for the buffer if the set
+  came from the same identity. The UI also records, per (buffer, server), the
+  last identity it has seen cleared, and rejects any later `Diagnostics` for
+  it. The table already rules that event out; this check doesn't depend on
+  the order in which the actor updates the table and emits events.
 
 So an event queued in the channel while the buffer was closed and reopened, or
-while the server restarted, can't paint stale diagnostics. Edits made between
-publication and delivery are rebased.
+while the server restarted, can't paint stale diagnostics, whether or not
+anything newer has been delivered yet. Edits made between publication and
+delivery are rebased.
 
 Fake-server tests (card 2/7):
 
 - a publication for a version two edits old lands on the right text
 - an edit between publication and delivery
 - out-of-order versioned publications
-- an unversioned publication before any edit is shown, and a delayed
-  unversioned publication after an edit is dropped
+- an unversioned publication from a server whose spec is `Drop` is dropped,
+  before and after the first edit
+- a delayed unversioned publication across reopen: the fake server computes
+  it on the old incarnation's text and sends it after the new `didOpen` and
+  before any `didChange`: dropped
 - close/reopen with a delayed publication carrying the old incarnation's
   version number: dropped, and versions don't collide
 - a restart with an old session's event still queued for the UI: rejected
-- a `Diagnostics` event queued for the UI, then the buffer closed and
-  reopened before the UI drains it: rejected
+- an old queued event before any new diagnostic: a `Diagnostics` for the old
+  identity is still queued when the buffer is closed and reopened (and, in a
+  second case, when the session restarts), and the UI drains it before any
+  event of the new identity has arrived: rejected
+- a `Diagnostics` delivered after `DiagnosticsCleared` for the same identity:
+  rejected, and the set stays empty
+- a stale activation: the actor's open (and, in a second case, a restart's
+  re-open) is paused before activation, the buffer is closed, and the open
+  resumes: no identity is inserted, no `didOpen` is sent, and a diagnostic
+  the fake server publishes for that URI is rejected
+- a stale activation across close and reopen: as above, but the buffer is
+  reopened before the paused open resumes. The stale open activates
+  nothing; only the new open's identity becomes active, and only its
+  diagnostics are applied
+- a stale size-limit close: the actor drains an edit that takes the
+  document over the limit and is paused before retiring it; the buffer is
+  closed and reopened, and the retirement resumes. The new open's
+  generation and entry are untouched, it still activates (or stays active),
+  and its diagnostics are applied
 
 **Ordering and batching.**
 
@@ -1497,7 +1595,7 @@ Whether fastedit ever installs or bundles servers for users is Q2. The
 
 | Feature | LSP methods and client capabilities | `fe-lsp` | `fe-editor` / `fe-display` | `fe-gpui` / `fe-workbench` |
 |---|---|---|---|---|
-| Diagnostics | push `textDocument/publishDiagnostics`; `publishDiagnostics { versionSupport, relatedInformation, tagSupport [Unnecessary, Deprecated], codeDescriptionSupport }` | Converts to `fe_lsp::Diagnostic { range: Range<usize>, severity, message, source, code, tags }` decoded in the ring's text for the published version (§4.1). Emits `LspEvent::Diagnostics { buffer, version, server, items }`, with ranges in that buffer version | **`DiagnosticSet` copied from gpui-kit** (`editor/diagnostics.rs:186`, as the plan's reuse map says), but holding `fe-buffer` anchors over byte ranges, not `lsp_types::Position` ranges, and keyed by server. On delivery, ranges are rebased from the event's version with `map_offset` and then anchored. Lives in `fe-editor` (GPUI-free) | Squiggles and gutter marks from the set; the message on hover. Plain text in M4 |
+| Diagnostics | push `textDocument/publishDiagnostics`; `publishDiagnostics { versionSupport, relatedInformation, tagSupport [Unnecessary, Deprecated], codeDescriptionSupport }` | Converts to `fe_lsp::Diagnostic { range: Range<usize>, severity, message, source, code, tags }` decoded in the ring's text for the published version (§4.1). Emits `LspEvent::Diagnostics { buffer, session, incarnation, version, server, items }`, with ranges in that buffer version, and `LspEvent::DiagnosticsCleared { buffer, session, incarnation, server }` at close and session end. Unversioned publications are dropped unless the spec names a verified guarantee (§4.1) | **`DiagnosticSet` copied from gpui-kit** (`editor/diagnostics.rs:186`, as the plan's reuse map says), but holding `fe-buffer` anchors over byte ranges, not `lsp_types::Position` ranges, and keyed by server. On delivery, a `Diagnostics` is applied only if its `(session, incarnation)` is the active one (`LspManager::active_identity`) and not already cleared; its ranges are then rebased from the event's version with `map_offset` and anchored. A `DiagnosticsCleared` (whose identity is already retired) empties the server's set only if the set carries that identity, and records the identity as cleared. Lives in `fe-editor` (GPUI-free) | Squiggles and gutter marks from the set; the message on hover. Plain text in M4 |
 | Definition | `textDocument/definition`; `definition.linkSupport = true` | `LspNavigation::definitions` (§5) | — | T107's F12 and picker, unchanged |
 | References | `textDocument/references` | `LspNavigation::references` (§5) | — | T112's panel, unchanged |
 | Workspace symbols | `workspace/symbol` (`symbol.symbolKind` the full set) | `LspNavigation::workspace_symbols` | — | T107's cmd-T, unchanged |
@@ -1535,7 +1633,7 @@ dependency beyond §2's.
 4. **Readiness, crash restart, timeouts and cancellation.** Both readiness modes and the empty-answer rule, the rolling restart window behind an injected clock, re-opening documents, `$/cancelRequest`, timeouts and the orphan budget, dynamic registration, and status and log events. Depends on 2 and 3.
 5. **Wire fe-lsp into the workbench (GPUI).** One `LspManager` per workbench, buffers opened with their subscriptions and nudged per frame, events over `async_channel`, a status item, and `lsp.restart` / `lsp.show_log`. Depends on 4 and T107.
 6. **LSP navigation provider.** Definition, references and workspace symbols at precedence 100 through T105's seam, plus §5's seam additions and the manual check "go-to-def before and after the LSP is ready". Depends on 5, T105, T106 and T107; T112 and T114 use it unchanged.
-7. **Diagnostics (GPUI for rendering).** gpui-kit's `DiagnosticSet` copied into `fe-editor` on anchored byte ranges (§4.3), rebasing versioned ranges on delivery (§4.1), and squiggles, gutter marks and hover messages in `fe-gpui`. Depends on 2 and 5.
+7. **Diagnostics (GPUI for rendering).** gpui-kit's `DiagnosticSet` copied into `fe-editor` on anchored byte ranges (§4.3), the active-identity check and rebasing of versioned ranges on delivery (§4.1), and squiggles, gutter marks and hover messages in `fe-gpui`. Depends on 2 and 5.
 8. **Hover popover (GPUI).** `textDocument/hover` and a popover that shares card 7's hover surface. Depends on 5.
 9. **Completion (GPUI for the menu).** Request, resolve, menu, and accept as one `Origin::User` transaction through `fe_buffer::Buffer::edit_from` (`crates/fe-buffer/src/buffer.rs:346`). Depends on 5.
 10. **Real-server tests and `lsp.yml`.** The `tools/lsp` lockfile and mise pin, `scripts/lsp-real.sh`, the `real_server_*` tests and emoji columns (§6), and M4's "precisely via rust-analyzer, pyright and tsserver" check. Depends on 6 and Q4/Q5; the workflow change needs the user's approval under Regatta's rules.
@@ -1671,9 +1769,11 @@ root.
   search's guesses, labelled "by search". Not measured for frequency.
 - **Which servers version their diagnostics.** The probe logged
   `publishDiagnostics` counts but not whether `version` was set. Unversioned
-  publications are accepted only before an incarnation's first edit (§4.1),
-  so a server that never versions them would stop refreshing diagnostics
-  after an edit. Card 7 checks all three servers.
+  publications are dropped unless the server's spec names a verified
+  guarantee that fixes their text, including across a reopen (§4.1), and no
+  server has one yet. So a server that never versions them would show no
+  diagnostics at all. Card 7 checks all three servers, and records a
+  guarantee in a spec only with the server's source and a test behind it.
 - **rust-analyzer from the 1.98.1 rustup component.** Not run. The probe used
   the 2026-10-05 standalone release. The component is older, so its encoding
   negotiation should be re-checked in card 10. The negotiation code has been
