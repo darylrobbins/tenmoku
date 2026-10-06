@@ -134,6 +134,46 @@ fn make_key(path: &str, real: Option<&[u8]>) -> Box<[u8]> {
     key.into()
 }
 
+/// `root` as [`fs::canonicalize`] resolves it, done once for
+/// [`FinderIndex::new`]. A root that is missing, wholly or in part, still gets
+/// an absolute path, which later walks reach without following symlinks: its
+/// longest existing ancestor resolved, then the rest of it as given, where a
+/// `..` goes up a level (and what that reaches is resolved again, if it
+/// exists). An empty path, as [`FinderIndex::from_paths`] uses, stays empty.
+fn resolve_root(root: &Path) -> PathBuf {
+    let Ok(absolute) = std::path::absolute(root) else {
+        return root.to_path_buf();
+    };
+    let mut missing = Vec::new();
+    let mut at = absolute.as_path();
+    let mut resolved = loop {
+        if let Ok(resolved) = fs::canonicalize(at) {
+            break resolved;
+        }
+        match (at.parent(), at.components().next_back()) {
+            (Some(parent), Some(last)) => {
+                missing.push(last);
+                at = parent;
+            }
+            // `/` itself wouldn't resolve.
+            _ => return absolute,
+        }
+    };
+    for component in missing.into_iter().rev() {
+        match component {
+            Component::ParentDir => {
+                resolved.pop();
+            }
+            Component::Normal(name) => resolved.push(name),
+            Component::RootDir | Component::CurDir | Component::Prefix(_) => {}
+        }
+        if let Ok(found) = fs::canonicalize(&resolved) {
+            resolved = found;
+        }
+    }
+    resolved
+}
+
 /// The key of relative path `rel`.
 fn key_of(rel: &Path) -> Box<[u8]> {
     match rel.as_os_str().to_string_lossy() {
@@ -223,7 +263,8 @@ struct Candidate {
 /// [`FinderIndex::finish`] marks the index complete. Batches from a
 /// [`crate::ProjectWatcher`] keep it current through [`FinderIndex::apply`].
 pub struct FinderIndex {
-    /// Canonical, as file watchers report paths.
+    /// Canonical, as file watchers report paths: resolved once, by
+    /// [`resolve_root`].
     root: PathBuf,
     /// The root as given to [`FinderIndex::new`], also accepted by `apply`.
     given_root: PathBuf,
@@ -248,7 +289,7 @@ impl FinderIndex {
     /// [`FinderIndex::extend`] and [`FinderIndex::finish`].
     pub fn new(root: impl AsRef<Path>) -> FinderIndex {
         let given_root = root.as_ref().to_path_buf();
-        let root = fs::canonicalize(&given_root).unwrap_or_else(|_| given_root.clone());
+        let root = resolve_root(&given_root);
         let mut index = FinderIndex {
             root,
             given_root,
@@ -282,7 +323,8 @@ impl FinderIndex {
         index
     }
 
-    /// The canonical root directory.
+    /// The canonical root directory (as it will be, if it was missing when
+    /// the index was made).
     pub fn root_path(&self) -> &Path {
         &self.root
     }

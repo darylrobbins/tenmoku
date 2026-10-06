@@ -8,6 +8,7 @@ use tempfile::TempDir;
 use crate::{listing, *};
 
 mod finder;
+mod finder_followups;
 mod finder_walk_safety;
 mod large;
 mod search;
