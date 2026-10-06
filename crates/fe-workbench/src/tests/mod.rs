@@ -10,6 +10,7 @@ mod project_panel;
 mod quick_open;
 mod quick_open_races;
 mod search_panel;
+mod search_panel_cancel;
 mod search_panel_followups;
 mod splits;
 mod tabs;

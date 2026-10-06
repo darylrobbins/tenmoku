@@ -176,9 +176,12 @@ impl SearchPanel {
         let cancel = self.cancel.clone();
         let (sender, batches) = async_channel::unbounded();
         let search = cx.background_spawn(async move {
-            fe_project::search(&root, &query, &options, cancel, |mut batch| {
-                batch.iter_mut().for_each(decode_offsets);
-                sender.send_blocking((generation, batch)).ok();
+            let flag = cancel.clone();
+            let cancelled = move || flag.load(Ordering::Relaxed);
+            fe_project::search(&root, &query, &options, cancel, |batch| {
+                publish(batch, &cancelled, |batch| {
+                    sender.send_blocking((generation, batch)).ok();
+                });
             })
         });
         self.running = Some(cx.spawn(async move |panel, cx| {
@@ -421,6 +424,48 @@ fn line_label(line: &LineMatch, ui: &UiTheme) -> HighlightedLabel {
     HighlightedLabel::new(preview.clone(), highlights, ui)
 }
 
+/// How many bytes of a line are read, or decoded, between checks of a run's
+/// cancel flag.
+pub(crate) const CHECK_BYTES: usize = 64 * 1024;
+
+/// A run's cancel flag was found set.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Cancelled;
+
+fn check(cancelled: &dyn Fn() -> bool) -> Result<(), Cancelled> {
+    if cancelled() { Err(Cancelled) } else { Ok(()) }
+}
+
+/// Decodes `batch`'s offsets, then passes it to `send`, unless `cancelled`
+/// is true at a check while decoding or just before sending: an obsolete
+/// batch is neither decoded further nor published. One whose flag is set
+/// after that last check is still dropped by [`SearchPanel::append`], as
+/// another generation's.
+pub(crate) fn publish(
+    mut batch: Vec<FileMatches>,
+    cancelled: &dyn Fn() -> bool,
+    send: impl FnOnce(Vec<FileMatches>),
+) {
+    if decode_batch(&mut batch, cancelled).is_ok() && check(cancelled).is_ok() {
+        send(batch);
+    }
+}
+
+/// Runs [`decode_offsets`] on each of `batch`'s files, checking `cancelled`
+/// before each file, and stops at the first check that's true. A line is
+/// rewritten whole or not at all, so the files and lines after the one it
+/// stopped in keep their offsets from the search.
+pub(crate) fn decode_batch(
+    batch: &mut [FileMatches],
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(), Cancelled> {
+    for file in batch {
+        check(cancelled)?;
+        decode_offsets(file, cancelled)?;
+    }
+    Ok(())
+}
+
 /// Rewrites the ranges and preview starts of `file`'s lines from byte
 /// offsets in the lines on disk to offsets in their lossy decoding, which
 /// the previews and the editor's text are made of: there, each invalid
@@ -435,33 +480,38 @@ fn line_label(line: &LineMatch, ui: &UiTheme) -> HighlightedLabel {
 /// offsets are in the UTF-8 it was searched as.
 ///
 /// That's one more read of each such line, up to its last match, from a file
-/// just searched, on the search's thread.
-fn decode_offsets(file: &mut FileMatches) {
+/// just searched, on the search's thread. `cancelled` is checked before each
+/// line and every [`CHECK_BYTES`] bytes read or decoded in one, so a rerun
+/// or a dropped panel stops it within that much work.
+fn decode_offsets(file: &mut FileMatches, cancelled: &dyn Fn() -> bool) -> Result<(), Cancelled> {
     let mut lines = file
         .lines
         .iter_mut()
         .filter(|line| may_shift(line))
         .peekable();
     if lines.peek().is_none() {
-        return;
+        return Ok(());
     }
     let Ok(source) = open_regular(&file.path) else {
-        return;
+        return Ok(());
     };
     let mut bom = [0; 2];
     if matches!(source.read_at(&mut bom, 0), Ok(2)) && matches!(bom, [0xFF, 0xFE] | [0xFE, 0xFF]) {
-        return;
+        return Ok(());
     }
     for line in lines {
+        check(cancelled)?;
         let end = line.ranges.iter().map(|range| range.end).max().unwrap_or(0);
         let preview_end = line.preview_start + line.preview.len();
         // A decoded unit is never smaller than its bytes, so the preview's
         // bytes end by `preview_end`; and 3 more bytes settle the unit at
         // the end, as no unit is longer than 4.
-        if let Ok(bytes) = read_line(&source, line.line_offset, end.max(preview_end) + 3) {
-            decode_line(&bytes, line);
+        let len = end.max(preview_end) + 3;
+        if let Ok(bytes) = read_line(&source, line.line_offset, len, cancelled)? {
+            decode_line(&bytes, line, cancelled)?;
         }
     }
+    Ok(())
 }
 
 /// Whether `line`'s offsets could be other than its decoding's.
@@ -497,37 +547,57 @@ fn open_regular(_: &Path) -> io::Result<File> {
 }
 
 /// Up to `len` bytes of the line at `offset` in `source`, short of its
-/// `\n`.
-fn read_line(source: &File, offset: u64, len: usize) -> io::Result<Vec<u8>> {
-    let mut bytes = vec![0; len];
-    let mut read = 0;
-    while read < len {
-        match source.read_at(&mut bytes[read..], offset + read as u64) {
-            Ok(0) => break,
-            Ok(n) => read += n,
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-            Err(error) => return Err(error),
+/// `\n`, read [`CHECK_BYTES`] at a time with `cancelled` checked before
+/// each.
+fn read_line(
+    source: &File,
+    offset: u64,
+    len: usize,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<io::Result<Vec<u8>>, Cancelled> {
+    let mut bytes = Vec::new();
+    while bytes.len() < len {
+        check(cancelled)?;
+        let start = bytes.len();
+        let end = len.min(start + CHECK_BYTES);
+        bytes.resize(end, 0);
+        let mut read = start;
+        while read < end {
+            match source.read_at(&mut bytes[read..end], offset + read as u64) {
+                Ok(0) => break,
+                Ok(n) => read += n,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                Err(error) => return Ok(Err(error)),
+            }
+        }
+        bytes.truncate(read);
+        if let Some(newline) = bytes[start..].iter().position(|&byte| byte == b'\n') {
+            bytes.truncate(start + newline);
+            break;
+        }
+        if read < end {
+            break;
         }
     }
-    bytes.truncate(read);
-    if let Some(newline) = bytes.iter().position(|&byte| byte == b'\n') {
-        bytes.truncate(newline);
-    }
-    Ok(bytes)
+    Ok(Ok(bytes))
 }
 
 /// Moves `line`'s offsets from `bytes`, the start of the line, to their
 /// lossy decoding, if `bytes` from the preview's start decode to its
 /// preview and hold its matches.
-fn decode_line(bytes: &[u8], line: &mut LineMatch) {
+fn decode_line(
+    bytes: &[u8],
+    line: &mut LineMatch,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(), Cancelled> {
     let end = line.ranges.iter().map(|range| range.end).max().unwrap_or(0);
     let start = line.preview_start;
     if bytes.len() < end || bytes.len() < start {
-        return;
+        return Ok(());
     }
     let window = &bytes[start..bytes.len().min(start + line.preview.len() + 3)];
     if !String::from_utf8_lossy(window).starts_with(&line.preview) {
-        return;
+        return Ok(());
     }
     // Each offset, and whether it rounds up: the preview's start both ways,
     // as it must be where a unit starts, then each range's ends.
@@ -537,54 +607,81 @@ fn decode_line(bytes: &[u8], line: &mut LineMatch) {
             .iter()
             .flat_map(|range| [(range.start, false), (range.end, true)]),
     );
-    let decoded = decode(bytes, &offsets);
+    let decoded = decode_checked(bytes, &offsets, cancelled)?;
     if decoded[0] != decoded[1] {
-        return;
+        return Ok(());
     }
     line.preview_start = decoded[0];
     let (ends, _) = decoded[2..].as_chunks::<2>();
     for (range, &[start, end]) in line.ranges.iter_mut().zip(ends) {
         *range = start..end;
     }
+    Ok(())
 }
 
 /// `offsets`, byte offsets in `bytes` and whether each rounds up, as offsets
 /// in `bytes`' lossy decoding: one inside a char or an invalid sequence goes
 /// to the start of its decoding, or its end if it rounds up.
+#[cfg(test)]
 pub(crate) fn decode(bytes: &[u8], offsets: &[(usize, bool)]) -> Vec<usize> {
-    // Each unit's length in `bytes`, then decoded: a char, or an invalid
-    // sequence that decodes to U+FFFD.
-    let mut units = bytes
-        .utf8_chunks()
-        .flat_map(|chunk| {
+    decode_checked(bytes, offsets, &|| false).expect("never cancelled")
+}
+
+/// [`decode`], a window of [`CHECK_BYTES`] at a time with `cancelled`
+/// checked before each, stopping once every offset is placed.
+fn decode_checked(
+    bytes: &[u8],
+    offsets: &[(usize, bool)],
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Vec<usize>, Cancelled> {
+    let mut order: Vec<usize> = (0..offsets.len()).collect();
+    order.sort_by_key(|&ix| offsets[ix].0);
+    let mut order = order.into_iter().peekable();
+    let mut decoded = vec![0; offsets.len()];
+    // Where the next unit starts, in `bytes` and decoded.
+    let (mut at, mut out) = (0, 0);
+    while at < bytes.len() && order.peek().is_some() {
+        check(cancelled)?;
+        let window_end = bytes.len().min(at + CHECK_BYTES);
+        // A unit is settled by at most 4 bytes from its start, so where the
+        // window cuts the line, the units starting in its last 3 bytes are
+        // left to the next window, which starts with them.
+        let settled = if window_end == bytes.len() {
+            window_end
+        } else {
+            window_end - 3
+        };
+        // Each unit's length in `bytes`, then decoded: a char, or an
+        // invalid sequence that decodes to U+FFFD.
+        let units = bytes[at..window_end].utf8_chunks().flat_map(|chunk| {
             let chars = chunk.valid().chars().map(|c| (c.len_utf8(), c.len_utf8()));
             let invalid = chunk.invalid().len();
             let replaced =
                 (invalid > 0).then_some((invalid, char::REPLACEMENT_CHARACTER.len_utf8()));
             chars.chain(replaced)
-        })
-        .peekable();
-    let mut order: Vec<usize> = (0..offsets.len()).collect();
-    order.sort_by_key(|&ix| offsets[ix].0);
-    let mut decoded = vec![0; offsets.len()];
-    // Where the next unit starts, in `bytes` and decoded.
-    let (mut at, mut out) = (0, 0);
-    for ix in order {
-        let (offset, up) = offsets[ix];
-        while let Some(&(len, size)) = units.peek() {
-            if at + len > offset {
+        });
+        for (len, size) in units {
+            if at >= settled {
                 break;
+            }
+            // The offsets before this unit's end are in it, or at its start.
+            while let Some(&ix) = order.peek() {
+                let (offset, up) = offsets[ix];
+                if at + len <= offset {
+                    break;
+                }
+                decoded[ix] = if up && at < offset { out + size } else { out };
+                order.next();
             }
             at += len;
             out += size;
-            units.next();
         }
-        decoded[ix] = match units.peek() {
-            Some(&(_, size)) if up && at < offset => out + size,
-            _ => out,
-        };
     }
-    decoded
+    // The rest are at or past the end.
+    for ix in order {
+        decoded[ix] = out;
+    }
+    Ok(decoded)
 }
 
 impl Drop for SearchPanel {
