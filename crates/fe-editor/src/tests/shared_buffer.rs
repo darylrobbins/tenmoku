@@ -492,8 +492,83 @@ fn batched_catch_up_folds_as_catching_up_after_each_edit_does() {
     }]));
 }
 
+/// Catches `b` up by syncing, or by dropping a borrow of the buffer.
+fn catch_up(b: &mut EditorModel, through_buffer: bool) {
+    if through_buffer {
+        drop(b.buffer_mut());
+    } else {
+        b.sync_display();
+    }
+}
+
 #[test]
-fn unrecorded_batches_unfold_only_the_folds_they_touch() {
+fn grouped_undo_and_redo_keep_folds_they_leave_be() {
+    for through_buffer in [false, true] {
+        let mut a = parse("top\ndef a():\n    one\n    two\nend");
+        let mut b = a.split();
+        b.fold_rows(1..=3);
+        {
+            let mut buffer = a.buffer_mut();
+            buffer.start_transaction(Origin::User);
+            buffer.edit([(6..6, "X")], Origin::User);
+            buffer.edit([(7..7, "Y")], Origin::User);
+            buffer.end_transaction();
+        }
+        catch_up(&mut b, through_buffer);
+        let fold = [fe_display::Fold { start: 1, end: 3 }];
+        assert_eq!(
+            b.display().folds(),
+            fold,
+            "through_buffer: {through_buffer}"
+        );
+        // Each makes two batches, recorded together.
+        a.undo().unwrap();
+        catch_up(&mut b, through_buffer);
+        assert_eq!(b.text().to_string(), "top\ndef a():\n    one\n    two\nend");
+        assert_eq!(
+            b.display().folds(),
+            fold,
+            "through_buffer: {through_buffer}"
+        );
+        a.redo().unwrap();
+        catch_up(&mut b, through_buffer);
+        assert_eq!(
+            b.text().to_string(),
+            "top\ndeXYf a():\n    one\n    two\nend"
+        );
+        assert_eq!(
+            b.display().folds(),
+            fold,
+            "through_buffer: {through_buffer}"
+        );
+    }
+}
+
+#[test]
+fn edits_through_one_borrow_keep_folds_they_leave_be() {
+    for through_buffer in [false, true] {
+        let mut a = parse("top\ndef a():\n    one\n    two\nend");
+        let mut b = a.split();
+        b.fold_rows(1..=3);
+        {
+            let mut guard = a.buffer_mut();
+            let buffer: &mut Buffer = &mut guard;
+            buffer.edit([(6..6, "X")], Origin::User);
+            buffer.edit([(7..7, "Y")], Origin::User);
+            buffer.edit([(0..4, "")], Origin::User);
+        }
+        catch_up(&mut b, through_buffer);
+        assert_eq!(b.text().to_string(), "deXYf a():\n    one\n    two\nend");
+        assert_eq!(
+            b.display().folds(),
+            [fe_display::Fold { start: 0, end: 2 }],
+            "through_buffer: {through_buffer}"
+        );
+    }
+}
+
+#[test]
+fn edits_through_one_borrow_unfold_only_the_folds_they_touch() {
     let mut a = parse("one\n    a\ntwo\n    b\nend");
     let mut b = a.split();
     b.fold_rows(0..=1);
