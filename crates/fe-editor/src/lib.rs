@@ -109,7 +109,7 @@ impl EditorModel {
         let snapshot = buffer.snapshot();
         let selections = SelectionSet::caret(&snapshot, 0);
         let display = DisplayMap::new(&snapshot, 4);
-        let mut history = History::new(&snapshot);
+        let mut history = History::new(buffer.subscribe(), &snapshot);
         let caught_up = history.join(snapshot.version());
         Self {
             buffer: Rc::new(RefCell::new(buffer)),
@@ -147,7 +147,7 @@ impl EditorModel {
         };
         let caught_up = {
             let mut history = self.history.borrow_mut();
-            history.record(&snapshot);
+            history.record();
             history.join(snapshot.version())
         };
         let mut model = Self {
@@ -232,10 +232,7 @@ impl EditorModel {
 
     /// The shared buffer, to edit directly. Dropping the guard catches this
     /// model up; don't hold it across calls into another model of the
-    /// buffer. Make each edit through the guard rather than one `&mut
-    /// Buffer` taken from it: text one edit with no deref after it inserts
-    /// and a later one deletes is never seen, so a fold whose fate depends
-    /// on it is unfolded on catching up.
+    /// buffer.
     pub fn buffer_mut(&mut self) -> BufferMut<'_> {
         BufferMut {
             buffer: Some(self.buffer.borrow_mut()),
@@ -1082,11 +1079,7 @@ impl std::ops::Deref for BufferMut<'_> {
 
 impl std::ops::DerefMut for BufferMut<'_> {
     fn deref_mut(&mut self) -> &mut Buffer {
-        let buffer = self.buffer.as_mut().expect("borrowed until dropped");
-        // Before each edit through the guard, so the text the one before it
-        // left is known.
-        self.history.borrow_mut().record(buffer.current());
-        buffer
+        self.buffer.as_mut().expect("borrowed until dropped")
     }
 }
 
@@ -1107,7 +1100,8 @@ impl Drop for BufferMut<'_> {
 }
 
 /// Brings `snapshot` and the `display` rows synced to it up to date with
-/// `buffer`, recording its edits in `history` first, and marks the model
+/// `buffer`, recording the batches applied since in `history` first, and
+/// marks the model
 /// `caught_up` to it. Measuring chars may edit the buffer through another
 /// model, so this goes on until the buffer stays put while the rows are
 /// synced.
@@ -1127,7 +1121,7 @@ fn catch_up(
     loop {
         let current = {
             let buffer = buffer.borrow();
-            history.borrow_mut().record(buffer.current());
+            history.borrow_mut().record();
             if buffer.version() == snapshot.version() {
                 break;
             }
@@ -1148,14 +1142,14 @@ fn catch_up(
 }
 
 /// The shared buffer's edit batches that a model of it may not have caught
-/// up with, each with its edits' [`Shape`]s. Only the latest text is kept,
-/// so batches are recorded while the texts on either side are at hand: when
-/// a model catches up, and before each edit through a [`BufferMut`]. The
-/// texts between batches recorded together, like the several one undo can
-/// make, are pieced together from those on either side.
+/// up with, each with its edits' [`Shape`]s. The buffer sends each batch
+/// with the text right after it, so a batch's shapes come from the real
+/// texts on either side, however many batches are recorded together.
 struct History {
-    /// The buffer as of the last record.
-    last: BufferSnapshot,
+    /// The buffer's events, recorded when a model catches up or splits.
+    events: Subscription,
+    /// The text after the last batch recorded.
+    last: Text,
     /// Oldest first, from the oldest version a model is caught up to.
     batches: VecDeque<Recorded>,
     /// The version each model is caught up to; dropped models' go dead.
@@ -1163,17 +1157,19 @@ struct History {
 }
 
 struct Recorded {
-    /// The version the record it was in took the buffer to. Models catch
-    /// up only to those.
+    /// The version the batch took the buffer to.
     version: Version,
     edits: Arc<[fe_buffer::Edit]>,
     shapes: Box<[Shape]>,
 }
 
 impl History {
-    fn new(snapshot: &BufferSnapshot) -> Self {
+    /// History from `snapshot`, receiving the buffer's later batches
+    /// through `events`.
+    fn new(events: Subscription, snapshot: &BufferSnapshot) -> Self {
         History {
-            last: snapshot.clone(),
+            events,
+            last: snapshot.text().clone(),
             batches: VecDeque::new(),
             models: Vec::new(),
         }
@@ -1187,28 +1183,26 @@ impl History {
         caught_up
     }
 
-    /// Records the batches since the last record.
-    fn record(&mut self, now: &BufferSnapshot) {
-        let since = self.last.version();
-        if now.version() > since && since >= now.oldest_version() {
-            let batches: Vec<&Arc<[fe_buffer::Edit]>> = now.edits_since(since).collect();
-            let known = Known::new(self.last.text(), now.text(), &batches);
-            let mut pieces = known.first();
-            for (index, edits) in batches.into_iter().enumerate() {
-                let next = splice(&pieces, index, edits);
-                let (before, after) = (known.at(&pieces), known.at(&next));
-                self.batches.push_back(Recorded {
-                    version: now.version(),
-                    edits: Arc::clone(edits),
-                    shapes: edits
-                        .iter()
-                        .map(|edit| Shape::of(edit, &before, &after))
-                        .collect(),
-                });
-                pieces = next;
-            }
+    /// Records the batches applied since the last record.
+    fn record(&mut self) {
+        for event in self.events.drain() {
+            let BufferEvent::Edited {
+                to, edits, text, ..
+            } = event
+            else {
+                continue;
+            };
+            let shapes = edits
+                .iter()
+                .map(|edit| Shape::of(edit, &self.last, &text))
+                .collect();
+            self.batches.push_back(Recorded {
+                version: to,
+                edits,
+                shapes,
+            });
+            self.last = text;
         }
-        self.last = now.clone();
     }
 
     /// The batches recorded after `version`, oldest first.
@@ -1241,243 +1235,52 @@ impl History {
 }
 
 /// What deciding folds needs of one edit, from the texts before and after
-/// its batch. Each part is `None` where it depends on text a batch inserted
-/// and a later one deleted before they were recorded, which isn't known.
+/// its batch.
 #[derive(Copy, Clone, Debug)]
 struct Shape {
     /// The line breaks in the text it replaced, and in its new text.
-    old_breaks: Option<u32>,
-    new_breaks: Option<u32>,
+    old_breaks: u32,
+    new_breaks: u32,
     /// Whether the ends of its old range start rows in the text before,
     /// and those of its new range in the text after.
-    old_row_starts: [Option<bool>; 2],
-    new_row_starts: [Option<bool>; 2],
+    old_row_starts: [bool; 2],
+    new_row_starts: [bool; 2],
     /// Past the last line break in its new text, if there's one, from the
-    /// new text's start; and likewise leaving out its last byte. The outer
-    /// `None` is the unknown one.
-    last_row: Option<Option<usize>>,
-    last_row_before_end: Option<Option<usize>>,
+    /// new text's start; and likewise leaving out its last byte.
+    last_row: Option<usize>,
+    last_row_before_end: Option<usize>,
 }
 
 impl Shape {
-    fn of(edit: &fe_buffer::Edit, before: &Pieced, after: &Pieced) -> Self {
+    fn of(edit: &fe_buffer::Edit, before: &Text, after: &Text) -> Self {
         let new = &edit.new;
         let last_row = |end: usize| {
-            let row = after.last_row(new.start..end.max(new.start))?;
-            Some(row.map(|row| row - new.start))
+            let end = end.max(new.start);
+            let row_start = after.row_start(after.offset_to_point(end).row);
+            (row_start > new.start).then(|| row_start - new.start)
         };
         Shape {
-            old_breaks: before.line_breaks(edit.old.clone()),
-            new_breaks: after.line_breaks(new.clone()),
+            old_breaks: line_breaks(before, edit.old.clone()),
+            new_breaks: line_breaks(after, new.clone()),
             old_row_starts: [
-                before.is_row_start(edit.old.start),
-                before.is_row_start(edit.old.end),
+                is_row_start(before, edit.old.start),
+                is_row_start(before, edit.old.end),
             ],
-            new_row_starts: [after.is_row_start(new.start), after.is_row_start(new.end)],
+            new_row_starts: [is_row_start(after, new.start), is_row_start(after, new.end)],
             last_row: last_row(new.end),
             last_row_before_end: last_row(new.end.saturating_sub(1)),
         }
     }
 }
 
-/// Where a run of an intermediate text's bytes came from.
-#[derive(Copy, Clone, Debug)]
-enum Source {
-    /// The first text, from this offset.
-    Old(usize),
-    /// The text batch `batch` inserted, from this offset in the text it
-    /// left.
-    Inserted { batch: usize, at: usize },
+/// The line breaks in `text`'s `range`.
+fn line_breaks(text: &Text, range: Range<usize>) -> u32 {
+    text.offset_to_point(range.end).row - text.offset_to_point(range.start).row
 }
 
-impl Source {
-    fn skip(self, bytes: usize) -> Source {
-        match self {
-            Source::Old(offset) => Source::Old(offset + bytes),
-            Source::Inserted { batch, at } => Source::Inserted {
-                batch,
-                at: at + bytes,
-            },
-        }
-    }
-}
-
-/// A run of an intermediate text: `len` bytes from `start`.
-#[derive(Copy, Clone, Debug)]
-struct Piece {
-    start: usize,
-    len: usize,
-    source: Source,
-}
-
-/// `pieces`, a text that covers them in order, after edit batch `batch`.
-fn splice(pieces: &[Piece], batch: usize, edits: &[fe_buffer::Edit]) -> Vec<Piece> {
-    let mut out: Vec<Piece> = Vec::with_capacity(pieces.len() + 2 * edits.len());
-    let push = |out: &mut Vec<Piece>, len: usize, source: Source| {
-        if len > 0 {
-            let start = out.last().map_or(0, |piece| piece.start + piece.len);
-            out.push(Piece { start, len, source });
-        }
-    };
-    let copy = |out: &mut Vec<Piece>, range: Range<usize>| {
-        let first = pieces.partition_point(|piece| piece.start + piece.len <= range.start);
-        for piece in &pieces[first..] {
-            if piece.start >= range.end {
-                break;
-            }
-            let from = range.start.max(piece.start);
-            let to = range.end.min(piece.start + piece.len);
-            push(out, to - from, piece.source.skip(from - piece.start));
-        }
-    };
-    let mut copied = 0;
-    for edit in edits {
-        copy(&mut out, copied..edit.old.start);
-        push(
-            &mut out,
-            edit.new.len(),
-            Source::Inserted {
-                batch,
-                at: edit.new.start,
-            },
-        );
-        copied = edit.old.end;
-    }
-    let len = pieces.last().map_or(0, |piece| piece.start + piece.len);
-    copy(&mut out, copied..len);
-    out
-}
-
-/// What is known of the texts between edit batches: the first text, and
-/// the runs of inserted text that last into the final one.
-struct Known<'a> {
-    old: &'a Text,
-    new: &'a Text,
-    /// Per batch, the runs of its inserted text in the final text, by
-    /// offset in the text it left: (offset, length, final offset).
-    inserted: Vec<Vec<(usize, usize, usize)>>,
-}
-
-impl<'a> Known<'a> {
-    fn new(old: &'a Text, new: &'a Text, batches: &[&Arc<[fe_buffer::Edit]>]) -> Self {
-        let mut known = Known {
-            old,
-            new,
-            inserted: vec![Vec::new(); batches.len()],
-        };
-        let mut pieces = known.first();
-        for (index, batch) in batches.iter().enumerate() {
-            pieces = splice(&pieces, index, batch);
-        }
-        for piece in pieces {
-            if let Source::Inserted { batch, at } = piece.source {
-                known.inserted[batch].push((at, piece.len, piece.start));
-            }
-        }
-        for runs in &mut known.inserted {
-            runs.sort_unstable();
-        }
-        known
-    }
-
-    /// The first text, as pieces.
-    fn first(&self) -> Vec<Piece> {
-        vec![Piece {
-            start: 0,
-            len: self.old.len(),
-            source: Source::Old(0),
-        }]
-    }
-
-    fn at<'b>(&'b self, pieces: &'b [Piece]) -> Pieced<'b> {
-        Pieced {
-            known: self,
-            pieces,
-        }
-    }
-}
-
-/// An intermediate text, as `pieces`.
-struct Pieced<'a> {
-    known: &'a Known<'a>,
-    pieces: &'a [Piece],
-}
-
-impl Pieced<'_> {
-    /// Visits the runs covering `range` in order: each one's length, and
-    /// the text it's known from with its offset there, if known.
-    fn runs(&self, range: Range<usize>, mut visit: impl FnMut(usize, Option<(&Text, usize)>)) {
-        let first = self
-            .pieces
-            .partition_point(|piece| piece.start + piece.len <= range.start);
-        for piece in &self.pieces[first..] {
-            if piece.start >= range.end {
-                break;
-            }
-            let from = range.start.max(piece.start) - piece.start;
-            let to = range.end.min(piece.start + piece.len) - piece.start;
-            match piece.source.skip(from) {
-                Source::Old(offset) => visit(to - from, Some((self.known.old, offset))),
-                Source::Inserted { batch, at } => {
-                    let end = at + to - from;
-                    let mut reached = at;
-                    let inserted = &self.known.inserted[batch];
-                    let first = inserted.partition_point(|&(start, len, _)| start + len <= at);
-                    for &(start, len, offset) in &inserted[first..] {
-                        if start >= end {
-                            break;
-                        }
-                        if start > reached {
-                            visit(start - reached, None);
-                        }
-                        let (from, to) = (reached.max(start), end.min(start + len));
-                        visit(to - from, Some((self.known.new, offset + from - start)));
-                        reached = to;
-                    }
-                    if reached < end {
-                        visit(end - reached, None);
-                    }
-                }
-            }
-        }
-    }
-
-    /// The line breaks in `range`, if known.
-    fn line_breaks(&self, range: Range<usize>) -> Option<u32> {
-        let mut breaks = Some(0);
-        self.runs(range, |len, run| {
-            breaks = breaks.zip(run).map(|(breaks, (text, start))| {
-                breaks + text.offset_to_point(start + len).row - text.offset_to_point(start).row
-            });
-        });
-        breaks
-    }
-
-    /// Whether `offset` starts a row, if known.
-    fn is_row_start(&self, offset: usize) -> Option<bool> {
-        if offset == 0 {
-            return Some(true);
-        }
-        Some(self.line_breaks(offset - 1..offset)? == 1)
-    }
-
-    /// Past the last line break in `range`, if there's one, if known.
-    fn last_row(&self, range: Range<usize>) -> Option<Option<usize>> {
-        let mut at = range.start;
-        let mut last = Some(None);
-        self.runs(range, |len, run| {
-            if let Some((text, start)) = run {
-                let row_start = text.row_start(text.offset_to_point(start + len).row);
-                if row_start > start {
-                    last = Some(Some(at + row_start - start));
-                }
-            } else {
-                last = None;
-            }
-            at += len;
-        });
-        last
-    }
+/// Whether `offset` starts a row of `text`.
+fn is_row_start(text: &Text, offset: usize) -> bool {
+    offset == 0 || line_breaks(text, offset - 1..offset) == 1
 }
 
 /// Where `folds`, rows of `old`'s text, are in `new`'s: those syncing after
@@ -1485,9 +1288,9 @@ impl Pieced<'_> {
 /// decides for one batch, a fold goes when an edit touches a row it hides,
 /// or touches its header and adds or removes line breaks.
 ///
-/// That's decided from the batches' [`Shape`]s in `history`. A fold whose
-/// fate depends on what isn't known there, or on a batch that wasn't
-/// recorded, is unfolded.
+/// That's decided from the batches' [`Shape`]s in `history`, taken from the
+/// texts on either side of each batch as it was applied. A fold whose fate
+/// depends on a batch that wasn't recorded is unfolded.
 fn surviving_folds(
     old: &BufferSnapshot,
     new: &BufferSnapshot,
@@ -1577,9 +1380,8 @@ impl FoldSpan {
             if edit.old.start >= hidden || edit.old.end > hidden {
                 return false;
             }
-            let whole =
-                shape.old_row_starts == [Some(true); 2] && shape.new_row_starts == [Some(true); 2];
-            let same_rows = shape.old_breaks.is_some() && shape.old_breaks == shape.new_breaks;
+            let whole = shape.old_row_starts == [true; 2] && shape.new_row_starts == [true; 2];
+            let same_rows = shape.old_breaks == shape.new_breaks;
             let kept = if edit.old.end == hidden {
                 // Ending at the first hidden row's start, it touches that
                 // row unless it replaces whole rows, the header's included.
@@ -1603,12 +1405,9 @@ impl FoldSpan {
             let row = if edit.old.end == hidden {
                 // ...the one ending the header among them, when it replaced
                 // whole rows through the header's.
-                shape.last_row_before_end.map(|row| Some(row.unwrap_or(0)))
+                Some(shape.last_row_before_end.unwrap_or(0))
             } else {
                 shape.last_row
-            };
-            let Some(row) = row else {
-                return false;
             };
             if let Some(row) = row {
                 self.header = edit.new.start + row;
@@ -1620,7 +1419,7 @@ impl FoldSpan {
         let (edit, shape) = (&batch[first], &shapes[first]);
         if edit.old.start >= header {
             self.header = shift(header, first);
-        } else if shape.new_row_starts[0] == Some(true) {
+        } else if shape.new_row_starts[0] {
             self.header = edit.new.start;
         } else {
             return false;

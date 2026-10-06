@@ -380,6 +380,7 @@ fn events_describe_each_batch() {
             from,
             to,
             edits,
+            ..
         } => {
             assert_eq!(*transaction, id);
             assert_eq!(*origin, Origin::User);

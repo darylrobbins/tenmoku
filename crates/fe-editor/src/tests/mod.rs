@@ -1,5 +1,6 @@
 use super::*;
 
+mod batch_structure;
 mod commands;
 mod fold_candidates;
 mod laws;

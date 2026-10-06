@@ -52,6 +52,8 @@ pub enum BufferEvent {
         from: Version,
         to: Version,
         edits: Arc<[Edit]>,
+        /// The text right after this batch.
+        text: Text,
     },
     Saved {
         version: Version,
@@ -331,7 +333,8 @@ impl Buffer {
             .collect();
         let batch = apply(&mut self.snapshot, edits, None)?;
         let id = self.record(origin.clone(), batch.clone());
-        self.emit_batch(id, &origin, EditKind::Edit, &batch);
+        let text = self.snapshot.text.clone();
+        self.emit_batch(id, &origin, EditKind::Edit, &batch, text);
         Some(id)
     }
 
@@ -450,8 +453,10 @@ impl Buffer {
         };
         let mut state = self.snapshot.clone();
         let entry = &self.history[ix];
-        let batches =
-            revert(&mut state, &entry.batches).map_err(|()| UndoError::Conflict(entry.id))?;
+        let (batches, texts): (Vec<_>, Vec<_>) = revert(&mut state, &entry.batches)
+            .map_err(|()| UndoError::Conflict(entry.id))?
+            .into_iter()
+            .unzip();
         self.snapshot = state;
         self.undo_clock += 1;
         let entry = &mut self.history[ix];
@@ -463,8 +468,8 @@ impl Buffer {
         let (id, origin) = (entry.id, entry.origin.clone());
         *self.history_bytes.entry(origin.clone()).or_default() += added;
         *self.redoable.entry(origin.clone()).or_default() += 1;
-        for batch in &batches {
-            self.emit_batch(id, &origin, EditKind::Undo, batch);
+        for (batch, text) in batches.iter().zip(texts) {
+            self.emit_batch(id, &origin, EditKind::Undo, batch, text);
         }
         Ok(Some(id))
     }
@@ -490,8 +495,10 @@ impl Buffer {
         let mut state = self.snapshot.clone();
         let entry = &self.history[ix];
         let undone = entry.undone.as_ref().expect("filtered on undone");
-        let batches =
-            revert(&mut state, &undone.batches).map_err(|()| UndoError::Conflict(entry.id))?;
+        let (batches, texts): (Vec<_>, Vec<_>) = revert(&mut state, &undone.batches)
+            .map_err(|()| UndoError::Conflict(entry.id))?
+            .into_iter()
+            .unzip();
         self.snapshot = state;
         let entry = &mut self.history[ix];
         let removed = entry_bytes(entry);
@@ -504,8 +511,8 @@ impl Buffer {
         if let Some(count) = self.redoable.get_mut(&origin) {
             *count -= 1;
         }
-        for batch in &batches {
-            self.emit_batch(id, &origin, EditKind::Redo, batch);
+        for (batch, text) in batches.iter().zip(texts) {
+            self.emit_batch(id, &origin, EditKind::Redo, batch, text);
         }
         Ok(Some(id))
     }
@@ -614,6 +621,7 @@ impl Buffer {
         origin: &Origin,
         kind: EditKind,
         batch: &AppliedBatch,
+        text: Text,
     ) {
         self.emit(BufferEvent::Edited {
             transaction,
@@ -622,6 +630,7 @@ impl Buffer {
             from: Version(batch.version.0 - 1),
             to: batch.version,
             edits: batch.edits.clone(),
+            text,
         });
     }
 
@@ -724,8 +733,11 @@ fn apply(
 /// Applies the inverse of `batches`, newest first, mapping each through the
 /// edits made since. Fails without a partial result if any text the batches
 /// wrote has since changed. Returns the inverse batches, which `revert` can
-/// take again to redo.
-fn revert(state: &mut BufferSnapshot, batches: &[AppliedBatch]) -> Result<Vec<AppliedBatch>, ()> {
+/// take again to redo, each with the text right after it.
+fn revert(
+    state: &mut BufferSnapshot,
+    batches: &[AppliedBatch],
+) -> Result<Vec<(AppliedBatch, Text)>, ()> {
     let mut produced = Vec::with_capacity(batches.len());
     for batch in batches.iter().rev() {
         let mut inverse = Vec::with_capacity(batch.edits.len());
@@ -762,7 +774,7 @@ fn revert(state: &mut BufferSnapshot, batches: &[AppliedBatch]) -> Result<Vec<Ap
             collapsed_by.sort_unstable();
             collapsed_by.dedup();
             applied.collapsed_by = collapsed_by.into();
-            produced.push(applied);
+            produced.push((applied, state.text.clone()));
         }
     }
     Ok(produced)
