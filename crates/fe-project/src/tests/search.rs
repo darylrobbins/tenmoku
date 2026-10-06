@@ -738,3 +738,74 @@ fn searches_from_a_relative_root_filter_as_from_an_absolute_one() {
         }
     }
 }
+
+/// Inline flags and text anchors see each line as the line matcher does:
+/// without its terminator, with a `\r` not before `\n` kept as content. This
+/// holds in UTF-16 files too.
+#[test]
+fn inline_flags_and_text_anchors_see_lines_without_terminators() {
+    let (_dir, root) = temp();
+    let utf16: Vec<u8> = [0xFF, 0xFE]
+        .into_iter()
+        .chain("x\r\nfoo\r\n".encode_utf16().flat_map(u16::to_le_bytes))
+        .collect();
+    write(
+        &root,
+        &[
+            ("mid.txt", b"a\rb\n"),
+            ("end.txt", b"x\nneedle\r"),
+            ("terminator.txt", b"needle\r\n"),
+            ("crlf.txt", b"x\r\nfoo\r\n"),
+            ("lf.txt", b"x\nfoo\n"),
+            ("utf16.txt", &utf16),
+        ],
+    );
+    let lines = |pattern: &str| -> Vec<(String, u64, Vec<std::ops::Range<usize>>)> {
+        let query = SearchQuery {
+            regex: true,
+            ..SearchQuery::literal(pattern)
+        };
+        let (batches, _) = run(&root, &query, &SearchOptions::default());
+        files(batches)
+            .into_iter()
+            .flat_map(|file| {
+                let rel = file.rel;
+                file.lines
+                    .into_iter()
+                    .map(move |line| (rel.clone(), line.line_number, line.ranges))
+            })
+            .collect()
+    };
+    let line = |rel: &str, number: u64, range: std::ops::Range<usize>| {
+        (rel.to_string(), number, vec![range])
+    };
+
+    // `.` without dot-all still matches a `\r` that isn't the terminator's,
+    // within a line or at the end of an unterminated one.
+    for pattern in [r"(?-s)a.b", r"(?-s:a.b)"] {
+        assert_eq!(lines(pattern), [line("mid.txt", 1, 0..3)], "{pattern}");
+    }
+    for pattern in [r"(?-s)needle.", r"(?-s:needle.)"] {
+        assert_eq!(lines(pattern), [line("end.txt", 2, 0..7)], "{pattern}");
+    }
+
+    // Text anchors are at the line's ends, inside the terminator.
+    for pattern in [
+        r"foo\z",
+        r"(?-m:foo$)",
+        r"(?-m)foo$",
+        r"\Afoo",
+        r"(?-R)foo$",
+    ] {
+        assert_eq!(
+            lines(pattern),
+            [
+                line("crlf.txt", 2, 0..3),
+                line("lf.txt", 2, 0..3),
+                line("utf16.txt", 2, 0..3),
+            ],
+            "{pattern}"
+        );
+    }
+    assert_eq!(lines(r"needle\r\z"), [line("end.txt", 2, 0..7)]);
+}

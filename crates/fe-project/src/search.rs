@@ -15,7 +15,7 @@ use std::{
     thread,
 };
 
-use grep_matcher::Matcher;
+use grep_matcher::{LineMatchKind, LineTerminator, Match, Matcher, NoError};
 use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_searcher::{
     BinaryDetection, MmapChoice, Searcher, SearcherBuilder, Sink, SinkContext, SinkMatch,
@@ -62,15 +62,12 @@ impl SearchQuery {
         }
     }
 
-    /// The searcher's matcher, which finds the matching lines, and the
-    /// matcher that finds the ranges in a line without its terminator.
-    ///
-    /// Both match `^` and `$` at line starts and ends, not only the
-    /// buffer's, and never match a `\n`. The searcher's also takes `$` to
-    /// match before `\r\n`, so it finds every line the other matches in, and
-    /// maybe a few more (`needle\r` on `needle\r\n`), which then have no
-    /// ranges and aren't reported. A `\r` not before `\n` is content.
-    fn matchers(&self) -> Result<(RegexMatcher, RegexMatcher), SearchError> {
+    /// The searcher's matcher, which picks the lines to look at, holding the
+    /// canonical matcher, which finds the ranges in a line without its
+    /// terminator. Both match `^` and `$` at line starts and ends, not only
+    /// the buffer's, and never match a `\n`. A `\r` not before `\n` is
+    /// content.
+    fn matcher(&self) -> Result<LineSelector, SearchError> {
         let build = |crlf: bool| {
             RegexMatcherBuilder::new()
                 .fixed_strings(!self.regex)
@@ -88,7 +85,130 @@ impl SearchQuery {
                 .build(&self.pattern)
                 .map_err(|err| SearchError::InvalidPattern(err.to_string()))
         };
-        Ok((build(true)?, build(false)?))
+        let line = build(false)?;
+        let candidates = if self.regex && sees_past_line_ends(&self.pattern) {
+            None
+        } else {
+            Some(build(true)?)
+        };
+        Ok(LineSelector { candidates, line })
+    }
+}
+
+/// Whether `pattern` has a construct that, searched over a buffer of lines
+/// with `crlf`, could fail to match a line that it matches once the line's
+/// terminator is stripped: a text anchor (`\A`, `\z`, or `^` or `$` with
+/// multi-line mode turned off), or turning off dot-all (`.` then misses
+/// `\r`) or CRLF mode (`$` then misses the end of a line before `\r\n`).
+/// Without those, every difference only lets the buffer search match more.
+/// A pattern that doesn't parse is taken to have one.
+fn sees_past_line_ends(pattern: &str) -> bool {
+    use regex_syntax::ast::{self, AssertionKind, Ast, Flag, GroupKind};
+
+    struct Finder;
+    impl ast::Visitor for Finder {
+        type Output = ();
+        type Err = ();
+
+        fn finish(self) -> Result<(), ()> {
+            Ok(())
+        }
+
+        fn visit_pre(&mut self, ast: &Ast) -> Result<(), ()> {
+            let flags = match ast {
+                Ast::Assertion(assertion) => {
+                    return match assertion.kind {
+                        AssertionKind::StartText | AssertionKind::EndText => Err(()),
+                        _ => Ok(()),
+                    };
+                }
+                Ast::Flags(set) => &set.flags,
+                Ast::Group(group) => match &group.kind {
+                    GroupKind::NonCapturing(flags) => flags,
+                    _ => return Ok(()),
+                },
+                _ => return Ok(()),
+            };
+            let off = [Flag::MultiLine, Flag::DotMatchesNewLine, Flag::CRLF]
+                .into_iter()
+                .any(|flag| flags.flag_state(flag) == Some(false));
+            if off { Err(()) } else { Ok(()) }
+        }
+    }
+
+    regex_syntax::ast::parse::Parser::new()
+        .parse(pattern)
+        .map_or(true, |ast| ast::visit(&ast, Finder).is_err())
+}
+
+/// The matcher the searcher picks lines with, which the sink then searches
+/// with the canonical matcher. It picks every line the canonical matcher
+/// matches without its terminator, and maybe a few more (`needle\r` on
+/// `needle\r\n`, `a$` on `a\rb`), which then have no ranges and aren't
+/// reported.
+///
+/// The searcher hands it lines without their `\n` only, so it can't tell
+/// the `\r` of a `\r\n` from a `\r` at the end of an unterminated last
+/// line, and it picks a line ending in `\r` that matches either way.
+struct LineSelector {
+    /// The query built with `crlf`, which finds candidate lines in a buffer
+    /// of lines: `$` matches before `\r\n`, and `.` still matches a `\r`.
+    /// `None` where it could miss lines ([`sees_past_line_ends`]): every
+    /// line is then a candidate.
+    candidates: Option<RegexMatcher>,
+    /// The canonical matcher, for a line without its terminator.
+    line: RegexMatcher,
+}
+
+impl Matcher for LineSelector {
+    type Captures = grep_matcher::NoCaptures;
+    type Error = grep_matcher::NoError;
+
+    fn find_at(&self, line: &[u8], at: usize) -> Result<Option<Match>, NoError> {
+        if let Some(found) = self.line.find_at(line, at)? {
+            return Ok(Some(found));
+        }
+        match line.strip_suffix(b"\r") {
+            Some(line) if at <= line.len() => self.line.find_at(line, at),
+            _ => Ok(None),
+        }
+    }
+
+    /// As [`LineSelector::find_at`]; what the searcher's checks call.
+    fn shortest_match_at(&self, line: &[u8], at: usize) -> Result<Option<usize>, NoError> {
+        if let Some(end) = self.line.shortest_match_at(line, at)? {
+            return Ok(Some(end));
+        }
+        match line.strip_suffix(b"\r") {
+            Some(line) if at <= line.len() => self.line.shortest_match_at(line, at),
+            _ => Ok(None),
+        }
+    }
+
+    fn new_captures(&self) -> Result<grep_matcher::NoCaptures, NoError> {
+        Ok(grep_matcher::NoCaptures::new())
+    }
+
+    fn line_terminator(&self) -> Option<LineTerminator> {
+        Some(LineTerminator::byte(b'\n'))
+    }
+
+    fn find_candidate_line(&self, buffer: &[u8]) -> Result<Option<LineMatchKind>, NoError> {
+        let Some(candidates) = &self.candidates else {
+            // The searcher asks again from the end of the line.
+            return Ok((!buffer.is_empty()).then_some(LineMatchKind::Candidate(0)));
+        };
+        // Never confirmed: the searcher would report the line as it is.
+        let at = match candidates.find_candidate_line(buffer)? {
+            None => return Ok(None),
+            Some(LineMatchKind::Confirmed(at) | LineMatchKind::Candidate(at)) => at,
+        };
+        // Past the last terminator, as an empty match can be, isn't a line,
+        // and nothing matched before it.
+        if at == buffer.len() && buffer.ends_with(b"\n") {
+            return Ok(None);
+        }
+        Ok(Some(LineMatchKind::Candidate(at)))
     }
 }
 
@@ -224,11 +344,10 @@ pub fn search(
     sink: impl FnMut(Vec<FileMatches>),
 ) -> Result<SearchSummary, SearchError> {
     let root = root.as_ref();
-    let (matcher, line_matcher) = query.matchers()?;
+    let matcher = query.matcher()?;
     let shared = Shared {
         root,
         matcher,
-        line_matcher,
         cancel: &cancel,
         max: options.max_matches,
         found: AtomicUsize::new(0),
@@ -389,10 +508,8 @@ enum Outcome {
 /// What the walker's threads share.
 struct Shared<'a> {
     root: &'a Path,
-    /// Finds the matching lines.
-    matcher: RegexMatcher,
-    /// Finds the ranges in a matching line, without its terminator.
-    line_matcher: RegexMatcher,
+    /// Picks the lines to look at, and finds the ranges in them.
+    matcher: LineSelector,
     cancel: &'a AtomicBool,
     max: usize,
     /// Matches in files whose search has ended (and wasn't abandoned).
@@ -510,7 +627,7 @@ impl Sink for FileSink<'_, '_> {
         let mut cancelled = false;
         // Cancel and the cap are checked at each match, so a line of many
         // matches doesn't hold either up.
-        let _ = shared.line_matcher.find_iter(line, |m| {
+        let _ = shared.matcher.line.find_iter(line, |m| {
             #[cfg(test)]
             ON_MATCH.with_borrow_mut(|hook| hook.as_mut().map(|hook| hook()));
             if shared.cancel.load(Ordering::Relaxed) {

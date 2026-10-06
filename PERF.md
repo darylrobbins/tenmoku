@@ -565,6 +565,7 @@ files a capped search reaches varies a little from run to run):
 | common literal (`let`) | capped at 10,000 matches in 385 files, 397 searched | 10.8 ms | none |
 | regex (`fn \w+_\d+\(`) | capped, 385 files, 395 searched | 13.7 ms | none |
 | whole word `Buffer`, case-insensitive | capped, 1,553 files, 1,565 searched | 19.8 ms | none |
+| rare regex with a text anchor (`rare_needle_token = 1;\z`), every line checked (T96) | 5 matches; every file searched | 317 ms (rare literal 144 ms in the same run) | none |
 | time to first batch (common literal, cancelled at the first batch) | | 3.1 ms | 50 ms |
 
 Nothing is asserted. A search that finds little reads every file, so the
@@ -576,6 +577,17 @@ own. The capped searches stop once
 10,000 matches are found, after a few hundred files. The first batch comes
 when no more results are waiting, so it arrives within a few files of the
 first match, long before the walk ends.
+
+A regex with a text anchor (`\A`, `\z`, or `^` or `$` with multi-line
+mode off) or that turns off dot-all or CRLF mode (`(?-s)`, `(?-R)`) can't
+be searched over a buffer of lines and agree with each line searched
+without its terminator, so every line of such a search is a candidate,
+checked with the regex on its own (T96). That is the "rare regex with a
+text anchor" row, measured 2026-10-06 with a load average of about 30 from
+other lanes: its 95% interval was 239 to 396 ms, about twice the rare
+literal's. Other searches pick candidate lines over the whole buffer as
+before; a rerun at a load average of about 50 put both rare cases near
+450 ms, so treat the ratio as rough.
 
 ## Typing latency (`cargo bench -p fe-gpui --bench keystroke`)
 

@@ -1777,6 +1777,7 @@ dependencies = [
  "ignore",
  "libc",
  "notify",
+ "regex-syntax",
  "tempfile",
 ]
 

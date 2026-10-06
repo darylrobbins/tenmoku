@@ -1,8 +1,9 @@
 //! Project search over a generated corpus of 10,000 files (100 directories
 //! of 100) of about 4 KB of Rust-like lines each, about 40 MB, plus a
 //! `.gitignore`d directory: a rare literal, a common literal that hits the
-//! default cap, a regex, a case-insensitive whole-word literal, and the time
-//! to the first batch. No budget is asserted; the provisional target is a
+//! default cap, a regex, a rare regex with a text anchor (which looks at
+//! every line), a case-insensitive whole-word literal, and the time to the
+//! first batch. No budget is asserted; the provisional target is a
 //! first batch in 50 ms. See PERF.md for numbers.
 //!
 //! Run with `cargo bench -p fe-project --bench search`.
@@ -108,6 +109,11 @@ fn benches(c: &mut Criterion) {
         regex: true,
         ..SearchQuery::literal(r"fn \w+_\d+\(")
     };
+    // `\z` makes every line a candidate, checked on its own.
+    let anchored = SearchQuery {
+        regex: true,
+        ..SearchQuery::literal(r"rare_needle_token = 1;\z")
+    };
     let word = SearchQuery {
         whole_word: true,
         ..SearchQuery::literal("Buffer")
@@ -118,6 +124,7 @@ fn benches(c: &mut Criterion) {
         "the files and .gitignore, not the ignored directory"
     );
     assert_eq!(rare_summary.matches, 5);
+    assert_eq!(run(&root, &anchored).matches, 5);
     assert!(
         run(&root, &common).truncated,
         "the common literal hits the cap"
@@ -129,6 +136,7 @@ fn benches(c: &mut Criterion) {
         ("rare literal", &rare),
         ("common literal, capped", &common),
         ("regex", &regex),
+        ("rare regex, text anchor", &anchored),
         ("whole word, case-insensitive", &word),
     ] {
         let summary = run(&root, query);
