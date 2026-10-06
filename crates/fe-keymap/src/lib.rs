@@ -20,5 +20,9 @@ pub use load::{
 pub use matcher::{KeyOutcome, Matcher};
 pub use report::KeymapIssue;
 
+/// The built-in macOS keymap, the first layer under the user's: see
+/// [`KeymapStore::load`].
+pub const DEFAULT_MACOS: &str = include_str!("../keymaps/default-macos.toml");
+
 #[cfg(test)]
 mod tests;

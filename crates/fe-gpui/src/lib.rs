@@ -1,33 +1,44 @@
 //! GPUI front end for the headless editor in `fe-editor`.
 //!
 //! [`EditorView`] owns an [`fe_editor::EditorModel`] and turns input into
-//! commands, run through `fe-command`'s registries ([`commands`]);
+//! commands, run through `fe-command`'s registries ([`commands`]); keys are
+//! matched by `fe-keymap` ([`keymap`]);
 //! [`element::EditorElement`] lays out the visible rows with
 //! [`fe_display::layout`], shaping them with GPUI and colouring them by
 //! `fe-syntax`, then paints the result.
 
 pub mod commands;
-pub mod default_bindings;
 mod element;
+pub mod keymap;
 mod timing;
 mod view;
 
 pub use fe_config::{EditorSettings, SettingsEvent};
+pub use fe_keymap;
 use fe_syntax::Highlight;
 use gpui::{App, Hsla, Pixels, SharedString, font, px, rgb, rgba};
 
+pub use keymap::{default_keymap, keymap_report, set_user_keymap};
 pub use timing::{FrameTiming, FrameTimings};
 pub use view::EditorView;
 
 /// Key context active while an editor is focused: the `fe-command`
-/// context name, so GPUI binding predicates and command predicates agree.
+/// context name, so keymap and command predicates agree.
 pub const KEY_CONTEXT: &str = fe_editor::commands::CONTEXT;
 
-/// Registers the app's commands (`app.quit`) and binds the
-/// [`default_bindings::DEFAULT_BINDINGS`], each to a
-/// [`commands::RunCommand`].
+/// [`init_with_keymap`] with the built-in keymap alone.
 pub fn init(cx: &mut App) {
+    init_with_keymap(cx, default_keymap());
+}
+
+/// Registers the app's commands (`app.quit`) and routes every keystroke
+/// through `keymap`, dispatching what it binds as a
+/// [`commands::RunCommand`]. `keymap` is the built-in
+/// [`fe_keymap::DEFAULT_MACOS`] with the user's layer, if any, over it, as
+/// [`fe_keymap::KeymapStore`] loads it. Swap it with [`set_user_keymap`].
+pub fn init_with_keymap(cx: &mut App, keymap: impl Into<std::sync::Arc<fe_keymap::Keymap>>) {
     commands::init(cx);
+    keymap::init(keymap.into(), cx);
 }
 
 /// Colours and metrics for the editor. The metrics come from
@@ -141,6 +152,8 @@ fn font_family(settings: &EditorSettings, cx: &App) -> SharedString {
 mod command_tests;
 #[cfg(test)]
 mod fold_gutter_tests;
+#[cfg(test)]
+mod keymap_tests;
 #[cfg(test)]
 mod settings_tests;
 #[cfg(test)]

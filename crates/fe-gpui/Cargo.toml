@@ -13,6 +13,7 @@ fe-command.workspace = true
 fe-config.workspace = true
 fe-display.workspace = true
 fe-editor.workspace = true
+fe-keymap.workspace = true
 fe-syntax.workspace = true
 gpui.workspace = true
 log.workspace = true

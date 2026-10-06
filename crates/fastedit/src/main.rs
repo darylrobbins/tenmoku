@@ -17,7 +17,10 @@ use perf::Startup;
 use fe_buffer::Buffer;
 use fe_config::{ConfigWatcher, Diagnostic, Settings, SettingsEvent, SettingsStore};
 use fe_editor::EditorModel;
-use fe_gpui::{EditorSettings, EditorTheme, EditorView};
+use fe_gpui::{
+    EditorSettings, EditorTheme, EditorView,
+    fe_keymap::{self, KeymapStore},
+};
 use gpui::{
     App, AppContext as _, Context, Entity, Focusable as _, IntoElement, ParentElement as _, Render,
     Styled as _, TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions, div, px, rgb,
@@ -238,19 +241,44 @@ fn log_diagnostics(diagnostics: &[Diagnostic]) {
     }
 }
 
-/// Watches the settings files, applying each change to the window's editors
-/// on the main thread. Diagnostics are logged when they change. The
-/// watcher's first batch names every file, so a save made since `store`
-/// loaded applies too.
-fn watch_settings(mut store: SettingsStore, window: WindowHandle<Workbench>, cx: &mut App) {
+/// The keymap store: the built-in keymap and the user's `keymap.toml`,
+/// checked against the editor's and the app's commands.
+fn load_keymap() -> KeymapStore {
+    let store = KeymapStore::load(
+        fe_keymap::DEFAULT_MACOS,
+        fe_keymap::user_keymap_path(),
+        Some(fe_gpui::commands::command_catalog()),
+    );
+    log_diagnostics(store.diagnostics());
+    store
+}
+
+/// Logs what [`fe_gpui::keymap_report`] finds in the keymap in use.
+fn log_keymap_report(cx: &App) {
+    for issue in fe_gpui::keymap_report(cx) {
+        log::info!("keymap: {issue}");
+    }
+}
+
+/// Watches the settings and keymap files, applying each change on the main
+/// thread: settings to the window's editors, the keymap to key input.
+/// Diagnostics are logged when they change. The watcher's first batch names
+/// every file, so a save made since the stores loaded applies too.
+fn watch_config(
+    mut settings: SettingsStore,
+    mut keymap: KeymapStore,
+    window: WindowHandle<Workbench>,
+    cx: &mut App,
+) {
     let (sender, batches) = async_channel::unbounded();
-    let watcher = ConfigWatcher::new(store.paths(), move |batch| {
+    let paths = settings.paths().into_iter().chain(keymap.paths()).collect();
+    let watcher = ConfigWatcher::new(paths, move |batch| {
         sender.send_blocking(batch).ok();
     });
     let watcher = match watcher {
         Ok(watcher) => watcher,
         Err(error) => {
-            log::warn!("settings won't reload when changed: {error}");
+            log::warn!("settings and keymap won't reload when changed: {error}");
             return;
         }
     };
@@ -258,8 +286,21 @@ fn watch_settings(mut store: SettingsStore, window: WindowHandle<Workbench>, cx:
         // Watching for as long as this task runs.
         let _watcher = watcher;
         while let Ok(batch) = batches.recv().await {
-            let previous = store.diagnostics().to_vec();
-            let Some(event) = store.reload(&batch) else {
+            let previous = keymap.diagnostics().to_vec();
+            if let Some(event) = keymap.reload(&batch) {
+                if event.diagnostics != previous {
+                    log_diagnostics(&event.diagnostics);
+                }
+                if event.keymap != event.previous {
+                    log::info!("keymap reloaded");
+                    cx.update(|cx| {
+                        fe_gpui::set_user_keymap(cx, event.keymap);
+                        log_keymap_report(cx);
+                    });
+                }
+            }
+            let previous = settings.diagnostics().to_vec();
+            let Some(event) = settings.reload(&batch) else {
                 continue;
             };
             if event.diagnostics != previous {
@@ -330,12 +371,14 @@ fn main() {
         .map(|path| loader::start(PathBuf::from(path)));
     let store = load_settings(reading.as_ref().map(loader::Reading::path));
     let settings: Arc<Settings> = store.settings().clone();
+    let keymap = load_keymap();
 
     let application = gpui_platform::application();
     startup.platform = Some(Instant::now());
     application.run(move |cx: &mut App| {
         startup.app = Some(Instant::now());
-        fe_gpui::init(cx);
+        fe_gpui::init_with_keymap(cx, keymap.keymap().clone());
+        log_keymap_report(cx);
         cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {
                 cx.quit();
@@ -392,7 +435,7 @@ fn main() {
         }
         // Not before the window opens: watching isn't needed for the first
         // frame.
-        watch_settings(store, window, cx);
+        watch_config(store, keymap, window, cx);
         cx.activate(true);
     });
 }

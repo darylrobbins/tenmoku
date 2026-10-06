@@ -1,19 +1,21 @@
 //! GPUI's side of `fe-command`. Every key binding dispatches one GPUI
-//! action, [`RunCommand`], carrying an [`Invocation`]. The focused
+//! action, [`RunCommand`], carrying an [`Invocation`] (see
+//! [`crate::keymap`]). The focused
 //! [`EditorView`] runs it through the editor's registry and lets any other
 //! ID propagate to the app's registry, which [`init`] owns.
 
 use std::{ops::Range, ops::RangeInclusive, rc::Rc};
 
 use fe_command::{
-    Actor, CommandError, CommandTarget, DispatchError, Dispatched, Effect, Invocation, Registry,
-    Source, Value,
+    Actor, CommandError, CommandId, CommandTarget, DispatchError, Dispatched, Effect, Invocation,
+    Registry, Source, Value,
 };
 use fe_editor::commands::{Editor, EditorHost, EditorTarget};
+use fe_keymap::{CatalogError, CommandCatalog};
 use fe_syntax::Syntax;
-use gpui::{Action, App, ClipboardItem, Context, Global, KeyBinding, Window};
+use gpui::{Action, App, ClipboardItem, Context, Global, Window};
 
-use crate::{EditorView, default_bindings::DEFAULT_BINDINGS, view::synced_syntax};
+use crate::{EditorView, view::synced_syntax};
 
 /// Runs a command: the one GPUI action every binding dispatches.
 #[derive(Clone, Debug, PartialEq, Action)]
@@ -48,15 +50,44 @@ thread_local! {
     static EDITOR_COMMANDS: Rc<Registry<Editor>> = Rc::new(fe_editor::commands::registry());
 }
 
-/// Registers the app commands and binds [`DEFAULT_BINDINGS`].
-pub(crate) fn init(cx: &mut App) {
+/// The app commands.
+fn app_registry() -> Registry<AppCommands> {
     let mut app = Registry::new();
     app.register("app.quit", "Quit", |cx: &mut &mut App, _: &Actor| {
         cx.quit();
         Ok(Dispatched::new(Effect::Nothing))
     })
     .expect("app command IDs are valid and distinct");
-    cx.default_global::<Commands>().app = Rc::new(app);
+    app
+}
+
+/// The editor's and the app's commands, to check keymap bindings against:
+/// pass it to [`fe_keymap::KeymapStore::load`].
+pub fn command_catalog() -> Box<dyn CommandCatalog> {
+    Box::new(Catalog {
+        editor: EDITOR_COMMANDS.with(Rc::clone),
+        app: app_registry(),
+    })
+}
+
+struct Catalog {
+    editor: Rc<Registry<Editor>>,
+    app: Registry<AppCommands>,
+}
+
+/// A command the editor doesn't know is checked against the app's.
+impl CommandCatalog for Catalog {
+    fn check(&self, command: &CommandId, args: &Value) -> Result<(), CatalogError> {
+        match self.editor.check(command, args) {
+            Err(CatalogError::UnknownCommand) => self.app.check(command, args),
+            result => result,
+        }
+    }
+}
+
+/// Registers the app commands and the handler that runs them.
+pub(crate) fn init(cx: &mut App) {
+    cx.default_global::<Commands>().app = Rc::new(app_registry());
     cx.on_action(|run: &RunCommand, cx| {
         let propagated = cx.default_global::<Commands>().propagated.take();
         // The view's stamped copy, if this is what it propagated.
@@ -70,12 +101,6 @@ pub(crate) fn init(cx: &mut App) {
             .unwrap_or_else(|| run.0.clone());
         dispatch_app(&invocation, cx)
     });
-    cx.bind_keys(DEFAULT_BINDINGS.iter().map(|binding| {
-        let invocation = Invocation::of(binding.command)
-            .expect("default bindings name valid command IDs")
-            .source(Source::Keyboard);
-        KeyBinding::new(binding.keys, RunCommand(invocation), binding.context)
-    }));
 }
 
 /// Calls `observer` with every invocation the editor and app registries

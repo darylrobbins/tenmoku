@@ -1,0 +1,325 @@
+//! Key input through `fe-keymap`: the default keymap file, user layers, the
+//! chord timer on the test executor's simulated clock, and the window's
+//! key context reaching the matcher.
+
+use std::{
+    cell::RefCell,
+    path::Path,
+    rc::Rc,
+    time::{Duration, Instant},
+};
+
+use fe_buffer::{Buffer, ResolvedSelection};
+use fe_command::Invocation;
+use fe_editor::EditorModel;
+use fe_keymap::{
+    DEFAULT_KEYMAP_PATH, DEFAULT_MACOS, KeySequence, Keymap, KeymapIssue, KeymapLayer, KeymapStore,
+};
+use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
+
+use crate::{
+    EditorTheme, EditorView, init_with_keymap,
+    keymap::{CHORD_TIMEOUT, context_stack},
+    keymap_report, set_user_keymap,
+};
+
+/// The bindings of card 1b's `default_bindings.rs`, in order, as
+/// `(keys, command, context)`.
+const OLD_TABLE: &[(&str, &str, Option<&str>)] = &[
+    ("left", "editor.move_left", Some("editor")),
+    ("right", "editor.move_right", Some("editor")),
+    ("up", "editor.move_up", Some("editor")),
+    ("down", "editor.move_down", Some("editor")),
+    ("alt-left", "editor.move_word_left", Some("editor")),
+    ("alt-right", "editor.move_word_right", Some("editor")),
+    ("cmd-left", "editor.move_line_start", Some("editor")),
+    ("home", "editor.move_line_start", Some("editor")),
+    ("cmd-right", "editor.move_line_end", Some("editor")),
+    ("end", "editor.move_line_end", Some("editor")),
+    ("cmd-up", "editor.move_document_start", Some("editor")),
+    ("cmd-down", "editor.move_document_end", Some("editor")),
+    ("pageup", "editor.page_up", Some("editor")),
+    ("pagedown", "editor.page_down", Some("editor")),
+    ("shift-left", "editor.select_left", Some("editor")),
+    ("shift-right", "editor.select_right", Some("editor")),
+    ("shift-up", "editor.select_up", Some("editor")),
+    ("shift-down", "editor.select_down", Some("editor")),
+    ("alt-shift-left", "editor.select_word_left", Some("editor")),
+    (
+        "alt-shift-right",
+        "editor.select_word_right",
+        Some("editor"),
+    ),
+    ("cmd-shift-left", "editor.select_line_start", Some("editor")),
+    ("shift-home", "editor.select_line_start", Some("editor")),
+    ("cmd-shift-right", "editor.select_line_end", Some("editor")),
+    ("shift-end", "editor.select_line_end", Some("editor")),
+    (
+        "cmd-shift-up",
+        "editor.select_document_start",
+        Some("editor"),
+    ),
+    (
+        "cmd-shift-down",
+        "editor.select_document_end",
+        Some("editor"),
+    ),
+    ("shift-pageup", "editor.select_page_up", Some("editor")),
+    ("shift-pagedown", "editor.select_page_down", Some("editor")),
+    ("cmd-a", "editor.select_all", Some("editor")),
+    ("backspace", "editor.backspace", Some("editor")),
+    ("shift-backspace", "editor.backspace", Some("editor")),
+    ("delete", "editor.delete", Some("editor")),
+    ("alt-backspace", "editor.delete_word_left", Some("editor")),
+    ("enter", "editor.newline", Some("editor")),
+    ("tab", "editor.tab", Some("editor")),
+    ("cmd-alt-[", "editor.fold", Some("editor")),
+    ("cmd-alt-]", "editor.unfold", Some("editor")),
+    ("cmd-k cmd-0", "editor.fold_all", Some("editor")),
+    ("cmd-k cmd-j", "editor.unfold_all", Some("editor")),
+    ("alt-z", "editor.toggle_soft_wrap", Some("editor")),
+    ("cmd-c", "editor.copy", Some("editor")),
+    ("cmd-x", "editor.cut", Some("editor")),
+    ("cmd-v", "editor.paste", Some("editor")),
+    ("cmd-z", "editor.undo", Some("editor")),
+    ("cmd-shift-z", "editor.redo", Some("editor")),
+    ("cmd-s", "editor.save", Some("editor")),
+    ("cmd-q", "app.quit", None),
+];
+
+/// The default keymap with `user` as the user's layer over it.
+fn with_user_layer(user: &str) -> Keymap {
+    let (default, _) = KeymapLayer::parse(Path::new(DEFAULT_KEYMAP_PATH), DEFAULT_MACOS, None);
+    let (user, diagnostics) = KeymapLayer::parse(Path::new("keymap.toml"), user, None);
+    assert_eq!(diagnostics, [], "{user:?}");
+    Keymap::from_layers([default.expect("the default keymap loads"), user.unwrap()])
+}
+
+/// A focused editor showing `text` with a caret at `caret`, matching keys
+/// against `keymap`, in a headless window.
+fn editor<'a>(
+    cx: &'a mut TestAppContext,
+    keymap: Keymap,
+    text: &str,
+    caret: usize,
+) -> (Entity<EditorView>, &'a mut VisualTestContext) {
+    cx.update(|cx| init_with_keymap(cx, keymap));
+    let text = text.to_owned();
+    let (view, cx) = cx.add_window_view(move |_, cx| {
+        let mut model = EditorModel::new(Buffer::new(&text), None);
+        model.set_selections(vec![ResolvedSelection {
+            range: caret..caret,
+            reversed: false,
+        }]);
+        EditorView::new(model, EditorTheme::default_dark(cx), cx)
+    });
+    cx.update(|window, cx| window.focus(&view.focus_handle(cx), cx));
+    cx.run_until_parked();
+    (view, cx)
+}
+
+/// The invocations run from now on.
+fn record(cx: &mut VisualTestContext) -> Rc<RefCell<Vec<Invocation>>> {
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let sink = seen.clone();
+    cx.update(|_, cx| {
+        crate::commands::observe_invocations(cx, move |invocation| {
+            sink.borrow_mut().push(invocation.clone());
+        });
+    });
+    seen
+}
+
+fn commands(seen: &RefCell<Vec<Invocation>>) -> Vec<String> {
+    let seen = std::mem::take(&mut *seen.borrow_mut());
+    seen.iter()
+        .map(|invocation| invocation.command.as_str().to_owned())
+        .collect()
+}
+
+fn text_and_caret(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> (String, usize) {
+    view.update(cx, |view, _| {
+        let model = view.model();
+        (model.text().to_string(), model.selections()[0].range.end)
+    })
+}
+
+#[gpui::test]
+fn default_keymap_matches_the_old_table(cx: &mut TestAppContext) {
+    let store = KeymapStore::load(
+        DEFAULT_MACOS,
+        None,
+        Some(crate::commands::command_catalog()),
+    );
+    assert_eq!(store.diagnostics(), []);
+    let bindings = store.keymap().bindings();
+    assert_eq!(bindings.len(), 47);
+    for (binding, &(keys, command, context)) in bindings.iter().zip(OLD_TABLE) {
+        assert_eq!(binding.keys, KeySequence::parse(keys).unwrap(), "{command}");
+        assert_eq!(binding.command.as_str(), command, "{keys}");
+        let found = binding.context.as_ref().map(ToString::to_string);
+        assert_eq!(found.as_deref(), context, "{keys}");
+    }
+    // The catalog dropped nothing, and each command checks out.
+    let catalog = crate::commands::command_catalog();
+    for binding in bindings {
+        assert_eq!(catalog.check(&binding.command, &binding.args), Ok(()));
+    }
+
+    cx.update(|cx| init_with_keymap(cx, store.keymap().clone()));
+    let issues = cx.update(|cx| keymap_report(cx));
+    let shadowed: Vec<_> = issues
+        .iter()
+        .filter(|issue| matches!(issue, KeymapIssue::Shadowed { .. }))
+        .collect();
+    assert_eq!(shadowed, Vec::<&KeymapIssue>::new());
+}
+
+#[gpui::test]
+fn user_layer_rebinds_and_unbinds(cx: &mut TestAppContext) {
+    let keymap = with_user_layer(
+        r#"
+        [[bindings]]
+        keys = "ctrl-a"
+        command = "editor.move_line_start"
+        context = "editor"
+
+        [[bindings]]
+        keys = "alt-z"
+        context = "editor"
+        command = ""
+        "#,
+    );
+    let (view, cx) = editor(cx, keymap, "  abc\nd", 4);
+    let soft_wrap =
+        |cx: &mut VisualTestContext| view.update(cx, |view, _| view.model().soft_wrap());
+
+    cx.simulate_keystrokes("ctrl-a");
+    assert_eq!(text_and_caret(&view, cx), ("  abc\nd".into(), 2));
+    cx.simulate_keystrokes("alt-z");
+    assert!(!soft_wrap(cx));
+    assert_eq!(text_and_caret(&view, cx), ("  abc\nd".into(), 2));
+
+    // A new layer applies from the next keystroke: ctrl-a now goes to the
+    // line end, and alt-z is back.
+    cx.update(|_, cx| {
+        let keymap = with_user_layer(
+            r#"
+            [[bindings]]
+            keys = "ctrl-a"
+            command = "editor.move_line_end"
+            context = "editor"
+            "#,
+        );
+        set_user_keymap(cx, keymap);
+    });
+    cx.simulate_keystrokes("ctrl-a");
+    assert_eq!(text_and_caret(&view, cx), ("  abc\nd".into(), 5));
+    cx.simulate_keystrokes("alt-z");
+    assert!(soft_wrap(cx));
+}
+
+#[gpui::test]
+fn chord_timeout_uses_the_simulated_clock(cx: &mut TestAppContext) {
+    let keymap = with_user_layer(
+        r#"
+        [[bindings]]
+        keys = "cmd-k"
+        command = "editor.select_all"
+        context = "editor"
+        "#,
+    );
+    let (view, cx) = editor(cx, keymap, "a:\n  b\nc:\n  d", 5);
+    let seen = record(cx);
+    let started = Instant::now();
+
+    // Alone, cmd-k waits for the timeout, then runs.
+    cx.simulate_keystrokes("cmd-k");
+    cx.executor()
+        .advance_clock(CHORD_TIMEOUT - Duration::from_millis(1));
+    cx.run_until_parked();
+    assert_eq!(commands(&seen), Vec::<String>::new());
+    cx.executor().advance_clock(Duration::from_millis(1));
+    cx.run_until_parked();
+    assert_eq!(commands(&seen), ["editor.select_all"]);
+
+    // cmd-k then x types x, and the timer is cancelled.
+    cx.simulate_keystrokes("right cmd-k x");
+    cx.executor().advance_clock(CHORD_TIMEOUT * 2);
+    cx.run_until_parked();
+    assert_eq!(commands(&seen), ["editor.move_right", "editor.insert"]);
+    assert_eq!(text_and_caret(&view, cx).0, "a:\n  b\nc:\n  dx");
+
+    // The chord completed in time runs, not cmd-k.
+    cx.simulate_keystrokes("cmd-k cmd-0");
+    cx.executor().advance_clock(CHORD_TIMEOUT * 2);
+    cx.run_until_parked();
+    assert_eq!(commands(&seen), ["editor.fold_all"]);
+    let folds: Vec<_> = view.update(cx, |view, _| {
+        let folds = view.model().display().folds();
+        folds.iter().map(|fold| (fold.start, fold.end)).collect()
+    });
+    assert_eq!(folds, [(0, 1), (2, 3)]);
+    assert!(
+        started.elapsed() < CHORD_TIMEOUT,
+        "waited {:?}",
+        started.elapsed()
+    );
+}
+
+#[gpui::test]
+fn swallowed_keys_are_typed_when_a_chord_fails(cx: &mut TestAppContext) {
+    let keymap = with_user_layer(
+        r#"
+        [[bindings]]
+        keys = "g g"
+        command = "editor.move_document_start"
+        context = "editor"
+        "#,
+    );
+    let (view, cx) = editor(cx, keymap, "ab\ncd", 5);
+    let seen = record(cx);
+
+    // Timed out, the prefix is typed.
+    cx.simulate_keystrokes("g");
+    assert_eq!(text_and_caret(&view, cx), ("ab\ncd".into(), 5));
+    cx.executor().advance_clock(CHORD_TIMEOUT);
+    cx.run_until_parked();
+    assert_eq!(text_and_caret(&view, cx), ("ab\ncdg".into(), 6));
+    // Ended by a key it doesn't bind, both are typed, in order.
+    cx.simulate_keystrokes("g x");
+    assert_eq!(text_and_caret(&view, cx), ("ab\ncdggx".into(), 8));
+    // And a key that ends one is matched afresh.
+    cx.simulate_keystrokes("g left");
+    assert_eq!(text_and_caret(&view, cx), ("ab\ncdggxg".into(), 8));
+    commands(&seen);
+    cx.simulate_keystrokes("g g");
+    assert_eq!(commands(&seen), ["editor.move_document_start"]);
+    assert_eq!(text_and_caret(&view, cx).1, 0);
+}
+
+#[gpui::test]
+fn window_context_reaches_the_matcher(cx: &mut TestAppContext) {
+    let keymap = with_user_layer(
+        r#"
+        [[bindings]]
+        keys = "ctrl-b"
+        command = "editor.select_all"
+        context = "workbench"
+        "#,
+    );
+    let (view, cx) = editor(cx, keymap, "ab", 0);
+    let seen = record(cx);
+
+    let stack = cx.update(|window, _| context_stack(&window.context_stack()));
+    assert_eq!(stack, fe_editor::commands::context());
+    cx.simulate_keystrokes("right");
+    let invocations = std::mem::take(&mut *seen.borrow_mut());
+    assert_eq!(invocations.len(), 1);
+    assert_eq!(invocations[0].context, fe_editor::commands::context());
+
+    cx.simulate_keystrokes("ctrl-b");
+    assert_eq!(commands(&seen), Vec::<String>::new());
+    let selection = view.update(cx, |view, _| view.model().selections()[0].range.clone());
+    assert_eq!(selection, 1..1);
+}

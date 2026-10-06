@@ -1,0 +1,236 @@
+# The built-in macOS keymap: the first layer, which the user's keymap.toml
+# overrides. See fe_keymap's `keymap` module for the format.
+
+[[bindings]]
+keys = "left"
+command = "editor.move_left"
+context = "editor"
+
+[[bindings]]
+keys = "right"
+command = "editor.move_right"
+context = "editor"
+
+[[bindings]]
+keys = "up"
+command = "editor.move_up"
+context = "editor"
+
+[[bindings]]
+keys = "down"
+command = "editor.move_down"
+context = "editor"
+
+[[bindings]]
+keys = "alt-left"
+command = "editor.move_word_left"
+context = "editor"
+
+[[bindings]]
+keys = "alt-right"
+command = "editor.move_word_right"
+context = "editor"
+
+[[bindings]]
+keys = "cmd-left"
+command = "editor.move_line_start"
+context = "editor"
+
+[[bindings]]
+keys = "home"
+command = "editor.move_line_start"
+context = "editor"
+
+[[bindings]]
+keys = "cmd-right"
+command = "editor.move_line_end"
+context = "editor"
+
+[[bindings]]
+keys = "end"
+command = "editor.move_line_end"
+context = "editor"
+
+[[bindings]]
+keys = "cmd-up"
+command = "editor.move_document_start"
+context = "editor"
+
+[[bindings]]
+keys = "cmd-down"
+command = "editor.move_document_end"
+context = "editor"
+
+[[bindings]]
+keys = "pageup"
+command = "editor.page_up"
+context = "editor"
+
+[[bindings]]
+keys = "pagedown"
+command = "editor.page_down"
+context = "editor"
+
+[[bindings]]
+keys = "shift-left"
+command = "editor.select_left"
+context = "editor"
+
+[[bindings]]
+keys = "shift-right"
+command = "editor.select_right"
+context = "editor"
+
+[[bindings]]
+keys = "shift-up"
+command = "editor.select_up"
+context = "editor"
+
+[[bindings]]
+keys = "shift-down"
+command = "editor.select_down"
+context = "editor"
+
+[[bindings]]
+keys = "alt-shift-left"
+command = "editor.select_word_left"
+context = "editor"
+
+[[bindings]]
+keys = "alt-shift-right"
+command = "editor.select_word_right"
+context = "editor"
+
+[[bindings]]
+keys = "cmd-shift-left"
+command = "editor.select_line_start"
+context = "editor"
+
+[[bindings]]
+keys = "shift-home"
+command = "editor.select_line_start"
+context = "editor"
+
+[[bindings]]
+keys = "cmd-shift-right"
+command = "editor.select_line_end"
+context = "editor"
+
+[[bindings]]
+keys = "shift-end"
+command = "editor.select_line_end"
+context = "editor"
+
+[[bindings]]
+keys = "cmd-shift-up"
+command = "editor.select_document_start"
+context = "editor"
+
+[[bindings]]
+keys = "cmd-shift-down"
+command = "editor.select_document_end"
+context = "editor"
+
+[[bindings]]
+keys = "shift-pageup"
+command = "editor.select_page_up"
+context = "editor"
+
+[[bindings]]
+keys = "shift-pagedown"
+command = "editor.select_page_down"
+context = "editor"
+
+[[bindings]]
+keys = "cmd-a"
+command = "editor.select_all"
+context = "editor"
+
+[[bindings]]
+keys = "backspace"
+command = "editor.backspace"
+context = "editor"
+
+[[bindings]]
+keys = "shift-backspace"
+command = "editor.backspace"
+context = "editor"
+
+[[bindings]]
+keys = "delete"
+command = "editor.delete"
+context = "editor"
+
+[[bindings]]
+keys = "alt-backspace"
+command = "editor.delete_word_left"
+context = "editor"
+
+[[bindings]]
+keys = "enter"
+command = "editor.newline"
+context = "editor"
+
+[[bindings]]
+keys = "tab"
+command = "editor.tab"
+context = "editor"
+
+[[bindings]]
+keys = "cmd-alt-["
+command = "editor.fold"
+context = "editor"
+
+[[bindings]]
+keys = "cmd-alt-]"
+command = "editor.unfold"
+context = "editor"
+
+[[bindings]]
+keys = "cmd-k cmd-0"
+command = "editor.fold_all"
+context = "editor"
+
+[[bindings]]
+keys = "cmd-k cmd-j"
+command = "editor.unfold_all"
+context = "editor"
+
+[[bindings]]
+keys = "alt-z"
+command = "editor.toggle_soft_wrap"
+context = "editor"
+
+[[bindings]]
+keys = "cmd-c"
+command = "editor.copy"
+context = "editor"
+
+[[bindings]]
+keys = "cmd-x"
+command = "editor.cut"
+context = "editor"
+
+[[bindings]]
+keys = "cmd-v"
+command = "editor.paste"
+context = "editor"
+
+[[bindings]]
+keys = "cmd-z"
+command = "editor.undo"
+context = "editor"
+
+[[bindings]]
+keys = "cmd-shift-z"
+command = "editor.redo"
+context = "editor"
+
+[[bindings]]
+keys = "cmd-s"
+command = "editor.save"
+context = "editor"
+
+[[bindings]]
+keys = "cmd-q"
+command = "app.quit"

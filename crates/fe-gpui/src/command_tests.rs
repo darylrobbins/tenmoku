@@ -1,20 +1,19 @@
-//! Key bindings dispatch through the command registries: one table binds
-//! them all, keystrokes become recorded invocations, and the recordings
+//! Key bindings dispatch through the command registries: one keymap file
+//! binds them all, keystrokes become recorded invocations, and the recordings
 //! replay headlessly.
 
 use std::{cell::RefCell, rc::Rc};
 
 use fe_buffer::Buffer;
-use fe_command::{CommandId, ContextStack, Invocation, Source, Value};
+use fe_command::{ContextStack, Invocation, Source, Value};
 use fe_editor::{
     EditorModel, Movement,
     commands::{EditorTarget, HeadlessHost},
 };
-use gpui::{Entity, Focusable as _, Keystroke, TestAppContext, VisualTestContext};
+use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 
 use crate::{
     commands::{RunCommand, observe_invocations},
-    default_bindings::DEFAULT_BINDINGS,
     *,
 };
 
@@ -53,77 +52,31 @@ fn text_and_selections(model: &EditorModel) -> (String, Vec<fe_buffer::ResolvedS
 
 #[gpui::test]
 fn table_is_the_only_binding_source(cx: &mut TestAppContext) {
-    assert_eq!(DEFAULT_BINDINGS.len(), 47);
-    let editor_rows: Vec<_> = DEFAULT_BINDINGS
+    // The table is now `fe_keymap::DEFAULT_MACOS`; `keymap_tests` checks
+    // its rows. GPUI's own keymap stays empty.
+    let keymap = default_keymap();
+    let bindings = keymap.bindings();
+    assert_eq!(bindings.len(), 47);
+    let editor = fe_editor::commands::context();
+    let others: Vec<_> = bindings
         .iter()
-        .filter(|row| row.context == Some("editor"))
-        .collect();
-    assert_eq!(editor_rows.len(), 46);
-    let others: Vec<_> = DEFAULT_BINDINGS
-        .iter()
-        .filter(|row| row.context != Some("editor"))
-        .map(|row| (row.keys, row.command, row.context))
-        .collect();
-    assert_eq!(others, [("cmd-q", "app.quit", None)]);
-
-    let editor_commands = fe_editor::commands::registry();
-    for row in DEFAULT_BINDINGS {
-        let id = CommandId::parse(row.command).unwrap();
-        let known = match id.namespace() {
-            "editor" => editor_commands.get(&id).is_some(),
-            "app" => id.as_str() == "app.quit",
-            _ => false,
-        };
-        assert!(known, "{} isn't a registered command", row.command);
-    }
-
-    cx.update(init);
-    let normalized = |keys: &str| {
-        keys.split_whitespace()
-            .map(|key| Keystroke::parse(key).unwrap().unparse())
-            .collect::<Vec<_>>()
-            .join(" ")
-    };
-    let mut bound: Vec<(String, Option<String>, Invocation)> = cx.update(|cx| {
-        cx.key_bindings()
-            .borrow()
-            .bindings()
-            .map(|binding| {
-                let RunCommand(invocation) = binding
-                    .action()
-                    .as_any()
-                    .downcast_ref::<RunCommand>()
-                    .expect("every binding runs a command");
-                let keys = binding
-                    .keystrokes()
-                    .iter()
-                    .map(|key| key.unparse())
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                let context = binding.predicate().map(|p| p.to_string());
-                (keys, context, invocation.clone())
-            })
-            .collect()
-    });
-    let mut expected: Vec<_> = DEFAULT_BINDINGS
-        .iter()
-        .map(|row| {
+        .filter(|binding| binding.depth(&editor) != Some(1))
+        .map(|binding| {
             (
-                normalized(row.keys),
-                row.context.map(str::to_string),
-                Invocation::of(row.command)
-                    .unwrap()
-                    .source(Source::Keyboard),
+                binding.keys.to_string(),
+                binding.command.as_str(),
+                binding.context.is_none(),
             )
         })
         .collect();
-    // One binding per row, in any order: invocations aren't `Ord`.
-    let key = |(keys, context, invocation): &(String, Option<String>, Invocation)| {
-        (keys.clone(), context.clone(), invocation.command.clone())
-    };
-    bound.sort_by_key(key);
-    expected.sort_by_key(key);
-    assert_eq!(bound, expected);
+    assert_eq!(others, [("cmd-q".to_string(), "app.quit", true)]);
+    for binding in bindings {
+        assert_eq!(binding.invocation(&editor).source, Source::Keyboard);
+    }
+
+    cx.update(init);
+    let gpui_bindings = cx.update(|cx| cx.key_bindings().borrow().bindings().count());
+    assert_eq!(gpui_bindings, 0);
 }
 
 #[gpui::test]

@@ -270,28 +270,20 @@ fn normalized(keystrokes: &str) -> String {
     keystrokes.join(" ")
 }
 
-#[gpui::test]
-fn bindings_are_all_tested(cx: &mut TestAppContext) {
-    cx.update(init);
-    let bound: BTreeSet<String> = cx.update(|cx| {
-        cx.key_bindings()
-            .borrow()
-            .bindings()
-            .filter(|binding| {
-                binding
-                    .predicate()
-                    .is_some_and(|p| p.to_string() == KEY_CONTEXT)
-            })
-            .map(|binding| {
-                binding
-                    .keystrokes()
-                    .iter()
-                    .map(|keystroke| keystroke.unparse())
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            })
-            .collect()
-    });
+#[test]
+fn bindings_are_all_tested() {
+    let keymap = fe_keymap::load_keymap(fe_keymap::DEFAULT_MACOS, None).0;
+    let bound: BTreeSet<String> = keymap
+        .bindings()
+        .iter()
+        .filter(|binding| {
+            binding
+                .context
+                .as_ref()
+                .is_some_and(|context| context.to_string() == KEY_CONTEXT)
+        })
+        .map(|binding| normalized(&binding.keys.to_string()))
+        .collect();
     assert!(
         bound.len() >= 40,
         "found only {} editor bindings",
