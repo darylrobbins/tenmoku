@@ -1,6 +1,7 @@
 mod layers;
 mod settings;
 mod watch;
+mod watch_late;
 
 use std::{fs, path::PathBuf};
 

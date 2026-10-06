@@ -270,6 +270,21 @@ fn tracker_resolves_links_after_registering() {
 /// new target is seen.
 #[test]
 fn watcher_follows_links_changed_while_registering() {
+    project_edit_seen_while_registering(false, |_, _| {});
+}
+
+/// Runs the test above with `extra` called, after the project link's move,
+/// for each directory registered, with the fixture's root.
+///
+/// Fixture and hook events can arrive late, after the first batch, so later
+/// batches may name the unchanged user file too. Each is reloaded, and the
+/// loop ends once the project's edit is loaded. With `await_user`, it also
+/// waits for a later batch naming the user file, which the caller's `extra`
+/// guarantees, so the tolerant loop certainly takes one.
+pub(super) fn project_edit_seen_while_registering(
+    await_user: bool,
+    extra: impl Fn(&Path, &Path) + Send + 'static,
+) {
     let temp = tempfile::tempdir().unwrap();
     let dir = temp.path().canonicalize().unwrap();
     let [user_dir, a, project_dir, b, c] =
@@ -289,6 +304,7 @@ fn watcher_follows_links_changed_while_registering() {
     let (tx, batches) = mpsc::channel();
     let hook_a = a.clone();
     let (hook_project, hook_c) = (project.clone(), to_c.clone());
+    let hook_dir = dir.clone();
     let _watcher = ConfigWatcher::with_hook(
         store.paths(),
         move |batch| {
@@ -298,17 +314,24 @@ fn watcher_follows_links_changed_while_registering() {
             if watched == hook_a {
                 retarget(&hook_project, &hook_c);
             }
+            extra(watched, &hook_dir);
         },
     )
     .unwrap();
     let batch = || batches.recv_timeout(TIMEOUT).expect("a batch in time");
-    assert_eq!(batch(), [user, project.clone()]);
+    assert_eq!(batch(), [user.clone(), project.clone()]);
     fs::write(&to_c, "editor.font_size = 18\n").unwrap();
+    let mut seen_user = false;
     loop {
         let batch = batch();
-        assert_eq!(batch, [project.as_path()]);
+        let mut files = [&user, &project].into_iter();
+        assert!(
+            !batch.is_empty() && batch.iter().all(|f| files.any(|expected| expected == f)),
+            "a non-empty, in-order subset of [user, project], got {batch:?}",
+        );
         store.reload(&batch);
-        if store.settings().editor.font_size == 18. {
+        seen_user |= batch.contains(&user);
+        if store.settings().editor.font_size == 18. && (seen_user || !await_user) {
             return;
         }
     }
