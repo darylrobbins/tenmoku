@@ -366,7 +366,7 @@ fn batched_catch_up_folds_as_catching_up_after_each_edit_does() {
         a.select_range(range, false);
         a.insert(text);
     }
-    let cases: [(&str, &[Edit]); 14] = [
+    let cases: [(&str, &[Edit]); 18] = [
         (
             "cut the row above",
             &[|a| {
@@ -407,6 +407,25 @@ fn batched_catch_up_folds_as_catching_up_after_each_edit_does() {
         (
             "insert rows above, then edit the header",
             &[|a| replace(a, 0..0, "x\ny\n"), |a| replace(a, 8..8, "z")],
+        ),
+        (
+            "add text to the header, then delete it",
+            &[|a| replace(a, 6..6, "X"), |a| replace(a, 6..7, "")],
+        ),
+        (
+            "insert a row above, then delete it",
+            &[|a| replace(a, 4..4, "\n"), |a| replace(a, 4..5, "")],
+        ),
+        (
+            "delete the row above, then restore it",
+            &[|a| replace(a, 0..4, ""), |a| replace(a, 0..0, "top\n")],
+        ),
+        (
+            "replace the header's row twice",
+            &[
+                |a| replace(a, 4..13, "renamed():\n"),
+                |a| replace(a, 4..15, "again():\n"),
+            ],
         ),
     ];
     for (name, steps) in cases {
@@ -452,6 +471,59 @@ fn batched_catch_up_folds_as_catching_up_after_each_edit_does() {
         |a| replace(a, 0..4, "new\nprefix "),
         |a| replace(a, 0..0, "!")
     ]));
+    assert!(kept(&[|a| replace(a, 6..6, "X"), |a| replace(a, 6..7, "")]));
+    assert!(kept(&[
+        |a| replace(a, 4..4, "\n"),
+        |a| replace(a, 4..5, "")
+    ]));
+    assert!(kept(&[
+        |a| replace(a, 0..4, ""),
+        |a| replace(a, 0..0, "top\n")
+    ]));
+    assert!(kept(&[
+        |a| replace(a, 4..13, "renamed():\n"),
+        |a| replace(a, 4..15, "again():\n")
+    ]));
+    // Each edit through one guard is recorded on its own too.
+    assert!(kept(&[|a| {
+        let mut buffer = a.buffer_mut();
+        buffer.edit([(6..6, "X")], Origin::User);
+        buffer.edit([(6..7, "")], Origin::User);
+    }]));
+}
+
+#[test]
+fn unrecorded_batches_unfold_only_the_folds_they_touch() {
+    let mut a = parse("one\n    a\ntwo\n    b\nend");
+    let mut b = a.split();
+    b.fold_rows(0..=1);
+    b.fold_rows(2..=3);
+    {
+        // Both edits through one borrow, with no record in between.
+        let mut guard = a.buffer_mut();
+        let buffer: &mut Buffer = &mut guard;
+        buffer.edit([(18..18, "X")], Origin::User);
+        let len = buffer.len();
+        buffer.edit([(len..len, "!")], Origin::User);
+    }
+    b.sync_display();
+    assert_eq!(b.display().folds(), [fe_display::Fold { start: 0, end: 1 }]);
+}
+
+#[test]
+fn catching_up_on_many_edits_below_a_fold_keeps_it_and_forgets_them() {
+    let mut a = parse("top\ndef a():\n    one\nend");
+    let mut b = a.split();
+    b.fold_rows(1..=2);
+    let edits = 10_000;
+    for _ in 0..edits {
+        let len = a.text().len();
+        a.buffer_mut().edit([(len..len, "!")], Origin::User);
+    }
+    assert_eq!(a.history.borrow().batches.len(), edits);
+    b.sync_display();
+    assert_eq!(b.display().folds(), [fe_display::Fold { start: 1, end: 2 }]);
+    assert!(a.history.borrow().batches.is_empty());
 }
 
 #[test]
