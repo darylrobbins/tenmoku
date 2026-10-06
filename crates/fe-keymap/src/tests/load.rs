@@ -13,8 +13,8 @@ use fe_config::ConfigWatcher;
 use super::{keystroke, stack, write};
 use crate::{KeyOutcome, KeymapStore, Matcher};
 
-/// An upper bound only: FSEvents may take a while on a busy machine.
-const TIMEOUT: Duration = Duration::from_secs(10);
+/// An upper bound only, sized for a loaded CI host: FSEvents may take a while.
+const TIMEOUT: Duration = Duration::from_secs(60);
 
 const DEFAULTS: &str = "\
 [[bindings]]

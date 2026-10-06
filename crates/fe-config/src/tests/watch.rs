@@ -20,8 +20,8 @@ use notify::{
 
 use crate::{ConfigWatcher, SettingsStore, watch::Tracker};
 
-/// An upper bound only: FSEvents may take a while on a busy machine.
-const TIMEOUT: Duration = Duration::from_secs(10);
+/// An upper bound only, sized for a loaded CI host: FSEvents may take a while.
+const TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Loads `path`, starts a fresh watcher over it, takes its first batch, then
 /// makes `change` and reloads each batch naming `path` until `done` holds.
