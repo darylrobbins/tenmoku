@@ -21,9 +21,11 @@ use fe_project::{SearchOptions, SearchQuery, search};
 use fe_syntax::{Outline, OutlineJob, OutlineKind, Syntax, language_by_name, symbols_job};
 
 use crate::{
-    Definition, Definitions, FileSymbols, Location, NavError, NavRequest, NavigationProvider,
-    Precision, Readiness, Skipped, SymbolIndex, Tier, WorkspaceSymbol,
+    Definition, Definitions, FileReferences, FileSymbols, Location, NavError, NavRequest,
+    NavigationProvider, Precision, Readiness, ReferenceOptions, ReferencesSummary, Skipped,
+    SymbolIndex, Tier, WorkspaceSymbol,
     extract::{extract_with, is_symbol, symbols_language},
+    references,
 };
 
 /// The most definitions in an answer.
@@ -77,10 +79,14 @@ type RunSymbols = dyn Fn(OutlineJob) -> Outline + Send + Sync;
 /// project's text for the word (capped in files and time) and extracts the
 /// definitions of the files that have it. Each request has a budget, 80 ms
 /// by default; work it hasn't finished by then is left out of the answer.
+///
+/// Find references is a word search of the project, filtered by syntax
+/// (see [`ReferenceOptions`]); it has no deadline, and streams instead.
 pub struct SearchNavigation {
     root: PathBuf,
     index: Arc<RwLock<SymbolIndex>>,
     budget: Duration,
+    reference_options: ReferenceOptions,
     extract: Arc<Extract>,
     run_symbols: Arc<RunSymbols>,
     fallback_slots: Arc<Slots>,
@@ -109,6 +115,7 @@ impl SearchNavigation {
             root: root.into(),
             index,
             budget: BUDGET,
+            reference_options: ReferenceOptions::default(),
             extract: Arc::new(|root, rel, give_up| {
                 extract_with(root, rel, |syntax| {
                     syntax.parse_until(Duration::MAX, give_up);
@@ -127,6 +134,13 @@ impl SearchNavigation {
     /// racing the clock.
     pub fn with_budget(mut self, budget: Duration) -> Self {
         self.budget = budget;
+        self
+    }
+
+    /// How find references works: 1,000 files verified per request unless
+    /// set otherwise.
+    pub fn with_reference_options(mut self, options: ReferenceOptions) -> Self {
+        self.reference_options = options;
         self
     }
 
@@ -589,6 +603,15 @@ impl NavigationProvider for SearchNavigation {
         })
     }
 
+    fn references(
+        &self,
+        req: &NavRequest,
+        cancel: &AtomicBool,
+        sink: &mut dyn FnMut(Vec<FileReferences>),
+    ) -> Result<ReferencesSummary, NavError> {
+        references::find(&self.root, &self.reference_options, req, cancel, sink)
+    }
+
     fn workspace_symbols(
         &self,
         query: &str,
@@ -619,9 +642,14 @@ impl NavigationProvider for SearchNavigation {
 
 /// The word at `offset` in `text`, and its bytes: the longest run of
 /// identifier chars touching it, so a caret just after a word counts.
-fn word_at(text: &Text, offset: usize, language: Option<&str>) -> Option<(Range<usize>, String)> {
+pub(crate) fn word_at(
+    text: &Text,
+    offset: usize,
+    language: Option<&str>,
+) -> Option<(Range<usize>, String)> {
     let dollar = matches!(language, Some("javascript" | "typescript" | "tsx"));
-    let is_word = |ch: char| ch.is_alphanumeric() || ch == '_' || (dollar && ch == '$');
+    // The search's word chars, so the word is one it finds whole.
+    let is_word = |ch: char| fe_project::is_word_char(ch) || (dollar && ch == '$');
     let offset = text.clip_offset(offset, Bias::Left);
     let row = text.offset_to_point(offset).row;
     let row_start = text.row_start(row);
@@ -643,7 +671,10 @@ fn word_at(text: &Text, offset: usize, language: Option<&str>) -> Option<(Range<
 }
 
 /// Whether every byte of `word` is under a comment or string highlight.
-fn in_comment_or_string(spans: &[fe_syntax::HighlightSpan], word: &Range<usize>) -> bool {
+pub(crate) fn in_comment_or_string(
+    spans: &[fe_syntax::HighlightSpan],
+    word: &Range<usize>,
+) -> bool {
     let mut covered: Vec<Range<usize>> = (spans.iter())
         .filter(|span| {
             let name = span.highlight.name();

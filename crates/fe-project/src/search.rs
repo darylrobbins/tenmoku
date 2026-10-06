@@ -51,6 +51,13 @@ pub struct SearchQuery {
     pub whole_word: bool,
 }
 
+/// Whether `ch` is a word character to [`SearchQuery::whole_word`]:
+/// Unicode's `\w` (letters, marks, decimal digits, connector punctuation
+/// and joiners), so code matching words in memory agrees with the search.
+pub fn is_word_char(ch: char) -> bool {
+    regex_syntax::is_word_character(ch)
+}
+
 impl SearchQuery {
     /// A case-insensitive literal search for `pattern`: the defaults.
     pub fn literal(pattern: impl Into<String>) -> SearchQuery {

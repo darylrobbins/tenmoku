@@ -19,7 +19,8 @@
 //!   language.
 //! - [`SearchNavigation`] answers go-to-definition and workspace symbols
 //!   from a [`SymbolIndex`], with a capped text search while it's
-//!   incomplete.
+//!   incomplete, and finds references by a word search of the project,
+//!   dropping the hits a parse puts in comments and strings.
 //!
 //! Like [`fe_project::search`], nothing here owns an executor: the caller
 //! runs [`build`] on a background thread of its own, and the workers are
@@ -31,6 +32,7 @@ mod build;
 mod extract;
 mod index;
 mod provider;
+mod references;
 mod search;
 
 pub use build::{
@@ -40,7 +42,8 @@ pub use extract::{FileSymbols, Skipped, Symbol, extract};
 pub use fe_syntax::OutlineKind;
 pub use index::{IndexStats, Reindex, SymbolIndex, SymbolMatch, SymbolRef};
 pub use provider::{
-    Answer, Definition, Definitions, Location, NavError, NavRequest, Navigation,
-    NavigationProvider, Precision, Readiness, Tier, WorkspaceSymbol,
+    Answer, Definition, Definitions, FileReferences, Location, NavError, NavRequest, Navigation,
+    NavigationProvider, Precision, Readiness, Reference, ReferencesSummary, Tier, WorkspaceSymbol,
 };
+pub use references::ReferenceOptions;
 pub use search::{SearchNavigation, SearchStats};

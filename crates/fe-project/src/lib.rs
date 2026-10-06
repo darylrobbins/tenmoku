@@ -29,7 +29,8 @@ mod watcher;
 pub use finder::{FileSetDelta, FinderIndex, FinderMatch, FinderStats};
 pub use listing::{Entry, EntryKind, Listed, Listing, open_file_under};
 pub use search::{
-    FileMatches, LineMatch, SearchError, SearchOptions, SearchQuery, SearchSummary, search,
+    FileMatches, LineMatch, SearchError, SearchOptions, SearchQuery, SearchSummary, is_word_char,
+    search,
 };
 pub use tree::{FileTree, NodeId, Row, TreeOptions, TreeStats};
 pub use watcher::{FsChange, ProjectWatcher};

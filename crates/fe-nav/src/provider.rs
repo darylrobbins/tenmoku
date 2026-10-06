@@ -1,6 +1,7 @@
 //! The [`NavigationProvider`] seam and the [`Navigation`] router.
 //!
-//! A provider answers go-to-definition and workspace symbols: by search
+//! A provider answers go-to-definition, find references and workspace
+//! symbols: by search
 //! ([`crate::SearchNavigation`]) until a precise one (a language server) is
 //! ready for the file's language. The router asks one provider per request,
 //! the best that's ready, and says which answered, so the UI can label a
@@ -12,6 +13,7 @@
 //! blocks on its own response, so this crate needs no runtime.
 
 use std::{
+    cell::Cell,
     fmt,
     ops::Range,
     path::PathBuf,
@@ -122,6 +124,60 @@ pub struct WorkspaceSymbol {
     pub indices: Vec<usize>,
 }
 
+/// One use of a word, as [`NavigationProvider::references`] reports it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Reference {
+    /// The word's bytes, in the file's text as the editor loads it, as
+    /// [`Location`] has them, wherever that text could be read and still has
+    /// the word on the line the search found it on. Otherwise (a file that
+    /// changed since, couldn't be read again, or is too large to load) they
+    /// are the file's bytes as the search read them; such a reference is
+    /// never `verified`.
+    pub location: Location,
+    /// 1-based, as the search counts lines.
+    pub line_number: u64,
+    /// The line, or a window of it (see [`fe_project::LineMatch::preview`]).
+    pub preview: String,
+    /// The word's bytes in `preview`: one range, or none when the preview
+    /// doesn't show it whole (a long line's window around another use, or,
+    /// in a file that couldn't be loaded again, invalid UTF-8 before it).
+    pub preview_ranges: Vec<Range<usize>>,
+    /// Its file was parsed, and its highlights there, had in full, show
+    /// the word isn't in a comment or a string. An unverified reference may
+    /// be either.
+    pub verified: bool,
+    /// It's the name of a definition in its file, by [`fe_syntax::symbols`];
+    /// only a verified reference can be.
+    pub is_definition: bool,
+}
+
+/// One file's references, in line order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileReferences {
+    /// Relative to the project root.
+    pub rel: PathBuf,
+    pub refs: Vec<Reference>,
+}
+
+/// How a find-references request went.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ReferencesSummary {
+    /// The word at the caret; `None` when there's none, and nothing was
+    /// searched.
+    pub word: Option<String>,
+    /// Project files whose search began (the request's own file on disk
+    /// included, though its hits come from the request's text).
+    pub files_searched: usize,
+    /// Files parsed to check their hits, the request's own included.
+    pub files_verified: usize,
+    /// Hits left out for being in a comment or a string.
+    pub dropped: usize,
+    /// The hit cap stopped the search: there may be more references.
+    pub truncated: bool,
+    /// The request's cancel flag was set before it ended.
+    pub cancelled: bool,
+}
+
 /// Why a provider gave no answer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NavError {
@@ -162,6 +218,24 @@ pub trait NavigationProvider: Send + Sync {
     fn readiness(&self, language: Option<&str>) -> Readiness;
 
     fn definitions(&self, req: &NavRequest, cancel: &AtomicBool) -> Result<Definitions, NavError>;
+
+    /// The uses of the word at the request's caret, handed to `sink` a batch
+    /// of whole files at a time as they're found; the summary comes once
+    /// they all have been. A provider that can't find references keeps this
+    /// default, [`NavError::Unsupported`], and the next provider is asked.
+    ///
+    /// A cancel before any batch went to `sink` is [`NavError::Cancelled`];
+    /// after one has, it's a summary with [`ReferencesSummary::cancelled`]
+    /// set, and `sink` isn't called again.
+    fn references(
+        &self,
+        req: &NavRequest,
+        cancel: &AtomicBool,
+        sink: &mut dyn FnMut(Vec<FileReferences>),
+    ) -> Result<ReferencesSummary, NavError> {
+        let _ = (req, cancel, sink);
+        Err(NavError::Unsupported)
+    }
 
     /// The best `limit` symbols of the project matching `query`, best first.
     fn workspace_symbols(
@@ -253,9 +327,36 @@ impl Navigation {
         req: &NavRequest,
         cancel: &AtomicBool,
     ) -> Result<Answer<Definitions>, NavError> {
-        self.route(req.language, cancel, |provider| {
-            provider.definitions(req, cancel)
-        })
+        self.route(
+            req.language,
+            cancel,
+            |provider| provider.definitions(req, cancel),
+            || false,
+        )
+    }
+
+    /// The uses of the word at the request's caret, handed to `sink` as
+    /// they're found. A provider that fails after handing over a batch isn't
+    /// followed by the next one, so answers are never mixed: its error is
+    /// returned.
+    pub fn references(
+        &self,
+        req: &NavRequest,
+        cancel: &AtomicBool,
+        sink: &mut dyn FnMut(Vec<FileReferences>),
+    ) -> Result<Answer<ReferencesSummary>, NavError> {
+        let delivered = Cell::new(false);
+        self.route(
+            req.language,
+            cancel,
+            |provider| {
+                provider.references(req, cancel, &mut |batch| {
+                    delivered.set(true);
+                    sink(batch);
+                })
+            },
+            || delivered.get(),
+        )
     }
 
     /// The best `limit` symbols of the project matching `query`.
@@ -265,19 +366,25 @@ impl Navigation {
         limit: usize,
         cancel: &AtomicBool,
     ) -> Result<Answer<Vec<WorkspaceSymbol>>, NavError> {
-        self.route(None, cancel, |provider| {
-            provider.workspace_symbols(query, limit, cancel)
-        })
+        self.route(
+            None,
+            cancel,
+            |provider| provider.workspace_symbols(query, limit, cancel),
+            || false,
+        )
     }
 
     /// Asks the ready providers in order until one gives a final answer.
     /// With none ready, or none answering, the last fall-through error
-    /// ([`NavError::Unsupported`] when none was asked).
+    /// ([`NavError::Unsupported`] when none was asked). An error is final
+    /// too once `answered` says the provider has handed part of an answer
+    /// over.
     fn route<T>(
         &self,
         language: Option<&str>,
         cancel: &AtomicBool,
-        ask: impl Fn(&dyn NavigationProvider) -> Result<T, NavError>,
+        mut ask: impl FnMut(&dyn NavigationProvider) -> Result<T, NavError>,
+        answered: impl Fn() -> bool,
     ) -> Result<Answer<T>, NavError> {
         // Called without the lock held, so a slow provider never holds up
         // `add` or `remove`.
@@ -300,6 +407,7 @@ impl Navigation {
                     });
                 }
                 Err(NavError::Cancelled) => return Err(NavError::Cancelled),
+                Err(err) if answered() => return Err(err),
                 Err(err) => last = err,
             }
         }
