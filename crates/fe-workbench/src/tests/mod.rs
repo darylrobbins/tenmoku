@@ -13,6 +13,7 @@ mod search_panel;
 mod search_panel_followups;
 mod splits;
 mod tabs;
+mod tree_keys;
 
 use std::{cell::Cell, path::Path, rc::Rc};
 

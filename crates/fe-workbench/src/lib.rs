@@ -6,7 +6,7 @@
 //! `workbench.previous_tab`, on the active pane, and the `pane.*` ones) are
 //! `fe-command` commands in the [`KEY_CONTEXT`] context, registered by
 //! [`init`] and bound in
-//! `fe-keymap`'s default keymap. A keystroke reaches them as a
+//! `fe-keymap`'s default keymap, as are the project panel's. A keystroke reaches them as a
 //! [`fe_gpui::commands::RunCommand`] that the focused editor doesn't know
 //! and propagates.
 
@@ -23,13 +23,9 @@ mod workbench;
 
 use std::rc::Rc;
 
-use dock::DockCommands;
 use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry, Value};
 use fe_keymap::{CatalogError, CommandCatalog};
 use gpui::{App, Global, Window};
-use outline_panel::OutlineCommands;
-use pane_group::PaneCommands;
-use picker::PaletteCommands;
 
 pub use dock::{Dock, DockPanel};
 pub use outline_panel::OutlinePanel;
@@ -67,6 +63,7 @@ pub fn init(cx: &mut App) {
     dock::init(cx);
     outline_panel::init(cx);
     pane_group::init(cx);
+    project_panel::init(cx);
 }
 
 fn registry(cx: &App) -> Option<Rc<Registry<WorkbenchCommands>>> {
@@ -105,45 +102,29 @@ fn new_registry() -> Registry<WorkbenchCommands> {
 /// The workbench's, the editor's and the app's commands, to check keymap
 /// bindings against: pass it to [`fe_keymap::KeymapStore::load`].
 pub fn command_catalog() -> Box<dyn CommandCatalog> {
-    Box::new(Catalog {
-        workbench: new_registry(),
-        palette: picker::registry(),
-        dock: dock::registry(),
-        outline: outline_panel::registry(),
-        panes: pane_group::registry(),
-        rest: fe_gpui::commands::command_catalog(),
-    })
+    Box::new(Catalog(vec![
+        Box::new(new_registry()),
+        Box::new(picker::registry()),
+        Box::new(dock::registry()),
+        Box::new(outline_panel::registry()),
+        Box::new(pane_group::registry()),
+        Box::new(project_panel::registry()),
+        fe_gpui::commands::command_catalog(),
+    ]))
 }
 
-struct Catalog {
-    workbench: Registry<WorkbenchCommands>,
-    palette: Registry<PaletteCommands>,
-    dock: Registry<DockCommands>,
-    outline: Registry<OutlineCommands>,
-    panes: Registry<PaneCommands>,
-    rest: Box<dyn CommandCatalog>,
-}
+/// Each catalog in turn, until one knows the command.
+struct Catalog(Vec<Box<dyn CommandCatalog>>);
 
 impl CommandCatalog for Catalog {
     fn check(&self, command: &fe_command::CommandId, args: &Value) -> Result<(), CatalogError> {
-        match self.workbench.check(command, args) {
-            Err(CatalogError::UnknownCommand) => match self.palette.check(command, args) {
-                Err(CatalogError::UnknownCommand) => match self.dock.check(command, args) {
-                    Err(CatalogError::UnknownCommand) => match self.outline.check(command, args) {
-                        Err(CatalogError::UnknownCommand) => {
-                            match self.panes.check(command, args) {
-                                Err(CatalogError::UnknownCommand) => self.rest.check(command, args),
-                                result => result,
-                            }
-                        }
-                        result => result,
-                    },
-                    result => result,
-                },
-                result => result,
-            },
-            result => result,
+        for catalog in &self.0 {
+            match catalog.check(command, args) {
+                Err(CatalogError::UnknownCommand) => {}
+                result => return result,
+            }
         }
+        Err(CatalogError::UnknownCommand)
     }
 }
 

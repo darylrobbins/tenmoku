@@ -22,7 +22,7 @@ use crate::{
     pane::{PaneEvent, Peers, file_name},
     pane_group::{self, Direction, PaneOp},
     picker::{self, PaletteOp},
-    project_panel::PanelEvent,
+    project_panel::{self, PanelEvent, PanelOp},
 };
 
 /// Shown in a tab when fastedit starts with nothing to open.
@@ -89,6 +89,8 @@ pub struct Workbench {
     quick_open: Entity<Picker<QuickOpen>>,
     /// Whether the quick-open palette shows.
     palette: bool,
+    /// The editor whose file the project panel last revealed.
+    revealed: Option<EntityId>,
     ui: UiTheme,
     _subscriptions: [Subscription; 3],
 }
@@ -182,6 +184,7 @@ impl Workbench {
             echoes: HashSet::new(),
             quick_open,
             palette: false,
+            revealed: None,
             ui,
             _subscriptions: [open, dismissed, left],
         };
@@ -476,18 +479,49 @@ impl Workbench {
         self.active.read(cx).active_editor()
     }
 
-    /// Tells the outline which editor is active, if that changed. Every tab
-    /// change redraws, though not every one notifies (focusing an open tab
-    /// only focuses it), so the workbench calls it as it renders. With
-    /// splits, it's the active pane's active editor.
+    /// Tells the outline which editor is active, if that changed, and has
+    /// the project panel reveal its file. Every tab change redraws, though
+    /// not every one notifies (focusing an open tab only focuses it), so the
+    /// workbench calls it as it renders. With splits, it's the active pane's
+    /// active editor.
     fn follow_active_editor(&mut self, window: &Window, cx: &mut Context<Self>) {
         let editor = self.active_editor(cx).cloned();
         let outline = self.dock.read(cx).outline().clone();
         outline.update(cx, |outline, cx| outline.set_editor(editor.as_ref(), cx));
+        let id = editor.as_ref().map(Entity::entity_id);
+        let reveal = id != self.revealed;
+        self.revealed = id;
         // The editor reparses as it renders, which notifies no one.
-        cx.defer_in(window, move |_, _, cx| {
-            outline.update(cx, OutlinePanel::frame_drawn)
+        cx.defer_in(window, move |workbench, window, cx| {
+            outline.update(cx, OutlinePanel::frame_drawn);
+            if reveal {
+                workbench.reveal_active(cx);
+            }
+            workbench.leave_hidden_panel(window, cx);
         });
+    }
+
+    /// Has the project panel select the active editor's file, if it has
+    /// one, expanding the directories above it; else drops a reveal still
+    /// pending for another tab. Focus stays where it is.
+    fn reveal_active(&mut self, cx: &mut Context<Self>) {
+        let path = self
+            .active_editor(cx)
+            .and_then(|editor| editor.read(cx).model().path().map(Path::to_owned));
+        self.panel.update(cx, |panel, cx| match path {
+            Some(path) => panel.reveal(path, cx),
+            None => panel.cancel_reveal(),
+        });
+    }
+
+    /// Focuses the active editor if the project panel has focus but isn't
+    /// shown, the dock being hidden or showing another panel.
+    fn leave_hidden_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let dock = self.dock.read(cx);
+        let shown = dock.is_visible() && dock.active() == DockPanel::Project;
+        if !shown && self.panel.focus_handle(cx).contains_focused(window, cx) {
+            window.focus(&self.focus_handle(cx), cx);
+        }
     }
 
     /// Opens the host's read of the launch file, `Ok(None)` being a new
@@ -530,18 +564,27 @@ impl Workbench {
             if let Some(op) = pane_group::op(run, cx) {
                 return self.run_pane_op(op, window, cx);
             }
+            if project_panel::op(run, cx) == Some(PanelOp::RevealActive) {
+                return self.reveal_active(cx);
+            }
             let fallback = self.focus_handle(cx);
             if outline_panel::shows(run, cx) {
                 // Focus stays where it is, unless on search's hidden input.
-                return self.dock.update(cx, |dock, cx| {
+                self.dock.update(cx, |dock, cx| {
                     dock.show(DockPanel::Outline, cx);
                     dock.leave_search(&fallback, window, cx);
                 });
+                return self.leave_hidden_panel(window, cx);
             }
-            let done = dock::op(run, cx).is_some_and(|op| {
+            let op = dock::op(run, cx);
+            let done = op.is_some_and(|op| {
                 self.dock
                     .update(cx, |dock, cx| dock.run(op, &fallback, window, cx))
             });
+            if op == Some(dock::DockOp::ShowProject) {
+                window.focus(&self.panel.focus_handle(cx), cx);
+            }
+            self.leave_hidden_panel(window, cx);
             if !done {
                 cx.propagate();
             }

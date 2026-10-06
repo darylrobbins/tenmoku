@@ -402,3 +402,30 @@ context = "workbench"
 keys = "cmd-k cmd-w"
 command = "pane.close"
 context = "workbench"
+
+# The project tree, when it has focus. `project_panel.reveal_active` has no
+# key yet: it's for the command palette.
+[[bindings]]
+keys = "up"
+command = "project_panel.select_prev"
+context = "project_panel"
+
+[[bindings]]
+keys = "down"
+command = "project_panel.select_next"
+context = "project_panel"
+
+[[bindings]]
+keys = "left"
+command = "project_panel.collapse_or_parent"
+context = "project_panel"
+
+[[bindings]]
+keys = "right"
+command = "project_panel.expand_or_first_child"
+context = "project_panel"
+
+[[bindings]]
+keys = "enter"
+command = "project_panel.open"
+context = "project_panel"

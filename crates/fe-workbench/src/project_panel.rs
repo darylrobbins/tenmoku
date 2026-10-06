@@ -1,19 +1,31 @@
 //! The project panel on the right dock: the lazy file tree, listed off the
 //! main thread and kept current by a file watcher.
+//!
+//! One row is selected, kept by node so it survives rows above it changing.
+//! Clicks and the keys of [`init`]'s registry (in the panel's
+//! [`KEY_CONTEXT`]) move it; [`ProjectPanel::reveal`] selects a file's row,
+//! expanding its collapsed ancestors.
 
 use std::{
     collections::{HashMap, HashSet},
     io,
     ops::Range,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
+    rc::Rc,
 };
 
+use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry};
+use fe_gpui::commands::RunCommand;
 use fe_project::{EntryKind, FileTree, FsChange, Listed, NodeId, ProjectWatcher, TreeOptions};
 use fe_ui::{TreeRow, UiTheme};
 use gpui::{
-    AppContext as _, Context, EventEmitter, IntoElement, ParentElement as _, Render, Styled as _,
+    App, AppContext as _, Context, EventEmitter, FocusHandle, Focusable, Global,
+    InteractiveElement as _, IntoElement, ParentElement as _, Render, ScrollStrategy, Styled as _,
     Task, UniformListScrollHandle, Window, div, px, uniform_list,
 };
+
+/// The key context the panel's element sets.
+pub(crate) const KEY_CONTEXT: &str = "project_panel";
 
 /// The dock's width, fixed until docks can be resized.
 pub const PANEL_WIDTH: gpui::Pixels = px(240.);
@@ -21,7 +33,7 @@ pub const PANEL_WIDTH: gpui::Pixels = px(240.);
 /// What the panel asks of the workbench.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PanelEvent {
-    /// A file row was clicked.
+    /// A file row was clicked, or Enter pressed on it.
     OpenFile(PathBuf),
     /// A watcher batch came, for others that follow the disk too.
     FsChanged(Vec<FsChange>),
@@ -57,12 +69,24 @@ pub struct ProjectPanel {
     /// reachable or owed), watcher batch and directory click.
     epoch: u64,
     selected: Option<NodeId>,
+    /// Where the selected row was last seen, checked before searching the
+    /// rows for it.
+    selected_hint: usize,
+    /// The file the last reveal asked for, until its row is selected or
+    /// it's found not to have one.
+    reveal: Option<PathBuf>,
+    /// The ancestor the reveal waits to have listed.
+    revealing: Option<NodeId>,
+    focus: FocusHandle,
     scroll: UniformListScrollHandle,
     theme: UiTheme,
     /// The row ranges the last frame built: the list builds the visible
     /// rows and measures its first row twice.
     #[cfg(test)]
     built: Vec<Range<usize>>,
+    /// The row the last frame drew selected.
+    #[cfg(test)]
+    drawn_selected: Option<usize>,
     _watch: Option<Task<()>>,
 }
 
@@ -123,10 +147,16 @@ impl ProjectPanel {
             failed: HashMap::new(),
             epoch: 0,
             selected: None,
+            selected_hint: 0,
+            reveal: None,
+            revealing: None,
+            focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
             theme,
             #[cfg(test)]
             built: Vec::new(),
+            #[cfg(test)]
+            drawn_selected: None,
             _watch: watch,
         }
     }
@@ -147,6 +177,7 @@ impl ProjectPanel {
                 State::Failed(format!("Cannot open {}: {error}", root.display()))
             }
         };
+        self.advance_reveal(cx);
         cx.notify();
     }
 
@@ -158,31 +189,237 @@ impl ProjectPanel {
             return;
         };
         let version = tree.version();
+        let selected = Self::index_of(tree, self.selected, self.selected_hint);
         tree.apply(changes);
-        let tree = &*tree;
-        let live = |id: &NodeId| tree.row(*id).is_some();
-        self.expanded.retain(live);
-        self.expanding.retain(live);
-        if self.selected.is_some_and(|id| !live(&id)) {
-            self.selected = None;
-        }
+        let changed = tree.version() != version;
+        self.removed(selected, cx);
         // Something changed, so failed listings may succeed now.
         self.epoch += 1;
-        if tree.version() != version {
+        if changed {
             cx.notify();
         }
         self.reconcile(cx);
+        self.advance_reveal(cx);
     }
 
-    /// What clicking a row does: a directory expands once listed (or
-    /// collapses, or stops waiting to expand); a file opens.
+    /// Forgets nodes the tree removed (a watcher batch or a listing can).
+    /// If the selected one went, selects the row now at its index,
+    /// `selected`, clamped to the last row.
+    fn removed(&mut self, selected: Option<usize>, cx: &mut Context<Self>) {
+        let State::Open(tree) = &self.state else {
+            return;
+        };
+        let live = |id: &NodeId| tree.row(*id).is_some();
+        self.expanded.retain(live);
+        self.expanding.retain(live);
+        if !self.selected.is_some_and(|id| !live(&id)) {
+            return;
+        }
+        let last = tree.row_count().checked_sub(1);
+        self.selected = None;
+        if let (Some(ix), Some(last)) = (selected, last) {
+            self.select_row(ix.min(last), cx);
+        }
+    }
+
+    /// Row `id`'s index, if it's shown: `hint` if it's there.
+    fn index_of(tree: &FileTree, id: Option<NodeId>, hint: usize) -> Option<usize> {
+        let id = id?;
+        if tree
+            .rows(hint..hint + 1)
+            .next()
+            .is_some_and(|row| row.id == id)
+        {
+            return Some(hint);
+        }
+        tree.rows(0..tree.row_count()).position(|row| row.id == id)
+    }
+
+    /// The selected row's index, if it's shown.
+    fn selected_index(&self) -> Option<usize> {
+        Self::index_of(self.tree()?, self.selected, self.selected_hint)
+    }
+
+    /// Selects row `ix` and scrolls it into view.
+    fn select_row(&mut self, ix: usize, cx: &mut Context<Self>) {
+        let Some(row) = self.tree().and_then(|tree| tree.rows(ix..ix + 1).next()) else {
+            return;
+        };
+        self.selected = Some(row.id);
+        self.selected_hint = ix;
+        self.scroll.scroll_to_item(ix, ScrollStrategy::Nearest);
+        cx.notify();
+    }
+
+    /// Up and Down: moves the selection by `delta` rows, clamped, or
+    /// selects the first row if none is.
+    fn move_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let Some(last) = self.tree().and_then(|tree| tree.row_count().checked_sub(1)) else {
+            return;
+        };
+        let ix = match self.selected_index() {
+            Some(ix) => ix.saturating_add_signed(delta).min(last),
+            None => 0,
+        };
+        self.select_row(ix, cx);
+    }
+
+    /// Left: collapses the selected directory if it's expanded, and
+    /// otherwise selects its parent, if that's a row, no longer expanding
+    /// the directory once listed.
+    fn collapse_or_parent(&mut self, cx: &mut Context<Self>) {
+        let Some(ix) = self.selected_index() else {
+            return;
+        };
+        let State::Open(tree) = &mut self.state else {
+            return;
+        };
+        let row = tree
+            .rows(ix..ix + 1)
+            .next()
+            .expect("the selection is shown");
+        let (id, depth) = (row.id, row.depth);
+        if row.expanded {
+            tree.collapse(id);
+            self.expanded.remove(&id);
+            cx.notify();
+        } else if depth > 0 {
+            self.expanding.remove(&id);
+            // The parent is the nearest row above that is less deep.
+            let parent = (0..ix)
+                .rev()
+                .find(|&above| tree.rows(above..above + 1).any(|row| row.depth < depth));
+            if let Some(parent) = parent {
+                self.select_row(parent, cx);
+            }
+        }
+    }
+
+    /// Right: expands the selected directory if it's collapsed, as a click
+    /// does, and otherwise selects its first child, if it has one.
+    fn expand_or_first_child(&mut self, cx: &mut Context<Self>) {
+        let Some(ix) = self.selected_index() else {
+            return;
+        };
+        let Some(tree) = self.tree() else {
+            return;
+        };
+        let row = tree
+            .rows(ix..ix + 1)
+            .next()
+            .expect("the selection is shown");
+        if row.kind != EntryKind::Dir {
+            return;
+        }
+        let id = row.id;
+        if row.expanded {
+            let child = tree.rows(ix + 1..ix + 2).next();
+            if child.is_some_and(|child| child.depth > row.depth) {
+                self.select_row(ix + 1, cx);
+            }
+        } else if !self.expanding.contains(&id) {
+            self.click(id, cx);
+        }
+    }
+
+    /// Enter: opens the selected file, or toggles the selected directory,
+    /// as a click does.
+    fn open_selected(&mut self, cx: &mut Context<Self>) {
+        if let Some(id) = self.selected_index().and(self.selected) {
+            self.click(id, cx);
+        }
+    }
+
+    /// Selects `path`'s row, expanding each collapsed ancestor from the root
+    /// down, without moving focus. Unlisted ancestors are listed off the
+    /// main thread, one at a time; none is expanded until the file's row is
+    /// found, so a file outside the root, or one the tree hides (it's
+    /// ignored, say), expands nothing. A file with no row yet (not created,
+    /// or its watcher event not in) reveals nothing either. A later reveal
+    /// replaces this one, and moving the selection drops it.
+    pub fn reveal(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        self.reveal = Some(path);
+        self.revealing = None;
+        self.advance_reveal(cx);
+    }
+
+    /// Takes the pending reveal as far as what's listed allows: down to the
+    /// first ancestor that wants a listing, which it starts, or to the row,
+    /// which it shows and selects.
+    fn advance_reveal(&mut self, cx: &mut Context<Self>) {
+        let Some(path) = self.reveal.clone() else {
+            return;
+        };
+        let State::Open(tree) = &mut self.state else {
+            return;
+        };
+        let rel = self
+            .root
+            .as_deref()
+            .and_then(|root| path.strip_prefix(root).ok())
+            .or_else(|| path.strip_prefix(tree.root_path()).ok());
+        let Some(rel) = rel.filter(|rel| !rel.as_os_str().is_empty()) else {
+            return self.cancel_reveal();
+        };
+        let mut chain = Vec::new();
+        let mut at = tree.root();
+        for component in rel.components() {
+            let Component::Normal(name) = component else {
+                return self.cancel_reveal();
+            };
+            if tree.listing(at).is_some() {
+                // Unlisted, or owing a listing: wait for it, unless the last
+                // failed and nothing changed since.
+                if self.failed.get(&at) == Some(&self.epoch) {
+                    return self.cancel_reveal();
+                }
+                self.revealing = Some(at);
+                return self.reconcile(cx);
+            }
+            let child = tree.children(at).and_then(|children| {
+                children
+                    .iter()
+                    .copied()
+                    .find(|&child| tree.row(child).is_some_and(|row| row.name == name))
+            });
+            let Some(child) = child else {
+                return self.cancel_reveal();
+            };
+            chain.push(child);
+            at = child;
+        }
+        let file = chain.pop().expect("the path has a component");
+        for dir in chain {
+            // Listed, so this does no IO.
+            tree.expand(dir);
+            self.expanded.insert(dir);
+            self.expanding.remove(&dir);
+        }
+        self.cancel_reveal();
+        self.selected = Some(file);
+        if let Some(ix) = self.selected_index() {
+            self.select_row(ix, cx);
+        }
+        cx.notify();
+    }
+
+    /// Drops the pending reveal, if any.
+    pub(crate) fn cancel_reveal(&mut self) {
+        self.reveal = None;
+        self.revealing = None;
+    }
+
+    /// What clicking a row does: it's selected, and a directory expands
+    /// once listed (or collapses, or stops waiting to expand); a file opens.
     fn click(&mut self, id: NodeId, cx: &mut Context<Self>) {
+        self.cancel_reveal();
         let State::Open(tree) = &mut self.state else {
             return;
         };
         let Some(row) = tree.row(id) else {
             return;
         };
+        self.selected = Some(id);
         if row.kind == EntryKind::Dir {
             if row.expanded {
                 tree.collapse(id);
@@ -201,15 +438,15 @@ impl ProjectPanel {
             Some(self.root.as_ref()?.join(rel))
         });
         if let Some(path) = path {
-            self.selected = Some(id);
             cx.emit(PanelEvent::OpenFile(path));
-            cx.notify();
         }
+        cx.notify();
     }
 
-    /// Lists in the background each directory shown or waiting to expand
-    /// that the tree wants listed (a result can make others than its own
-    /// directory owe a listing), unless one is running or its last failed.
+    /// Lists in the background each directory shown, waiting to expand or
+    /// waited on by a reveal that the tree wants listed (a result can make
+    /// others than its own directory owe a listing), unless one is running
+    /// or its last failed.
     /// Expands those waiting that need none.
     fn reconcile(&mut self, cx: &mut Context<Self>) {
         let State::Open(tree) = &mut self.state else {
@@ -219,6 +456,7 @@ impl ProjectPanel {
             .into_iter()
             .chain(self.expanded.iter().copied())
             .chain(self.expanding.iter().copied())
+            .chain(self.revealing)
             .collect();
         for dir in dirs {
             let Some(listing) = tree.listing(dir) else {
@@ -251,7 +489,9 @@ impl ProjectPanel {
             return;
         };
         let failed = listed.result().is_err();
+        let selected = Self::index_of(tree, self.selected, self.selected_hint);
         tree.fill(dir, listed);
+        self.removed(selected, cx);
         if !failed {
             self.epoch += 1;
         } else if started == Some(self.epoch) {
@@ -263,6 +503,24 @@ impl ProjectPanel {
         // Otherwise it may be stale: reconciling retries it.
         cx.notify();
         self.reconcile(cx);
+        self.advance_reveal(cx);
+    }
+
+    /// Runs a panel command; others go on to the workbench.
+    fn on_run_command(&mut self, run: &RunCommand, _: &mut Window, cx: &mut Context<Self>) {
+        let op = op(run, cx);
+        if op.is_some_and(|op| op != PanelOp::RevealActive) {
+            // The user moved on.
+            self.cancel_reveal();
+        }
+        match op {
+            Some(PanelOp::SelectPrev) => self.move_selection(-1, cx),
+            Some(PanelOp::SelectNext) => self.move_selection(1, cx),
+            Some(PanelOp::CollapseOrParent) => self.collapse_or_parent(cx),
+            Some(PanelOp::ExpandOrFirstChild) => self.expand_or_first_child(cx),
+            Some(PanelOp::Open) => self.open_selected(cx),
+            Some(PanelOp::RevealActive) | None => cx.propagate(),
+        }
     }
 
     fn render_rows(&mut self, range: Range<usize>, cx: &mut Context<Self>) -> Vec<TreeRow> {
@@ -271,10 +529,16 @@ impl ProjectPanel {
         };
         #[cfg(test)]
         self.built.push(range.clone());
-        tree.rows(range.clone())
+        let mut seen = None;
+        let rows = tree
+            .rows(range.clone())
             .zip(range)
             .map(|(row, ix)| {
                 let id = row.id;
+                let selected = self.selected == Some(id);
+                if selected {
+                    seen = Some(ix);
+                }
                 let mut element = TreeRow::new(
                     ("row", ix),
                     row.name.to_string_lossy().into_owned(),
@@ -283,14 +547,22 @@ impl ProjectPanel {
                 .depth(row.depth)
                 .ignored(row.ignored)
                 .error(row.error.is_some())
-                .selected(self.selected == Some(id))
+                .selected(selected)
                 .on_click(cx.listener(move |panel, _, _, cx| panel.click(id, cx)));
                 if row.kind == EntryKind::Dir {
                     element = element.directory(row.expanded);
                 }
                 element
             })
-            .collect()
+            .collect();
+        if let Some(ix) = seen {
+            self.selected_hint = ix;
+            #[cfg(test)]
+            {
+                self.drawn_selected = Some(ix);
+            }
+        }
+        rows
     }
 
     fn message(&self, text: String) -> gpui::AnyElement {
@@ -306,7 +578,10 @@ impl ProjectPanel {
 impl Render for ProjectPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         #[cfg(test)]
-        self.built.clear();
+        {
+            self.built.clear();
+            self.drawn_selected = None;
+        }
         let title = match &self.state {
             State::Open(tree) => tree.root_path().file_name(),
             _ => self.root.as_deref().and_then(Path::file_name),
@@ -328,6 +603,9 @@ impl Render for ProjectPanel {
             .into_any_element(),
         };
         div()
+            .track_focus(&self.focus)
+            .key_context(KEY_CONTEXT)
+            .on_action(cx.listener(Self::on_run_command))
             .w(PANEL_WIDTH)
             .h_full()
             .flex_none()
@@ -343,8 +621,112 @@ impl Render for ProjectPanel {
     }
 }
 
+impl Focusable for ProjectPanel {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+}
+
+/// What a panel command asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PanelOp {
+    SelectPrev,
+    SelectNext,
+    CollapseOrParent,
+    ExpandOrFirstChild,
+    Open,
+    /// Done by the workbench, which knows the active file.
+    RevealActive,
+}
+
+/// The [`CommandTarget`] of panel commands: the op to do.
+pub(crate) struct PanelCommands;
+
+impl CommandTarget for PanelCommands {
+    type Tx = ();
+    type Target<'a> = Option<PanelOp>;
+}
+
+struct Commands(Rc<Registry<PanelCommands>>);
+
+impl Global for Commands {}
+
+/// Registers the panel's commands.
+pub(crate) fn init(cx: &mut App) {
+    cx.set_global(Commands(Rc::new(registry())));
+}
+
+pub(crate) fn registry() -> Registry<PanelCommands> {
+    use PanelOp::*;
+    let commands = [
+        (
+            "project_panel.select_prev",
+            "Select Previous",
+            KEY_CONTEXT,
+            SelectPrev,
+        ),
+        (
+            "project_panel.select_next",
+            "Select Next",
+            KEY_CONTEXT,
+            SelectNext,
+        ),
+        (
+            "project_panel.collapse_or_parent",
+            "Collapse or Select Parent",
+            KEY_CONTEXT,
+            CollapseOrParent,
+        ),
+        (
+            "project_panel.expand_or_first_child",
+            "Expand or Select First Child",
+            KEY_CONTEXT,
+            ExpandOrFirstChild,
+        ),
+        ("project_panel.open", "Open", KEY_CONTEXT, Open),
+        (
+            "project_panel.reveal_active",
+            "Reveal Active File in Project",
+            crate::KEY_CONTEXT,
+            RevealActive,
+        ),
+    ];
+    let mut registry = Registry::new();
+    for (id, title, context, op) in commands {
+        registry
+            .register(id, title, move |target: &mut Option<PanelOp>, _: &Actor| {
+                *target = Some(op);
+                Ok(Dispatched::new(Effect::Notify))
+            })
+            .expect("project panel command IDs are valid and distinct")
+            .context(ContextPredicate::identifier(context));
+    }
+    registry
+}
+
+/// The op of `run`, if it's a panel command that applies in its context.
+pub(crate) fn op(run: &RunCommand, cx: &App) -> Option<PanelOp> {
+    let registry = cx.try_global::<Commands>()?.0.clone();
+    registry.get(&run.0.command)?;
+    let mut op = None;
+    if let Err(error) = registry.dispatch(&mut op, &run.0) {
+        log::warn!("{error}");
+    }
+    op
+}
+
 #[cfg(test)]
 impl ProjectPanel {
+    /// The row the last frame drew selected.
+    pub(crate) fn drawn_selected(&self) -> Option<usize> {
+        self.drawn_selected
+    }
+
+    /// The selected row's index, if it's shown.
+    pub(crate) fn selected_row(&self) -> Option<usize> {
+        self.selected_index()
+    }
+
     /// The row ranges the last frame built.
     pub(crate) fn built(&self) -> Vec<Range<usize>> {
         self.built.clone()
