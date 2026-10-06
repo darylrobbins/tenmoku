@@ -14,7 +14,7 @@ use fe_command::{
     Effect, Registry,
 };
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
 use crate::{EditorModel, Movement};
 
@@ -168,7 +168,8 @@ pub struct MoveArgs {
     #[serde(default)]
     pub extend: bool,
     /// How many times to move, up to [`MAX_MOVE_COUNT`].
-    #[serde(default = "one")]
+    #[serde(default = "one", deserialize_with = "move_count")]
+    #[schemars(range(max = MAX_MOVE_COUNT))]
     pub count: u32,
 }
 
@@ -176,10 +177,21 @@ fn one() -> u32 {
     1
 }
 
-/// The most moves one `editor.move` makes. Invocations come from scripts,
-/// replays and agents as well as keys, so a count can't be allowed to spin
-/// the model for billions of moves.
+/// The most moves one `editor.move` makes; a larger count is bad args.
+/// Invocations come from scripts, replays and agents as well as keys, so a
+/// count can't be allowed to spin the model for billions of moves, and
+/// making fewer moves than asked would misreport what ran.
 pub const MAX_MOVE_COUNT: u32 = 10_000;
+
+fn move_count<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
+    let count = u32::deserialize(deserializer)?;
+    if count > MAX_MOVE_COUNT {
+        return Err(D::Error::custom(format!(
+            "count {count} is more than {MAX_MOVE_COUNT}"
+        )));
+    }
+    Ok(count)
+}
 
 type Run = Result<Effect, CommandError>;
 
@@ -444,7 +456,7 @@ pub fn registry() -> Registry<Editor> {
                     // Caught up first, so the selections compared are
                     // those moving would start from.
                     model.sync_display();
-                    for _ in 0..args.count.min(MAX_MOVE_COUNT) {
+                    for _ in 0..args.count {
                         let before = model.selections();
                         model.move_cursors(args.motion.into(), args.extend);
                         // Moving again from where a move left nothing
@@ -453,11 +465,7 @@ pub fn registry() -> Registry<Editor> {
                             break;
                         }
                     }
-                    Ok(if args.count == 0 {
-                        Effect::Nothing
-                    } else {
-                        Effect::Changed
-                    })
+                    Ok(Effect::Changed)
                 })
             },
         )
@@ -491,12 +499,35 @@ fn add(
 
 /// Runs `run` with the model's edits, undo and redo acting as `actor`, and
 /// collects the transactions it produced.
+///
+/// `run` says [`Effect::Changed`] where it may change what's shown; that
+/// stands only if the text, the selections, the folds or the wrap did
+/// change (catching up with another model's edits counts). Otherwise the
+/// command did nothing, such as moving left at the start, undoing with no
+/// history or inserting nothing at carets.
 fn run_as(
     target: &mut EditorTarget<'_>,
     actor: &Actor,
     run: impl FnOnce(&mut EditorModel, &mut dyn EditorHost) -> Run,
 ) -> Result<Dispatched<TransactionId>, CommandError> {
     let host = &mut *target.host;
+    let before = shown(target.model);
     let (effect, transactions) = target.model.run_as(origin(actor), |model| run(model, host));
-    Ok(Dispatched::new(effect?).with_transactions(transactions))
+    let effect = match effect? {
+        Effect::Changed if shown(target.model) == before => Effect::Nothing,
+        effect => effect,
+    };
+    Ok(Dispatched::new(effect).with_transactions(transactions))
+}
+
+/// What a command can change that the view shows: the text (by version),
+/// the selections, the folds and the wrap.
+fn shown(model: &EditorModel) -> impl PartialEq + use<> {
+    (
+        model.snapshot().version(),
+        model.selections(),
+        model.display().folds().to_vec(),
+        model.soft_wrap(),
+        model.display().row_count(),
+    )
 }

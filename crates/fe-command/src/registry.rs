@@ -168,9 +168,10 @@ impl<T: CommandTarget> Registry<T> {
         )
     }
 
-    /// Registers a command whose args deserialize into `A`. Args that don't
-    /// give a [`DispatchError::BadArgs`] and run nothing; `Null` args are
-    /// read as an empty table, so all-default args can be left out.
+    /// Registers a command whose args deserialize into `A`. Args that don't,
+    /// or that aren't a table or hold a null, give a
+    /// [`DispatchError::BadArgs`] and run nothing; `Null` args are read as an
+    /// empty table, so all-default args can be left out.
     pub fn register_with_args<A, F>(
         &mut self,
         id: &str,
@@ -335,10 +336,33 @@ fn no_args(args: &Value) -> Result<(), String> {
 }
 
 fn typed_args<A: DeserializeOwned>(args: &Value) -> Result<A, String> {
+    representable(args)?;
     let result = if args.is_null() {
         A::deserialize(&Value::Object(Default::default()))
     } else {
         A::deserialize(args)
     };
     result.map_err(|error| error.to_string())
+}
+
+/// Checks that args are a table (or nothing) holding no nulls, so they're
+/// TOML as well as JSON. Serde alone would read a positional array into a
+/// struct, and pass over nulls in fields it ignores or reads as `None`.
+fn representable(args: &Value) -> Result<(), String> {
+    fn has_null(value: &Value) -> bool {
+        match value {
+            Value::Null => true,
+            Value::Array(items) => items.iter().any(has_null),
+            Value::Object(table) => table.values().any(has_null),
+            _ => false,
+        }
+    }
+    match args {
+        Value::Null => Ok(()),
+        Value::Object(table) if table.values().any(has_null) => {
+            Err("args can't hold a null".to_string())
+        }
+        Value::Object(_) => Ok(()),
+        _ => Err("args must be a table".to_string()),
+    }
 }

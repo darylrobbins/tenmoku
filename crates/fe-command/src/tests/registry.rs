@@ -259,3 +259,45 @@ fn invocations_round_trip() {
     registry.dispatch(&mut log, &clear).unwrap();
     assert_eq!(*seen.borrow(), [ok, clear]);
 }
+
+#[test]
+fn args_that_are_not_a_null_free_table_run_nothing() {
+    let mut registry = registry();
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    registry.observe({
+        let seen = seen.clone();
+        move |invocation| seen.borrow_mut().push(invocation.clone())
+    });
+    let mut log = vec!["kept".to_string()];
+    for args in [
+        // Serde reads these into `Say` on its own.
+        json!(["hi"]),
+        json!(["hi", 2]),
+        json!({"text": "hi", "times": null}),
+        json!({"text": "hi", "ignored": null}),
+        json!({"text": "hi", "ignored": [1, null]}),
+        json!({"text": "hi", "ignored": {"deep": null}}),
+        json!("hi"),
+        json!(1),
+    ] {
+        let bad = invocation("test.say").args(args);
+        assert!(
+            matches!(registry.validate(&bad), Err(DispatchError::BadArgs { .. })),
+            "{bad:?}"
+        );
+        assert!(
+            matches!(
+                registry.dispatch(&mut log, &bad),
+                Err(DispatchError::BadArgs { .. })
+            ),
+            "{bad:?}"
+        );
+    }
+    assert_eq!(log, ["kept"]);
+    assert!(seen.borrow().is_empty());
+
+    // Null args are still an empty table, and a table without nulls runs.
+    let ok = invocation("test.say").args(json!({"text": "hi", "ignored": [1]}));
+    registry.dispatch(&mut log, &ok).unwrap();
+    assert_eq!(*seen.borrow(), [ok]);
+}

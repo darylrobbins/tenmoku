@@ -62,9 +62,10 @@ The editor has two typed commands:
 - `editor.insert { text }` inserts as typing does.
 - `editor.move { motion, extend = false, count = 1 }`. `motion` is a
   snake_case enum over the non-page movements, and the movement repeats
-  `count` times. It stops early once the carets stop moving, and makes at
-  most `MAX_MOVE_COUNT` (10,000) moves, because a count can come from a
-  script or an agent as well as from keys.
+  `count` times, stopping early once the carets stop moving. A `count` above
+  `MAX_MOVE_COUNT` (10,000) is `BadArgs`, and its schema gives that as the
+  `maximum`, because a count can come from a script or an agent as well as
+  from keys. Making fewer moves than asked would misreport what ran.
 
 **Representability.** Args are carried as `serde_json::Value` in an
 invocation and typed only at dispatch, so the registry, recorders and
@@ -74,6 +75,12 @@ and TOML, for keymap files:
 - They are a table or nothing (a no-arg command accepts `null` or `{}`).
 - They never contain a null. `Option` fields use
   `#[serde(skip_serializing_if = "Option::is_none")]`.
+
+The registry enforces both before typing args, in `validate` and `dispatch`
+alike: anything else is `BadArgs`, and runs neither the handler nor the
+observers. Serde alone would read a positional array (`["x"]`) into a struct,
+and pass over a null in a field it ignores or reads as `None`, so a record
+that can't be written as TOML would dispatch and be observed.
 
 ## Context predicates
 
@@ -177,7 +184,9 @@ field for field. `fe-command` doesn't depend on `fe-buffer`.
 - **Stamping.** All model edits go through `apply_with_carets` into
   `Buffer::edit`. While a command runs (`EditorModel::run_as`), that edit is
   stamped with the invoking actor's origin. Direct method calls keep using
-  `Origin::User`, as before.
+  `Origin::User`, as before. `run_as` restores the origin however the command
+  exits, so a host that catches a panic from inside one (say, its own
+  clipboard) isn't left editing and undoing as that command's actor.
 - **Undo per actor.** `editor.undo` and `editor.redo` act on the actor's own
   origin. A `User` actor undoes `User` transactions, which is the old
   behaviour. An `Ai { agent, session }` actor undoes only that session's
@@ -190,10 +199,16 @@ field for field. `fe-command` doesn't depend on `fe-buffer`.
 
 `Effect` is `Nothing`, `Notify` or `Changed`:
 
-- `copy`, and `paste` with an empty clipboard, return `Nothing`.
-- `save` returns `Notify`.
+- `copy` always returns `Nothing`.
+- `save` always returns `Notify`.
 - Every other command returns `Changed`, which means repaint and scroll to the
-  cursor, as the view's `changed()` did.
+  cursor, as the view's `changed()` did, if it changed the text, the
+  selections, the folds or the wrap. Catching up with another model's edits
+  counts. A command that changed none of these returns `Nothing`: moving
+  left at the start, deleting backward at offset zero, undoing or redoing
+  with no history to act on, unfolding with nothing folded, or inserting or
+  pasting empty text at carets. `fe_editor::commands` compares that state
+  before and after the handler, so a handler needn't work it out itself.
 
 Save, undo and redo failures come back as `DispatchError::Failed` with the
 message the view used to log.

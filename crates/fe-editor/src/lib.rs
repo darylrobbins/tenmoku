@@ -919,16 +919,38 @@ impl EditorModel {
     /// Runs `f` with edits, undo and redo acting as `origin` rather than
     /// the user. Returns its result and the transactions it produced: those
     /// it edited in, and those it undid or redid.
+    ///
+    /// The model acts as before once `f` exits, even by unwinding, so a
+    /// host that catches a panic isn't left editing and undoing as `origin`.
     pub(crate) fn run_as<R>(
         &mut self,
         origin: Origin,
         f: impl FnOnce(&mut Self) -> R,
     ) -> (R, Vec<TransactionId>) {
+        /// Puts the outer origin and transactions back when dropped.
+        struct Restore<'a> {
+            model: &'a mut EditorModel,
+            origin: Origin,
+            transactions: Option<Vec<TransactionId>>,
+        }
+
+        impl Drop for Restore<'_> {
+            fn drop(&mut self) {
+                self.model.origin = std::mem::replace(&mut self.origin, Origin::User);
+                self.model.transactions = self.transactions.take();
+            }
+        }
+
         let outer = std::mem::replace(&mut self.origin, origin);
         let outer_transactions = self.transactions.replace(Vec::new());
-        let result = f(self);
-        self.origin = outer;
-        let transactions = std::mem::replace(&mut self.transactions, outer_transactions);
+        let restore = Restore {
+            model: self,
+            origin: outer,
+            transactions: outer_transactions,
+        };
+        let result = f(restore.model);
+        let transactions = restore.model.transactions.take();
+        drop(restore);
         (result, transactions.unwrap_or_default())
     }
 

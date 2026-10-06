@@ -1,4 +1,4 @@
-use fe_command::{Actor, Dispatched, Effect, Invocation, Value};
+use fe_command::{Actor, DispatchError, Dispatched, Effect, Invocation, Value};
 use serde_json::json;
 
 use super::*;
@@ -182,10 +182,10 @@ fn headless_dispatch_matches_model_calls() {
             }
         },
     );
-    // A huge count stops once the carets stop moving.
+    // The largest count stops once the carets stop moving.
     check(
         "editor.move",
-        json!({"motion": "right", "count": u32::MAX}),
+        json!({"motion": "right", "count": commands::MAX_MOVE_COUNT}),
         &|model| model.move_cursors(Movement::DocumentEnd, false),
     );
     check(
@@ -418,4 +418,214 @@ fn recorded_invocations_replay() {
     }
     assert_eq!(render(&b), render(&a));
     assert_ne!(render(&b), marked);
+}
+
+/// A host whose clipboard panics, as a buggy embedding might.
+struct PanickingHost;
+
+impl commands::EditorHost for PanickingHost {
+    fn page_rows(&self) -> u32 {
+        20
+    }
+
+    fn read_clipboard(&mut self) -> Option<String> {
+        panic!("clipboard unavailable")
+    }
+
+    fn write_clipboard(&mut self, _: String) {}
+
+    fn fold_range_at(&self, _: u32) -> Option<std::ops::RangeInclusive<u32>> {
+        None
+    }
+
+    fn fold_ranges(&self, _: std::ops::Range<u32>) -> Vec<std::ops::RangeInclusive<u32>> {
+        Vec::new()
+    }
+}
+
+#[test]
+fn a_caught_panic_leaves_the_model_acting_as_the_user() {
+    let registry = commands::registry();
+    let ai = Actor::Ai {
+        agent: "claude".into(),
+        session: "s1".into(),
+    };
+    let mut model = parse("|");
+    model.insert("U");
+    let by_ai = registry
+        .dispatch(
+            &mut EditorTarget::new(&mut model, &mut HeadlessHost::new()),
+            &invocation("editor.insert", json!({"text": "X"})).actor(ai.clone()),
+        )
+        .unwrap();
+    let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        registry.dispatch(
+            &mut EditorTarget::new(&mut model, &mut PanickingHost),
+            &invocation("editor.paste", Value::Null).actor(ai.clone()),
+        )
+    }));
+    assert!(panicked.is_err());
+
+    // A direct edit is the user's, so the agent's undo passes over it.
+    model.insert("u");
+    let undone = registry
+        .dispatch(
+            &mut EditorTarget::new(&mut model, &mut HeadlessHost::new()),
+            &invocation("editor.undo", Value::Null).actor(ai),
+        )
+        .unwrap();
+    assert_eq!(undone.transactions, by_ai.transactions);
+    assert_eq!(model.text().to_string(), "Uu");
+    // And a direct undo undoes the user's edits, after that dispatch too.
+    assert!(model.undo().unwrap().is_some());
+    assert_eq!(model.text().to_string(), "U");
+    assert!(model.undo().unwrap().is_some());
+    assert_eq!(model.text().to_string(), "");
+}
+
+#[test]
+fn move_counts_past_the_limit_are_bad_args() {
+    let registry = commands::registry();
+    let schema = registry
+        .commands()
+        .find(|meta| meta.id.as_str() == "editor.move")
+        .and_then(|meta| meta.args_schema.clone())
+        .unwrap();
+    assert_eq!(
+        schema["properties"]["count"]["maximum"],
+        json!(commands::MAX_MOVE_COUNT),
+        "{schema}"
+    );
+
+    // Text long enough that every move moves, in short rows to keep each
+    // move cheap.
+    let long = format!("|{}", "xxxxxxxxx\n".repeat(1_001));
+    let mut model = parse(&long);
+    let mut host = HeadlessHost::new();
+    let most = commands::MAX_MOVE_COUNT;
+    dispatch(
+        &mut model,
+        &mut host,
+        "editor.move",
+        json!({"motion": "right", "count": most}),
+    );
+    assert_eq!(model.primary_selection().head(), most as usize);
+
+    let mut model = parse(&long);
+    for count in [most + 1, u32::MAX] {
+        let too_many = invocation("editor.move", json!({"motion": "right", "count": count}));
+        assert!(matches!(
+            registry.validate(&too_many),
+            Err(DispatchError::BadArgs { .. })
+        ));
+        assert!(matches!(
+            registry.dispatch(&mut EditorTarget::new(&mut model, &mut host), &too_many),
+            Err(DispatchError::BadArgs { .. })
+        ));
+    }
+    assert_eq!(render(&model), long);
+}
+
+#[test]
+fn commands_that_change_nothing_report_nothing() {
+    let no_ops: [(&str, &[&str]); 3] = [
+        (
+            "|ab\ncd",
+            &[
+                "move_left",
+                "move_up",
+                "move_word_left",
+                "move_line_start",
+                "move_document_start",
+                "page_up",
+                "select_left",
+                "select_up",
+                "select_word_left",
+                "select_document_start",
+                "select_page_up",
+                "backspace",
+                "delete_word_left",
+                "fold",
+                "fold_all",
+                "unfold",
+                "unfold_all",
+                "undo",
+                "redo",
+            ],
+        ),
+        (
+            "ab\ncd|",
+            &[
+                "move_right",
+                "move_down",
+                "move_word_right",
+                "move_line_end",
+                "move_document_end",
+                "page_down",
+                "select_right",
+                "select_down",
+                "select_document_end",
+                "delete",
+            ],
+        ),
+        ("[ab\ncd]", &["select_all", "select_document_end"]),
+    ];
+    let mut cases: Vec<(&str, String, Value)> = no_ops
+        .iter()
+        .flat_map(|(marked, names)| {
+            names
+                .iter()
+                .map(|name| (*marked, format!("editor.{name}"), Value::Null))
+        })
+        .collect();
+    cases.extend([
+        (
+            "|ab\ncd",
+            "editor.move".to_string(),
+            json!({"motion": "left", "count": 3}),
+        ),
+        (
+            "a|b\ncd",
+            "editor.move".to_string(),
+            json!({"motion": "right", "count": 0}),
+        ),
+        ("a|b\nc|d", "editor.insert".to_string(), json!({"text": ""})),
+        ("a|b\nc|d", "editor.paste".to_string(), Value::Null),
+    ]);
+    for (marked, command, args) in cases {
+        let mut model = parse(marked);
+        let before = state(&model);
+        let mut host = HeadlessHost {
+            clipboard: Some(String::new()),
+            ..HeadlessHost::new()
+        };
+        let dispatched = dispatch(&mut model, &mut host, &command, args);
+        assert_eq!(
+            dispatched,
+            Dispatched::new(Effect::Nothing),
+            "{command} at {marked:?}"
+        );
+        assert_eq!(state(&model), before, "{command} at {marked:?}");
+    }
+
+    // The same commands report changes once there's something to change,
+    // and nothing again once it's done.
+    let mut model = parse("|a\n    b\n");
+    let mut host = HeadlessHost::new();
+    for (command, effect) in [
+        ("editor.fold", Effect::Changed),
+        ("editor.fold", Effect::Nothing),
+        ("editor.unfold", Effect::Changed),
+        ("editor.unfold", Effect::Nothing),
+        ("editor.toggle_soft_wrap", Effect::Changed),
+        ("editor.delete", Effect::Changed),
+        ("editor.undo", Effect::Changed),
+        ("editor.undo", Effect::Nothing),
+        ("editor.redo", Effect::Changed),
+        ("editor.redo", Effect::Nothing),
+        ("editor.copy", Effect::Nothing),
+    ] {
+        let dispatched = dispatch(&mut model, &mut host, command, Value::Null);
+        assert_eq!(dispatched.effect, effect, "{command}");
+    }
 }
