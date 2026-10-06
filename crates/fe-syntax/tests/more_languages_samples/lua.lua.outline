@@ -1,0 +1,8 @@
+Module "M" 1:7-1:13
+Module "Account" 9:7-14:2
+  Method "deposit" 11:3-13:6
+Function "new" 16:1-19:4
+Method "describe" 21:1-24:4
+Function "helper" 26:1-29:4
+Function "global_helper" 31:1-33:4
+Function "callback" 35:1-37:4

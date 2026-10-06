@@ -163,6 +163,14 @@ fn symbols_match_golden_files() {
         .filter(|name| symbols_supported(name))
         .collect();
     supported.sort_unstable();
+    // The languages T113 added have their samples, and goldens, in
+    // more_languages_samples/, which tests/more_languages.rs checks.
+    covered.extend(
+        fs::read_dir(tests_dir().join("more_languages_samples"))
+            .unwrap()
+            .filter_map(|entry| language_for_path(&entry.unwrap().path()))
+            .map(|language| language.name()),
+    );
     covered.sort_unstable();
     assert_eq!(
         covered, supported,
@@ -349,6 +357,15 @@ fn unsupported_languages_have_no_symbols() {
         "go",
         "java",
         "c",
+        // Added by T113.
+        "cpp",
+        "csharp",
+        "ruby",
+        "php",
+        "swift",
+        "kotlin",
+        "scala",
+        "lua",
     ];
     for language in code {
         assert!(symbols_supported(language), "{language}");

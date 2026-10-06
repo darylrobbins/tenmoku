@@ -1,0 +1,25 @@
+Module "App\\Models" 3:1-3:22
+Constant "APP_VERSION" 5:7-5:26
+Constant "LEGACY" 7:1-7:23
+Variable "registry" 9:1-9:15
+Variable "first" 10:6-10:12
+Variable "second" 10:14-10:21
+Interface "HasName" 12:1-17:2
+  Constant "PREFIX" 14:11-14:23
+  Method "name" 16:5-16:36
+Trait "Greets" 19:1-25:2
+  Method "greet" 21:5-24:6
+Class "Model" 27:1-46:2
+  Constant "TABLE" 31:18-31:34
+  Field "name" 32:22-32:27
+  Field "count" 33:24-33:34
+  Field "other" 33:36-33:42
+  Method "__construct" 35:5-37:6
+    Field "id" 35:33-35:48
+  Method "name" 39:5-43:6
+  Method "save" 45:5-45:46
+Enum "Status" 48:1-57:2
+  Variant "Active" 50:5-50:28
+  Variant "Archived" 51:5-51:32
+  Method "label" 53:5-56:6
+Function "helper" 59:1-63:2

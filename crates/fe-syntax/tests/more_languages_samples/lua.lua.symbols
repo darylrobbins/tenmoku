@@ -1,0 +1,13 @@
+Module "M" 1:7-1:13
+Variable "x" 3:7-3:12
+Variable "low" 4:7-4:10
+Variable "high" 4:12-4:16
+Variable "counter" 5:1-5:12
+Module "Account" 9:7-14:2
+  Field "balance" 10:3-10:14
+  Method "deposit" 11:3-13:6
+Function "new" 16:1-19:4
+Method "describe" 21:1-24:4
+Function "helper" 26:1-29:4
+Function "global_helper" 31:1-33:4
+Function "callback" 35:1-37:4

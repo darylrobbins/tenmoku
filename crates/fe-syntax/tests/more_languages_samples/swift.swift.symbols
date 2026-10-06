@@ -1,0 +1,30 @@
+Variable "limit" 3:5-3:10
+Variable "low" 4:6-4:9
+Variable "high" 4:11-4:15
+Variable "counter" 5:5-5:12
+Interface "Shape" 7:1-11:2
+  Field "area" 8:5-8:13
+  Method "describe" 9:5-9:30
+  Method "init" 10:5-10:23
+Struct "Point" 13:1-21:2
+  Field "x" 14:9-14:10
+  Field "y" 15:9-15:10
+  Method "distance" 17:5-20:6
+Class "Circle" 23:1-44:2
+  Field "radius" 24:9-24:15
+  Field "count" 25:16-25:21
+  Method "init" 27:5-29:6
+  Method "deinit" 31:5-31:14
+  Field "area" 33:9-33:13
+  Method "describe" 37:5-39:6
+  Method "subscript" 41:5-43:6
+Enum "Direction" 46:1-53:2
+  Variant "north" 47:10-47:15
+  Variant "south" 48:10-48:15
+  Variant "east" 48:17-48:21
+  Method "opposite" 50:5-52:6
+Impl "Point" 55:1-59:2
+  Method "scaled" 56:5-58:6
+Type "Distance" 61:1-61:28
+Macro "stringify" 63:1-64:105
+Function "helper" 66:1-69:2

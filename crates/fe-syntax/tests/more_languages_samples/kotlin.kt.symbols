@@ -1,0 +1,27 @@
+Module "demo.shapes" 1:1-1:20
+Constant "LIMIT" 3:1-3:21
+Variable "origin" 4:1-4:15
+Variable "counter" 5:1-5:16
+Interface "Shape" 7:1-10:2
+  Field "area" 8:5-8:21
+  Method "describe" 9:5-9:27
+Class "Point" 12:1-12:67
+  Field "x" 12:18-12:31
+  Field "y" 12:33-12:66
+Class "Circle" 14:1-28:2
+  Field "radius" 14:19-14:45
+  Field "area" 15:5-15:48
+  Field "label" 16:5-16:25
+  Method "constructor" 18:5-18:30
+  Method "describe" 20:5-23:6
+  Class "Factory" 25:5-27:6
+    Method "unit" 26:9-26:38
+Enum "Direction" 30:1-35:2
+  Variant "NORTH" 31:5-31:10
+  Variant "SOUTH" 32:5-32:10
+  Method "opposite" 34:5-34:37
+Class "Registry" 37:1-43:2
+  Field "shapes" 38:5-38:40
+  Method "register" 40:5-42:6
+Type "Distance" 45:1-45:28
+Function "helper" 47:1-50:2

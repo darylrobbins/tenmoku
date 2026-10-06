@@ -1,0 +1,16 @@
+Module "Shop.Orders" 3:1-57:2
+  Interface "IOrder" 5:5-9:6
+    Method "Submit" 8:9-8:23
+  Class "Order" 11:5-36:6
+    Constant "MaxLines" 13:26-13:39
+    Method "Order" 18:9-22:10
+    Method "~Order" 24:9-24:21
+    Method "Submit" 26:9-26:33
+    Method "operator +" 28:9-28:63
+    Method "this" 30:9-30:45
+    Class "Line" 32:9-35:10
+  Struct "Money" 38:5-43:6
+    Method "ToString" 42:9-42:64
+  Enum "Status" 45:5-49:6
+  Class "Receipt" 51:5-54:6
+  Type "Notify" 56:5-56:49

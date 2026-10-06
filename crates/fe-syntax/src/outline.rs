@@ -12,7 +12,12 @@
 //! variables. Those come from `queries/definitions/`, run after the outline
 //! query as one query.
 
-use std::{collections::HashMap, ops::Range, sync::OnceLock};
+use std::{
+    cell::OnceCell,
+    collections::{HashMap, HashSet},
+    ops::Range,
+    sync::OnceLock,
+};
 
 use fe_buffer::{Text, Version};
 use tree_sitter::{
@@ -233,6 +238,11 @@ impl OutlineJob {
             self.query.outline(self.language)
         };
         let text = &self.text;
+        let context = Context {
+            text,
+            root: self.tree.root_node(),
+            cpp_scopes: OnceCell::new(),
+        };
         let mut cursor = QueryCursor::new();
         // Predicates like `#match?` read node text straight from the rope.
         let source = |node: Node| chunks(text, node.byte_range());
@@ -246,7 +256,7 @@ impl OutlineJob {
         while let Some(found_match) = matches.next() {
             let captures = found_match.captures();
             let predicates = &compiled.predicates[found_match.pattern_index];
-            if !predicates.iter().all(|predicate| predicate.holds(captures)) {
+            if !(predicates.iter()).all(|predicate| predicate.holds(captures, &context)) {
                 continue;
             }
             let mut item: Option<(OutlineKind, Node)> = None;
@@ -259,7 +269,7 @@ impl OutlineJob {
                     Capture::Name => {
                         let declared = declared_name(capture.node);
                         names_function |= declares_function(declared);
-                        let range = declared.byte_range();
+                        let range = name_range(declared);
                         name = Some(match name {
                             Some(name) => merge(name, range),
                             None => range,
@@ -476,8 +486,23 @@ fn merge(a: Range<usize>, b: Range<usize>) -> Range<usize> {
 
 /// The node that names what `node` declares. That's `node` itself, except
 /// for a C declarator, which stands for the identifier at the end of its
-/// chain: `f` in `*(*f)(int)`, without the parameters' names.
-fn declared_name(mut node: Node) -> Node {
+/// chain: `f` in `*(*f)(int)`, without the parameters' names, and a C++
+/// qualified name, which stands for its last part: `count` in
+/// `int A::X::count`.
+fn declared_name(node: Node) -> Node {
+    let mut node = declarator_end(node);
+    while node.kind() == "qualified_identifier" {
+        match node.child_by_field_name("name") {
+            Some(name) => node = declarator_end(name),
+            None => break,
+        }
+    }
+    node
+}
+
+/// The node at the end of a C declarator's chain, `f` in `*(*f)(int)`, or
+/// `node` itself if it isn't a declarator.
+fn declarator_end(mut node: Node) -> Node {
     while node.kind().ends_with("_declarator") {
         let inner = node.child_by_field_name("declarator").or_else(|| {
             // Parenthesized and attributed declarators have no field. Their
@@ -496,15 +521,42 @@ fn declared_name(mut node: Node) -> Node {
     node
 }
 
-/// Whether `name`, the node [`declared_name`] found, names a C function:
-/// `f` in `int *f(void)` and `int f [[deprecated]] (void)`, but not `fp` in
-/// `int (*fp)(void)`, a pointer to one.
+/// The bytes of the name `node` stands for: its own, except for a Ruby
+/// symbol, `:name` in `attr_reader :name`, which names `name`, and a C++
+/// conversion operator, `operator char*() const`, named up to its
+/// parameters, `operator char*`.
+fn name_range(node: Node) -> Range<usize> {
+    let range = node.byte_range();
+    match node.kind() {
+        "simple_symbol" => (range.start + 1).min(range.end)..range.end,
+        "operator_cast" => {
+            let mut declarator = node.child_by_field_name("declarator");
+            while let Some(inner) = declarator {
+                if inner.kind() == "abstract_function_declarator" {
+                    break;
+                }
+                declarator = inner.child_by_field_name("declarator");
+            }
+            let parameters = declarator.and_then(|d| d.child_by_field_name("parameters"));
+            range.start..parameters.map_or(range.end, |parameters| parameters.start_byte())
+        }
+        _ => range,
+    }
+}
+
+/// Whether `name`, the node [`declared_name`] found, names a C or C++
+/// function: `f` in `int *f(void)`, `int f [[deprecated]] (void)` and
+/// `int X::f()`, but not `fp` in `int (*fp)(void)`, a pointer to one. A C++
+/// conversion operator, `operator bool()`, is a function too.
 fn declares_function(name: Node) -> bool {
+    if name.kind() == "operator_cast" {
+        return true;
+    }
     let mut parent = name.parent();
     while let Some(node) = parent.filter(|node| {
         matches!(
             node.kind(),
-            "parenthesized_declarator" | "attributed_declarator"
+            "parenthesized_declarator" | "attributed_declarator" | "qualified_identifier"
         )
     }) {
         parent = node.parent();
@@ -521,10 +573,11 @@ struct Predicate {
 }
 
 enum Test {
-    /// `(#scope? @node kind...)`: the scope of @node, a C declaration, is
-    /// one of the kinds. That's its nearest ancestor other than preprocessor
-    /// conditionals and a struct's or union's member list. A struct or union
-    /// without a name is no scope, so its members don't match.
+    /// `(#scope? @node kind...)`: the scope of @node, a C or C++
+    /// declaration, is one of the kinds. That's its nearest ancestor other
+    /// than preprocessor conditionals and a struct's, union's or class's
+    /// member list. One of those without a name is no scope, so its members
+    /// don't match.
     Scope(Vec<Box<str>>),
     /// `(#destructured? @node)`: @node is a name a JavaScript destructuring
     /// pattern binds, at any depth, in a declaration at the top of the
@@ -546,6 +599,36 @@ enum Test {
     /// list a statement directly in the scope of that kind assigns to, a in
     /// `a, *b = 1, 2`, also when that assignment is chained.
     Unpacked(Box<str>),
+    /// `(#function? @node)`, or `#not-function?` for the opposite: @node, a
+    /// C++ declarator, declares a function, as [`declares_function`] says.
+    Function(bool),
+    /// `(#member? @node)`, or `#not-member?` for the opposite: @node, a C++
+    /// definition, declaration or declarator, declares a member of a type
+    /// outside it, as `int X::f() { }` and `int X::count = 0;` do. A name
+    /// can't say whether its qualifier is a namespace or a type, so it's a
+    /// type unless the file defines a namespace of that name and no type:
+    /// a member defined in a .cpp file usually belongs to a class its header
+    /// declares.
+    Member(bool),
+    /// `(#sole? @node)`, or `#not-sole?` for the opposite: @node, a Lua
+    /// assignment target or a name in one, as M or f in `M.f = ...`, is in
+    /// a list of one target: `local x = 1` but not `local a, b = 1, 2`.
+    Sole(bool),
+}
+
+/// What the predicates of a match can look at besides its captures.
+struct Context<'a> {
+    text: &'a Text,
+    root: Node<'a>,
+    cpp_scopes: OnceCell<CppScopes>,
+}
+
+/// The names of the namespaces and the types a C++ file declares, for
+/// [`Test::Member`].
+#[derive(Default)]
+struct CppScopes {
+    namespaces: HashSet<String>,
+    types: HashSet<String>,
 }
 
 impl Predicate {
@@ -571,6 +654,12 @@ impl Predicate {
             "chained?" => Test::Chained(scope()?),
             "unchained?" if args.is_empty() => Test::Unchained,
             "unpacked?" => Test::Unpacked(scope()?),
+            "function?" if args.is_empty() => Test::Function(true),
+            "not-function?" if args.is_empty() => Test::Function(false),
+            "member?" if args.is_empty() => Test::Member(true),
+            "not-member?" if args.is_empty() => Test::Member(false),
+            "sole?" if args.is_empty() => Test::Sole(true),
+            "not-sole?" if args.is_empty() => Test::Sole(false),
             _ => return None,
         };
         Some(Self {
@@ -581,7 +670,7 @@ impl Predicate {
 
     /// Whether the match with these captures meets the predicate. One whose
     /// node wasn't captured doesn't.
-    fn holds(&self, captures: &[QueryCapture]) -> bool {
+    fn holds(&self, captures: &[QueryCapture], context: &Context) -> bool {
         let Some(node) = (captures.iter())
             .find(|capture| capture.index == self.capture)
             .map(|capture| capture.node)
@@ -600,6 +689,9 @@ impl Predicate {
             Test::Unpacked(scope) => {
                 assigned(node, true).is_some_and(|(statement, _)| statement_in(statement, scope))
             }
+            Test::Function(function) => declares_function(declared_name(node)) == *function,
+            Test::Member(member) => cpp_member(node, context) == *member,
+            Test::Sole(sole) => sole_target(node) == *sole,
         }
     }
 }
@@ -607,6 +699,102 @@ impl Predicate {
 /// `node`'s field in `parent` is `field`.
 fn is_field(parent: Node, field: &str, node: Node) -> bool {
     parent.child_by_field_name(field) == Some(node)
+}
+
+/// Whether the C++ definition, declaration or declarator `node` declares a
+/// member of a type outside it. See [`Test::Member`].
+fn cpp_member(mut node: Node, context: &Context) -> bool {
+    if let Some(declarator) = (node.kind() != "qualified_identifier")
+        .then(|| node.child_by_field_name("declarator"))
+        .flatten()
+    {
+        node = declarator;
+    }
+    let mut node = declarator_end(node);
+    if node.kind() != "qualified_identifier" {
+        return false;
+    }
+    // The innermost qualifier: X in A::X::f.
+    while let Some(name) =
+        (node.child_by_field_name("name")).filter(|name| name.kind() == "qualified_identifier")
+    {
+        node = name;
+    }
+    let Some(scope) = node.child_by_field_name("scope") else {
+        // ::f, in the global namespace.
+        return false;
+    };
+    if scope.kind() != "namespace_identifier" {
+        // A template, as in Box<T>::get.
+        return true;
+    }
+    let scopes = (context.cpp_scopes).get_or_init(|| cpp_scopes(context.root, context.text));
+    let name = node_text(context.text, scope);
+    scopes.types.contains(&name) || !scopes.namespaces.contains(&name)
+}
+
+/// Whether the Lua target `node`, or the target it's in, is the only one
+/// in its list. See [`Test::Sole`].
+fn sole_target(node: Node) -> bool {
+    let mut list = node.parent();
+    while let Some(parent) = list.filter(|parent| parent.kind() != "variable_list") {
+        list = parent.parent();
+    }
+    list.is_some_and(|list| {
+        let mut cursor = list.walk();
+        list.children_by_field_name("name", &mut cursor).count() == 1
+    })
+}
+
+/// See [`CppScopes`].
+fn cpp_scopes(root: Node, text: &Text) -> CppScopes {
+    let mut scopes = CppScopes::default();
+    let mut cursor = root.walk();
+    loop {
+        let node = cursor.node();
+        let name = node.child_by_field_name("name");
+        match node.kind() {
+            "namespace_definition" => {
+                if let Some(name) = name {
+                    let mut names = vec![name];
+                    if name.kind() == "nested_namespace_specifier" {
+                        let mut cursor = name.walk();
+                        names = name.named_children(&mut cursor).collect();
+                    }
+                    for name in names {
+                        scopes.namespaces.insert(node_text(text, name));
+                    }
+                }
+            }
+            "class_specifier" | "struct_specifier" | "union_specifier" | "enum_specifier"
+            | "alias_declaration" => {
+                scopes.types.extend(name.map(|name| node_text(text, name)));
+            }
+            "type_definition" => {
+                let mut cursor = node.walk();
+                for declarator in node.children_by_field_name("declarator", &mut cursor) {
+                    scopes
+                        .types
+                        .insert(node_text(text, declared_name(declarator)));
+                }
+            }
+            _ => {}
+        }
+        if cursor.goto_first_child() {
+            continue;
+        }
+        while !cursor.goto_next_sibling() {
+            if !cursor.goto_parent() {
+                return scopes;
+            }
+        }
+    }
+}
+
+fn node_text(text: &Text, node: Node) -> String {
+    (chunks(text, node.byte_range()))
+        .map(String::from_utf8_lossy)
+        .collect()
 }
 
 /// The scope [`Test::Scope`] describes.
@@ -623,8 +811,10 @@ fn c_scope(node: Node) -> Option<Node> {
     ) {
         scope = scope.parent()?;
     }
-    let anonymous = matches!(scope.kind(), "struct_specifier" | "union_specifier")
-        && scope.child_by_field_name("name").is_none();
+    let anonymous = matches!(
+        scope.kind(),
+        "struct_specifier" | "union_specifier" | "class_specifier"
+    ) && scope.child_by_field_name("name").is_none();
     (!anonymous).then_some(scope)
 }
 
@@ -921,7 +1111,7 @@ const JAVASCRIPT_DEFINITIONS: &str = include_str!("../queries/definitions/javasc
 const TYPESCRIPT_DEFINITIONS: &str = include_str!("../queries/definitions/typescript.scm");
 
 /// The outline and definitions queries, by language name.
-static QUERIES: [OutlineQuery; 10] = [
+static QUERIES: [OutlineQuery; 18] = [
     OutlineQuery::new(
         "rust",
         &[include_str!("../queries/outline/rust.scm")],
@@ -957,6 +1147,46 @@ static QUERIES: [OutlineQuery; 10] = [
         "c",
         &[include_str!("../queries/outline/c.scm")],
         &[include_str!("../queries/definitions/c.scm")],
+    ),
+    OutlineQuery::new(
+        "cpp",
+        &[include_str!("../queries/outline/cpp.scm")],
+        &[include_str!("../queries/definitions/cpp.scm")],
+    ),
+    OutlineQuery::new(
+        "csharp",
+        &[include_str!("../queries/outline/csharp.scm")],
+        &[include_str!("../queries/definitions/csharp.scm")],
+    ),
+    OutlineQuery::new(
+        "ruby",
+        &[include_str!("../queries/outline/ruby.scm")],
+        &[include_str!("../queries/definitions/ruby.scm")],
+    ),
+    OutlineQuery::new(
+        "php",
+        &[include_str!("../queries/outline/php.scm")],
+        &[include_str!("../queries/definitions/php.scm")],
+    ),
+    OutlineQuery::new(
+        "swift",
+        &[include_str!("../queries/outline/swift.scm")],
+        &[include_str!("../queries/definitions/swift.scm")],
+    ),
+    OutlineQuery::new(
+        "kotlin",
+        &[include_str!("../queries/outline/kotlin.scm")],
+        &[include_str!("../queries/definitions/kotlin.scm")],
+    ),
+    OutlineQuery::new(
+        "scala",
+        &[include_str!("../queries/outline/scala.scm")],
+        &[include_str!("../queries/definitions/scala.scm")],
+    ),
+    OutlineQuery::new(
+        "lua",
+        &[include_str!("../queries/outline/lua.scm")],
+        &[include_str!("../queries/definitions/lua.scm")],
     ),
     OutlineQuery::new(
         "markdown",

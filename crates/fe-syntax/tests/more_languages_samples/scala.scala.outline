@@ -1,0 +1,12 @@
+Module "demo.shapes" 1:1-1:20
+Trait "Shape" 3:1-6:2
+  Method "area" 4:3-4:19
+Class "Point" 8:1-8:52
+Class "Circle" 10:1-18:2
+  Method "area" 14:3-17:4
+Module "Registry" 20:1-26:2
+  Method "register" 23:3-23:40
+  Type "Id" 25:3-25:16
+Enum "Direction" 28:1-33:2
+  Method "opposite" 32:3-32:33
+Function "helper" 35:1-38:2

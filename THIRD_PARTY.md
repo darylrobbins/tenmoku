@@ -9,11 +9,27 @@
 | `crates/fe-display/src/display_map.rs` | gpui-kit `…/display_map/display_map.rs` | `2c5162f8c5b0c7fcec066ed53125d304c632bfe2` | Apache-2.0 |
 | `crates/fe-syntax/queries/toml.scm` | [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter) `runtime/queries/toml/highlights.scm` | `e289100ff98969e118c702199d88b764ce9e7fdf` | Apache-2.0 |
 | `crates/fe-syntax/queries/kotlin.scm` | nvim-treesitter `runtime/queries/kotlin/highlights.scm` | `3e1f54c1ce0a86959313f1cb7f60262ea57aaa23` | Apache-2.0 |
+| `crates/fe-syntax/queries/outline/ruby.scm` | tree-sitter-ruby crate `queries/tags.scm` | version 0.23.1 | MIT |
+| `crates/fe-syntax/queries/outline/php.scm` | tree-sitter-php crate `queries/tags.scm` | version 0.24.2 | MIT |
+| `crates/fe-syntax/queries/definitions/php.scm` | tree-sitter-php crate `queries/tags.scm` | version 0.24.2 | MIT |
+| `crates/fe-syntax/queries/outline/kotlin.scm` | tree-sitter-kotlin-sg crate `queries/tags.scm` | version 0.4.1 | MIT |
+| `crates/fe-syntax/queries/definitions/kotlin.scm` | tree-sitter-kotlin-sg crate `queries/tags.scm` | version 0.4.1 | MIT |
+| `crates/fe-syntax/queries/outline/scala.scm` | tree-sitter-scala crate `queries/tags.scm` | version 0.26.2 | MIT |
+| `crates/fe-syntax/queries/definitions/scala.scm` | tree-sitter-scala crate `queries/tags.scm` | version 0.26.2 | MIT |
+| `crates/fe-syntax/queries/outline/lua.scm` | tree-sitter-lua crate `queries/tags.scm` | version 0.5.0 | MIT |
 
 gpui-kit is Copyright 2024 - 2026 Longbridge. Its files carry no license
 header and the repository has no NOTICE file, so each adapted file starts with
 a header naming the source, commit and license and saying what was changed.
 Ship the Apache-2.0 license text with them.
+
+The outline and definitions queries adapted from a grammar crate's
+`queries/tags.scm` come from the crate version `fe-syntax` already links
+(MIT, listed below), so its licence covers them. Each starts with a header
+naming the source file, version and licence and saying what was changed.
+None adapts nvim-treesitter. The other outline and definitions queries for
+C++, C#, Ruby, Swift and Lua are ours, written from the grammar's
+`node-types.json`, and say so in their headers.
 
 ## Tree-sitter grammars and highlight queries
 

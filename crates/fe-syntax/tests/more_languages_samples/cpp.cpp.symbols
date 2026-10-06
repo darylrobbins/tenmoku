@@ -1,0 +1,38 @@
+Macro "MAX_ITEMS" 3:1-4:1
+Macro "SQUARE" 4:1-5:1
+Module "shapes" 6:1-72:2
+  Variable "kSides" 8:11-8:21
+  Variable "counter" 9:5-9:16
+  Variable "cursor" 9:18-9:25
+  Struct "Point" 12:1-15:2
+    Field "x" 13:9-13:10
+    Field "y" 13:12-13:13
+    Method "length" 14:12-14:26
+  Class "Shape" 17:1-37:2
+    Method "Shape" 19:5-19:49
+    Method "~Shape" 20:5-20:24
+    Method "area" 22:5-25:6
+    Method "scaled" 28:5-28:48
+    Field "count" 30:16-30:21
+    Method "neighbours" 31:11-31:25
+    Method "operator char *" 32:5-32:28
+    Field "sides_" 35:9-35:15
+    Field "callback_" 36:9-36:26
+  Enum "Color" 39:1-39:32
+    Variant "Red" 39:20-39:23
+    Variant "Green" 39:25-39:30
+  Struct "Value" 41:1-44:2
+    Field "i" 42:9-42:10
+    Field "f" 43:11-43:12
+  Type "Size" 46:1-46:28
+  Type "Name" 47:1-47:26
+  Function "maximum" 50:1-52:2
+  Variable "zero" 55:3-55:13
+  Module "detail" 57:1-60:2
+    Function "helper" 58:1-58:26
+  Function "twice" 62:1-62:51
+  Method "length" 64:1-64:43
+  Field "count" 66:5-66:21
+  Method "neighbours" 68:1-68:48
+  Method "operator char *" 70:1-70:51
+Function "main" 74:1-77:2

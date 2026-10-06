@@ -1,0 +1,27 @@
+Module "Shop.Orders" 3:1-57:2
+  Interface "IOrder" 5:5-9:6
+    Field "Total" 7:9-7:31
+    Method "Submit" 8:9-8:23
+  Class "Order" 11:5-36:6
+    Constant "MaxLines" 13:26-13:39
+    Field "id" 14:30-14:32
+    Field "version" 14:34-14:41
+    Field "Total" 15:9-15:51
+    Field "Changed" 16:35-16:42
+    Method "Order" 18:9-22:10
+    Method "~Order" 24:9-24:21
+    Method "Submit" 26:9-26:33
+    Method "operator +" 28:9-28:63
+    Method "this" 30:9-30:45
+    Class "Line" 32:9-35:10
+      Field "Sku" 34:13-34:44
+  Struct "Money" 38:5-43:6
+    Field "Amount" 40:24-40:30
+    Method "ToString" 42:9-42:64
+  Enum "Status" 45:5-49:6
+    Variant "Open" 47:9-47:13
+    Variant "Closed" 48:9-48:19
+  Class "Receipt" 51:5-54:6
+    Field "Number" 51:27-51:37
+    Field "Note" 53:9-53:42
+  Type "Notify" 56:5-56:49

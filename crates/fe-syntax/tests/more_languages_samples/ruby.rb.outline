@@ -1,0 +1,15 @@
+Constant "VERSION" 3:1-3:16
+Module "Billing" 5:1-37:4
+  Constant "TAX_RATE" 6:3-6:17
+  Class "Invoice" 8:3-32:6
+    Method "initialize" 12:5-15:8
+    Method "build" 17:5-19:8
+    Method "paid?" 21:5-23:8
+    Method "cached" 26:7-28:10
+    Method "label" 31:5-31:21
+  Module "Helpers" 34:3-36:6
+    Method "format" 35:5-35:42
+Constant "DEFAULT_RATE" 39:1-39:28
+Class "Report" 41:1-43:4
+  Method "render" 42:3-42:18
+Function "top_level" 45:1-48:4
