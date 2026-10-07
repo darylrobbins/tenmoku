@@ -292,8 +292,12 @@ impl LoginPath {
     /// In a command and in a `PATH` entry alike, a leading `~` (alone or
     /// before a `/`) is the home directory, as bash has it, and never a
     /// directory named `~` under `cwd`. Other relative or empty entries are
-    /// directories under `cwd`, and an empty `PATH` is one empty entry.
-    /// `None` for a bare name not found, or a `~` with no home.
+    /// skipped, because `cwd` is the workspace root, which may be untrusted:
+    /// a `PATH` holding `.`, a trailing `:` or `node_modules/.bin` must not
+    /// run a server a cloned repository ships there as soon as a file opens.
+    /// A relative `command` (with a `/`) is still under `cwd`, as whoever
+    /// wrote it meant. `None` for a bare name not found, or a `~` with no
+    /// home.
     pub fn resolve(
         &self,
         command: &Path,
@@ -311,7 +315,7 @@ impl LoginPath {
                 &process_path
             }
         };
-        find_executable(command, path, cwd, self.home.as_deref())
+        find_executable(command, path, self.home.as_deref())
     }
 }
 
@@ -331,19 +335,19 @@ fn expand_home(path: &Path, home: Option<&Path>) -> Option<PathBuf> {
     }
 }
 
-/// The first `dir/name` on `path` that is a file this process may run, a
-/// `dir` with a leading `~` being under `home` and other relative or empty
-/// ones under `cwd`. As in a shell's lookup, one it may not run is passed
-/// over for the next.
-fn find_executable(name: &Path, path: &OsStr, cwd: &Path, home: Option<&Path>) -> Option<PathBuf> {
+/// The first `dir/name` on `path` that is a file this process may run,
+/// a `dir` with a leading `~` being under `home`. Only absolute
+/// directories are searched: empty, `.` and other relative entries are
+/// skipped, because they'd resolve under `cwd`, which is the workspace and
+/// may be untrusted (a cloned repository could ship a `rust-analyzer` there
+/// for a `PATH` holding `.`, an empty entry or `node_modules/.bin`). As in
+/// a shell's lookup, a file it may not run is passed over for the next.
+fn find_executable(name: &Path, path: &OsStr, home: Option<&Path>) -> Option<PathBuf> {
     std::env::split_paths(path)
         .filter_map(|dir| {
-            if dir.as_os_str().is_empty() || dir == Path::new(".") {
-                Some(cwd.to_owned())
-            } else {
-                // A `~` entry with no home is nowhere.
-                Some(cwd.join(expand_home(&dir, home)?))
-            }
+            // A `~` entry with no home is nowhere.
+            let dir = expand_home(&dir, home)?;
+            dir.is_absolute().then_some(dir)
         })
         .map(|dir| dir.join(name))
         .find(|candidate| is_runnable(candidate))

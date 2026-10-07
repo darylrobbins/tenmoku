@@ -1448,8 +1448,8 @@ fn bare_commands_use_the_login_shell_path() {
         }
     }
 
-    // Relative and empty entries are directories under the server's
-    // working directory, in their order, as in a shell started there.
+    // Relative and empty entries are skipped: the server's working
+    // directory is the workspace, which may be untrusted.
     let relative = dir.join("relative-shell");
     let relative_path = format!("bin::{}:/bin:/usr/bin", dir.join("elsewhere").display());
     login_shell(&relative, "", &relative_path, "");
@@ -1461,57 +1461,38 @@ fn bare_commands_use_the_login_shell_path() {
     script(&dir.join("elsewhere/fe-test-server"), "exit 1");
     let login = Arc::new(LoginPath::new(&relative));
     assert_eq!(login.path(), Some(OsStr::new(&relative_path)));
+    // `bin` is passed over, and the absolute entry after it is found.
     assert_eq!(
         login.resolve(Path::new("fe-test-server"), None, &dir),
-        Some(bin.join("fe-test-server"))
+        Some(dir.join("elsewhere/fe-test-server"))
     );
-    assert_eq!(
-        login.resolve(Path::new("local-server"), None, &dir),
-        Some(dir.join("local-server"))
-    );
+    assert_eq!(login.resolve(Path::new("local-server"), None, &dir), None);
     let launcher = LocalLauncher::with_login_path(login);
-    ping(launcher.launch(&spec, &dir).unwrap());
-    assert_eq!(
-        std::fs::read_to_string(dir.join("server-path.txt")).unwrap(),
-        relative_path
-    );
-    ping(
-        launcher
-            .launch(&ServerSpec::new("local", "local-server"), &dir)
-            .unwrap(),
-    );
-    // A PATH of relative entries only is a PATH too.
+    match launcher.launch(&ServerSpec::new("local", "local-server"), &dir) {
+        Err(err) => assert_eq!(err.to_string(), "local-server not found"),
+        Ok(_) => panic!("local-server was found through an empty entry"),
+    }
+    // A PATH of relative entries only is a PATH too, and finds nothing.
     let relative_only = dir.join("relative-only-shell");
     login_shell(&relative_only, "", "bin", "");
     let login = LoginPath::new(&relative_only);
     assert_eq!(login.path(), Some(OsStr::new("bin")));
-    assert_eq!(
-        login.resolve(Path::new("fe-test-server"), None, &dir),
-        Some(bin.join("fe-test-server"))
-    );
+    assert_eq!(login.resolve(Path::new("fe-test-server"), None, &dir), None);
 
-    // So is an empty one: a single entry, the server's working directory.
-    // This process's PATH isn't searched.
+    // So is an empty one: a single empty entry, which is skipped. This
+    // process's PATH isn't searched.
     let empty = dir.join("empty-shell");
     login_shell(&empty, "", "", "");
     let login = Arc::new(LoginPath::new(&empty));
     assert_eq!(login.path(), Some(OsStr::new("")));
     assert_eq!(login.resolve(Path::new("cat"), None, &dir), None);
     assert_eq!(login.resolve(Path::new("fe-test-server"), None, &dir), None);
-    assert_eq!(
-        login.resolve(Path::new("local-server"), None, &dir),
-        Some(dir.join("local-server"))
-    );
+    assert_eq!(login.resolve(Path::new("local-server"), None, &dir), None);
     let launcher = LocalLauncher::with_login_path(login);
-    ping(
-        launcher
-            .launch(&ServerSpec::new("local", "local-server"), &dir)
-            .unwrap(),
-    );
-    assert_eq!(
-        std::fs::read_to_string(dir.join("server-path.txt")).unwrap(),
-        ""
-    );
+    match launcher.launch(&ServerSpec::new("local", "local-server"), &dir) {
+        Err(err) => assert_eq!(err.to_string(), "local-server not found"),
+        Ok(_) => panic!("local-server was found through an empty PATH"),
+    }
     match launcher.launch(&ServerSpec::new("cat", "cat"), &dir) {
         Err(err) => assert_eq!(err.to_string(), "cat not found"),
         Ok(_) => panic!("cat was looked up on this process's PATH"),

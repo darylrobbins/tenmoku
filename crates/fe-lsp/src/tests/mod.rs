@@ -6,6 +6,7 @@ mod cancel;
 mod encoding;
 mod identity;
 mod launcher;
+mod launcher_path_safety;
 mod lifecycle;
 mod readiness;
 mod registration;
