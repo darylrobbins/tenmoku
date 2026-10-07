@@ -878,7 +878,9 @@ fn bound_by<'a>(name: Node<'a>, text: &Text) -> Option<Node<'a>> {
     // A Swift tuple label, as left in (left: b, right: c), isn't a name.
     if name.kind() == "simple_identifier" {
         let mut next = name.next_sibling();
-        while let Some(comment) = next.filter(|next| next.kind() == "comment") {
+        while let Some(comment) =
+            next.filter(|next| matches!(next.kind(), "comment" | "multiline_comment"))
+        {
             next = comment.next_sibling();
         }
         if next.is_some_and(|next| next.kind() == ":") {
@@ -909,7 +911,9 @@ fn bound_by<'a>(name: Node<'a>, text: &Text) -> Option<Node<'a>> {
             // PHP. In [$k => $v], $k is a key, which is read.
             "list_literal" => {
                 let mut next = node.next_sibling();
-                while let Some(comment) = next.filter(|next| next.kind() == "comment") {
+                while let Some(comment) =
+                    next.filter(|next| matches!(next.kind(), "comment" | "multiline_comment"))
+                {
                     next = comment.next_sibling();
                 }
                 next.is_none_or(|next| next.kind() != "=>")
@@ -1171,13 +1175,17 @@ impl CppScopes {
             if lookup.active.contains(&key) {
                 continue;
             }
+            // Active through the lookup in the namespace it names too, so
+            // a directive that names its own namespace or a cycle ends at
+            // once instead of spending the budget.
             lookup.active.push(key);
-            let resolved = self.resolve(path, target, lookup);
+            let found = match self.resolve(path, target, lookup) {
+                CppResolved::Namespace(used) => self.member(&used, name, lookup),
+                _ => None,
+            };
             lookup.active.pop();
-            if let CppResolved::Namespace(used) = resolved
-                && let Some(found) = self.member(&used, name, lookup)
-            {
-                return Some(found);
+            if found.is_some() {
+                return found;
             }
         }
         None

@@ -12,7 +12,7 @@
 (chunk
   (variable_declaration
     (assignment_statement
-      (variable_list . name: (identifier) .)
+      (variable_list . name: (identifier) . [(attribute) (comment)]* .)
       (expression_list
         .
         value: (table_constructor
@@ -20,7 +20,7 @@
 
 (chunk
   (assignment_statement
-    (variable_list . name: (identifier) .)
+    (variable_list . name: (identifier) . [(attribute) (comment)]* .)
     (expression_list
       .
       value: (table_constructor
@@ -35,15 +35,15 @@
 (chunk
   (variable_declaration
     (assignment_statement
-      (variable_list . name: (identifier) @name .)) @definition.variable))
+      (variable_list . name: (identifier) @name . [(attribute) (comment)]* .)) @definition.variable))
 
 (chunk
   (variable_declaration
-    (variable_list . name: (identifier) @name .) @definition.variable))
+    (variable_list . name: (identifier) @name . [(attribute) (comment)]* .) @definition.variable))
 
 (chunk
   (assignment_statement
-    (variable_list . name: (identifier) @name .)) @definition.variable)
+    (variable_list . name: (identifier) @name . [(attribute) (comment)]* .)) @definition.variable)
 
 ((chunk
   (variable_declaration

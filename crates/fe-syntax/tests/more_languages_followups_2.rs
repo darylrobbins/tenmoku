@@ -323,3 +323,117 @@ fn lua_long_assignments_scale() {
         assert!(start.elapsed().as_secs() < 5, "{:?}", start.elapsed());
     }
 }
+
+/// A using directive naming its own namespace, or one in a cycle, doesn't
+/// keep the directives after it from being searched.
+#[test]
+fn cpp_self_and_cyclic_using_directives() {
+    use OutlineKind::*;
+    for directives in [
+        "using namespace B; using namespace A;",
+        "using namespace C; using namespace A;",
+    ] {
+        let text = format!(
+            "\
+namespace A {{ namespace N {{ void f(); extern int x; }} }}
+namespace C {{ using namespace B; }}
+namespace B {{ {directives} }}
+void B::N::f() {{}}
+int B::N::x = 0;
+"
+        );
+        let names: Vec<_> = symbols_of("cpp", &text)
+            .into_iter()
+            .map(|(kind, name, _)| (kind, name))
+            .collect();
+        assert_eq!(
+            &names[names.len() - 2..],
+            [(Function, "f".to_owned()), (Variable, "x".to_owned()),]
+        );
+    }
+}
+
+/// An attribute or a comment in a Lua target list doesn't hide the target.
+#[test]
+fn lua_attributed_single_targets() {
+    use OutlineKind::*;
+    let text = "\
+local f <const> = function() end
+local x <const> = 1
+local M <const> = { balance = 0, get = function() end }
+local g --[[c]] = function() end
+";
+    let names: Vec<_> = symbols_of("lua", text)
+        .into_iter()
+        .map(|(kind, name, _)| (kind, name))
+        .collect();
+    assert_eq!(
+        names,
+        [
+            (Function, "f".to_owned()),
+            (Variable, "x".to_owned()),
+            (Module, "M".to_owned()),
+            (Field, "balance".to_owned()),
+            (Function, "get".to_owned()),
+            (Function, "g".to_owned()),
+        ]
+    );
+}
+
+/// A block comment after a Swift tuple label, at the top and in a type.
+#[test]
+fn swift_commented_tuple_labels() {
+    use OutlineKind::*;
+    let text = "\
+let (a, (left /* c */: b, right: c)) = (1, (left: 2, right: 3))
+struct S {
+    let (d, (l /* c */: e, r: f)) = (1, (l: 2, r: 3))
+}
+func g() {
+    let (h, (m /* c */: i, n: j)) = (1, (m: 2, n: 3))
+}
+";
+    let names: Vec<_> = symbols_of("swift", text)
+        .into_iter()
+        .map(|(kind, name, _)| (kind, name))
+        .collect();
+    let expected: Vec<_> = [
+        (Variable, "a"),
+        (Variable, "b"),
+        (Variable, "c"),
+        (Struct, "S"),
+        (Field, "d"),
+        (Field, "e"),
+        (Field, "f"),
+        (Function, "g"),
+    ]
+    .into_iter()
+    .map(|(kind, name)| (kind, name.to_owned()))
+    .collect();
+    assert_eq!(names, expected);
+}
+
+/// A block comment between a Scala label and its binding.
+#[test]
+fn scala_block_comments_in_named_patterns() {
+    use OutlineKind::*;
+    let text = "\
+val (name /* c */ = n, age = a) = person
+class C { val (k /* c */ = o, p = q) = t }
+";
+    let names: Vec<_> = symbols_of("scala", text)
+        .into_iter()
+        .map(|(kind, name, _)| (kind, name))
+        .collect();
+    let expected: Vec<_> = [
+        (Variable, "n"),
+        (Variable, "a"),
+        (Class, "C"),
+        (Field, "o"),
+        (Field, "q"),
+    ]
+    .into_iter()
+    .map(|(kind, name)| (kind, name.to_owned()))
+    .collect();
+    assert_eq!(names, expected);
+}

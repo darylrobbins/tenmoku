@@ -42,7 +42,7 @@
     (infix_pattern right: (identifier) @name @definition.variable)
     (capture_pattern name: (identifier) @name @definition.variable)
     (capture_pattern pattern: (identifier) @name @definition.variable)
-    (named_pattern . (identifier) . (comment)* . (identifier) @name @definition.variable)
+    (named_pattern . (identifier) . [(comment) (block_comment)]* . (identifier) @name @definition.variable)
   ]
   (#bound? @name compilation_unit package_clause))
 
@@ -87,7 +87,7 @@
     (infix_pattern right: (identifier) @name @definition.field)
     (capture_pattern name: (identifier) @name @definition.field)
     (capture_pattern pattern: (identifier) @name @definition.field)
-    (named_pattern . (identifier) . (comment)* . (identifier) @name @definition.field)
+    (named_pattern . (identifier) . [(comment) (block_comment)]* . (identifier) @name @definition.field)
   ]
   (#bound? @name template_body enum_body))
 

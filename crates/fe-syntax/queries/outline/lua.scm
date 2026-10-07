@@ -44,7 +44,7 @@
     . name: [
       (identifier) @name @_target
       (dot_index_expression field: (identifier) @name) @_target
-    ] .) @_list) @definition.function
+    ] . [(attribute) (comment)]* .) @_list) @definition.function
   (#function-valued? @_target @_list))
 
 ((assignment_statement
@@ -66,10 +66,10 @@
 (chunk
   (variable_declaration
     (assignment_statement
-      (variable_list . name: (identifier) @name .)
+      (variable_list . name: (identifier) @name . [(attribute) (comment)]* .)
       (expression_list . value: (table_constructor) .)) @definition.module))
 
 (chunk
   (assignment_statement
-    (variable_list . name: (identifier) @name .)
+    (variable_list . name: (identifier) @name . [(attribute) (comment)]* .)
     (expression_list . value: (table_constructor) .)) @definition.module)
