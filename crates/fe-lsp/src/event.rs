@@ -28,15 +28,6 @@ pub enum ServerStatus {
     Stopped(Option<String>),
 }
 
-/// The position encoding a server chose in `initialize` (§4.2).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PositionEncoding {
-    Utf8,
-    /// Also what a server that doesn't say means.
-    Utf16,
-    Utf32,
-}
-
 /// Why a request got no answer.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]

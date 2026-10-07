@@ -13,6 +13,9 @@
 //!   anywhere, and an `FnMut(LspEvent) + Send` sink called on server
 //!   threads.
 //! - Every timeout is measured on an injected [`Clock`].
+//! - Documents are synced from the buffer's own events: the host hands
+//!   [`LspManager::open`] a `fe_buffer::Subscription`, and the server's
+//!   thread drains it ([`LspManager::changed`] nudges it to).
 //!
 //! Two facts for a host embedding fe-lsp:
 //!
@@ -29,6 +32,8 @@
 //! This crate must never depend on GPUI.
 
 mod clock;
+mod document;
+mod encoding;
 mod event;
 mod launcher;
 mod manager;
@@ -45,7 +50,8 @@ mod tests;
 #[cfg(any(test, feature = "test-support"))]
 pub use clock::ManualClock;
 pub use clock::{Clock, SystemClock};
-pub use event::{LspError, LspEvent, PositionEncoding, ServerId, ServerStatus};
+pub use encoding::{PositionEncoding, from_lsp, to_lsp};
+pub use event::{LspError, LspEvent, ServerId, ServerStatus};
 pub use launcher::{
     ExitInfo, LocalLauncher, ReadinessMode, ServerIo, ServerLauncher, ServerProcess, ServerSpec,
     UnversionedDiagnostics,

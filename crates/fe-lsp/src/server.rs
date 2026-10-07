@@ -11,9 +11,14 @@
 //!   What it hands async-lsp can't be taken back, so it keeps at most
 //!   [`QUEUED_MAX`] requests in async-lsp's queue and holds the rest: a
 //!   stop drops those, and `shutdown` goes next.
+//! - The actor also keeps each open document in sync (§4.1, `document`),
+//!   draining its subscription on a nudge and on a [`BACKSTOP`] tick. Its
+//!   notifications take their turn in the same window as requests, so they
+//!   stay in order with them, and a drain only runs when the window has
+//!   room and what the last one made has gone.
 
 use std::cell::Cell;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
@@ -25,6 +30,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use async_lsp::{MainLoop, ServerSocket};
+use fe_buffer::BufferId;
 use futures::channel::{mpsc, oneshot};
 use futures::future::{BoxFuture, Either};
 use futures::stream::FuturesUnordered;
@@ -45,7 +51,9 @@ use lsp_types::{
 };
 
 use crate::clock::Clock;
-use crate::event::{LspEvent, PositionEncoding, ServerId, ServerStatus};
+use crate::document::{Document, Note, Opening, SyncPolicy};
+use crate::encoding::PositionEncoding;
+use crate::event::{LspEvent, ServerId, ServerStatus};
 use crate::launcher::{ServerIo, ServerLauncher, ServerProcess, ServerSpec};
 use crate::router::{ClientState, client_router};
 
@@ -59,6 +67,10 @@ pub(crate) const EXIT_TIMEOUT: Duration = Duration::from_secs(1);
 /// loop to take them. More wait with the actor, so `shutdown` follows at
 /// most this many, plus the one the loop is writing.
 pub(crate) const QUEUED_MAX: u64 = 32;
+/// How often the actor drains every open document's subscription, so an
+/// event the host never nudged about (a save after the edits were already
+/// sent, say) still reaches the server.
+pub(crate) const BACKSTOP: Duration = Duration::from_millis(250);
 
 /// The manager's event sink, shared by every server thread.
 pub(crate) type Sink = Arc<Mutex<dyn FnMut(LspEvent) + Send>>;
@@ -69,16 +81,22 @@ pub(crate) type Sink = Arc<Mutex<dyn FnMut(LspEvent) + Send>>;
 pub(crate) type Issue = Box<dyn FnOnce(&ServerSocket, i32) -> BoxFuture<'static, ()> + Send>;
 
 /// What the manager asks of the actor. Anything that must keep its order
-/// with requests (later cards' document sync, say) comes through here and
+/// with requests (document sync, say) comes through here and
 /// [`QUEUED_MAX`]'s window, or it would overtake the requests the actor
 /// holds back. Only `shutdown` and `exit` skip it, on purpose.
 pub(crate) enum Command {
     Request(Issue),
+    /// Start syncing a document: `didOpen`.
+    Open(Box<Opening>),
+    /// Drain a document's subscription.
+    Changed(BufferId),
+    /// Drain a document one last time, then `didClose`.
+    Close(BufferId),
 }
 
-/// The event the actor queues behind each request it hands async-lsp. The
-/// router counts it when the loop gets to it, by which time the loop has
-/// taken the request.
+/// The event the actor queues behind each request or notification it hands
+/// async-lsp. The router counts it when the loop gets to it, by which time
+/// the loop has taken the message.
 pub(crate) struct Taken;
 
 /// How many of the actor's requests async-lsp's loop has taken from its
@@ -235,6 +253,12 @@ impl Server {
             sent: 0,
             pending: FuturesUnordered::new(),
             backlog: VecDeque::new(),
+            outbox: VecDeque::new(),
+            documents: HashMap::new(),
+            sync: SyncPolicy::from_capabilities(&ServerCapabilities::default()),
+            encoding: PositionEncoding::Utf16,
+            tick: None,
+            drain_due: false,
             stopping: false,
         };
         async_io::block_on(futures::future::join3(
@@ -277,14 +301,27 @@ struct Actor {
     /// The id async-lsp gives the next request.
     next_id: i32,
     queue: Rc<Queue>,
-    /// Requests handed to async-lsp since `initialize`, each followed by
-    /// [`Taken`].
+    /// Requests and notifications handed to async-lsp since `initialize`,
+    /// each followed by [`Taken`].
     sent: u64,
     /// Requests in flight; each answers its caller.
     pending: FuturesUnordered<BoxFuture<'static, ()>>,
-    /// Requests made while starting, sent once initialized, ahead of new
-    /// commands.
-    backlog: VecDeque<Issue>,
+    /// Commands made while starting, carried out once initialized, ahead
+    /// of new ones.
+    backlog: VecDeque<Command>,
+    /// Document notifications waiting for room in async-lsp's queue, sent
+    /// ahead of anything else.
+    outbox: VecDeque<Note>,
+    documents: HashMap<BufferId, Document>,
+    /// How the server asked for documents to be synced.
+    sync: SyncPolicy,
+    encoding: PositionEncoding,
+    /// The next [`BACKSTOP`] tick, while documents are open.
+    tick: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
+    /// A tick came: drain every document once there's room to send what
+    /// that makes. Ticks while it waits add nothing, so a server that
+    /// doesn't read can't make the outbox grow.
+    drain_due: bool,
     /// The manager asked for a stop.
     stopping: bool,
 }
@@ -298,8 +335,9 @@ enum Started {
 }
 
 enum Step {
-    Command(Option<Command>),
+    Next(Next),
     Stop,
+    Tick,
     Answered,
     LoopEnded(Result<async_lsp::Result<()>, oneshot::Canceled>),
 }
@@ -328,16 +366,32 @@ impl Actor {
                 _ = &mut self.stop => Step::Stop,
                 ended = loop_done => Step::LoopEnded(ended),
                 () = self.pending.select_next_some() => Step::Answered,
-                command = next_command(
+                () = wait_tick(&mut self.tick).fuse() => Step::Tick,
+                next = next_command(
                     &self.queue,
                     self.sent,
+                    &mut self.outbox,
+                    self.drain_due,
                     &mut self.backlog,
                     &mut self.commands,
-                ).fuse() => Step::Command(command),
+                ).fuse() => Step::Next(next),
             };
             match step {
-                Step::Command(Some(Command::Request(issue))) => self.issue(issue),
-                Step::Command(None) | Step::Stop => break,
+                Step::Next(Next::Note(note)) => self.notify(note),
+                Step::Next(Next::Command(Some(command))) => self.command(command),
+                Step::Next(Next::Command(None)) | Step::Stop => break,
+                Step::Next(Next::DrainAll) => {
+                    self.drain_due = false;
+                    let ids: Vec<BufferId> = self.documents.keys().copied().collect();
+                    for id in ids {
+                        self.drain(id);
+                    }
+                }
+                Step::Tick => {
+                    self.tick = None;
+                    self.drain_due = true;
+                    self.arm_tick();
+                }
                 Step::Answered => {}
                 Step::LoopEnded(ended) => {
                     process.kill();
@@ -363,6 +417,57 @@ impl Actor {
         // If the loop has gone, `loop_done` says so.
         let _ = self.socket.emit(Taken);
         self.sent += 1;
+    }
+
+    fn notify(&mut self, note: Note) {
+        // If the loop has gone, `loop_done` says so.
+        let _ = note.send(&self.socket);
+        let _ = self.socket.emit(Taken);
+        self.sent += 1;
+    }
+
+    /// Carries out a command once initialized. A document command only
+    /// queues notifications in the outbox, which goes out ahead of the
+    /// next command.
+    fn command(&mut self, command: Command) {
+        match command {
+            Command::Request(issue) => self.issue(issue),
+            Command::Open(opening) => {
+                let buffer = opening.buffer;
+                // The manager closes a buffer before opening it again, so
+                // its document has gone by now; replace it if it hasn't.
+                if let Some(old) = self.documents.remove(&buffer) {
+                    old.close(self.sync, self.encoding, &mut self.outbox);
+                }
+                let document = Document::open(*opening, self.sync, &mut self.outbox);
+                self.documents.insert(buffer, document);
+                self.arm_tick();
+            }
+            Command::Changed(buffer) => self.drain(buffer),
+            Command::Close(buffer) => {
+                if let Some(document) = self.documents.remove(&buffer) {
+                    document.close(self.sync, self.encoding, &mut self.outbox);
+                }
+                if self.documents.is_empty() {
+                    self.tick = None;
+                    self.drain_due = false;
+                }
+            }
+        }
+    }
+
+    fn drain(&mut self, buffer: BufferId) {
+        if let Some(document) = self.documents.get_mut(&buffer) {
+            document.drain(self.sync, self.encoding, &mut self.outbox);
+        }
+    }
+
+    /// Starts the [`BACKSTOP`] timer if documents are open and it isn't
+    /// running.
+    fn arm_tick(&mut self) {
+        if self.tick.is_none() && !self.documents.is_empty() {
+            self.tick = Some(self.clock.sleep(BACKSTOP));
+        }
     }
 
     async fn initialize(&mut self, loop_done: &mut LoopDone) -> Started {
@@ -400,7 +505,7 @@ impl Actor {
                     ));
                 }
                 command = self.commands.next() => match command {
-                    Some(Command::Request(issue)) => self.backlog.push_back(issue),
+                    Some(command) => self.backlog.push_back(command),
                     None => self.stopping = true,
                 },
             }
@@ -448,16 +553,18 @@ impl Actor {
             None => PositionEncoding::Utf16,
             Some(kind) if *kind == PositionEncodingKind::UTF8 => PositionEncoding::Utf8,
             Some(kind) if *kind == PositionEncodingKind::UTF16 => PositionEncoding::Utf16,
-            Some(kind) if *kind == PositionEncodingKind::UTF32 => PositionEncoding::Utf32,
+            // Including utf-32, which isn't offered.
             Some(kind) => {
                 log::warn!(
-                    "{}: unknown position encoding {:?}; assuming utf-16",
+                    "{}: position encoding {:?} wasn't offered; assuming utf-16",
                     self.spec.name,
                     kind.as_str()
                 );
                 PositionEncoding::Utf16
             }
         };
+        self.sync = SyncPolicy::from_capabilities(&result.capabilities);
+        self.encoding = encoding;
         let mut session = self.session.lock().unwrap_or_else(PoisonError::into_inner);
         session.capabilities = Some(result.capabilities);
         session.encoding = Some(encoding);
@@ -471,6 +578,10 @@ impl Actor {
         // and those of requests still unread once the session is over.
         self.pending = FuturesUnordered::new();
         self.backlog.clear();
+        self.outbox.clear();
+        self.documents.clear();
+        self.tick = None;
+        self.drain_due = false;
         self.take_id();
         let reply = send_request::<Shutdown>(&self.socket, ()).fuse();
         let timeout = self.clock.sleep(SHUTDOWN_TIMEOUT).fuse();
@@ -574,18 +685,44 @@ async fn drain_stderr(
     }
 }
 
-/// The next request to send, once async-lsp's queue has room: the startup
-/// backlog first, then commands.
+enum Next {
+    Note(Note),
+    /// Drain every document: a backstop tick came.
+    DrainAll,
+    /// `None` once the manager has gone.
+    Command(Option<Command>),
+}
+
+/// What to do next, once async-lsp's queue has room: send the outbox's
+/// first notification, else a due backstop drain, else carry out the
+/// startup backlog, then commands. So the outbox only fills when it's
+/// empty and there's room, from one drain or one command at a time.
 async fn next_command(
     queue: &Queue,
     sent: u64,
-    backlog: &mut VecDeque<Issue>,
+    outbox: &mut VecDeque<Note>,
+    drain_due: bool,
+    backlog: &mut VecDeque<Command>,
     commands: &mut mpsc::UnboundedReceiver<Command>,
-) -> Option<Command> {
+) -> Next {
     futures::future::poll_fn(|cx| queue.poll_room(sent, cx)).await;
+    if let Some(note) = outbox.pop_front() {
+        return Next::Note(note);
+    }
+    if drain_due {
+        return Next::DrainAll;
+    }
     match backlog.pop_front() {
-        Some(issue) => Some(Command::Request(issue)),
-        None => commands.next().await,
+        Some(command) => Next::Command(Some(command)),
+        None => Next::Command(commands.next().await),
+    }
+}
+
+/// Resolves when the backstop tick is due; never, while it isn't running.
+async fn wait_tick(tick: &mut Option<Pin<Box<dyn Future<Output = ()> + Send>>>) {
+    match tick {
+        Some(tick) => tick.await,
+        None => futures::future::pending().await,
     }
 }
 

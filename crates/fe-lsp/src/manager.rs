@@ -7,13 +7,17 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
 
+use fe_buffer::{BufferId, Subscription, Version};
+use fe_text::Text;
 use futures::channel::{mpsc, oneshot};
 use futures::future::FutureExt;
-use lsp_types::ServerCapabilities;
 use lsp_types::request::Request;
+use lsp_types::{ServerCapabilities, Url};
 
 use crate::clock::{Clock, SystemClock};
-use crate::event::{LspError, LspEvent, PositionEncoding, ServerId};
+use crate::document::{Attached, Opening, Subscribed, language_id};
+use crate::encoding::PositionEncoding;
+use crate::event::{LspError, LspEvent, ServerId};
 use crate::launcher::{ServerLauncher, ServerSpec};
 use crate::server::{Command, Issue, Server, Session, Sink, send_request};
 
@@ -24,6 +28,9 @@ pub struct LspManager {
     clock: Arc<dyn Clock>,
     sink: Sink,
     servers: HashMap<ServerId, Handle>,
+    /// The server each open document is synced to, and its subscription,
+    /// shared with that server's thread.
+    documents: HashMap<BufferId, (ServerId, Subscribed)>,
     next_id: u64,
 }
 
@@ -56,6 +63,7 @@ impl LspManager {
             clock,
             sink: Arc::new(Mutex::new(sink)),
             servers: HashMap::new(),
+            documents: HashMap::new(),
             next_id: 0,
         }
     }
@@ -68,6 +76,9 @@ impl LspManager {
     pub fn start(&mut self, spec: ServerSpec, root: &Path) -> io::Result<ServerId> {
         self.servers
             .retain(|_, handle| !handle.commands.is_closed() && !handle.thread.is_finished());
+        let servers = &self.servers;
+        self.documents
+            .retain(|_, (server, _)| servers.contains_key(server));
         if let Some((&id, _)) = self
             .servers
             .iter()
@@ -114,6 +125,9 @@ impl LspManager {
         if let Some(handle) = self.servers.remove(&server) {
             let _ = handle.stop.send(());
         }
+        // Its documents go with it.
+        self.documents
+            .retain(|_, (synced_to, _)| *synced_to != server);
     }
 
     /// Sends `R` to `server`. A request made while the server starts is
@@ -147,6 +161,91 @@ impl LspManager {
             let _ = handle.commands.unbounded_send(Command::Request(issue));
         }
         answered.map(|answer| answer.map_err(|oneshot::Canceled| LspError::ServerDown))
+    }
+
+    /// Starts syncing buffer `buffer` to `server` (§4.1): `didOpen` with
+    /// `text`, the buffer's text at `version`, as LSP version 0, with the
+    /// `languageId` for fe-syntax's `language` (§3.2).
+    ///
+    /// From then on `server`'s thread drains `subscription`, which must
+    /// have been made no later than `version` (edits up to it, and saves
+    /// of earlier versions, are skipped): on [`changed`](Self::changed), and every 250 ms in case a
+    /// nudge was missed. Each run of edits becomes a `didChange` and each
+    /// save a `didSave`, in the buffer's order. Sent while the server
+    /// starts, it goes once the server has initialized.
+    ///
+    /// A buffer already open is closed first. Errs if `path` isn't
+    /// absolute, or `server` isn't running.
+    #[allow(clippy::too_many_arguments)] // Each is one thing the document needs.
+    pub fn open(
+        &mut self,
+        server: ServerId,
+        buffer: BufferId,
+        text: Text,
+        version: Version,
+        subscription: Subscription,
+        path: &Path,
+        language: &str,
+    ) -> Result<(), LspError> {
+        let uri = Url::from_file_path(path).map_err(|()| {
+            LspError::Unavailable(format!("{} isn't an absolute path", path.display()))
+        })?;
+        if !self.servers.contains_key(&server) {
+            return Err(LspError::ServerDown);
+        }
+        let subscription = Subscribed::new(subscription);
+        let opening = Opening {
+            buffer,
+            text,
+            version,
+            subscription: Attached(subscription.clone()),
+            uri,
+            language_id: language_id(language, path),
+        };
+        // Closed before the open is sent, so a server dropping the open
+        // drops nothing the manager still tracks.
+        self.close(buffer);
+        self.servers[&server]
+            .commands
+            .unbounded_send(Command::Open(Box::new(opening)))
+            .map_err(|_| LspError::ServerDown)?;
+        self.documents.insert(buffer, (server, subscription));
+        Ok(())
+    }
+
+    /// Stops syncing `buffer`: what it did until now that its server
+    /// hasn't been sent yet is sent, in order, then `didClose`. The
+    /// subscription is dropped here, on the calling thread, so edits made
+    /// after this returns send nothing.
+    pub fn close(&mut self, buffer: BufferId) {
+        if let Some((server, subscribed)) = self.documents.remove(&buffer) {
+            subscribed.detach();
+            self.send(server, Command::Close(buffer));
+        }
+    }
+
+    /// Whether `buffer` still queues events for fe-lsp.
+    #[cfg(test)]
+    pub(crate) fn is_subscribed(&self, buffer: BufferId) -> bool {
+        self.documents
+            .get(&buffer)
+            .is_some_and(|(_, subscribed)| subscribed.is_attached())
+    }
+
+    /// Says `buffer` emitted events (edits or a save), so its server's
+    /// thread drains them now rather than at the next backstop tick. Cheap:
+    /// call it once a frame for each buffer that changed.
+    pub fn changed(&self, buffer: BufferId) {
+        if let Some(&(server, _)) = self.documents.get(&buffer) {
+            self.send(server, Command::Changed(buffer));
+        }
+    }
+
+    fn send(&self, server: ServerId, command: Command) {
+        if let Some(handle) = self.servers.get(&server) {
+            // A server that has gone has no documents to sync.
+            let _ = handle.commands.unbounded_send(command);
+        }
     }
 
     /// The position encoding `server` chose, once it has initialized.

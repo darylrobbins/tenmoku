@@ -12,6 +12,11 @@
 //! tagged with the launch (1, 2, …) it belongs to, and it can send
 //! requests and notifications of its own or crash on cue. It can also hold
 //! or step the client's writes to it (see [`Writes`]).
+//!
+//! It keeps a [`Replica`] of each document the client syncs to it,
+//! applying `didOpen`, `didChange`, `didSave` and `didClose` with a
+//! position converter of its own (§4.4), never fe-lsp's, and records what
+//! it can't apply as [`FakeServer::sync_errors`].
 
 use std::collections::HashMap;
 use std::io;
@@ -30,7 +35,12 @@ use futures::channel::{mpsc, oneshot};
 use futures::{AsyncRead, AsyncWrite, Future, FutureExt, StreamExt};
 use lsp_types::notification::Notification;
 use lsp_types::request::Request;
-use lsp_types::{InitializeResult, NumberOrString, PositionEncodingKind, ServerCapabilities};
+use lsp_types::{
+    DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+    DidSaveTextDocumentParams, InitializeResult, NumberOrString, Position, PositionEncodingKind,
+    ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
+    TextDocumentSyncSaveOptions, Url,
+};
 use serde_json::{Value, json};
 
 use crate::clock::{Clock, SystemClock};
@@ -95,11 +105,22 @@ impl Default for Script {
     }
 }
 
-/// An `InitializeResult` with default capabilities and the given encoding.
+/// An `InitializeResult` with the given encoding, incremental sync with
+/// `didOpen`, `didClose` and `didSave` (without the text), and otherwise
+/// default capabilities.
 pub fn initialize_result(encoding: Option<PositionEncodingKind>) -> InitializeResult {
     InitializeResult {
         capabilities: ServerCapabilities {
             position_encoding: encoding,
+            text_document_sync: Some(TextDocumentSyncCapability::Options(
+                TextDocumentSyncOptions {
+                    open_close: Some(true),
+                    change: Some(TextDocumentSyncKind::INCREMENTAL),
+                    will_save: None,
+                    will_save_wait_until: None,
+                    save: Some(TextDocumentSyncSaveOptions::Supported(true)),
+                },
+            )),
             ..ServerCapabilities::default()
         },
         server_info: None,
@@ -125,6 +146,28 @@ pub enum OnExit {
     CloseOnly,
     /// Carry on as if nothing was said, until killed.
     Ignore,
+}
+
+/// A document as the fake has it, built from the client's notifications.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Replica {
+    pub language_id: String,
+    /// From the latest `didOpen` or `didChange`.
+    pub version: i32,
+    pub text: String,
+    /// Each `didSave`, in order.
+    pub saves: Vec<Saved>,
+    /// Until `didClose`.
+    pub open: bool,
+}
+
+/// A `didSave` as the fake got it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Saved {
+    /// The document's version when it came.
+    pub version: i32,
+    /// The text it carried, if any.
+    pub text: Option<String>,
 }
 
 /// Something the fake received or sent, in order.
@@ -221,6 +264,9 @@ struct State {
     allowed: usize,
     /// A stepped write is blocked, waiting to be let through.
     write_waiting: bool,
+    documents: HashMap<Url, Replica>,
+    /// Document notifications the fake couldn't apply, and why.
+    sync_errors: Vec<String>,
 }
 
 /// Ends the fake's main loop.
@@ -273,6 +319,8 @@ impl FakeServer {
                     held: Vec::new(),
                     allowed: 0,
                     write_waiting: false,
+                    documents: HashMap::new(),
+                    sync_errors: Vec::new(),
                 }),
                 changed: Condvar::new(),
                 clock,
@@ -498,6 +546,206 @@ impl FakeServer {
         self.lock().records.push((launch, record));
         self.shared.changed.notify_all();
     }
+
+    /// The replica of the document at `uri`, if it was ever opened.
+    pub fn document(&self, uri: &Url) -> Option<Replica> {
+        self.lock().documents.get(uri).cloned()
+    }
+
+    /// Blocks until `done` holds for the replica of `uri` (`None` until
+    /// it's opened), and returns it. Panics after 10 s, naming `what`.
+    pub fn wait_for_document(
+        &self,
+        uri: &Url,
+        what: &str,
+        done: impl Fn(Option<&Replica>) -> bool,
+    ) -> Option<Replica> {
+        let deadline = Instant::now() + WAIT;
+        let mut state = self.lock();
+        loop {
+            let replica = state.documents.get(uri);
+            if done(replica) {
+                return replica.cloned();
+            }
+            let now = Instant::now();
+            assert!(
+                now < deadline,
+                "fake: timed out waiting for {what}: {replica:#?}"
+            );
+            state = self
+                .shared
+                .changed
+                .wait_timeout(state, deadline - now)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+        }
+    }
+
+    /// Every document notification the fake couldn't apply, and why.
+    pub fn sync_errors(&self) -> Vec<String> {
+        self.lock().sync_errors.clone()
+    }
+
+    /// Records a notification, applying it to the replicas first, under
+    /// one lock, so a test that sees the record sees its effect too.
+    fn record_notification(&self, launch: usize, method: &str, params: &Value) {
+        let mut state = self.lock();
+        let utf16 = !negotiated_utf8(&state.script);
+        if let Err(err) = apply(&mut state.documents, method, params, utf16) {
+            state.sync_errors.push(format!("{method}: {err}"));
+        }
+        state.records.push((
+            launch,
+            Record::Notification {
+                method: method.to_owned(),
+                params: params.clone(),
+            },
+        ));
+        drop(state);
+        self.shared.changed.notify_all();
+    }
+}
+
+/// Whether the script's `initialize` answer chose utf-8. Anything else
+/// (no answer, no field) is utf-16.
+fn negotiated_utf8(script: &Script) -> bool {
+    matches!(
+        &script.initialize,
+        InitializeReply::Result(result)
+            if result.capabilities.position_encoding == Some(PositionEncodingKind::UTF8)
+    )
+}
+
+/// Applies a document notification to `documents`; other methods are
+/// ignored.
+fn apply(
+    documents: &mut HashMap<Url, Replica>,
+    method: &str,
+    params: &Value,
+    utf16: bool,
+) -> Result<(), String> {
+    fn parse<T: serde::de::DeserializeOwned>(params: &Value) -> Result<T, String> {
+        serde_json::from_value(params.clone()).map_err(|err| err.to_string())
+    }
+    fn open<'a>(
+        documents: &'a mut HashMap<Url, Replica>,
+        uri: &Url,
+    ) -> Result<&'a mut Replica, String> {
+        documents
+            .get_mut(uri)
+            .filter(|replica| replica.open)
+            .ok_or_else(|| format!("{uri} isn't open"))
+    }
+    match method {
+        "textDocument/didOpen" => {
+            let DidOpenTextDocumentParams { text_document } = parse(params)?;
+            if documents.get(&text_document.uri).is_some_and(|r| r.open) {
+                return Err(format!("{} is already open", text_document.uri));
+            }
+            documents.insert(
+                text_document.uri,
+                Replica {
+                    language_id: text_document.language_id,
+                    version: text_document.version,
+                    text: text_document.text,
+                    saves: Vec::new(),
+                    open: true,
+                },
+            );
+        }
+        "textDocument/didChange" => {
+            let DidChangeTextDocumentParams {
+                text_document,
+                content_changes,
+            } = parse(params)?;
+            let replica = open(documents, &text_document.uri)?;
+            if text_document.version <= replica.version {
+                return Err(format!(
+                    "version {} after {}",
+                    text_document.version, replica.version
+                ));
+            }
+            replica.version = text_document.version;
+            for change in content_changes {
+                let Some(range) = change.range else {
+                    replica.text = change.text;
+                    continue;
+                };
+                let start = reference_offset(&replica.text, range.start, utf16)?;
+                let end = reference_offset(&replica.text, range.end, utf16)?;
+                if end < start {
+                    return Err(format!("{range:?} ends before it starts"));
+                }
+                replica.text.replace_range(start..end, &change.text);
+            }
+        }
+        "textDocument/didSave" => {
+            let DidSaveTextDocumentParams {
+                text_document,
+                text,
+            } = parse(params)?;
+            let replica = open(documents, &text_document.uri)?;
+            replica.saves.push(Saved {
+                version: replica.version,
+                text,
+            });
+        }
+        "textDocument/didClose" => {
+            let DidCloseTextDocumentParams { text_document } = parse(params)?;
+            open(documents, &text_document.uri)?.open = false;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// The byte offset of `position` in `text`, as the fake reads LSP: a line
+/// ends at `\n`, `\r\n` or `\r`, and a column counts UTF-16 code units
+/// (`utf16`) or bytes, never including the line break. Written over
+/// `char_indices` and `char::len_utf16`, apart from fe-lsp's conversion
+/// through fe-text. It's strict: a position past its line's end, past the
+/// last line, or inside a char is an error, since fe-lsp never sends one.
+pub fn reference_offset(text: &str, position: Position, utf16: bool) -> Result<usize, String> {
+    let mut chars = text.char_indices().peekable();
+    let mut line_start = 0;
+    for _ in 0..position.line {
+        loop {
+            match chars.next() {
+                None => return Err(format!("{position:?} is past the last line")),
+                Some((at, '\n')) => {
+                    line_start = at + 1;
+                    break;
+                }
+                Some((at, '\r')) => {
+                    line_start = at + 1;
+                    if let Some(&(_, '\n')) = chars.peek() {
+                        chars.next();
+                        line_start += 1;
+                    }
+                    break;
+                }
+                Some(_) => {}
+            }
+        }
+    }
+    let mut column = 0;
+    for (at, c) in text[line_start..].char_indices() {
+        if column == position.character {
+            return Ok(line_start + at);
+        }
+        if c == '\n' || c == '\r' {
+            return Err(format!("{position:?} is past its line's end"));
+        }
+        column += if utf16 { c.len_utf16() } else { c.len_utf8() } as u32;
+        if column > position.character {
+            return Err(format!("{position:?} is inside {c:?}"));
+        }
+    }
+    if column == position.character {
+        // The last line's end.
+        return Ok(text.len());
+    }
+    Err(format!("{position:?} is past its line's end"))
 }
 
 fn records(state: &State, launch: Option<usize>) -> Vec<Record> {
@@ -641,13 +889,7 @@ fn fake_router(
         })
         .unhandled_notification(|session, notif: AnyNotification| {
             let fake = &session.fake;
-            fake.record(
-                session.launch,
-                Record::Notification {
-                    method: notif.method.clone(),
-                    params: notif.params,
-                },
-            );
+            fake.record_notification(session.launch, &notif.method, &notif.params);
             if notif.method == "exit" {
                 let on_exit = fake.lock().script.on_exit;
                 match on_exit {

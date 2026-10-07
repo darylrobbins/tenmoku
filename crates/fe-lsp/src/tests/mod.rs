@@ -1,9 +1,11 @@
 //! Unit tests, one module per area. They run servers through the fake in
 //! `crate::fake` (declared in lib.rs, so fe-workbench can share it).
 
+mod encoding;
 mod launcher;
 mod lifecycle;
 mod router;
+mod sync;
 
 use std::future::Future;
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
