@@ -174,6 +174,9 @@ fn overlapping_requests_wait_for_the_write(cx: &mut TestAppContext) {
     let (paused_tx, paused_rx) = std::sync::mpsc::channel();
     let (waiting_tx, waiting_rx) = std::sync::mpsc::channel();
     let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    // Wakes the releaser if the command never reaches `Stage::Wait`.
+    let wake = waiting_tx.clone();
+    let bound = std::time::Duration::from_secs(10);
     let (paused_tx, waiting_tx, release_rx) = (
         Mutex::new(paused_tx),
         Mutex::new(waiting_tx),
@@ -185,7 +188,7 @@ fn overlapping_requests_wait_for_the_write(cx: &mut TestAppContext) {
             match stage {
                 Stage::Write => {
                     paused_tx.lock().unwrap().send(()).unwrap();
-                    release_rx.lock().unwrap().recv().unwrap();
+                    let _ = release_rx.lock().unwrap().recv_timeout(bound);
                 }
                 Stage::Wait => waiting_tx.lock().unwrap().send(()).unwrap(),
                 Stage::Cleanup => {}
@@ -197,11 +200,12 @@ fn overlapping_requests_wait_for_the_write(cx: &mut TestAppContext) {
         let file = file.clone();
         move || create_settings(&file)
     });
-    paused_rx.recv().unwrap();
-    // Releases the first once the command's request is waiting on it.
+    paused_rx.recv_timeout(bound).unwrap();
+    // Releases the first once the command's request is waiting on it, or
+    // when woken or timed out, so neither thread can outlive the test.
     let releaser = std::thread::spawn(move || {
-        waiting_rx.recv().unwrap();
-        release_tx.send(()).unwrap();
+        let _ = waiting_rx.recv_timeout(bound);
+        let _ = release_tx.send(());
     });
 
     cx.simulate_keystrokes("cmd-,");
@@ -215,6 +219,9 @@ fn overlapping_requests_wait_for_the_write(cx: &mut TestAppContext) {
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    if !opened {
+        let _ = wake.send(());
     }
     releaser.join().unwrap();
     first.join().unwrap().unwrap();
