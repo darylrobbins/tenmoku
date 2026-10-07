@@ -72,8 +72,6 @@
 //! - After undoing or redoing a `c` over several rows, nvim's caret goes to
 //!   the second row at the column its motion reached; fe-vim uses the
 //!   caret's own column, which differs when the motion moved it sideways.
-//! - `vim.undo` and `vim.redo` step through the model's own history, the
-//!   user's, whatever the actor.
 //! - Typed `<CR>` and `<BS>` are the editor's (`EditorModel::newline` and
 //!   `backspace`), not Vim's 'autoindent' and 'smarttab': a line break
 //!   copies the row's indentation as it is (tabs and any other white space
@@ -124,8 +122,9 @@
 //! - Measuring text as the model catches up (`EditorModel`'s char widths)
 //!   may stamp the context, or even end the session, through a clone of
 //!   the state. A clone ending a session while another is ending it
-//!   returns to normal mode without the session's outcome (its last change
-//!   for `.`).
+//!   returns to normal mode, and adopts the session's outcome (its last
+//!   change for `.` and its carets record) before its next `.`, `u` or
+//!   `<C-r>`.
 
 mod args;
 mod commands;

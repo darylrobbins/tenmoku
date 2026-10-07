@@ -158,8 +158,8 @@ pub fn registry() -> Registry<VimCommands> {
         .register_with_args(
             "vim.undo",
             "Vim Undo",
-            |target: &mut VimTarget<'_>, _: &Actor, args: CountArgs| {
-                history::undo(target, args, false)
+            |target: &mut VimTarget<'_>, actor: &Actor, args: CountArgs| {
+                history::undo(target, actor, args, false)
             },
         )
         .expect("vim command IDs are valid and distinct")
@@ -172,8 +172,8 @@ pub fn registry() -> Registry<VimCommands> {
         .register_with_args(
             "vim.redo",
             "Vim Redo",
-            |target: &mut VimTarget<'_>, _: &Actor, args: CountArgs| {
-                history::undo(target, args, true)
+            |target: &mut VimTarget<'_>, actor: &Actor, args: CountArgs| {
+                history::undo(target, actor, args, true)
             },
         )
         .expect("vim command IDs are valid and distinct")

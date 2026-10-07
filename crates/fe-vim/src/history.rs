@@ -14,8 +14,8 @@
 use std::collections::VecDeque;
 
 use fe_buffer::{ResolvedSelection, TransactionId};
-use fe_command::{CommandError, Dispatched, Effect};
-use fe_editor::EditorModel;
+use fe_command::{Actor, CommandError, Dispatched, Effect};
+use fe_editor::{EditorModel, commands::origin};
 use fe_text::Text;
 
 use crate::{CountArgs, VimTarget, motion::Cursor};
@@ -116,19 +116,21 @@ fn clamped(text: &Text, (row, column): (u32, usize)) -> usize {
 }
 
 /// `vim.undo`, or `vim.redo` if `redo`: `count` steps of the model's own
-/// history, stopping when there's nothing left.
+/// history for `actor`'s origin, stopping when there's nothing left.
 pub(crate) fn undo(
     target: &mut VimTarget<'_>,
+    actor: &Actor,
     args: CountArgs,
     redo: bool,
 ) -> Result<Dispatched<TransactionId>, CommandError> {
     let VimTarget { model, state, .. } = target;
+    crate::insert::adopt_closing(state);
     let mut reverted = Vec::new();
     for _ in 0..args.count.unwrap_or(1).max(1) {
-        let step = match redo {
+        let (step, _) = model.run_as(origin(actor), |model| match redo {
             true => model.redo(),
             false => model.undo(),
-        };
+        });
         match step {
             Ok(Some(id)) => reverted.push(id),
             Ok(None) => break,

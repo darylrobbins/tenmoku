@@ -2,9 +2,12 @@ use fe_buffer::{Buffer, Origin, ResolvedSelection};
 use fe_command::{ContextPredicate, DispatchError, Effect, Invocation};
 use fe_editor::{EditorModel, commands::HeadlessHost};
 
-use std::{cell::Cell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
-use super::{Measuring, invocation};
+use super::{Measuring, commit, invocation};
 use crate::{
     CountArgs, HeadlessVim, InsertArgs, InsertAt, Mode, Register, Registers, VimState, VimTarget,
     Write, context, insert::COPIES_NOTED, registry,
@@ -558,25 +561,28 @@ fn closing_a_session_locks_nothing_while_measuring() {
     // rest to the first, so the copies go in once.
     let mut vim = HeadlessVim::new("ab", (0, 0));
     vim.feed("3ix").unwrap();
-    let mut clone = vim.state().clone();
+    let clone = Rc::new(RefCell::new(vim.state().clone()));
     let mut split = vim.model().split();
     split.set_cursor(vim.model().primary_selection().head());
     let ended = Rc::new(Cell::new(false));
     let measuring = {
         let ended = Rc::clone(&ended);
+        let clone = Rc::clone(&clone);
         Measuring::new(move |edited| {
+            let mut clone = clone.borrow_mut();
+            let clone = &mut *clone;
             if !edited || ended.replace(true) {
                 return;
             }
             assert!(!clone.session.as_ref().unwrap().is_locked());
             let normal_mode = Invocation::of("vim.normal_mode")
                 .unwrap()
-                .context(context(&clone));
+                .context(context(clone));
             let (mut host, mut registers) = (HeadlessHost::new(), Registers::new());
             let mut target = VimTarget {
                 model: &mut split,
                 host: &mut host,
-                state: &mut clone,
+                state: clone,
                 registers: &mut registers,
             };
             registry().dispatch(&mut target, &normal_mode).unwrap();
@@ -590,6 +596,68 @@ fn closing_a_session_locks_nothing_while_measuring() {
     assert_eq!(vim.state().last_change().unwrap().inserted(), Some("x"));
     assert_eq!(undo(&mut vim), 1);
     assert_eq!(vim.text(), "ab");
+
+    // The clone, kept past the outer ending, adopts its outcome: `.` repeats
+    // the insert, and undo and redo restore the carets.
+    let mut vim = HeadlessVim::new("ab", (0, 1));
+    vim.feed("3ix").unwrap();
+    let state = vim.state().clone();
+    let clone = Rc::new(RefCell::new(state));
+    let mut split = vim.model().split();
+    split.set_cursor(vim.model().primary_selection().head());
+    let ended = Rc::new(Cell::new(false));
+    let measuring = {
+        let (ended, clone) = (Rc::clone(&ended), Rc::clone(&clone));
+        Measuring::new(move |edited| {
+            if !edited || ended.replace(true) {
+                return;
+            }
+            let mut clone = clone.borrow_mut();
+            let normal_mode = Invocation::of("vim.normal_mode")
+                .unwrap()
+                .context(context(&clone));
+            let (mut host, mut registers) = (HeadlessHost::new(), Registers::new());
+            let mut target = VimTarget {
+                model: &mut split,
+                host: &mut host,
+                state: &mut clone,
+                registers: &mut registers,
+            };
+            registry().dispatch(&mut target, &normal_mode).unwrap();
+        })
+    };
+    vim.feed("<Esc>").unwrap();
+    drop(measuring);
+    assert_eq!(vim.text(), "axxxb");
+    // The clone drives the same model through the host's registry.
+    let mut clone = Rc::try_unwrap(clone).ok().unwrap().into_inner();
+    let (mut host, mut registers) = (HeadlessHost::new(), Registers::new());
+    let mut run = |model: &mut EditorModel, state: &mut VimState, keys: &str| {
+        let invocation = commit(keys).context(context(state));
+        let mut target = VimTarget {
+            model,
+            host: &mut host,
+            state,
+            registers: &mut registers,
+        };
+        registry().dispatch(&mut target, &invocation).unwrap();
+    };
+    let model = vim.model_mut();
+    run(model, &mut clone, ".");
+    model.sync_display();
+    assert_eq!(
+        model.text().slice_to_string(0..model.text().len()),
+        "axxxxxxb"
+    );
+    run(model, &mut clone, "u");
+    run(model, &mut clone, "u");
+    model.sync_display();
+    assert_eq!(model.text().slice_to_string(0..model.text().len()), "ab");
+    let head = model.primary_selection().head();
+    assert_eq!(head, 1);
+    run(model, &mut clone, "<C-r>");
+    model.sync_display();
+    assert_eq!(model.text().slice_to_string(0..model.text().len()), "axxxb");
 }
 
 #[test]

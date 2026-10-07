@@ -1,4 +1,4 @@
-use fe_command::{ContextPredicate, DispatchError, Effect};
+use fe_command::{Actor, ContextPredicate, DispatchError, Effect};
 
 use super::commit;
 use crate::{FeedError, HeadlessVim, VimKey, VimState, context, parse_keys, registry};
@@ -116,4 +116,35 @@ fn card_3_commands_are_registered() {
     ] {
         assert_eq!(commit(keys).command.as_str(), command, "{keys}");
     }
+}
+
+#[test]
+fn undo_and_redo_run_as_the_invoking_actor() {
+    let ai = || Actor::Ai {
+        agent: "agent".into(),
+        session: "session".into(),
+    };
+    let text = "one two\nnext";
+    let mut vim = HeadlessVim::new(text, (0, 0));
+    let context = context(&VimState::new());
+    let dispatch = |vim: &mut HeadlessVim, keys: &str, actor: Actor| {
+        vim.dispatch(&commit(keys).context(context.clone()).actor(actor))
+            .unwrap()
+    };
+    dispatch(&mut vim, "dw", ai());
+    assert_eq!(vim.text(), "two\nnext");
+
+    // The user's undo leaves the agent's edit alone.
+    dispatch(&mut vim, "u", Actor::User);
+    assert_eq!(vim.text(), "two\nnext");
+
+    dispatch(&mut vim, "u", ai());
+    vim.model_mut().sync_display();
+    assert_eq!(vim.text(), text);
+
+    dispatch(&mut vim, "<C-r>", Actor::User);
+    assert_eq!(vim.text(), text);
+    dispatch(&mut vim, "<C-r>", ai());
+    vim.model_mut().sync_display();
+    assert_eq!(vim.text(), "two\nnext");
 }

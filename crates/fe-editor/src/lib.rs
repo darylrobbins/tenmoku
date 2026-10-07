@@ -946,7 +946,7 @@ impl EditorModel {
     ///
     /// The model acts as before once `f` exits, even by unwinding, so a
     /// host that catches a panic isn't left editing and undoing as `origin`.
-    pub(crate) fn run_as<R>(
+    pub fn run_as<R>(
         &mut self,
         origin: Origin,
         f: impl FnOnce(&mut Self) -> R,

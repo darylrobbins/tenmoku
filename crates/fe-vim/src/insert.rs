@@ -86,6 +86,38 @@ enum End {
     Ended(Closed),
 }
 
+/// A session this state left to a clone that was ending it, until the
+/// outcome is published and adopted.
+#[derive(Clone, Debug)]
+pub(crate) struct Closing {
+    ledger: Arc<Mutex<Ledger>>,
+    replaying: bool,
+}
+
+/// Adopts the outcome of a session a clone ended, if it's published: the
+/// last change for `.` and the carets record for undo and redo. Called
+/// before the commands that read them.
+pub(crate) fn adopt_closing(state: &mut VimState) {
+    let Some(closing) = &state.closing else {
+        return;
+    };
+    let closed = match &closing
+        .ledger
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .end
+    {
+        End::Ended(closed) => closed.clone(),
+        _ => return,
+    };
+    let replaying = closing.replaying;
+    state.closing = None;
+    state.last_change = Some(closed.last_change);
+    if !replaying {
+        state.carets.close(closed.transaction);
+    }
+}
+
 /// What ending a session left: the last change for `.`, and the
 /// transaction it closed, if that was kept, for the carets record.
 #[derive(Clone, Debug)]
@@ -974,10 +1006,18 @@ pub(crate) fn normal_mode(
         // outcome. One ending it now (from inside measuring text) has none
         // to give yet. Either way, its model's carets are made normal mode's.
         Err(closed) => {
-            if let Some(closed) = closed {
-                state.last_change = Some(closed.last_change);
-                if !replaying {
-                    state.carets.close(closed.transaction);
+            match closed {
+                Some(closed) => {
+                    state.last_change = Some(closed.last_change);
+                    if !replaying {
+                        state.carets.close(closed.transaction);
+                    }
+                }
+                None => {
+                    state.closing = Some(Closing {
+                        ledger: Arc::clone(&session.ledger),
+                        replaying,
+                    })
                 }
             }
             let carets: Vec<ResolvedSelection> = model

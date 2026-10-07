@@ -4,7 +4,12 @@ use fe_buffer::Version;
 use fe_command::{ContextFrame, ContextStack};
 use fe_editor::{EditorModel, commands::CONTEXT};
 
-use crate::{LastChange, Motion, Pending, Step, VimKey, history::Carets, insert::Session, step};
+use crate::{
+    LastChange, Motion, Pending, Step, VimKey,
+    history::Carets,
+    insert::{Closing, Session},
+    step,
+};
 
 /// The context key holding the mode's name.
 const MODE: &str = "vim.mode";
@@ -40,6 +45,9 @@ pub struct VimState {
     pub(crate) last_find: Option<Motion>,
     /// Set in insert mode: the session `vim.normal_mode` ends.
     pub(crate) session: Option<Session>,
+    /// A session this state left while a clone was ending it: the outcome
+    /// is adopted once it's published (see `insert::adopt_closing`).
+    pub(crate) closing: Option<Closing>,
     pub(crate) last_change: Option<LastChange>,
     pub(crate) carets: Carets,
     /// Set while `.` replays a change inside its own transaction.

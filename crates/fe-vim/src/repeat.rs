@@ -94,6 +94,7 @@ pub(crate) fn repeat(
     actor: &Actor,
     args: CountArgs,
 ) -> Result<Dispatched<TransactionId>, CommandError> {
+    crate::insert::adopt_closing(target.state);
     let Some(last) = target.state.last_change.clone() else {
         return Ok(Dispatched::new(Effect::Nothing));
     };
