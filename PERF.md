@@ -589,6 +589,31 @@ literal's. Other searches pick candidate lines over the whole buffer as
 before; a rerun at a load average of about 50 put both rare cases near
 450 ms, so treat the ratio as rough.
 
+## M3 Browse sign-off
+
+The plan's M3 done-when is "Tree handles a 100k-file repo; finder and
+search budgets met". One run of `cargo bench -p fe-project --bench tree`,
+`--bench finder` and `--bench search` at commit `b16f69b`, on 2026-10-07
+on the 14-core M3 Max. The machine was badly loaded, with a load average of
+about 90 (it had been 130 to 160 in the previous 15 minutes), so every
+number is several times worse than the quiet-machine runs in the sections
+below, and they stay the better guide. Medians. Nothing is asserted, and
+benches aren't part of the gate. The end-to-end behaviour on 100,000 files
+(counts, no timing) is `tests::m3_signoff::a_100k_file_project_end_to_end`.
+
+| Target | Measured | Met? | Detail |
+|---|---|---|---|
+| Finder: first results under 50 ms on 100k files | 1.4 to 2.5 ms for a query (1, 3, 8 and 20 chars); the walk, which runs in the background, 135 ms | met | [Finder](#finder-cargo-bench--p-fe-project---bench-finder) |
+| Search (provisional, T65): first batch under 50 ms | 0.93 ms | met | [Project search](#project-search-cargo-bench--p-fe-project---bench-search) |
+| Tree: `open` of the root of 100k files | 0.25 ms | no target | [Project tree](#project-tree-cargo-bench--p-fe-project---bench-tree) |
+| Tree: `expand` of a 10,000-file directory | 14 ms | no target | same |
+| Tree: `apply` of a 1,000-path batch | 5.2 ms | no target | same |
+
+The search bench's other cases have no target; under this load they were
+602 ms for a rare literal (every file searched), 21.5 ms for a capped common
+literal, 29 ms for a regex, 563 ms for a rare regex with a text anchor and
+75 ms for a case-insensitive whole word.
+
 ## Typing latency (`cargo bench -p fe-gpui --bench keystroke`)
 
 The plan's target is keystroke to paint under 4 ms at p50 and 8 ms at p99.
