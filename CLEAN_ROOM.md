@@ -13,6 +13,21 @@ it": code written after reading GPL code is hard to defend as independent.
 Zed's Apache-2.0 crates (`gpui*`, `sum_tree`, `collections`, `util`,
 `refineable`) are fine. Zed's highlight queries are GPL and also off limits.
 
+Vim engines, for vim mode (`fe-vim`):
+
+- **Vim**: its source, runtime files and `:help` text. The Vim License requires
+  modified versions to publish their changes.
+- **Neovim**: its C, Lua and Vimscript runtime. New code is Apache-2.0, but code
+  inherited from Vim keeps the Vim License, and the two are mixed throughout the
+  tree.
+- **hjkl** (`kryptic-sh/hjkl`, every `hjkl-*` crate, its corpus included): it
+  contains Vim-licensed C ported to Rust.
+- **Helix**: MPL-2.0 (see below).
+
+Learn Vim's behaviour by running it, or from its documentation without copying
+the text: recording headless Neovim as a test oracle is how `fe-vim` is
+checked. nvim-treesitter is a separate project and stays allowed (below).
+
 ## Copying permissive code
 
 Allowed sources include gpui-kit (Apache-2.0), Floem (MIT; its xi-derived
