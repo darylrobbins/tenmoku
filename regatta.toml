@@ -106,6 +106,12 @@ lanes_max = 3
 [review]
 on_finish = true
 
+# Review follow-ups run on Sonnet whatever their size: their specs name each fix, and as of
+# 2026-10-07 they were 38% of tasks. The first matching rule wins, so this comes first.
+[[routing.rules]]
+when = { labels = ["follow-up"] }
+tier = "standard"
+
 # Medium and larger tasks run on Opus at high effort.
 [[routing.rules]]
 when = { complexity = ["m", "l", "xl"] }
