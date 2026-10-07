@@ -262,27 +262,50 @@ impl EditorView {
         }
         let offset = self.offset_for_position(event.position);
         self.marked = None;
-        match event.click_count {
+        let click = |model: &mut EditorModel| match event.click_count {
             2 => {
-                let word = self.model.word_range_at(offset);
-                self.model.select_range(word.clone(), false);
-                self.drag = Some(Drag::Words(word));
+                let word = model.word_range_at(offset);
+                model.select_range(word.clone(), false);
+                Drag::Words(word)
             }
             3.. => {
-                let row = self.model.line_range_at(offset);
-                self.model.select_range(row.clone(), false);
-                self.drag = Some(Drag::Rows(row));
+                let row = model.line_range_at(offset);
+                model.select_range(row.clone(), false);
+                Drag::Rows(row)
             }
             _ => {
                 if event.modifiers.shift {
-                    self.model.extend_primary_to(offset);
+                    model.extend_primary_to(offset);
                 } else {
-                    self.model.set_cursor(offset);
+                    model.set_cursor(offset);
                 }
-                self.drag = Some(Drag::Chars);
+                Drag::Chars
             }
-        }
+        };
+        // The word or row as selected now, which the split may have moved.
+        let selected = |model: &EditorModel| model.primary_selection().range;
+        self.drag = Some(match self.split_session(click, cx) {
+            Drag::Chars => Drag::Chars,
+            Drag::Words(_) => Drag::Words(selected(&self.model)),
+            Drag::Rows(_) => Drag::Rows(selected(&self.model)),
+        });
         self.changed(cx);
+    }
+
+    /// Runs `select` on the model: a mouse click or drag, which moves carets
+    /// without editing. In vim's insert mode, if it changes the selections,
+    /// it splits the session as an editor command does
+    /// ([`fe_vim::VimState::split_session`]).
+    fn split_session<R>(
+        &mut self,
+        select: impl FnOnce(&mut EditorModel) -> R,
+        cx: &mut Context<Self>,
+    ) -> R {
+        self.sync_vim(cx);
+        match &mut self.vim {
+            Some(state) => state.split_session(&mut self.model, false, select),
+            None => select(&mut self.model),
+        }
     }
 
     /// Of a fold toggle or marker under a window position in the last frame,
@@ -322,22 +345,26 @@ impl EditorView {
             return;
         }
         let offset = self.offset_for_position(event.position);
-        let (origin, under) = match drag {
-            Drag::Chars => {
-                self.model.extend_primary_to(offset);
-                self.changed(cx);
-                return;
-            }
-            Drag::Words(origin) => (origin, self.model.word_range_at(offset)),
-            Drag::Rows(origin) => (origin, self.model.line_range_at(offset)),
-        };
-        // Grow from the originally clicked word or row, whole units at a time.
-        if under.start < origin.start {
-            self.model.select_range(under.start..origin.end, true);
-        } else {
-            self.model
-                .select_range(origin.start..under.end.max(origin.end), false);
-        }
+        self.split_session(
+            |model| {
+                let (origin, under) = match drag {
+                    Drag::Chars => {
+                        model.extend_primary_to(offset);
+                        return;
+                    }
+                    Drag::Words(origin) => (origin, model.word_range_at(offset)),
+                    Drag::Rows(origin) => (origin, model.line_range_at(offset)),
+                };
+                // Grow from the originally clicked word or row, whole units
+                // at a time.
+                if under.start < origin.start {
+                    model.select_range(under.start..origin.end, true);
+                } else {
+                    model.select_range(origin.start..under.end.max(origin.end), false);
+                }
+            },
+            cx,
+        );
         self.changed(cx);
     }
 

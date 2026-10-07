@@ -16,6 +16,14 @@
 //!    `Forward` lets it go on, to type nothing: no input handler is
 //!    registered outside insert mode.
 //!
+//! In insert mode the reducer isn't called: an unmatched keystroke goes on
+//! as text, and the editor's keys work as with vim off, but for `escape`
+//! and `ctrl-[`, bound to `vim.normal_mode`. Text typed or composed by an
+//! input method joins the insert session, and `Enter` goes in through
+//! [`VimState::line_break`]. Any other editor command, and a mouse click
+//! that moves the caret, splits the session
+//! ([`VimState::split_session`]), as Vim's cursor keys do.
+//!
 //! The keymap matches against each editor's live state, stamped onto its
 //! frame before matching ([`live_stack`]), not the context the last frame
 //! drew, which can trail the keys typed since.
@@ -23,7 +31,8 @@
 use std::rc::Rc;
 
 use fe_buffer::TransactionId;
-use fe_command::{ContextStack, DispatchError, Dispatched, Invocation, Registry};
+use fe_command::{ContextStack, DispatchError, Dispatched, Effect, Invocation, Registry};
+use fe_editor::EditorModel;
 use fe_vim::{Registers, Step, VimCommands, VimKey, VimState, VimTarget};
 use gpui::{
     App, Context, Entity, FocusHandle, Global, KeyContext, KeyDownEvent, WeakEntity,
@@ -37,6 +46,20 @@ use crate::{EditorView, commands::ViewHost, view::synced_syntax};
 pub(crate) const KEY: &str = "vim.key";
 /// Flips the switch, for this session.
 pub(crate) const TOGGLE: &str = "vim.toggle";
+
+/// The line break `Enter` types: in insert mode, through
+/// [`VimState::line_break`].
+pub(crate) const NEWLINE: &str = "editor.newline";
+/// The editor commands that type, besides [`NEWLINE`]: in insert mode they
+/// join the session, as the input methods' edits do, where any other editor
+/// command splits it ([`VimState::split_session`]).
+pub(crate) const TEXT_INPUT: [&str; 5] = [
+    "editor.insert",
+    "editor.backspace",
+    "editor.delete",
+    "editor.delete_word_left",
+    "editor.tab",
+];
 
 /// The prefix of vim's keys in GPUI's key contexts, whose identifiers can't
 /// hold `.`: `vim_mode` is `vim.mode`.
@@ -218,6 +241,20 @@ pub(crate) fn add_to_key_context(context: &mut KeyContext, state: &VimState) {
     }
 }
 
+/// Runs `invocation`, an `editor.newline`, in insert mode: the line break
+/// goes in through [`VimState::line_break`], acting as the invocation's
+/// actor, so the session knows the indentation it copies is
+/// 'autoindent', which `Esc` drops if nothing is typed after it.
+pub(crate) fn line_break(
+    state: &VimState,
+    model: &mut EditorModel,
+    invocation: &Invocation,
+) -> Result<Dispatched<TransactionId>, DispatchError> {
+    let origin = fe_editor::commands::origin(&invocation.actor);
+    let ((), transactions) = model.run_as(origin, |model| state.line_break(model));
+    Ok(Dispatched::new(Effect::Changed).with_transactions(transactions))
+}
+
 /// The key the reducer reads for `keystroke`, if any: none with `cmd`;
 /// `ctrl-[` is `<Esc>` and `ctrl-<letter>` is `<C-letter>`; `escape`,
 /// `enter`, `backspace`, `tab` and the arrows are those keys; otherwise the
@@ -394,3 +431,6 @@ impl EditorView {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod insert_tests;

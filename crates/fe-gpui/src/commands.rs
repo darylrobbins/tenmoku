@@ -232,7 +232,9 @@ impl EditorView {
     /// if the editor's frame is in it, or else the editor's frame alone. An
     /// ID the editor doesn't know propagates, still in that context, to the
     /// app's commands. With vim on, vim's IDs run through its registry, the
-    /// editor's frame stamped from its vim state.
+    /// editor's frame stamped from its vim state, and in insert mode an
+    /// editor command other than text input splits the session
+    /// ([`fe_vim::VimState::split_session`]).
     fn run_command(&mut self, invocation: Invocation, cx: &mut Context<Self>) {
         let in_editor = ContextPredicate::identifier(fe_editor::commands::CONTEXT);
         let mut invocation = if in_editor.eval(&invocation.context) {
@@ -254,13 +256,32 @@ impl EditorView {
             page_rows,
             syntax,
         };
-        let result = registry.dispatch(
-            &mut EditorTarget::new(&mut self.model, &mut host),
-            &invocation,
-        );
-        let mutates = registry
-            .get(&invocation.command)
-            .is_some_and(|meta| meta.mutates_buffer);
+        let meta = registry.get(&invocation.command);
+        let mutates = meta.is_some_and(|meta| meta.mutates_buffer);
+        let mut dispatch = |model: &mut fe_editor::EditorModel| {
+            registry.dispatch(&mut EditorTarget::new(model, &mut host), &invocation)
+        };
+        let mut split = false;
+        let result = match &mut self.vim {
+            // In insert mode, `Enter` is a typed line break, and any other
+            // editor command but text input splits the session (§9.8).
+            Some(state) if state.mode() == fe_vim::Mode::Insert && meta.is_some() => {
+                match invocation.command.as_str() {
+                    vim::NEWLINE => vim::line_break(state, &mut self.model, &invocation),
+                    command if vim::TEXT_INPUT.contains(&command) => dispatch(&mut self.model),
+                    _ => {
+                        split = true;
+                        state.split_session(&mut self.model, mutates, dispatch)
+                    }
+                }
+            }
+            _ => dispatch(&mut self.model),
+        };
+        if split {
+            // Ending the session may have dropped indentation, whatever the
+            // command did.
+            self.changed(cx);
+        }
         match self.dispatched(result, &invocation, mutates, cx) {
             Ok(()) => {}
             Err(DispatchError::UnknownCommand(_)) => {

@@ -56,6 +56,8 @@ pub(crate) struct Session {
     change: Change,
     /// `o` and `O`: a count opens more rows.
     opens: bool,
+    /// It continues a session a split ended ([`VimState::split_session`]).
+    resumed: bool,
 }
 
 /// What an open session follows: the buffer's edits since it opened, and
@@ -196,6 +198,88 @@ struct Region {
     start: Anchor,
     /// Where it ends: text typed at it goes before it.
     end: Anchor,
+}
+
+impl VimState {
+    /// Runs `command`, which is neither typing nor `Esc`, splitting an open
+    /// insert session around it, as the cursor keys split a session in Vim
+    /// (`:help ins-special-special`): in the app, an editor command other
+    /// than text input, or a mouse click. `edits` says whether it may edit
+    /// the buffer. Outside insert mode it only runs `command`.
+    ///
+    /// The session ends as `Esc` ends it, but for the count's copies (nvim
+    /// drops the count) and the step back: the indentation it made that
+    /// went unused goes, its transaction closes, and `.` keeps its change and
+    /// the text typed up to the primary caret. The mode stays insert, and a
+    /// new session with the same origin opens at the carets `command` left,
+    /// as `i` opens one, keeping any selection. So the text typed next is an
+    /// undo step of its own, which `.` repeats as `i` would; if the new
+    /// session changes nothing, `.` keeps the change before the split.
+    ///
+    /// A command that `edits` runs once the session has ended, so its edits
+    /// are their own. Any other runs inside the session, which ends after it
+    /// only if it moved a caret or changed a selection, and keeps the
+    /// indentation on the rows the carets are on then, as nvim keeps it
+    /// while the cursor stays on its row (`o<Left>`) and drops it once it
+    /// leaves (`o<Up>`).
+    pub fn split_session<R>(
+        &mut self,
+        model: &mut EditorModel,
+        edits: bool,
+        command: impl FnOnce(&mut EditorModel) -> R,
+    ) -> R {
+        let Some(origin) = self.session.as_ref().map(|session| session.origin.clone()) else {
+            return command(model);
+        };
+        if edits {
+            end(model, self, Ending::Split);
+            let result = command(model);
+            resume(model, self, origin);
+            return result;
+        }
+        sync(model);
+        let before = model.selections();
+        let primary = model
+            .snapshot()
+            .anchor_before(model.primary_selection().head());
+        let result = command(model);
+        if model.selections() != before {
+            end(model, self, Ending::Moved(primary));
+            resume(model, self, origin);
+        }
+        result
+    }
+}
+
+/// Opens the session a split resumes ([`VimState::split_session`]): typing
+/// starts at each selection's start, where typing over it goes, and the
+/// selections stay.
+fn resume(model: &mut EditorModel, state: &mut VimState, origin: Origin) {
+    model.sync_display();
+    let text = model.text().clone();
+    let mut heads: Vec<usize> = model
+        .selections()
+        .iter()
+        .map(|selection| selection.range.start)
+        .collect();
+    heads.sort_unstable();
+    heads.dedup();
+    start(model, state, origin.clone(), &text, heads.iter().copied());
+    let opened = {
+        let mut buffer = model.buffer_mut();
+        (buffer.snapshot(), buffer.subscribe())
+    };
+    let opening = Opening {
+        origin,
+        count: 1,
+        change: Change::Insert(InsertArgs {
+            at: InsertAt::Before,
+            count: None,
+        }),
+        opens: false,
+        resumed: true,
+    };
+    open(state, opening, &heads, Indents::default(), opened);
 }
 
 impl Session {
@@ -611,6 +695,7 @@ struct Opening {
     count: u32,
     change: Change,
     opens: bool,
+    resumed: bool,
 }
 
 /// Places a caret at each of `carets` (sorted, offsets in `snapshot`, the
@@ -628,19 +713,32 @@ fn enter(
     carets.dedup_by_key(|(head, _)| *head);
     let heads: Vec<usize> = carets.iter().map(|&(head, _)| head).collect();
     place(model, &snapshot, &heads);
-    let regions = carets
-        .iter()
-        .map(|&(head, _)| Region {
-            start: snapshot.anchor_before(head),
-            end: snapshot.anchor_after(head),
-        })
-        .collect();
     let mut indents = Indents::default();
     indents.add(
         carets
             .iter()
             .filter_map(|&(head, indent)| Some(Indent::new(indent?..head))),
     );
+    open(state, opening, &heads, indents, (snapshot, events));
+}
+
+/// Enters insert mode with a session whose typing starts at each of
+/// `heads` (sorted offsets in `snapshot`), following the buffer from
+/// `events`, subscribed at `snapshot`. The transaction is open.
+fn open(
+    state: &mut VimState,
+    opening: Opening,
+    heads: &[usize],
+    indents: Indents,
+    (snapshot, events): (BufferSnapshot, Subscription),
+) {
+    let regions = heads
+        .iter()
+        .map(|&head| Region {
+            start: snapshot.anchor_before(head),
+            end: snapshot.anchor_after(head),
+        })
+        .collect();
     let ledger = Arc::new(Mutex::new(Ledger {
         events,
         indents,
@@ -653,6 +751,7 @@ fn enter(
         count,
         change,
         opens,
+        resumed,
     } = opening;
     state.session = Some(Session {
         regions,
@@ -661,6 +760,7 @@ fn enter(
         count,
         change,
         opens,
+        resumed,
     });
     state.mode = Mode::Insert;
     state.pending = Default::default();
@@ -766,6 +866,7 @@ pub(crate) fn insert(
         count: args.count.unwrap_or(1).max(1),
         change: Change::Insert(args),
         opens,
+        resumed: false,
     };
     enter(model, state, opening, carets, opened);
     Ok(Dispatched::new(Effect::Changed))
@@ -929,6 +1030,7 @@ pub(crate) fn change(
         count: 1,
         change: Change::Operate(args),
         opens: false,
+        resumed: false,
     };
     enter(model, state, opening, carets, opened);
     Ok(Dispatched::new(Effect::Changed))
@@ -973,11 +1075,32 @@ pub(crate) fn normal_mode(
     target: &mut VimTarget<'_>,
 ) -> Result<Dispatched<TransactionId>, CommandError> {
     let VimTarget { model, state, .. } = target;
+    let ended = end(model, state, Ending::Esc);
+    Ok(Dispatched::new(Effect::Changed).with_transactions(ended.into_iter().collect()))
+}
+
+/// How [`end`] ends a session.
+#[derive(Copy, Clone, Debug)]
+enum Ending {
+    /// `Esc`: the count's copies go in, and each caret steps back.
+    Esc,
+    /// A split before a command that edits: typing stopped at the carets.
+    Split,
+    /// A split after a command that moved the carets without editing:
+    /// typing stopped at this, the primary caret before it, and the
+    /// indentation on the rows the carets are on now stays.
+    Moved(Anchor),
+}
+
+/// Ends the open session, if any, leaving normal mode: as `Esc` does
+/// ([`normal_mode`]), or for a split ([`VimState::split_session`]) without
+/// the count's copies or the step back. Returns the transaction it closed,
+/// if that was kept.
+fn end(model: &mut EditorModel, state: &mut VimState, how: Ending) -> Option<TransactionId> {
+    let esc = matches!(how, Ending::Esc);
     state.mode = Mode::Normal;
     state.goals = None;
-    let Some(session) = state.session.take() else {
-        return Ok(Dispatched::new(Effect::Changed));
-    };
+    let session = state.session.take()?;
     let replaying = state.replaying;
     sync(model);
     let text = model.text().clone();
@@ -1020,18 +1143,23 @@ pub(crate) fn normal_mode(
                     })
                 }
             }
-            let carets: Vec<ResolvedSelection> = model
-                .selections()
-                .iter()
-                .map(|selection| caret(Cursor::at(&text, selection.head()).offset()))
-                .collect();
-            model.set_selections(carets);
-            return Ok(Dispatched::new(Effect::Changed));
+            if esc {
+                let carets: Vec<ResolvedSelection> = model
+                    .selections()
+                    .iter()
+                    .map(|selection| caret(Cursor::at(&text, selection.head()).offset()))
+                    .collect();
+                model.set_selections(carets);
+            }
+            return None;
         }
     };
     let heads: Vec<usize> = model.selections().iter().map(|s| s.head()).collect();
-    let primary = model.primary_selection().head();
     let snapshot = model.snapshot();
+    let primary = match how {
+        Ending::Moved(primary) => snapshot.resolve(&primary),
+        _ => model.primary_selection().head(),
+    };
     let ended: Vec<Ended> = session
         .regions
         .iter()
@@ -1053,8 +1181,10 @@ pub(crate) fn normal_mode(
         .filter(|start| primary >= snapshot.resolve(start))
         .map(|start| (start, snapshot.anchor_before(primary)));
 
-    repeat_typed(model, &session, &ended);
-    drop_unused_indent(model, &session);
+    if esc {
+        repeat_typed(model, &session, &ended);
+    }
+    drop_unused_indent(model, &session, matches!(how, Ending::Moved(_)));
 
     let snapshot = model.snapshot();
     let typed = kept.map_or_else(String::new, |(start, end)| {
@@ -1068,32 +1198,39 @@ pub(crate) fn normal_mode(
         state.carets.close(ended);
     }
 
-    let text = model.text().clone();
-    let carets: Vec<ResolvedSelection> = model
-        .selections()
-        .iter()
-        .map(|selection| {
-            let head = selection.head();
-            let mut cursor = Cursor::at(&text, head);
-            // At a row's end, the clamp is the step back.
-            if cursor.offset() == head && cursor.ix > 0 {
-                cursor.ix -= 1;
-            }
-            caret(cursor.offset())
-        })
-        .collect();
-    model.set_selections(carets);
-    let last_change = LastChange {
-        change: session.change.clone(),
-        inserted: Some(typed),
-        typed_first,
+    if esc {
+        let text = model.text().clone();
+        let carets: Vec<ResolvedSelection> = model
+            .selections()
+            .iter()
+            .map(|selection| {
+                let head = selection.head();
+                let mut cursor = Cursor::at(&text, head);
+                // At a row's end, the clamp is the step back.
+                if cursor.offset() == head && cursor.ix > 0 {
+                    cursor.ix -= 1;
+                }
+                caret(cursor.offset())
+            })
+            .collect();
+        model.set_selections(carets);
+    }
+    // A session a split resumed that changed nothing leaves `.` the change
+    // before the split, as nvim does.
+    let last_change = match &state.last_change {
+        Some(last) if session.resumed && ended.is_none() => last.clone(),
+        _ => LastChange {
+            change: session.change.clone(),
+            inserted: Some(typed),
+            typed_first,
+        },
     };
     session.ledger().end = End::Ended(Closed {
         last_change: last_change.clone(),
         transaction: ended,
     });
     state.last_change = Some(last_change);
-    Ok(Dispatched::new(Effect::Changed).with_transactions(ended.into_iter().collect()))
+    ended
 }
 
 /// A count's copies at one caret, for [`repeat_typed`].
@@ -1389,20 +1526,45 @@ impl Copied {
 }
 
 /// Removes the indentation the session made that went unused, as Vim's
-/// 'autoindent' does on `Esc`: see [`Indents::unused`].
-fn drop_unused_indent(model: &mut EditorModel, session: &Session) {
+/// 'autoindent' does on `Esc`: see [`Indents::unused`]. With `off_caret_rows`,
+/// only from rows no caret is on, as nvim does when the cursor leaves a row
+/// in insert mode. The selections move with the text, and are left alone
+/// (their goal columns too) if nothing before them went.
+fn drop_unused_indent(model: &mut EditorModel, session: &Session, off_caret_rows: bool) {
     sync(model);
-    let removed = {
+    let mut removed = {
         let mut ledger = session.ledger();
         ledger.follow(&session.origin);
         ledger.indents.unused(model.text())
     };
+    let selections = model.selections();
+    if off_caret_rows {
+        let text = model.text();
+        let rows: Vec<u32> = selections.iter().map(|s| row(text, s.head())).collect();
+        removed.retain(|range| !rows.contains(&row(text, range.start)));
+    }
     if removed.is_empty() {
         return;
     }
-    let heads: Vec<usize> = model.selections().iter().map(|s| s.head()).collect();
-    let heads = through_deletes(&heads, &removed);
+    let ends: Vec<usize> = selections
+        .iter()
+        .flat_map(|s| [s.range.start, s.range.end])
+        .collect();
+    let mapped = through_deletes(&ends, &removed);
     let edits = removed.iter().map(|range| (range.clone(), ""));
     let (_, snapshot) = apply(model, edits, session.origin.clone());
-    place(model, &snapshot, &heads);
+    if mapped == ends {
+        return;
+    }
+    let anchors: Vec<Anchor> = mapped
+        .iter()
+        .map(|&offset| snapshot.anchor_before(offset))
+        .collect();
+    let mapped = model.snapshot().resolve_many(&anchors);
+    model.set_selections(selections.iter().zip(mapped.chunks(2)).map(|(s, ends)| {
+        ResolvedSelection {
+            range: ends[0]..ends[1].max(ends[0]),
+            reversed: s.reversed,
+        }
+    }));
 }

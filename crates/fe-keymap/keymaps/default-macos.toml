@@ -520,3 +520,16 @@ context = "editor && vim.mode == normal"
 keys = "alt-backspace"
 command = "vim.key"
 context = "editor && vim.mode == normal"
+
+# Insert mode keeps the editor's keys; `escape` and `ctrl-[` end the session
+# and return to normal mode.
+
+[[bindings]]
+keys = "escape"
+command = "vim.normal_mode"
+context = "editor && vim.mode == insert"
+
+[[bindings]]
+keys = "ctrl-["
+command = "vim.normal_mode"
+context = "editor && vim.mode == insert"
