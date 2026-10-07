@@ -31,6 +31,8 @@ cargo test --workspace            # what CI runs on every push
 scripts/soak.sh                   # 50k cases per property, release (a few minutes);
                                   # run after changing undo/redo or anchor code
 scripts/check-syntax-features.sh  # fe-syntax with no languages, then each alone (CI runs it)
+scripts/prune-build-cache.sh --dry-run   # stale regatta incremental dirs; see Disk
+scripts/test-prune-build-cache.sh        # fixture test for the prune script
 cargo mutants -p fe-buffer -j 4   # by hand, before milestones
 cargo llvm-cov -p fe-buffer --summary-only
 ```
@@ -45,6 +47,22 @@ large-text rope tests, which run a hundredth as many (at least 8). Note that
 `proptest!` lets the variable override `ProptestConfig::with_cases`, so a test
 that needs its own count has to drive `TestRunner` itself, as `large.rs` does.
 CI's `soak` workflow runs `scripts/soak.sh` on demand.
+
+## Disk
+
+Regatta lanes share one build cache (`~/Library/Caches/fastedit-regatta/target`);
+each gate snapshot (`.worktrees/.verify/<id>`) builds cold in its own `target/`.
+`scripts/ci-env.sh` makes snapshots light: `CARGO_INCREMENTAL=0` and
+`CARGO_PROFILE_DEV_DEBUG=line-tables-only` (panics keep file:line), and it exits 75
+with a one-line message when the volume has under `FASTEDIT_MIN_FREE_GIB` (default 10)
+free. Lanes are never checked. A cold snapshot build (`cargo build --workspace
+--all-targets` plus `nextest run --profile ci --no-run`) took 144 s and left a 4.1 GiB
+`target/`, down from about 6 GiB.
+
+`scripts/prune-build-cache.sh [--dry-run] [--older-than MIN] [--if-below GIB]` deletes
+incremental session dirs older than `--older-than` minutes (default 180) from the shared
+cache's `debug/incremental`, always keeping each crate's newest, and prints the GiB
+freed. `--if-below` does nothing while that much is free.
 
 ## Screenshots
 
