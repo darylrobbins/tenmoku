@@ -12,7 +12,8 @@
 //!   [`FinderIndex::query`] (Cmd-P). [`FinderIndex::apply`] keeps it current
 //!   from the same batches.
 //! - [`search()`] searches the contents of the files the tree shows, with
-//!   ripgrep's searcher, streaming capped and cancellable results.
+//!   ripgrep's searcher, streaming capped and cancellable results;
+//!   [`search_excluding`] leaves one file out.
 //! - [`open_file_under`] opens a path the tree or the finder listed without
 //!   following a symlink, for readers of the project's files.
 //!
@@ -30,7 +31,7 @@ pub use finder::{FileSetDelta, FinderIndex, FinderMatch, FinderStats};
 pub use listing::{Entry, EntryKind, Listed, Listing, open_file_under};
 pub use search::{
     FileMatches, LineMatch, SearchError, SearchOptions, SearchQuery, SearchSummary, is_word_char,
-    search,
+    search, search_excluding,
 };
 pub use tree::{FileTree, NodeId, Row, TreeOptions, TreeStats};
 pub use watcher::{FsChange, ProjectWatcher};

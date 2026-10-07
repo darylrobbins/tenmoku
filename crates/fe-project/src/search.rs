@@ -5,7 +5,7 @@
 use std::{
     fmt, fs,
     ops::Range,
-    os::unix::fs::{FileExt, OpenOptionsExt},
+    os::unix::fs::FileExt,
     path::{Path, PathBuf},
     sync::{
         Arc,
@@ -341,8 +341,10 @@ impl std::error::Error for SearchError {}
 /// The walk is [`crate::FinderIndex::walk`]'s, with its known limits:
 /// ignore files are opened following symlinks, an ignore file that is a
 /// FIFO blocks the walk, and directories are listed by path. Files
-/// themselves are opened without following a symlink, and only when they
-/// are regular files.
+/// themselves are opened with [`crate::open_file_under`], following no
+/// symlink below the root, so a directory swapped for one since the walk
+/// listed it can't lead the search out of the project; and only regular
+/// files are searched.
 pub fn search(
     root: impl AsRef<Path>,
     query: &SearchQuery,
@@ -350,10 +352,41 @@ pub fn search(
     cancel: Arc<AtomicBool>,
     sink: impl FnMut(Vec<FileMatches>),
 ) -> Result<SearchSummary, SearchError> {
-    let root = root.as_ref();
+    search_inner(root.as_ref(), query, options, None, cancel, sink)
+}
+
+/// [`search()`], but for the file at `excluded`, relative to `root`, whose
+/// text is searched another way, such as from memory: it isn't opened, so
+/// none of its matches is delivered or counts towards
+/// [`SearchOptions::max_matches`]. It's still counted in
+/// [`SearchSummary::files_searched`] when the walk reaches it.
+pub fn search_excluding(
+    root: impl AsRef<Path>,
+    query: &SearchQuery,
+    options: &SearchOptions,
+    excluded: &Path,
+    cancel: Arc<AtomicBool>,
+    sink: impl FnMut(Vec<FileMatches>),
+) -> Result<SearchSummary, SearchError> {
+    search_inner(root.as_ref(), query, options, Some(excluded), cancel, sink)
+}
+
+fn search_inner(
+    root: &Path,
+    query: &SearchQuery,
+    options: &SearchOptions,
+    excluded: Option<&Path>,
+    cancel: Arc<AtomicBool>,
+    sink: impl FnMut(Vec<FileMatches>),
+) -> Result<SearchSummary, SearchError> {
     let matcher = query.matcher()?;
+    // Files are opened under the root without following a symlink, so it's
+    // reached through none.
+    let open_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let shared = Shared {
         root,
+        open_root: &open_root,
+        excluded,
         matcher,
         cancel: &cancel,
         max: options.max_matches,
@@ -515,6 +548,10 @@ enum Outcome {
 /// What the walker's threads share.
 struct Shared<'a> {
     root: &'a Path,
+    /// `root` canonicalized, which files are opened under.
+    open_root: &'a Path,
+    /// A file not to search, relative to `root`.
+    excluded: Option<&'a Path>,
     /// Picks the lines to look at, and finds the ranges in them.
     matcher: LineSelector,
     cancel: &'a AtomicBool,
@@ -536,19 +573,29 @@ impl Shared<'_> {
         if !entry.file_type().is_some_and(|kind| kind.is_file()) {
             return Outcome::Skip;
         }
+        let path = entry.path();
+        let rel = path.strip_prefix(self.root).unwrap_or(path);
+        if self.excluded == Some(rel) {
+            self.files_searched.fetch_add(1, Ordering::Relaxed);
+            return Outcome::Skip;
+        }
         if self.found.load(Ordering::Relaxed) >= self.max {
             self.truncated.store(true, Ordering::Relaxed);
             return Outcome::Quit;
         }
         self.files_searched.fetch_add(1, Ordering::Relaxed);
-        let path = entry.path();
-        // Opened without following a symlink, and without blocking on a
-        // FIFO, in case either replaced the file since the walk saw it.
-        let file = fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-            .open(path);
-        let file = match file {
+        // Opened without following a symlink at any component below the
+        // root, and without blocking on a FIFO, in case either replaced the
+        // file or a directory above it since the walk saw it.
+        let opened = match (rel.as_os_str().is_empty(), self.open_root.parent()) {
+            // The root itself, a file: under its directory.
+            (true, Some(dir)) => {
+                let name = self.open_root.file_name().unwrap_or_default();
+                listing::open_file_under(dir, Path::new(name))
+            }
+            _ => listing::open_file_under(self.open_root, rel),
+        };
+        let file = match opened {
             Ok(file) => file,
             Err(err) => return Outcome::Error(path.to_path_buf(), err.to_string()),
         };
@@ -580,7 +627,6 @@ impl Shared<'_> {
             return Outcome::Skip;
         }
         self.found.fetch_add(sink.count, Ordering::Relaxed);
-        let rel = path.strip_prefix(self.root).unwrap_or(path);
         Outcome::Found(FileMatches {
             path: path.to_path_buf(),
             rel: rel.to_string_lossy().into_owned(),

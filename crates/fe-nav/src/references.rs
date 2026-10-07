@@ -21,7 +21,7 @@ use std::{
 };
 
 use fe_buffer::Buffer;
-use fe_project::{FileMatches, SearchOptions, SearchQuery, is_word_char, search};
+use fe_project::{FileMatches, SearchOptions, SearchQuery, is_word_char, search_excluding};
 use fe_syntax::{
     HighlightSpan, Language, Syntax, language_by_name, language_name_for_path, symbols,
 };
@@ -49,8 +49,8 @@ const PREVIEW_BYTES: usize = 512;
 /// runs.
 const POLL: Duration = Duration::from_millis(5);
 
-/// How much of the request's text is scanned for its word between checks
-/// for a cancel.
+/// About how many steps the scan of the request's text for its word takes
+/// between checks for a cancel.
 const SCAN_CHUNK: usize = 64 * 1024;
 
 /// How long one file's parse may take; past it, its hits are unverified.
@@ -98,7 +98,7 @@ impl Default for ReferenceOptions {
 /// verified on this thread before it's handed on: loaded as the editor
 /// loads it, then parsed if its language is supported, it's under the
 /// language's parse limit, and `options.verify_files` isn't spent. The disk
-/// copy of the request's file is skipped.
+/// copy of the request's file isn't searched.
 pub(crate) fn find(
     root: &Path,
     options: &ReferenceOptions,
@@ -144,14 +144,8 @@ pub(crate) fn find(
         case_sensitive: true,
         whole_word: true,
     };
-    // The rest of the cap, and as many again as the request's file has on
-    // disk (up to the cap, so the search never holds more than twice it):
-    // the search finds those too, and they're skipped. And one more: the
-    // search says it's truncated once it reaches its cap, which is so only
-    // if there's a hit past ours.
-    let disk_copy = finder.disk_copy_hits(&root, &req.rel);
     let search_options = SearchOptions {
-        max_matches: search_cap(hits, disk_copy),
+        max_matches: search_cap(hits),
         threads: 0,
     };
     let stop = Arc::new(AtomicBool::new(false));
@@ -170,34 +164,42 @@ pub(crate) fn find(
         });
         // Ends the thread above however this ends, a panic included.
         let _done = SetOnDrop(&done);
-        search(&root, &query, &search_options, stop.clone(), |batch| {
-            let mut out = Vec::new();
-            for file in batch {
+        // The request's file on disk isn't searched: its text was, and its
+        // hits there would take up the cap.
+        search_excluding(
+            &root,
+            &query,
+            &search_options,
+            &req.rel,
+            stop.clone(),
+            |batch| {
+                let mut out = Vec::new();
+                for file in batch {
+                    if finder.cancelled() {
+                        stop.store(true, Ordering::Relaxed);
+                        return;
+                    }
+                    if finder.hits_used >= MAX_HITS {
+                        // A hit past the cap.
+                        finder.summary.truncated = true;
+                        stop.store(true, Ordering::Relaxed);
+                        break;
+                    }
+                    out.extend(finder.disk_file(&root, file));
+                }
                 if finder.cancelled() {
                     stop.store(true, Ordering::Relaxed);
                     return;
                 }
-                if finder.hits_used >= MAX_HITS && file.path.strip_prefix(&root) != Ok(&req.rel) {
-                    // A hit past the cap, as the disk copy of the request's
-                    // file had fewer hits than were allowed for.
-                    finder.summary.truncated = true;
-                    stop.store(true, Ordering::Relaxed);
-                    break;
+                if !out.is_empty() {
+                    finder.delivered = true;
+                    sink(out);
                 }
-                out.extend(finder.disk_file(&root, &req.rel, file));
-            }
-            if finder.cancelled() {
-                stop.store(true, Ordering::Relaxed);
-                return;
-            }
-            if !out.is_empty() {
-                finder.delivered = true;
-                sink(out);
-            }
-            if finder.cancelled() {
-                stop.store(true, Ordering::Relaxed);
-            }
-        })
+                if finder.cancelled() {
+                    stop.store(true, Ordering::Relaxed);
+                }
+            },
+        )
     });
     // The pattern is a literal without a line break, so it's valid.
     if let Ok(searched) = searched {
@@ -207,10 +209,11 @@ pub(crate) fn find(
     finder.finish()
 }
 
-/// The search's cap, after `hits` in the request's text, with `disk_copy`
-/// in its file on disk: at most `2 * MAX_HITS + 1`.
-fn search_cap(hits: usize, disk_copy: usize) -> usize {
-    MAX_HITS - hits.min(MAX_HITS) + disk_copy.min(MAX_HITS) + 1
+/// The search's cap, after `hits` in the request's text: the rest of
+/// [`MAX_HITS`], and one more, as the search says it's truncated once it
+/// reaches its cap, which is so only if there's a hit past ours.
+fn search_cap(hits: usize) -> usize {
+    MAX_HITS - hits.min(MAX_HITS) + 1
 }
 
 struct SetOnDrop<'a>(&'a AtomicBool);
@@ -295,44 +298,8 @@ impl Finder<'_> {
         hits: &mut Vec<(u32, usize, usize)>,
     ) -> Option<FileReferences> {
         let source = req.text.to_string();
-        let word = self.word.as_str();
-        // The row and line start at `counted`, moved on a chunk at a time.
-        let mut rows = Rows::default();
-        // Scanned a chunk at a time, checking for a cancel in between,
-        // however few matches there are.
-        let mut pos = 0;
-        'scan: while pos < source.len() {
-            if self.cancelled() {
-                return None;
-            }
-            // Candidates starting in `pos..end`, seen whole.
-            let end = source.ceil_char_boundary((pos + SCAN_CHUNK).min(source.len()));
-            let seen = source.ceil_char_boundary((end + word.len()).min(source.len()));
-            let mut at = pos;
-            while at < end {
-                let Some(found) = source[at..seen].find(word).map(|found| at + found) else {
-                    break;
-                };
-                if found >= end {
-                    break;
-                }
-                if !is_whole_word(&source, found, word.len()) {
-                    // Only past its first char, as the search moves on: a
-                    // candidate overlapping it may be whole (`$$` in `a$$$`).
-                    at = found + source[found..].chars().next().map_or(1, char::len_utf8);
-                    continue;
-                }
-                rows.count(&source, found);
-                if hits.len() == MAX_HITS {
-                    self.summary.truncated = true;
-                    break 'scan;
-                }
-                hits.push((rows.row, rows.line_start, found - rows.line_start));
-                at = found + word.len();
-            }
-            let next = at.max(end);
-            rows.count(&source, next);
-            pos = next;
+        if !self.scan(&source, hits) {
+            return None;
         }
         if hits.is_empty() || self.cancelled() {
             return None;
@@ -377,36 +344,138 @@ impl Finder<'_> {
         })
     }
 
-    /// How many whole-word hits the request's file has on disk at `rel`,
-    /// counted as the search counts them; 0 if it can't be read.
-    fn disk_copy_hits(&self, root: &Path, rel: &Path) -> usize {
-        let Ok((mut handle, _)) = open_under(root, rel) else {
-            return 0;
-        };
-        let mut head = Vec::with_capacity(2);
-        if (&mut handle).take(2).read_to_end(&mut head).is_err() {
-            return 0;
+    /// Finds the whole-word hits in `source` for [`Finder::own_refs`], at
+    /// most [`MAX_HITS`] (more sets `truncated`): `false` if cancelled.
+    ///
+    /// One pass finds every occurrence of the word, overlapping ones
+    /// included, by Knuth–Morris–Pratt, counting rows as it goes. A hit is
+    /// one that's whole and starts past the last hit, as the search moves on
+    /// past a hit but only past the first char of a candidate that isn't
+    /// whole: one overlapping it may be (`$$` in `a$$$`). So however long
+    /// the word, and however many candidates overlap, no more than
+    /// [`SCAN_CHUNK`] steps or so pass between checks for a cancel.
+    fn scan(&mut self, source: &str, hits: &mut Vec<(u32, usize, usize)>) -> bool {
+        if self.cancelled() {
+            return false;
         }
+        let text = source.as_bytes();
         let word = self.word.as_bytes();
-        let counted = if utf16_bom(&head) {
-            // The search reads it transcoded to UTF-8.
-            let reader = Utf16Reader::new(handle, head == [0xFE, 0xFF]);
-            count_whole_words(reader, word, self.cancel)
-        } else {
-            count_whole_words(io::Cursor::new(head).chain(handle), word, self.cancel)
+        let Some(first) = self.word.chars().next() else {
+            return true;
         };
-        counted.unwrap_or(0)
+        // Steps since the last check for a cancel.
+        let mut spent = 0;
+        let Some(borders) = self.borders(word, &mut spent) else {
+            return false;
+        };
+        let (mut row, mut line_start) = (0, 0);
+        // How much of the word the bytes before `at` end with.
+        let mut matched = 0;
+        // Where the next hit may start: past the last.
+        let mut next = 0;
+        let mut at = 0;
+        while at < text.len() {
+            if matched == 0 {
+                // Straight on to the word's first char, a bounded span at a
+                // time. Only continuation bytes are before a char boundary.
+                let from = source.ceil_char_boundary(at);
+                let until = source.ceil_char_boundary((from + SCAN_CHUNK).min(text.len()));
+                let found = source[from..until].find(first).map(|found| from + found);
+                let to = found.unwrap_or(until);
+                for (ix, &byte) in text[at..to].iter().enumerate() {
+                    if byte == b'\n' {
+                        row += 1;
+                        line_start = at + ix + 1;
+                    }
+                }
+                let skipped = to - at;
+                at = to;
+                if self.spend(&mut spent, skipped) {
+                    return false;
+                }
+                if found.is_none() {
+                    continue;
+                }
+            }
+            let byte = text[at];
+            while matched > 0 && word[matched] != byte {
+                matched = borders[matched - 1];
+                if self.spend(&mut spent, 1) {
+                    return false;
+                }
+            }
+            if word[matched] == byte {
+                matched += 1;
+            }
+            if byte == b'\n' {
+                row += 1;
+                line_start = at + 1;
+            }
+            at += 1;
+            if self.spend(&mut spent, 1) {
+                return false;
+            }
+            if matched == word.len() {
+                matched = borders[matched - 1];
+                // On a char boundary, as the word starts with a whole char;
+                // on the row counted, as the word is on one line.
+                let start = at - word.len();
+                if start >= next && is_whole_word(source, start, word.len()) {
+                    if hits.len() == MAX_HITS {
+                        self.summary.truncated = true;
+                        break;
+                    }
+                    hits.push((row, line_start, start - line_start));
+                    next = at;
+                } else {
+                    #[cfg(test)]
+                    followup_tests::REJECTED.set(followup_tests::REJECTED.get() + 1);
+                }
+            }
+        }
+        true
+    }
+
+    /// Knuth–Morris–Pratt's table for `word`: for each of its prefixes,
+    /// the length of the longest that's also a proper suffix of it. `None`
+    /// if cancelled, checked for as [`Finder::spend`] has it.
+    fn borders(&self, word: &[u8], spent: &mut usize) -> Option<Vec<usize>> {
+        let mut borders = vec![0; word.len()];
+        let mut len = 0;
+        for ix in 1..word.len() {
+            while len > 0 && word[ix] != word[len] {
+                len = borders[len - 1];
+                if self.spend(spent, 1) {
+                    return None;
+                }
+            }
+            if word[ix] == word[len] {
+                len += 1;
+            }
+            borders[ix] = len;
+            if self.spend(spent, 1) {
+                return None;
+            }
+        }
+        Some(borders)
+    }
+
+    /// Adds `steps` to `spent`, the steps taken since the last check for a
+    /// cancel, and checks once they reach [`SCAN_CHUNK`]: whether cancelled.
+    fn spend(&self, spent: &mut usize, steps: usize) -> bool {
+        *spent += steps;
+        if *spent < SCAN_CHUNK {
+            return false;
+        }
+        *spent = 0;
+        self.cancelled()
     }
 
     /// The references among a file's search hits, `None` if none is left or
-    /// the file is `skip` (the request's own, whose disk copy isn't
-    /// reported) or not under `root`.
-    fn disk_file(&mut self, root: &Path, skip: &Path, file: FileMatches) -> Option<FileReferences> {
+    /// the file isn't under `root`.
+    fn disk_file(&mut self, root: &Path, file: FileMatches) -> Option<FileReferences> {
         // `file.rel` is lossy; the path keeps the name's bytes.
         let rel = file.path.strip_prefix(root).ok()?;
-        if rel == skip {
-            return None;
-        }
         // Its hits count towards the cap before any is checked, so dropped
         // ones count too; past the cap, they're left out.
         let mut lines = file.lines;
@@ -704,162 +773,10 @@ fn is_whole_word(text: &str, at: usize, len: usize) -> bool {
         && !text[at + len..].chars().next().is_some_and(is_word_char)
 }
 
-/// How many times `word` occurs in what `reader` reads as a whole word,
-/// with a char that isn't a word char ([`is_word_char`]), or nothing, on
-/// either side; invalid UTF-8 beside it isn't a boundary, as to the search. Read a chunk at a time, however large; `None` if it can't
-/// be read or `cancel` is set meanwhile.
-fn count_whole_words(mut reader: impl Read, word: &[u8], cancel: &AtomicBool) -> Option<usize> {
-    if word.is_empty() {
-        return Some(0);
-    }
-    // The longest UTF-8 char, the context checked on either side.
-    const CHAR: usize = 4;
-    let mut buf: Vec<u8> = Vec::new();
-    // Where in `buf` the next match may start.
-    let mut from = 0;
-    let mut count = 0;
-    let mut chunk = vec![0; 64 * 1024];
-    loop {
-        if cancel.load(Ordering::Relaxed) {
-            return None;
-        }
-        let read = match reader.read(&mut chunk) {
-            Ok(read) => read,
-            Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
-            Err(_) => return None,
-        };
-        buf.extend_from_slice(&chunk[..read]);
-        let eof = read == 0;
-        // Matches starting before `until` have their context in `buf`.
-        let until = if eof {
-            buf.len()
-        } else {
-            buf.len().saturating_sub(word.len() + CHAR)
-        };
-        while from < until {
-            let Some(at) = (buf[from..].windows(word.len()))
-                .position(|window| window == word)
-                .map(|at| from + at)
-                .filter(|&at| at < until)
-            else {
-                from = until;
-                break;
-            };
-            let before = char_before(&buf[at.saturating_sub(CHAR)..at]);
-            let after = char_after(&buf[at + word.len()..]);
-            let apart =
-                |side: Option<Option<char>>| side.is_some_and(|ch| !ch.is_some_and(is_word_char));
-            if apart(before) && apart(after) {
-                count += 1;
-                from = at + word.len();
-            } else {
-                // A candidate overlapping a rejected one may be whole.
-                from = at + 1;
-            }
-        }
-        if eof {
-            return Some(count);
-        }
-        // Keep the bytes a later match's context may need.
-        let cut = from.saturating_sub(CHAR);
-        buf.drain(..cut);
-        from -= cut;
-    }
-}
-
 /// Whether `bytes` start with a UTF-16 byte order mark, as the search
 /// detects one.
 fn utf16_bom(bytes: &[u8]) -> bool {
     matches!(bytes, [0xFF, 0xFE, ..] | [0xFE, 0xFF, ..])
-}
-
-/// Reads UTF-16 (after its byte order mark) as UTF-8, an unpaired surrogate
-/// or odd last byte as U+FFFD.
-struct Utf16Reader<R> {
-    inner: R,
-    big_endian: bool,
-    /// Read but not yet decoded: an odd byte, or a high surrogate's two.
-    held: Vec<u8>,
-    /// Decoded but not yet handed out.
-    out: Vec<u8>,
-    done: bool,
-}
-
-impl<R: Read> Utf16Reader<R> {
-    fn new(inner: R, big_endian: bool) -> Self {
-        Utf16Reader {
-            inner,
-            big_endian,
-            held: Vec::new(),
-            out: Vec::new(),
-            done: false,
-        }
-    }
-}
-
-impl<R: Read> Read for Utf16Reader<R> {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        while self.out.is_empty() && !self.done {
-            let mut bytes = std::mem::take(&mut self.held);
-            let start = bytes.len();
-            bytes.resize(start + 64 * 1024, 0);
-            let read = self.inner.read(&mut bytes[start..])?;
-            bytes.truncate(start + read);
-            self.done = read == 0;
-            let (pairs, odd) = bytes.as_chunks::<2>();
-            let mut units: Vec<u16> = (pairs.iter())
-                .map(|&pair| match self.big_endian {
-                    true => u16::from_be_bytes(pair),
-                    false => u16::from_le_bytes(pair),
-                })
-                .collect();
-            let mut held = Vec::new();
-            if !self.done
-                && let Some(&last) = units.last()
-                && (0xD800..0xDC00).contains(&last)
-            {
-                // A high surrogate, whose pair may come in the next read.
-                units.pop();
-                held.extend_from_slice(&pairs[units.len()]);
-            }
-            held.extend_from_slice(odd);
-            let mut text: String = char::decode_utf16(units)
-                .map(|unit| unit.unwrap_or(char::REPLACEMENT_CHARACTER))
-                .collect();
-            if self.done && !held.is_empty() {
-                text.push(char::REPLACEMENT_CHARACTER);
-                held.clear();
-            }
-            self.held = held;
-            self.out = text.into_bytes();
-        }
-        let n = buf.len().min(self.out.len());
-        buf[..n].copy_from_slice(&self.out[..n]);
-        self.out.drain(..n);
-        Ok(n)
-    }
-}
-
-/// The char `bytes` end with: `Some(None)` if they're empty, `None` if
-/// they end with invalid UTF-8.
-fn char_before(bytes: &[u8]) -> Option<Option<char>> {
-    if bytes.is_empty() {
-        return Some(None);
-    }
-    (1..=bytes.len().min(4))
-        .find_map(|len| std::str::from_utf8(&bytes[bytes.len() - len..]).ok())
-        .map(|valid| valid.chars().next_back())
-}
-
-/// The char `bytes` start with: `Some(None)` if they're empty, `None` if
-/// they start with invalid UTF-8.
-fn char_after(bytes: &[u8]) -> Option<Option<char>> {
-    if bytes.is_empty() {
-        return Some(None);
-    }
-    (1..=bytes.len().min(4))
-        .find_map(|len| std::str::from_utf8(&bytes[..len]).ok())
-        .map(|valid| valid.chars().next())
 }
 
 /// The preview of the line starting at `line_start` in `source` for the hit
@@ -884,27 +801,6 @@ fn preview(source: &str, line_start: usize, hit: Range<usize>) -> (String, Optio
     let window = line[start..end].to_owned();
     let in_window = (hit.end <= end).then(|| hit.start - start..hit.end - start);
     (window, in_window)
-}
-
-/// A row and where its line starts, counted up to an offset.
-#[derive(Default)]
-struct Rows {
-    row: u32,
-    line_start: usize,
-    counted: usize,
-}
-
-impl Rows {
-    /// Counts the rows of `source` on to `to`.
-    fn count(&mut self, source: &str, to: usize) {
-        for (ix, byte) in source.as_bytes()[self.counted..to].iter().enumerate() {
-            if *byte == b'\n' {
-                self.row += 1;
-                self.line_start = self.counted + ix + 1;
-            }
-        }
-        self.counted = self.counted.max(to);
-    }
 }
 
 /// Opens the regular file at `rel` under `root` for reading, as the
@@ -947,6 +843,10 @@ fn load(file: File, limit: usize, cancel: &AtomicBool) -> Option<Loaded> {
         buffer,
     })
 }
+
+#[cfg(test)]
+#[path = "references_followup_tests.rs"]
+mod followup_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1027,11 +927,7 @@ mod tests {
                 preview_start: 0,
             }],
         };
-        assert!(
-            finder
-                .disk_file(Path::new("/nonexistent"), Path::new("y"), file)
-                .is_none()
-        );
+        assert!(finder.disk_file(Path::new("/nonexistent"), file).is_none());
     }
 
     #[test]
@@ -1108,27 +1004,6 @@ mod tests {
     }
 
     #[test]
-    fn utf16_disk_copies_are_counted_transcoded() {
-        let dir = tempfile::tempdir().unwrap();
-        let text = "helper x helper\u{1F600}helper";
-        for (bom, encode) in [
-            ([0xFF, 0xFE], u16::to_le_bytes as fn(u16) -> [u8; 2]),
-            ([0xFE, 0xFF], u16::to_be_bytes),
-        ] {
-            let mut bytes = bom.to_vec();
-            bytes.extend(text.encode_utf16().flat_map(encode));
-            let path = dir.path().join("x.rs");
-            fs::write(&path, &bytes).unwrap();
-            let cancel = AtomicBool::new(false);
-            let root = fs::canonicalize(dir.path()).unwrap();
-            assert_eq!(finder(&cancel).disk_copy_hits(&root, Path::new("x.rs")), 3);
-            // A few bytes at a time, splitting the surrogate pair.
-            let reader = Utf16Reader::new(Trickle(&bytes[2..]), bom == [0xFE, 0xFF]);
-            assert_eq!(count_whole_words(reader, b"helper", &cancel), Some(3));
-        }
-    }
-
-    #[test]
     fn a_long_word_has_no_preview_range_when_cut() {
         let word = "x".repeat(600);
         let line = format!("let {word} = 1;");
@@ -1146,43 +1021,11 @@ mod tests {
         assert_eq!(&window[range.unwrap()], "x");
     }
 
-    /// Reads a few bytes at a time, so words and their context straddle
-    /// the chunks.
-    struct Trickle<'a>(&'a [u8]);
-
-    impl Read for Trickle<'_> {
-        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-            let n = buf.len().min(self.0.len()).min(3);
-            buf[..n].copy_from_slice(&self.0[..n]);
-            self.0 = &self.0[n..];
-            Ok(n)
-        }
-    }
-
-    #[test]
-    fn whole_words_counted_in_bytes() {
-        let mut bytes = "helper xhelper helper_ helper\u{301} \u{e9}helper helper\u{b2} "
-            .as_bytes()
-            .to_vec();
-        bytes.extend(b"\xffhelper\xff helper\xe2\x82 $$$ helper");
-        let cancel = AtomicBool::new(false);
-        // The first, the one before `\u{b2}` and the last: not those beside
-        // invalid UTF-8, which the search doesn't take as a boundary.
-        assert_eq!(count_whole_words(&bytes[..], b"helper", &cancel), Some(3));
-        assert_eq!(
-            count_whole_words(Trickle(&bytes), b"helper", &cancel),
-            Some(3)
-        );
-        // An overlapping candidate after a rejected one, as in `a$$$`.
-        assert_eq!(count_whole_words(&b"$$; a$$$"[..], b"$$", &cancel), Some(2));
-    }
-
     #[test]
     fn the_search_cap_is_bounded() {
-        assert_eq!(search_cap(1, 0), MAX_HITS);
-        assert_eq!(search_cap(1, 5), MAX_HITS + 5);
-        assert_eq!(search_cap(0, usize::MAX), 2 * MAX_HITS + 1);
-        assert_eq!(search_cap(MAX_HITS, 0), 1);
+        assert_eq!(search_cap(1), MAX_HITS);
+        assert_eq!(search_cap(MAX_HITS), 1);
+        assert_eq!(search_cap(MAX_HITS + 5), 1);
     }
 
     /// A cancel set while the request's text is scanned or its hits are
