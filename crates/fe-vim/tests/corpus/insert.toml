@@ -1,0 +1,538 @@
+# Insert-session cases for fe-vim's oracle: i a I A o O with counts, the
+# change operator over motions and text objects (cw on a word and on white
+# space), cc C s S on indented rows, <CR> and <BS> typed in a session, and
+# <Esc> at a row's start. Hand-written: name, buffer (rows joined with \n,
+# no trailing newline), cursor = [row, byte column] and keys in vim notation.
+# What nvim does with each is recorded in insert.expected.json by the
+# ignored `record_corpus_with_neovim` test; edit a case, then re-record.
+#
+# Typed line breaks and backspaces go through fe-editor's newline and
+# backspace, which aren't nvim's 'autoindent' and 'smarttab': no <CR> here
+# before blanks (nvim drops them, fe-editor moves them to the new row).
+
+# i a I A o O, and their counts.
+[[case]]
+name = "i_before_caret"
+buffer = "one two three\nfour five"
+cursor = [0, 4]
+keys = "iXY<Esc>"
+
+[[case]]
+name = "a_after_caret"
+buffer = "one two three\nfour five"
+cursor = [0, 4]
+keys = "aXY<Esc>"
+
+[[case]]
+name = "I_before_first_non_blank"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "I// <Esc>"
+
+[[case]]
+name = "I_on_blank_row_goes_to_end"
+buffer = "   \nx"
+cursor = [0, 1]
+keys = "Ix<Esc>"
+
+[[case]]
+name = "A_at_row_end"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "A;<Esc>"
+
+[[case]]
+name = "A_on_empty_row"
+buffer = "a\n\nb"
+cursor = [1, 0]
+keys = "Ax<Esc>"
+
+[[case]]
+name = "o_copies_indent"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "oq<Esc>"
+
+[[case]]
+name = "O_copies_indent"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [1, 6]
+keys = "Oq<Esc>"
+
+[[case]]
+name = "o_on_last_row"
+buffer = "one two three\nfour five"
+cursor = [1, 2]
+keys = "oend<Esc>"
+
+[[case]]
+name = "O_on_first_row"
+buffer = "one two three\nfour five"
+cursor = [0, 2]
+keys = "Ostart<Esc>"
+
+[[case]]
+name = "o_tab_indent_as_spaces"
+buffer = "\tab\ncd"
+cursor = [0, 1]
+keys = "ox<Esc>"
+
+[[case]]
+name = "count_3i"
+buffer = "one two three\nfour five"
+cursor = [0, 4]
+keys = "3ix<Esc>"
+
+[[case]]
+name = "count_2a"
+buffer = "one two three\nfour five"
+cursor = [0, 4]
+keys = "2aab<Esc>"
+
+[[case]]
+name = "count_3I"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [1, 6]
+keys = "3I-<Esc>"
+
+[[case]]
+name = "count_2A"
+buffer = "one two three\nfour five"
+cursor = [1, 0]
+keys = "2A!<Esc>"
+
+[[case]]
+name = "count_3o"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "3oq<Esc>"
+
+[[case]]
+name = "count_2O"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [1, 6]
+keys = "2Oq<Esc>"
+
+[[case]]
+name = "count_2o_two_rows"
+buffer = "  ab cd\nef"
+cursor = [0, 3]
+keys = "2ox<CR>y<Esc>"
+
+[[case]]
+name = "count_2i_two_rows"
+buffer = "  ab cd\nef"
+cursor = [0, 3]
+keys = "2ix<CR>y<Esc>"
+
+[[case]]
+name = "o_esc_drops_indent"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "o<Esc>"
+
+[[case]]
+name = "count_3o_esc"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "3o<Esc>"
+
+[[case]]
+name = "i_esc_steps_back"
+buffer = "one two three\nfour five"
+cursor = [0, 4]
+keys = "i<Esc>"
+
+
+# The change operator: cw is ce on a word, dw on white space.
+[[case]]
+name = "cw_on_word_keeps_space"
+buffer = "one two three\nfour five"
+cursor = [0, 4]
+keys = "cwX<Esc>"
+
+[[case]]
+name = "cw_on_last_grapheme"
+buffer = "one two three\nfour five"
+cursor = [0, 6]
+keys = "cwX<Esc>"
+
+[[case]]
+name = "cW_on_word"
+buffer = "foo.bar baz"
+cursor = [0, 0]
+keys = "cWX<Esc>"
+
+[[case]]
+name = "c2w_on_word"
+buffer = "one two three\nfour five"
+cursor = [0, 4]
+keys = "c2wX<Esc>"
+
+[[case]]
+name = "2cw_across_rows"
+buffer = "one two three\nfour five"
+cursor = [0, 8]
+keys = "2cwX<Esc>"
+
+[[case]]
+name = "cw_on_white_space"
+buffer = "ab   cd"
+cursor = [0, 3]
+keys = "cwX<Esc>"
+
+[[case]]
+name = "cw_on_trailing_blanks"
+buffer = "ab  \n\n  cd"
+cursor = [0, 2]
+keys = "cwX<Esc>"
+
+[[case]]
+name = "cw_on_empty_row"
+buffer = "ab  \n\n  cd"
+cursor = [1, 0]
+keys = "cwX<Esc>"
+
+[[case]]
+name = "ce"
+buffer = "one two three\nfour five"
+cursor = [0, 4]
+keys = "ceX<Esc>"
+
+[[case]]
+name = "cb"
+buffer = "one two three\nfour five"
+cursor = [0, 8]
+keys = "cbX<Esc>"
+
+[[case]]
+name = "ch_at_row_start"
+buffer = "one two three\nfour five"
+cursor = [1, 0]
+keys = "chX<Esc>"
+
+[[case]]
+name = "c_dollar"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "c$X<Esc>"
+
+[[case]]
+name = "c_f"
+buffer = "one two three\nfour five"
+cursor = [0, 0]
+keys = "ct X<Esc>"
+
+[[case]]
+name = "c0"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "c0X<Esc>"
+
+[[case]]
+name = "cj_keeps_indent"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 6]
+keys = "cjq<Esc>"
+
+[[case]]
+name = "cG_keeps_indent"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 4]
+keys = "cGq<Esc>"
+
+[[case]]
+name = "ciw"
+buffer = "one two three\nfour five"
+cursor = [0, 5]
+keys = "ciwXY<Esc>"
+
+[[case]]
+name = "c3iw"
+buffer = "one two three\nfour five"
+cursor = [0, 4]
+keys = "c3iwX<Esc>"
+
+[[case]]
+name = "caw"
+buffer = "one two three\nfour five"
+cursor = [0, 4]
+keys = "cawX<Esc>"
+
+[[case]]
+name = "ci_paren"
+buffer = "    f(a, (b, c)) + \"hi there\""
+cursor = [0, 10]
+keys = "ci(z<Esc>"
+
+[[case]]
+name = "ca_paren"
+buffer = "    f(a, (b, c)) + \"hi there\""
+cursor = [0, 10]
+keys = "ca(z<Esc>"
+
+[[case]]
+name = "ci_quote"
+buffer = "    f(a, (b, c)) + \"hi there\""
+cursor = [0, 23]
+keys = "ci\"bye<Esc>"
+
+[[case]]
+name = "named_register_cw"
+buffer = "one two three\nfour five"
+cursor = [0, 4]
+keys = "\"acwX<Esc>"
+
+[[case]]
+name = "c_failed_motion_stays_normal"
+buffer = "one two three\nfour five"
+cursor = [0, 0]
+keys = "cfqx"
+
+
+# cc C s S on indented rows.
+[[case]]
+name = "cc_keeps_indent"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "ccq<Esc>"
+
+[[case]]
+name = "cc_esc_drops_indent"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "cc<Esc>"
+
+[[case]]
+name = "2cc"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "2ccq<Esc>"
+
+[[case]]
+name = "C_indented"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "Cq<Esc>"
+
+[[case]]
+name = "C_on_empty_row"
+buffer = "ab cd\n\nef"
+cursor = [1, 0]
+keys = "C<Esc>"
+
+[[case]]
+name = "s_indented"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "sq<Esc>"
+
+[[case]]
+name = "3s_indented"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "3sq<Esc>"
+
+[[case]]
+name = "s_on_empty_row"
+buffer = "ab cd\n\nef"
+cursor = [1, 0]
+keys = "s<Esc>"
+
+[[case]]
+name = "S_keeps_indent"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [1, 6]
+keys = "Sq<Esc>"
+
+[[case]]
+name = "2S"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 6]
+keys = "2Sq<Esc>"
+
+[[case]]
+name = "S_esc_on_tab_indent"
+buffer = "\tab\ncd"
+cursor = [0, 1]
+keys = "S<Esc>"
+
+
+# <CR> and <BS> in a session, and <Esc> at a row's start.
+[[case]]
+name = "cr_splits_row"
+buffer = "one two three\nfour five"
+cursor = [0, 1]
+keys = "aX<CR>Y<Esc>"
+
+[[case]]
+name = "cr_at_indented_row_end"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "Afoo<CR>bar<Esc>"
+
+[[case]]
+name = "cr_twice"
+buffer = "one two three\nfour five"
+cursor = [1, 2]
+keys = "aX<CR><CR>Y<Esc>"
+
+[[case]]
+name = "cr_alone_at_row_end"
+buffer = "one two three\nfour five"
+cursor = [0, 4]
+keys = "A<CR><Esc>"
+
+[[case]]
+name = "bs_typed_text"
+buffer = "one two three\nfour five"
+cursor = [0, 4]
+keys = "ixy<BS>z<Esc>"
+
+[[case]]
+name = "bs_before_session_start"
+buffer = "one two three\nfour five"
+cursor = [0, 4]
+keys = "i<BS><BS>X<Esc>"
+
+[[case]]
+name = "bs_joins_rows"
+buffer = "one two three\nfour five"
+cursor = [1, 0]
+keys = "i<BS><Esc>"
+
+[[case]]
+name = "cw_then_bs"
+buffer = "one two three\nfour five"
+cursor = [0, 4]
+keys = "cwab<BS>c<Esc>"
+
+[[case]]
+name = "esc_at_row_start"
+buffer = "one two three\nfour five"
+cursor = [1, 3]
+keys = "I<Esc>"
+
+[[case]]
+name = "esc_at_row_start_after_typing"
+buffer = "one two three\nfour five"
+cursor = [1, 0]
+keys = "ix<BS><Esc>"
+
+[[case]]
+name = "esc_on_combining_mark"
+buffer = "aéx"
+cursor = [0, 0]
+keys = "aZ<Esc>"
+
+
+# 'autoindent' on <Esc>: indentation nothing was typed after on its row goes,
+# even if the typing was deleted since; a backspace and a line break aren't
+# typing, and the count's copies follow the same rule.
+[[case]]
+name = "o_bs_in_indent"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "o<BS><Esc>"
+
+[[case]]
+name = "o_typed_then_deleted_keeps_indent"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "ox<BS><Esc>"
+
+[[case]]
+name = "o_typed_blanks_keep_indent"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "o  <Esc>"
+
+[[case]]
+name = "o_cr_drops_both_indents"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "o<CR><Esc>"
+
+[[case]]
+name = "cr_typed_blanks_stay"
+buffer = "one two three\nfour five"
+cursor = [0, 4]
+keys = "A<CR>  <CR>x<Esc>"
+
+[[case]]
+name = "cr_after_typed_blank_keeps_indent"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "A<CR> <CR>x<Esc>"
+
+[[case]]
+name = "cr_typed_then_deleted_keeps_indent"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "A<CR>x<BS><Esc>"
+
+[[case]]
+name = "cr_bs_in_indent"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "A<CR><BS><Esc>"
+
+[[case]]
+name = "cc_cr_esc"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "cc<CR><Esc>"
+
+[[case]]
+name = "count_2o_cr_esc"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "2o<CR><Esc>"
+
+[[case]]
+name = "count_2o_typed_then_deleted"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "2ox<BS><Esc>"
+
+[[case]]
+name = "count_2o_x_cr_esc"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "2ox<CR><Esc>"
+
+[[case]]
+name = "count_3o_typed_blank"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "3o <Esc>"
+
+[[case]]
+name = "count_2A_cr_esc"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "2A<CR><Esc>"
+
+[[case]]
+name = "count_2A_cr_typed_then_deleted"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "2A<CR>x<BS><Esc>"
+
+[[case]]
+name = "count_2A_blank_cr_esc"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "2A <CR><Esc>"
+
+[[case]]
+name = "cr_ideographic_space_indent"
+buffer = "  \u3000ab\ncd"
+cursor = [0, 0]
+keys = "A<CR><Esc>"
+
+[[case]]
+name = "cr_no_break_space_indent"
+buffer = "\u00a0\u00a0ab\ncd"
+cursor = [0, 0]
+keys = "A<CR><Esc>"

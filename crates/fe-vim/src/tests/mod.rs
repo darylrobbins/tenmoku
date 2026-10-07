@@ -1,14 +1,18 @@
 use fe_command::Invocation;
 use serde::Serialize;
 
-use crate::{HeadlessVim, Pending, Step, VimState, context, parse_keys, step};
+use crate::{HeadlessVim, Pending, Step, VimState, context, operator::MEASURING, parse_keys, step};
 
 mod commands;
+mod edits;
+mod insert;
 mod motions;
 mod operators;
 mod reducer;
 mod registers;
+mod repeat;
 mod state;
+mod undo;
 
 /// Steps `keys` through the reducer from nothing pending. Every key but the
 /// last must wait; returns what the last did.
@@ -50,4 +54,22 @@ pub(super) fn registers(vim: &HeadlessVim) -> Vec<(char, String, bool)> {
             Some((name, register.text.clone(), register.linewise))
         })
         .collect()
+}
+
+/// Runs a hook wherever measuring text would as the model catches up, until
+/// dropped (see `operator::MEASURING`): with `true` right after an edit of
+/// fe-vim's.
+pub(super) struct Measuring;
+
+impl Measuring {
+    pub(super) fn new(hook: impl FnMut(bool) + 'static) -> Self {
+        MEASURING.set(Some(Box::new(hook)));
+        Self
+    }
+}
+
+impl Drop for Measuring {
+    fn drop(&mut self) {
+        MEASURING.take();
+    }
 }

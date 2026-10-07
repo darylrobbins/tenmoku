@@ -1,0 +1,363 @@
+# Edit cases for fe-vim's oracle: J with counts, before a ) row, with an
+# empty row and after trailing white space; r with counts and with too few
+# graphemes; ~ with counts and at a row's end; and u and <C-r> with counts.
+# Hand-written: name, buffer (rows joined with \n, no trailing newline),
+# cursor = [row, byte column] and keys in vim notation. What nvim does with
+# each is recorded in edits.expected.json by the ignored
+# `record_corpus_with_neovim` test; edit a case, then re-record. A case
+# never undoes more changes than it made: nvim would undo the buffer's set-up.
+
+# J.
+[[case]]
+name = "J_two_rows"
+buffer = "foo\n  bar\nbaz\n)qux\n\nend"
+cursor = [0, 1]
+keys = "J"
+
+[[case]]
+name = "J_count_1_is_2"
+buffer = "foo\n  bar\nbaz\n)qux\n\nend"
+cursor = [0, 1]
+keys = "1J"
+
+[[case]]
+name = "J_count_3"
+buffer = "foo\n  bar\nbaz\n)qux\n\nend"
+cursor = [0, 1]
+keys = "3J"
+
+[[case]]
+name = "J_count_past_end"
+buffer = "foo\n  bar\nbaz\n)qux\n\nend"
+cursor = [0, 1]
+keys = "9J"
+
+[[case]]
+name = "J_before_paren_row"
+buffer = "foo\n  bar\nbaz\n)qux\n\nend"
+cursor = [2, 1]
+keys = "J"
+
+[[case]]
+name = "J_paren_after_indent"
+buffer = "a\n  )b"
+cursor = [0, 0]
+keys = "J"
+
+[[case]]
+name = "J_onto_empty_row"
+buffer = "foo\n  bar\nbaz\n)qux\n\nend"
+cursor = [3, 1]
+keys = "J"
+
+[[case]]
+name = "J_from_empty_row"
+buffer = "foo\n  bar\nbaz\n)qux\n\nend"
+cursor = [4, 0]
+keys = "J"
+
+[[case]]
+name = "J_over_empty_row"
+buffer = "foo\n  bar\nbaz\n)qux\n\nend"
+cursor = [3, 1]
+keys = "3J"
+
+[[case]]
+name = "J_after_trailing_white_space"
+buffer = "foo  \n   bar"
+cursor = [0, 1]
+keys = "J"
+
+[[case]]
+name = "J_after_tab"
+buffer = "ab\t\ncd"
+cursor = [0, 0]
+keys = "J"
+
+[[case]]
+name = "J_blank_row_then_text"
+buffer = "a\n  \nx"
+cursor = [0, 0]
+keys = "3J"
+
+[[case]]
+name = "J_trailing_blank_then_empty"
+buffer = "ab  \n\n  cd"
+cursor = [0, 0]
+keys = "3J"
+
+[[case]]
+name = "J_strips_tab_indent"
+buffer = "a\n\tb"
+cursor = [0, 0]
+keys = "J"
+
+[[case]]
+name = "J_on_last_row"
+buffer = "foo\n  bar\nbaz\n)qux\n\nend"
+cursor = [5, 1]
+keys = "J"
+
+[[case]]
+name = "J_count_3_on_last_row"
+buffer = "ab\ncd"
+cursor = [1, 1]
+keys = "3J"
+
+[[case]]
+name = "J_then_x"
+buffer = "ab\n  cd"
+cursor = [0, 0]
+keys = "Jx"
+
+
+# r.
+[[case]]
+name = "r_one"
+buffer = "abcdé\nxy"
+cursor = [0, 1]
+keys = "rZ"
+
+[[case]]
+name = "r_count"
+buffer = "abcdé\nxy"
+cursor = [0, 1]
+keys = "3rZ"
+
+[[case]]
+name = "r_count_to_row_end"
+buffer = "abcdé\nxy"
+cursor = [0, 1]
+keys = "4rZ"
+
+[[case]]
+name = "r_too_few_graphemes"
+buffer = "abcdé\nxy"
+cursor = [0, 1]
+keys = "5rZ"
+
+[[case]]
+name = "r_at_row_end"
+buffer = "abcdé\nxy"
+cursor = [0, 4]
+keys = "rZ"
+
+[[case]]
+name = "r_count_at_row_end"
+buffer = "abcdé\nxy"
+cursor = [0, 4]
+keys = "2rZ"
+
+[[case]]
+name = "r_on_empty_row"
+buffer = "ab\n\ncd"
+cursor = [1, 0]
+keys = "rZ"
+
+[[case]]
+name = "r_multibyte"
+buffer = "abcdé\nxy"
+cursor = [0, 1]
+keys = "2rλ"
+
+[[case]]
+name = "r_combining_mark"
+buffer = "éxy"
+cursor = [0, 0]
+keys = "2rZ"
+
+[[case]]
+name = "r_tab"
+buffer = "abcd"
+cursor = [0, 1]
+keys = "r<Tab>"
+
+[[case]]
+name = "r_tab_count"
+buffer = "abcd"
+cursor = [0, 1]
+keys = "2r<Tab>"
+
+[[case]]
+name = "r_tab_on_a_tab"
+buffer = "a\tbc"
+cursor = [0, 1]
+keys = "2r<Tab>"
+
+[[case]]
+name = "r_esc_cancels"
+buffer = "abcdé\nxy"
+cursor = [0, 1]
+keys = "r<Esc>x"
+
+
+# ~.
+[[case]]
+name = "tilde_one"
+buffer = "abcdé\nxy"
+cursor = [0, 1]
+keys = "~"
+
+[[case]]
+name = "tilde_count"
+buffer = "abcdé\nxy"
+cursor = [0, 1]
+keys = "3~"
+
+[[case]]
+name = "tilde_count_past_row_end"
+buffer = "abcdé\nxy"
+cursor = [0, 1]
+keys = "9~"
+
+[[case]]
+name = "tilde_at_row_end"
+buffer = "abcdé\nxy"
+cursor = [0, 4]
+keys = "~"
+
+[[case]]
+name = "tilde_count_at_row_end"
+buffer = "abcdé\nxy"
+cursor = [0, 4]
+keys = "3~"
+
+[[case]]
+name = "tilde_upper_to_lower"
+buffer = "ABC def"
+cursor = [0, 0]
+keys = "5~"
+
+[[case]]
+name = "tilde_beyond_ascii"
+buffer = "straße ǆ İı"
+cursor = [0, 0]
+keys = "20~"
+
+[[case]]
+name = "tilde_combining_mark"
+buffer = "éxy"
+cursor = [0, 0]
+keys = "2~"
+
+[[case]]
+name = "tilde_on_empty_row"
+buffer = "ab\n\ncd"
+cursor = [1, 0]
+keys = "~"
+
+
+# u and <C-r>, with counts; the caret goes back to where each change began.
+[[case]]
+name = "u_one"
+buffer = "one two three"
+cursor = [0, 4]
+keys = "xu"
+
+[[case]]
+name = "u_count"
+buffer = "one two three"
+cursor = [0, 4]
+keys = "xxx2u"
+
+[[case]]
+name = "redo_count"
+buffer = "one two three"
+cursor = [0, 4]
+keys = "xxx3u2<C-r>"
+
+[[case]]
+name = "redo_past_history"
+buffer = "one two three"
+cursor = [0, 4]
+keys = "xxu3<C-r>"
+
+[[case]]
+name = "redo_with_nothing_undone"
+buffer = "one two three"
+cursor = [0, 4]
+keys = "x<C-r>"
+
+[[case]]
+name = "u_after_X"
+buffer = "one two three"
+cursor = [0, 9]
+keys = "Xu"
+
+[[case]]
+name = "u_after_db"
+buffer = "one two three"
+cursor = [0, 9]
+keys = "dbu<C-r>"
+
+[[case]]
+name = "u_after_dd_redo"
+buffer = "a\n  bc\nd"
+cursor = [1, 3]
+keys = "ddu<C-r>"
+
+[[case]]
+name = "u_after_dk"
+buffer = "a\n  bc\nd"
+cursor = [1, 3]
+keys = "dku"
+
+[[case]]
+name = "u_after_J"
+buffer = "ab\ncd\nef"
+cursor = [0, 1]
+keys = "2Ju"
+
+[[case]]
+name = "u_after_r"
+buffer = "abcd"
+cursor = [0, 1]
+keys = "3rZu<C-r>"
+
+[[case]]
+name = "u_after_tilde"
+buffer = "abcd"
+cursor = [0, 1]
+keys = "3~u"
+
+[[case]]
+name = "u_after_A"
+buffer = "  ab cd\nef"
+cursor = [0, 3]
+keys = "Ax<Esc>u"
+
+[[case]]
+name = "u_after_I"
+buffer = "  ab cd\nef"
+cursor = [0, 5]
+keys = "Ix<Esc>u"
+
+[[case]]
+name = "u_after_o"
+buffer = "  ab cd\nef"
+cursor = [0, 5]
+keys = "ox<Esc>u"
+
+[[case]]
+name = "u_after_ciw"
+buffer = "one two three"
+cursor = [0, 5]
+keys = "ciwX<Esc>u"
+
+[[case]]
+name = "u_after_cc"
+buffer = "  ab cd\nef"
+cursor = [0, 5]
+keys = "ccx<Esc>u"
+
+[[case]]
+name = "u_after_put"
+buffer = "one two three"
+cursor = [0, 4]
+keys = "yiwwPu"
+
+[[case]]
+name = "u_after_shift"
+buffer = "a\n  bc\nd"
+cursor = [1, 3]
+keys = ">ku<C-r>"

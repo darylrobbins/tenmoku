@@ -300,6 +300,11 @@ impl Line {
         }
     }
 
+    /// The display column grapheme `ix` starts at.
+    pub(crate) fn start_column(&self, ix: usize, tab: usize) -> usize {
+        (0..ix).fold(0, |column, i| column + self.width(i, column, tab))
+    }
+
     /// Vim's goal column for a normal-mode caret on grapheme `ix`: the
     /// display column it starts at, except for a tab, whose last column it
     /// is (where the caret shows).
@@ -470,7 +475,7 @@ impl<'a> Cursor<'a> {
 
     /// `w`, `b` or `e` (`W B E` if `big`) `count` times, stopping once a step
     /// doesn't move.
-    fn words(&mut self, motion: Motion, count: u32, big: bool) {
+    pub(crate) fn words(&mut self, motion: Motion, count: u32, big: bool) {
         for step in 0..count {
             let before = (self.row, self.ix);
             self.word_row = self.row;

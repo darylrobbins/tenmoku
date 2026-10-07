@@ -6,23 +6,101 @@
 //! transaction for every caret; the registers take the primary (last)
 //! caret's text.
 
-use std::ops::{Range, RangeInclusive};
+use std::{
+    ops::{Range, RangeInclusive},
+    sync::Arc,
+};
 
-use fe_buffer::{ResolvedSelection, TransactionId};
+use fe_buffer::{Anchor, BufferSnapshot, Origin, ResolvedSelection, TransactionId};
 use fe_command::{Actor, CommandError, Dispatched, Effect};
 use fe_editor::{EditorModel, commands::origin};
 use fe_text::Text;
 
 use crate::{
-    Motion, MoveArgs, OperateArgs, Operator, PutArgs, RangeClass, Register, Registers, Target,
-    VimState, VimTarget, Write,
+    Change, Motion, MoveArgs, OperateArgs, Operator, PutArgs, RangeClass, Register, Registers,
+    Target, VimState, VimTarget, Write, history, insert,
     motion::{self, Cursor},
     text_object,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
 /// The most text one put may insert.
-const MAX_PUT: usize = 64 << 20;
+pub(crate) const MAX_PUT: usize = 64 << 20;
+
+/// Applies `edits` with `origin`: the transaction they made, and the
+/// snapshot right after them. Catching the model up as the edit ends
+/// measures text, which may edit the buffer through another model
+/// (`EditorModel::set_char_widths`), so positions in the edited text are
+/// taken in this snapshot, not the model's caught-up text: see [`land`].
+pub(crate) fn apply<S: Into<Arc<str>>>(
+    model: &mut EditorModel,
+    edits: impl IntoIterator<Item = (Range<usize>, S)>,
+    origin: Origin,
+) -> (Option<TransactionId>, BufferSnapshot) {
+    let applied = {
+        let mut buffer = model.buffer_mut();
+        let id = buffer.edit(edits, origin);
+        (id, buffer.snapshot())
+    };
+    #[cfg(test)]
+    measured(model, true);
+    applied
+}
+
+/// Catches the model up (`EditorModel::sync_display`), which measures text
+/// as [`apply`] does.
+pub(crate) fn sync(model: &mut EditorModel) {
+    model.sync_display();
+    #[cfg(test)]
+    measured(model, false);
+}
+
+/// Puts a normal-mode caret at each of `heads`, offsets in `snapshot`, the
+/// text right after an edit (see [`apply`]): anchored there, each stays on
+/// its grapheme in the text the model caught up to, text put in before it
+/// meanwhile included, and lands on the grapheme it's in.
+pub(crate) fn land(
+    model: &mut EditorModel,
+    snapshot: &BufferSnapshot,
+    heads: impl IntoIterator<Item = usize>,
+) {
+    let anchors: Vec<Anchor> = heads
+        .into_iter()
+        .map(|head| snapshot.anchor_after(head))
+        .collect();
+    let heads = model.snapshot().resolve_many(&anchors);
+    let text = model.text().clone();
+    model.set_selections(
+        heads
+            .into_iter()
+            .map(|head| caret(Cursor::at(&text, head).offset())),
+    );
+}
+
+/// What [`MEASURING`] runs.
+#[cfg(test)]
+pub(crate) type Measure = Box<dyn FnMut(bool)>;
+
+#[cfg(test)]
+thread_local! {
+    /// What measuring text does in tests, standing in for char widths,
+    /// whose `CharWidth` fe-vim's tests can't build: called with `true` once
+    /// [`apply`]'s catch-up ends, and with `false` once [`sync`]'s does. The
+    /// model then catches up with whatever it edited, as the catch-up would
+    /// have.
+    pub(crate) static MEASURING: std::cell::RefCell<Option<Measure>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn measured(model: &mut EditorModel, edited: bool) {
+    let Some(mut measuring) = MEASURING.take() else {
+        return;
+    };
+    measuring(edited);
+    MEASURING.set(Some(measuring));
+    model.sync_display();
+}
 
 /// What an operator acts on for one caret.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -47,7 +125,7 @@ pub(crate) enum Span {
 }
 
 /// One caret's resolved target, for the operator.
-struct Op {
+pub(crate) struct Op {
     /// Bytes removed by a delete (rows with a line break each).
     range: Range<usize>,
     linewise: bool,
@@ -55,7 +133,7 @@ struct Op {
     first_non_blank: bool,
 }
 
-fn row_end(text: &Text, row: u32) -> usize {
+pub(crate) fn row_end(text: &Text, row: u32) -> usize {
     text.row_start(row) + text.row_len(row) as usize
 }
 
@@ -68,7 +146,7 @@ fn at_or_before_first_non_blank(text: &Text, offset: usize) -> bool {
 }
 
 /// The byte length of the grapheme at `offset` (0 at a row's end).
-fn grapheme_len(text: &Text, offset: usize) -> usize {
+pub(crate) fn grapheme_len(text: &Text, offset: usize) -> usize {
     let cursor = Cursor::at(text, offset);
     match cursor.offset() == offset && cursor.line.len() > 0 {
         true => cursor.line.grapheme(cursor.ix).len(),
@@ -202,7 +280,7 @@ fn whole_rows(text: &Text, span: Span) -> Span {
 impl Op {
     /// The op for `span`. An empty range is one only if `empty` (a yank
     /// writes the registers even with nothing to take; a delete doesn't).
-    fn new(text: &Text, span: &Span, empty: bool) -> Option<Self> {
+    pub(crate) fn new(text: &Text, span: &Span, empty: bool) -> Option<Self> {
         let row = |offset: usize| text.offset_to_point(offset).row;
         Some(match span {
             Span::Chars(range) if empty || !range.is_empty() => Self {
@@ -236,7 +314,7 @@ impl Op {
     }
 
     /// What the registers take: only the primary caret's is built.
-    fn register(&self, text: &Text) -> Register {
+    pub(crate) fn register(&self, text: &Text) -> Register {
         match self.linewise {
             true => {
                 let (first, last) = (*self.rows.start(), *self.rows.end());
@@ -250,7 +328,7 @@ impl Op {
 }
 
 /// Where `offset` lands once `removed` (sorted, disjoint) are deleted.
-fn map_through_deletes(offset: usize, removed: &[Range<usize>]) -> usize {
+pub(crate) fn map_through_deletes(offset: usize, removed: &[Range<usize>]) -> usize {
     let mut shift = 0;
     for range in removed {
         if range.end <= offset {
@@ -263,7 +341,7 @@ fn map_through_deletes(offset: usize, removed: &[Range<usize>]) -> usize {
 }
 
 /// Sorts `ranges` and merges the overlapping or touching ones.
-fn merge(mut ranges: Vec<Range<usize>>) -> Vec<Range<usize>> {
+pub(crate) fn merge(mut ranges: Vec<Range<usize>>) -> Vec<Range<usize>> {
     ranges.sort_by_key(|range| range.start);
     let mut merged: Vec<Range<usize>> = Vec::with_capacity(ranges.len());
     for range in ranges {
@@ -275,7 +353,7 @@ fn merge(mut ranges: Vec<Range<usize>>) -> Vec<Range<usize>> {
     merged
 }
 
-fn caret(offset: usize) -> ResolvedSelection {
+pub(crate) fn caret(offset: usize) -> ResolvedSelection {
     ResolvedSelection {
         range: offset..offset,
         reversed: false,
@@ -333,15 +411,34 @@ fn move_only(
     })
 }
 
+/// Runs `f`, putting `.`'s last change back if it fails: a command that
+/// fails (a register that can't be written, a put too big) isn't a change.
+fn keeping_last_change<R>(
+    target: &mut VimTarget<'_>,
+    f: impl FnOnce(&mut VimTarget<'_>) -> Result<R, CommandError>,
+) -> Result<R, CommandError> {
+    let last = target.state.last_change.clone();
+    let result = f(target);
+    if result.is_err() {
+        target.state.last_change = last;
+    }
+    result
+}
+
 /// `vim.operate`.
 pub(crate) fn operate(
     target: &mut VimTarget<'_>,
     actor: &Actor,
     args: OperateArgs,
 ) -> Result<Dispatched<TransactionId>, CommandError> {
-    if args.operator == Operator::Change {
-        return Err(CommandError::new("change needs insert mode (card 3)"));
-    }
+    keeping_last_change(target, |target| operate_unless_failing(target, actor, args))
+}
+
+fn operate_unless_failing(
+    target: &mut VimTarget<'_>,
+    actor: &Actor,
+    args: OperateArgs,
+) -> Result<Dispatched<TransactionId>, CommandError> {
     if let Some(name) = args.register {
         Registers::check(name).map_err(|error| CommandError::new(error.to_string()))?;
     }
@@ -376,8 +473,19 @@ pub(crate) fn operate(
     let (spans, starts): (Vec<Span>, Vec<Option<usize>>) = before
         .iter()
         .map(|selection| {
-            let head = selection.head();
+            // Another origin's edit may have left the caret inside a
+            // grapheme: it's on that grapheme.
+            let head = Cursor::at(&text, selection.head()).offset();
             let span = match args.target {
+                // `cw` on a non-blank is `ce` (`:help cw`).
+                Target::Motion(motion @ (Motion::WordForward | Motion::BigWordForward))
+                    if args.operator == Operator::Change =>
+                {
+                    insert::change_word(&text, head, motion, args.count.unwrap_or(1))
+                        .unwrap_or_else(|| {
+                            motion_span(&text, head, motion, args.count, last_find, tab)
+                        })
+                }
                 Target::Motion(motion) => {
                     motion_span(&text, head, motion, args.count, last_find, tab)
                 }
@@ -418,6 +526,54 @@ pub(crate) fn operate(
         })
         .collect();
     let row = |text: &Text, offset: usize| text.offset_to_point(offset).row;
+    // `.` repeats an operator whose target resolved, even over nothing (`x`
+    // on an empty row); a failed one isn't a change. `c` is kept when its
+    // session ends, and a yank never.
+    let resolved = spans
+        .iter()
+        .any(|span| matches!(span, Span::Chars(_) | Span::Lines { .. }));
+    if resolved
+        && matches!(
+            args.operator,
+            Operator::Delete | Operator::Indent | Operator::Outdent
+        )
+    {
+        state.last_change = Some(Change::Operate(args).into());
+    }
+    if args.operator == Operator::Change {
+        if spans
+            .iter()
+            .all(|span| matches!(span, Span::Failed | Span::Move(_)))
+        {
+            return Ok(move_only(model, state, &text, &before, &spans));
+        }
+        return insert::change(
+            model,
+            &mut **host,
+            state,
+            registers,
+            actor,
+            args,
+            &before,
+            &spans,
+        );
+    }
+    // Where the change begins for each caret, for undo: the start of what it
+    // acts on, or for whole rows the first one at the caret's column.
+    let begins = |text: &Text, firsts: Vec<Option<(u32, Option<usize>)>>| -> Vec<(u32, usize)> {
+        before
+            .iter()
+            .zip(firsts)
+            .map(|(selection, first)| {
+                let (row, column) = history::pair(text, selection.head());
+                match first {
+                    Some((first, None)) => history::caret_on_row(text, first, column),
+                    Some((first, Some(start))) => (first, start - text.row_start(first)),
+                    None => (row, column),
+                }
+            })
+            .collect()
+    };
     if let Operator::Indent | Operator::Outdent = args.operator {
         // Each caret's rows: an empty range (`>h` at column 0) still has
         // its own.
@@ -448,14 +604,23 @@ pub(crate) fn operate(
             .into_iter()
             .filter_map(|row| shift(&text, row, indent, tab))
             .collect();
-        let transaction = model
-            .buffer_mut()
-            .edit(edits.iter().cloned(), origin(actor));
-        let after = model.text().clone();
+        let (transaction, snapshot) = apply(model, edits, origin(actor));
+        if let Some(id) = transaction {
+            let firsts = rows
+                .iter()
+                .map(|rows| rows.as_ref().map(|rows| (*rows.start(), None)))
+                .collect();
+            state.carets.record(id, begins(&text, firsts));
+        }
+        let after = snapshot.text().clone();
         // The caret goes to the first row at its goal column; `$` aims it at
         // the row's end.
-        let carets = before.iter().zip(&rows).zip(&spans).zip(&goals).map(
-            |(((selection, rows), span), goal)| {
+        let carets: Vec<usize> = before
+            .iter()
+            .zip(&rows)
+            .zip(&spans)
+            .zip(&goals)
+            .map(|(((selection, rows), span), goal)| {
                 let (at, goal) = match (rows, span) {
                     (Some(rows), _) if args.target == Target::Motion(Motion::LineEnd) => {
                         (*rows.start(), Some(usize::MAX))
@@ -468,10 +633,10 @@ pub(crate) fn operate(
                     }
                     (None, _) => (row(&text, selection.head()), *goal),
                 };
-                caret(on_row(&after, at, goal, tab, false))
-            },
-        );
-        model.set_selections(carets);
+                on_row(&after, at, goal, tab, false)
+            })
+            .collect();
+        land(model, &snapshot, carets);
         let effect = match transaction.is_some() || model.selections() != before {
             true => Effect::Changed,
             false => Effect::Nothing,
@@ -569,36 +734,49 @@ pub(crate) fn operate(
             {
                 last.start -= 1;
             }
-            let transaction = model.buffer_mut().edit(
+            let (transaction, snapshot) = apply(
+                model,
                 removed.iter().map(|range| (range.clone(), "")),
                 origin(actor),
             );
-            let after = model.text().clone();
-            let carets = before.iter().zip(&ops).zip(&spans).zip(&goals).map(
-                |(((selection, op), span), goal)| {
-                    caret(match (op, span) {
-                        (Some(op), _) => {
-                            let at = map_through_deletes(op.range.start, &removed);
-                            match op.linewise {
-                                true => {
-                                    on_row(&after, row(&after, at), *goal, tab, op.first_non_blank)
-                                }
-                                false => Cursor::at(&after, at).offset(),
-                            }
-                        }
-                        (None, span) => {
-                            let at = moved_to(span).unwrap_or(selection.head());
-                            Cursor::at(&after, map_through_deletes(at, &removed)).offset()
-                        }
+            if let Some(id) = transaction {
+                let firsts = ops
+                    .iter()
+                    .map(|op| {
+                        op.as_ref().map(|op| match op.linewise {
+                            true => (*op.rows.start(), None),
+                            false => (row(&text, op.range.start), Some(op.range.start)),
+                        })
                     })
-                },
-            );
-            model.set_selections(carets);
+                    .collect();
+                state.carets.record(id, begins(&text, firsts));
+            }
+            let after = snapshot.text().clone();
+            let carets: Vec<usize> = before
+                .iter()
+                .zip(&ops)
+                .zip(&spans)
+                .zip(&goals)
+                .map(|(((selection, op), span), goal)| match (op, span) {
+                    (Some(op), _) => {
+                        let at = map_through_deletes(op.range.start, &removed);
+                        match op.linewise {
+                            true => on_row(&after, row(&after, at), *goal, tab, op.first_non_blank),
+                            false => Cursor::at(&after, at).offset(),
+                        }
+                    }
+                    (None, span) => {
+                        let at = moved_to(span).unwrap_or(selection.head());
+                        Cursor::at(&after, map_through_deletes(at, &removed)).offset()
+                    }
+                })
+                .collect();
+            land(model, &snapshot, carets);
             Ok(Dispatched::new(Effect::Changed)
                 .with_transactions(transaction.into_iter().collect()))
         }
         Operator::Indent | Operator::Outdent | Operator::Change => {
-            unreachable!("shifted or refused above")
+            unreachable!("shifted or changed above")
         }
     }
 }
@@ -635,6 +813,14 @@ pub(crate) fn put(
     actor: &Actor,
     args: PutArgs,
 ) -> Result<Dispatched<TransactionId>, CommandError> {
+    keeping_last_change(target, |target| put_unless_failing(target, actor, args))
+}
+
+fn put_unless_failing(
+    target: &mut VimTarget<'_>,
+    actor: &Actor,
+    args: PutArgs,
+) -> Result<Dispatched<TransactionId>, CommandError> {
     let VimTarget {
         model,
         host,
@@ -644,6 +830,7 @@ pub(crate) fn put(
     let value = registers
         .read(args.register, &mut **host)
         .map_err(|error| CommandError::new(error.to_string()))?;
+    state.last_change = Some(Change::Put(args).into());
     let Some(value) = value.filter(|value| !value.text.is_empty()) else {
         return Ok(Dispatched::new(Effect::Nothing));
     };
@@ -656,6 +843,7 @@ pub(crate) fn put(
     model.sync_display();
     let text = model.text().clone();
     let before = model.selections();
+    let carets_before = history::pairs(model);
     let count = args.count.unwrap_or(1).max(1) as usize;
     let size = payload
         .len()
@@ -673,7 +861,7 @@ pub(crate) fn put(
     // row starting there.
     let mut puts: Vec<(usize, String, (usize, bool))> = Vec::with_capacity(before.len());
     for selection in &before {
-        let head = selection.head();
+        let head = Cursor::at(&text, selection.head()).offset();
         let repeated = payload.repeat(count);
         if value.linewise {
             let row = row(head);
@@ -707,26 +895,30 @@ pub(crate) fn put(
     }
     puts.sort_by_key(|(at, _, _)| *at);
     puts.dedup_by_key(|(at, _, _)| *at);
-    let transaction = model.buffer_mut().edit(
+    let (transaction, snapshot) = apply(
+        model,
         puts.iter()
-            .map(|(at, inserted, _)| (*at..*at, inserted.clone())),
+            .map(|(at, inserted, _)| (*at..*at, inserted.as_str())),
         origin(actor),
     );
-    let after = model.text().clone();
+    if let Some(id) = transaction {
+        state.carets.record(id, carets_before);
+    }
+    let after = snapshot.text().clone();
     let mut shift = 0;
-    let carets: Vec<ResolvedSelection> = puts
+    let carets: Vec<usize> = puts
         .iter()
         .map(|(at, inserted, (land, first_non_blank))| {
             let start = at + shift;
             shift += inserted.len();
             let land = start + land;
-            caret(match first_non_blank {
+            match first_non_blank {
                 true => on_row(&after, after.offset_to_point(land).row, None, 1, true),
                 false => Cursor::at(&after, land).offset(),
-            })
+            }
         })
         .collect();
-    model.set_selections(carets);
+    land(model, &snapshot, carets);
     state.goals = None;
     Ok(Dispatched::new(Effect::Changed).with_transactions(transaction.into_iter().collect()))
 }

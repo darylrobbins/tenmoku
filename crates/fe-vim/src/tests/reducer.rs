@@ -150,6 +150,7 @@ fn prefixes_targets_cancel_and_forward() {
         ("g", PendingKind::G),
         ("f", PendingKind::Find),
         ("di", PendingKind::TextObject),
+        ("3r", PendingKind::Replace),
     ] {
         match run(keys) {
             Step::Wait(pending) => assert_eq!(pending.kind(), Some(kind), "{keys}"),
@@ -160,11 +161,11 @@ fn prefixes_targets_cancel_and_forward() {
 
     for keys in [
         "d<Esc>", "3<Esc>", "dq", "\"!", "g<Esc>", "dy", "d\"", "di<Esc>", "dix", "3q", "f<Esc>",
-        "gx", "3i",
+        "gx", "3Z", "r<Esc>", "r<CR>", "dr", "dJ", "di<C-r>",
     ] {
         assert_eq!(run(keys), Step::Cancel, "{keys}");
     }
-    for keys in ["q", ":", "/", "v", "i", "<C-x>", "<CR>"] {
+    for keys in ["q", ":", "/", "v", "Z", "<C-x>", "<CR>"] {
         assert_eq!(run(keys), Step::Forward, "{keys}");
     }
     assert_eq!(run("<Esc>"), Step::Cancel);

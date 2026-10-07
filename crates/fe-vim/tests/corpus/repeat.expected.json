@@ -1,0 +1,823 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "d3w_yank_dot",
+      "buffer": "one two three four five six seven\nsecond line here\nthird foo line",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d3w\"ayy.",
+      "expect": {
+        "buffer": "seven\nsecond line here\nthird foo line",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "four five six ",
+            "linewise": false
+          },
+          "-": {
+            "text": "four five six ",
+            "linewise": false
+          },
+          "a": {
+            "text": "four five six seven\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "ciw_then_dot_on_next_row",
+      "buffer": "four five\nsecond line\nthird foo line",
+      "cursor": [
+        1,
+        7
+      ],
+      "keys": "ciwXY<Esc>j0w.",
+      "expect": {
+        "buffer": "four five\nsecond XY\nthird XY line",
+        "cursor": [
+          2,
+          7
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo",
+            "linewise": false
+          },
+          "-": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "x_dot",
+      "buffer": "one two three four five six seven\nsecond line here\nthird foo line",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "x.",
+      "expect": {
+        "buffer": "e two three four five six seven\nsecond line here\nthird foo line",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "n",
+            "linewise": false
+          },
+          "-": {
+            "text": "n",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "count_dot_after_d2w",
+      "buffer": "one two three four five six seven\nsecond line here\nthird foo line",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d2w3.",
+      "expect": {
+        "buffer": "six seven\nsecond line here\nthird foo line",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "three four five ",
+            "linewise": false
+          },
+          "-": {
+            "text": "three four five ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dot_after_d2w",
+      "buffer": "one two three four five six seven\nsecond line here\nthird foo line",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d2w.",
+      "expect": {
+        "buffer": "five six seven\nsecond line here\nthird foo line",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "three four ",
+            "linewise": false
+          },
+          "-": {
+            "text": "three four ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dot_after_A",
+      "buffer": "one two three four five six seven\nsecond line here\nthird foo line",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "A;<Esc>j.",
+      "expect": {
+        "buffer": "one two three four five six seven;\nsecond line here;\nthird foo line",
+        "cursor": [
+          1,
+          16
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "numbered_put_undo_dot",
+      "buffer": "a\nb\nc\nd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dddd\"1pu.",
+      "expect": {
+        "buffer": "c\na\nd",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "b\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "numbered_put_undo_dot_twice",
+      "buffer": "a\nb\nc\nd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dddddd\"1pu.u.",
+      "expect": {
+        "buffer": "d\na",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "c\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "b\n",
+            "linewise": true
+          },
+          "3": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "named_put_dot_keeps_register",
+      "buffer": "one two three four five six seven\nsecond line here\nthird foo line",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\"add\"bdd\"ap.",
+      "expect": {
+        "buffer": "third foo line\none two three four five six seven\none two three four five six seven",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "second line here\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "second line here\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "one two three four five six seven\n",
+            "linewise": true
+          },
+          "a": {
+            "text": "one two three four five six seven\n",
+            "linewise": true
+          },
+          "b": {
+            "text": "second line here\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "count_3i_dot",
+      "buffer": "one two three four five six seven\nsecond line here\nthird foo line",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3ix<Esc>j.",
+      "expect": {
+        "buffer": "xxxone two three four five six seven\nsexxxcond line here\nthird foo line",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_3i_count_dot",
+      "buffer": "one two three four five six seven\nsecond line here\nthird foo line",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3ix<Esc>j2.",
+      "expect": {
+        "buffer": "xxxone two three four five six seven\nsexxcond line here\nthird foo line",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ciw_count_dot",
+      "buffer": "one two three four five six seven\nsecond line here\nthird foo line",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ciwXY<Esc>w3.",
+      "expect": {
+        "buffer": "XY XY four five six seven\nsecond line here\nthird foo line",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two three",
+            "linewise": false
+          },
+          "-": {
+            "text": "two three",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "cw_dot",
+      "buffer": "one two three four five six seven\nsecond line here\nthird foo line",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "cwZ<Esc>w.",
+      "expect": {
+        "buffer": "Z Z three four five six seven\nsecond line here\nthird foo line",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two",
+            "linewise": false
+          },
+          "-": {
+            "text": "two",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "o_dot",
+      "buffer": "one two three four five six seven\nsecond line here\nthird foo line",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "oab<Esc>.",
+      "expect": {
+        "buffer": "one two three four five six seven\nab\nab\nsecond line here\nthird foo line",
+        "cursor": [
+          2,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_o_count_dot",
+      "buffer": "one two three four five six seven\nsecond line here\nthird foo line",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2oab<Esc>3.",
+      "expect": {
+        "buffer": "one two three four five six seven\nab\nab\nab\nab\nab\nsecond line here\nthird foo line",
+        "cursor": [
+          5,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "o_esc_dot",
+      "buffer": "  ab\n  cd",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "o<Esc>.",
+      "expect": {
+        "buffer": "  ab\n\n\n  cd",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "C_dot",
+      "buffer": "one two three four five six seven\nsecond line here\nthird foo line",
+      "cursor": [
+        1,
+        6
+      ],
+      "keys": "Cq<Esc>j.",
+      "expect": {
+        "buffer": "one two three four five six seven\nsecondq\nthird q",
+        "cursor": [
+          2,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo line",
+            "linewise": false
+          },
+          "-": {
+            "text": "foo line",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "S_dot_keeps_indent",
+      "buffer": "  ab\n    cd",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "Sx<Esc>j.",
+      "expect": {
+        "buffer": "  x\n    x",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "    cd\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "    cd\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "  ab\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "J_dot",
+      "buffer": "one two three four five six seven\nsecond line here\nthird foo line",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "J.",
+      "expect": {
+        "buffer": "one two three four five six seven second line here third foo line",
+        "cursor": [
+          0,
+          50
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "J_count_dot",
+      "buffer": "a\nb\nc\nd\ne",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3J.",
+      "expect": {
+        "buffer": "a b c d e",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "r_dot",
+      "buffer": "one two three four five six seven\nsecond line here\nthird foo line",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2rZw.",
+      "expect": {
+        "buffer": "ZZe ZZo three four five six seven\nsecond line here\nthird foo line",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "tilde_dot",
+      "buffer": "one two three four five six seven\nsecond line here\nthird foo line",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3~w.",
+      "expect": {
+        "buffer": "ONE TWO three four five six seven\nsecond line here\nthird foo line",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "shift_dot",
+      "buffer": "one two three four five six seven\nsecond line here\nthird foo line",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ">>j.",
+      "expect": {
+        "buffer": "    one two three four five six seven\n    second line here\nthird foo line",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "yyp_dot",
+      "buffer": "one two three four five six seven\nsecond line here\nthird foo line",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yyp.",
+      "expect": {
+        "buffer": "one two three four five six seven\none two three four five six seven\none two three four five six seven\nsecond line here\nthird foo line",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one two three four five six seven\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "one two three four five six seven\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "yyp_count_dot",
+      "buffer": "one two three four five six seven\nsecond line here\nthird foo line",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yyp2.",
+      "expect": {
+        "buffer": "one two three four five six seven\none two three four five six seven\none two three four five six seven\none two three four five six seven\nsecond line here\nthird foo line",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one two three four five six seven\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "one two three four five six seven\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "dot_after_undo",
+      "buffer": "one two three four five six seven\nsecond line here\nthird foo line",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "Ax<Esc>u.",
+      "expect": {
+        "buffer": "one two three four five six sevenx\nsecond line here\nthird foo line",
+        "cursor": [
+          0,
+          33
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_after_motions_and_yank",
+      "buffer": "one two three four five six seven\nsecond line here\nthird foo line",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xwyiwj.",
+      "expect": {
+        "buffer": "ne two three four five six seven\nsecnd line here\nthird foo line",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "o",
+            "linewise": false
+          },
+          "-": {
+            "text": "o",
+            "linewise": false
+          },
+          "0": {
+            "text": "two",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dd_count_dot",
+      "buffer": "a\nb\nc\nd\ne",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dd2.",
+      "expect": {
+        "buffer": "d\ne",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b\nc\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "b\nc\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "dot_after_failed_r_keeps_count",
+      "buffer": "ab\nc",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "kx2rZj.",
+      "expect": {
+        "buffer": "b\n",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c",
+            "linewise": false
+          },
+          "-": {
+            "text": "c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "o_cr_dot",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "o<CR>x<Esc>j.",
+      "expect": {
+        "buffer": "    let x = foo(a);\n\n    x\n    x + b\n\n    x\nend",
+        "cursor": [
+          5,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "cr_typed_then_deleted_dot",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "A<CR>x<BS><Esc>j.",
+      "expect": {
+        "buffer": "    let x = foo(a);\n    \n    x + b\n    \nend",
+        "cursor": [
+          3,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "o_typed_then_deleted_dot",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "ox<BS><Esc>j.",
+      "expect": {
+        "buffer": "    let x = foo(a);\n    \n    x + b\n    \nend",
+        "cursor": [
+          3,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "cc_typed_then_deleted_dot",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "ccx<BS><Esc>j.",
+      "expect": {
+        "buffer": "    \n    \nend",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "    x + b\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "    x + b\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "    let x = foo(a);\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "o_typed_then_deleted_count_dot",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "ox<BS><Esc>j3.",
+      "expect": {
+        "buffer": "    let x = foo(a);\n    \n    x + b\n    \n    \n    \nend",
+        "cursor": [
+          5,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    }
+  ]
+}

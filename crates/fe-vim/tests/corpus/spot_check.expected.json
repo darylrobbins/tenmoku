@@ -1,0 +1,500 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "row_01",
+      "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "w",
+      "expect": {
+        "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "row_02",
+      "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "wb",
+      "expect": {
+        "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "row_03",
+      "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "e",
+      "expect": {
+        "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "row_04",
+      "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "j^",
+      "expect": {
+        "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "row_05",
+      "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "$",
+      "expect": {
+        "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+        "cursor": [
+          0,
+          13
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "row_06",
+      "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "Ggg",
+      "expect": {
+        "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "row_07",
+      "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "fb",
+      "expect": {
+        "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "row_08",
+      "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "f(%",
+      "expect": {
+        "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+        "cursor": [
+          0,
+          11
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "row_09",
+      "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "x",
+      "expect": {
+        "buffer": "fn fo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "o",
+            "linewise": false
+          },
+          "-": {
+            "text": "o",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "row_10",
+      "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "dd",
+      "expect": {
+        "buffer": "    let x = foo(a);\n    x + b\n}\nfoo end",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "fn foo(a, b) {\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "fn foo(a, b) {\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "row_11",
+      "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "yyjp",
+      "expect": {
+        "buffer": "fn foo(a, b) {\n    let x = foo(a);\nfn foo(a, b) {\n    x + b\n}\nfoo end",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "fn foo(a, b) {\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "fn foo(a, b) {\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "row_12",
+      "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "J",
+      "expect": {
+        "buffer": "fn foo(a, b) { let x = foo(a);\n    x + b\n}\nfoo end",
+        "cursor": [
+          0,
+          14
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "row_13",
+      "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "rZ",
+      "expect": {
+        "buffer": "fn fZo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "row_14",
+      "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "~",
+      "expect": {
+        "buffer": "fn fOo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "row_15",
+      "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": ">>",
+      "expect": {
+        "buffer": "    fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "row_16",
+      "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "cwbar<Esc>",
+      "expect": {
+        "buffer": "fn fbar(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "oo",
+            "linewise": false
+          },
+          "-": {
+            "text": "oo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "row_17",
+      "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "ci(z<Esc>",
+      "expect": {
+        "buffer": "fn foo(z) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a, b",
+            "linewise": false
+          },
+          "-": {
+            "text": "a, b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "row_18",
+      "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "oq<Esc>",
+      "expect": {
+        "buffer": "fn foo(a, b) {\nq\n    let x = foo(a);\n    x + b\n}\nfoo end",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "row_19",
+      "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "A;<Esc>",
+      "expect": {
+        "buffer": "fn foo(a, b) {;\n    let x = foo(a);\n    x + b\n}\nfoo end",
+        "cursor": [
+          0,
+          14
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "row_20",
+      "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "ddu<C-r>",
+      "expect": {
+        "buffer": "    let x = foo(a);\n    x + b\n}\nfoo end",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "fn foo(a, b) {\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "fn foo(a, b) {\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "row_21",
+      "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "x.",
+      "expect": {
+        "buffer": "fn f(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "o",
+            "linewise": false
+          },
+          "-": {
+            "text": "o",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "row_24",
+      "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "D",
+      "expect": {
+        "buffer": "fn f\n    let x = foo(a);\n    x + b\n}\nfoo end",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "oo(a, b) {",
+            "linewise": false
+          },
+          "-": {
+            "text": "oo(a, b) {",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "row_25",
+      "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "2dw",
+      "expect": {
+        "buffer": "fn fa, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "oo(",
+            "linewise": false
+          },
+          "-": {
+            "text": "oo(",
+            "linewise": false
+          }
+        }
+      }
+    }
+  ]
+}

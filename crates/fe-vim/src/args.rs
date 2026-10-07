@@ -154,3 +154,47 @@ pub struct PutArgs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub register: Option<char>,
 }
+
+/// Where `vim.insert` puts the caret before the session starts.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum InsertAt {
+    /// `i`: before the caret's grapheme.
+    Before,
+    /// `a`: after it.
+    After,
+    /// `I`: before the row's first non-blank, or at its end if it's all
+    /// blank.
+    FirstNonBlank,
+    /// `A`: at the row's end.
+    LineEnd,
+    /// `o`: on a new row below, indented as the caret's row is.
+    LineBelow,
+    /// `O`: on a new row above, indented as the caret's row is.
+    LineAbove,
+}
+
+/// `vim.insert`'s args: `i a I A o O`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct InsertArgs {
+    pub at: InsertAt,
+    /// How many times the typed text goes in (`3ix<Esc>` is `xxx`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<u32>,
+}
+
+/// The args of the commands that take only a count: `vim.join`,
+/// `vim.toggle_case`, `vim.undo`, `vim.redo` and `vim.repeat`.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CountArgs {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<u32>,
+}
+
+/// `vim.replace_char`'s args: `r{char}`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ReplaceCharArgs {
+    pub char: char,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<u32>,
+}

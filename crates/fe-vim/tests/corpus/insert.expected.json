@@ -1,0 +1,1859 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "i_before_caret",
+      "buffer": "one two three\nfour five",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "iXY<Esc>",
+      "expect": {
+        "buffer": "one XYtwo three\nfour five",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "a_after_caret",
+      "buffer": "one two three\nfour five",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "aXY<Esc>",
+      "expect": {
+        "buffer": "one tXYwo three\nfour five",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "I_before_first_non_blank",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "I// <Esc>",
+      "expect": {
+        "buffer": "    // let x = foo(a);\n    x + b\nend",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "I_on_blank_row_goes_to_end",
+      "buffer": "   \nx",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "Ix<Esc>",
+      "expect": {
+        "buffer": "   x\nx",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "A_at_row_end",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "A;<Esc>",
+      "expect": {
+        "buffer": "    let x = foo(a);;\n    x + b\nend",
+        "cursor": [
+          0,
+          19
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "A_on_empty_row",
+      "buffer": "a\n\nb",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "Ax<Esc>",
+      "expect": {
+        "buffer": "a\nx\nb",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "o_copies_indent",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "oq<Esc>",
+      "expect": {
+        "buffer": "    let x = foo(a);\n    q\n    x + b\nend",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "O_copies_indent",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        1,
+        6
+      ],
+      "keys": "Oq<Esc>",
+      "expect": {
+        "buffer": "    let x = foo(a);\n    q\n    x + b\nend",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "o_on_last_row",
+      "buffer": "one two three\nfour five",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "oend<Esc>",
+      "expect": {
+        "buffer": "one two three\nfour five\nend",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "O_on_first_row",
+      "buffer": "one two three\nfour five",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "Ostart<Esc>",
+      "expect": {
+        "buffer": "start\none two three\nfour five",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "o_tab_indent_as_spaces",
+      "buffer": "\tab\ncd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "ox<Esc>",
+      "expect": {
+        "buffer": "\tab\n    x\ncd",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_3i",
+      "buffer": "one two three\nfour five",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "3ix<Esc>",
+      "expect": {
+        "buffer": "one xxxtwo three\nfour five",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_2a",
+      "buffer": "one two three\nfour five",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "2aab<Esc>",
+      "expect": {
+        "buffer": "one tababwo three\nfour five",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_3I",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        1,
+        6
+      ],
+      "keys": "3I-<Esc>",
+      "expect": {
+        "buffer": "    let x = foo(a);\n    ---x + b\nend",
+        "cursor": [
+          1,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_2A",
+      "buffer": "one two three\nfour five",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "2A!<Esc>",
+      "expect": {
+        "buffer": "one two three\nfour five!!",
+        "cursor": [
+          1,
+          10
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_3o",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "3oq<Esc>",
+      "expect": {
+        "buffer": "    let x = foo(a);\n    q\n    q\n    q\n    x + b\nend",
+        "cursor": [
+          3,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_2O",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        1,
+        6
+      ],
+      "keys": "2Oq<Esc>",
+      "expect": {
+        "buffer": "    let x = foo(a);\n    q\n    q\n    x + b\nend",
+        "cursor": [
+          2,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_2o_two_rows",
+      "buffer": "  ab cd\nef",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "2ox<CR>y<Esc>",
+      "expect": {
+        "buffer": "  ab cd\n  x\n  y\n  x\n  y\nef",
+        "cursor": [
+          4,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_2i_two_rows",
+      "buffer": "  ab cd\nef",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "2ix<CR>y<Esc>",
+      "expect": {
+        "buffer": "  ax\n  yx\n  yb cd\nef",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "o_esc_drops_indent",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "o<Esc>",
+      "expect": {
+        "buffer": "    let x = foo(a);\n\n    x + b\nend",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_3o_esc",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "3o<Esc>",
+      "expect": {
+        "buffer": "    let x = foo(a);\n\n\n\n    x + b\nend",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "i_esc_steps_back",
+      "buffer": "one two three\nfour five",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "i<Esc>",
+      "expect": {
+        "buffer": "one two three\nfour five",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "cw_on_word_keeps_space",
+      "buffer": "one two three\nfour five",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "cwX<Esc>",
+      "expect": {
+        "buffer": "one X three\nfour five",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two",
+            "linewise": false
+          },
+          "-": {
+            "text": "two",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "cw_on_last_grapheme",
+      "buffer": "one two three\nfour five",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "cwX<Esc>",
+      "expect": {
+        "buffer": "one twX three\nfour five",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "o",
+            "linewise": false
+          },
+          "-": {
+            "text": "o",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "cW_on_word",
+      "buffer": "foo.bar baz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "cWX<Esc>",
+      "expect": {
+        "buffer": "X baz",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo.bar",
+            "linewise": false
+          },
+          "-": {
+            "text": "foo.bar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "c2w_on_word",
+      "buffer": "one two three\nfour five",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "c2wX<Esc>",
+      "expect": {
+        "buffer": "one X\nfour five",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two three",
+            "linewise": false
+          },
+          "-": {
+            "text": "two three",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "2cw_across_rows",
+      "buffer": "one two three\nfour five",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "2cwX<Esc>",
+      "expect": {
+        "buffer": "one two X five",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "three\nfour",
+            "linewise": false
+          },
+          "1": {
+            "text": "three\nfour",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "cw_on_white_space",
+      "buffer": "ab   cd",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "cwX<Esc>",
+      "expect": {
+        "buffer": "ab Xcd",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "  ",
+            "linewise": false
+          },
+          "-": {
+            "text": "  ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "cw_on_trailing_blanks",
+      "buffer": "ab  \n\n  cd",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "cwX<Esc>",
+      "expect": {
+        "buffer": "abX\n\n  cd",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "  ",
+            "linewise": false
+          },
+          "-": {
+            "text": "  ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "cw_on_empty_row",
+      "buffer": "ab  \n\n  cd",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "cwX<Esc>",
+      "expect": {
+        "buffer": "ab  \nX\n  cd",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "ce",
+      "buffer": "one two three\nfour five",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "ceX<Esc>",
+      "expect": {
+        "buffer": "one X three\nfour five",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two",
+            "linewise": false
+          },
+          "-": {
+            "text": "two",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "cb",
+      "buffer": "one two three\nfour five",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "cbX<Esc>",
+      "expect": {
+        "buffer": "one Xthree\nfour five",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two ",
+            "linewise": false
+          },
+          "-": {
+            "text": "two ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ch_at_row_start",
+      "buffer": "one two three\nfour five",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "chX<Esc>",
+      "expect": {
+        "buffer": "one two three\nXfour five",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "c_dollar",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "c$X<Esc>",
+      "expect": {
+        "buffer": "    let X\n    x + b\nend",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x = foo(a);",
+            "linewise": false
+          },
+          "-": {
+            "text": "x = foo(a);",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "c_f",
+      "buffer": "one two three\nfour five",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ct X<Esc>",
+      "expect": {
+        "buffer": "X two three\nfour five",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one",
+            "linewise": false
+          },
+          "-": {
+            "text": "one",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "c0",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "c0X<Esc>",
+      "expect": {
+        "buffer": "Xx = foo(a);\n    x + b\nend",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "    let ",
+            "linewise": false
+          },
+          "-": {
+            "text": "    let ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "cj_keeps_indent",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "cjq<Esc>",
+      "expect": {
+        "buffer": "    q\nend",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "    let x = foo(a);\n    x + b\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "    let x = foo(a);\n    x + b\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "cG_keeps_indent",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "cGq<Esc>",
+      "expect": {
+        "buffer": "    q",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "    let x = foo(a);\n    x + b\nend\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "    let x = foo(a);\n    x + b\nend\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "ciw",
+      "buffer": "one two three\nfour five",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "ciwXY<Esc>",
+      "expect": {
+        "buffer": "one XY three\nfour five",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two",
+            "linewise": false
+          },
+          "-": {
+            "text": "two",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "c3iw",
+      "buffer": "one two three\nfour five",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "c3iwX<Esc>",
+      "expect": {
+        "buffer": "one X\nfour five",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two three",
+            "linewise": false
+          },
+          "-": {
+            "text": "two three",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "caw",
+      "buffer": "one two three\nfour five",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "cawX<Esc>",
+      "expect": {
+        "buffer": "one Xthree\nfour five",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two ",
+            "linewise": false
+          },
+          "-": {
+            "text": "two ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ci_paren",
+      "buffer": "    f(a, (b, c)) + \"hi there\"",
+      "cursor": [
+        0,
+        10
+      ],
+      "keys": "ci(z<Esc>",
+      "expect": {
+        "buffer": "    f(a, (z)) + \"hi there\"",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b, c",
+            "linewise": false
+          },
+          "-": {
+            "text": "b, c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ca_paren",
+      "buffer": "    f(a, (b, c)) + \"hi there\"",
+      "cursor": [
+        0,
+        10
+      ],
+      "keys": "ca(z<Esc>",
+      "expect": {
+        "buffer": "    f(a, z) + \"hi there\"",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "(b, c)",
+            "linewise": false
+          },
+          "-": {
+            "text": "(b, c)",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ci_quote",
+      "buffer": "    f(a, (b, c)) + \"hi there\"",
+      "cursor": [
+        0,
+        23
+      ],
+      "keys": "ci\"bye<Esc>",
+      "expect": {
+        "buffer": "    f(a, (b, c)) + \"bye\"",
+        "cursor": [
+          0,
+          22
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "hi there",
+            "linewise": false
+          },
+          "-": {
+            "text": "hi there",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "named_register_cw",
+      "buffer": "one two three\nfour five",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "\"acwX<Esc>",
+      "expect": {
+        "buffer": "one X three\nfour five",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two",
+            "linewise": false
+          },
+          "a": {
+            "text": "two",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "c_failed_motion_stays_normal",
+      "buffer": "one two three\nfour five",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "cfqx",
+      "expect": {
+        "buffer": "ne two three\nfour five",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "o",
+            "linewise": false
+          },
+          "-": {
+            "text": "o",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "cc_keeps_indent",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "ccq<Esc>",
+      "expect": {
+        "buffer": "    q\n    x + b\nend",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "    let x = foo(a);\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "    let x = foo(a);\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "cc_esc_drops_indent",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "cc<Esc>",
+      "expect": {
+        "buffer": "\n    x + b\nend",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "    let x = foo(a);\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "    let x = foo(a);\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "2cc",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "2ccq<Esc>",
+      "expect": {
+        "buffer": "    q\nend",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "    let x = foo(a);\n    x + b\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "    let x = foo(a);\n    x + b\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "C_indented",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "Cq<Esc>",
+      "expect": {
+        "buffer": "    let q\n    x + b\nend",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x = foo(a);",
+            "linewise": false
+          },
+          "-": {
+            "text": "x = foo(a);",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "C_on_empty_row",
+      "buffer": "ab cd\n\nef",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "C<Esc>",
+      "expect": {
+        "buffer": "ab cd\n\nef",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "s_indented",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "sq<Esc>",
+      "expect": {
+        "buffer": "    let q = foo(a);\n    x + b\nend",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "3s_indented",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "3sq<Esc>",
+      "expect": {
+        "buffer": "    let q foo(a);\n    x + b\nend",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x =",
+            "linewise": false
+          },
+          "-": {
+            "text": "x =",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "s_on_empty_row",
+      "buffer": "ab cd\n\nef",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "s<Esc>",
+      "expect": {
+        "buffer": "ab cd\n\nef",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "S_keeps_indent",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        1,
+        6
+      ],
+      "keys": "Sq<Esc>",
+      "expect": {
+        "buffer": "    let x = foo(a);\n    q\nend",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "    x + b\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "    x + b\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "2S",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "2Sq<Esc>",
+      "expect": {
+        "buffer": "    q\nend",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "    let x = foo(a);\n    x + b\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "    let x = foo(a);\n    x + b\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "S_esc_on_tab_indent",
+      "buffer": "\tab\ncd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "S<Esc>",
+      "expect": {
+        "buffer": "\ncd",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\tab\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "\tab\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "cr_splits_row",
+      "buffer": "one two three\nfour five",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "aX<CR>Y<Esc>",
+      "expect": {
+        "buffer": "onX\nYe two three\nfour five",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "cr_at_indented_row_end",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "Afoo<CR>bar<Esc>",
+      "expect": {
+        "buffer": "    let x = foo(a);foo\n    bar\n    x + b\nend",
+        "cursor": [
+          1,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "cr_twice",
+      "buffer": "one two three\nfour five",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "aX<CR><CR>Y<Esc>",
+      "expect": {
+        "buffer": "one two three\nfouX\n\nYr five",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "cr_alone_at_row_end",
+      "buffer": "one two three\nfour five",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "A<CR><Esc>",
+      "expect": {
+        "buffer": "one two three\n\nfour five",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "bs_typed_text",
+      "buffer": "one two three\nfour five",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "ixy<BS>z<Esc>",
+      "expect": {
+        "buffer": "one xztwo three\nfour five",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "bs_before_session_start",
+      "buffer": "one two three\nfour five",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "i<BS><BS>X<Esc>",
+      "expect": {
+        "buffer": "onXtwo three\nfour five",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "bs_joins_rows",
+      "buffer": "one two three\nfour five",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "i<BS><Esc>",
+      "expect": {
+        "buffer": "one two threefour five",
+        "cursor": [
+          0,
+          12
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "cw_then_bs",
+      "buffer": "one two three\nfour five",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "cwab<BS>c<Esc>",
+      "expect": {
+        "buffer": "one ac three\nfour five",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two",
+            "linewise": false
+          },
+          "-": {
+            "text": "two",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "esc_at_row_start",
+      "buffer": "one two three\nfour five",
+      "cursor": [
+        1,
+        3
+      ],
+      "keys": "I<Esc>",
+      "expect": {
+        "buffer": "one two three\nfour five",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "esc_at_row_start_after_typing",
+      "buffer": "one two three\nfour five",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "ix<BS><Esc>",
+      "expect": {
+        "buffer": "one two three\nfour five",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "esc_on_combining_mark",
+      "buffer": "aéx",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "aZ<Esc>",
+      "expect": {
+        "buffer": "aZéx",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "o_bs_in_indent",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "o<BS><Esc>",
+      "expect": {
+        "buffer": "    let x = foo(a);\n\n    x + b\nend",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "o_typed_then_deleted_keeps_indent",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "ox<BS><Esc>",
+      "expect": {
+        "buffer": "    let x = foo(a);\n    \n    x + b\nend",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "o_typed_blanks_keep_indent",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "o  <Esc>",
+      "expect": {
+        "buffer": "    let x = foo(a);\n      \n    x + b\nend",
+        "cursor": [
+          1,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "o_cr_drops_both_indents",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "o<CR><Esc>",
+      "expect": {
+        "buffer": "    let x = foo(a);\n\n\n    x + b\nend",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "cr_typed_blanks_stay",
+      "buffer": "one two three\nfour five",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "A<CR>  <CR>x<Esc>",
+      "expect": {
+        "buffer": "one two three\n  \n  x\nfour five",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "cr_after_typed_blank_keeps_indent",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "A<CR> <CR>x<Esc>",
+      "expect": {
+        "buffer": "    let x = foo(a);\n     \n     x\n    x + b\nend",
+        "cursor": [
+          2,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "cr_typed_then_deleted_keeps_indent",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "A<CR>x<BS><Esc>",
+      "expect": {
+        "buffer": "    let x = foo(a);\n    \n    x + b\nend",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "cr_bs_in_indent",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "A<CR><BS><Esc>",
+      "expect": {
+        "buffer": "    let x = foo(a);\n\n    x + b\nend",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "cc_cr_esc",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "cc<CR><Esc>",
+      "expect": {
+        "buffer": "\n\n    x + b\nend",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "    let x = foo(a);\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "    let x = foo(a);\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "count_2o_cr_esc",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "2o<CR><Esc>",
+      "expect": {
+        "buffer": "    let x = foo(a);\n\n\n\n\n    x + b\nend",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_2o_typed_then_deleted",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "2ox<BS><Esc>",
+      "expect": {
+        "buffer": "    let x = foo(a);\n    \n    \n    x + b\nend",
+        "cursor": [
+          2,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_2o_x_cr_esc",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "2ox<CR><Esc>",
+      "expect": {
+        "buffer": "    let x = foo(a);\n    x\n\n    x\n\n    x + b\nend",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_3o_typed_blank",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "3o <Esc>",
+      "expect": {
+        "buffer": "    let x = foo(a);\n     \n      \n       \n    x + b\nend",
+        "cursor": [
+          3,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_2A_cr_esc",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "2A<CR><Esc>",
+      "expect": {
+        "buffer": "    let x = foo(a);\n\n\n    x + b\nend",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_2A_cr_typed_then_deleted",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "2A<CR>x<BS><Esc>",
+      "expect": {
+        "buffer": "    let x = foo(a);\n    \n    \n    x + b\nend",
+        "cursor": [
+          2,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_2A_blank_cr_esc",
+      "buffer": "    let x = foo(a);\n    x + b\nend",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "2A <CR><Esc>",
+      "expect": {
+        "buffer": "    let x = foo(a); \n     \n\n    x + b\nend",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "cr_ideographic_space_indent",
+      "buffer": "  　ab\ncd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "A<CR><Esc>",
+      "expect": {
+        "buffer": "  　ab\n\ncd",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "cr_no_break_space_indent",
+      "buffer": "  ab\ncd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "A<CR><Esc>",
+      "expect": {
+        "buffer": "  ab\n\ncd",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    }
+  ]
+}

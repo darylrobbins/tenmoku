@@ -1,17 +1,18 @@
 //! A vim editor without a UI, for tests and the Neovim oracle.
 
 use fe_buffer::{Buffer, Point, TransactionId};
-use fe_command::{DispatchError, Dispatched, Invocation, Registry};
+use fe_command::{DispatchError, Dispatched, Invocation, Registry, Source};
 use fe_editor::{EditorModel, commands::HeadlessHost};
 
 use crate::{
-    KeyError, Registers, Step, VimCommands, VimKey, VimState, VimTarget, context, parse_keys,
+    KeyError, Mode, Registers, Step, VimCommands, VimKey, VimState, VimTarget, context, parse_keys,
     registry,
 };
 
 /// An [`EditorModel`] with a [`HeadlessHost`], a [`VimState`], registers
-/// and vim's registry, fed keys the way the GPUI host routes them in normal
-/// mode.
+/// and vim's registry, fed keys the way the GPUI host routes them: through
+/// [`crate::step`] in normal mode, and in insert mode as the editor's text
+/// input and the keymap would take them.
 pub struct HeadlessVim {
     model: EditorModel,
     host: HeadlessHost,
@@ -52,8 +53,18 @@ impl HeadlessVim {
     /// stamped with the context as it is once the reducer has cleared its
     /// pending input, then dispatched. Stops at the first key forwarded or
     /// invocation that fails.
+    ///
+    /// In insert mode [`crate::step`] isn't called: a character goes to
+    /// [`EditorModel::insert`], `<CR>` to [`EditorModel::newline`] (through
+    /// [`VimState::line_break`], as the host's `Enter` does), `<BS>` to
+    /// [`EditorModel::backspace`], and `<Esc>` dispatches `vim.normal_mode`;
+    /// any other key is forwarded.
     pub fn feed(&mut self, keys: &str) -> Result<(), FeedError> {
         for key in parse_keys(keys)? {
+            if self.state.mode() == Mode::Insert {
+                self.type_key(key)?;
+                continue;
+            }
             match self.state.feed(key) {
                 Step::Wait(_) | Step::Cancel => {}
                 Step::Forward => return Err(FeedError::Forwarded(key)),
@@ -62,6 +73,26 @@ impl HeadlessVim {
                     self.dispatch(&invocation)?;
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// One key in insert mode. The keymap looks it up in the stamped
+    /// context first, as the host's does.
+    fn type_key(&mut self, key: VimKey) -> Result<(), FeedError> {
+        let context = context(&self.state);
+        match key {
+            VimKey::Char(ch) => self.model.insert(ch.encode_utf8(&mut [0; 4])),
+            VimKey::Enter => self.state.line_break(&mut self.model),
+            VimKey::Backspace => self.model.backspace(),
+            VimKey::Esc => {
+                let invocation = Invocation::of("vim.normal_mode")
+                    .expect("vim command IDs are valid")
+                    .source(Source::Keyboard)
+                    .context(context);
+                self.dispatch(&invocation)?;
+            }
+            _ => return Err(FeedError::Forwarded(key)),
         }
         Ok(())
     }

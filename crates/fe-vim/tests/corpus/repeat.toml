@@ -1,0 +1,212 @@
+# Dot-repeat cases for fe-vim's oracle: the last change and the text its
+# insert session typed, with and without a new count; a yank isn't a change
+# (`d3w"ayy.`); a put from a numbered register takes the next one. No case
+# starts with `.`, and every `.` follows a change in its own case: nvim keeps
+# the last change from case to case. Hand-written: name, buffer (rows joined
+# with \n, no trailing newline), cursor = [row, byte column] and keys in vim
+# notation. What nvim does with each is recorded in repeat.expected.json by
+# the ignored `record_corpus_with_neovim` test; edit a case, then re-record.
+
+[[case]]
+name = "d3w_yank_dot"
+buffer = "one two three four five six seven\nsecond line here\nthird foo line"
+cursor = [0, 0]
+keys = "d3w\"ayy."
+
+[[case]]
+name = "ciw_then_dot_on_next_row"
+buffer = "four five\nsecond line\nthird foo line"
+cursor = [1, 7]
+keys = "ciwXY<Esc>j0w."
+
+[[case]]
+name = "x_dot"
+buffer = "one two three four five six seven\nsecond line here\nthird foo line"
+cursor = [0, 0]
+keys = "x."
+
+[[case]]
+name = "count_dot_after_d2w"
+buffer = "one two three four five six seven\nsecond line here\nthird foo line"
+cursor = [0, 0]
+keys = "d2w3."
+
+[[case]]
+name = "dot_after_d2w"
+buffer = "one two three four five six seven\nsecond line here\nthird foo line"
+cursor = [0, 0]
+keys = "d2w."
+
+[[case]]
+name = "dot_after_A"
+buffer = "one two three four five six seven\nsecond line here\nthird foo line"
+cursor = [0, 0]
+keys = "A;<Esc>j."
+
+[[case]]
+name = "numbered_put_undo_dot"
+buffer = "a\nb\nc\nd"
+cursor = [0, 0]
+keys = "dddd\"1pu."
+
+[[case]]
+name = "numbered_put_undo_dot_twice"
+buffer = "a\nb\nc\nd"
+cursor = [0, 0]
+keys = "dddddd\"1pu.u."
+
+[[case]]
+name = "named_put_dot_keeps_register"
+buffer = "one two three four five six seven\nsecond line here\nthird foo line"
+cursor = [0, 0]
+keys = "\"add\"bdd\"ap."
+
+[[case]]
+name = "count_3i_dot"
+buffer = "one two three four five six seven\nsecond line here\nthird foo line"
+cursor = [0, 0]
+keys = "3ix<Esc>j."
+
+[[case]]
+name = "count_3i_count_dot"
+buffer = "one two three four five six seven\nsecond line here\nthird foo line"
+cursor = [0, 0]
+keys = "3ix<Esc>j2."
+
+[[case]]
+name = "ciw_count_dot"
+buffer = "one two three four five six seven\nsecond line here\nthird foo line"
+cursor = [0, 0]
+keys = "ciwXY<Esc>w3."
+
+[[case]]
+name = "cw_dot"
+buffer = "one two three four five six seven\nsecond line here\nthird foo line"
+cursor = [0, 0]
+keys = "cwZ<Esc>w."
+
+[[case]]
+name = "o_dot"
+buffer = "one two three four five six seven\nsecond line here\nthird foo line"
+cursor = [0, 0]
+keys = "oab<Esc>."
+
+[[case]]
+name = "count_o_count_dot"
+buffer = "one two three four five six seven\nsecond line here\nthird foo line"
+cursor = [0, 0]
+keys = "2oab<Esc>3."
+
+[[case]]
+name = "o_esc_dot"
+buffer = "  ab\n  cd"
+cursor = [0, 2]
+keys = "o<Esc>."
+
+[[case]]
+name = "C_dot"
+buffer = "one two three four five six seven\nsecond line here\nthird foo line"
+cursor = [1, 6]
+keys = "Cq<Esc>j."
+
+[[case]]
+name = "S_dot_keeps_indent"
+buffer = "  ab\n    cd"
+cursor = [0, 2]
+keys = "Sx<Esc>j."
+
+[[case]]
+name = "J_dot"
+buffer = "one two three four five six seven\nsecond line here\nthird foo line"
+cursor = [0, 0]
+keys = "J."
+
+[[case]]
+name = "J_count_dot"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = "3J."
+
+[[case]]
+name = "r_dot"
+buffer = "one two three four five six seven\nsecond line here\nthird foo line"
+cursor = [0, 0]
+keys = "2rZw."
+
+[[case]]
+name = "tilde_dot"
+buffer = "one two three four five six seven\nsecond line here\nthird foo line"
+cursor = [0, 0]
+keys = "3~w."
+
+[[case]]
+name = "shift_dot"
+buffer = "one two three four five six seven\nsecond line here\nthird foo line"
+cursor = [0, 0]
+keys = ">>j."
+
+[[case]]
+name = "yyp_dot"
+buffer = "one two three four five six seven\nsecond line here\nthird foo line"
+cursor = [0, 0]
+keys = "yyp."
+
+[[case]]
+name = "yyp_count_dot"
+buffer = "one two three four five six seven\nsecond line here\nthird foo line"
+cursor = [0, 0]
+keys = "yyp2."
+
+[[case]]
+name = "dot_after_undo"
+buffer = "one two three four five six seven\nsecond line here\nthird foo line"
+cursor = [0, 0]
+keys = "Ax<Esc>u."
+
+[[case]]
+name = "dot_after_motions_and_yank"
+buffer = "one two three four five six seven\nsecond line here\nthird foo line"
+cursor = [0, 0]
+keys = "xwyiwj."
+
+[[case]]
+name = "dd_count_dot"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = "dd2."
+
+[[case]]
+name = "dot_after_failed_r_keeps_count"
+buffer = "ab\nc"
+cursor = [1, 0]
+keys = "kx2rZj."
+
+[[case]]
+name = "o_cr_dot"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "o<CR>x<Esc>j."
+
+[[case]]
+name = "cr_typed_then_deleted_dot"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "A<CR>x<BS><Esc>j."
+
+[[case]]
+name = "o_typed_then_deleted_dot"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "ox<BS><Esc>j."
+
+[[case]]
+name = "cc_typed_then_deleted_dot"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "ccx<BS><Esc>j."
+
+[[case]]
+name = "o_typed_then_deleted_count_dot"
+buffer = "    let x = foo(a);\n    x + b\nend"
+cursor = [0, 8]
+keys = "ox<BS><Esc>j3."

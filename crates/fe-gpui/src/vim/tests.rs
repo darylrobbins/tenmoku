@@ -163,7 +163,7 @@ fn normal_mode_keys_go_to_fe_vim(cx: &mut TestAppContext) {
         cx.simulate_keystrokes(keys);
         assert_eq!(text(&view, cx), start, "{keys}");
     }
-    cx.simulate_input("abc");
+    cx.simulate_input("QK");
     assert_eq!(text(&view, cx), start);
 
     cx.simulate_keystrokes("cmd-a");

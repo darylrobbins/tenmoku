@@ -1,0 +1,143 @@
+# The spot check of docs/decisions/vim-engine.md §6: its table's rows 1-21,
+# 24 and 25 (22 and 23 are search, a later card), on §6's buffer with the
+# cursor at (0, 4), under the oracle's options. What nvim does with each is
+# recorded in spot_check.expected.json by the ignored
+# `record_corpus_with_neovim` test; edit a case, then re-record.
+
+[[case]]
+name = "row_01"
+buffer = "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end"
+cursor = [0, 4]
+keys = "w"
+
+[[case]]
+name = "row_02"
+buffer = "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end"
+cursor = [0, 4]
+keys = "wb"
+
+[[case]]
+name = "row_03"
+buffer = "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end"
+cursor = [0, 4]
+keys = "e"
+
+[[case]]
+name = "row_04"
+buffer = "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end"
+cursor = [0, 4]
+keys = "j^"
+
+[[case]]
+name = "row_05"
+buffer = "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end"
+cursor = [0, 4]
+keys = "$"
+
+[[case]]
+name = "row_06"
+buffer = "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end"
+cursor = [0, 4]
+keys = "Ggg"
+
+[[case]]
+name = "row_07"
+buffer = "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end"
+cursor = [0, 4]
+keys = "fb"
+
+[[case]]
+name = "row_08"
+buffer = "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end"
+cursor = [0, 4]
+keys = "f(%"
+
+[[case]]
+name = "row_09"
+buffer = "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end"
+cursor = [0, 4]
+keys = "x"
+
+[[case]]
+name = "row_10"
+buffer = "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end"
+cursor = [0, 4]
+keys = "dd"
+
+[[case]]
+name = "row_11"
+buffer = "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end"
+cursor = [0, 4]
+keys = "yyjp"
+
+[[case]]
+name = "row_12"
+buffer = "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end"
+cursor = [0, 4]
+keys = "J"
+
+[[case]]
+name = "row_13"
+buffer = "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end"
+cursor = [0, 4]
+keys = "rZ"
+
+[[case]]
+name = "row_14"
+buffer = "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end"
+cursor = [0, 4]
+keys = "~"
+
+[[case]]
+name = "row_15"
+buffer = "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end"
+cursor = [0, 4]
+keys = ">>"
+
+[[case]]
+name = "row_16"
+buffer = "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end"
+cursor = [0, 4]
+keys = "cwbar<Esc>"
+
+[[case]]
+name = "row_17"
+buffer = "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end"
+cursor = [0, 4]
+keys = "ci(z<Esc>"
+
+[[case]]
+name = "row_18"
+buffer = "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end"
+cursor = [0, 4]
+keys = "oq<Esc>"
+
+[[case]]
+name = "row_19"
+buffer = "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end"
+cursor = [0, 4]
+keys = "A;<Esc>"
+
+[[case]]
+name = "row_20"
+buffer = "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end"
+cursor = [0, 4]
+keys = "ddu<C-r>"
+
+[[case]]
+name = "row_21"
+buffer = "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end"
+cursor = [0, 4]
+keys = "x."
+
+[[case]]
+name = "row_24"
+buffer = "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end"
+cursor = [0, 4]
+keys = "D"
+
+[[case]]
+name = "row_25"
+buffer = "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end"
+cursor = [0, 4]
+keys = "2dw"

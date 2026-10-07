@@ -74,3 +74,46 @@ fn operate_and_put_are_registered() {
     vim.feed("dd").unwrap();
     assert_eq!(vim.text(), "two");
 }
+
+#[test]
+fn card_3_commands_are_registered() {
+    let registry = registry();
+    for id in [
+        "vim.insert",
+        "vim.join",
+        "vim.replace_char",
+        "vim.toggle_case",
+        "vim.undo",
+        "vim.redo",
+        "vim.repeat",
+    ] {
+        let meta = registry.get(&id.parse().unwrap()).expect(id);
+        assert_eq!(
+            meta.context,
+            Some(ContextPredicate::parse("editor && vim.mode == normal").unwrap()),
+            "{id}"
+        );
+        assert!(meta.mutates_buffer, "{id}");
+        assert!(meta.args_schema.is_some(), "{id}");
+    }
+    let meta = registry.get(&"vim.normal_mode".parse().unwrap()).unwrap();
+    assert_eq!(
+        meta.context,
+        Some(ContextPredicate::parse("editor && vim.mode == insert").unwrap())
+    );
+    // The keys commit them.
+    for (keys, command) in [
+        ("3o", "vim.insert"),
+        ("2J", "vim.join"),
+        ("2rx", "vim.replace_char"),
+        ("~", "vim.toggle_case"),
+        ("2u", "vim.undo"),
+        ("<C-r>", "vim.redo"),
+        ("3.", "vim.repeat"),
+        ("C", "vim.operate"),
+        ("s", "vim.operate"),
+        ("S", "vim.operate"),
+    ] {
+        assert_eq!(commit(keys).command.as_str(), command, "{keys}");
+    }
+}

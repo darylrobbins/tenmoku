@@ -46,6 +46,62 @@ fn registers_match_neovim() {
     matches_neovim("registers", 10);
 }
 
+#[test]
+fn insert_matches_neovim() {
+    matches_neovim("insert", 20);
+}
+
+#[test]
+fn edits_match_neovim() {
+    matches_neovim("edits", 10);
+}
+
+#[test]
+fn repeat_matches_neovim() {
+    matches_neovim("repeat", 10);
+}
+
+/// docs/decisions/vim-engine.md §6's spot check: rows 1-21, 24 and 25 of its
+/// table, on its buffer from (0, 4).
+#[test]
+fn spot_check_matches_neovim() {
+    let rows: Vec<String> = (1..=21)
+        .chain([24, 25])
+        .map(|row| format!("row_{row:02}"))
+        .collect();
+    let recorded = load("spot_check").unwrap();
+    let names: Vec<&str> = recorded.iter().map(|case| case.name.as_str()).collect();
+    assert_eq!(names, rows);
+    for case in &recorded {
+        assert_eq!(
+            (case.buffer.as_str(), case.cursor),
+            (
+                "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+                (0, 4)
+            ),
+            "{}",
+            case.name
+        );
+    }
+    matches_neovim("spot_check", rows.len());
+}
+
+/// The first fe-vim work's exit criterion: at least 150 cases, every one
+/// recorded from nvim (`load` checks the version and that each case is in
+/// its expected file).
+#[test]
+fn corpus_has_at_least_150_cases() {
+    let mut areas: Vec<String> = std::fs::read_dir(support::corpus_dir())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
+        .map(|path| path.file_stem().unwrap().to_string_lossy().into_owned())
+        .collect();
+    areas.sort();
+    let cases: usize = areas.iter().map(|area| load(area).unwrap().len()).sum();
+    assert!(cases >= 150, "{cases} cases in {areas:?}");
+}
+
 fn corpus(cases: &[(&str, &str, &str)]) -> String {
     cases
         .iter()
@@ -178,6 +234,25 @@ fn record_char_table_with_neovim() {
         .args(["--clean", "--headless", "-l"])
         .arg(dir.join("tests/support/chars.lua"))
         .arg(dir.join("src/chars.txt"))
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .expect("run nvim");
+    assert!(status.success(), "nvim exited with {status}");
+}
+
+/// Rewrites `src/case.txt`, what nvim's `~` makes of every code point it
+/// changes, which `vim.toggle_case` reads:
+/// `cargo nextest run -p fe-vim --run-ignored only -E 'test(=record_case_table_with_neovim)'`.
+#[test]
+#[ignore = "needs nvim 0.12.4; rewrites src/case.txt"]
+fn record_case_table_with_neovim() {
+    check_nvim_version();
+    let dir = support::crate_dir();
+    let status = Command::new("nvim")
+        .args(["--clean", "--headless", "-l"])
+        .arg(dir.join("tests/support/case.lua"))
+        .arg(dir.join("src/case.txt"))
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()

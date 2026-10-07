@@ -153,7 +153,7 @@ fn transactions_origins_and_failed_targets() {
     assert_eq!(vim.text(), "a");
     assert_eq!(registers(&vim)[0], ('"', "c\n".into(), true));
 
-    // `change` waits for insert mode.
+    // `change` deletes, then enters insert mode (card 3).
     let mut vim = HeadlessVim::new(text, (0, 0));
     let change = invocation(
         "vim.operate",
@@ -164,12 +164,8 @@ fn transactions_origins_and_failed_targets() {
             register: None,
         },
     );
-    let before = snapshot(&vim);
-    assert!(matches!(
-        vim.dispatch(&change),
-        Err(DispatchError::Failed { .. })
-    ));
-    assert_eq!(snapshot(&vim), before);
+    vim.dispatch(&change).unwrap();
+    assert_eq!(vim.mode(), "insert");
 }
 
 #[test]

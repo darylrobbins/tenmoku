@@ -5,7 +5,10 @@ use serde::Serialize;
 
 use crate::{
     VimKey,
-    args::{Motion, MoveArgs, OperateArgs, Operator, PutArgs, Target, TextObject},
+    args::{
+        CountArgs, InsertArgs, InsertAt, Motion, MoveArgs, OperateArgs, Operator, PutArgs,
+        ReplaceCharArgs, Target, TextObject,
+    },
 };
 
 /// The whole incomplete command: counts, `"{reg}`, an operator and a prefix
@@ -32,6 +35,8 @@ enum Prefix {
     Object {
         inner: bool,
     },
+    /// `r`, awaiting the replacement.
+    Replace,
 }
 
 /// What a [`Pending`] is waiting on, for `vim.pending_kind` and which-key.
@@ -43,11 +48,12 @@ pub enum PendingKind {
     G,
     Find,
     TextObject,
+    Replace,
 }
 
 impl PendingKind {
     /// Its `vim.pending_kind` value: `count`, `register`, `operator`, `g`,
-    /// `find` or `text_object`.
+    /// `find`, `text_object` or `replace`.
     pub fn name(self) -> &'static str {
         match self {
             Self::Count => "count",
@@ -56,6 +62,7 @@ impl PendingKind {
             Self::G => "g",
             Self::Find => "find",
             Self::TextObject => "text_object",
+            Self::Replace => "replace",
         }
     }
 }
@@ -88,6 +95,7 @@ impl Pending {
             Some(Prefix::G) => PendingKind::G,
             Some(Prefix::Find(_)) => PendingKind::Find,
             Some(Prefix::Object { .. }) => PendingKind::TextObject,
+            Some(Prefix::Replace) => PendingKind::Replace,
             None if self.typing.is_some() => PendingKind::Count,
             None if self.operator.is_some() => PendingKind::Operator,
             None if self.register.is_some() => PendingKind::Register,
@@ -145,10 +153,10 @@ impl Pending {
     }
 
     /// The key after a prefix.
-    fn complete(self, prefix: Prefix, key: VimKey) -> Step {
+    fn complete(mut self, prefix: Prefix, key: VimKey) -> Step {
         let ch = match key {
             VimKey::Char(ch) => ch,
-            VimKey::Tab if matches!(prefix, Prefix::Find(_)) => '\t',
+            VimKey::Tab if matches!(prefix, Prefix::Find(_) | Prefix::Replace) => '\t',
             _ => return Step::Cancel,
         };
         match prefix {
@@ -167,6 +175,16 @@ impl Pending {
                 Some(object) => self.commit(Target::TextObject(object)),
                 None => Step::Cancel,
             },
+            Prefix::Replace => {
+                self.end_count();
+                invocation(
+                    "vim.replace_char",
+                    ReplaceCharArgs {
+                        char: ch,
+                        count: self.count,
+                    },
+                )
+            }
             _ => Step::Cancel,
         }
     }
@@ -181,6 +199,16 @@ pub fn step(mut pending: Pending, key: VimKey) -> Step {
     let ch = match key {
         VimKey::Char(ch) => ch,
         VimKey::Esc => return Step::Cancel,
+        // In normal mode vim wins ctrl keys (§10).
+        VimKey::Ctrl('r') if pending.operator.is_none() => {
+            pending.end_count();
+            return invocation(
+                "vim.redo",
+                CountArgs {
+                    count: pending.count,
+                },
+            );
+        }
         _ => return pending.reject(),
     };
     // `0` is a motion unless a count is being typed.
@@ -199,6 +227,7 @@ pub fn step(mut pending: Pending, key: VimKey) -> Step {
         't' => Prefix::Find(Motion::TillForward(' ')),
         'T' => Prefix::Find(Motion::TillBackward(' ')),
         'i' | 'a' if pending.operator.is_some() => Prefix::Object { inner: ch == 'i' },
+        'r' if pending.operator.is_none() => Prefix::Replace,
         _ => {
             if let Some(operator) = operator(ch) {
                 return match pending.operator {
@@ -216,26 +245,48 @@ pub fn step(mut pending: Pending, key: VimKey) -> Step {
             if let Some(motion) = motion(ch) {
                 return pending.commit(Target::Motion(motion));
             }
-            // `x X D` and `p P` stand alone: after an operator they cancel.
+            // The rest stand alone: after an operator they cancel.
             if pending.operator.is_some() {
                 return pending.reject();
             }
-            if let Some(motion) = shorthand(ch) {
-                pending.operator = Some(Operator::Delete);
+            if let Some((operator, motion)) = shorthand(ch) {
+                pending.operator = Some(operator);
                 return pending.commit(Target::Motion(motion));
             }
+            pending.end_count();
+            if let Some(at) = insert_at(ch) {
+                return invocation(
+                    "vim.insert",
+                    InsertArgs {
+                        at,
+                        count: pending.count,
+                    },
+                );
+            }
+            let counted = match ch {
+                'J' => Some("vim.join"),
+                '~' => Some("vim.toggle_case"),
+                'u' => Some("vim.undo"),
+                '.' => Some("vim.repeat"),
+                _ => None,
+            };
+            if let Some(command) = counted {
+                return invocation(
+                    command,
+                    CountArgs {
+                        count: pending.count,
+                    },
+                );
+            }
             return match ch {
-                'p' | 'P' => {
-                    pending.end_count();
-                    invocation(
-                        "vim.put",
-                        PutArgs {
-                            before: ch == 'P',
-                            count: pending.count,
-                            register: pending.register,
-                        },
-                    )
-                }
+                'p' | 'P' => invocation(
+                    "vim.put",
+                    PutArgs {
+                        before: ch == 'P',
+                        count: pending.count,
+                        register: pending.register,
+                    },
+                ),
                 _ => pending.reject(),
             };
         }
@@ -289,12 +340,28 @@ fn motion(ch: char) -> Option<Motion> {
     })
 }
 
-/// `x X D`: `dl dh d$`.
-fn shorthand(ch: char) -> Option<Motion> {
+/// `x X D` and `C s S`: `dl dh d$` and `c$ cl cc`.
+fn shorthand(ch: char) -> Option<(Operator, Motion)> {
     Some(match ch {
-        'x' => Motion::Right,
-        'X' => Motion::Left,
-        'D' => Motion::LineEnd,
+        'x' => (Operator::Delete, Motion::Right),
+        'X' => (Operator::Delete, Motion::Left),
+        'D' => (Operator::Delete, Motion::LineEnd),
+        'C' => (Operator::Change, Motion::LineEnd),
+        's' => (Operator::Change, Motion::Right),
+        'S' => (Operator::Change, Motion::Line),
+        _ => return None,
+    })
+}
+
+/// `i a I A o O`.
+fn insert_at(ch: char) -> Option<InsertAt> {
+    Some(match ch {
+        'i' => InsertAt::Before,
+        'a' => InsertAt::After,
+        'I' => InsertAt::FirstNonBlank,
+        'A' => InsertAt::LineEnd,
+        'o' => InsertAt::LineBelow,
+        'O' => InsertAt::LineAbove,
         _ => return None,
     })
 }
