@@ -418,7 +418,10 @@ fn toggle_while_settings_is_created(cx: &mut TestAppContext) {
 
         let text = fs::read_to_string(&path).unwrap();
         assert_eq!(text, written, "fails: {fails}");
-        assert_eq!(comments(&text), comments(template), "fails: {fails}");
+        // The status bar's commented-out default became the setting.
+        let mut expected = comments(template);
+        expected.retain(|line| line != "# visible = true");
+        assert_eq!(comments(&text), expected, "fails: {fails}");
         let line = format!("\nvisible = {shown}\n");
         assert!(text.contains(&line), "fails: {fails}: {text:?}");
         assert_eq!(saved(&path).status_bar.visible, shown, "fails: {fails}");

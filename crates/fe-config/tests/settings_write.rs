@@ -96,7 +96,10 @@ fn creates_from_the_template() {
             .map(str::to_owned)
             .collect()
     };
-    assert_eq!(comments(&written), comments(USER_SETTINGS_TEMPLATE));
+    // Only the commented-out default of vim.enabled became the setting.
+    let mut expected = comments(USER_SETTINGS_TEMPLATE);
+    expected.retain(|line| *line != "# enabled = false");
+    assert_eq!(comments(&written), expected);
 
     // Through a symlink: the target changes, and the link stays a link.
     let link = dir.path().join("settings.toml");
@@ -171,12 +174,11 @@ fn keeps_line_endings() {
     );
 }
 
-/// toml_edit would write some files back with more changed than a key it
-/// adds: it gathers a dotted table's keys, and respaces a dotted header
-/// whose table is defined again later. An existing key is still changed in
-/// place; adding one is refused, leaving the file untouched.
+/// A key is added to files toml_edit wouldn't write back as they are: one
+/// that gathers a dotted table's keys, or respaces a dotted header.
+/// Adding one changes nothing else in them (more in settings_write_insert).
 #[test]
-fn refuses_to_reformat() {
+fn adds_to_files_toml_edit_would_reformat() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("settings.toml");
     let original = "vim.x = 1\neditor.tab_size = 2\nvim.enabled = false # mine\n";
@@ -185,15 +187,23 @@ fn refuses_to_reformat() {
     let changed = original.replace("false", "true");
     assert_eq!(fs::read_to_string(&file).unwrap(), changed);
 
-    for original in [
-        "[vim]\nx.a = 1\nother = 2\nx.b = 3\n",
-        "vim.x = 1\neditor.tab_size = 2\nvim.y = 2\n",
-        "[vim . sub]\nx = 1\n[vim]\nother = 2\n",
+    for (original, after) in [
+        (
+            "[vim]\nx.a = 1\nother = 2\nx.b = 3\n",
+            "[vim]\nx.a = 1\nother = 2\nx.b = 3\nenabled = true\n",
+        ),
+        (
+            "vim.x = 1\neditor.tab_size = 2\nvim.y = 2\n",
+            "vim.x = 1\neditor.tab_size = 2\nvim.y = 2\nvim.enabled = true\n",
+        ),
+        (
+            "[vim . sub]\nx = 1\n[vim]\nother = 2\n",
+            "[vim . sub]\nx = 1\n[vim]\nother = 2\nenabled = true\n",
+        ),
     ] {
         fs::write(&file, original).unwrap();
-        let result = write_setting(&file, &["vim", "enabled"], true);
-        assert!(result.is_err(), "{original:?} is refused");
-        assert_eq!(fs::read_to_string(&file).unwrap(), original);
+        write_setting(&file, &["vim", "enabled"], true).unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), after);
         assert_eq!(names(dir.path()), ["settings.toml"]);
     }
 }
@@ -210,10 +220,9 @@ fn only_an_empty_file_gets_the_template() {
         write_setting(&file, &["vim", "enabled"], true).unwrap();
         let written = fs::read_to_string(&file).unwrap();
         assert!(written.starts_with(empty), "{written:?}");
-        assert_eq!(
-            comments(&written[empty.len()..]),
-            comments(USER_SETTINGS_TEMPLATE)
-        );
+        let mut expected = comments(USER_SETTINGS_TEMPLATE);
+        expected.retain(|line| *line != "# enabled = false");
+        assert_eq!(comments(&written[empty.len()..]), expected);
         assert!(load(&file).settings().vim.enabled);
     }
 

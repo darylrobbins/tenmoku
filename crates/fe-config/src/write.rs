@@ -9,7 +9,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use toml_edit::{Document, DocumentMut, InlineTable, Item, Table, TableLike, Value};
+use toml_edit::{Document, Item, Table, TableLike, Value};
 
 use crate::USER_SETTINGS_TEMPLATE;
 
@@ -17,17 +17,20 @@ use crate::USER_SETTINGS_TEMPLATE;
 /// (`["vim", "enabled"]`), in the settings file at `path`.
 ///
 /// An existing key keeps its place and its comments: only its value's text
-/// is replaced. A missing key is added at the end of its table, and a
-/// missing table at the end of the file. Every byte outside the change is
+/// is replaced. A missing key is added at the end of its table (or
+/// replaces its commented-out default), and a missing table at the end of
+/// the file. Every byte outside the change is
 /// kept, line endings, a byte order mark and a missing final newline
 /// included, and what's added uses the file's line endings. A missing file,
 /// and its directory, is created from [`USER_SETTINGS_TEMPLATE`] first, as
 /// is an empty one (a byte order mark aside), which has nothing to keep.
-/// A file that doesn't parse as TOML, or where a name on the path isn't a
-/// table (`vim = 3`), is an error and is left untouched. So is one the key
-/// has to be added to, if toml_edit would write it back with more changed
-/// than that: it gathers a dotted table's keys (`a.b = 1`, `c = 2`,
-/// `a.d = 3`). Nothing else in the file is checked.
+/// Where a missing key goes is taken from the file as parsed, so nothing
+/// else in it has to be of any form: a table made of dotted keys gets the
+/// key beside them, an inline table inside its braces, and a table whose
+/// only mention of the key is its commented-out default gets the key in
+/// that comment's place. A file that doesn't parse as TOML, or where a name
+/// on the path isn't a table (`vim = 3`), is an error and is left
+/// untouched.
 ///
 /// The new text goes to a temporary file in the same directory, renamed
 /// over the old, or linked in place of a missing one, so a crash never
@@ -87,12 +90,9 @@ fn edit(source: &str, key: &[&str], value: bool) -> Result<String, String> {
         let (before, after) = (&source[..span.start], &source[span.end..]);
         return Ok(format!("{mark}{before}{value}{after}"));
     }
-    let mut document = parsed.into_mut();
-    let base = document.to_string();
-    set(&mut document, &base, key, value)?;
-    let edited = splice(source, &base, &document.to_string())
-        .ok_or("can't take the setting without reformatting the rest of it")?;
-    Ok(format!("{mark}{edited}"))
+    let (range, text) = insertion(source, parsed.as_table(), key, value)?;
+    let (before, after) = (&source[..range.start], &source[range.end..]);
+    Ok(format!("{mark}{before}{text}{after}"))
 }
 
 /// Where the value at `key` is in the text `root` was parsed from; `None`
@@ -140,142 +140,251 @@ fn resolve(path: &Path) -> io::Result<PathBuf> {
     )))
 }
 
-/// Sets `key` to `value` in `document`, parsed from `text`, creating the
-/// tables on its path.
-fn set(document: &mut DocumentMut, text: &str, key: &[&str], value: bool) -> Result<(), String> {
+/// What the table holding a setting is, in the text it was parsed from.
+enum Kind<'a> {
+    /// The top of the file, before any header.
+    Root,
+    /// Under a `[header]`.
+    Header(&'a Table),
+    /// Named only on the way to a deeper header (`[a.b]` makes `a`).
+    Implicit,
+    /// Made by dotted keys (`a.b = 1`).
+    Dotted(&'a Table),
+    /// Inside `{ ... }` at that span, which `tables[relative..]` leads on
+    /// from through dotted keys (`{ a.b = 1 }`) if the table is one.
+    Inline {
+        table: &'a dyn TableLike,
+        braces: Range<usize>,
+        relative: usize,
+        dotted: bool,
+    },
+}
+
+/// The text to put, and the range of `source` it replaces, to add `key` set
+/// to `value`, which `root` (parsed from `source`) lacks.
+fn insertion(
+    source: &str,
+    root: &Table,
+    key: &[&str],
+    value: bool,
+) -> Result<(Range<usize>, String), String> {
     let (name, tables) = key.split_last().expect("a setting has a name");
-    // A new table goes after every other, taking the comments that end the
-    // file before it, so the text before it is unchanged.
-    let position = last_position(document.as_table()).map_or(0, |last| last + 1);
-    let mut prefix = document.trailing().as_str().unwrap_or("").to_owned();
-    if !text.is_empty() && !text.ends_with('\n') {
-        prefix.push('\n');
-    }
-    if !text.is_empty() && !text.ends_with("\n\n") && !text.ends_with("\n\r\n") {
-        prefix.push('\n');
-    }
-    let mut created = false;
-    let mut table: &mut dyn TableLike = document.as_table_mut();
-    let mut inline = false;
-    for (depth, &part) in tables.iter().enumerate() {
-        if table.get(part).is_none() {
-            let new = if inline {
-                Item::Value(Value::InlineTable(InlineTable::new()))
-            } else {
-                let mut new = Table::new();
-                // Only a table with keys gets a header: the innermost.
-                new.set_implicit(true);
-                new.set_position(Some(position));
-                new.decor_mut().set_prefix(prefix.as_str());
-                created = true;
-                Item::Table(new)
-            };
-            table.insert(part, new);
-        }
-        let item = table.get_mut(part).expect("just found or inserted");
-        inline = matches!(item, Item::Value(Value::InlineTable(_)));
-        table = item
-            .as_table_like_mut()
-            .ok_or_else(|| format!("{} isn't a table", tables[..=depth].join(".")))?;
-    }
-    match table.get_mut(name) {
-        Some(Item::Value(old)) => {
-            let decor = old.decor().clone();
-            *old = Value::from(value);
-            *old.decor_mut() = decor;
-        }
-        Some(_) => return Err(format!("{} is a table", key.join("."))),
-        None => {
-            table.insert(name, Item::Value(Value::from(value)));
-        }
-    }
-    // The new table's header took them.
-    if created {
-        document.set_trailing("");
-    }
-    Ok(())
-}
-
-/// The highest position of any table in `table`, itself included.
-fn last_position(table: &Table) -> Option<isize> {
-    let nested = table.iter().filter_map(|(_, item)| match item {
-        Item::Table(inner) => last_position(inner),
-        Item::ArrayOfTables(array) => array.iter().filter_map(last_position).max(),
-        _ => None,
-    });
-    nested.chain(table.position()).max()
-}
-
-/// `source` with the change from `base`, toml_edit's text for it, to
-/// `edited` made to it in place: toml_edit writes `\n` after headers and
-/// keys whatever the file used, and ends the file with one, so its text
-/// can differ from `source` beyond the change. `None` if it differs in
-/// more than that, as when toml_edit gathers a dotted table's keys.
-fn splice(source: &str, base: &str, edited: &str) -> Option<String> {
-    let (offsets, added_newline) = align(source, base)?;
-    let common = |a: &[u8], b: &[u8]| a.iter().zip(b).take_while(|(a, b)| a == b).count();
-    let mut start = common(base.as_bytes(), edited.as_bytes());
-    while !base.is_char_boundary(start) {
-        start -= 1;
-    }
-    let most = base.len().min(edited.len()) - start;
-    let reversed = |text: &str| {
-        text.as_bytes()[start..]
-            .iter()
-            .rev()
-            .copied()
-            .collect::<Vec<_>>()
+    let eol = if source.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
     };
-    let mut end = common(&reversed(base), &reversed(edited)).min(most);
-    while !base.is_char_boundary(base.len() - end) {
-        end -= 1;
+    let mut kind = Kind::Root;
+    let mut table: &dyn TableLike = root;
+    // Where the tables below the last header start in `tables`.
+    let mut relative = 0;
+    // How many of `tables` exist.
+    let mut present = 0;
+    for (depth, part) in tables.iter().enumerate() {
+        let Some(item) = table.get(part) else {
+            break;
+        };
+        present = depth + 1;
+        table = item
+            .as_table_like()
+            .ok_or_else(|| format!("{} isn't a table", tables[..=depth].join(".")))?;
+        kind = match item {
+            Item::Table(inner) if inner.is_dotted() => {
+                if !matches!(kind, Kind::Dotted(_)) {
+                    relative = depth;
+                }
+                Kind::Dotted(inner)
+            }
+            Item::Table(inner) if inner.is_implicit() => Kind::Implicit,
+            Item::Table(inner) => {
+                relative = depth + 1;
+                Kind::Header(inner)
+            }
+            Item::Value(Value::InlineTable(inner)) if inner.is_dotted() => {
+                // Only inside braces.
+                let Kind::Inline {
+                    braces, relative, ..
+                } = kind
+                else {
+                    return Err("dotted keys outside of any table".into());
+                };
+                Kind::Inline {
+                    table,
+                    braces,
+                    relative,
+                    dotted: true,
+                }
+            }
+            _ => Kind::Inline {
+                table,
+                braces: item.span().ok_or("a table without a place")?,
+                relative: depth + 1,
+                dotted: false,
+            },
+        };
     }
-    let mut inserted = edited[start..edited.len() - end].to_owned();
-    // After the final newline toml_edit added, which the source lacks.
-    if added_newline && start == base.len() && !inserted.is_empty() {
-        inserted.insert(0, '\n');
-    }
-    if source.contains("\r\n") {
-        inserted = crlf(&inserted);
-    }
-    let (from, to) = (offsets[start], offsets[base.len() - end]);
-    Some(format!("{}{inserted}{}", &source[..from], &source[to..]))
-}
-
-/// Where each byte offset of `base` is in `source`, and where its end is,
-/// if `base` is `source` with some `\r\n` written `\n` and perhaps a final
-/// `\n` added; and whether it was.
-fn align(source: &str, base: &str) -> Option<(Vec<usize>, bool)> {
-    let source = source.as_bytes();
-    let mut offsets = Vec::with_capacity(base.len() + 1);
-    let mut at = 0;
-    for &byte in base.as_bytes() {
-        offsets.push(at);
-        if source[at..].starts_with(b"\r\n") && byte == b'\n' {
-            at += 2;
-        } else if source.get(at) == Some(&byte) {
-            at += 1;
-        } else if !(byte == b'\n' && at == source.len()) {
-            return None;
+    let missing = present < tables.len();
+    let line = |at: usize, text: &str| after_line(source, at, text, eol);
+    let setting = format!("{} = {value}", quoted(name));
+    match kind {
+        Kind::Inline {
+            table: inner,
+            braces,
+            relative,
+            dotted,
+        } => {
+            let nested = if dotted {
+                // Beside the keys it's made of, written the way they are.
+                let path = tables[relative..].iter().chain([name]);
+                let path = path.map(|part| quoted(part)).collect::<Vec<_>>().join(".");
+                format!("{path} = {value}")
+            } else {
+                tables[present..]
+                    .iter()
+                    .rev()
+                    .fold(setting, |inside, table| {
+                        format!("{} = {{ {inside} }}", quoted(table))
+                    })
+            };
+            Ok(match last_end(inner) {
+                Some(end) => (end..end, format!(", {nested}")),
+                None => (braces.start + 1..braces.start + 1, format!(" {nested} ")),
+            })
+        }
+        Kind::Dotted(inner) => {
+            let end = last_end(inner).ok_or("a dotted table without keys")?;
+            let path = tables[relative..].iter().chain([name]);
+            let path = path.map(|part| quoted(part)).collect::<Vec<_>>().join(".");
+            Ok(line(end, &format!("{path} = {value}")))
+        }
+        Kind::Root if !missing => Ok(match last_end(root) {
+            Some(end) => line(end, &setting),
+            None => (0..0, format!("{setting}{eol}")),
+        }),
+        Kind::Header(inner) if !missing => {
+            let header = inner.span().ok_or("a header without a place")?;
+            let end = last_end(inner);
+            if end.is_none()
+                && let Some(found) = commented(source, root, inner, name, value)
+            {
+                return Ok(found);
+            }
+            Ok(line(end.unwrap_or(header.end), &setting))
+        }
+        _ => {
+            // A table of its own, after everything.
+            let mut prefix = String::new();
+            if !source.ends_with('\n') {
+                prefix.push_str(eol);
+            }
+            if !source.ends_with("\n\n") && !source.ends_with("\n\r\n") {
+                prefix.push_str(eol);
+            }
+            let header = tables
+                .iter()
+                .map(|part| quoted(part))
+                .collect::<Vec<_>>()
+                .join(".");
+            let text = format!("{prefix}[{header}]{eol}{setting}{eol}");
+            Ok((source.len()..source.len(), text))
         }
     }
-    offsets.push(at);
-    let added_newline = !base.is_empty() && offsets[base.len() - 1] == source.len();
-    (at == source.len()).then_some((offsets, added_newline))
 }
 
-/// `text` with each `\n` not already after a `\r` written `\r\n`.
-fn crlf(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut previous = None;
-    for ch in text.chars() {
-        if ch == '\n' && previous != Some('\r') {
-            out.push('\r');
+/// `part` as a key: bare if it can be, else quoted and escaped.
+fn quoted(part: &str) -> String {
+    toml_edit::Key::new(part).to_string()
+}
+
+/// `text` as a line after the one `at` is on, as a range and what to put.
+fn after_line(source: &str, at: usize, text: &str, eol: &str) -> (Range<usize>, String) {
+    match source[at..].find('\n') {
+        Some(newline) => {
+            let next = at + newline + 1;
+            (next..next, format!("{text}{eol}"))
         }
-        out.push(ch);
-        previous = Some(ch);
+        None => (source.len()..source.len(), format!("{eol}{text}")),
     }
-    out
+}
+
+/// Where the last value in `table` ends, those of the dotted tables in it
+/// included.
+fn last_end(table: &dyn TableLike) -> Option<usize> {
+    table
+        .iter()
+        .filter_map(|(_, item)| match item {
+            Item::Value(Value::InlineTable(inner)) if inner.is_dotted() => last_end(inner),
+            Item::Value(value) => value.span().map(|span| span.end),
+            Item::Table(inner) if inner.is_dotted() => last_end(inner),
+            _ => None,
+        })
+        .max()
+}
+
+/// The place for `name` set to `value` in `table`, a `[header]` with no keys
+/// of its own, if a comment in it is the setting's default (`# name =
+/// false`): that comment's text, made the setting.
+fn commented(
+    source: &str,
+    root: &Table,
+    table: &Table,
+    name: &str,
+    value: bool,
+) -> Option<(Range<usize>, String)> {
+    let header = table.span()?;
+    let name = quoted(name);
+    let name = name.as_str();
+    let start = header.end + source[header.end..].find('\n')? + 1;
+    let mut starts = Vec::new();
+    headers(root, &mut starts);
+    let end = starts
+        .into_iter()
+        .filter(|&at| at > header.start)
+        .min()
+        .unwrap_or(source.len());
+    let mut at = start;
+    for line in source.get(start..end)?.split_inclusive('\n') {
+        let line_start = at;
+        at += line.len();
+        let Some(comment) = line.trim_start().strip_prefix('#') else {
+            continue;
+        };
+        let Some(rest) = comment
+            .trim_start()
+            .strip_prefix(name)
+            .and_then(|rest| rest.trim_start().strip_prefix('='))
+        else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        let Some(word) = ["true", "false"].into_iter().find(|w| rest.starts_with(w)) else {
+            continue;
+        };
+        let after = rest[word.len()..].trim();
+        if !after.is_empty() && !after.starts_with('#') {
+            continue;
+        }
+        let hash = line_start + line.len() - line.trim_start().len();
+        let word_end = line_start + line.len() - rest.len() + word.len();
+        return Some((hash..word_end, format!("{name} = {value}")));
+    }
+    None
+}
+
+/// Where each `[header]` in `table` starts.
+fn headers(table: &Table, starts: &mut Vec<usize>) {
+    if table.position().is_some()
+        && let Some(span) = table.span()
+    {
+        starts.push(span.start);
+    }
+    for (_, item) in table {
+        match item {
+            Item::Table(inner) => headers(inner, starts),
+            Item::ArrayOfTables(array) => array.iter().for_each(|inner| headers(inner, starts)),
+            _ => {}
+        }
+    }
 }
 
 /// Writes `contents` to `path` through a temporary file beside it, if
@@ -403,7 +512,7 @@ mod tests {
 
         fs::write(&file, OFF).unwrap();
         write_after(&file, |path| fs::remove_file(path).unwrap());
-        let template = USER_SETTINGS_TEMPLATE.replace("[vim]\n", ON);
+        let template = USER_SETTINGS_TEMPLATE.replace("# enabled = false", "enabled = true");
         assert_eq!(fs::read_to_string(&file).unwrap(), template);
 
         fs::write(&file, OFF).unwrap();
