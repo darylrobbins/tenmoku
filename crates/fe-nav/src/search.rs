@@ -62,6 +62,10 @@ const IMPORT_SCAN_BYTES: usize = 1 << 20;
 /// The longest an unclosed import statement is followed for.
 const MAX_IMPORT_LINES: usize = 200;
 
+/// How many lines or definitions a request works through between looks at
+/// its cancel flag.
+const CANCEL_EVERY: usize = 1024;
+
 /// Reads one file's definitions, giving up once its third argument says
 /// so: [`extract_with`], except in tests.
 type Extract =
@@ -69,6 +73,17 @@ type Extract =
 
 /// Runs a definitions query: [`OutlineJob::run`], except in tests.
 type RunSymbols = dyn Fn(OutlineJob) -> Outline + Send + Sync;
+
+/// A step of a request that a test can act at, as by cancelling it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Phase {
+    /// Go-to-definition is about to read the request text's imports.
+    Imports,
+    /// Go-to-definition is about to rank what it found.
+    Rank,
+    /// Workspace symbols is about to match the query.
+    Fuzzy,
+}
 
 /// Navigation by name: the definitions named like the word at the caret,
 /// ranked by how close they are to the request, from a [`SymbolIndex`]
@@ -93,6 +108,8 @@ pub struct SearchNavigation {
     symbols_slots: Arc<Slots>,
     searches: AtomicUsize,
     files_extracted: Arc<AtomicUsize>,
+    #[cfg(test)]
+    on_phase: Arc<dyn Fn(Phase) + Send + Sync>,
 }
 
 /// What a [`SearchNavigation`]'s fallback has done, since it was made.
@@ -126,6 +143,8 @@ impl SearchNavigation {
             symbols_slots: Slots::new(SYMBOLS_THREADS),
             searches: AtomicUsize::new(0),
             files_extracted: Arc::new(AtomicUsize::new(0)),
+            #[cfg(test)]
+            on_phase: Arc::new(|_| {}),
         }
     }
 
@@ -152,6 +171,12 @@ impl SearchNavigation {
             searches: self.searches.load(Ordering::Relaxed),
             files_extracted: self.files_extracted.load(Ordering::Relaxed),
         }
+    }
+
+    /// Tells a test that a request is at `phase`.
+    fn reached(&self, _phase: Phase) {
+        #[cfg(test)]
+        (self.on_phase)(_phase);
     }
 
     fn index(&self) -> std::sync::RwLockReadGuard<'_, SymbolIndex> {
@@ -266,6 +291,12 @@ impl SearchNavigation {
         + 'static,
     ) -> Self {
         self.extract = Arc::new(extract);
+        self
+    }
+
+    #[cfg(test)]
+    fn with_on_phase(mut self, on_phase: impl Fn(Phase) + Send + Sync + 'static) -> Self {
+        self.on_phase = Arc::new(on_phase);
         self
     }
 
@@ -543,7 +574,8 @@ impl NavigationProvider for SearchNavigation {
 
         {
             let index = self.index();
-            for symbol in index.definitions(&word) {
+            for (step, symbol) in index.definitions(&word).into_iter().enumerate() {
+                check_every(step, cancel)?;
                 if symbol.rel == req.rel {
                     continue;
                 }
@@ -576,11 +608,13 @@ impl NavigationProvider for SearchNavigation {
                 Some(Cow::Owned(req.text.slice_to_string(0..end)))
             }
         };
+        self.reached(Phase::Imports);
         let imports = match (req.language, &import_source) {
-            (Some(language), Some(source)) => import_lines(language, source),
+            (Some(language), Some(source)) => import_lines(language, source, cancel)?,
             _ => Vec::new(),
         };
-        for definition in &mut found {
+        for (step, definition) in found.iter_mut().enumerate() {
+            check_every(step, cancel)?;
             if definition.tier == Tier::Project
                 && module_name(&definition.location.rel)
                     .is_some_and(|module| imports.iter().any(|line| has_word(line, module)))
@@ -588,6 +622,8 @@ impl NavigationProvider for SearchNavigation {
                 definition.tier = Tier::Imported;
             }
         }
+        self.reached(Phase::Rank);
+        check()?;
         rank(&mut found, &req.rel, hint);
         found.truncate(MAX_ITEMS);
         let unambiguous = match &found[..] {
@@ -595,6 +631,7 @@ impl NavigationProvider for SearchNavigation {
             [first, second, ..] => first.tier < second.tier,
             [] => false,
         };
+        check()?;
         Ok(Definitions {
             word: Some(word),
             items: found,
@@ -621,10 +658,11 @@ impl NavigationProvider for SearchNavigation {
         if cancel.load(Ordering::Relaxed) {
             return Err(NavError::Cancelled);
         }
+        self.reached(Phase::Fuzzy);
         let index = self.index();
-        Ok(index
-            .fuzzy(query, limit)
-            .into_iter()
+        // The match itself can't be cancelled: `SymbolIndex::fuzzy` takes
+        // no flag. Its answer is dropped if a cancel came meanwhile.
+        let symbols: Vec<WorkspaceSymbol> = (index.fuzzy(query, limit).into_iter())
             .map(|found| WorkspaceSymbol {
                 location: Location {
                     rel: found.symbol.rel.to_path_buf(),
@@ -636,7 +674,11 @@ impl NavigationProvider for SearchNavigation {
                 container: found.symbol.container.map(str::to_owned),
                 indices: found.indices,
             })
-            .collect())
+            .collect();
+        if cancel.load(Ordering::Relaxed) {
+            return Err(NavError::Cancelled);
+        }
+        Ok(symbols)
     }
 }
 
@@ -778,14 +820,24 @@ fn has_word(line: &str, word: &str) -> bool {
 /// them. A statement not complete on its first line (`use a::{`,
 /// `import (`) runs on to the line that completes it. For JavaScript and
 /// TypeScript, the module paths of its imports and re-exports instead.
-fn import_lines<'a>(language: &str, source: &'a str) -> Vec<&'a str> {
+/// `Err(Cancelled)` once `cancel` is set, which it looks at every
+/// [`CANCEL_EVERY`] lines.
+fn import_lines<'a>(
+    language: &str,
+    source: &'a str,
+    cancel: &AtomicBool,
+) -> Result<Vec<&'a str>, NavError> {
     let lines: Vec<&str> = source.lines().collect();
     if matches!(language, "javascript" | "typescript" | "tsx") {
-        return js_imports(&lines);
+        return js_imports(&lines, cancel);
     }
     let mut found = Vec::new();
     let mut ix = 0;
-    while ix < lines.len() {
+    for step in 0.. {
+        if ix >= lines.len() {
+            break;
+        }
+        check_every(step, cancel)?;
         let Some(statement) = import_statement(language, lines[ix].trim_start()) else {
             ix += 1;
             continue;
@@ -797,7 +849,17 @@ fn import_lines<'a>(language: &str, source: &'a str) -> Vec<&'a str> {
         }
         ix += taken.len();
     }
-    found
+    Ok(found)
+}
+
+/// `Err(Cancelled)` if `cancel` is set and this is a `step` to look at it
+/// on: every [`CANCEL_EVERY`]th, the first included.
+fn check_every(step: usize, cancel: &AtomicBool) -> Result<(), NavError> {
+    if step.is_multiple_of(CANCEL_EVERY) && cancel.load(Ordering::Relaxed) {
+        Err(NavError::Cancelled)
+    } else {
+        Ok(())
+    }
 }
 
 /// How an import statement of some form runs.
@@ -878,84 +940,167 @@ fn import_statement(language: &str, line: &str) -> Option<Statement> {
 }
 
 /// The module paths of the JavaScript or TypeScript imports and re-exports
-/// starting on these lines: `import … from 'm'`, `import 'm'`,
-/// `export { … } from 'm'`, `export * as n from 'm'`, followed across lines
-/// and comments (at most [`MAX_IMPORT_LINES`] each), and the `'m'` of a
-/// line's `require('m')`.
-fn js_imports<'a>(lines: &[&'a str]) -> Vec<&'a str> {
+/// in these lines: `import … from 'm'`, `import 'm'`,
+/// `export { … } from 'm'`, `export * as n from 'm'`, each starting a line
+/// or following a `;`, a `}` or another such statement, followed across
+/// lines and comments (at most [`MAX_IMPORT_LINES`] each); and the `'m'` of
+/// each `require('m')` outside them, comments included, as a plain search
+/// for `require(` finds it.
+fn js_imports<'a>(lines: &[&'a str], cancel: &AtomicBool) -> Result<Vec<&'a str>, NavError> {
     let mut found = Vec::new();
-    let mut ix = 0;
-    while ix < lines.len() {
-        let line = lines[ix].trim_start();
-        let statement = keyword(line, "import").is_some() || keyword(line, "export").is_some();
-        if statement {
-            let rest = &lines[ix..lines.len().min(ix + MAX_IMPORT_LINES)];
-            if let Some((module, at)) = module_of(rest) {
-                found.push(module);
-                ix += at + 1;
-                continue;
+    // Where the scan is: a line, and a byte in it after a statement.
+    let (mut ix, mut start) = (0, 0);
+    // Tokens read, for looking at `cancel` within a long line.
+    let mut read = 0;
+    for step in 0.. {
+        if ix >= lines.len() {
+            break;
+        }
+        check_every(step, cancel)?;
+        let window = &lines[ix..lines.len().min(ix + MAX_IMPORT_LINES)];
+        let line = &window[0][start..];
+        // The next statement on the line: where it starts, its module, and
+        // where the scan goes on after that.
+        let mut statement = None;
+        // A line is searched for the keywords once, not again after each
+        // statement, so a long line of them takes linear time.
+        if start > 0 || line.contains("import") || line.contains("export") {
+            let mut tokens = Tokens::at(window, start);
+            let mut statement_start = true;
+            loop {
+                let before = tokens.clone();
+                let Some((token, 0)) = tokens.next() else {
+                    break;
+                };
+                read += 1;
+                check_every(read, cancel)?;
+                if statement_start && matches!(token, Token::Word("import" | "export")) {
+                    let mut after = before.clone();
+                    if let Some(module) = module_of(&mut after) {
+                        let at = before.position().1 - start;
+                        statement = Some((at, module, after.position()));
+                        break;
+                    }
+                }
+                statement_start = matches!(token, Token::Punct(';' | '}'));
             }
         }
-        let mut require = lines[ix];
+        let mut require = &line[..statement.map_or(line.len(), |(at, ..)| at)];
         while let Some(at) = require.find("require(") {
             require = &require[at + "require(".len()..];
-            if let Some(Token::Str(module)) = Tokens::new(&[require]).next().map(|(token, _)| token)
-            {
+            if let Some((Token::Str(module), _)) = Tokens::at(&[require], 0).next() {
                 found.push(module);
             }
         }
-        ix += 1;
+        (ix, start) = match statement {
+            Some((_, module, (line, after))) => {
+                found.push(module);
+                (ix + line, after)
+            }
+            None => (ix + 1, 0),
+        };
     }
-    found
+    Ok(found)
 }
 
-/// The module path of the import or re-export statement at the start of
-/// `lines`, and the index of the line it's on.
-fn module_of<'a>(lines: &[&'a str]) -> Option<(&'a str, usize)> {
-    let mut tokens = Tokens::new(lines).peekable();
-    let (Token::Word(first), _) = tokens.next()? else {
-        return None;
-    };
-    // The module after `from`, once the bindings or names are done.
-    let from = |tokens: &mut std::iter::Peekable<Tokens<'a, '_>>| {
-        let mut depth = 0usize;
-        loop {
-            match tokens.next()? {
-                (Token::Punct('{'), _) => depth += 1,
-                (Token::Punct('}'), _) => depth = depth.checked_sub(1)?,
-                (Token::Word("from"), _) if depth == 0 => {
-                    return match tokens.next()? {
-                        (Token::Str(module), line) => Some((module, line)),
-                        _ => None,
-                    };
+/// The module path of the import or re-export statement at `tokens`,
+/// which it leaves after the path.
+fn module_of<'a>(tokens: &mut Tokens<'a, '_>) -> Option<&'a str> {
+    match next_token(tokens)? {
+        Token::Word("import") => {
+            let mut ahead = tokens.clone();
+            match next_token(&mut ahead)? {
+                Token::Str(module) => {
+                    *tokens = ahead;
+                    return Some(module);
                 }
-                // Names and strings in braces; bindings, `*`, `as`, `type`
-                // and commas outside them.
-                (Token::Word(_) | Token::Str(_), _) => {}
-                (Token::Punct('*' | ','), _) => {}
-                _ if depth > 0 => {}
+                // `import(…)` and `import.meta` aren't statements.
+                Token::Word(_) | Token::Punct('{' | '*') => import_clause(tokens)?,
                 _ => return None,
             }
         }
-    };
-    match first {
-        // `import(…)` and `import.meta` aren't statements.
-        "import" => match tokens.peek().copied()? {
-            (Token::Str(module), line) => Some((module, line)),
-            (Token::Word(_) | Token::Punct('{' | '*'), _) => from(&mut tokens),
-            _ => None,
-        },
-        "export" => {
-            if let Some((Token::Word("type"), _)) = tokens.peek() {
-                tokens.next();
+        Token::Word("export") => {
+            let mut ahead = tokens.clone();
+            if next_token(&mut ahead)? == Token::Word("type") {
+                *tokens = ahead;
             }
-            match tokens.peek()? {
-                (Token::Punct('{' | '*'), _) => from(&mut tokens),
-                _ => None,
+            names_or_namespace(tokens)?;
+        }
+        _ => return None,
+    }
+    if next_token(tokens)? != Token::Word("from") {
+        return None;
+    }
+    match next_token(tokens)? {
+        Token::Str(module) => Some(module),
+        _ => None,
+    }
+}
+
+/// Takes an import's bindings: modifiers (`type`, `typeof`, `defer`, …),
+/// then a default binding, `,` and named or namespace ones, or either
+/// alone. A binding may be named `from`: a word is the default binding
+/// when a `,`, or `from` and the module, follows it, and a modifier when
+/// another binding does. At most [`MAX_MODIFIERS`] modifiers.
+fn import_clause(tokens: &mut Tokens<'_, '_>) -> Option<()> {
+    for _ in 0..=MAX_MODIFIERS {
+        let mut ahead = tokens.clone();
+        let Token::Word(_) = next_token(&mut ahead)? else {
+            return names_or_namespace(tokens);
+        };
+        let mut after = ahead.clone();
+        match next_token(&mut after)? {
+            Token::Punct(',') => {
+                *tokens = after;
+                return names_or_namespace(tokens);
             }
+            Token::Word("from") if matches!(next_token(&mut after), Some(Token::Str(_))) => {
+                *tokens = ahead;
+                return Some(());
+            }
+            Token::Word(_) | Token::Punct('{' | '*') => *tokens = ahead,
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// The most modifiers an import's bindings follow, as `type` in
+/// `import type from from 'm'`; so a run of words that isn't an import is
+/// given up early.
+const MAX_MODIFIERS: usize = 2;
+
+/// Takes `{ … }`, or `*` and, if there is one, `as` and a name (which may
+/// be `from`).
+fn names_or_namespace(tokens: &mut Tokens<'_, '_>) -> Option<()> {
+    match next_token(tokens)? {
+        Token::Punct('{') => {
+            // Names, `as`, `type`, strings and commas to the `}`; anything
+            // else (an unclosed brace's `;`, say) isn't a list of names.
+            loop {
+                match next_token(tokens)? {
+                    Token::Punct('}') => return Some(()),
+                    Token::Word(_) | Token::Str(_) | Token::Punct(',') => {}
+                    _ => return None,
+                }
+            }
+        }
+        Token::Punct('*') => {
+            let mut ahead = tokens.clone();
+            if next_token(&mut ahead)? == Token::Word("as") {
+                match next_token(&mut ahead)? {
+                    Token::Word(_) | Token::Str(_) => *tokens = ahead,
+                    _ => return None,
+                }
+            }
+            Some(())
         }
         _ => None,
     }
+}
+
+fn next_token<'a>(tokens: &mut Tokens<'a, '_>) -> Option<Token<'a>> {
+    tokens.next().map(|(token, _)| token)
 }
 
 /// A JavaScript token, roughly: enough to follow an import statement.
@@ -969,6 +1114,7 @@ enum Token<'a> {
 
 /// The tokens of some lines, with the index of the line each is on,
 /// skipping comments. A string runs to its closing quote on the same line.
+#[derive(Clone)]
 struct Tokens<'a, 'l> {
     lines: &'l [&'a str],
     line: usize,
@@ -977,13 +1123,20 @@ struct Tokens<'a, 'l> {
 }
 
 impl<'a, 'l> Tokens<'a, 'l> {
-    fn new(lines: &'l [&'a str]) -> Self {
+    /// The tokens from byte `start` of the first of `lines`.
+    fn at(lines: &'l [&'a str], start: usize) -> Self {
         Tokens {
             lines,
             line: 0,
-            rest: lines.first().copied().unwrap_or(""),
+            rest: lines.first().map_or("", |line| &line[start..]),
             in_comment: false,
         }
+    }
+
+    /// Where the next token is looked for from: a line, and a byte in it.
+    fn position(&self) -> (usize, usize) {
+        let line = self.lines.get(self.line).map_or(0, |line| line.len());
+        (self.line, line - self.rest.len())
     }
 }
 
@@ -1062,6 +1215,10 @@ fn is_word_char(ch: char) -> bool {
 }
 
 #[cfg(test)]
+#[path = "search_followup_tests.rs"]
+mod followup_tests;
+
+#[cfg(test)]
 mod tests {
     use std::sync::{Condvar, Mutex};
 
@@ -1094,6 +1251,11 @@ mod tests {
 
     fn other(root: &Path) -> NavRequest {
         request(root, "other();\n")
+    }
+
+    /// `source`'s imports, uncancelled.
+    pub(super) fn imports<'a>(language: &str, source: &'a str) -> Vec<&'a str> {
+        import_lines(language, source, &AtomicBool::new(false)).unwrap()
     }
 
     /// Work that says when it starts, then waits to be let go.
@@ -1320,7 +1482,7 @@ mod tests {
     fn import_lines_follow_open_lists() {
         let rust = "use crate::{\n    util,\n    lexer,\n};\nmod a;\nmod tests {\n    fn b() {}\n}\npub(crate) use x::y;\n";
         assert_eq!(
-            import_lines("rust", rust),
+            imports("rust", rust),
             [
                 "use crate::{",
                 "    util,",
@@ -1332,12 +1494,12 @@ mod tests {
         );
         let go = "import (\n\t\"fmt\"\n\t\"x/util\"\n)\nfunc main() {}\n";
         assert_eq!(
-            import_lines("go", go),
+            imports("go", go),
             ["import (", "\t\"fmt\"", "\t\"x/util\"", ")"]
         );
         let python = "from util import (\n    a,\n    b,\n)\nx = 1\n";
         assert_eq!(
-            import_lines("python", python),
+            imports("python", python),
             ["from util import (", "    a,", "    b,", ")"]
         );
     }
@@ -1370,11 +1532,11 @@ mod tests {
             ("imports.util()", &[]),
         ];
         for (source, modules) in cases {
-            assert_eq!(&import_lines("typescript", source), modules, "{source:?}");
+            assert_eq!(&imports("typescript", source), modules, "{source:?}");
         }
         // Statements after one another.
         let several = "import a from './a'\nimport {\n  b,\n} from './b'\nexport { c }\nexport * from './c'\n";
-        assert_eq!(import_lines("tsx", several), ["./a", "./b", "./c"]);
+        assert_eq!(imports("tsx", several), ["./a", "./b", "./c"]);
     }
 
     #[test]
@@ -1390,10 +1552,10 @@ mod tests {
             ("go", "import\t\"x/util\""),
             ("c", "#\tinclude \"util.h\""),
         ] {
-            assert_eq!(import_lines(language, line), [line], "{language}");
+            assert_eq!(imports(language, line), [line], "{language}");
         }
         assert_eq!(
-            import_lines("javascript", "import\t{ a }\tfrom\t'./util'"),
+            imports("javascript", "import\t{ a }\tfrom\t'./util'"),
             ["./util"]
         );
         for (language, line) in [
@@ -1401,10 +1563,7 @@ mod tests {
             ("rust", "mod util {"),
             ("python", "important = util"),
         ] {
-            assert!(
-                import_lines(language, line).is_empty(),
-                "{language}: {line}"
-            );
+            assert!(imports(language, line).is_empty(), "{language}: {line}");
         }
     }
 
