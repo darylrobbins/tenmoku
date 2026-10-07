@@ -6,6 +6,7 @@ mod encoding;
 mod identity;
 mod launcher;
 mod lifecycle;
+mod registry;
 mod router;
 mod sync;
 
@@ -124,7 +125,7 @@ impl Started {
         let path = PathBuf::from(ROOT).join(name);
         let subscription = buffer.subscribe();
         self.manager
-            .open(
+            .open_on(
                 server,
                 buffer.id(),
                 buffer.text().clone(),

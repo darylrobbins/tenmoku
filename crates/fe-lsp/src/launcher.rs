@@ -2,12 +2,19 @@
 //! a process itself. It asks a [`ServerLauncher`] for a server's byte
 //! streams, on the server's own thread.
 
+use std::ffi::{OsStr, OsString};
 use std::future::Future;
+use std::hash::{BuildHasher, RandomState};
 use std::io;
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::pin::Pin;
 use std::process::Stdio;
+use std::sync::mpsc::RecvTimeoutError;
+use std::sync::{Arc, LazyLock, OnceLock};
+use std::time::{Duration, Instant};
 
 use futures::{AsyncRead, AsyncWrite};
 
@@ -92,6 +99,8 @@ pub struct ExitInfo {
 /// detection.
 pub trait ServerProcess: Send {
     /// Resolves when the server has gone: exited, or its transport closed.
+    /// Also after [`kill`](Self::kill), once it has taken effect: a
+    /// replacement for the server waits for that.
     fn exited(&mut self) -> Pin<Box<dyn Future<Output = ExitInfo> + Send + '_>>;
     /// Forcibly stops it (kill the process group, close the proxy …).
     fn kill(&mut self);
@@ -110,41 +119,399 @@ pub trait ServerLauncher: Send + Sync {
 /// piped stdio, cwd = root, the spec's environment and `kill_on_drop`.
 /// [`ServerProcess::kill`] signals the whole group, so the server's own
 /// children go too.
+///
+/// A bare `command` (a name with no `/`) is looked up on the login shell's
+/// `PATH` ([`LoginPath::system`]), which the process also gets, unless the
+/// spec's `env` sets one: an app started from Finder has only a minimal
+/// `PATH`, while servers are usually installed where a terminal finds
+/// them. An absolute command is used as it is, and a relative one is under
+/// the root (see [`LoginPath::resolve`]). A bare one not found on its
+/// `PATH` fails to launch, as not found.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct LocalLauncher;
 
+impl LocalLauncher {
+    /// A [`LocalLauncher`] looking bare commands up on `path` rather than
+    /// on [`LoginPath::system`].
+    pub fn with_login_path(path: Arc<LoginPath>) -> impl ServerLauncher {
+        WithPath(path)
+    }
+}
+
 impl ServerLauncher for LocalLauncher {
     fn launch(&self, spec: &ServerSpec, root: &Path) -> io::Result<ServerIo> {
-        let mut command = std::process::Command::new(&spec.command);
-        command
-            .args(&spec.args)
-            .current_dir(root)
-            .envs(spec.env.iter().map(|(k, v)| (k, v)))
-            .process_group(0);
-        let mut command = async_process::Command::from(command);
-        command
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true);
-        let mut child = command.spawn()?;
-        let (Some(input), Some(output), stderr) =
-            (child.stdin.take(), child.stdout.take(), child.stderr.take())
-        else {
-            return Err(io::Error::other("the child's stdio wasn't piped"));
-        };
-        Ok(ServerIo {
-            input: Box::pin(input),
-            output: Box::pin(output),
-            stderr: stderr.map(|s| Box::pin(s) as Pin<Box<dyn AsyncRead + Send>>),
-            process: Box::new(LocalProcess { child, exit: None }),
-        })
+        launch_local(spec, root, LoginPath::system())
     }
+}
+
+struct WithPath(Arc<LoginPath>);
+
+impl ServerLauncher for WithPath {
+    fn launch(&self, spec: &ServerSpec, root: &Path) -> io::Result<ServerIo> {
+        launch_local(spec, root, &self.0)
+    }
+}
+
+fn launch_local(spec: &ServerSpec, root: &Path, login: &LoginPath) -> io::Result<ServerIo> {
+    let spec_path = spec
+        .env
+        .iter()
+        .rev()
+        .find(|(name, _)| name == "PATH")
+        .map(|(_, path)| OsString::from(path));
+    let program = login
+        .resolve(&spec.command, spec_path.as_deref(), root)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("{} not found", spec.command.display()),
+            )
+        })?;
+    let mut command = std::process::Command::new(program);
+    // Also for absolute commands: a server may run other programs off
+    // its PATH (`#!/usr/bin/env node`).
+    if spec_path.is_none()
+        && let Some(path) = login.path()
+    {
+        command.env("PATH", path);
+    }
+    command
+        .args(&spec.args)
+        .current_dir(root)
+        .envs(spec.env.iter().map(|(k, v)| (k, v)))
+        .process_group(0);
+    let mut command = async_process::Command::from(command);
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    let mut child = command.spawn()?;
+    let (Some(input), Some(output), stderr) =
+        (child.stdin.take(), child.stdout.take(), child.stderr.take())
+    else {
+        return Err(io::Error::other("the child's stdio wasn't piped"));
+    };
+    Ok(ServerIo {
+        input: Box::pin(input),
+        output: Box::pin(output),
+        stderr: stderr.map(|s| Box::pin(s) as Pin<Box<dyn AsyncRead + Send>>),
+        process: Box::new(LocalProcess { child, exit: None }),
+    })
+}
+
+/// How long the login shell may take to print its `PATH`.
+pub const LOGIN_SHELL_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// What the login shell runs: `printf %s "$PATH"`, with a line break after
+/// it, appended to the file [`PATH_FILE_VAR`] names.
+const PRINT_PATH: &str = r#"printf "%s\n" "$PATH" >> "$FASTEDIT_LOGIN_PATH_FILE""#;
+
+/// Names the file the login shell writes its `PATH` to.
+const PATH_FILE_VAR: &str = "FASTEDIT_LOGIN_PATH_FILE";
+
+/// The `PATH` a login shell has, which bare commands are looked up on
+/// (docs/decisions/lsp-client.md §3.3). The shell runs once, the first
+/// time its `PATH` is needed, as `<shell> -l -c 'printf "%s\n" "$PATH" >>
+/// "$FASTEDIT_LOGIN_PATH_FILE"'`, and what it wrote is kept.
+///
+/// The `PATH` goes to a file of fastedit's, not the shell's output, where
+/// a profile's or logout script's chatter could pass for it. Only that
+/// command writes there, and its final line break shows it wrote the
+/// whole `PATH`, so any `PATH` is kept as it was written: relative
+/// entries, or an empty one, which a shell takes as its working
+/// directory. If there's nowhere to put that file, or the shell fails,
+/// takes more than [`LOGIN_SHELL_TIMEOUT`], or ends without having written
+/// its `PATH`, this process's `PATH` is used instead, and why is logged.
+pub struct LoginPath {
+    shell: PathBuf,
+    /// What a leading `~` stands for.
+    home: Option<PathBuf>,
+    path: OnceLock<Option<OsString>>,
+}
+
+impl LoginPath {
+    /// The `PATH` the login shell `shell` prints, with `$HOME` as `~`.
+    pub fn new(shell: impl Into<PathBuf>) -> Self {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .filter(|home| home.is_absolute());
+        Self::with_home(shell, home)
+    }
+
+    /// As [`new`](Self::new), with `home` as `~`, or no `~` at all.
+    pub(crate) fn with_home(shell: impl Into<PathBuf>, home: Option<PathBuf>) -> Self {
+        Self {
+            shell: shell.into(),
+            home,
+            path: OnceLock::new(),
+        }
+    }
+
+    /// `$SHELL`'s, or, if that isn't an absolute path, `/bin/sh`'s, which
+    /// is logged; shared by every [`LocalLauncher`].
+    pub fn system() -> &'static LoginPath {
+        static SYSTEM: LazyLock<LoginPath> = LazyLock::new(|| {
+            let shell = std::env::var_os("SHELL").filter(|shell| Path::new(shell).is_absolute());
+            LoginPath::new(shell.unwrap_or_else(|| {
+                log::warn!(
+                    "SHELL isn't an absolute path, so language servers are looked up on the \
+                     PATH of /bin/sh as a login shell"
+                );
+                "/bin/sh".into()
+            }))
+        });
+        &SYSTEM
+    }
+
+    /// The login shell's `PATH`, running it the first time; `None` if it
+    /// failed.
+    pub fn path(&self) -> Option<&OsStr> {
+        self.path
+            .get_or_init(|| match run_login_shell(&self.shell) {
+                Ok(path) => Some(path),
+                Err(why) => {
+                    log::warn!(
+                        "bare language server commands are looked up on fastedit's own PATH: \
+                         the login shell {} {why}",
+                        self.shell.display()
+                    );
+                    None
+                }
+            })
+            .as_deref()
+    }
+
+    /// What to run for `command`, started in `cwd`, as a shell started
+    /// there would run it. A bare name (no `/`) is the first file this
+    /// process may run on one `PATH`, in order: `spec_path` if given, else
+    /// the login shell's, or this process's if the shell failed. An
+    /// absolute command is used as it is, and a relative one is under
+    /// `cwd`.
+    ///
+    /// In a command and in a `PATH` entry alike, a leading `~` (alone or
+    /// before a `/`) is the home directory, as bash has it, and never a
+    /// directory named `~` under `cwd`. Other relative or empty entries are
+    /// directories under `cwd`, and an empty `PATH` is one empty entry.
+    /// `None` for a bare name not found, or a `~` with no home.
+    pub fn resolve(
+        &self,
+        command: &Path,
+        spec_path: Option<&OsStr>,
+        cwd: &Path,
+    ) -> Option<PathBuf> {
+        if !is_bare(command) {
+            return Some(cwd.join(expand_home(command, self.home.as_deref())?));
+        }
+        let process_path;
+        let path = match spec_path.or_else(|| self.path()) {
+            Some(path) => path,
+            None => {
+                process_path = std::env::var_os("PATH")?;
+                &process_path
+            }
+        };
+        find_executable(command, path, cwd, self.home.as_deref())
+    }
+}
+
+/// A name with no `/`, such as `rust-analyzer`: one looked up on a `PATH`,
+/// as `execvp` would.
+fn is_bare(command: &Path) -> bool {
+    !command.as_os_str().as_encoded_bytes().contains(&b'/')
+}
+
+/// `path` with a leading `~`, alone or before a `/`, made `home`; `None`
+/// with no home. Anything else (`~user` too) as it is.
+fn expand_home(path: &Path, home: Option<&Path>) -> Option<PathBuf> {
+    let mut components = path.components();
+    match components.next() {
+        Some(Component::Normal(first)) if first == "~" => Some(home?.join(components.as_path())),
+        _ => Some(path.to_owned()),
+    }
+}
+
+/// The first `dir/name` on `path` that is a file this process may run, a
+/// `dir` with a leading `~` being under `home` and other relative or empty
+/// ones under `cwd`. As in a shell's lookup, one it may not run is passed
+/// over for the next.
+fn find_executable(name: &Path, path: &OsStr, cwd: &Path, home: Option<&Path>) -> Option<PathBuf> {
+    std::env::split_paths(path)
+        .filter_map(|dir| {
+            if dir.as_os_str().is_empty() || dir == Path::new(".") {
+                Some(cwd.to_owned())
+            } else {
+                // A `~` entry with no home is nowhere.
+                Some(cwd.join(expand_home(&dir, home)?))
+            }
+        })
+        .map(|dir| dir.join(name))
+        .find(|candidate| is_runnable(candidate))
+}
+
+/// A file the kernel lets this process execute, judged for its effective
+/// user and groups as `exec` judges it: an execute bit alone may be
+/// another user's, and an ACL may deny it. (rustix's `fs` is on through
+/// async-io and async-process.)
+fn is_runnable(file: &Path) -> bool {
+    use rustix::fs::{Access, AtFlags, CWD};
+    std::fs::metadata(file).is_ok_and(|meta| meta.is_file())
+        && rustix::fs::accessat(CWD, file, Access::EXEC_OK, AtFlags::EACCESS).is_ok()
+}
+
+/// Runs `shell -l -c` [`PRINT_PATH`] in a process group of its own and
+/// returns the `PATH` it wrote, or why not, within [`LOGIN_SHELL_TIMEOUT`].
+/// It runs on a thread of its own, so nothing the shell does (an exec or a
+/// reap stuck on a hung file system, say) holds this up past the deadline;
+/// that thread kills the shell's group then, and is left to finish alone.
+fn run_login_shell(shell: &Path) -> Result<OsString, String> {
+    let deadline = Instant::now() + LOGIN_SHELL_TIMEOUT;
+    let (sender, written) = std::sync::mpsc::channel();
+    let shell = shell.to_owned();
+    std::thread::Builder::new()
+        .name("fe-lsp login shell".into())
+        .spawn(move || {
+            let _ = sender.send(capture_login_path(&shell, deadline));
+        })
+        .map_err(|err| format!("couldn't be run: {err}"))?;
+    match written.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+        Ok(written) => written,
+        Err(RecvTimeoutError::Timeout) => Err(too_slow()),
+        Err(RecvTimeoutError::Disconnected) => Err("stopped without an answer".into()),
+    }
+}
+
+fn too_slow() -> String {
+    format!(
+        "took over {} s to print its PATH",
+        LOGIN_SHELL_TIMEOUT.as_secs()
+    )
+}
+
+/// [`run_login_shell`]'s work, given until `deadline`: the `PATH` the
+/// shell wrote, what's in its file before the final line break. The group
+/// is killed if the shell takes longer. What it prints itself is
+/// discarded.
+fn capture_login_path(shell: &Path, deadline: Instant) -> Result<OsString, String> {
+    let file = PathFile::create().map_err(|err| format!("had nowhere to write its PATH: {err}"))?;
+    let mut child = std::process::Command::new(shell)
+        .args(["-l", "-c", PRINT_PATH])
+        .env(PATH_FILE_VAR, &file.0)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .spawn()
+        .map_err(|err| format!("didn't start: {err}"))?;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Ok(None) => {
+                kill_group(&mut child);
+                return Err(too_slow());
+            }
+            Err(err) => {
+                kill_group(&mut child);
+                return Err(format!("couldn't be waited for: {err}"));
+            }
+        }
+    };
+    if !status.success() {
+        return Err(format!("failed: {status}"));
+    }
+    let written = std::fs::read(&file.0)
+        .map_err(|err| format!("wrote a PATH that couldn't be read back: {err}"))?;
+    // Nothing, or no line break: the command didn't run, or didn't finish.
+    match written.strip_suffix(b"\n") {
+        Some(path) => Ok(OsStr::from_bytes(path).to_owned()),
+        None => Err("ended without writing its PATH".into()),
+    }
+}
+
+/// An empty file, new and only this user's, for the login shell to append
+/// its `PATH` to. Removed when dropped.
+struct PathFile(PathBuf);
+
+impl PathFile {
+    /// In the temporary directory, or in `/tmp` if that one can't be used.
+    fn create() -> io::Result<Self> {
+        let mut failed = None;
+        for dir in [std::env::temp_dir(), PathBuf::from("/tmp")] {
+            // Absolute, in case the shell's profile changes directory. An
+            // empty `TMPDIR` can't be.
+            let created = std::path::absolute(dir).and_then(|dir| Self::create_in(&dir));
+            match created {
+                Ok(file) => return Ok(file),
+                Err(err) => {
+                    failed.get_or_insert(err);
+                }
+            }
+        }
+        Err(failed.expect("tried at least once"))
+    }
+
+    fn create_in(dir: &Path) -> io::Result<Self> {
+        let mut taken = None;
+        for attempt in 0..16_u32 {
+            // Random, so that no one can take every name first.
+            let random = RandomState::new().hash_one(attempt);
+            let path = dir.join(format!(
+                "fastedit-login-path-{}-{random:016x}",
+                std::process::id()
+            ));
+            // Never an existing file, or what a link there points to.
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&path)
+            {
+                Ok(_) => return Ok(Self(path)),
+                Err(err) if err.kind() == io::ErrorKind::AlreadyExists => taken = Some(err),
+                Err(err) => return Err(err),
+            }
+        }
+        Err(taken.expect("tried at least once"))
+    }
+}
+
+impl Drop for PathFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// Kills `child`'s process group, which it leads, and reaps it.
+fn kill_group(child: &mut std::process::Child) {
+    if let Some(group) = i32::try_from(child.id())
+        .ok()
+        .and_then(rustix::process::Pid::from_raw)
+    {
+        let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 struct LocalProcess {
     child: async_process::Child,
     exit: Option<ExitInfo>,
+}
+
+/// A process dropped without having been seen to exit (its thread
+/// panicked, say) takes its group with it: `kill_on_drop` alone would
+/// leave the server's own children running.
+impl Drop for LocalProcess {
+    fn drop(&mut self) {
+        if self.exit.is_none() {
+            self.kill();
+            // Reaped before the thread ends, which a replacement waits for.
+            let _ = async_io::block_on(self.child.status());
+        }
+    }
 }
 
 impl ServerProcess for LocalProcess {

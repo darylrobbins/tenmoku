@@ -13,6 +13,11 @@
 //!   anywhere, and an `FnMut(LspEvent) + Send` sink called on server
 //!   threads.
 //! - Every timeout is measured on an injected [`Clock`].
+//! - [`LspManager::open`] picks a document's server by its language, from
+//!   built-in specs, the user's `[lsp]` settings
+//!   ([`LspManager::update_settings`]) and specs the host registers
+//!   ([`LspManager::register_spec`]), and starts one instance per (server,
+//!   workspace root) the first time a document needs it.
 //! - Documents are synced from the buffer's own events: the host hands
 //!   [`LspManager::open`] a `fe_buffer::Subscription`, and the server's
 //!   thread drains it ([`LspManager::changed`] nudges it to).
@@ -38,6 +43,7 @@ mod event;
 mod identity;
 mod launcher;
 mod manager;
+mod registry;
 mod router;
 mod server;
 
@@ -56,7 +62,7 @@ pub use encoding::{PositionEncoding, from_lsp, to_lsp};
 pub use event::{LspError, LspEvent, ServerId, ServerStatus};
 pub use identity::{IncarnationId, SessionId};
 pub use launcher::{
-    ExitInfo, LocalLauncher, ReadinessMode, ServerIo, ServerLauncher, ServerProcess, ServerSpec,
-    UnversionedDiagnostics,
+    ExitInfo, LOGIN_SHELL_TIMEOUT, LocalLauncher, LoginPath, ReadinessMode, ServerIo,
+    ServerLauncher, ServerProcess, ServerSpec, UnversionedDiagnostics,
 };
 pub use manager::{DEFAULT_MAX_FILE_BYTES, LspManager};

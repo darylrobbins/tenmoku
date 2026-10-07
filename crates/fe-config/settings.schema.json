@@ -43,6 +43,205 @@
       },
       "type": "object"
     },
+    "LspReadiness": {
+      "description": "How a server's readiness is told.",
+      "oneOf": [
+        {
+          "const": "server-status",
+          "description": "rust-analyzer's `experimental/serverStatus`.",
+          "type": "string"
+        },
+        {
+          "const": "progress",
+          "description": "No work-done progress open.",
+          "type": "string"
+        }
+      ]
+    },
+    "LspServerSettings": {
+      "description": "One server's settings. Each key left unset keeps the built-in value.",
+      "properties": {
+        "args": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "command": {
+          "description": "The program: a bare name is looked up on the login shell's `PATH`.",
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "enabled": {
+          "default": true,
+          "description": "Whether the server runs.",
+          "type": "boolean"
+        },
+        "env": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Set on top of fastedit's environment.",
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "initialization_options": {
+          "description": "Sent with `initialize`."
+        },
+        "languages": {
+          "description": "The languages it serves, by fastedit's names: rust, python,\njavascript, typescript, tsx and so on. A file gets the first enabled\nserver listing its language.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "readiness": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LspReadiness"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How fastedit tells the server is ready."
+        },
+        "ready_ignores_progress": {
+          "description": "Work-done progress token prefixes that don't hold back readiness.",
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "settings": {
+          "additionalProperties": true,
+          "description": "Answers the server's `workspace/configuration` requests, by section:\n`[lsp.servers.rust-analyzer.settings.rust-analyzer]` is the\n`rust-analyzer` section. Changing it doesn't restart the server.",
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "LspSettings": {
+      "description": "Settings for language servers (docs/decisions/lsp-client.md §3.3).\n\nA server's spec is executable configuration, so a project's settings\nfile may only turn servers off: `lsp.enabled = false` and\n`lsp.servers.<name>.enabled = false` apply from it, and every other\n`lsp` key there is ignored with a warning, until workspace trust exists.",
+      "properties": {
+        "enabled": {
+          "default": true,
+          "description": "Whether language servers run at all.",
+          "type": "boolean"
+        },
+        "max_file_bytes": {
+          "default": 52428800,
+          "description": "The largest file, in bytes, synced to a language server. Applies to\nfiles opened after it changes.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "servers": {
+          "additionalProperties": {
+            "$ref": "#/$defs/LspServerSettings"
+          },
+          "default": {},
+          "description": "Servers by name: changes to the built-in rust-analyzer, pyright,\ntypescript-language-server and typescript-go, or servers of your\nown, which need a `command`.",
+          "type": "object"
+        },
+        "timeouts": {
+          "$ref": "#/$defs/LspTimeouts",
+          "default": {
+            "completion": 3000,
+            "definition": 5000,
+            "hover": 3000,
+            "references": 30000,
+            "resolve": 2000,
+            "workspace_symbol": 5000
+          },
+          "description": "How long requests may take, in milliseconds, by method."
+        },
+        "typescript_server": {
+          "$ref": "#/$defs/TypescriptServer",
+          "default": "typescript-language-server",
+          "description": "Which built-in server TypeScript and JavaScript files get."
+        }
+      },
+      "type": "object"
+    },
+    "LspTimeouts": {
+      "description": "Request timeouts, in milliseconds.",
+      "properties": {
+        "completion": {
+          "default": 3000,
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "definition": {
+          "default": 5000,
+          "description": "Go to definition.",
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "hover": {
+          "default": 3000,
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "references": {
+          "default": 30000,
+          "description": "Find references.",
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "resolve": {
+          "default": 2000,
+          "description": "Resolving a completion item.",
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "workspace_symbol": {
+          "default": 5000,
+          "description": "Workspace symbols.",
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "TypescriptServer": {
+      "description": "The built-in server for TypeScript and JavaScript.",
+      "oneOf": [
+        {
+          "const": "typescript-language-server",
+          "description": "typescript-language-server, over tsserver.",
+          "type": "string"
+        },
+        {
+          "const": "typescript-go",
+          "description": "typescript-go's `tsc --lsp`.",
+          "type": "string"
+        }
+      ]
+    },
     "VimSettings": {
       "description": "Settings for vim mode.",
       "properties": {
@@ -67,6 +266,24 @@
         "tab_size": 4
       },
       "description": "The text editor."
+    },
+    "lsp": {
+      "$ref": "#/$defs/LspSettings",
+      "default": {
+        "enabled": true,
+        "max_file_bytes": 52428800,
+        "servers": {},
+        "timeouts": {
+          "completion": 3000,
+          "definition": 5000,
+          "hover": 3000,
+          "references": 30000,
+          "resolve": 2000,
+          "workspace_symbol": 5000
+        },
+        "typescript_server": "typescript-language-server"
+      },
+      "description": "Language servers. A project file may only turn them off."
     },
     "vim": {
       "$ref": "#/$defs/VimSettings",

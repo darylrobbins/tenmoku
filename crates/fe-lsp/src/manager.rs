@@ -1,13 +1,20 @@
 //! [`LspManager`]: starts and stops servers, and carries requests to them.
+//!
+//! Documents opened with [`LspManager::open`] are routed (§3.2): each goes
+//! to the first enabled server listing its language (registry.rs), one
+//! instance per (server, root), started by the first document that needs
+//! it and left running when its last document closes. One with no server
+//! to go to waits, parked, until settings or a host spec give it one.
 
 use std::collections::HashMap;
 use std::future::Future;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
 
 use fe_buffer::{BufferId, Subscription, Version};
+use fe_config::settings::LspSettings;
 use fe_text::Text;
 use futures::channel::{mpsc, oneshot};
 use futures::future::FutureExt;
@@ -20,7 +27,10 @@ use crate::encoding::PositionEncoding;
 use crate::event::{LspError, LspEvent, NOT_OPEN, ServerId};
 use crate::identity::{Identities, IncarnationId, SessionId};
 use crate::launcher::{ServerLauncher, ServerSpec};
-use crate::server::{Admit, Command, Issue, Server, Session, Sink, send_request};
+use crate::registry::{Registry, needs_restart, server_for};
+use crate::server::{
+    Admit, Command, Done, Issue, Place, Routes, Server, Session, Sink, send_request,
+};
 
 /// The default [`LspManager::max_file_bytes`]: 50 MB, the size past which
 /// fastedit highlights only the viewport.
@@ -33,9 +43,17 @@ pub struct LspManager {
     clock: Arc<dyn Clock>,
     sink: Sink,
     servers: HashMap<ServerId, Handle>,
-    /// The server each open document is synced to, and its subscription,
+    /// Every open document: where it's synced, and its subscription,
     /// shared with that server's thread.
-    documents: HashMap<BufferId, (ServerId, Subscribed)>,
+    documents: HashMap<BufferId, Placed>,
+    /// Where routed documents are, and those waiting for a server, shared
+    /// with the servers' threads, which hand theirs on when they end.
+    routes: Routes,
+    /// For each (name, root) whose server was stopped, a signal its thread
+    /// has ended, which the next instance there waits for before it
+    /// launches.
+    retiring: HashMap<(String, PathBuf), Done>,
+    registry: Registry,
     /// Which identity of each open buffer is active on each server,
     /// shared with the servers' threads.
     identities: Identities,
@@ -46,10 +64,44 @@ pub struct LspManager {
 struct Handle {
     name: String,
     root: PathBuf,
+    /// What it was started with, or last configured with.
+    spec: ServerSpec,
+    /// Started by [`LspManager::open`], so settings changes apply to it.
+    routed: bool,
     commands: mpsc::UnboundedSender<Command>,
     stop: oneshot::Sender<()>,
+    /// Resolves when its thread has ended.
+    done: Done,
     session: Arc<Mutex<Session>>,
     thread: JoinHandle<()>,
+}
+
+impl Handle {
+    /// Asks it to stop; the next instance of the same name and root waits
+    /// for its thread to end.
+    fn stop(self, retiring: &mut HashMap<(String, PathBuf), Done>) {
+        let _ = self.stop.send(());
+        retiring.insert((self.name, self.root), self.done);
+    }
+}
+
+/// An open document.
+struct Placed {
+    subscribed: Subscribed,
+    kind: Kind,
+}
+
+enum Kind {
+    /// Opened on a server of the host's choosing ([`LspManager::open_on`]).
+    On(ServerId),
+    /// Routed by [`LspManager::open`]: where it is is in `routes`.
+    Routed(Route),
+}
+
+struct Route {
+    root: PathBuf,
+    /// fe-syntax's name.
+    language: String,
 }
 
 impl LspManager {
@@ -73,9 +125,76 @@ impl LspManager {
             sink: Arc::new(Mutex::new(sink)),
             servers: HashMap::new(),
             documents: HashMap::new(),
+            routes: Routes::default(),
+            retiring: HashMap::new(),
+            registry: Registry::default(),
             identities: Identities::default(),
             max_file_bytes: DEFAULT_MAX_FILE_BYTES,
             next_id: 0,
+        }
+    }
+
+    /// Applies the effective `[lsp]` settings (§3.3), whose project layer
+    /// fe-config has narrowed. For each server [`open`](Self::open)
+    /// started:
+    ///
+    /// - turned off (or `lsp.enabled` false, or the other TypeScript server
+    ///   chosen): it's stopped;
+    /// - a change to anything but its `settings` (`command`, `args`, `env`,
+    ///   `languages`, `readiness`, `initialization_options` …): it's shut
+    ///   down and launched again;
+    /// - a change to its `settings` only: it answers
+    ///   `workspace/configuration` with them from now on, and is sent
+    ///   `workspace/didChangeConfiguration`.
+    ///
+    /// A stopped or restarted server's documents go to the server they'd
+    /// get if opened now, at the text it last drained, or wait for one.
+    /// Documents waiting get a server if one now applies. A document stays
+    /// on a server that keeps running, even if another would now come
+    /// first for its language. `max_file_bytes` applies to documents
+    /// opened from now on.
+    ///
+    /// A server that stopped on its own (a launch error such as a missing
+    /// command, or a crash) hands its documents back to wait, and they get
+    /// a server again here, or when another document starts theirs.
+    /// A request on a document still on its way to its new server answers
+    /// `Unavailable("not open on a language server")`, as for one not yet
+    /// opened.
+    pub fn update_settings(&mut self, settings: &LspSettings) {
+        self.max_file_bytes = usize::try_from(settings.max_file_bytes).unwrap_or(usize::MAX);
+        if self.registry.settings() != settings {
+            self.registry.set_settings(settings.clone());
+        }
+        self.reconcile();
+    }
+
+    /// Registers a host's `spec`, which wins over a built-in or settings
+    /// spec of the same name; settings may still turn it off. Applies as
+    /// [`update_settings`](Self::update_settings) does.
+    pub fn register_spec(&mut self, spec: ServerSpec) {
+        self.registry.register(spec);
+        self.reconcile();
+    }
+
+    /// The server `buffer` is synced to, if any.
+    pub fn server_of(&self, buffer: BufferId) -> Option<ServerId> {
+        match self.documents.get(&buffer)?.kind {
+            Kind::On(server) => Some(server),
+            Kind::Routed(_) => self.place_of(buffer),
+        }
+    }
+
+    /// The server a routed document is placed on, if any.
+    fn place_of(&self, buffer: BufferId) -> Option<ServerId> {
+        match self
+            .routes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .places
+            .get(&buffer)?
+        {
+            Place::Server(server, _) => Some(*server),
+            Place::Waiting => None,
         }
     }
 
@@ -100,16 +219,63 @@ impl LspManager {
     /// sink hears how the start went. Errs only if the thread can't be
     /// made.
     pub fn start(&mut self, spec: ServerSpec, root: &Path) -> io::Result<ServerId> {
-        self.servers
-            .retain(|_, handle| !handle.commands.is_closed() && !handle.thread.is_finished());
-        let (servers, identities) = (&self.servers, &self.identities);
-        self.documents.retain(|&buffer, (server, _)| {
-            let live = servers.contains_key(server);
-            if !live {
-                identities.close(buffer);
+        self.start_server(spec, root, false)
+    }
+
+    /// Forgets servers that have gone. Their routed documents wait for a
+    /// server (the server hands them back), and the others go with them.
+    /// Only servers found gone here count: one retired a moment ago (no
+    /// longer listed, still handing its documents on) doesn't.
+    fn prune(&mut self) {
+        // A thread whose end has been seen needn't be waited for.
+        self.retiring
+            .retain(|_, done| done.clone().now_or_never().is_none());
+        let mut gone = Vec::new();
+        let dead: Vec<ServerId> = self
+            .servers
+            .iter()
+            .filter(|(_, handle)| handle.commands.is_closed() || handle.thread.is_finished())
+            .map(|(&id, _)| id)
+            .collect();
+        for id in dead {
+            let handle = self.servers.remove(&id).expect("listed above");
+            // Its thread may still be ending (its process being killed): a
+            // new instance there waits for it.
+            self.retiring
+                .insert((handle.name, handle.root), handle.done);
+            gone.push(id);
+        }
+        if gone.is_empty() {
+            return;
+        }
+        let identities = &self.identities;
+        let mut routes = self.routes.lock().unwrap_or_else(PoisonError::into_inner);
+        self.documents.retain(|&buffer, placed| match placed.kind {
+            Kind::On(server) => {
+                let live = !gone.contains(&server);
+                if !live {
+                    identities.close(buffer);
+                }
+                live
             }
-            live
+            Kind::Routed(_) => {
+                if let Some(Place::Server(server, _)) = routes.places.get(&buffer)
+                    && gone.contains(server)
+                {
+                    routes.places.insert(buffer, Place::Waiting);
+                }
+                true
+            }
         });
+    }
+
+    fn start_server(
+        &mut self,
+        spec: ServerSpec,
+        root: &Path,
+        routed: bool,
+    ) -> io::Result<ServerId> {
+        self.prune();
         if let Some((&id, _)) = self
             .servers
             .iter()
@@ -121,11 +287,16 @@ impl LspManager {
         self.next_id += 1;
         let (commands, receiver) = mpsc::unbounded();
         let (stop, stop_requested) = oneshot::channel();
+        let (done_sender, done) = oneshot::channel();
+        let key = (spec.name.clone(), root.to_owned());
+        // Removed once the thread is made: if it can't be, the next try
+        // still waits.
+        let after = self.retiring.get(&key).cloned();
         let session = Arc::new(Mutex::new(Session::default()));
         let name = spec.name.clone();
         let thread = Server {
             id,
-            spec,
+            spec: spec.clone(),
             root: root.to_owned(),
             launcher: self.launcher.clone(),
             clock: self.clock.clone(),
@@ -135,15 +306,22 @@ impl LspManager {
             identities: self.identities.clone(),
             commands: receiver,
             stop: stop_requested,
+            routes: self.routes.clone(),
+            after,
+            done: Some(done_sender),
         }
         .spawn()?;
+        self.retiring.remove(&key);
         self.servers.insert(
             id,
             Handle {
                 name,
                 root: root.to_owned(),
+                spec,
+                routed,
                 commands,
                 stop,
+                done: done.shared(),
                 session,
                 thread,
             },
@@ -153,20 +331,40 @@ impl LspManager {
 
     /// Shuts `server` down (§3.4) on its own thread; the sink hears
     /// `Stopped(None)` when it has gone. Requests still waiting get
-    /// [`LspError::ServerDown`].
+    /// [`LspError::ServerDown`]. Its documents go with it, routed ones too:
+    /// they're no longer tracked, as if closed, and a host wanting them
+    /// synced again opens them again. (One that a crash or a settings
+    /// change leaves without a server waits for one instead.)
     pub fn stop(&mut self, server: ServerId) {
-        if let Some(handle) = self.servers.remove(&server) {
-            let _ = handle.stop.send(());
-        }
         // Its documents go with it.
-        let identities = &self.identities;
-        self.documents.retain(|&buffer, (synced_to, _)| {
-            let kept = *synced_to != server;
-            if !kept {
-                identities.close(buffer);
-            }
-            kept
-        });
+        let gone: Vec<BufferId> = self
+            .documents
+            .keys()
+            .copied()
+            .filter(|&buffer| self.server_of(buffer) == Some(server))
+            .collect();
+        for buffer in gone {
+            self.forget(buffer);
+        }
+        if let Some(handle) = self.servers.remove(&server) {
+            handle.stop(&mut self.retiring);
+        }
+    }
+
+    /// Stops tracking `buffer`: retires its identity, drops its
+    /// subscription, its place and any opening waiting for it. Returns the
+    /// server it was synced to.
+    fn forget(&mut self, buffer: BufferId) -> Option<ServerId> {
+        let server = self.server_of(buffer);
+        let placed = self.documents.remove(&buffer)?;
+        self.identities.close(buffer);
+        placed.subscribed.detach();
+        let mut routes = self.routes.lock().unwrap_or_else(PoisonError::into_inner);
+        routes.places.remove(&buffer);
+        let parked = routes.lot.remove(&buffer);
+        drop(routes);
+        drop(parked);
+        server
     }
 
     /// Sends `R` to `server`. A request made while the server starts is
@@ -238,8 +436,8 @@ impl LspManager {
                 })
             }))
         });
-        match self.documents.get(&buffer) {
-            Some(&(server, _)) => self.send(
+        match self.server_of(buffer) {
+            Some(server) => self.send(
                 server,
                 Command::Admit {
                     buffer,
@@ -252,6 +450,246 @@ impl LspManager {
             }
         }
         answered.map(|answer| answer.unwrap_or(Err(LspError::ServerDown)))
+    }
+
+    /// Starts syncing buffer `buffer`, at `path`, to the server for
+    /// fe-syntax's `language` and the workspace at `root` (§3.2), starting
+    /// that server if it isn't running, and returns which it is. As
+    /// [`open_on`](Self::open_on) otherwise.
+    ///
+    /// A document with no root, or whose path isn't under it, gets no
+    /// server, and isn't kept. One with no server for its language (none
+    /// listing it, or `[lsp]` turning it off) is kept, without a server,
+    /// until [`update_settings`](Self::update_settings) or
+    /// [`register_spec`](Self::register_spec) give it one; its subscription
+    /// is drained at each [`changed`](Self::changed) meanwhile.
+    ///
+    /// Errs if `path` isn't absolute.
+    #[allow(clippy::too_many_arguments)] // Each is one thing the document needs.
+    pub fn open(
+        &mut self,
+        root: Option<&Path>,
+        buffer: BufferId,
+        text: Text,
+        version: Version,
+        subscription: Subscription,
+        path: &Path,
+        language: &str,
+    ) -> Result<Option<ServerId>, LspError> {
+        let uri = Url::from_file_path(path).map_err(|()| {
+            LspError::Unavailable(format!("{} isn't an absolute path", path.display()))
+        })?;
+        self.close(buffer);
+        let Some(root) = root.filter(|root| is_under(path, root)) else {
+            return Ok(None);
+        };
+        let subscribed = Subscribed::new(subscription);
+        let opening = Opening {
+            buffer,
+            text,
+            version,
+            subscription: Attached(subscribed.clone()),
+            uri,
+            language_id: language_id(language, path),
+            generation: self.identities.open(buffer),
+            max_bytes: self.max_file_bytes,
+        };
+        self.documents.insert(
+            buffer,
+            Placed {
+                subscribed,
+                kind: Kind::Routed(Route {
+                    root: root.to_owned(),
+                    language: language.to_owned(),
+                }),
+            },
+        );
+        let specs = self.registry.specs();
+        let server = self.place(opening, &specs);
+        // Documents waiting for the same server (after it failed, say) go
+        // to it too.
+        if server.is_some()
+            && let Some(spec) = server_for(&specs, language)
+        {
+            let only = (spec.name.clone(), root.to_owned());
+            self.place_waiting(&specs, Some(&only));
+        }
+        Ok(server)
+    }
+
+    /// Opens `opening` on the server its route gives it under `specs`,
+    /// starting that if need be, or leaves it waiting.
+    fn place(&mut self, opening: Opening, specs: &[ServerSpec]) -> Option<ServerId> {
+        let buffer = opening.buffer;
+        let (server, place) = self.place_for(buffer, specs);
+        let mut routes = self.routes.lock().unwrap_or_else(PoisonError::into_inner);
+        routes.places.insert(buffer, place);
+        routes.forward(&self.identities, vec![opening]);
+        server
+    }
+
+    /// Places routed `buffer` at `place`. If it's a server and the
+    /// document's opening is waiting in the lot (handed back meanwhile),
+    /// that goes there now.
+    fn set_place(&self, buffer: BufferId, place: Place) {
+        let mut routes = self.routes.lock().unwrap_or_else(PoisonError::into_inner);
+        let to_server = matches!(place, Place::Server(..));
+        routes.places.insert(buffer, place);
+        if to_server && let Some(opening) = routes.lot.remove(&buffer) {
+            routes.forward(&self.identities, vec![opening]);
+        }
+    }
+
+    /// The server for `buffer` under `specs`, started if need be, and its
+    /// place, or none and [`Place::Waiting`].
+    fn place_for(&mut self, buffer: BufferId, specs: &[ServerSpec]) -> (Option<ServerId>, Place) {
+        self.target(buffer, specs)
+            .and_then(|server| {
+                let commands = self.servers.get(&server)?.commands.clone();
+                Some((Some(server), Place::Server(server, commands)))
+            })
+            .unwrap_or((None, Place::Waiting))
+    }
+
+    /// The server `buffer`'s route gives it under `specs`, started if it
+    /// isn't running. `None` for a document without a route, with no
+    /// server for its language, or whose server's thread can't be made.
+    fn target(&mut self, buffer: BufferId, specs: &[ServerSpec]) -> Option<ServerId> {
+        let Kind::Routed(route) = &self.documents.get(&buffer)?.kind else {
+            return None;
+        };
+        let spec = server_for(specs, &route.language)?.clone();
+        let root = route.root.clone();
+        match self.start_server(spec, &root, true) {
+            Ok(server) => Some(server),
+            Err(err) => {
+                log::warn!("no thread for a language server: {err}");
+                None
+            }
+        }
+    }
+
+    /// Brings running servers and waiting documents in line with the
+    /// registry: see [`update_settings`](Self::update_settings).
+    fn reconcile(&mut self) {
+        self.prune();
+        let specs = self.registry.specs();
+        let routed: Vec<ServerId> = self
+            .servers
+            .iter()
+            .filter(|(_, handle)| handle.routed)
+            .map(|(&id, _)| id)
+            .collect();
+        for id in routed {
+            // Retiring one may have found another gone.
+            let Some(handle) = self.servers.get_mut(&id) else {
+                continue;
+            };
+            match specs.iter().find(|spec| spec.name == handle.name) {
+                Some(spec) if !needs_restart(&handle.spec, spec) => {
+                    if spec.settings != handle.spec.settings {
+                        handle.spec.settings = spec.settings.clone();
+                        let configure = Command::Configure(spec.settings.clone());
+                        // A server that has gone has nothing to configure.
+                        let _ = handle.commands.unbounded_send(configure);
+                    }
+                }
+                Some(spec) => {
+                    let (spec, root) = (spec.clone(), handle.root.clone());
+                    self.retire(id, &specs);
+                    // Launched again even with no documents, as it was
+                    // running; its documents may have started it already.
+                    if let Err(err) = self.start_server(spec, &root, true) {
+                        log::warn!("no thread for a language server: {err}");
+                    }
+                }
+                None => self.retire(id, &specs),
+            }
+        }
+        self.place_waiting(&specs, None);
+    }
+
+    /// Stops routed server `id`, first placing each of its documents on
+    /// the server it gets under `specs` (started if need be: a new
+    /// instance of it waits for it to end), or to wait, so its thread
+    /// forwards them there. Documents opened on it by
+    /// [`open_on`](Self::open_on) go with it.
+    fn retire(&mut self, id: ServerId, specs: &[ServerSpec]) {
+        let Some(handle) = self.servers.remove(&id) else {
+            return;
+        };
+        let (name, root) = (handle.name.clone(), handle.root.clone());
+        self.retiring.insert((name, root), handle.done);
+        let buffers: Vec<BufferId> = self
+            .documents
+            .keys()
+            .copied()
+            .filter(|&buffer| self.server_of(buffer) == Some(id))
+            .collect();
+        for buffer in buffers {
+            if matches!(self.documents[&buffer].kind, Kind::On(_)) {
+                self.forget(buffer);
+                continue;
+            }
+            let (_, place) = self.place_for(buffer, specs);
+            self.set_place(buffer, place);
+        }
+        let _ = handle.stop.send(());
+    }
+
+    /// Opens each waiting document whose route now gives it a server
+    /// (only `only`, a server name and root, if given), with the size limit
+    /// it was opened with. One its old server hasn't handed back yet is
+    /// forwarded there when it is.
+    fn place_waiting(&mut self, specs: &[ServerSpec], only: Option<&(String, PathBuf)>) {
+        let started = self.next_id;
+        for buffer in self.waiting_for(specs, only) {
+            let (server, place) = self.place_for(buffer, specs);
+            if server.is_some() {
+                self.set_place(buffer, place);
+            }
+        }
+        // One placed early in the pass may have come back meanwhile from an
+        // instance that failed, which a later one replaced: it goes to the
+        // instance running now rather than wait beside it. None is started
+        // for this, so a server failing at once can't make it a loop.
+        if self.next_id != started {
+            for buffer in self.waiting_for(specs, only) {
+                if let Some(place) = self.running_place(buffer, specs) {
+                    self.set_place(buffer, place);
+                }
+            }
+        }
+    }
+
+    /// The place of the instance running for routed `buffer`'s server and
+    /// root under `specs`, if there is one; none is started.
+    fn running_place(&self, buffer: BufferId, specs: &[ServerSpec]) -> Option<Place> {
+        let Kind::Routed(route) = &self.documents.get(&buffer)?.kind else {
+            return None;
+        };
+        let spec = server_for(specs, &route.language)?;
+        self.servers
+            .iter()
+            .find(|(_, handle)| handle.name == spec.name && handle.root == route.root)
+            .map(|(&id, handle)| Place::Server(id, handle.commands.clone()))
+    }
+
+    /// The routed documents waiting for a server that `specs` give them
+    /// one of (only `only`, a server name and root, if given).
+    fn waiting_for(&self, specs: &[ServerSpec], only: Option<&(String, PathBuf)>) -> Vec<BufferId> {
+        self.documents
+            .iter()
+            .filter_map(|(&buffer, placed)| {
+                let Kind::Routed(route) = &placed.kind else {
+                    return None;
+                };
+                let spec = server_for(specs, &route.language)?;
+                only.is_none_or(|(name, root)| spec.name == *name && route.root == *root)
+                    .then_some(buffer)
+            })
+            .filter(|&buffer| self.place_of(buffer).is_none())
+            .collect()
     }
 
     /// Starts syncing buffer `buffer` to `server` (§4.1): `didOpen` with
@@ -274,9 +712,10 @@ impl LspManager {
     /// starts, it goes once the server has initialized.
     ///
     /// A buffer already open is closed first. Errs if `path` isn't
-    /// absolute, or `server` isn't running.
+    /// absolute, or `server` isn't running. The document stays on
+    /// `server`: settings changes don't move it.
     #[allow(clippy::too_many_arguments)] // Each is one thing the document needs.
-    pub fn open(
+    pub fn open_on(
         &mut self,
         server: ServerId,
         buffer: BufferId,
@@ -314,7 +753,13 @@ impl LspManager {
             self.identities.close(buffer);
             return Err(LspError::ServerDown);
         }
-        self.documents.insert(buffer, (server, subscription));
+        self.documents.insert(
+            buffer,
+            Placed {
+                subscribed: subscription,
+                kind: Kind::On(server),
+            },
+        );
         Ok(())
     }
 
@@ -324,9 +769,7 @@ impl LspManager {
     /// after this returns send nothing, and its identity is retired here
     /// too, before `didClose` is sent.
     pub fn close(&mut self, buffer: BufferId) {
-        if let Some((server, subscribed)) = self.documents.remove(&buffer) {
-            self.identities.close(buffer);
-            subscribed.detach();
+        if let Some(server) = self.forget(buffer) {
             self.send(server, Command::Close(buffer));
         }
     }
@@ -358,7 +801,7 @@ impl LspManager {
         buffer: BufferId,
     ) -> impl Future<Output = Vec<(i32, Version)>> + use<> {
         let (answer, answered) = oneshot::channel();
-        if let Some(&(server, _)) = self.documents.get(&buffer) {
+        if let Some(server) = self.server_of(buffer) {
             self.send(server, Command::Ring(buffer, answer));
         }
         answered.map(Result::unwrap_or_default)
@@ -369,15 +812,25 @@ impl LspManager {
     pub(crate) fn is_subscribed(&self, buffer: BufferId) -> bool {
         self.documents
             .get(&buffer)
-            .is_some_and(|(_, subscribed)| subscribed.is_attached())
+            .is_some_and(|placed| placed.subscribed.is_attached())
     }
 
     /// Says `buffer` emitted events (edits or a save), so its server's
-    /// thread drains them now rather than at the next backstop tick. Cheap:
-    /// call it once a frame for each buffer that changed.
+    /// thread drains them now rather than at the next backstop tick; a
+    /// document waiting for a server is drained here. Cheap: call it once
+    /// a frame for each buffer that changed.
     pub fn changed(&self, buffer: BufferId) {
-        if let Some(&(server, _)) = self.documents.get(&buffer) {
-            self.send(server, Command::Changed(buffer));
+        if !self.documents.contains_key(&buffer) {
+            return;
+        }
+        match self.server_of(buffer) {
+            Some(server) => self.send(server, Command::Changed(buffer)),
+            None => {
+                let mut routes = self.routes.lock().unwrap_or_else(PoisonError::into_inner);
+                if let Some(opening) = routes.lot.get_mut(&buffer) {
+                    opening.catch_up();
+                }
+            }
         }
     }
 
@@ -421,7 +874,17 @@ impl Drop for LspManager {
     /// Asks every server to shut down, without waiting for them.
     fn drop(&mut self) {
         for (_, handle) in self.servers.drain() {
-            let _ = handle.stop.send(());
+            handle.stop(&mut self.retiring);
         }
     }
+}
+
+/// Whether `path` is within the workspace at `root`, by its components:
+/// a path through `..` never is.
+fn is_under(path: &Path, root: &Path) -> bool {
+    root.is_absolute()
+        && path.starts_with(root)
+        && !path
+            .components()
+            .any(|component| component == Component::ParentDir)
 }

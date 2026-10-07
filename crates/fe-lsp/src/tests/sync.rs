@@ -63,7 +63,7 @@ impl Session {
         let path = PathBuf::from(ROOT).join(name);
         let subscription = buffer.subscribe();
         self.manager
-            .open(
+            .open_on(
                 self.server,
                 buffer.id(),
                 buffer.text().clone(),
@@ -610,7 +610,7 @@ fn events_before_the_opened_version_are_skipped() {
     let path = PathBuf::from(ROOT).join("late.txt");
     session
         .manager
-        .open(
+        .open_on(
             session.server,
             buffer.id(),
             buffer.text().clone(),
@@ -667,7 +667,7 @@ fn open_buffer(
 ) -> Result<Url, crate::LspError> {
     let path = PathBuf::from(ROOT).join(name);
     let subscription = buffer.subscribe();
-    manager.open(
+    manager.open_on(
         server,
         buffer.id(),
         buffer.text().clone(),

@@ -1,6 +1,7 @@
 //! The client side's router: what fe-lsp answers when a server asks, and
 //! what it does with the server's notifications (§3.6).
 
+use std::cell::RefCell;
 use std::future::ready;
 use std::ops::ControlFlow;
 use std::rc::Rc;
@@ -23,8 +24,9 @@ pub(crate) struct ClientState {
     pub(crate) name: String,
     /// The single workspace folder.
     pub(crate) folder: WorkspaceFolder,
-    /// The spec's `settings`, answering `workspace/configuration`.
-    pub(crate) settings: Value,
+    /// The spec's `settings`, answering `workspace/configuration`; the
+    /// actor replaces them when they change.
+    pub(crate) settings: Rc<RefCell<Value>>,
     /// Where the loop counts the actor's requests it has taken.
     pub(crate) queue: Rc<Queue>,
     /// Keeps the main loop's event channel open for as long as the loop
@@ -38,10 +40,11 @@ pub(crate) fn client_router(state: ClientState) -> Router<ClientState> {
         .request::<WorkDoneProgressCreate, _>(|_, _| ready(Ok(())))
         .request::<WorkspaceFoldersRequest, _>(|st, ()| ready(Ok(Some(vec![st.folder.clone()]))))
         .request::<WorkspaceConfiguration, _>(|st, params| {
+            let settings = st.settings.borrow();
             let answers = params
                 .items
                 .iter()
-                .map(|item| section(&st.settings, item.section.as_deref()))
+                .map(|item| section(&settings, item.section.as_deref()))
                 .collect();
             ready(Ok(answers))
         })

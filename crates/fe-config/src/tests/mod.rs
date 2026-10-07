@@ -1,4 +1,5 @@
 mod layers;
+mod lsp;
 mod settings;
 mod watch;
 mod watch_late;

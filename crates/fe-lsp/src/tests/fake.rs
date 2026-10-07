@@ -22,7 +22,7 @@ use std::collections::HashMap;
 use std::io;
 use std::marker::PhantomData;
 use std::ops::ControlFlow;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::task::{Context, Poll, Waker, ready};
@@ -159,6 +159,10 @@ pub struct Replica {
     pub saves: Vec<Saved>,
     /// Until `didClose`.
     pub open: bool,
+    /// The launch that opened it: each launch is a server of its own, so
+    /// another's notifications don't apply to it, and its `didOpen`
+    /// replaces it.
+    pub launch: usize,
 }
 
 /// A `didSave` as the fake got it.
@@ -254,7 +258,13 @@ struct State {
     /// Each with the launch it belongs to.
     records: Vec<(usize, Record)>,
     launch_threads: Vec<Option<String>>,
+    /// What each launch was asked to start, and where.
+    launched: Vec<(ServerSpec, PathBuf)>,
     kills: usize,
+    /// While set, a kill closes the transport but the exit waits in
+    /// `killed` until [`FakeServer::hold_kills`] clears it.
+    hold_kills: bool,
+    killed: Vec<ExitSender>,
     /// Every launch, in order: launch `n` is `sessions[n - 1]`.
     sessions: Vec<Launched>,
     writes: Writes,
@@ -299,6 +309,12 @@ fn send_exit(sender: &ExitSender, exit: ExitInfo) {
 
 const WAIT: Duration = Duration::from_secs(10);
 
+/// How a killed launch exits.
+const KILLED: ExitInfo = ExitInfo {
+    code: None,
+    signal: Some(9),
+};
+
 impl FakeServer {
     /// A fake whose delays are real time.
     pub fn new(script: Script) -> Self {
@@ -313,7 +329,10 @@ impl FakeServer {
                     script,
                     records: Vec::new(),
                     launch_threads: Vec::new(),
+                    launched: Vec::new(),
                     kills: 0,
+                    hold_kills: false,
+                    killed: Vec::new(),
                     sessions: Vec::new(),
                     writes: Writes::Open,
                     held: Vec::new(),
@@ -339,6 +358,11 @@ impl FakeServer {
     /// Everything recorded, across launches.
     pub fn records(&self) -> Vec<Record> {
         records(&self.lock(), None)
+    }
+
+    /// Everything recorded, in order, each with its launch.
+    pub fn timeline(&self) -> Vec<(usize, Record)> {
+        self.lock().records.clone()
     }
 
     /// What launch `launch` (from 1) recorded.
@@ -406,9 +430,32 @@ impl FakeServer {
         });
     }
 
+    /// The spec and root each launch was given, in order.
+    pub fn launched(&self) -> Vec<(ServerSpec, PathBuf)> {
+        self.lock().launched.clone()
+    }
+
     /// The name of the thread each launch ran on.
     pub fn launch_threads(&self) -> Vec<Option<String>> {
         self.lock().launch_threads.clone()
+    }
+
+    /// While `hold` is set, a killed launch closes its transport at once
+    /// but exits only when this is called again with `false`, as a process
+    /// takes a while to go after `SIGKILL`.
+    pub fn hold_kills(&self, hold: bool) {
+        let killed = {
+            let mut state = self.lock();
+            state.hold_kills = hold;
+            if hold {
+                Vec::new()
+            } else {
+                std::mem::take(&mut state.killed)
+            }
+        };
+        for exit in killed {
+            send_exit(&exit, KILLED);
+        }
     }
 
     /// How many times the client killed it.
@@ -505,7 +552,16 @@ impl FakeServer {
     /// Sends a request to the client, from the latest launch, and blocks
     /// for its answer, as JSON.
     pub fn request<R: Request>(&self, params: R::Params) -> Result<Value, FakeError> {
-        let socket = self.socket();
+        self.request_at::<R>(self.launches(), params)
+    }
+
+    /// As [`request`](Self::request), from launch `launch`.
+    pub fn request_at<R: Request>(
+        &self,
+        launch: usize,
+        params: R::Params,
+    ) -> Result<Value, FakeError> {
+        let socket = self.lock().sessions[launch - 1].socket.clone();
         let reply = async move { socket.request::<Raw<R>>(params).await }.fuse();
         // A watchdog for the test, so real time whatever the fake's clock.
         let timeout = SystemClock.sleep(WAIT).fuse();
@@ -591,7 +647,7 @@ impl FakeServer {
     fn record_notification(&self, launch: usize, method: &str, params: &Value) {
         let mut state = self.lock();
         let utf16 = !negotiated_utf8(&state.script);
-        if let Err(err) = apply(&mut state.documents, method, params, utf16) {
+        if let Err(err) = apply(&mut state.documents, launch, method, params, utf16) {
             state.sync_errors.push(format!("{method}: {err}"));
         }
         state.records.push((
@@ -620,6 +676,7 @@ fn negotiated_utf8(script: &Script) -> bool {
 /// ignored.
 fn apply(
     documents: &mut HashMap<Url, Replica>,
+    launch: usize,
     method: &str,
     params: &Value,
     utf16: bool,
@@ -630,16 +687,20 @@ fn apply(
     fn open<'a>(
         documents: &'a mut HashMap<Url, Replica>,
         uri: &Url,
+        launch: usize,
     ) -> Result<&'a mut Replica, String> {
         documents
             .get_mut(uri)
-            .filter(|replica| replica.open)
+            .filter(|replica| replica.open && replica.launch == launch)
             .ok_or_else(|| format!("{uri} isn't open"))
     }
     match method {
         "textDocument/didOpen" => {
             let DidOpenTextDocumentParams { text_document } = parse(params)?;
-            if documents.get(&text_document.uri).is_some_and(|r| r.open) {
+            if documents
+                .get(&text_document.uri)
+                .is_some_and(|r| r.open && r.launch == launch)
+            {
                 return Err(format!("{} is already open", text_document.uri));
             }
             documents.insert(
@@ -650,6 +711,7 @@ fn apply(
                     text: text_document.text,
                     saves: Vec::new(),
                     open: true,
+                    launch,
                 },
             );
         }
@@ -658,7 +720,7 @@ fn apply(
                 text_document,
                 content_changes,
             } = parse(params)?;
-            let replica = open(documents, &text_document.uri)?;
+            let replica = open(documents, &text_document.uri, launch)?;
             if text_document.version <= replica.version {
                 return Err(format!(
                     "version {} after {}",
@@ -684,7 +746,7 @@ fn apply(
                 text_document,
                 text,
             } = parse(params)?;
-            let replica = open(documents, &text_document.uri)?;
+            let replica = open(documents, &text_document.uri, launch)?;
             replica.saves.push(Saved {
                 version: replica.version,
                 text,
@@ -692,7 +754,7 @@ fn apply(
         }
         "textDocument/didClose" => {
             let DidCloseTextDocumentParams { text_document } = parse(params)?;
-            open(documents, &text_document.uri)?.open = false;
+            open(documents, &text_document.uri, launch)?.open = false;
         }
         _ => {}
     }
@@ -769,7 +831,7 @@ pub struct FakeLauncher {
 }
 
 impl ServerLauncher for FakeLauncher {
-    fn launch(&self, spec: &ServerSpec, _root: &Path) -> io::Result<ServerIo> {
+    fn launch(&self, spec: &ServerSpec, root: &Path) -> io::Result<ServerIo> {
         let (client_reads, server_writes) = pipe();
         let (server_reads, client_writes) = pipe();
         let (exit, exited) = oneshot::channel();
@@ -783,6 +845,7 @@ impl ServerLauncher for FakeLauncher {
         state
             .launch_threads
             .push(thread::current().name().map(str::to_owned));
+        state.launched.push((spec.clone(), root.to_owned()));
         state.sessions.push(session.clone());
         drop(state);
         let ended = session.exit.clone();
@@ -833,11 +896,16 @@ impl ServerProcess for FakeProcess {
     }
 
     fn kill(&mut self) {
-        self.fake.lock().kills += 1;
-        self.session.end(ExitInfo {
-            code: None,
-            signal: Some(9),
-        });
+        let mut state = self.fake.lock();
+        state.kills += 1;
+        if state.hold_kills {
+            state.killed.push(self.session.exit.clone());
+            drop(state);
+            let _ = self.session.socket.emit(Stop);
+            return;
+        }
+        drop(state);
+        self.session.end(KILLED);
     }
 }
 

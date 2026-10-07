@@ -22,8 +22,12 @@
 //! - Every open it performs activates its identity first (identity.rs),
 //!   and when the session ends, however it ends, its identities are
 //!   retired before anything else is reported.
+//! - However the session ends, the documents the manager routed to it
+//!   ([`Routes`]), open or still queued, go on to wherever the manager now
+//!   places them: another server (a restart's new instance), or its lot
+//!   to wait. The rest are dropped.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -43,14 +47,14 @@ use futures::stream::FuturesUnordered;
 use futures::{
     AsyncRead, AsyncReadExt, AsyncWrite, Future, FutureExt, StreamExt, pin_mut, select_biased,
 };
-use lsp_types::notification::{Exit, Initialized};
+use lsp_types::notification::{DidChangeConfiguration, Exit, Initialized};
 use lsp_types::request::{Initialize, Request, Shutdown};
 use lsp_types::{
     ClientCapabilities, ClientInfo, CompletionClientCapabilities, CompletionItemCapability,
-    CompletionItemCapabilityResolveSupport, DiagnosticTag, DynamicRegistrationClientCapabilities,
-    GeneralClientCapabilities, GotoCapability, HoverClientCapabilities, InitializeParams,
-    InitializeResult, InitializedParams, MarkupKind, PositionEncodingKind,
-    PublishDiagnosticsClientCapabilities, ServerCapabilities, TagSupport,
+    CompletionItemCapabilityResolveSupport, DiagnosticTag, DidChangeConfigurationParams,
+    DynamicRegistrationClientCapabilities, GeneralClientCapabilities, GotoCapability,
+    HoverClientCapabilities, InitializeParams, InitializeResult, InitializedParams, MarkupKind,
+    PositionEncodingKind, PublishDiagnosticsClientCapabilities, ServerCapabilities, TagSupport,
     TextDocumentClientCapabilities, TextDocumentSyncClientCapabilities, Url,
     WindowClientCapabilities, WorkspaceClientCapabilities, WorkspaceFolder,
     WorkspaceSymbolClientCapabilities,
@@ -118,9 +122,66 @@ pub(crate) enum Command {
         version: Version,
         admit: Admit,
     },
+    /// New `settings` for the spec: they answer `workspace/configuration`
+    /// from now on, and `workspace/didChangeConfiguration` carries them.
+    Configure(serde_json::Value),
     /// The LSP and buffer versions in a document's ring.
     #[cfg(test)]
     Ring(BufferId, oneshot::Sender<Vec<(i32, Version)>>),
+}
+
+/// Where routed documents are, shared by the manager and every server
+/// thread behind one mutex. The manager updates a document's place before
+/// it stops the server holding it, and an ending server closes its command
+/// channel before it takes what's queued there. So a document forwarded to
+/// a server that has since stopped either lands in its queue in time to be
+/// forwarded again, or fails to send and goes where its place now says.
+pub(crate) type Routes = Arc<Mutex<Places>>;
+
+#[derive(Default)]
+pub(crate) struct Places {
+    /// Where each document [`LspManager::open`](crate::LspManager::open)
+    /// routed is, or is going. A document not here isn't forwarded.
+    pub(crate) places: HashMap<BufferId, Place>,
+    /// Documents waiting for a server, as openings at the text last
+    /// drained.
+    pub(crate) lot: HashMap<BufferId, Opening>,
+}
+
+#[derive(Clone)]
+pub(crate) enum Place {
+    /// Synced to this server, or on its way there.
+    Server(ServerId, mpsc::UnboundedSender<Command>),
+    /// Waiting in the lot, or on its way there.
+    Waiting,
+}
+
+impl Places {
+    /// Sends each of `openings` still current where its place says: to its
+    /// server, or, if that has gone (its place then says it waits) or it has
+    /// none, to the lot. One with no place is dropped.
+    pub(crate) fn forward(&mut self, identities: &Identities, openings: Vec<Opening>) {
+        for opening in openings {
+            if !identities.is_current(opening.buffer, opening.generation) {
+                continue;
+            }
+            let opening = match self.places.get(&opening.buffer) {
+                None => continue,
+                Some(Place::Waiting) => opening,
+                Some(Place::Server(_, commands)) => {
+                    match commands.unbounded_send(Command::Open(Box::new(opening))) {
+                        Ok(()) => continue,
+                        Err(err) => match err.into_inner() {
+                            Command::Open(opening) => *opening,
+                            _ => continue,
+                        },
+                    }
+                }
+            };
+            self.places.insert(opening.buffer, Place::Waiting);
+            self.lot.insert(opening.buffer, opening);
+        }
+    }
 }
 
 /// The event the actor queues behind each request or notification it hands
@@ -165,6 +226,31 @@ pub(crate) struct Session {
     pub(crate) encoding: Option<PositionEncoding>,
 }
 
+/// Resolves when a server thread has ended.
+pub(crate) type Done = futures::future::Shared<oneshot::Receiver<()>>;
+
+/// Holds a server thread's command receiver until its actor takes it, and
+/// hands its queued documents on if the thread ends before (a panic, say).
+struct Unhanded {
+    commands: Option<mpsc::UnboundedReceiver<Command>>,
+    routes: Routes,
+    identities: Identities,
+}
+
+impl Unhanded {
+    fn hand_over(&mut self) {
+        if let Some(mut commands) = self.commands.take() {
+            hand_over(&mut commands, Vec::new(), &self.routes, &self.identities);
+        }
+    }
+}
+
+impl Drop for Unhanded {
+    fn drop(&mut self) {
+        self.hand_over();
+    }
+}
+
 /// Everything a server thread starts with.
 pub(crate) struct Server {
     pub(crate) id: ServerId,
@@ -181,6 +267,13 @@ pub(crate) struct Server {
     /// Resolves (either way) when the manager wants the server stopped.
     /// Apart from the commands, so a stream of requests can't delay it.
     pub(crate) stop: oneshot::Receiver<()>,
+    pub(crate) routes: Routes,
+    /// Resolves when the thread of the instance this one replaces (same
+    /// name and root) has ended, its process gone: nothing is launched
+    /// before.
+    pub(crate) after: Option<Done>,
+    /// Dropped when this thread ends, for the instance replacing it.
+    pub(crate) done: Option<oneshot::Sender<()>>,
 }
 
 impl Server {
@@ -190,7 +283,8 @@ impl Server {
             .spawn(move || self.run())
     }
 
-    fn run(self) {
+    fn run(mut self) {
+        let _done = self.done.take();
         let status = StatusSink {
             id: self.id,
             name: self.spec.name.clone(),
@@ -209,33 +303,66 @@ impl Server {
             name: self.spec.name.clone(),
             sink: self.sink.clone(),
         };
+        let mut unhanded = Unhanded {
+            commands: Some(self.commands),
+            routes: self.routes.clone(),
+            identities: self.identities.clone(),
+        };
         status.send(ServerStatus::Starting);
+        if let Some(after) = self.after.take() {
+            // A stop first: one that came while waiting wins over the end.
+            let waited = async_io::block_on(futures::future::select(&mut self.stop, after));
+            if let Either::Left((_, after)) = waited {
+                // Stopped before it launched. Whatever replaces it must still
+                // wait for the one before, so this thread ends after that.
+                unhanded.hand_over();
+                status.send(ServerStatus::Stopped(None));
+                let _ = async_io::block_on(after);
+                return;
+            }
+        }
         let folder = match workspace_folder(&self.root) {
             Ok(folder) => folder,
             Err(err) => {
-                self.commands.close();
+                unhanded.hand_over();
                 return status.send(ServerStatus::Stopped(Some(err)));
             }
         };
+        // A stop that came after the wait, or with none to wait for, wins
+        // too: nothing is launched for a spec already replaced.
+        if !matches!(self.stop.try_recv(), Ok(None)) {
+            unhanded.hand_over();
+            return status.send(ServerStatus::Stopped(None));
+        }
         let ServerIo {
             input,
             output,
             stderr,
-            process,
+            mut process,
         } = match self.launcher.launch(&self.spec, &self.root) {
             Ok(io) => io,
             Err(err) => {
-                self.commands.close();
+                unhanded.hand_over();
                 return status.send(ServerStatus::Stopped(Some(err.to_string())));
             }
         };
+        // A stop that came while it launched (which may block: a login
+        // shell, a container): nothing has been sent to it yet, so it's
+        // killed rather than initialized, and its successor needn't wait
+        // for an `initialize` answer first.
+        if !matches!(self.stop.try_recv(), Ok(None)) {
+            async_io::block_on(kill(&mut *process));
+            unhanded.hand_over();
+            return status.send(ServerStatus::Stopped(None));
+        }
 
         let queue = Rc::new(Queue::default());
+        let settings = Rc::new(RefCell::new(self.spec.settings.clone()));
         let (main_loop, socket) = MainLoop::new_client(|socket| {
             client_router(ClientState {
                 name: self.spec.name.clone(),
                 folder: folder.clone(),
-                settings: self.spec.settings.clone(),
+                settings: settings.clone(),
                 queue: queue.clone(),
                 _socket: socket,
             })
@@ -275,12 +402,13 @@ impl Server {
             _end: EndSession(self.identities.clone(), self.session_id),
             status,
             spec: self.spec,
+            settings,
             folder,
             clock: self.clock,
             session: self.session,
             socket,
-            commands: self.commands,
             stop: self.stop,
+            routes: self.routes,
             next_id: 0,
             queue,
             sent: 0,
@@ -299,6 +427,9 @@ impl Server {
             tick: None,
             drain_due: false,
             stopping: false,
+            // Last, so nothing can panic between the hand from `unhanded`
+            // to the actor, which hands queued documents on when dropped.
+            commands: unhanded.commands.take().expect("not handed over"),
         };
         async_io::block_on(futures::future::join3(
             main_loop,
@@ -334,12 +465,15 @@ struct Actor {
     _end: EndSession,
     status: StatusSink,
     spec: ServerSpec,
+    /// The spec's `settings` as they are now, shared with the router.
+    settings: Rc<RefCell<serde_json::Value>>,
     folder: WorkspaceFolder,
     clock: Arc<dyn Clock>,
     session: Arc<Mutex<Session>>,
     socket: ServerSocket,
     commands: mpsc::UnboundedReceiver<Command>,
     stop: oneshot::Receiver<()>,
+    routes: Routes,
     /// The id async-lsp gives the next request.
     next_id: i32,
     queue: Rc<Queue>,
@@ -362,6 +496,13 @@ struct Actor {
     drain_due: bool,
     /// The manager asked for a stop.
     stopping: bool,
+}
+
+/// However the actor ends, a panic included, its documents go on.
+impl Drop for Actor {
+    fn drop(&mut self) {
+        self.hand_over();
+    }
 }
 
 enum Started {
@@ -390,11 +531,11 @@ impl Actor {
         match self.initialize(&mut loop_done).await {
             Started::Running => {}
             Started::Stopped => {
-                process.kill();
+                kill(&mut *process).await;
                 return self.stopped(None);
             }
             Started::Failed(why) => {
-                process.kill();
+                kill(&mut *process).await;
                 return self.stopped(Some(why));
             }
         }
@@ -418,7 +559,17 @@ impl Actor {
                 Step::Next(Next::Out(Outgoing::Note(note))) => self.notify(note),
                 Step::Next(Next::Out(Outgoing::Request(issue))) => self.issue(issue),
                 Step::Next(Next::Command(Some(command))) => self.command(command),
-                Step::Next(Next::Command(None)) | Step::Stop => break,
+                Step::Stop => {
+                    self.hand_over();
+                    break;
+                }
+                // Every sender gone means the manager retired it (its stop
+                // is on its way) or has gone itself: a stop either way.
+                Step::Next(Next::Command(None)) => {
+                    log::debug!("{}: its commands ended", self.spec.name);
+                    self.hand_over();
+                    break;
+                }
                 Step::Next(Next::DrainAll) => {
                     self.drain_due = false;
                     let ids: Vec<BufferId> = self.documents.keys().copied().collect();
@@ -433,7 +584,7 @@ impl Actor {
                 }
                 Step::Answered => {}
                 Step::LoopEnded(ended) => {
-                    process.kill();
+                    kill(&mut *process).await;
                     let why = format!("{} stopped: {}", self.spec.name, loop_end(ended));
                     return self.stopped(Some(why));
                 }
@@ -473,6 +624,11 @@ impl Actor {
             Command::Request(issue) => self.issue(issue),
             Command::Open(opening) => {
                 let buffer = opening.buffer;
+                // A stale open (one handed over late, say) must not replace
+                // the document a newer open made.
+                if !self.link.identities.is_current(buffer, opening.generation) {
+                    return;
+                }
                 // The manager closes a buffer before opening it again, so
                 // its document has gone by now; replace it if it hasn't.
                 if let Some(old) = self.documents.remove(&buffer) {
@@ -503,12 +659,47 @@ impl Actor {
                     self.link.outbox.push_back(Outgoing::Request(issue));
                 }
             }
+            Command::Configure(settings) => {
+                self.settings.replace(settings.clone());
+                // If the loop has gone, `loop_done` says so.
+                let _ = self
+                    .socket
+                    .notify::<DidChangeConfiguration>(DidChangeConfigurationParams { settings });
+                let _ = self.socket.emit(Taken);
+                self.sent += 1;
+            }
             #[cfg(test)]
             Command::Ring(buffer, answer) => {
                 let ring = self.documents.get(&buffer).map(Document::ring);
                 let _ = answer.send(ring.unwrap_or_default());
             }
         }
+    }
+
+    /// Forwards the routed documents, open or still queued, to where the
+    /// manager now places them ([`Routes`]), at the text drained so far:
+    /// what the buffer did since waits in its subscription for the next
+    /// server's drains. Closes the command channel first, and takes every
+    /// command still in it; the others are dropped with the session.
+    fn hand_over(&mut self) {
+        let mut openings: Vec<Opening> = self
+            .documents
+            .drain()
+            .map(|(_, document)| document.into_opening())
+            .collect();
+        // Opened later than those, so they go after them.
+        openings.extend(self.backlog.drain(..).filter_map(|command| match command {
+            Command::Open(opening) => Some(*opening),
+            _ => None,
+        }));
+        self.tick = None;
+        self.drain_due = false;
+        hand_over(
+            &mut self.commands,
+            openings,
+            &self.routes,
+            &self.link.identities,
+        );
     }
 
     fn drain(&mut self, buffer: BufferId) {
@@ -566,7 +757,10 @@ impl Actor {
         let result = loop {
             select_biased! {
                 result = reply => break result,
-                _ = &mut self.stop => self.stopping = true,
+                _ = &mut self.stop => {
+                    self.stopping = true;
+                    self.hand_over();
+                }
                 ended = &mut *loop_done => {
                     return failed(self.stopping, format!(
                         "{} stopped before answering initialize: {}",
@@ -582,8 +776,17 @@ impl Actor {
                     ));
                 }
                 command = self.commands.next() => match command {
+                    // So a configuration request during the start gets
+                    // them; the notification waits.
+                    Some(Command::Configure(settings)) => {
+                        self.settings.replace(settings.clone());
+                        self.backlog.push_back(Command::Configure(settings));
+                    }
                     Some(command) => self.backlog.push_back(command),
-                    None => self.stopping = true,
+                    None => {
+                        self.stopping = true;
+                        self.hand_over();
+                    }
                 },
             }
             budget.spend().await;
@@ -651,6 +854,8 @@ impl Actor {
     /// then `kill`. Whatever the server does after `exit` (a non-zero code,
     /// closing its output) is a normal stop.
     async fn shutdown(&mut self, process: &mut dyn ServerProcess) {
+        // However it came to stop, its documents go on first.
+        self.hand_over();
         self.link.identities.end_session(self.link.session);
         // Callers of requests in flight or kept back get `ServerDown` now,
         // and those of requests still unread once the session is over.
@@ -695,7 +900,7 @@ impl Actor {
                 self.spec.name,
                 EXIT_TIMEOUT.as_secs(),
             );
-            process.kill();
+            kill(process).await;
         }
         self.stopped(None);
     }
@@ -703,9 +908,51 @@ impl Actor {
     /// Reports the session over. The manager sees the command channel
     /// closed first, so a `start` prompted by this status starts afresh.
     fn stopped(&mut self, why: Option<String>) {
+        // A session ending on its own (a failed start, a crash) hands its
+        // documents back too.
+        self.hand_over();
         self.link.identities.end_session(self.link.session);
-        self.commands.close();
         self.status.send(ServerStatus::Stopped(why));
+    }
+}
+
+/// Kills `process` and waits until it has gone, so the instance replacing
+/// it never runs beside it. [`ServerProcess::exited`] must resolve once a
+/// killed process has gone.
+async fn kill(process: &mut dyn ServerProcess) {
+    process.kill();
+    process.exited().await;
+}
+
+/// Closes `commands`, then forwards `openings` and every opening still
+/// queued there, after them, as [`Places::forward`] does.
+///
+/// It takes commands until the channel has ended, not just until it's
+/// empty: a send the channel counted before the close may still be on its
+/// way into the queue, and an open there would be dropped with the
+/// receiver. Sends the close comes before fail, and their documents wait.
+fn hand_over(
+    commands: &mut mpsc::UnboundedReceiver<Command>,
+    mut openings: Vec<Opening>,
+    routes: &Routes,
+    identities: &Identities,
+) {
+    commands.close();
+    loop {
+        match commands.try_recv() {
+            Ok(Command::Open(opening)) => openings.push(*opening),
+            Ok(_) => {}
+            Err(mpsc::TryRecvError::Closed) => break,
+            // Another thread is part-way through a send, as futures'
+            // receiver waits for when it's dropped.
+            Err(mpsc::TryRecvError::Empty) => thread::yield_now(),
+        }
+    }
+    if !openings.is_empty() {
+        routes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .forward(identities, openings);
     }
 }
 
@@ -768,7 +1015,9 @@ enum Next {
     Out(Outgoing),
     /// Drain every document: a backstop tick came.
     DrainAll,
-    /// `None` once the manager has gone.
+    /// `None` once every sender has gone: the manager retired the server
+    /// (its places point elsewhere, and its stop is on its way) or has
+    /// gone itself.
     Command(Option<Command>),
 }
 

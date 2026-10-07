@@ -223,6 +223,21 @@ pub(crate) struct Opening {
     pub(crate) max_bytes: usize,
 }
 
+impl Opening {
+    /// Brings the opening up to the buffer's latest edit, so a document
+    /// waiting for a server doesn't keep a queue of events.
+    pub(crate) fn catch_up(&mut self) {
+        for event in self.subscription.0.take_events() {
+            if let BufferEvent::Edited { to, text, .. } = event
+                && to > self.version
+            {
+                self.text = text;
+                self.version = to;
+            }
+        }
+    }
+}
+
 /// The LSP `languageId` for a buffer of fe-syntax's `language` (§3.2): a
 /// fixed table, with `.jsx` files told apart from plain JavaScript by
 /// their extension. Other languages pass their name through.
@@ -382,6 +397,22 @@ impl Document {
 
     fn oversized(&self) -> bool {
         self.text.len() > self.max_bytes
+    }
+
+    /// The document as an opening for another server, at the text drained
+    /// so far: the subscription keeps what the buffer did since. Its
+    /// session is ending, which retires its identity.
+    pub(crate) fn into_opening(self) -> Opening {
+        Opening {
+            buffer: self.buffer,
+            text: self.text,
+            version: self.at,
+            subscription: self.subscription,
+            uri: self.uri,
+            language_id: self.language_id,
+            generation: self.generation,
+            max_bytes: self.max_bytes,
+        }
     }
 
     /// Activates a new incarnation and queues its `didOpen`. False if the
