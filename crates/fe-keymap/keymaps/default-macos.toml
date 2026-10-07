@@ -460,3 +460,63 @@ context = "project_panel"
 keys = "enter"
 command = "project_panel.open"
 context = "project_panel"
+
+# Vim's layer, last so that it wins over the plain editor's bindings in the
+# same frame. In normal mode the arrows are vim's motions (`h l k j`), and the
+# editing keys are vim's (`vim.key` hands the keystroke to vim) rather than
+# the editor's. Vim's ctrl keys need no binding: no `ctrl-` binding applies
+# in the editor, so they reach vim unmatched.
+
+[[bindings]]
+keys = "left"
+command = "vim.move"
+args = { motion = "left" }
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "right"
+command = "vim.move"
+args = { motion = "right" }
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "up"
+command = "vim.move"
+args = { motion = "up" }
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "down"
+command = "vim.move"
+args = { motion = "down" }
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "enter"
+command = "vim.key"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "tab"
+command = "vim.key"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "backspace"
+command = "vim.key"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "shift-backspace"
+command = "vim.key"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "delete"
+command = "vim.key"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "alt-backspace"
+command = "vim.key"
+context = "editor && vim.mode == normal"

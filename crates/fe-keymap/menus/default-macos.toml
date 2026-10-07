@@ -146,6 +146,10 @@ title = "Soft Wrap"
 command = "editor.toggle_soft_wrap"
 
 [[menus.items]]
+title = "Toggle Vim Mode"
+command = "vim.toggle"
+
+[[menus.items]]
 separator = true
 
 [[menus.items]]

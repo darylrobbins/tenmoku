@@ -520,15 +520,37 @@ impl Element for EditorElement {
         let view = self.view.read(cx);
         let theme = view.theme.clone();
         let focus = view.focus.clone();
-        let layout = layout.take().expect("prepaint ran");
+        let accepts_text = view.accepts_text();
+        let mut layout = layout.take().expect("prepaint ran");
+        let block = view.block_cursor();
+        let carets: Vec<_> = match focus.is_focused(window) {
+            false => Vec::new(),
+            true if block => {
+                let text = view.model.text();
+                let heads = view.model.selections().into_iter().map(|s| s.head());
+                block_carets(&mut layout, text, heads)
+            }
+            true => layout
+                .frame
+                .cursors
+                .iter()
+                .map(|&cursor| layout.bounds(cursor))
+                .collect(),
+        };
         let frame = &layout.frame;
         let line_height = px(frame.line_height);
+        #[cfg(test)]
+        let mut painted = Vec::new();
 
-        window.handle_input(
-            &focus,
-            ElementInputHandler::new(bounds, self.view.clone()),
-            cx,
-        );
+        // In vim's normal mode nothing types: neither keys nor an input
+        // method insert text.
+        if accepts_text {
+            window.handle_input(
+                &focus,
+                ElementInputHandler::new(bounds, self.view.clone()),
+                cx,
+            );
+        }
         window.with_content_mask(Some(ContentMask { bounds }), |window| {
             window.paint_quad(fill(bounds, theme.background));
             for &line in &frame.active_lines {
@@ -543,6 +565,14 @@ impl Element for EditorElement {
                     for &selection in &frame.selections {
                         window.paint_quad(fill(layout.bounds(selection), theme.selection));
                     }
+                    // Under the text, so the glyph stays readable.
+                    if block {
+                        for &caret in &carets {
+                            window.paint_quad(fill(caret, theme.cursor.opacity(BLOCK_ALPHA)));
+                            #[cfg(test)]
+                            painted.push(caret);
+                        }
+                    }
                     for row in &frame.rows {
                         let origin = layout.to_window(frame.line_origin(row));
                         row.line.paint(origin, line_height, window, cx);
@@ -555,9 +585,11 @@ impl Element for EditorElement {
                         });
                         marker.line.paint(origin, line_height, window, cx);
                     }
-                    if focus.is_focused(window) {
-                        for &cursor in &frame.cursors {
-                            window.paint_quad(fill(layout.bounds(cursor), theme.cursor));
+                    if !block {
+                        for &caret in &carets {
+                            window.paint_quad(fill(caret, theme.cursor));
+                            #[cfg(test)]
+                            painted.push(caret);
                         }
                     }
                 },
@@ -589,8 +621,65 @@ impl Element for EditorElement {
         self.view.update(cx, |view, _| {
             view.layout = Some(layout);
             view.frame_timings.record(timing);
+            #[cfg(test)]
+            {
+                view.painted_carets = painted;
+            }
         });
     }
+}
+
+/// How opaque a block cursor is, over the cursor colour.
+const BLOCK_ALPHA: f32 = 0.6;
+
+/// Vim's normal-mode cursor at each of `heads` on screen: a block over the
+/// grapheme after it, to the next grapheme boundary on its display row, or
+/// one space wide at a line's end.
+fn block_carets(
+    layout: &mut FrameLayout,
+    text: &Text,
+    heads: impl Iterator<Item = usize>,
+) -> Vec<Bounds<Pixels>> {
+    let FrameLayout {
+        frame,
+        long_rows,
+        glyph_widths,
+        ..
+    } = layout;
+    let mut blocks = Vec::new();
+    for head in heads {
+        let (Some(row), Some(bar)) = (
+            frame.row_containing(head),
+            frame.caret_bounds(head, long_rows, glyph_widths),
+        ) else {
+            continue;
+        };
+        let line = text.offset_to_point(head).row;
+        let line_end = text.row_start(line) + text.row_len(line) as usize;
+        // Measured on the head's row: a wrap point's caret is on the next.
+        let end = next_grapheme(text, head, row.end.min(line_end))
+            .map(|next| frame.view_x(row.x_for_offset(next, long_rows, glyph_widths)))
+            .filter(|&end| end > bar.x);
+        let width = end.map_or_else(|| glyph_widths.char_width(' '), |end| end - bar.x);
+        blocks.push(Rect { width, ..bar });
+    }
+    blocks.into_iter().map(|rect| layout.bounds(rect)).collect()
+}
+
+/// The grapheme boundary after `offset`, if it's before `line_end`. A
+/// cluster longer than [`MAX_CLUSTER_BYTES`] ends there.
+fn next_grapheme(text: &Text, offset: usize, line_end: usize) -> Option<usize> {
+    use unicode_segmentation::UnicodeSegmentation as _;
+    if offset >= line_end {
+        return None;
+    }
+    let end = text.clip_offset(
+        (offset + MAX_CLUSTER_BYTES).min(line_end),
+        fe_buffer::Bias::Left,
+    );
+    let slice = text.slice_to_string(offset..end);
+    let grapheme = slice.graphemes(true).next()?;
+    Some(offset + grapheme.len())
 }
 
 /// The buffer rows in `rows` that head a fold candidate of the syntax tree.

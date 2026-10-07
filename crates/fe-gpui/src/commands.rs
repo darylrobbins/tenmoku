@@ -15,7 +15,7 @@ use fe_keymap::{CatalogError, CommandCatalog};
 use fe_syntax::Syntax;
 use gpui::{Action, App, ClipboardItem, Context, Global, Window};
 
-use crate::{EditorView, view::synced_syntax};
+use crate::{EditorView, view::synced_syntax, vim};
 
 /// Runs a command: the one GPUI action every binding dispatches.
 #[derive(Clone, Debug, PartialEq, Action)]
@@ -53,10 +53,12 @@ thread_local! {
 type AppCommand = fn(&mut App);
 
 /// The app commands, in no context. The window ones act on the active
-/// window, and do nothing without one.
+/// window, and do nothing without one. `vim.key` does nothing when
+/// dispatched: a binding to it hands its keystroke to vim instead
+/// ([`crate::vim`]).
 fn app_registry() -> Registry<AppCommands> {
     let mut app = Registry::new();
-    let commands: [(&str, &str, AppCommand); 8] = [
+    let commands: [(&str, &str, AppCommand); 10] = [
         ("app.quit", "Quit", |cx| cx.quit()),
         ("app.hide", "Hide fastedit", |cx| cx.hide()),
         ("app.hide_others", "Hide Others", |cx| cx.hide_other_apps()),
@@ -73,6 +75,11 @@ fn app_registry() -> Registry<AppCommands> {
         ("window.close", "Close Window", |cx| {
             on_active_window(cx, |window| window.remove_window())
         }),
+        (vim::TOGGLE, "Toggle Vim Mode", |cx| {
+            let enabled = vim::vim_enabled(cx);
+            vim::set_vim_enabled(cx, !enabled)
+        }),
+        (vim::KEY, "Vim Key", |_| {}),
     ];
     for (id, title, run) in commands {
         app.register(id, title, move |cx: &mut &mut App, _: &Actor| {
@@ -95,25 +102,31 @@ fn on_active_window(cx: &mut App, f: fn(&mut Window)) {
     }
 }
 
-/// The editor's and the app's commands, to check keymap bindings against:
-/// pass it to [`fe_keymap::KeymapStore::load`].
+/// The editor's, vim's and the app's commands, to check keymap bindings
+/// against: pass it to [`fe_keymap::KeymapStore::load`].
 pub fn command_catalog() -> Box<dyn CommandCatalog> {
     Box::new(Catalog {
         editor: EDITOR_COMMANDS.with(Rc::clone),
+        vim: vim::registry(),
         app: app_registry(),
     })
 }
 
 struct Catalog {
     editor: Rc<Registry<Editor>>,
+    vim: Rc<Registry<fe_vim::VimCommands>>,
     app: Registry<AppCommands>,
 }
 
-/// A command the editor doesn't know is checked against the app's.
+/// A command the editor doesn't know is checked against vim's, then the
+/// app's.
 impl CommandCatalog for Catalog {
     fn check(&self, command: &CommandId, args: &Value) -> Result<(), CatalogError> {
         match self.editor.check(command, args) {
-            Err(CatalogError::UnknownCommand) => self.app.check(command, args),
+            Err(CatalogError::UnknownCommand) => match self.vim.check(command, args) {
+                Err(CatalogError::UnknownCommand) => self.app.check(command, args),
+                result => result,
+            },
             result => result,
         }
     }
@@ -146,7 +159,7 @@ pub fn observe_invocations(cx: &mut App, observer: impl Fn(&Invocation) + 'stati
         .push(Rc::new(observer));
 }
 
-fn notify_observers(invocation: &Invocation, cx: &App) {
+pub(crate) fn notify_observers(invocation: &Invocation, cx: &App) {
     if let Some(commands) = cx.try_global::<Commands>() {
         for observer in &commands.observers {
             observer(invocation);
@@ -172,11 +185,11 @@ pub(crate) fn dispatch_app(invocation: &Invocation, cx: &mut App) {
 
 /// The editor's side of a dispatch: the view's clipboard, viewport and
 /// syntax folds.
-struct ViewHost<'a> {
-    cx: &'a mut App,
-    page_rows: u32,
+pub(crate) struct ViewHost<'a> {
+    pub(crate) cx: &'a mut App,
+    pub(crate) page_rows: u32,
     /// The syntax tree, if it matches the text.
-    syntax: Option<&'a Syntax>,
+    pub(crate) syntax: Option<&'a Syntax>,
 }
 
 impl EditorHost for ViewHost<'_> {
@@ -218,14 +231,21 @@ impl EditorView {
     /// dispatched in, such as `[workbench, editor]` from a key or a menu,
     /// if the editor's frame is in it, or else the editor's frame alone. An
     /// ID the editor doesn't know propagates, still in that context, to the
-    /// app's commands.
+    /// app's commands. With vim on, vim's IDs run through its registry, the
+    /// editor's frame stamped from its vim state.
     fn run_command(&mut self, invocation: Invocation, cx: &mut Context<Self>) {
         let in_editor = ContextPredicate::identifier(fe_editor::commands::CONTEXT);
-        let invocation = if in_editor.eval(&invocation.context) {
+        let mut invocation = if in_editor.eval(&invocation.context) {
             invocation
         } else {
             invocation.context(fe_editor::commands::context())
         };
+        self.sync_vim(cx);
+        if self.vim.is_some() && vim::registry().get(&invocation.command).is_some() {
+            invocation.context = vim::stamp(invocation.context, self.vim.as_ref());
+            self.run_vim(&invocation, cx);
+            return;
+        }
         let registry = EDITOR_COMMANDS.with(Rc::clone);
         let page_rows = self.page_rows();
         let syntax = synced_syntax(&self.syntax, &self.model);
@@ -238,6 +258,31 @@ impl EditorView {
             &mut EditorTarget::new(&mut self.model, &mut host),
             &invocation,
         );
+        let mutates = registry
+            .get(&invocation.command)
+            .is_some_and(|meta| meta.mutates_buffer);
+        match self.dispatched(result, &invocation, mutates, cx) {
+            Ok(()) => {}
+            Err(DispatchError::UnknownCommand(_)) => {
+                cx.default_global::<Commands>().propagated = Some(invocation);
+                // In case no app handler takes it.
+                cx.defer(|cx| cx.default_global::<Commands>().propagated = None);
+                cx.propagate();
+            }
+            Err(error) => log::error!("{error}"),
+        }
+    }
+
+    /// Applies a dispatch's effect and tells the observers, or logs a
+    /// failed command; `mutates` is whether the command can edit. Returns
+    /// any other error.
+    pub(crate) fn dispatched<Tx>(
+        &mut self,
+        result: Result<Dispatched<Tx>, DispatchError>,
+        invocation: &Invocation,
+        mutates: bool,
+        cx: &mut Context<Self>,
+    ) -> Result<(), DispatchError> {
         match result {
             Ok(dispatched) => {
                 match dispatched.effect {
@@ -245,32 +290,24 @@ impl EditorView {
                     Effect::Notify => cx.notify(),
                     Effect::Nothing => {}
                 }
-                notify_observers(&invocation, cx);
-            }
-            Err(DispatchError::UnknownCommand(_)) => {
-                cx.default_global::<Commands>().propagated = Some(invocation);
-                // In case no app handler takes it.
-                cx.defer(|cx| cx.default_global::<Commands>().propagated = None);
-                cx.propagate();
+                notify_observers(invocation, cx);
             }
             Err(DispatchError::Failed {
-                command,
                 error: CommandError(message),
+                ..
             }) => {
                 log::error!("{message}");
                 // A failed edit, such as undo, may have moved the carets;
                 // a failed save only repaints.
-                if registry
-                    .get(&command)
-                    .is_some_and(|meta| meta.mutates_buffer)
-                {
+                if mutates {
                     self.changed(cx);
                 } else {
                     cx.notify();
                 }
             }
-            Err(error) => log::error!("{error}"),
+            Err(error) => return Err(error),
         }
+        Ok(())
     }
 
     /// Types `text` at every caret, as `editor.insert` from the keyboard.

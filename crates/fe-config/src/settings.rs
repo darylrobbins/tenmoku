@@ -21,6 +21,19 @@ use crate::{
 pub struct Settings {
     /// The text editor.
     pub editor: EditorSettings,
+    /// Vim mode.
+    #[serde(default)]
+    pub vim: VimSettings,
+}
+
+/// Settings for vim mode.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct VimSettings {
+    /// Whether the editor starts in vim's normal mode, where keys run vim
+    /// commands rather than type. View > Toggle Vim Mode flips it until
+    /// fastedit quits.
+    pub enabled: bool,
 }
 
 /// Settings for the text editor.

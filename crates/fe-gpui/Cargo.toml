@@ -15,8 +15,10 @@ fe-display.workspace = true
 fe-editor.workspace = true
 fe-keymap.workspace = true
 fe-syntax.workspace = true
+fe-vim.workspace = true
 gpui.workspace = true
 log.workspace = true
+unicode-segmentation.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true

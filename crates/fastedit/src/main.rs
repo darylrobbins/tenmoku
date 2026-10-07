@@ -164,6 +164,12 @@ fn watch_config(
             if *event.settings != *event.previous {
                 log::info!("settings reloaded");
             }
+            // Only when the file changed it, so that reloading anything else
+            // keeps a Toggle Vim Mode.
+            let vim = event.settings.vim.enabled;
+            if vim != event.previous.vim.enabled {
+                cx.update(|cx| fe_gpui::set_vim_enabled(cx, vim));
+            }
             let applied = window.update(cx, |workbench, _, cx| {
                 workbench.reload_settings(&event, cx);
             });
@@ -232,6 +238,7 @@ fn main() {
         startup.app = Some(Instant::now());
         fe_gpui::init_with_keymap(cx, keymap.keymap().clone());
         fe_workbench::init(cx);
+        fe_gpui::set_vim_enabled(cx, settings.vim.enabled);
         install_menus(cx);
         log_keymap_report(cx);
         cx.on_window_closed(|cx, _| {

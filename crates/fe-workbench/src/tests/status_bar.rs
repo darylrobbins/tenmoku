@@ -261,6 +261,7 @@ fn file_facts(cx: &mut TestAppContext) {
                 tab_size,
                 ..EditorSettings::default()
             },
+            ..Settings::default()
         })
     };
     let event = SettingsEvent {

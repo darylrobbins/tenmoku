@@ -158,7 +158,7 @@ fn default_keymap_matches_the_old_table(cx: &mut TestAppContext) {
     let store = KeymapStore::load(DEFAULT_MACOS, None, None);
     assert_eq!(store.diagnostics(), []);
     let bindings = store.keymap().bindings();
-    assert_eq!(bindings.len(), 92);
+    assert_eq!(bindings.len(), 102);
     for (binding, &(keys, command, context)) in bindings.iter().zip(OLD_TABLE) {
         assert_eq!(binding.keys, KeySequence::parse(keys).unwrap(), "{command}");
         assert_eq!(binding.command.as_str(), command, "{keys}");

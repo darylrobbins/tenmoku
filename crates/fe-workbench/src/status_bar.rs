@@ -1,6 +1,7 @@
-//! The status bar along the window's bottom edge: the active editor's
-//! cursor, selections, indentation, encoding, line endings and language on
-//! the right, and whatever items a host sets.
+//! The status bar along the window's bottom edge: the active editor's vim
+//! mode, with vim on, on the left; its cursor, selections, indentation,
+//! encoding, line endings and language on the right; and whatever items a
+//! host sets.
 //!
 //! Items are data ([`StatusItem`]). The built-in ones are computed from the
 //! active editor each time the bar renders, so nothing new is tracked: the
@@ -50,9 +51,12 @@ pub struct StatusItem {
     pub command: Option<Invocation>,
 }
 
-/// The built-in items' ids, all on the right, in this order. A host item
-/// set with one of them shows in that item's place.
+/// The built-in items' ids: the vim mode on the left, the others on the
+/// right, in this order. A host item set with one of them shows in that
+/// item's place.
 impl StatusItem {
+    /// `NORMAL` or `INSERT`, only with vim on: on the left, priority 0.
+    pub const VIM_MODE: &str = "vim_mode";
     /// `Ln 12, Col 5`, then ` (17 selected)` or ` (3 selections)`: priority
     /// 100.
     pub const CURSOR: &str = "cursor";
@@ -238,6 +242,13 @@ fn built_in_items(editor: &EditorView) -> Vec<StatusItem> {
         None if editor.is_loading_language() => "…".into(),
         None => PLAIN_TEXT.into(),
     };
+    let vim_mode = editor.vim_mode().map(|mode| StatusItem {
+        id: StatusItem::VIM_MODE.into(),
+        side: StatusSide::Left,
+        priority: 0,
+        text: vim_mode_label(mode),
+        command: None,
+    });
     let language_command = Invocation::of("language.select").expect("a valid command ID");
     let texts: [(SharedString, Option<Invocation>); 5] = [
         (cursor.into(), None),
@@ -246,24 +257,39 @@ fn built_in_items(editor: &EditorView) -> Vec<StatusItem> {
         (line_ending.into(), None),
         (language, Some(language_command)),
     ];
-    BUILT_IN_PRIORITIES
-        .into_iter()
-        .zip(texts)
-        .map(|((id, priority), (text, command))| StatusItem {
-            id: id.into(),
-            side: StatusSide::Right,
-            priority,
-            text,
-            command,
-        })
-        .collect()
+    let right =
+        BUILT_IN_PRIORITIES
+            .into_iter()
+            .zip(texts)
+            .map(|((id, priority), (text, command))| StatusItem {
+                id: id.into(),
+                side: StatusSide::Right,
+                priority,
+                text,
+                command,
+            });
+    vim_mode.into_iter().chain(right).collect()
+}
+
+/// The bar's text for a `vim.mode`: an operator waiting is still normal
+/// mode.
+fn vim_mode_label(mode: &str) -> SharedString {
+    match mode {
+        "normal" | "operator_pending" => "NORMAL".into(),
+        "insert" => "INSERT".into(),
+        other => other.to_uppercase().into(),
+    }
 }
 
 /// The focused element's key contexts, outermost first, as a context
 /// stack, as a key's invocation is stamped with: each one's primary
 /// identifier names its frame, its other identifiers are flags, and its
-/// `key=value` pairs carry over.
+/// `key=value` pairs carry over. GPUI's `vim_mode` is `vim.mode`, and so on.
 fn focused_context(window: &Window) -> ContextStack {
+    let key = |key: &str| match key.strip_prefix("vim_") {
+        Some(rest) => format!("vim.{rest}"),
+        None => key.to_owned(),
+    };
     window
         .context_stack()
         .iter()
@@ -272,8 +298,8 @@ fn focused_context(window: &Window) -> ContextStack {
             context
                 .secondary()
                 .fold(ContextFrame::new(name), |frame, entry| match &entry.value {
-                    None => frame.flag(entry.key.as_ref()),
-                    Some(value) => frame.set(entry.key.as_ref(), value.as_ref()),
+                    None => frame.flag(key(&entry.key)),
+                    Some(value) => frame.set(key(&entry.key), value.as_ref()),
                 })
         })
         .collect()
@@ -380,3 +406,7 @@ pub(crate) fn op(run: &RunCommand, cx: &App) -> Option<StatusOp> {
     }
     op
 }
+
+#[cfg(test)]
+#[path = "status_bar_vim_tests.rs"]
+mod vim_tests;

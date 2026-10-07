@@ -32,6 +32,7 @@ fn event(previous: &EditorSettings, settings: &EditorSettings) -> SettingsEvent 
     let wrap = |editor: &EditorSettings| {
         Arc::new(Settings {
             editor: editor.clone(),
+            ..Settings::default()
         })
     };
     SettingsEvent {

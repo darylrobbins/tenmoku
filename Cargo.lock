@@ -1761,11 +1761,13 @@ dependencies = [
  "fe-editor",
  "fe-keymap",
  "fe-syntax",
+ "fe-vim",
  "gpui-pre",
  "gpui-pre-platform",
  "image",
  "log",
  "serde_json",
+ "unicode-segmentation",
 ]
 
 [[package]]

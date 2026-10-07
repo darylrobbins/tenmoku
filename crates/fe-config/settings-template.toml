@@ -18,3 +18,7 @@
 
 # Whether long lines wrap at the window's edge.
 # soft_wrap = false
+
+[vim]
+# Whether the editor starts in vim's normal mode, where keys run vim commands.
+# enabled = false

@@ -6,16 +6,26 @@
 //! A keystroke that matches nothing propagates as usual, so text input
 //! reaches the view. Keystrokes swallowed by a chord that then fails are
 //! re-delivered as input (those without a character, such as `cmd-k`,
-//! deliver nothing), and the keystroke that failed it is matched again
-//! alone, as a fresh one, before it propagates: `cmd-k left` moves left. A
-//! key `fe-keymap` has no name for, such as `f21`, fails a chord the same
-//! way, then propagates unmatched.
+//! deliver nothing), and then the keystroke that failed it is matched
+//! again alone, as a fresh one, before it propagates: `cmd-k left` moves
+//! left. A key `fe-keymap` has no name for, such as `f21`, fails a chord
+//! the same way, then propagates unmatched. Where vim owns the focused
+//! editor's keys, the swallowed keystrokes go to its reducer instead, all
+//! of them, and a command they leave pending owns the one that failed the
+//! chord.
 //!
 //! A chord belongs to the window and focused element it started in. It is
 //! abandoned, neither run nor typed, once focus leaves that element, the
 //! window closes, or a keystroke comes from anywhere else. Focus that
 //! leaves and comes back before the next frame is drawn goes unseen; see
 //! `PendingChord::start`.
+//!
+//! With vim on, the focused editor's frame is stamped from its live vim
+//! state before matching, and while a vim command is pending the matcher
+//! isn't consulted: the editor owns every keystroke. A match to `vim.key`
+//! isn't dispatched either; the chord's keystrokes go to vim, the last on
+//! to the editor's key listener.
+//! See [`crate::vim`].
 
 use std::{sync::Arc, time::Duration};
 
@@ -205,6 +215,13 @@ fn on_keystroke(event: &KeystrokeEvent, window: &mut Window, cx: &mut App) {
     {
         input.abandon();
     }
+    let gpui_stack = context_stack(&event.context_stack);
+    let (stack, vim_pending) = crate::vim::live_stack(gpui_stack.clone(), window, cx);
+    if vim_pending {
+        // The editor's key listener has it.
+        return;
+    }
+    let input = cx.global_mut::<KeyInput>();
     let Some(keystroke) = keystroke(&event.keystroke) else {
         // A standalone modifier goes on as GPUI sends it, leaving the chord
         // be. Any other key `fe-keymap` has no name for fails the chord, as
@@ -212,7 +229,7 @@ fn on_keystroke(event: &KeystrokeEvent, window: &mut Window, cx: &mut App) {
         if !is_modifier(&event.keystroke) {
             let failed_chord = input.pending.take().map(|chord| chord.swallowed);
             input.matcher.flush();
-            redeliver(failed_chord.unwrap_or_default(), window, cx);
+            replay(failed_chord.unwrap_or_default(), window, cx);
         }
         return;
     };
@@ -221,19 +238,27 @@ fn on_keystroke(event: &KeystrokeEvent, window: &mut Window, cx: &mut App) {
         .pending
         .take()
         .map_or_else(Vec::new, |chord| chord.swallowed);
-    let stack = context_stack(&event.context_stack);
     let mut outcome = input.matcher.push(keystroke, &stack);
-    let mut failed_chord = Vec::new();
     if let KeyOutcome::Unmatched(keys) = &outcome
         && keys.len() > 1
     {
-        // This keystroke ended a chord that matched nothing: match it again
-        // as a fresh one.
-        failed_chord = std::mem::take(&mut swallowed);
-        outcome = input.matcher.push(keystroke, &stack);
+        // This keystroke ended a chord that matched nothing. The chord's
+        // keystrokes go first, then this one is matched again, as a fresh
+        // one, in the context they leave: they may have started a vim
+        // command, which then owns it.
+        replay(std::mem::take(&mut swallowed), window, cx);
+        let (stack, vim_pending) = crate::vim::live_stack(gpui_stack, window, cx);
+        if vim_pending {
+            return;
+        }
+        outcome = cx.global_mut::<KeyInput>().matcher.push(keystroke, &stack);
     }
-    redeliver(failed_chord, window, cx);
     match outcome {
+        // Vim's: the chord's keystrokes go to the reducer, and this one on
+        // to the editor's key listener, so each is fed once, in order.
+        KeyOutcome::Dispatch(invocation) if invocation.command.as_str() == crate::vim::KEY => {
+            replay(swallowed, window, cx);
+        }
         KeyOutcome::Dispatch(invocation) => {
             dispatch(invocation, window, cx);
             cx.stop_propagation();
@@ -265,8 +290,14 @@ fn on_timeout(handle: AnyWindowHandle, cx: &mut App) {
                 return;
             }
             match outcome {
+                // Vim's: the keys go to the reducer.
+                KeyOutcome::Dispatch(invocation)
+                    if invocation.command.as_str() == crate::vim::KEY =>
+                {
+                    replay(chord.swallowed, window, cx)
+                }
                 KeyOutcome::Dispatch(invocation) => dispatch(invocation, window, cx),
-                KeyOutcome::Unmatched(_) => redeliver(chord.swallowed, window, cx),
+                KeyOutcome::Unmatched(_) => replay(chord.swallowed, window, cx),
                 KeyOutcome::Pending => unreachable!("flush ends the chord"),
             }
         })
@@ -283,21 +314,31 @@ pub(crate) fn dispatch(invocation: Invocation, window: &mut Window, cx: &mut App
     }
 }
 
-/// Delivers swallowed keystrokes as input, past the matcher. Those without
-/// a character deliver nothing.
-fn redeliver(keystrokes: Vec<gpui::Keystroke>, window: &mut Window, cx: &mut App) {
-    let typed: Vec<_> = keystrokes
-        .into_iter()
-        .filter(|keystroke| keystroke.key_char.is_some())
-        .collect();
-    if typed.is_empty() {
+/// Re-delivers swallowed keystrokes, past the matcher. Where vim owns the
+/// focused editor's keys, every one goes to its reducer, which reads
+/// `escape` and arrows too. Otherwise they're dispatched as input, those
+/// with a character; those without deliver nothing.
+///
+/// Either way GPUI's propagation flag is left on, as it is when the
+/// interceptor runs: it's shared by every event, so a re-delivered
+/// keystroke's handler stopping it would otherwise swallow the keystroke
+/// being handled.
+fn replay(keystrokes: Vec<gpui::Keystroke>, window: &mut Window, cx: &mut App) {
+    if keystrokes.is_empty() {
+        return;
+    }
+    if let Some(editor) = crate::vim::vim_editor(window, cx) {
+        crate::vim::feed(&editor, &keystrokes, window, cx);
         return;
     }
     cx.global_mut::<KeyInput>().redelivering = true;
-    for keystroke in typed {
-        window.dispatch_keystroke(keystroke, cx);
+    for keystroke in keystrokes {
+        if keystroke.key_char.is_some() {
+            window.dispatch_keystroke(keystroke, cx);
+        }
     }
     cx.global_mut::<KeyInput>().redelivering = false;
+    cx.propagate();
 }
 
 /// Whether `keystroke` is a modifier pressed and released alone, which GPUI
@@ -324,8 +365,13 @@ fn keystroke(keystroke: &gpui::Keystroke) -> Option<Keystroke> {
 
 /// GPUI's key contexts, outermost first, as a context stack: each one's
 /// primary identifier names its frame, its other identifiers are flags, and
-/// its `key=value` pairs carry over.
+/// its `key=value` pairs carry over. Keys starting `vim_` start `vim.`
+/// instead (`vim_mode` is `vim.mode`): GPUI's identifiers can't hold `.`.
 pub(crate) fn context_stack(contexts: &[KeyContext]) -> ContextStack {
+    let key = |key: &str| match key.strip_prefix(crate::vim::GPUI_PREFIX) {
+        Some(rest) => format!("vim.{rest}"),
+        None => key.to_owned(),
+    };
     contexts
         .iter()
         .map(|context| {
@@ -333,8 +379,8 @@ pub(crate) fn context_stack(contexts: &[KeyContext]) -> ContextStack {
             context
                 .secondary()
                 .fold(ContextFrame::new(name), |frame, entry| match &entry.value {
-                    None => frame.flag(entry.key.as_ref()),
-                    Some(value) => frame.set(entry.key.as_ref(), value.as_ref()),
+                    None => frame.flag(key(&entry.key)),
+                    Some(value) => frame.set(key(&entry.key), value.as_ref()),
                 })
         })
         .collect()

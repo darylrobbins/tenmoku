@@ -42,6 +42,17 @@
         }
       },
       "type": "object"
+    },
+    "VimSettings": {
+      "description": "Settings for vim mode.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "description": "Whether the editor starts in vim's normal mode, where keys run vim\ncommands rather than type. View > Toggle Vim Mode flips it until\nfastedit quits.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -56,6 +67,13 @@
         "tab_size": 4
       },
       "description": "The text editor."
+    },
+    "vim": {
+      "$ref": "#/$defs/VimSettings",
+      "default": {
+        "enabled": false
+      },
+      "description": "Vim mode."
     }
   },
   "title": "Settings",

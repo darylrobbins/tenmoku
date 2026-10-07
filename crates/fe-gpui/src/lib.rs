@@ -6,7 +6,8 @@
 //! ([`menu`]) its shortcuts;
 //! [`element::EditorElement`] lays out the visible rows with
 //! [`fe_display::layout`], shaping them with GPUI and colouring them by
-//! `fe-syntax`, then paints the result.
+//! `fe-syntax`, then paints the result. Vim mode, one app-wide switch
+//! ([`set_vim_enabled`]), routes an editor's keys through `fe-vim`.
 
 pub mod commands;
 mod element;
@@ -14,6 +15,7 @@ pub mod keymap;
 pub mod menu;
 mod timing;
 mod view;
+mod vim;
 
 pub use fe_config::{EditorSettings, SettingsEvent};
 pub use fe_keymap;
@@ -23,6 +25,7 @@ use gpui::{App, Hsla, Pixels, SharedString, font, px, rgb, rgba};
 pub use keymap::{default_keymap, keymap_report, set_user_keymap};
 pub use timing::{FrameTiming, FrameTimings};
 pub use view::EditorView;
+pub use vim::{set_vim_enabled, vim_enabled};
 
 /// Key context active while an editor is focused: the `fe-command`
 /// context name, so keymap and command predicates agree.

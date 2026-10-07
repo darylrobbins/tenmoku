@@ -6,7 +6,7 @@ use fe_editor::EditorModel;
 use fe_syntax::{Language, ParseJob, Spawner, Syntax, SyntaxDriver};
 use gpui::{
     App, AppContext as _, Bounds, Context, CursorStyle, EntityInputHandler, FocusHandle, Focusable,
-    InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent,
+    InteractiveElement as _, IntoElement, KeyContext, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, ParentElement as _, Pixels, Point, Render, ScrollWheelEvent, Styled as _, Task,
     UTF16Selection, Window, div, px,
 };
@@ -53,6 +53,13 @@ pub struct EditorView {
     #[cfg(test)]
     pub(crate) before_taking_missing: Option<SyntaxHook>,
     pub(crate) frame_timings: FrameTimings,
+    /// Vim's state, while vim is on ([`crate::vim`]).
+    pub(crate) vim: Option<fe_vim::VimState>,
+    /// The vim switch's generation this view last synced with.
+    pub(crate) vim_generation: u64,
+    /// The carets the last frame painted, in window coordinates.
+    #[cfg(test)]
+    pub(crate) painted_carets: Vec<Bounds<Pixels>>,
 }
 
 /// What a mouse drag extends: characters, or whole words or rows starting
@@ -83,7 +90,13 @@ impl EditorView {
             #[cfg(test)]
             before_taking_missing: None,
             frame_timings: FrameTimings::default(),
+            vim: None,
+            vim_generation: 0,
+            #[cfg(test)]
+            painted_carets: Vec::new(),
         };
+        crate::vim::register(&view.focus, cx);
+        view.sync_vim(cx);
         let text = view.model.text();
         let start = text.slice_to_string(0..text.clip_offset(DETECT_BYTES, Bias::Left));
         let language = fe_syntax::detect_language_name(view.model.path(), &start);
@@ -485,9 +498,15 @@ impl Render for EditorView {
             // around what it shows.
             cx.defer_in(window, |view, _, cx| view.sync_syntax(cx));
         }
+        self.sync_vim(cx);
+        let mut key_context = KeyContext::default();
+        key_context.add(KEY_CONTEXT);
+        if let Some(state) = &self.vim {
+            crate::vim::add_to_key_context(&mut key_context, state);
+        }
         div()
             .id("editor")
-            .key_context(KEY_CONTEXT)
+            .key_context(key_context)
             .track_focus(&self.focus)
             .size_full()
             .cursor(CursorStyle::IBeam)
@@ -497,6 +516,7 @@ impl Render for EditorView {
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_scroll_wheel(cx.listener(Self::on_scroll))
             .on_action(cx.listener(Self::on_run_command))
+            .on_key_down(cx.listener(Self::on_vim_key))
             .child(EditorElement::new(cx.entity()))
     }
 }
@@ -548,6 +568,9 @@ impl EntityInputHandler for EditorView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.accepts_text() {
+            return;
+        }
         let range = range_utf16
             .map(|range| self.range_from_utf16(&range))
             .or_else(|| self.marked_range());
@@ -570,6 +593,9 @@ impl EntityInputHandler for EditorView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if !self.accepts_text() {
+            return;
+        }
         let range = range_utf16
             .map(|range| self.range_from_utf16(&range))
             .or_else(|| self.marked_range())
