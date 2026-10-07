@@ -20,8 +20,7 @@ use fe_gpui::{
 };
 use fe_workbench::{Workbench, loader};
 use gpui::{
-    App, AppContext as _, Focusable as _, TitlebarOptions, WindowBounds, WindowHandle,
-    WindowOptions, px, size,
+    App, AppContext as _, Focusable as _, WindowBounds, WindowHandle, WindowOptions, px, size,
 };
 
 /// The buffer a finished read produced: a missing file is a new one, which
@@ -248,10 +247,8 @@ fn main() {
             .open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::centered(size(px(1200.), px(800.)), cx)),
-                    titlebar: Some(TitlebarOptions {
-                        title: Some("fastedit".into()),
-                        ..Default::default()
-                    }),
+                    titlebar: Some(fe_workbench::titlebar_options("fastedit")),
+                    app_owns_titlebar_drag: true,
                     ..Default::default()
                 },
                 |window, cx| {
@@ -271,8 +268,12 @@ fn main() {
                         (reading.path().to_owned(), buffer)
                     });
                     let editor_settings = settings.editor.clone();
-                    let workbench =
-                        cx.new(|cx| Workbench::new(launch, theme, editor_settings, window, cx));
+                    let workbench = cx.new(|cx| {
+                        let mut workbench =
+                            Workbench::new(launch, theme, editor_settings, window, cx);
+                        workbench.set_title_bar(true, cx);
+                        workbench
+                    });
                     // Focus before the window's first draw: focusing after
                     // it would make the first frame request draw again.
                     let focus = workbench.read(cx).focus_handle(cx);

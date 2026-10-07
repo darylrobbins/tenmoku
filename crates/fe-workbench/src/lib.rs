@@ -23,6 +23,7 @@ mod project_panel;
 mod quick_open;
 mod search_panel;
 mod status_bar;
+mod title_bar;
 mod workbench;
 
 use std::rc::Rc;
@@ -40,6 +41,7 @@ pub use project_panel::{PANEL_WIDTH, PanelEvent, ProjectPanel};
 pub use quick_open::QuickOpen;
 pub use search_panel::SearchPanel;
 pub use status_bar::{StatusBar, StatusItem, StatusSide};
+pub use title_bar::{TITLE_BAR_HEIGHT, TRAFFIC_LIGHT_INSET, TRAFFIC_LIGHTS, titlebar_options};
 pub use workbench::{Launch, RootChanged, WELCOME, Workbench, resolve_launch};
 
 /// The key context the workbench's root element sets.

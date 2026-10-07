@@ -29,6 +29,7 @@ use crate::{
     picker::{self, PaletteOp},
     project_panel::{self, PanelEvent, PanelOp},
     status_bar::{self, StatusOp},
+    title_bar,
 };
 
 /// Shown in a tab when fastedit starts with nothing to open.
@@ -110,6 +111,9 @@ pub struct Workbench {
     palette: Option<Palette>,
     status_bar: Entity<StatusBar>,
     status_bar_visible: bool,
+    title_bar: bool,
+    /// The folder the workbench is rooted at, if any.
+    root: Option<PathBuf>,
     /// The editor whose file the project panel last revealed.
     revealed: Option<EntityId>,
     /// The launch file the host is reading, and the pane it opens in, until
@@ -144,6 +148,7 @@ impl Workbench {
         let ui = UiTheme::default_dark();
         let welcome = launch.root.is_none() && launch.file.is_none();
         let root = launch.root.clone();
+        let launch_root = launch.root.clone();
         let launch_read = match &launch.file {
             Some((path, None)) => Some(path.clone()),
             _ => None,
@@ -193,6 +198,8 @@ impl Workbench {
             palette: None,
             status_bar: cx.new(|_| StatusBar::new(ui)),
             status_bar_visible: true,
+            title_bar: false,
+            root: launch_root,
             revealed: None,
             launch_read: launch_read.map(|path| (path, pane.downgrade())),
             prompting: false,
@@ -327,6 +334,7 @@ impl Workbench {
         }
         // So the new tree reveals the active file, if it's under the root.
         self.revealed = None;
+        self.root = Some(root.clone());
         cx.emit(RootChanged(root));
         cx.notify();
     }
@@ -744,6 +752,20 @@ impl Workbench {
         &self.status_bar
     }
 
+    /// Shows or hides the title bar the standalone app draws under its
+    /// transparent macOS title bar: see [`crate::titlebar_options`]. Off by
+    /// default.
+    pub fn set_title_bar(&mut self, shown: bool, cx: &mut Context<Self>) {
+        self.title_bar = shown;
+        cx.notify();
+    }
+
+    /// The name the title bar reads.
+    #[cfg(test)]
+    pub(crate) fn title_bar_name(&self) -> gpui::SharedString {
+        title_bar::name(self.root.as_deref())
+    }
+
     pub fn status_bar_visible(&self) -> bool {
         self.status_bar_visible
     }
@@ -972,6 +994,10 @@ impl Render for Workbench {
             .bg(self.ui.background)
             .text_color(self.ui.text)
             .text_size(px(12.))
+            .children(
+                self.title_bar
+                    .then(|| title_bar::title_bar(self.root.as_deref(), &self.ui)),
+            )
             .child(main)
             .children(status_bar)
             .map(|root| match self.palette {
