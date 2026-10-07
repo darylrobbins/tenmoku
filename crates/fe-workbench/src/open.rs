@@ -11,6 +11,7 @@ use std::{
     io::{self, Write as _},
     path::PathBuf,
     rc::Rc,
+    sync::{Arc, Mutex},
 };
 
 use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry};
@@ -112,7 +113,24 @@ pub(crate) fn settings_path(cx: &App) -> Option<PathBuf> {
 
 /// Writes the settings template to `path`, with its directory, unless the
 /// file exists, which is never overwritten.
+///
+/// Requests for the same path are serialized, so one that finds the file
+/// there finds it complete: it was written whole, or, if the write failed,
+/// removed again for the next request to retry and report its own error.
 pub(crate) fn create_settings(path: &std::path::Path) -> io::Result<()> {
+    let lock = {
+        static LOCKS: Mutex<Vec<(PathBuf, Arc<Mutex<()>>)>> = Mutex::new(Vec::new());
+        let mut locks = LOCKS.lock().unwrap_or_else(|e| e.into_inner());
+        match locks.iter().find(|(p, _)| p == path) {
+            Some((_, lock)) => lock.clone(),
+            None => {
+                let lock = Arc::new(Mutex::new(()));
+                locks.push((path.to_owned(), lock.clone()));
+                lock
+            }
+        }
+    };
+    let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)?;
     }
@@ -121,8 +139,37 @@ pub(crate) fn create_settings(path: &std::path::Path) -> io::Result<()> {
         .create_new(true)
         .open(path)
     {
-        Ok(mut file) => file.write_all(fe_config::USER_SETTINGS_TEMPLATE.as_bytes()),
+        Ok(mut file) => {
+            #[cfg(test)]
+            after_create_hook(path);
+            let written = file.write_all(fe_config::USER_SETTINGS_TEMPLATE.as_bytes());
+            if written.is_err() {
+                drop(file);
+                let _ = fs::remove_file(path);
+            }
+            written
+        }
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
         Err(error) => Err(error),
+    }
+}
+
+#[cfg(test)]
+pub(crate) type Hook = Arc<dyn Fn() + Send + Sync>;
+
+/// Runs between `create_settings` creating the file and writing it, for
+/// the one path a test names.
+#[cfg(test)]
+pub(crate) static AFTER_CREATE: Mutex<Option<(PathBuf, Hook)>> = Mutex::new(None);
+
+#[cfg(test)]
+fn after_create_hook(path: &std::path::Path) {
+    let hook = match AFTER_CREATE.lock().unwrap().as_ref() {
+        Some((hooked, hook)) if hooked == path => Some(hook.clone()),
+        _ => None,
+    };
+    // Called unlocked: it blocks.
+    if let Some(hook) = hook {
+        hook();
     }
 }

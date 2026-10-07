@@ -149,3 +149,50 @@ fn no_config_directory_opens_nothing(cx: &mut TestAppContext) {
         "an error is logged: {errors:?}"
     );
 }
+
+/// A second request that finds the file created but not yet written waits
+/// for the write, so what it then opens is complete. (Threads, not the
+/// test executor: parking it would wait on the paused write.)
+#[test]
+fn overlapping_requests_wait_for_the_write() {
+    use crate::open::{AFTER_CREATE, create_settings};
+    let config = tempfile::tempdir().unwrap();
+    let file = config.path().join("settings.toml");
+
+    let (created_tx, created_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let (created_tx, release_rx) = (Mutex::new(created_tx), Mutex::new(release_rx));
+    *AFTER_CREATE.lock().unwrap() = Some((
+        file.clone(),
+        std::sync::Arc::new(move || {
+            created_tx.lock().unwrap().send(()).unwrap();
+            release_rx.lock().unwrap().recv().unwrap();
+        }),
+    ));
+    let first = std::thread::spawn({
+        let file = file.clone();
+        move || create_settings(&file)
+    });
+    created_rx.recv().unwrap();
+    assert_eq!(fs::read_to_string(&file).unwrap(), "");
+
+    let (read_tx, read_rx) = std::sync::mpsc::channel();
+    let second = std::thread::spawn({
+        let file = file.clone();
+        move || {
+            create_settings(&file).unwrap();
+            read_tx.send(fs::read_to_string(&file).unwrap()).unwrap();
+        }
+    });
+    assert!(
+        read_rx
+            .recv_timeout(std::time::Duration::from_millis(200))
+            .is_err(),
+        "the second request returned before the write finished"
+    );
+    AFTER_CREATE.lock().unwrap().take();
+    release_tx.send(()).unwrap();
+    first.join().unwrap().unwrap();
+    second.join().unwrap();
+    assert_eq!(read_rx.recv().unwrap(), USER_SETTINGS_TEMPLATE);
+}
