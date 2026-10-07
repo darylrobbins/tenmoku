@@ -227,6 +227,17 @@
       },
       "type": "object"
     },
+    "StatusBarSettings": {
+      "description": "Settings for the status bar.",
+      "properties": {
+        "visible": {
+          "default": true,
+          "description": "Whether the status bar shows at the bottom of the window. View >\nToggle Status Bar flips it and saves it here.",
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
     "TypescriptServer": {
       "description": "The built-in server for TypeScript and JavaScript.",
       "oneOf": [
@@ -247,7 +258,7 @@
       "properties": {
         "enabled": {
           "default": false,
-          "description": "Whether the editor starts in vim's normal mode, where keys run vim\ncommands rather than type. View > Toggle Vim Mode flips it until\nfastedit quits.",
+          "description": "Whether the editor starts in vim's normal mode, where keys run vim\ncommands rather than type. View > Toggle Vim Mode flips it and saves\nit here.",
           "type": "boolean"
         }
       },
@@ -284,6 +295,13 @@
         "typescript_server": "typescript-language-server"
       },
       "description": "Language servers. A project file may only turn them off."
+    },
+    "status_bar": {
+      "$ref": "#/$defs/StatusBarSettings",
+      "default": {
+        "visible": true
+      },
+      "description": "The status bar."
     },
     "vim": {
       "$ref": "#/$defs/VimSettings",

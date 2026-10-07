@@ -28,6 +28,9 @@ pub struct Settings {
     /// Vim mode.
     #[serde(default)]
     pub vim: VimSettings,
+    /// The status bar.
+    #[serde(default)]
+    pub status_bar: StatusBarSettings,
     /// Language servers. A project file may only turn them off.
     pub lsp: LspSettings,
 }
@@ -37,9 +40,24 @@ pub struct Settings {
 #[serde(default)]
 pub struct VimSettings {
     /// Whether the editor starts in vim's normal mode, where keys run vim
-    /// commands rather than type. View > Toggle Vim Mode flips it until
-    /// fastedit quits.
+    /// commands rather than type. View > Toggle Vim Mode flips it and saves
+    /// it here.
     pub enabled: bool,
+}
+
+/// Settings for the status bar.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct StatusBarSettings {
+    /// Whether the status bar shows at the bottom of the window. View >
+    /// Toggle Status Bar flips it and saves it here.
+    pub visible: bool,
+}
+
+impl Default for StatusBarSettings {
+    fn default() -> Self {
+        Self { visible: true }
+    }
 }
 
 /// Settings for the text editor.

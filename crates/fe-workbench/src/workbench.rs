@@ -27,6 +27,7 @@ use crate::{
     pane_drag::TabDropped,
     pane_group::{self, Destination, Direction, PaneOp},
     pane_toolbar::{self, NavButtons, SymbolChain, ToolbarRequest},
+    persist,
     picker::{self, PaletteOp},
     project_panel::{self, PanelEvent, PanelOp},
     status_bar::{self, StatusOp},
@@ -945,7 +946,8 @@ impl Workbench {
         self.status_bar_visible
     }
 
-    /// Shows or hides the status bar, as `view.toggle_status_bar` does.
+    /// Shows or hides the status bar, as `view.toggle_status_bar` does,
+    /// though without saving it (see [`crate::save_toggles_to`]).
     pub fn set_status_bar_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
         self.status_bar_visible = visible;
         cx.notify();
@@ -953,7 +955,10 @@ impl Workbench {
 
     fn run_status_op(&mut self, op: StatusOp, window: &mut Window, cx: &mut Context<Self>) {
         match op {
-            StatusOp::ToggleStatusBar => self.set_status_bar_visible(!self.status_bar_visible, cx),
+            StatusOp::ToggleStatusBar => {
+                self.set_status_bar_visible(!self.status_bar_visible, cx);
+                persist::save_status_bar(self.status_bar_visible, cx);
+            }
             StatusOp::SelectLanguage => self.select_language(window, cx),
         }
     }
@@ -1073,8 +1078,13 @@ impl Workbench {
     }
 
     /// Applies reloaded settings to the open editors and to editors yet to
-    /// open.
+    /// open, and `status_bar.visible` to the status bar if the reload
+    /// changed it, so reloading for any other key keeps a toggle.
     pub fn reload_settings(&mut self, event: &SettingsEvent, cx: &mut Context<Self>) {
+        let visible = event.settings.status_bar.visible;
+        if visible != event.previous.status_bar.visible {
+            self.set_status_bar_visible(visible, cx);
+        }
         for pane in self.panes.panes() {
             pane.update(cx, |pane, cx| pane.reload_settings(event, cx));
         }

@@ -239,6 +239,11 @@ fn main() {
         fe_gpui::init_with_keymap(cx, keymap.keymap().clone());
         fe_workbench::init(cx);
         fe_gpui::set_vim_enabled(cx, settings.vim.enabled);
+        // Toggle Vim Mode and Toggle Status Bar save to the user's file,
+        // which the watcher then reloads.
+        if let Some(path) = fe_config::user_settings_path() {
+            fe_workbench::save_toggles_to(cx, path);
+        }
         install_menus(cx);
         log_keymap_report(cx);
         cx.on_window_closed(|cx, _| {
@@ -279,6 +284,7 @@ fn main() {
                         let mut workbench =
                             Workbench::new(launch, theme, editor_settings, window, cx);
                         workbench.set_title_bar(true, cx);
+                        workbench.set_status_bar_visible(settings.status_bar.visible, cx);
                         workbench
                     });
                     // Focus before the window's first draw: focusing after
