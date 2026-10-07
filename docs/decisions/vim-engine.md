@@ -720,7 +720,52 @@ For card 1a or a follow-up. These hold whichever engine we choose.
     `range` arg (`:'<,'>s/…/…/g`). `:normal {keys}` feeds keys through
     item 1.
 
-## 10. Unanswered
+## 10. Key routing and modes (decided 2026-10-06)
+
+Vim mode is not a second keymap or input path: the mode is part of the key
+context every keystroke is matched in. `fe-vim` owns the mode and publishes it
+as `vim.mode` on the focused editor's context frame (GPUI key: `vim_mode`).
+With vim off, `vim.mode` is never set and nothing below step 1 changes.
+
+A keystroke, in `fe-gpui/src/keymap.rs`'s interceptor:
+
+1. **Keymap bindings first, in every mode.** `cmd-` shortcuts work in normal,
+   insert and non-vim mode alike. Vim bindings live in a vim layer of the
+   default keymap under predicates such as `editor && vim_mode == normal`.
+   The deeper context wins, so in normal mode they beat the plain editor's.
+2. **Unmatched, in normal, visual or operator-pending mode:** the keystroke
+   goes to `fe-vim`'s `step()` and never becomes text. `Wait` swallows it,
+   `Commit` dispatches the invocation, `Cancel` drops the pending input, and
+   `Forward` lets it propagate.
+3. **Otherwise (insert mode, or vim off):** it propagates as text input, as
+   today.
+
+- **No text in normal or visual mode.** In those modes the editor view does
+  not register its `EntityInputHandler`. Nothing can insert text there, and
+  an IME does not start composing over a vim command. Insert mode registers
+  it, so IME and dead keys work as in plain editing.
+- **Other inputs.** The palette, search and picker inputs have their own
+  contexts and never carry `vim.mode`, so they always type.
+- **Insert-mode escapes** such as `jk` are ordinary keymap chords in
+  `vim_mode == insert`. A failed chord re-delivers the swallowed keys as text.
+
+The user's decisions:
+
+- **Ctrl keys in normal and visual mode: vim wins.** `ctrl-r`, `ctrl-d`,
+  `ctrl-u`, `ctrl-o`, `ctrl-a` and the like do what Vim does there, over the
+  default macOS `ctrl-` bindings.
+- **Insert mode keeps the macOS text keys.** `ctrl-a`/`ctrl-e`/`ctrl-k` and
+  option-arrows edit as in any macOS field. `Esc` and `ctrl-[` return to
+  normal mode. Vim's insert `ctrl-` keys aren't bound by default; a user
+  can bind them.
+- **Toggle: a `vim.enabled` setting plus a command.** The setting
+  hot-reloads, and a palette command ("Toggle Vim Mode") flips it.
+
+Not designed yet: vim-style key-to-key remaps (`nnoremap H ^`). The keymap
+maps keys to commands, so they likely need a remap table inside `fe-vim`
+(a later card).
+
+## 11. Unanswered
 
 - **The 161 binary-backed oracle cases.** These are in 15 suites:
   - ex: `:d`, `:g`, `:j`, line ops, `:u`, `:y`
