@@ -1,0 +1,813 @@
+# Text object cases for fe-vim's oracle: iw aw iW aW i( a( i{ a{ i" a" i'
+# a' and the bracket aliases, with counts, across rows, and objects that
+# don't exist. Hand-written: name, buffer (rows joined with \n, no trailing
+# newline), cursor = [row, byte column] and keys in vim notation. What nvim
+# does with each is recorded in text_objects.expected.json by the ignored
+# `record_corpus_with_neovim` test; edit a case, then re-record.
+
+# iw aw iW aW, with counts.
+[[case]]
+name = "iw_word"
+buffer = "foo bar baz"
+cursor = [0, 5]
+keys = "diw"
+
+[[case]]
+name = "iw_blanks"
+buffer = "foo bar baz"
+cursor = [0, 3]
+keys = "diw"
+
+[[case]]
+name = "aw_takes_trailing_blanks"
+buffer = "foo bar baz"
+cursor = [0, 5]
+keys = "daw"
+
+[[case]]
+name = "aw_from_blanks_takes_the_next_word"
+buffer = "foo bar baz"
+cursor = [0, 3]
+keys = "daw"
+
+[[case]]
+name = "aw_takes_leading_blanks_at_row_end"
+buffer = "foo bar"
+cursor = [0, 5]
+keys = "daw"
+
+[[case]]
+name = "aw_from_leading_blanks"
+buffer = "  foo bar"
+cursor = [0, 0]
+keys = "daw"
+
+[[case]]
+name = "aw_all_trailing_blanks"
+buffer = "foo bar  "
+cursor = [0, 5]
+keys = "daw"
+
+[[case]]
+name = "aw_keeps_indent"
+buffer = "  foo"
+cursor = [0, 2]
+keys = "daw"
+
+[[case]]
+name = "aw_whole_rows_from_indent"
+buffer = " }}\n)"
+cursor = [0, 2]
+keys = "d2aw"
+
+[[case]]
+name = "yaw_across_rows_charwise"
+buffer = " }}\n)\nx"
+cursor = [0, 2]
+keys = "y2aw"
+
+[[case]]
+name = "aW_from_empty_row_to_empty_row"
+buffer = "\n\n\"z\n  b"
+cursor = [0, 0]
+keys = "daW"
+
+[[case]]
+name = "indent_iw_count_past_end"
+buffer = "x.yfooéa"
+cursor = [0, 6]
+keys = ">2iw"
+
+[[case]]
+name = "aw_leading_blanks_count_2"
+buffer = "x foo bar"
+cursor = [0, 2]
+keys = "d2aw"
+
+[[case]]
+name = "iw_count_3"
+buffer = "foo bar baz"
+cursor = [0, 0]
+keys = "d3iw"
+
+[[case]]
+name = "iw_count_5_whole_row"
+buffer = "foo bar baz"
+cursor = [0, 0]
+keys = "d5iw"
+
+[[case]]
+name = "aw_count_2"
+buffer = "foo bar baz"
+cursor = [0, 0]
+keys = "d2aw"
+
+[[case]]
+name = "aw_count_3_whole_row"
+buffer = "foo bar baz"
+cursor = [0, 0]
+keys = "d3aw"
+
+[[case]]
+name = "iw_count_across_rows"
+buffer = "foo\nbar baz qux"
+cursor = [0, 1]
+keys = "d2iw"
+
+[[case]]
+name = "iw_count_across_rows_4"
+buffer = "foo\nbar baz qux"
+cursor = [0, 1]
+keys = "d4iw"
+
+[[case]]
+name = "iw_count_trailing_blank_row"
+buffer = "foo \nbar baz"
+cursor = [0, 1]
+keys = "d3iw"
+
+[[case]]
+name = "iw_count_indented_row"
+buffer = "foo\n  bar baz"
+cursor = [0, 1]
+keys = "d2iw"
+
+[[case]]
+name = "iw_count_over_empty_row"
+buffer = "foo\n\nbar"
+cursor = [0, 1]
+keys = "d2iw"
+
+[[case]]
+name = "iw_count_over_empty_row_to_indent"
+buffer = "foo\n\n  bar"
+cursor = [0, 1]
+keys = "d2iw"
+
+[[case]]
+name = "aw_on_empty_row_to_indent"
+buffer = "a\n\n  b c"
+cursor = [1, 0]
+keys = "daw"
+
+[[case]]
+name = "iw_count_3_over_empty_row"
+buffer = "foo\n\nbar"
+cursor = [0, 1]
+keys = "d3iw"
+
+[[case]]
+name = "aw_count_across_rows"
+buffer = "foo\nbar baz qux"
+cursor = [0, 1]
+keys = "d2aw"
+
+[[case]]
+name = "aw_count_3_across_rows"
+buffer = "foo\nbar baz qux"
+cursor = [0, 1]
+keys = "d3aw"
+
+[[case]]
+name = "aw_blanks_across_rows"
+buffer = "foo  \n  bar baz"
+cursor = [0, 4]
+keys = "daw"
+
+[[case]]
+name = "iw_trailing_blanks_stay_on_row"
+buffer = "foo  \n  bar baz"
+cursor = [0, 4]
+keys = "diw"
+
+[[case]]
+name = "yiW_count_over_empty_row"
+buffer = "x\n,}(\n\n ab"
+cursor = [1, 1]
+keys = "y2iW"
+
+[[case]]
+name = "iw_on_empty_last_row"
+buffer = "ab cd\nx"
+cursor = [1, 0]
+keys = "xdiw"
+
+[[case]]
+name = "yiw_on_empty_last_row"
+buffer = "ab cd\nx"
+cursor = [1, 0]
+keys = "xyiw"
+
+[[case]]
+name = "aw_on_empty_last_row_fails"
+buffer = "ab cd\nx"
+cursor = [1, 0]
+keys = "xdaw"
+
+[[case]]
+name = "iw_count_on_emptied_last_row"
+buffer = "abc\nx"
+cursor = [1, 0]
+keys = "xd2iw"
+
+[[case]]
+name = "yiw_count_on_emptied_last_row"
+buffer = "abc\nx"
+cursor = [1, 0]
+keys = "xy2iw"
+
+[[case]]
+name = "indent_iw_count_on_emptied_last_row"
+buffer = "abc\nx"
+cursor = [1, 0]
+keys = "x>2iw"
+
+[[case]]
+name = "iW_count_on_emptied_last_row"
+buffer = "abc def\nx"
+cursor = [1, 0]
+keys = "xd2iW"
+
+[[case]]
+name = "iw_count_two_empty_rows"
+buffer = "foo\n\n\nbar"
+cursor = [0, 0]
+keys = "d3iw"
+
+[[case]]
+name = "iw_count_two_empty_rows_rows_only"
+buffer = "foo\n\n\nbar"
+cursor = [0, 0]
+keys = "d2iw"
+
+[[case]]
+name = "yiw_count_two_empty_rows"
+buffer = "foo\n\n\nbar"
+cursor = [0, 0]
+keys = "y3iw"
+
+[[case]]
+name = "indent_iw_count_two_empty_rows"
+buffer = "foo\n\n\nbar baz"
+cursor = [0, 0]
+keys = ">4iw"
+
+[[case]]
+name = "iw_count_three_empty_rows"
+buffer = "foo\n\n\n\nbar baz"
+cursor = [0, 0]
+keys = "d3iw"
+
+[[case]]
+name = "iw_count_three_empty_rows_then_word"
+buffer = "foo\n\n\n\nbar baz"
+cursor = [0, 0]
+keys = "d4iw"
+
+[[case]]
+name = "iw_count_empty_rows_then_indent"
+buffer = "foo\n\n\n  bar baz"
+cursor = [0, 0]
+keys = "d3iw"
+
+[[case]]
+name = "yiw_count_empty_rows_then_indent"
+buffer = "foo\n\n\n  bar baz"
+cursor = [0, 0]
+keys = "y4iw"
+
+[[case]]
+name = "iw_count_from_empty_row"
+buffer = "foo\n\n\n\nbar baz"
+cursor = [1, 0]
+keys = "d3iw"
+
+[[case]]
+name = "iw_count_lone_blank_after_empty_row"
+buffer = "a\n\n b"
+cursor = [0, 0]
+keys = "d3iw"
+
+[[case]]
+name = "yiw_count_one_letter_after_empty_row"
+buffer = "x.y\n\nz"
+cursor = [0, 2]
+keys = "y3iW"
+
+[[case]]
+name = "yaw_count_over_empty_rows"
+buffer = "\na \n\na\n  b c"
+cursor = [0, 0]
+keys = "y2aw"
+
+[[case]]
+name = "yaw_on_blank_row_before_empty_row"
+buffer = "ab cd\n  \n\n b"
+cursor = [1, 1]
+keys = "yaw"
+
+[[case]]
+name = "yaw_count_empty_rows_as_words"
+buffer = "\n\n\n\n b"
+cursor = [0, 0]
+keys = "y3aW"
+
+[[case]]
+name = "iw_on_empty_row_does_nothing"
+buffer = "a\n\nb"
+cursor = [1, 0]
+keys = "diw"
+
+[[case]]
+name = "aw_on_empty_row"
+buffer = "a\n\nb"
+cursor = [1, 0]
+keys = "daw"
+
+[[case]]
+name = "iw_count_past_end"
+buffer = "foo bar baz"
+cursor = [0, 0]
+keys = "d9iw"
+
+[[case]]
+name = "aw_count_past_end"
+buffer = "foo bar"
+cursor = [0, 4]
+keys = "d2aw"
+
+[[case]]
+name = "iw_punctuation"
+buffer = "foo.bar"
+cursor = [0, 4]
+keys = "diw"
+
+[[case]]
+name = "iW_big_word"
+buffer = "foo.bar baz"
+cursor = [0, 1]
+keys = "diW"
+
+[[case]]
+name = "aW_big_word"
+buffer = "foo.bar baz"
+cursor = [0, 1]
+keys = "daW"
+
+[[case]]
+name = "aW_no_blanks"
+buffer = "foo.bar"
+cursor = [0, 3]
+keys = "daW"
+
+[[case]]
+name = "yiw_moves_to_start"
+buffer = "foo bar"
+cursor = [0, 6]
+keys = "yiw"
+
+# i( a( i{ a{ and the aliases b ( ) B { }.
+[[case]]
+name = "i_paren"
+buffer = "f(a, (b), c)"
+cursor = [0, 6]
+keys = "di("
+
+[[case]]
+name = "i_paren_count_2"
+buffer = "f(a, (b), c)"
+cursor = [0, 6]
+keys = "d2i("
+
+[[case]]
+name = "a_paren_on_open"
+buffer = "f(a, (b), c)"
+cursor = [0, 5]
+keys = "da("
+
+[[case]]
+name = "i_close_paren_alias_on_outer_open"
+buffer = "f(a, (b), c)"
+cursor = [0, 1]
+keys = "di)"
+
+[[case]]
+name = "ib_on_close"
+buffer = "f(a, (b), c)"
+cursor = [0, 11]
+keys = "dib"
+
+[[case]]
+name = "ab_alias"
+buffer = "x (a b) y"
+cursor = [0, 3]
+keys = "dab"
+
+[[case]]
+name = "a_close_paren_alias"
+buffer = "x (a b) y"
+cursor = [0, 4]
+keys = "da)"
+
+[[case]]
+name = "i_paren_next_on_row"
+buffer = "f(a, (b), c)"
+cursor = [0, 0]
+keys = "di("
+
+[[case]]
+name = "i_paren_next_row"
+buffer = "x\n(a)"
+cursor = [0, 0]
+keys = "di("
+
+[[case]]
+name = "a_paren_next_row"
+buffer = "x\n(a)"
+cursor = [0, 0]
+keys = "da("
+
+[[case]]
+name = "i_paren_none_after"
+buffer = "(a) xyz"
+cursor = [0, 4]
+keys = "di("
+
+[[case]]
+name = "i_paren_close_first_fails"
+buffer = "x ) (a)"
+cursor = [0, 0]
+keys = "di("
+
+[[case]]
+name = "i_paren_outside_any"
+buffer = "abc"
+cursor = [0, 1]
+keys = "di("
+
+[[case]]
+name = "i_paren_empty"
+buffer = "f()"
+cursor = [0, 1]
+keys = "di("
+
+[[case]]
+name = "a_paren_empty"
+buffer = "f()"
+cursor = [0, 1]
+keys = "da("
+
+[[case]]
+name = "i_paren_escaped"
+buffer = "f(a\\(b)"
+cursor = [0, 4]
+keys = "di("
+
+[[case]]
+name = "i_paren_skips_quoted"
+buffer = "f(a, \")\", b)"
+cursor = [0, 2]
+keys = "di("
+
+[[case]]
+name = "i_paren_unterminated_string"
+buffer = "(\"a\nb)"
+cursor = [1, 0]
+keys = "di("
+
+[[case]]
+name = "i_paren_odd_quotes_row"
+buffer = "f(a\n\"b) c\"d\" e"
+cursor = [0, 2]
+keys = "di("
+
+[[case]]
+name = "i_paren_quoted_open"
+buffer = "f(\"(\", x)"
+cursor = [0, 7]
+keys = "di("
+
+[[case]]
+name = "i_paren_count_nested_after"
+buffer = "x ((a))"
+cursor = [0, 0]
+keys = "d2i("
+
+[[case]]
+name = "a_paren_count_nested_after"
+buffer = "x ((a))"
+cursor = [0, 0]
+keys = "d2a("
+
+[[case]]
+name = "i_brace_count_nested_after"
+buffer = "x {{a}}"
+cursor = [0, 0]
+keys = "d2i{"
+
+[[case]]
+name = "a_paren_count_after_unmatched_opener"
+buffer = "\n(ab(cd)a"
+cursor = [0, 0]
+keys = "2dab"
+
+[[case]]
+name = "i_paren_count_after_leading_closer"
+buffer = "x )(((a)))"
+cursor = [0, 0]
+keys = "d2i("
+
+[[case]]
+name = "a_paren_count_after_leading_closer"
+buffer = "x )(((a)))"
+cursor = [0, 0]
+keys = "d2a("
+
+[[case]]
+name = "yi_brace_count_after_leading_closer"
+buffer = "x }{{{a}}}"
+cursor = [0, 0]
+keys = "y2iB"
+
+[[case]]
+name = "ya_brace_count_after_leading_closer"
+buffer = "x }{{{a}}}"
+cursor = [0, 0]
+keys = "y2a}"
+
+[[case]]
+name = "iw_count_onto_emptied_last_row"
+buffer = "ab\nx"
+cursor = [0, 0]
+keys = "jxky2iw"
+
+[[case]]
+name = "iW_count_onto_emptied_last_row"
+buffer = "ab\nx"
+cursor = [0, 0]
+keys = "jxky2iW"
+
+[[case]]
+name = "d_iw_count_onto_emptied_last_row"
+buffer = "ab\nx"
+cursor = [0, 0]
+keys = "jxkd2iw"
+
+[[case]]
+name = "i_paren_count_without_pair"
+buffer = "x (a) (b)"
+cursor = [0, 0]
+keys = "d2i("
+
+[[case]]
+name = "indent_empty_inner"
+buffer = "{\n\t}"
+cursor = [1, 1]
+keys = ">iB"
+
+[[case]]
+name = "i_paren_multi_row"
+buffer = "x (a\nb) z"
+cursor = [0, 0]
+keys = "di("
+
+[[case]]
+name = "i_paren_open_ends_row"
+buffer = "x = (\n  1,\n  2)"
+cursor = [1, 2]
+keys = "di("
+
+[[case]]
+name = "i_brace_whole_rows"
+buffer = "fn {\n    body\n}"
+cursor = [1, 4]
+keys = "di{"
+
+[[case]]
+name = "a_brace_multi_row"
+buffer = "fn {\n    body\n}"
+cursor = [1, 4]
+keys = "da{"
+
+[[case]]
+name = "iB_alias"
+buffer = "fn {\n    body\n}"
+cursor = [0, 3]
+keys = "diB"
+
+[[case]]
+name = "i_close_brace_indented_close"
+buffer = "fn {\n    body\n  }"
+cursor = [1, 4]
+keys = "di}"
+
+[[case]]
+name = "i_brace_rows_caret_first_non_blank"
+buffer = "x {\n  a\n  b\n    }"
+cursor = [2, 0]
+keys = "di{"
+
+[[case]]
+name = "i_brace_blanks_after_open"
+buffer = "fn {  \n    body\n}"
+cursor = [1, 4]
+keys = "di{"
+
+[[case]]
+name = "i_brace_text_after_open"
+buffer = "fn {a\n    body\n}"
+cursor = [1, 4]
+keys = "di{"
+
+[[case]]
+name = "i_brace_empty_rows"
+buffer = "{\n}"
+cursor = [0, 0]
+keys = "di{"
+
+[[case]]
+name = "i_brace_one_empty_row"
+buffer = "{\n\n}"
+cursor = [1, 0]
+keys = "di{"
+
+[[case]]
+name = "a_brace_whole_rows"
+buffer = "{\n a\n}\n  x"
+cursor = [1, 1]
+keys = "da{"
+
+[[case]]
+name = "aB_nested"
+buffer = "{a {b} c}"
+cursor = [0, 4]
+keys = "daB"
+
+[[case]]
+name = "a_close_brace_outer"
+buffer = "{a {b} c}"
+cursor = [0, 7]
+keys = "da}"
+
+[[case]]
+name = "i_brace_count_2"
+buffer = "{a {b} c}"
+cursor = [0, 4]
+keys = "d2i{"
+
+[[case]]
+name = "yi_paren_moves_to_start"
+buffer = "f(abc)"
+cursor = [0, 4]
+keys = "yi("
+
+[[case]]
+name = "yi_brace_rows"
+buffer = "fn {\n    body\n}"
+cursor = [0, 0]
+keys = "yi{"
+
+# i" a" i' a'.
+[[case]]
+name = "i_quote"
+buffer = "say \"hi there\" now"
+cursor = [0, 6]
+keys = "di\""
+
+[[case]]
+name = "a_quote_trailing_blanks"
+buffer = "say \"hi there\" now"
+cursor = [0, 6]
+keys = "da\""
+
+[[case]]
+name = "a_quote_leading_blanks"
+buffer = "say \"hi there\""
+cursor = [0, 6]
+keys = "da\""
+
+[[case]]
+name = "a_quote_leading_before_comma"
+buffer = "say \"hi there\",x"
+cursor = [0, 6]
+keys = "da\""
+
+[[case]]
+name = "a_quote_all_trailing"
+buffer = "say \"hi\"  x"
+cursor = [0, 6]
+keys = "da\""
+
+[[case]]
+name = "i_quote_before_first"
+buffer = "say \"hi there\" now"
+cursor = [0, 0]
+keys = "di\""
+
+[[case]]
+name = "a_quote_before_first"
+buffer = "say \"hi there\" now"
+cursor = [0, 0]
+keys = "da\""
+
+[[case]]
+name = "i_quote_after_last_fails"
+buffer = "say \"hi there\" now"
+cursor = [0, 16]
+keys = "di\""
+
+[[case]]
+name = "i_quote_between_strings"
+buffer = "\"a\" x \"b\""
+cursor = [0, 4]
+keys = "di\""
+
+[[case]]
+name = "i_quote_on_opening"
+buffer = "\"a\" x \"b\""
+cursor = [0, 0]
+keys = "di\""
+
+[[case]]
+name = "i_quote_on_closing"
+buffer = "\"a\" x \"b\""
+cursor = [0, 2]
+keys = "di\""
+
+[[case]]
+name = "i_quote_on_second_opening"
+buffer = "\"a\" x \"b\""
+cursor = [0, 6]
+keys = "di\""
+
+[[case]]
+name = "i_quote_count_2"
+buffer = "\"a\" x \"b\""
+cursor = [0, 4]
+keys = "d2i\""
+
+[[case]]
+name = "i_quote_escaped"
+buffer = "\"a\\\"b\" c"
+cursor = [0, 1]
+keys = "di\""
+
+[[case]]
+name = "i_quote_on_escaped"
+buffer = "\"a\\\"b\" c"
+cursor = [0, 3]
+keys = "di\""
+
+[[case]]
+name = "i_quote_escaped_backslash"
+buffer = "\"a\\\\\"b\" c"
+cursor = [0, 1]
+keys = "di\""
+
+[[case]]
+name = "i_single_quote_on_escaped_first"
+buffer = ")x.y\\'q'  "
+cursor = [0, 5]
+keys = "yi'"
+
+[[case]]
+name = "i_quote_escaped_first"
+buffer = "x\\\"a\"b\""
+cursor = [0, 0]
+keys = "di\""
+
+[[case]]
+name = "i_quote_empty"
+buffer = "\"\" x"
+cursor = [0, 0]
+keys = "di\""
+
+[[case]]
+name = "a_quote_whole_row"
+buffer = "\"a\""
+cursor = [0, 1]
+keys = "da\""
+
+[[case]]
+name = "i_quote_no_quotes"
+buffer = "abc"
+cursor = [0, 1]
+keys = "di\""
+
+[[case]]
+name = "i_single_quote"
+buffer = "it's 'a b' ok"
+cursor = [0, 8]
+keys = "di'"
+
+[[case]]
+name = "a_single_quote"
+buffer = "it's 'a b' ok"
+cursor = [0, 8]
+keys = "da'"
+
+[[case]]
+name = "ya_quote_moves_to_start"
+buffer = "x \"ab\" y"
+cursor = [0, 4]
+keys = "ya\""

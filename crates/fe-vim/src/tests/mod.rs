@@ -1,10 +1,13 @@
 use fe_command::Invocation;
+use serde::Serialize;
 
-use crate::{Pending, Step, parse_keys, step};
+use crate::{HeadlessVim, Pending, Step, VimState, context, parse_keys, step};
 
 mod commands;
 mod motions;
+mod operators;
 mod reducer;
+mod registers;
 mod state;
 
 /// Steps `keys` through the reducer from nothing pending. Every key but the
@@ -28,4 +31,23 @@ pub(super) fn commit(keys: &str) -> Invocation {
         Step::Commit(invocation) => invocation,
         other => panic!("{keys} gave {other:?}, not Commit"),
     }
+}
+
+/// `command` with `args`, stamped with a normal-mode vim context.
+pub(super) fn invocation(command: &str, args: impl Serialize) -> Invocation {
+    Invocation::new(command.parse().unwrap())
+        .args(serde_json::to_value(args).unwrap())
+        .context(context(&VimState::new()))
+}
+
+/// The registers `" 0-9 - a-z` that hold anything, as `(name, text,
+/// linewise)`.
+pub(super) fn registers(vim: &HeadlessVim) -> Vec<(char, String, bool)> {
+    "\"0123456789-abcdefghijklmnopqrstuvwxyz"
+        .chars()
+        .filter_map(|name| {
+            let register = vim.registers().get(name)?;
+            Some((name, register.text.clone(), register.linewise))
+        })
+        .collect()
 }

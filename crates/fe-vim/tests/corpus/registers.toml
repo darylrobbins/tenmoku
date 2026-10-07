@@ -1,0 +1,322 @@
+# Register cases for fe-vim's oracle: named a-z and A-Z appends, _, the
+# numbered shift, - and 0, and p and P charwise and linewise with counts and
+# named registers. Hand-written: name, buffer (rows joined with \n, no
+# trailing newline), cursor = [row, byte column] and keys in vim notation.
+# What nvim does with each is recorded in registers.expected.json by the
+# ignored `record_corpus_with_neovim` test; edit a case, then re-record.
+
+# Named registers a-z, and A-Z appending.
+[[case]]
+name = "named_yank"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "\"ayw"
+
+[[case]]
+name = "named_yank_leaves_0"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = "yy\"bjyw"
+
+[[case]]
+name = "named_delete_line_also_writes_1"
+buffer = "one\ntwo\nthree"
+cursor = [0, 0]
+keys = "\"add"
+
+[[case]]
+name = "named_small_delete_skips_minus"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "\"adw"
+
+[[case]]
+name = "named_replaces"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "\"aywW\"ayw"
+
+[[case]]
+name = "append_charwise"
+buffer = "abc"
+cursor = [0, 1]
+keys = "\"ayl\"Ayl"
+
+[[case]]
+name = "append_lines_to_chars"
+buffer = "abc"
+cursor = [0, 1]
+keys = "\"ayl\"Ayy"
+
+[[case]]
+name = "append_chars_to_lines"
+buffer = "abc"
+cursor = [0, 1]
+keys = "\"ayy\"Ayl"
+
+[[case]]
+name = "append_to_empty"
+buffer = "abc"
+cursor = [0, 0]
+keys = "\"Qyw"
+
+[[case]]
+name = "uppercase_reads_lowercase"
+buffer = "abc"
+cursor = [0, 0]
+keys = "\"ayl\"Ap"
+
+# The black hole _.
+[[case]]
+name = "black_hole_delete"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "yw\"_dw"
+
+[[case]]
+name = "black_hole_line"
+buffer = "abc\ndef"
+cursor = [0, 1]
+keys = "\"_dd"
+
+[[case]]
+name = "black_hole_put"
+buffer = "abc"
+cursor = [0, 0]
+keys = "yl\"_p"
+
+# The numbered shift, - and 0.
+[[case]]
+name = "numbered_shift"
+buffer = "a\nb\nc\nd"
+cursor = [0, 0]
+keys = "dddddd"
+
+[[case]]
+name = "numbered_shift_drops_9"
+buffer = "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11"
+cursor = [0, 0]
+keys = "dddddddddddddddddddd"
+
+[[case]]
+name = "multi_row_charwise_delete_writes_1"
+buffer = "ab\ncd"
+cursor = [0, 1]
+keys = "de"
+
+[[case]]
+name = "small_delete_writes_minus"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "dwx"
+
+[[case]]
+name = "small_delete_leaves_1"
+buffer = "a\nb c"
+cursor = [0, 0]
+keys = "ddx"
+
+[[case]]
+name = "yank_writes_0"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "ywdw"
+
+[[case]]
+name = "yank_unnamed_register_name"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "\"\"yw"
+
+[[case]]
+name = "percent_delete_writes_1_and_minus"
+buffer = "(a) b"
+cursor = [0, 0]
+keys = "d%"
+
+[[case]]
+name = "named_percent_delete"
+buffer = "(a) b"
+cursor = [0, 0]
+keys = "\"ad%"
+
+[[case]]
+name = "quote_quote_delete_writes_0"
+buffer = "a\nb"
+cursor = [0, 0]
+keys = "\"\"dd"
+
+[[case]]
+name = "quote_quote_small_delete"
+buffer = "a b"
+cursor = [0, 0]
+keys = "\"\"dw"
+
+[[case]]
+name = "numbered_name_delete_points_at_1"
+buffer = "a\nb"
+cursor = [0, 0]
+keys = "\"2dd"
+
+[[case]]
+name = "minus_name_line_delete"
+buffer = "a\nb"
+cursor = [0, 0]
+keys = "\"-dd"
+
+[[case]]
+name = "empty_yank_clears"
+buffer = "ab\n\nc"
+cursor = [0, 0]
+keys = "ylj$y$"
+
+[[case]]
+name = "empty_named_yank_clears"
+buffer = "ab\n\nc"
+cursor = [0, 0]
+keys = "\"ayljy0\"ay$p"
+
+[[case]]
+name = "empty_delete_keeps"
+buffer = "ab\n\nc"
+cursor = [0, 0]
+keys = "dljx"
+
+[[case]]
+name = "P_linewise_empty_row"
+buffer = "bar\nx.y"
+cursor = [0, 0]
+keys = "DddP"
+
+[[case]]
+name = "numbered_register_named"
+buffer = "a\nb"
+cursor = [0, 0]
+keys = "\"3yy"
+
+[[case]]
+name = "minus_register_named"
+buffer = "abc"
+cursor = [0, 0]
+keys = "\"-yl"
+
+# p and P, charwise and linewise, with counts and named registers.
+[[case]]
+name = "p_charwise"
+buffer = "abc"
+cursor = [0, 1]
+keys = "ylp"
+
+[[case]]
+name = "p_charwise_count"
+buffer = "abc"
+cursor = [0, 1]
+keys = "yl3p"
+
+[[case]]
+name = "P_charwise"
+buffer = "abc"
+cursor = [0, 1]
+keys = "ylP"
+
+[[case]]
+name = "P_charwise_count"
+buffer = "abc"
+cursor = [0, 1]
+keys = "yl3P"
+
+[[case]]
+name = "p_charwise_multi_row"
+buffer = "ab\ncd\nxy"
+cursor = [0, 1]
+keys = "yejp"
+
+[[case]]
+name = "P_charwise_multi_row"
+buffer = "ab\ncd\nxy"
+cursor = [0, 1]
+keys = "yejP"
+
+[[case]]
+name = "p_linewise"
+buffer = "one\ntwo"
+cursor = [0, 1]
+keys = "yyp"
+
+[[case]]
+name = "P_linewise"
+buffer = "one\ntwo"
+cursor = [0, 1]
+keys = "yyP"
+
+[[case]]
+name = "p_linewise_count"
+buffer = "one\ntwo"
+cursor = [1, 1]
+keys = "yy3p"
+
+[[case]]
+name = "p_linewise_last_row"
+buffer = "a\nb"
+cursor = [1, 0]
+keys = "kyyjp"
+
+[[case]]
+name = "p_linewise_first_non_blank"
+buffer = "  one\ntwo"
+cursor = [1, 0]
+keys = "kyyjP"
+
+[[case]]
+name = "p_named"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = "\"ayyj\"ap"
+
+[[case]]
+name = "P_named_count"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "\"aywW\"byw0\"b2P"
+
+[[case]]
+name = "p_numbered"
+buffer = "a\nb\nc"
+cursor = [0, 0]
+keys = "dddd\"2p"
+
+[[case]]
+name = "p_minus"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "dw\"-P"
+
+[[case]]
+name = "p_empty_register"
+buffer = "abc"
+cursor = [0, 0]
+keys = "p"
+
+[[case]]
+name = "p_on_empty_row"
+buffer = "abc\n\nx"
+cursor = [0, 0]
+keys = "ylj2p"
+
+[[case]]
+name = "p_after_delete_line"
+buffer = "one\ntwo\nthree"
+cursor = [0, 0]
+keys = "ddp"
+
+[[case]]
+name = "p_multibyte"
+buffer = "añb"
+cursor = [0, 1]
+keys = "ylp"
+
+[[case]]
+name = "xp_swaps"
+buffer = "ab"
+cursor = [0, 0]
+keys = "xp"

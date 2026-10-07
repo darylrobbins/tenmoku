@@ -8,12 +8,12 @@
 
 use std::sync::OnceLock;
 
-use fe_buffer::ResolvedSelection;
+use fe_buffer::{ResolvedSelection, Version};
 use fe_editor::EditorModel;
 use fe_text::Text;
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::{Motion, MoveArgs, VimState};
+use crate::{Motion, MoveArgs, VimState, state::Goals};
 
 /// Moves every caret by `args`; returns whether any selection changed.
 pub(crate) fn apply(model: &mut EditorModel, state: &mut VimState, args: MoveArgs) -> bool {
@@ -23,19 +23,14 @@ pub(crate) fn apply(model: &mut EditorModel, state: &mut VimState, args: MoveArg
     let version = model.snapshot().version();
     let before = model.selections();
     // Goals hold only while the carets are where vim left them.
-    let goals = state.goals.as_ref().filter(|(at, goals)| {
-        *at == version
-            && goals
-                .iter()
-                .map(|goal| goal.0)
-                .eq(before.iter().map(|s| s.head()))
-    });
+    let goals = valid_goals(state, version, &before);
     let tab = model.tab_size().max(1);
     let mut moved = Vec::with_capacity(before.len());
     for (ix, selection) in before.iter().enumerate() {
         let mut cursor = Cursor::at(&text, selection.head());
         let goal = goals.and_then(|(_, goals)| goals[ix].1);
-        let goal = motion(&mut cursor, args, goal, tab);
+        let goal =
+            motion(&mut cursor, args, state.last_find, goal, tab).unwrap_or_else(|kept| kept);
         let head = cursor.offset();
         let tail = if args.extend { selection.tail() } else { head };
         moved.push((selection_from(tail, head), goal));
@@ -58,31 +53,76 @@ pub(crate) fn apply(model: &mut EditorModel, state: &mut VimState, args: MoveArg
     after != before
 }
 
-/// Moves one caret; returns the goal column it keeps (`None` resets it).
-fn motion(cursor: &mut Cursor, args: MoveArgs, goal: Option<usize>, tab: usize) -> Option<usize> {
+/// The goals `state` holds for `selections`, if they're still where vim left
+/// them in this `version` of the text.
+pub(crate) fn valid_goals<'a>(
+    state: &'a VimState,
+    version: Version,
+    selections: &[ResolvedSelection],
+) -> Option<&'a (Version, Goals)> {
+    state.goals.as_ref().filter(|(at, goals)| {
+        *at == version
+            && goals
+                .iter()
+                .map(|goal| goal.0)
+                .eq(selections.iter().map(|s| s.head()))
+    })
+}
+
+/// The find `;` (or `,`, if `reverse`) repeats: the last `f F t T`, turned
+/// around for `,`.
+pub(crate) fn repeated_find(last_find: Option<Motion>, reverse: bool) -> Option<Motion> {
+    let find = last_find?;
+    Some(match (find, reverse) {
+        (find, false) => find,
+        (Motion::FindForward(ch), true) => Motion::FindBackward(ch),
+        (Motion::FindBackward(ch), true) => Motion::FindForward(ch),
+        (Motion::TillForward(ch), true) => Motion::TillBackward(ch),
+        (Motion::TillBackward(ch), true) => Motion::TillForward(ch),
+        _ => return None,
+    })
+}
+
+/// Moves one caret. `Ok` holds the goal column it keeps (`None` resets it).
+/// `Err` says the motion failed, as Vim beeps (`h` at the line start, `j` on
+/// the last row, an `f` with no match, `%` with no bracket), holding the goal
+/// to keep: an operator given a failed motion does nothing.
+pub(crate) fn motion(
+    cursor: &mut Cursor,
+    args: MoveArgs,
+    last_find: Option<Motion>,
+    goal: Option<usize>,
+    tab: usize,
+) -> Result<Option<usize>, Option<usize>> {
     let count = args.count.unwrap_or(1).max(1);
     let n = count as usize;
     let (row, last_row) = (cursor.row, cursor.text.row_count() - 1);
     let line = &cursor.line;
     match args.motion {
-        // A motion that fails (`h` at the line start, `l` at its end, an `f`
-        // with no match) leaves the goal alone, as in Vim.
+        // A motion that fails leaves the goal alone, as in Vim. For an
+        // operator, `l` may step past the last grapheme: `x` takes it.
         Motion::Left | Motion::Right => {
             let ix = match args.motion {
                 Motion::Left => cursor.ix.saturating_sub(n),
+                _ if cursor.op => cursor.ix.saturating_add(n).min(line.len()),
                 _ => cursor.ix.saturating_add(n).min(line.last()),
             };
+            // An operator's `h` at the row's start (or `l` at its end) only
+            // has nothing to act on: `>h` still shifts the row.
             if ix == cursor.ix {
-                return goal;
+                return if cursor.op { Ok(goal) } else { Err(goal) };
             }
             cursor.ix = ix;
         }
         // Vim fails `k` on the first row and `j` on the last, keeping the
         // goal; from elsewhere a count past the end clamps.
-        Motion::Up if row == 0 => return goal,
-        Motion::Down if row == last_row => return goal,
-        Motion::Up => return cursor.vertical(row.saturating_sub(count), goal, tab),
-        Motion::Down => return cursor.vertical(row.saturating_add(count).min(last_row), goal, tab),
+        Motion::Up if row == 0 => return Err(goal),
+        Motion::Down | Motion::Line if row == last_row && count > 1 => return Err(goal),
+        Motion::Down if row == last_row => return Err(goal),
+        Motion::Up => return Ok(cursor.vertical(row.saturating_sub(count), goal, tab)),
+        Motion::Down => {
+            return Ok(cursor.vertical(row.saturating_add(count).min(last_row), goal, tab));
+        }
         Motion::DocumentStart | Motion::DocumentEnd => {
             let default = if args.motion == Motion::DocumentEnd {
                 last_row + 1
@@ -94,37 +134,49 @@ fn motion(cursor: &mut Cursor, args: MoveArgs, goal: Option<usize>, tab: usize) 
                 .unwrap_or(default)
                 .saturating_sub(1)
                 .min(last_row);
-            return cursor.vertical(to_row, goal, tab);
+            return Ok(cursor.vertical(to_row, goal, tab));
         }
+        // `{count}%`: the row `count` percent down, as `:help N%` computes it.
+        Motion::MatchPair if args.count.is_some() => {
+            if count > 100 {
+                return Err(goal);
+            }
+            let rows = u64::from(last_row) + 1;
+            let to_row = (u64::from(count) * rows).div_ceil(100).saturating_sub(1);
+            return Ok(cursor.vertical(to_row as u32, goal, tab));
+        }
+        Motion::MatchPair => match match_pair(cursor.text, cursor.offset()) {
+            Some(Match { offset, rows }) => {
+                cursor.goto(offset);
+                cursor.rows_matched = rows;
+            }
+            None => return Err(goal),
+        },
         Motion::LineStart => cursor.ix = 0,
         Motion::FirstNonBlank => cursor.ix = line.first_non_blank(),
         // Vim fails a `{count}$` from the last row (still aiming at line
         // ends), and clamps one from above.
-        Motion::LineEnd if count > 1 && row == last_row => return Some(usize::MAX),
+        Motion::LineEnd if count > 1 && row == last_row => return Err(Some(usize::MAX)),
         Motion::LineEnd => {
             cursor.enter(row.saturating_add(count - 1).min(last_row));
             cursor.ix = cursor.line.last();
-            return Some(usize::MAX);
+            return Ok(Some(usize::MAX));
         }
-        Motion::FindForward(ch) | Motion::TillForward(ch) => {
-            let till = matches!(args.motion, Motion::TillForward(_));
-            let mut found = (cursor.ix + 1..line.len()).filter(|&ix| line.starts_with(ix, ch));
-            // `t` onto the very next grapheme fails too; `T` doesn't.
-            match found.nth(n - 1).map(|ix| ix - usize::from(till)) {
-                Some(ix) if ix != cursor.ix => cursor.ix = ix,
-                _ => return goal,
+        Motion::FindForward(_)
+        | Motion::FindBackward(_)
+        | Motion::TillForward(_)
+        | Motion::TillBackward(_) => {
+            if !cursor.find(args.motion, n, false) {
+                return Err(goal);
             }
         }
-        Motion::FindBackward(ch) | Motion::TillBackward(ch) => {
-            let till = matches!(args.motion, Motion::TillBackward(_));
-            let mut found = (0..cursor.ix).rev().filter(|&ix| line.starts_with(ix, ch));
-            match found.nth(n - 1) {
-                // `T` steps one character past the match, which inside a
-                // grapheme with combining marks is the match itself.
-                Some(ix) => {
-                    cursor.ix = ix + usize::from(till && line.grapheme(ix).chars().nth(1).is_none())
-                }
-                None => return goal,
+        // As nvim's 'cpoptions' has no `;`, a repeated `t` or `T` next to its
+        // char skips it for the following one.
+        Motion::RepeatFind | Motion::RepeatFindReverse => {
+            let reverse = args.motion == Motion::RepeatFindReverse;
+            match repeated_find(last_find, reverse) {
+                Some(find) if cursor.find(find, n, true) => {}
+                _ => return Err(goal),
             }
         }
         Motion::WordForward | Motion::WordBackward | Motion::WordEnd => {
@@ -140,14 +192,20 @@ fn motion(cursor: &mut Cursor, args: MoveArgs, goal: Option<usize>, tab: usize) 
             cursor.ix = cursor.line.first_non_blank();
         }
     }
-    None
+    // nvim fails an operator whose `b` can't move at all, or would step
+    // back from an empty first row (from a non-empty one, it just stops at
+    // the start).
+    if cursor.op && cursor.stuck_at_start {
+        return Err(goal);
+    }
+    Ok(None)
 }
 
 /// Vim's word classes: `Of` holds nvim's `charclass()` (1 punctuation, 2
 /// word, 3 emoji, others a script's own class). An empty row is a word of
 /// its own; for `W B E`, every non-blank is one class.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-enum Class {
+pub(crate) enum Class {
     Blank,
     Of(u32),
     EmptyRow,
@@ -176,7 +234,7 @@ fn char_info(ch: char) -> (u32, usize) {
 }
 
 /// A grapheme's class is its first character's, as in nvim.
-fn class(grapheme: &str, big: bool) -> Class {
+pub(crate) fn class(grapheme: &str, big: bool) -> Class {
     match char_info(grapheme.chars().next().unwrap_or(' ')).0 {
         0 => Class::Blank,
         _ if big => Class::Of(2),
@@ -185,14 +243,14 @@ fn class(grapheme: &str, big: bool) -> Class {
 }
 
 /// One row's text and the byte offset of each grapheme in it.
-struct Line {
-    start: usize,
-    text: String,
-    starts: Vec<usize>,
+pub(crate) struct Line {
+    pub(crate) start: usize,
+    pub(crate) text: String,
+    pub(crate) starts: Vec<usize>,
 }
 
 impl Line {
-    fn new(text: &Text, row: u32) -> Self {
+    pub(crate) fn new(text: &Text, row: u32) -> Self {
         let line = text.row_to_string(row);
         let starts = line.grapheme_indices(true).map(|(ix, _)| ix).collect();
         let start = text.row_start(row);
@@ -203,16 +261,16 @@ impl Line {
         }
     }
 
-    fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.starts.len()
     }
 
     /// The last grapheme's index; 0 on an empty row.
-    fn last(&self) -> usize {
+    pub(crate) fn last(&self) -> usize {
         self.len().saturating_sub(1)
     }
 
-    fn grapheme(&self, ix: usize) -> &str {
+    pub(crate) fn grapheme(&self, ix: usize) -> &str {
         let end = self.starts.get(ix + 1).copied().unwrap_or(self.text.len());
         &self.text[self.starts[ix]..end]
     }
@@ -224,7 +282,7 @@ impl Line {
 
     /// `^`: the first non-blank grapheme, or the last if all are blank.
     /// Only a space or a tab is blank here, unlike for `w`.
-    fn first_non_blank(&self) -> usize {
+    pub(crate) fn first_non_blank(&self) -> usize {
         (0..self.len())
             .find(|&ix| !matches!(self.grapheme(ix), " " | "\t"))
             .unwrap_or(self.last())
@@ -245,7 +303,7 @@ impl Line {
     /// Vim's goal column for a normal-mode caret on grapheme `ix`: the
     /// display column it starts at, except for a tab, whose last column it
     /// is (where the caret shows).
-    fn goal_column(&self, ix: usize, tab: usize) -> usize {
+    pub(crate) fn goal_column(&self, ix: usize, tab: usize) -> usize {
         if self.len() == 0 {
             return 0;
         }
@@ -259,35 +317,97 @@ impl Line {
 
 /// A caret: a row and the index of a grapheme in it (0 on an empty row),
 /// keeping that row's [`Line`] as it steps.
-struct Cursor<'a> {
-    text: &'a Text,
-    row: u32,
-    ix: usize,
-    line: Line,
+pub(crate) struct Cursor<'a> {
+    pub(crate) text: &'a Text,
+    pub(crate) row: u32,
+    pub(crate) ix: usize,
+    pub(crate) line: Line,
+    /// Moving for an operator: `l` may step onto the row's end.
+    pub(crate) op: bool,
+    /// The row of the last word `w` moved over.
+    pub(crate) word_row: u32,
+    /// Whether `w` ran into the end of the text.
+    pub(crate) hit_end: bool,
+    /// Whether `b` was stuck at the start of the text: from its first step,
+    /// or with steps left on an empty first row.
+    pub(crate) stuck_at_start: bool,
+    /// Whether `%` matched preprocessor rows, which an operator takes
+    /// whole.
+    pub(crate) rows_matched: bool,
 }
 
 impl<'a> Cursor<'a> {
     /// The normal-mode caret for `offset`: on the grapheme holding it,
     /// clamped to the row's last.
-    fn at(text: &'a Text, offset: usize) -> Self {
+    pub(crate) fn at(text: &'a Text, offset: usize) -> Self {
         let row = text.offset_to_point(offset).row;
-        let line = Line::new(text, row);
-        let column = offset.saturating_sub(line.start);
-        let ix = line.starts.partition_point(|&start| start <= column);
-        let ix = ix.saturating_sub(1).min(line.last());
-        Self {
+        let mut cursor = Self {
             text,
             row,
-            ix,
-            line,
+            ix: 0,
+            line: Line::new(text, row),
+            op: false,
+            word_row: row,
+            hit_end: false,
+            stuck_at_start: false,
+            rows_matched: false,
+        };
+        cursor.goto(offset);
+        cursor
+    }
+
+    /// To the grapheme holding `offset`, clamped to its row's last.
+    pub(crate) fn goto(&mut self, offset: usize) {
+        self.enter(self.text.offset_to_point(offset).row);
+        let column = offset.saturating_sub(self.line.start);
+        let ix = self.line.starts.partition_point(|&start| start <= column);
+        self.ix = ix.saturating_sub(1).min(self.line.last());
+    }
+
+    /// The caret's offset; the row's end when an operator's `l` stepped
+    /// past its last grapheme.
+    pub(crate) fn offset(&self) -> usize {
+        let column = self.line.starts.get(self.ix).copied();
+        self.line.start + column.unwrap_or(self.line.text.len())
+    }
+
+    /// `f F t T` `n` times along the row; false if there aren't `n`
+    /// matches. `skip` is `;` and `,`: a till next to its char goes on to
+    /// the following one.
+    fn find(&mut self, find: Motion, n: usize, skip: bool) -> bool {
+        let line = &self.line;
+        match find {
+            Motion::FindForward(ch) | Motion::TillForward(ch) => {
+                let till = matches!(find, Motion::TillForward(_));
+                let from = self.ix + 1 + usize::from(till && skip);
+                let mut found = (from..line.len()).filter(|&ix| line.starts_with(ix, ch));
+                // `t` onto the very next grapheme fails too, though an
+                // operator then takes the caret's own; `T` doesn't.
+                match found.nth(n - 1).map(|ix| ix - usize::from(till)) {
+                    Some(ix) if ix != self.ix || self.op => self.ix = ix,
+                    _ => return false,
+                }
+            }
+            Motion::FindBackward(ch) | Motion::TillBackward(ch) => {
+                let till = matches!(find, Motion::TillBackward(_));
+                let to = self.ix.saturating_sub(usize::from(till && skip));
+                let mut found = (0..to).rev().filter(|&ix| line.starts_with(ix, ch));
+                match found.nth(n - 1) {
+                    // `T` steps one character past the match, which inside a
+                    // grapheme with combining marks is the match itself.
+                    Some(ix) => {
+                        self.ix =
+                            ix + usize::from(till && line.grapheme(ix).chars().nth(1).is_none())
+                    }
+                    None => return false,
+                }
+            }
+            _ => return false,
         }
+        true
     }
 
-    fn offset(&self) -> usize {
-        self.line.start + self.line.starts.get(self.ix).copied().unwrap_or(0)
-    }
-
-    fn enter(&mut self, row: u32) {
+    pub(crate) fn enter(&mut self, row: u32) {
         if row != self.row {
             self.row = row;
             self.line = Line::new(self.text, row);
@@ -296,7 +416,7 @@ impl<'a> Cursor<'a> {
 
     /// To the grapheme on `row` covering the goal column (by default, the
     /// one this caret is on), or the row's last; returns the goal.
-    fn vertical(&mut self, row: u32, goal: Option<usize>, tab: usize) -> Option<usize> {
+    pub(crate) fn vertical(&mut self, row: u32, goal: Option<usize>, tab: usize) -> Option<usize> {
         let goal = goal.unwrap_or_else(|| self.line.goal_column(self.ix, tab));
         self.enter(row);
         let mut end = 0;
@@ -309,7 +429,7 @@ impl<'a> Cursor<'a> {
         Some(goal)
     }
 
-    fn class(&self, big: bool) -> Class {
+    pub(crate) fn class(&self, big: bool) -> Class {
         match self.line.len() {
             0 => Class::EmptyRow,
             _ => class(self.line.grapheme(self.ix), big),
@@ -317,12 +437,12 @@ impl<'a> Cursor<'a> {
     }
 
     /// The class of grapheme `ix` on this row, if it has one.
-    fn class_on_row(&self, ix: usize, big: bool) -> Option<Class> {
+    pub(crate) fn class_on_row(&self, ix: usize, big: bool) -> Option<Class> {
         (ix < self.line.len()).then(|| class(self.line.grapheme(ix), big))
     }
 
     /// To the next grapheme, or the next row's first; false at the end.
-    fn forward(&mut self) -> bool {
+    pub(crate) fn forward(&mut self) -> bool {
         if self.ix + 1 < self.line.len() {
             self.ix += 1;
         } else if self.row + 1 < self.text.row_count() {
@@ -336,7 +456,7 @@ impl<'a> Cursor<'a> {
 
     /// To the previous grapheme, or the previous row's last; false at the
     /// start.
-    fn backward(&mut self) -> bool {
+    pub(crate) fn backward(&mut self) -> bool {
         if self.ix > 0 {
             self.ix -= 1;
         } else if self.row > 0 {
@@ -351,33 +471,42 @@ impl<'a> Cursor<'a> {
     /// `w`, `b` or `e` (`W B E` if `big`) `count` times, stopping once a step
     /// doesn't move.
     fn words(&mut self, motion: Motion, count: u32, big: bool) {
-        for _ in 0..count {
+        for step in 0..count {
             let before = (self.row, self.ix);
+            self.word_row = self.row;
             match motion {
                 Motion::WordForward => self.word_forward(big),
                 Motion::WordBackward => self.word_backward(big),
                 _ => self.word_end(big),
             }
             if (self.row, self.ix) == before {
+                self.stuck_at_start = motion == Motion::WordBackward
+                    && before == (0, 0)
+                    && (step == 0 || self.line.len() == 0);
                 break;
             }
         }
     }
 
     /// `w`: past this word, then past blanks to the next word or empty row.
-    /// Off the end of the text, it stays on the last grapheme.
+    /// Off the end of the text, it stays on the last grapheme (noting
+    /// [`Cursor::hit_end`]).
     fn word_forward(&mut self, big: bool) {
         let (class, row) = (self.class(big), self.row);
-        if !matches!(class, Class::Blank | Class::EmptyRow) {
-            while self.forward() {
-                if self.row != row || self.class(big) != class {
-                    break;
+        let mut moved = if !matches!(class, Class::Blank | Class::EmptyRow) {
+            loop {
+                let moved = self.forward();
+                if !moved || self.row != row || self.class(big) != class {
+                    break moved;
                 }
             }
         } else {
-            self.forward();
+            self.forward()
+        };
+        while moved && self.class(big) == Class::Blank {
+            moved = self.forward();
         }
-        while self.class(big) == Class::Blank && self.forward() {}
+        self.hit_end |= !moved;
     }
 
     /// `e`: at least one step, past blanks and empty rows, to the end of the
@@ -419,4 +548,324 @@ fn selection_from(tail: usize, head: usize) -> ResolvedSelection {
         range: tail.min(head)..tail.max(head),
         reversed: head < tail,
     }
+}
+
+/// The bracket pairs `%` and the bracket objects match.
+pub(crate) const PAIRS: [(u8, u8); 3] = [(b'(', b')'), (b'[', b']'), (b'{', b'}')];
+
+/// A row's bytes, and for each whether an odd run of backslashes escapes it
+/// and whether it's inside a double-quoted string (after an odd number of
+/// unescaped `"` on the row, if the row has an even number).
+pub(crate) struct Scan {
+    pub(crate) start: usize,
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) escaped: Vec<bool>,
+    pub(crate) quoted: Vec<bool>,
+}
+
+impl Scan {
+    pub(crate) fn new(text: &Text, row: u32) -> Self {
+        let bytes = text.row_to_string(row).into_bytes();
+        let (mut escaped, mut quoted) = (Vec::with_capacity(bytes.len()), Vec::new());
+        let (mut slashes, mut inside) = (0usize, false);
+        for &byte in &bytes {
+            let escape = slashes % 2 == 1;
+            escaped.push(escape);
+            quoted.push(inside);
+            if byte == b'"' && !escape {
+                inside = !inside;
+            }
+            slashes = if byte == b'\\' { slashes + 1 } else { 0 };
+        }
+        // With an odd number of quotes, the row's strings can't be told
+        // apart: none count.
+        if inside {
+            quoted.clear();
+        }
+        quoted.resize(bytes.len(), false);
+        Self {
+            start: text.row_start(row),
+            bytes,
+            escaped,
+            quoted,
+        }
+    }
+
+    /// Whether byte `ix` is a bracket quoted as a char, `'('`.
+    fn char_literal(&self, ix: usize) -> bool {
+        ix > 0 && self.bytes[ix - 1] == b'\'' && self.bytes.get(ix + 1) == Some(&b'\'')
+    }
+
+    fn quote_at(&self, ix: usize) -> bool {
+        self.bytes[ix] == b'"' && !self.escaped[ix]
+    }
+}
+
+/// How [`unmatched`] treats double-quoted strings.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Quotes {
+    /// Brackets inside strings count like any others.
+    Ignore,
+    /// Brackets inside strings are skipped: starting outside one.
+    Skip,
+    /// Only the string started in counts, up to its closing quote.
+    Within,
+}
+
+impl Quotes {
+    /// [`Quotes::Within`] if `quoted`, else [`Quotes::Skip`]: `%` and
+    /// matching a bracket found.
+    pub(crate) fn from(quoted: bool) -> Self {
+        if quoted { Self::Within } else { Self::Skip }
+    }
+}
+
+/// How [`unmatched`] treats quotes and escapes, from where it starts.
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct Rules {
+    /// Only brackets escaped like this count (`:help %`, without
+    /// 'cpoptions' M).
+    pub(crate) escaped: bool,
+    pub(crate) quotes: Quotes,
+    /// Skip brackets quoted as chars, `'('`, as `%` does.
+    pub(crate) literals: bool,
+}
+
+/// From `from` (not included), the first `close` (`forward`) or `open`
+/// (backward) without a partner in between, by `rules`.
+pub(crate) fn unmatched(
+    text: &Text,
+    from: usize,
+    forward: bool,
+    pair: (u8, u8),
+    rules: Rules,
+) -> Option<usize> {
+    nth_unmatched(text, from, forward, pair, rules, 1)
+}
+
+/// [`unmatched`], going on past `n - 1` of them: the `n`th enclosing
+/// bracket, in one pass.
+pub(crate) fn nth_unmatched(
+    text: &Text,
+    from: usize,
+    forward: bool,
+    (open, close): (u8, u8),
+    rules: Rules,
+    mut n: u32,
+) -> Option<usize> {
+    let (want, other) = if forward {
+        (close, open)
+    } else {
+        (open, close)
+    };
+    let first = text.offset_to_point(from).row;
+    let mut depth = 0usize;
+    let rows: Box<dyn Iterator<Item = u32>> = match forward {
+        true => Box::new(first..text.row_count()),
+        false => Box::new((0..=first).rev()),
+    };
+    for row in rows {
+        // A string doesn't go on past its row.
+        if rules.quotes == Quotes::Within && row != first {
+            return None;
+        }
+        let scan = Scan::new(text, row);
+        let len = scan.bytes.len();
+        let ixs: Box<dyn Iterator<Item = usize>> = match (row == first, forward) {
+            (true, true) => Box::new(from - scan.start + 1..len),
+            (true, false) => Box::new((0..(from - scan.start).min(len)).rev()),
+            (false, true) => Box::new(0..len),
+            (false, false) => Box::new((0..len).rev()),
+        };
+        for ix in ixs {
+            if rules.quotes == Quotes::Within && scan.quote_at(ix) {
+                return None;
+            }
+            let byte = scan.bytes[ix];
+            if (byte != want && byte != other)
+                || scan.escaped[ix] != rules.escaped
+                || (rules.quotes == Quotes::Skip && scan.quoted[ix])
+                || (rules.literals && scan.char_literal(ix))
+            {
+                continue;
+            }
+            match (byte == want, depth) {
+                (true, 0) if n <= 1 => return Some(scan.start + ix),
+                (true, 0) => n -= 1,
+                (true, _) => depth -= 1,
+                (false, _) => depth += 1,
+            }
+        }
+    }
+    None
+}
+
+/// Where `%` goes: an offset, and whether it matched preprocessor rows.
+pub(crate) struct Match {
+    pub(crate) offset: usize,
+    pub(crate) rows: bool,
+}
+
+/// `%` without a count (`:help %`): with the caret on `/*` or `*/`, the
+/// other end of the comment (from `*/`, the nearest `/*` ending before it); on a preprocessor conditional's `#` (or in the
+/// blanks before it), the next `#else`, `#elif` or `#endif` at its level,
+/// or from `#endif` its `#if`; otherwise from the first bracket at or after
+/// the caret on its row, its match; failing that, the conditional again.
+pub(crate) fn match_pair(text: &Text, offset: usize) -> Option<Match> {
+    let row = text.offset_to_point(offset).row;
+    let scan = Scan::new(text, row);
+    let col = offset - scan.start;
+    let bytes = &scan.bytes;
+    let at = |ix: usize, byte: u8| bytes.get(ix) == Some(&byte);
+    let chars = |offset: usize| Match {
+        offset,
+        rows: false,
+    };
+    // A `*` between `/` and `/` closes; a `/` between `*` and `*` opens.
+    let opens = at(col, b'/') && at(col + 1, b'*')
+        || at(col, b'*') && !at(col + 1, b'/') && col > 0 && at(col - 1, b'/');
+    let closes = !opens
+        && (at(col, b'*') && at(col + 1, b'/') || at(col, b'/') && col > 0 && at(col - 1, b'*'));
+    if opens {
+        let from = scan.start + col + if at(col, b'/') { 2 } else { 1 };
+        let rest = text.slice_to_string(from..text.len());
+        return rest.find("*/").map(|ix| chars(from + ix + 1));
+    }
+    if closes {
+        let close = scan.start + col - usize::from(at(col, b'/'));
+        let before = text.slice_to_string(0..close + 2).into_bytes();
+        return comment_open(&before, close).map(chars);
+    }
+    let directive = directive(bytes);
+    if let Some((hash, _)) = directive
+        && col <= hash
+    {
+        return conditional(text, row);
+    }
+    let bracket = (col..bytes.len()).find_map(|ix| {
+        let byte = bytes[ix];
+        PAIRS.iter().find_map(|&pair| match byte {
+            _ if byte == pair.0 => Some((ix, pair, true)),
+            _ if byte == pair.1 => Some((ix, pair, false)),
+            _ => None,
+        })
+    });
+    let Some((ix, pair, forward)) = bracket else {
+        return directive.and_then(|_| conditional(text, row));
+    };
+    let rules = Rules {
+        escaped: scan.escaped[ix],
+        quotes: Quotes::from(scan.quoted[ix]),
+        literals: true,
+    };
+    unmatched(text, scan.start + ix, forward, pair, rules).map(chars)
+}
+
+/// The `/*` that `%` matches with the `*/` at `close` in `text` (which
+/// runs to the end of that `*/`), as nvim picks it, in one pass. A `/*`
+/// after a `//` line comment on its row doesn't count, nor one right after
+/// a `*` (unless it's `/*/`). The nearest that counts is the match unless a
+/// `*/` follows it; an earlier one still open wins over it, one that no
+/// `*/` follows at all, even overlapping it as `/*/` does.
+fn comment_open(text: &[u8], close: usize) -> Option<usize> {
+    let marker = |ix: usize, first: u8, second: u8| text[ix] == first && text[ix + 1] == second;
+    let last_close = (0..close).rev().find(|&ix| marker(ix, b'*', b'/'));
+    let (mut commented, mut earliest, mut nearest) = (false, None, None);
+    for ix in 0..close.saturating_sub(1) {
+        if text[ix] == b'\n' {
+            commented = false;
+            continue;
+        }
+        let after_star = ix > 0 && text[ix - 1] == b'*';
+        if marker(ix, b'/', b'*') && !commented && (!after_star || text.get(ix + 2) == Some(&b'/'))
+        {
+            nearest = Some(ix);
+            if earliest.is_none() && last_close.is_none_or(|last| ix >= last) {
+                earliest = Some(ix);
+            }
+        }
+        // A `//` starts a line comment, unless its first `/` ends a `*/`.
+        if marker(ix, b'/', b'/') && !after_star {
+            commented = true;
+        }
+    }
+    let nearest = nearest?;
+    if last_close.is_some_and(|last| last >= nearest + 2) {
+        return None;
+    }
+    Some(
+        earliest
+            .filter(|&earliest| earliest <= nearest)
+            .unwrap_or(nearest),
+    )
+}
+
+/// A preprocessor conditional on a row: its `#`'s column and its kind.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum Directive {
+    /// `#if`, `#ifdef`, `#ifndef`.
+    If,
+    /// `#else`, `#elif`.
+    Else,
+    Endif,
+}
+
+fn directive(bytes: &[u8]) -> Option<(usize, Directive)> {
+    let blank = |byte: &u8| matches!(byte, b' ' | b'\t');
+    let hash = bytes.iter().position(|byte| !blank(byte))?;
+    if bytes[hash] != b'#' {
+        return None;
+    }
+    let word = &bytes[hash + 1..];
+    let word = &word[word
+        .iter()
+        .position(|byte| !blank(byte))
+        .unwrap_or(word.len())..];
+    let kind = match () {
+        _ if word.starts_with(b"endif") => Directive::Endif,
+        _ if word.starts_with(b"if") => Directive::If,
+        _ if word.starts_with(b"el") => Directive::Else,
+        _ => return None,
+    };
+    Some((hash, kind))
+}
+
+/// From the conditional on `row`: the next `#else`, `#elif` or `#endif` at
+/// its level, or from an `#endif`, its `#if`. The `#`'s offset, as rows.
+fn conditional(text: &Text, row: u32) -> Option<Match> {
+    let (_, kind) = directive(&text.row_to_string(row).into_bytes())?;
+    let forward = kind != Directive::Endif;
+    let mut depth = 0usize;
+    let rows: Box<dyn Iterator<Item = u32>> = match forward {
+        true => Box::new(row + 1..text.row_count()),
+        false => Box::new((0..row).rev()),
+    };
+    for other in rows {
+        let Some((hash, found)) = directive(&text.row_to_string(other).into_bytes()) else {
+            continue;
+        };
+        let opens = if forward {
+            Directive::If
+        } else {
+            Directive::Endif
+        };
+        let closes = if forward {
+            Directive::Endif
+        } else {
+            Directive::If
+        };
+        match found {
+            _ if found == opens => depth += 1,
+            _ if found == closes && depth > 0 => depth -= 1,
+            Directive::Else if !forward => {}
+            _ if depth == 0 => {
+                return Some(Match {
+                    offset: text.row_start(other) + hash,
+                    rows: true,
+                });
+            }
+            _ => {}
+        }
+    }
+    None
 }

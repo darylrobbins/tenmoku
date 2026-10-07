@@ -44,11 +44,33 @@ fn move_dispatches_through_the_registry() {
 
     assert_eq!(vim.feed("q"), Err(FeedError::Forwarded(VimKey::Char('q'))));
     assert!(matches!(vim.feed("<nope>"), Err(FeedError::Keys(_))));
-    // `vim.operate` is card 2's.
-    assert!(matches!(
-        vim.feed("dd"),
-        Err(FeedError::Dispatch(DispatchError::UnknownCommand(_)))
-    ));
     assert_eq!(vim.mode(), "normal");
     assert!(parse_keys("<C-r><lt><Left><TAB><cr>").is_ok());
+}
+
+#[test]
+fn operate_and_put_are_registered() {
+    let registry = registry();
+    for id in ["vim.operate", "vim.put"] {
+        let meta = registry.get(&id.parse().unwrap()).expect(id);
+        assert_eq!(
+            meta.context,
+            Some(ContextPredicate::parse("editor && vim.mode == normal").unwrap()),
+            "{id}"
+        );
+        assert!(meta.mutates_buffer, "{id}");
+        assert!(meta.args_schema.is_some(), "{id}");
+    }
+    // Not while an operator is pending: `dd` is one invocation, not `d`
+    // then `d`.
+    let mut operator = VimState::new();
+    operator.feed(VimKey::Char('d'));
+    let mut vim = HeadlessVim::new("one\ntwo", (0, 0));
+    let pending = commit("dd").context(context(&operator));
+    assert!(matches!(
+        vim.dispatch(&pending),
+        Err(DispatchError::NotInContext { .. })
+    ));
+    vim.feed("dd").unwrap();
+    assert_eq!(vim.text(), "two");
 }

@@ -243,18 +243,38 @@ fn mode_name(nvim: &str) -> &str {
     }
 }
 
+/// The registers the oracle records, `" 0-9 - a-z`.
+const REGISTERS: &str = "\"0123456789-abcdefghijklmnopqrstuvwxyz";
+
+/// `vim`'s non-empty registers among [`REGISTERS`], as the oracle records
+/// them.
+fn registers(vim: &HeadlessVim) -> BTreeMap<String, Register> {
+    REGISTERS
+        .chars()
+        .filter_map(|name| {
+            let register = vim.registers().get(name)?;
+            let register = Register {
+                text: register.text.clone(),
+                linewise: register.linewise,
+            };
+            (!register.text.is_empty()).then(|| (name.to_string(), register))
+        })
+        .collect()
+}
+
 /// Drives `recorded`'s keys through [`HeadlessVim`] and compares the buffer,
-/// the cursor and the mode with nvim's. Registers are compared from card 2.
+/// the cursor, the mode and the registers with nvim's.
 pub(crate) fn check(recorded: &Recorded) -> Result<(), String> {
     let (case, expect) = (recorded.case(), &recorded.expect);
     let mut vim = HeadlessVim::new(&case.buffer, case.cursor);
     vim.feed(&case.keys)
         .map_err(|error| format!("{}: {error}", case.name))?;
-    let got = (vim.text(), vim.cursor(), vim.mode());
+    let got = (vim.text(), vim.cursor(), vim.mode(), registers(&vim));
     let want = (
         expect.buffer.clone(),
         expect.cursor,
         mode_name(&expect.mode),
+        expect.registers.clone(),
     );
     if got != want {
         return Err(format!(

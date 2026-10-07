@@ -1,0 +1,1099 @@
+# Operator cases for fe-vim's oracle: d y > < over motions of each class,
+# the exclusive adjustments, counts, x X D and ; ,. Hand-written: name,
+# buffer (rows joined with \n, no trailing newline), cursor = [row, byte
+# column] and keys in vim notation. What nvim does with each is recorded in
+# operators.expected.json by the ignored `record_corpus_with_neovim` test;
+# edit a case, then re-record.
+
+# Exclusive motions: w b h l 0 ^.
+[[case]]
+name = "dw_mid_line"
+buffer = "foo bar baz"
+cursor = [0, 4]
+keys = "dw"
+
+[[case]]
+name = "dw_last_word_keeps_line_break"
+buffer = "foo bar\nbaz"
+cursor = [0, 4]
+keys = "dw"
+
+[[case]]
+name = "dw_at_end_of_text"
+buffer = "abc def"
+cursor = [0, 4]
+keys = "dw"
+
+[[case]]
+name = "dw_onto_indented_row"
+buffer = "foo\n  bar"
+cursor = [0, 0]
+keys = "dw"
+
+[[case]]
+name = "dw_from_trailing_blanks"
+buffer = "foo   \nbar"
+cursor = [0, 4]
+keys = "dw"
+
+[[case]]
+name = "dw_on_last_grapheme"
+buffer = "abc"
+cursor = [0, 2]
+keys = "dw"
+
+[[case]]
+name = "d2w_over_empty_row_linewise"
+buffer = "foo\n\n\nbar"
+cursor = [0, 0]
+keys = "d2w"
+
+[[case]]
+name = "d2w_over_empty_row_after_first_non_blank"
+buffer = "x foo\n\n\nbar"
+cursor = [0, 2]
+keys = "d2w"
+
+[[case]]
+name = "d2w_over_empty_row_to_indent"
+buffer = "foo\n\n  bar"
+cursor = [0, 0]
+keys = "d2w"
+
+[[case]]
+name = "d2w_whole_rows_keep_column"
+buffer = "foo\nbaz\n  x"
+cursor = [0, 0]
+keys = "d2w"
+
+[[case]]
+name = "d3w_across_rows"
+buffer = "a b\nc d"
+cursor = [0, 0]
+keys = "d3w"
+
+[[case]]
+name = "dW_big_word"
+buffer = "foo.bar baz"
+cursor = [0, 0]
+keys = "dW"
+
+[[case]]
+name = "yw_moves_to_start"
+buffer = "one two three"
+cursor = [0, 5]
+keys = "yw"
+
+[[case]]
+name = "db_within_row"
+buffer = "abc def"
+cursor = [0, 6]
+keys = "db"
+
+[[case]]
+name = "db_from_column_0_linewise"
+buffer = "foo\nbar"
+cursor = [1, 0]
+keys = "db"
+
+[[case]]
+name = "db_from_column_0_charwise"
+buffer = "x foo\nbar"
+cursor = [1, 0]
+keys = "db"
+
+[[case]]
+name = "db_onto_empty_row"
+buffer = "foo\n\nbar"
+cursor = [2, 0]
+keys = "db"
+
+[[case]]
+name = "db_across_rows_mid"
+buffer = "abc\n   x"
+cursor = [1, 3]
+keys = "db"
+
+[[case]]
+name = "d2B_past_empty_first_row_fails"
+buffer = "\nz"
+cursor = [1, 0]
+keys = "d2B"
+
+[[case]]
+name = "d3b_stops_at_start"
+buffer = "ab cd"
+cursor = [0, 4]
+keys = "d3b"
+
+[[case]]
+name = "d3b_past_empty_first_row_fails"
+buffer = "\n\nz"
+cursor = [2, 0]
+keys = "d3b"
+
+[[case]]
+name = "y2w_over_empty_row_linewise"
+buffer = "foo\n\n\nbar"
+cursor = [0, 0]
+keys = "y2w"
+
+[[case]]
+name = "y2w_whole_rows_stay_charwise"
+buffer = "foo\nbaz\n  x"
+cursor = [0, 0]
+keys = "y2w"
+
+[[case]]
+name = "d2w_trailing_blanks_after_end"
+buffer = "foo\nbar  \nx"
+cursor = [0, 0]
+keys = "d2e"
+
+[[case]]
+name = "yb_moves_to_start"
+buffer = "one two three"
+cursor = [0, 8]
+keys = "yb"
+
+[[case]]
+name = "d2h"
+buffer = "abcdef"
+cursor = [0, 4]
+keys = "d2h"
+
+[[case]]
+name = "dh_at_column_0_fails"
+buffer = "abc"
+cursor = [0, 0]
+keys = "dh"
+
+[[case]]
+name = "d3l"
+buffer = "abcdef"
+cursor = [0, 2]
+keys = "d3l"
+
+[[case]]
+name = "dl_on_last_grapheme"
+buffer = "abc def"
+cursor = [0, 6]
+keys = "dl"
+
+[[case]]
+name = "d9l_clamps_to_row"
+buffer = "a\nb"
+cursor = [0, 0]
+keys = "d9l"
+
+[[case]]
+name = "d0"
+buffer = "abc def"
+cursor = [0, 5]
+keys = "d0"
+
+[[case]]
+name = "d0_at_column_0"
+buffer = "abc"
+cursor = [0, 0]
+keys = "d0"
+
+[[case]]
+name = "d_caret_after_first_non_blank"
+buffer = "  abc"
+cursor = [0, 4]
+keys = "d^"
+
+[[case]]
+name = "d_caret_before_first_non_blank"
+buffer = "  abc"
+cursor = [0, 0]
+keys = "d^"
+
+[[case]]
+name = "dl_over_multibyte"
+buffer = "añb€c"
+cursor = [0, 1]
+keys = "d2l"
+
+# Inclusive motions: e $ f t %.
+[[case]]
+name = "de"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "de"
+
+[[case]]
+name = "de_on_last_grapheme"
+buffer = "abc def"
+cursor = [0, 6]
+keys = "de"
+
+[[case]]
+name = "ye_across_rows"
+buffer = "ab\ncd"
+cursor = [0, 1]
+keys = "ye"
+
+[[case]]
+name = "d2e_whole_rows"
+buffer = "abc\ndef\n  x"
+cursor = [0, 0]
+keys = "2de"
+
+[[case]]
+name = "d_dollar"
+buffer = "abc\ndef"
+cursor = [0, 1]
+keys = "d$"
+
+[[case]]
+name = "d2_dollar"
+buffer = "abc\ndef\nghi"
+cursor = [0, 1]
+keys = "d2$"
+
+[[case]]
+name = "d2_dollar_on_last_row_fails"
+buffer = "abc\ndef"
+cursor = [1, 1]
+keys = "d2$"
+
+[[case]]
+name = "y_dollar_moves_to_start"
+buffer = "one two three"
+cursor = [0, 4]
+keys = "y$"
+
+[[case]]
+name = "df"
+buffer = "a.b.c.d"
+cursor = [0, 0]
+keys = "df."
+
+[[case]]
+name = "d2f"
+buffer = "a.b.c.d"
+cursor = [0, 0]
+keys = "d2f."
+
+[[case]]
+name = "dt"
+buffer = "a.b.c.d"
+cursor = [0, 0]
+keys = "d2t."
+
+[[case]]
+name = "dF_exclusive"
+buffer = "a.b.c.d"
+cursor = [0, 6]
+keys = "dF."
+
+[[case]]
+name = "dT_exclusive"
+buffer = "a.b.c.d"
+cursor = [0, 6]
+keys = "d2T."
+
+[[case]]
+name = "dt_onto_next_grapheme"
+buffer = "a x.y"
+cursor = [0, 2]
+keys = "dt."
+
+[[case]]
+name = "dw_on_lone_empty_row"
+buffer = ""
+cursor = [0, 0]
+keys = "dw"
+
+[[case]]
+name = "dd_on_lone_empty_row"
+buffer = ""
+cursor = [0, 0]
+keys = "dd"
+
+[[case]]
+name = "dw_on_empty_row"
+buffer = "\n)'x"
+cursor = [0, 0]
+keys = "dw"
+
+[[case]]
+name = "dW_on_empty_row_to_indent"
+buffer = "ab\n\n  c"
+cursor = [1, 0]
+keys = "dW"
+
+[[case]]
+name = "y2_dollar_onto_empty_row"
+buffer = "\n\n\tbar"
+cursor = [0, 0]
+keys = "y2$"
+
+[[case]]
+name = "df_no_match_does_nothing"
+buffer = "abc def"
+cursor = [0, 1]
+keys = "dfz"
+
+[[case]]
+name = "d_percent_forward"
+buffer = "x (one) two"
+cursor = [0, 0]
+keys = "d%"
+
+[[case]]
+name = "d_percent_from_close"
+buffer = "a { b ( c ) d }"
+cursor = [0, 14]
+keys = "d%"
+
+[[case]]
+name = "d_percent_nested"
+buffer = "a { b ( c ) d }"
+cursor = [0, 6]
+keys = "d%"
+
+[[case]]
+name = "d_percent_no_bracket"
+buffer = "abc"
+cursor = [0, 0]
+keys = "d%"
+
+[[case]]
+name = "d_percent_rows_whole"
+buffer = "(\n)"
+cursor = [1, 0]
+keys = "d%"
+
+[[case]]
+name = "d_percent_across_rows"
+buffer = "x [a\n] (b)"
+cursor = [0, 0]
+keys = "d%"
+
+[[case]]
+name = "y_percent"
+buffer = "x (one) two"
+cursor = [0, 0]
+keys = "y%"
+
+[[case]]
+name = "d_percent_skips_quoted"
+buffer = "f(a, \")\", b)"
+cursor = [0, 1]
+keys = "d%"
+
+[[case]]
+name = "d_percent_skips_char_literal"
+buffer = "f(a, '(', b)"
+cursor = [0, 1]
+keys = "d%"
+
+[[case]]
+name = "d_percent_skips_escaped"
+buffer = "( \\) )"
+cursor = [0, 0]
+keys = "d%"
+
+[[case]]
+name = "percent_moves_to_match"
+buffer = "x [a] (b)"
+cursor = [0, 0]
+keys = "%"
+
+[[case]]
+name = "percent_from_inside_quotes"
+buffer = "x \"(a\" (b)"
+cursor = [0, 3]
+keys = "%"
+
+[[case]]
+name = "percent_comment_open"
+buffer = "/* x */ (a)"
+cursor = [0, 1]
+keys = "%"
+
+[[case]]
+name = "percent_comment_close"
+buffer = "/* x */ (a)"
+cursor = [0, 6]
+keys = "%"
+
+[[case]]
+name = "percent_inside_comment_takes_bracket"
+buffer = "/* x */ (a)"
+cursor = [0, 2]
+keys = "%"
+
+[[case]]
+name = "percent_comment_across_rows"
+buffer = "a /* x\n y */ b"
+cursor = [1, 3]
+keys = "%"
+
+[[case]]
+name = "percent_comment_star_between_slashes"
+buffer = "(*/*/\n*/(']"
+cursor = [1, 0]
+keys = "%"
+
+[[case]]
+name = "d_percent_comment_opened_twice"
+buffer = "{\"}\n/*/*x\n\"]\n*/\"y"
+cursor = [3, 1]
+keys = "d%"
+
+[[case]]
+name = "percent_comment_already_closed"
+buffer = "x\"/**/'\nx\n*/)}"
+cursor = [2, 0]
+keys = "y%"
+
+[[case]]
+name = "y_percent_conditional_moves_to_match"
+buffer = " #ifdef A\n#if \n#endif"
+cursor = [2, 4]
+keys = "y%"
+
+[[case]]
+name = "percent_comment_overlapping_markers"
+buffer = "/* /*/ */"
+cursor = [0, 7]
+keys = "%"
+
+[[case]]
+name = "d_percent_comment_overlapping_markers"
+buffer = "/* /*/ */"
+cursor = [0, 7]
+keys = "d%"
+
+[[case]]
+name = "percent_comment_final_close"
+buffer = "/*/*/\n*/"
+cursor = [1, 1]
+keys = "%"
+
+[[case]]
+name = "d_percent_comment_final_close"
+buffer = "/*/*/\n*/"
+cursor = [1, 1]
+keys = "d%"
+
+[[case]]
+name = "percent_comment_earlier_open_wins"
+buffer = "''x\n[/*\n'/*{#if(\n]x*/"
+cursor = [3, 2]
+keys = "%"
+
+[[case]]
+name = "percent_comment_after_line_comment"
+buffer = "x//*\n*/"
+cursor = [1, 1]
+keys = "%"
+
+[[case]]
+name = "percent_comment_open_closed_by_overlap"
+buffer = "/*//**/"
+cursor = [0, 5]
+keys = "%"
+
+[[case]]
+name = "d_percent_comment_open_closed_by_overlap"
+buffer = "/*//**/"
+cursor = [0, 5]
+keys = "d%"
+
+[[case]]
+name = "d_percent_comment_open_closed_by_overlap_slash"
+buffer = "/*//**/"
+cursor = [0, 6]
+keys = "d%"
+
+[[case]]
+name = "percent_comment_spaced_overlap"
+buffer = "/*//* */"
+cursor = [0, 6]
+keys = "%"
+
+[[case]]
+name = "d_percent_comment_spaced_overlap"
+buffer = "/*//* */"
+cursor = [0, 7]
+keys = "d%"
+
+[[case]]
+name = "percent_comment_open_at_both_bytes"
+buffer = "/*//**/"
+cursor = [0, 1]
+keys = "%"
+
+[[case]]
+name = "percent_comment_open_second_byte"
+buffer = "x /* y */"
+cursor = [0, 3]
+keys = "d%"
+
+[[case]]
+name = "percent_comment_close_first_byte"
+buffer = "x /* y */"
+cursor = [0, 7]
+keys = "y%"
+
+[[case]]
+name = "percent_comment_unclosed"
+buffer = "/* x"
+cursor = [0, 0]
+keys = "%"
+
+[[case]]
+name = "d_percent_comment"
+buffer = "a /* x */ b"
+cursor = [0, 2]
+keys = "d%"
+
+[[case]]
+name = "percent_if_to_else"
+buffer = "#if\nx\n#else\ny\n#endif"
+cursor = [0, 0]
+keys = "%"
+
+[[case]]
+name = "percent_else_to_endif"
+buffer = "#if\nx\n#else\ny\n#endif"
+cursor = [2, 0]
+keys = "%"
+
+[[case]]
+name = "percent_endif_to_if"
+buffer = "#if\nx\n#else\ny\n#endif"
+cursor = [4, 0]
+keys = "%"
+
+[[case]]
+name = "percent_elif_without_bracket"
+buffer = "#if\nx\n#elif\ny\n#endif"
+cursor = [2, 1]
+keys = "%"
+
+[[case]]
+name = "percent_nested_conditionals"
+buffer = "  #if a\n#if b\n#endif\n #endif"
+cursor = [0, 0]
+keys = "%"
+
+[[case]]
+name = "percent_conditional_prefers_bracket"
+buffer = "#if (a)\n#endif"
+cursor = [0, 1]
+keys = "%"
+
+[[case]]
+name = "percent_define_is_not_conditional"
+buffer = "#define X (1)"
+cursor = [0, 0]
+keys = "%"
+
+[[case]]
+name = "d_percent_conditional_rows"
+buffer = "#if\nx\n#endif\ny"
+cursor = [0, 0]
+keys = "d%"
+
+[[case]]
+name = "d50_percent_linewise"
+buffer = "a\nb\nc\nd"
+cursor = [0, 0]
+keys = "d50%"
+
+[[case]]
+name = "y25_percent"
+buffer = "a\nb\nc\nd"
+cursor = [3, 0]
+keys = "y25%"
+
+[[case]]
+name = "percent_count_over_100_fails"
+buffer = "a\nb"
+cursor = [0, 0]
+keys = "d101%"
+
+# Linewise motions: j k gg G.
+[[case]]
+name = "dj_keeps_column"
+buffer = "ab\ncdefgh\nij"
+cursor = [1, 4]
+keys = "dj"
+
+[[case]]
+name = "dj_on_last_row_fails"
+buffer = "one\ntwo"
+cursor = [1, 1]
+keys = "dj"
+
+[[case]]
+name = "dk_on_first_row_fails"
+buffer = "one\ntwo"
+cursor = [0, 1]
+keys = "dk"
+
+[[case]]
+name = "dk"
+buffer = "one\ntwo\nthree"
+cursor = [2, 1]
+keys = "dk"
+
+[[case]]
+name = "d5j_clamps"
+buffer = "one\ntwo\nthree"
+cursor = [1, 1]
+keys = "d5j"
+
+[[case]]
+name = "dG"
+buffer = "one\ntwo\nthree"
+cursor = [1, 1]
+keys = "dG"
+
+[[case]]
+name = "dgg"
+buffer = "one\ntwo\nthree"
+cursor = [1, 1]
+keys = "dgg"
+
+[[case]]
+name = "d1G"
+buffer = "one\ntwo\nthree"
+cursor = [2, 1]
+keys = "d1G"
+
+[[case]]
+name = "yk_moves_up"
+buffer = "ab\ncdefgh\nij"
+cursor = [2, 1]
+keys = "yk"
+
+[[case]]
+name = "yj_stays"
+buffer = "ab\ncdefgh\nij"
+cursor = [1, 4]
+keys = "yj"
+
+[[case]]
+name = "ygg_moves_up"
+buffer = "ab\ncdefgh\nij"
+cursor = [1, 4]
+keys = "ygg"
+
+# Doubled operators: dd yy >> <<.
+[[case]]
+name = "dd_keeps_column"
+buffer = "abcdef\n  xyz\nghij"
+cursor = [0, 5]
+keys = "dd"
+
+[[case]]
+name = "dd_uses_goal_column"
+buffer = "abcdef\nxyz"
+cursor = [0, 4]
+keys = "jdd"
+
+[[case]]
+name = "dd_then_j_resets_goal"
+buffer = "abcdef\nxy\nghijkl"
+cursor = [0, 4]
+keys = "ddj"
+
+[[case]]
+name = "dd_last_row"
+buffer = "one\ntwo"
+cursor = [1, 1]
+keys = "dd"
+
+[[case]]
+name = "dd_only_row"
+buffer = "abc"
+cursor = [0, 1]
+keys = "dd"
+
+[[case]]
+name = "d3d"
+buffer = "a\nb\nc\nd"
+cursor = [0, 0]
+keys = "d3d"
+
+[[case]]
+name = "3dd_from_last_row_fails"
+buffer = "one\ntwo"
+cursor = [1, 1]
+keys = "3dd"
+
+[[case]]
+name = "5dd_clamps"
+buffer = "one\ntwo\nthree"
+cursor = [0, 1]
+keys = "5dd"
+
+[[case]]
+name = "2d2d_counts_multiply"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = "2d2d"
+
+[[case]]
+name = "yy_keeps_caret"
+buffer = "one\ntwo"
+cursor = [0, 2]
+keys = "yy"
+
+[[case]]
+name = "indent_keeps_display_column"
+buffer = "abcdef\nxy"
+cursor = [0, 4]
+keys = ">>"
+
+[[case]]
+name = "indent_tab_rewritten"
+buffer = "\tone"
+cursor = [0, 1]
+keys = ">>"
+
+[[case]]
+name = "outdent_tab"
+buffer = "\tone"
+cursor = [0, 1]
+keys = "<<"
+
+[[case]]
+name = "outdent_mixed_blanks"
+buffer = " \t a"
+cursor = [0, 0]
+keys = "<<"
+
+[[case]]
+name = "outdent_clamps_caret"
+buffer = "      a"
+cursor = [0, 6]
+keys = "<<"
+
+[[case]]
+name = "outdent_without_indent"
+buffer = "abc"
+cursor = [0, 1]
+keys = "<<"
+
+[[case]]
+name = "indent_skips_empty_rows"
+buffer = "  one\n\n   two"
+cursor = [0, 3]
+keys = ">2j"
+
+[[case]]
+name = "indent_blank_rows"
+buffer = "  \n  x"
+cursor = [0, 0]
+keys = ">j"
+
+[[case]]
+name = "3_indent"
+buffer = "one\n    two\nthree"
+cursor = [0, 1]
+keys = "3>>"
+
+[[case]]
+name = "3_outdent_from_last_row_fails"
+buffer = "one\n    two"
+cursor = [1, 1]
+keys = "3<<"
+
+[[case]]
+name = "indent_k_moves_up"
+buffer = "one\ntwo"
+cursor = [1, 2]
+keys = ">k"
+
+[[case]]
+name = "indent_word"
+buffer = "foo bar"
+cursor = [0, 4]
+keys = ">w"
+
+[[case]]
+name = "indent_h_at_column_0"
+buffer = "abc"
+cursor = [0, 0]
+keys = ">h"
+
+[[case]]
+name = "indent_0_at_column_0"
+buffer = "\tabc"
+cursor = [0, 0]
+keys = "3>0"
+
+[[case]]
+name = "outdent_count_h_with_tab"
+buffer = "\t{"
+cursor = [0, 0]
+keys = "3<lt>2h"
+
+[[case]]
+name = "outdent_dollar_aims_at_row_end"
+buffer = "    'q'bar"
+cursor = [0, 4]
+keys = "<lt>$"
+
+[[case]]
+name = "indent_2_dollar"
+buffer = "x\nab\ncd"
+cursor = [1, 0]
+keys = ">2$"
+
+[[case]]
+name = "indent_failed_find"
+buffer = "  abc"
+cursor = [0, 3]
+keys = ">fz"
+
+[[case]]
+name = "indent_b_at_start_fails"
+buffer = "z"
+cursor = [0, 0]
+keys = ">B"
+
+[[case]]
+name = "lt_notation"
+buffer = "    ab\n    cd"
+cursor = [1, 5]
+keys = "<lt><lt>"
+
+# Counts before and after the operator.
+[[case]]
+name = "2d3w"
+buffer = "a b c d e f g h"
+cursor = [0, 0]
+keys = "2d3w"
+
+[[case]]
+name = "d2w"
+buffer = "a b c d e"
+cursor = [0, 0]
+keys = "d2w"
+
+[[case]]
+name = "3dw"
+buffer = "a b c d e"
+cursor = [0, 0]
+keys = "3dw"
+
+[[case]]
+name = "d9w_clamps"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "d9w"
+
+# x X D with counts.
+[[case]]
+name = "x"
+buffer = "abcdef"
+cursor = [0, 2]
+keys = "x"
+
+[[case]]
+name = "3x"
+buffer = "abcdef"
+cursor = [0, 2]
+keys = "3x"
+
+[[case]]
+name = "9x_clamps_to_row"
+buffer = "abcdef"
+cursor = [0, 4]
+keys = "9x"
+
+[[case]]
+name = "x_on_empty_row"
+buffer = "abc\n\ndef"
+cursor = [1, 0]
+keys = "x"
+
+[[case]]
+name = "x_last_grapheme"
+buffer = "abc"
+cursor = [0, 2]
+keys = "x"
+
+[[case]]
+name = "2X"
+buffer = "abcdef"
+cursor = [0, 4]
+keys = "2X"
+
+[[case]]
+name = "X_at_column_0"
+buffer = "abcdef"
+cursor = [0, 0]
+keys = "X"
+
+[[case]]
+name = "D"
+buffer = "abcdef"
+cursor = [0, 2]
+keys = "D"
+
+[[case]]
+name = "2D_across_rows"
+buffer = "ab\ncdef\ngh"
+cursor = [0, 1]
+keys = "2D"
+
+[[case]]
+name = "2D_whole_rows"
+buffer = "abc\ndef\n  x"
+cursor = [0, 0]
+keys = "2D"
+
+[[case]]
+name = "D_on_empty_row"
+buffer = ""
+cursor = [0, 0]
+keys = "D"
+
+# ; and , after f and t.
+[[case]]
+name = "f_semicolon"
+buffer = "a.b.c.d"
+cursor = [0, 0]
+keys = "f.;"
+
+[[case]]
+name = "f_semicolon_twice"
+buffer = "a.b.c.d"
+cursor = [0, 0]
+keys = "f.;;"
+
+[[case]]
+name = "f_2_semicolon"
+buffer = "a.b.c.d"
+cursor = [0, 0]
+keys = "f.2;"
+
+[[case]]
+name = "F_comma"
+buffer = "a.b.c.d"
+cursor = [0, 6]
+keys = "F.,"
+
+[[case]]
+name = "t_semicolon_skips_adjacent"
+buffer = "a.b.c.d"
+cursor = [0, 0]
+keys = "t.;"
+
+[[case]]
+name = "t_semicolon_twice"
+buffer = "a.b.c.d"
+cursor = [0, 0]
+keys = "t.;;"
+
+[[case]]
+name = "T_semicolon"
+buffer = "a.b.c.d"
+cursor = [0, 6]
+keys = "T.;"
+
+[[case]]
+name = "f_semicolon_comma"
+buffer = "a.b.c.d"
+cursor = [0, 0]
+keys = "f.;,"
+
+[[case]]
+name = "d_semicolon_after_f"
+buffer = "a.b.c.d"
+cursor = [0, 0]
+keys = "f.d;"
+
+[[case]]
+name = "d_comma_after_f_is_exclusive"
+buffer = "a.b.c.d"
+cursor = [0, 4]
+keys = "f.d,"
+
+[[case]]
+name = "d_comma_fails"
+buffer = "a.b.c.d"
+cursor = [0, 0]
+keys = "f.d,"
+
+[[case]]
+name = "d_semicolon_after_t"
+buffer = "a.b.c.d"
+cursor = [0, 0]
+keys = "t.d;"
+
+[[case]]
+name = "d_semicolon_after_F"
+buffer = "a.b.c.d"
+cursor = [0, 6]
+keys = "F.d;"
+
+[[case]]
+name = "t_comma"
+buffer = "a.b.c.d"
+cursor = [0, 6]
+keys = "t.,"
+
+[[case]]
+name = "t_semicolon_comma"
+buffer = "a.b.c.d"
+cursor = [0, 0]
+keys = "t.;;,"
+
+[[case]]
+name = "T_comma"
+buffer = "a.b.c.d"
+cursor = [0, 0]
+keys = "fdT.,"
+
+[[case]]
+name = "T_comma_skips_adjacent"
+buffer = "a.b.c.d"
+cursor = [0, 4]
+keys = "T.,"
+
+[[case]]
+name = "d_comma_after_t"
+buffer = "a.b.c.d"
+cursor = [0, 6]
+keys = "t.d,"
+
+[[case]]
+name = "d_comma_after_T"
+buffer = "a.b.c.d"
+cursor = [0, 0]
+keys = "T.d,"
+
+[[case]]
+name = "d_comma_after_T_adjacent"
+buffer = "a.b.c.d"
+cursor = [0, 2]
+keys = "T.d,"
+
+[[case]]
+name = "semicolon_without_find"
+buffer = "a.b.c.d"
+cursor = [0, 0]
+keys = ";"
+
+[[case]]
+name = "semicolon_after_failed_find"
+buffer = "a.b.c.d"
+cursor = [0, 0]
+keys = "f.fz;"
+
+[[case]]
+name = "df_sets_last_find"
+buffer = "a.b.c.d"
+cursor = [0, 0]
+keys = "df.;"

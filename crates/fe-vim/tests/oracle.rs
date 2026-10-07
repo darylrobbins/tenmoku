@@ -9,21 +9,41 @@ use support::{
     Case, Expected, NVIM, NvimResult, Recorded, check, load, parse_corpus, parse_expected,
 };
 
-#[test]
-fn motions_match_neovim() {
-    let recorded = load("motions").unwrap();
-    assert!(recorded.len() >= 60, "{} cases", recorded.len());
+/// Checks every case of `tests/corpus/<area>.toml`, at least `min` of them.
+fn matches_neovim(area: &str, min: usize) {
+    let recorded = load(area).unwrap();
+    assert!(recorded.len() >= min, "{area}: {} cases", recorded.len());
     let failures: Vec<String> = recorded
         .iter()
         .filter_map(|case| check(case).err())
         .collect();
     assert!(
         failures.is_empty(),
-        "{} of {} cases differ from nvim:\n{}",
+        "{area}: {} of {} cases differ from nvim:\n{}",
         failures.len(),
         recorded.len(),
         failures.join("\n")
     );
+}
+
+#[test]
+fn motions_match_neovim() {
+    matches_neovim("motions", 60);
+}
+
+#[test]
+fn operators_match_neovim() {
+    matches_neovim("operators", 20);
+}
+
+#[test]
+fn text_objects_match_neovim() {
+    matches_neovim("text_objects", 20);
+}
+
+#[test]
+fn registers_match_neovim() {
+    matches_neovim("registers", 10);
 }
 
 fn corpus(cases: &[(&str, &str, &str)]) -> String {

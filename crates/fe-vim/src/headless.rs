@@ -5,15 +5,18 @@ use fe_command::{DispatchError, Dispatched, Invocation, Registry};
 use fe_editor::{EditorModel, commands::HeadlessHost};
 
 use crate::{
-    KeyError, Step, VimCommands, VimKey, VimState, VimTarget, context, parse_keys, registry,
+    KeyError, Registers, Step, VimCommands, VimKey, VimState, VimTarget, context, parse_keys,
+    registry,
 };
 
-/// An [`EditorModel`] with a [`HeadlessHost`], a [`VimState`] and vim's
-/// registry, fed keys the way the GPUI host routes them in normal mode.
+/// An [`EditorModel`] with a [`HeadlessHost`], a [`VimState`], registers
+/// and vim's registry, fed keys the way the GPUI host routes them in normal
+/// mode.
 pub struct HeadlessVim {
     model: EditorModel,
     host: HeadlessHost,
     state: VimState,
+    registers: Registers,
     registry: Registry<VimCommands>,
 }
 
@@ -40,6 +43,7 @@ impl HeadlessVim {
             model,
             host: HeadlessHost::new(),
             state: VimState::new(),
+            registers: Registers::new(),
             registry: registry(),
         }
     }
@@ -71,6 +75,7 @@ impl HeadlessVim {
             model: &mut self.model,
             host: &mut self.host,
             state: &mut self.state,
+            registers: &mut self.registers,
         };
         self.registry.dispatch(&mut target, invocation)
     }
@@ -104,5 +109,22 @@ impl HeadlessVim {
 
     pub fn model_mut(&mut self) -> &mut EditorModel {
         &mut self.model
+    }
+
+    pub fn registers(&self) -> &Registers {
+        &self.registers
+    }
+
+    pub fn registers_mut(&mut self) -> &mut Registers {
+        &mut self.registers
+    }
+
+    /// The host, whose `clipboard` is `+` and `*`.
+    pub fn host(&self) -> &HeadlessHost {
+        &self.host
+    }
+
+    pub fn host_mut(&mut self) -> &mut HeadlessHost {
+        &mut self.host
     }
 }

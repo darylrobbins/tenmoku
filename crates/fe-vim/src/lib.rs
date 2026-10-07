@@ -4,8 +4,8 @@
 //! incomplete command (count, `"{reg}`, operator, a prefix such as `g` or
 //! `f`) in one [`Pending`] value and never sees the buffer. A complete
 //! command comes out as an [`Invocation`](fe_command::Invocation) of
-//! `vim.move` or `vim.operate`, dispatched through [`registry`] against a
-//! [`VimTarget`]. [`VimState`] holds the pending value, the goal columns and
+//! `vim.move`, `vim.operate` or `vim.put`, dispatched through [`registry`]
+//! against a [`VimTarget`], which carries the host's shared [`Registers`]. [`VimState`] holds the pending value, the goal columns and
 //! the last character search, and publishes `vim.mode` (plus `vim.pending`
 //! and `vim.pending_kind` while a command is incomplete) on the editor's own
 //! context frame, so keymap bindings can be scoped to a mode. With vim off
@@ -26,11 +26,11 @@
 //!
 //! M7 builds this crate in three cards:
 //!
-//! 1. This one: the keys, the whole pending-input grammar, `vim.mode`,
-//!    `vim.move` and its motions (`h j k l w b e W B E 0 ^ $ gg G f t F T`),
-//!    and the Neovim oracle with its recorder.
-//! 2. `vim.operate` with `d y > <`, text objects, `%`, `;` and `,`,
-//!    registers, and `x X D p P`.
+//! 1. The keys, the whole pending-input grammar, `vim.mode`, `vim.move` and
+//!    its motions (`h j k l w b e W B E 0 ^ $ gg G f t F T`), and the Neovim
+//!    oracle with its recorder.
+//! 2. This one: `vim.operate` with `d y > <`, text objects, `%`, `;` and
+//!    `,`, registers, and `x X D p P`.
 //! 3. Insert sessions as one transaction, `c C s S i a I A o O`, `J r ~`,
 //!    `u <C-r>` and `.`.
 //!
@@ -42,14 +42,18 @@ mod commands;
 mod headless;
 mod key;
 mod motion;
+mod operator;
 mod reducer;
+mod register;
 mod state;
+mod text_object;
 
-pub use args::{Motion, MoveArgs, OperateArgs, Operator, Target, TextObject};
+pub use args::{Motion, MoveArgs, OperateArgs, Operator, PutArgs, RangeClass, Target, TextObject};
 pub use commands::{VimCommands, VimTarget, registry};
 pub use headless::{FeedError, HeadlessVim};
 pub use key::{KeyError, VimKey, parse_keys};
 pub use reducer::{Pending, PendingKind, Step, step};
+pub use register::{Register, RegisterError, Registers, Write};
 pub use state::{Mode, VimState, context};
 
 #[cfg(test)]

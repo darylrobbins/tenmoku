@@ -23,6 +23,15 @@ vim.o.clipboard = ""
 -- set before anything loads the provider.
 vim.g.loaded_clipboard_provider = 1
 assert(vim.fn.has("clipboard") == 0, "a clipboard provider is still reachable")
+-- --clean still loads the matchit plugin, whose `%` (in normal, visual and
+-- operator-pending modes) isn't Vim's: `d%` within a line then skips
+-- register 1. Record the builtin `%` (`:help %`, `:help quote_number`).
+for _, mode in ipairs({ "n", "x", "o" }) do
+  for _, lhs in ipairs({ "%", "g%", "[%", "]%" }) do
+    pcall(vim.keymap.del, mode, lhs)
+  end
+end
+assert(vim.fn.maparg("%", "o") == "", "matchit still maps %")
 
 local cleared = {}
 for reg in ('"0123456789-abcdefghijklmnopqrstuvwxyz/'):gmatch(".") do
@@ -46,7 +55,8 @@ for _, case in ipairs(vim.json.decode(read(input))) do
 
   vim.api.nvim_buf_set_lines(0, 0, -1, false, vim.split(case.buffer, "\n", { plain = true }))
   vim.api.nvim_win_set_cursor(0, { case.cursor[1] + 1, case.cursor[2] })
-  local keys = vim.api.nvim_replace_termcodes(case.keys, true, false, true)
+  -- do_lt: `<lt>` is `<`, as fe-vim's parse_keys reads it.
+  local keys = vim.api.nvim_replace_termcodes(case.keys, true, true, true)
   vim.api.nvim_feedkeys(keys, "xt", false)
 
   local cursor = vim.api.nvim_win_get_cursor(0)

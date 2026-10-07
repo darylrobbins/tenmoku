@@ -5,7 +5,7 @@ use serde::Serialize;
 
 use crate::{
     VimKey,
-    args::{Motion, MoveArgs, OperateArgs, Operator, Target, TextObject},
+    args::{Motion, MoveArgs, OperateArgs, Operator, PutArgs, Target, TextObject},
 };
 
 /// The whole incomplete command: counts, `"{reg}`, an operator and a prefix
@@ -213,9 +213,30 @@ pub fn step(mut pending: Pending, key: VimKey) -> Step {
                     Some(_) => Step::Cancel,
                 };
             }
-            return match motion(ch) {
-                Some(motion) => pending.commit(Target::Motion(motion)),
-                None => pending.reject(),
+            if let Some(motion) = motion(ch) {
+                return pending.commit(Target::Motion(motion));
+            }
+            // `x X D` and `p P` stand alone: after an operator they cancel.
+            if pending.operator.is_some() {
+                return pending.reject();
+            }
+            if let Some(motion) = shorthand(ch) {
+                pending.operator = Some(Operator::Delete);
+                return pending.commit(Target::Motion(motion));
+            }
+            return match ch {
+                'p' | 'P' => {
+                    pending.end_count();
+                    invocation(
+                        "vim.put",
+                        PutArgs {
+                            before: ch == 'P',
+                            count: pending.count,
+                            register: pending.register,
+                        },
+                    )
+                }
+                _ => pending.reject(),
             };
         }
     };
@@ -261,6 +282,19 @@ fn motion(ch: char) -> Option<Motion> {
         '^' => Motion::FirstNonBlank,
         '$' => Motion::LineEnd,
         'G' => Motion::DocumentEnd,
+        '%' => Motion::MatchPair,
+        ';' => Motion::RepeatFind,
+        ',' => Motion::RepeatFindReverse,
+        _ => return None,
+    })
+}
+
+/// `x X D`: `dl dh d$`.
+fn shorthand(ch: char) -> Option<Motion> {
+    Some(match ch {
+        'x' => Motion::Right,
+        'X' => Motion::Left,
+        'D' => Motion::LineEnd,
         _ => return None,
     })
 }

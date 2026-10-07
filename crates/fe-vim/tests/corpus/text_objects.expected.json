@@ -1,0 +1,3486 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "iw_word",
+      "buffer": "foo bar baz",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "diw",
+      "expect": {
+        "buffer": "foo  baz",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bar",
+            "linewise": false
+          },
+          "-": {
+            "text": "bar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "iw_blanks",
+      "buffer": "foo bar baz",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "diw",
+      "expect": {
+        "buffer": "foobar baz",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " ",
+            "linewise": false
+          },
+          "-": {
+            "text": " ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "aw_takes_trailing_blanks",
+      "buffer": "foo bar baz",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "daw",
+      "expect": {
+        "buffer": "foo baz",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bar ",
+            "linewise": false
+          },
+          "-": {
+            "text": "bar ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "aw_from_blanks_takes_the_next_word",
+      "buffer": "foo bar baz",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "daw",
+      "expect": {
+        "buffer": "foo baz",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " bar",
+            "linewise": false
+          },
+          "-": {
+            "text": " bar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "aw_takes_leading_blanks_at_row_end",
+      "buffer": "foo bar",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "daw",
+      "expect": {
+        "buffer": "foo",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " bar",
+            "linewise": false
+          },
+          "-": {
+            "text": " bar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "aw_from_leading_blanks",
+      "buffer": "  foo bar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "daw",
+      "expect": {
+        "buffer": " bar",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "  foo",
+            "linewise": false
+          },
+          "-": {
+            "text": "  foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "aw_all_trailing_blanks",
+      "buffer": "foo bar  ",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "daw",
+      "expect": {
+        "buffer": "foo ",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bar  ",
+            "linewise": false
+          },
+          "-": {
+            "text": "bar  ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "aw_keeps_indent",
+      "buffer": "  foo",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "daw",
+      "expect": {
+        "buffer": "  ",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo",
+            "linewise": false
+          },
+          "-": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "aw_whole_rows_from_indent",
+      "buffer": " }}\n)",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "d2aw",
+      "expect": {
+        "buffer": "",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " }}\n)\n",
+            "linewise": true
+          },
+          "1": {
+            "text": " }}\n)\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "yaw_across_rows_charwise",
+      "buffer": " }}\n)\nx",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "y2aw",
+      "expect": {
+        "buffer": " }}\n)\nx",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "}}\n)",
+            "linewise": false
+          },
+          "0": {
+            "text": "}}\n)",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "aW_from_empty_row_to_empty_row",
+      "buffer": "\n\n\"z\n  b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "daW",
+      "expect": {
+        "buffer": "\"z\n  b",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\n\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "\n\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "indent_iw_count_past_end",
+      "buffer": "x.yfooéa",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": ">2iw",
+      "expect": {
+        "buffer": "x.yfooéa",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "aw_leading_blanks_count_2",
+      "buffer": "x foo bar",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "d2aw",
+      "expect": {
+        "buffer": "x",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " foo bar",
+            "linewise": false
+          },
+          "-": {
+            "text": " foo bar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "iw_count_3",
+      "buffer": "foo bar baz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d3iw",
+      "expect": {
+        "buffer": " baz",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo bar",
+            "linewise": false
+          },
+          "-": {
+            "text": "foo bar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "iw_count_5_whole_row",
+      "buffer": "foo bar baz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d5iw",
+      "expect": {
+        "buffer": "",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo bar baz",
+            "linewise": false
+          },
+          "-": {
+            "text": "foo bar baz",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "aw_count_2",
+      "buffer": "foo bar baz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d2aw",
+      "expect": {
+        "buffer": "baz",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo bar ",
+            "linewise": false
+          },
+          "-": {
+            "text": "foo bar ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "aw_count_3_whole_row",
+      "buffer": "foo bar baz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d3aw",
+      "expect": {
+        "buffer": "",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo bar baz",
+            "linewise": false
+          },
+          "-": {
+            "text": "foo bar baz",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "iw_count_across_rows",
+      "buffer": "foo\nbar baz qux",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "d2iw",
+      "expect": {
+        "buffer": " baz qux",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo\nbar",
+            "linewise": false
+          },
+          "1": {
+            "text": "foo\nbar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "iw_count_across_rows_4",
+      "buffer": "foo\nbar baz qux",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "d4iw",
+      "expect": {
+        "buffer": " qux",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo\nbar baz",
+            "linewise": false
+          },
+          "1": {
+            "text": "foo\nbar baz",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "iw_count_trailing_blank_row",
+      "buffer": "foo \nbar baz",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "d3iw",
+      "expect": {
+        "buffer": " baz",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo \nbar",
+            "linewise": false
+          },
+          "1": {
+            "text": "foo \nbar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "iw_count_indented_row",
+      "buffer": "foo\n  bar baz",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "d2iw",
+      "expect": {
+        "buffer": "bar baz",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo\n  ",
+            "linewise": false
+          },
+          "1": {
+            "text": "foo\n  ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "iw_count_over_empty_row",
+      "buffer": "foo\n\nbar",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "d2iw",
+      "expect": {
+        "buffer": "bar",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo\n\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "foo\n\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "iw_count_over_empty_row_to_indent",
+      "buffer": "foo\n\n  bar",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "d2iw",
+      "expect": {
+        "buffer": "  bar",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo\n\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "foo\n\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "aw_on_empty_row_to_indent",
+      "buffer": "a\n\n  b c",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "daw",
+      "expect": {
+        "buffer": "a\n c",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\n  b",
+            "linewise": false
+          },
+          "1": {
+            "text": "\n  b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "iw_count_3_over_empty_row",
+      "buffer": "foo\n\nbar",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "d3iw",
+      "expect": {
+        "buffer": "",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo\n\nbar\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "foo\n\nbar\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "aw_count_across_rows",
+      "buffer": "foo\nbar baz qux",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "d2aw",
+      "expect": {
+        "buffer": "baz qux",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo\nbar ",
+            "linewise": false
+          },
+          "1": {
+            "text": "foo\nbar ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "aw_count_3_across_rows",
+      "buffer": "foo\nbar baz qux",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "d3aw",
+      "expect": {
+        "buffer": "qux",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo\nbar baz ",
+            "linewise": false
+          },
+          "1": {
+            "text": "foo\nbar baz ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "aw_blanks_across_rows",
+      "buffer": "foo  \n  bar baz",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "daw",
+      "expect": {
+        "buffer": "foo baz",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "  \n  bar",
+            "linewise": false
+          },
+          "1": {
+            "text": "  \n  bar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "iw_trailing_blanks_stay_on_row",
+      "buffer": "foo  \n  bar baz",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "diw",
+      "expect": {
+        "buffer": "foo\n  bar baz",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "  ",
+            "linewise": false
+          },
+          "-": {
+            "text": "  ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "yiW_count_over_empty_row",
+      "buffer": "x\n,}(\n\n ab",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "y2iW",
+      "expect": {
+        "buffer": "x\n,}(\n\n ab",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": ",}(\n\n",
+            "linewise": true
+          },
+          "0": {
+            "text": ",}(\n\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "iw_on_empty_last_row",
+      "buffer": "ab cd\nx",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "xdiw",
+      "expect": {
+        "buffer": "ab c",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "d\n",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          },
+          "1": {
+            "text": "d\n",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "yiw_on_empty_last_row",
+      "buffer": "ab cd\nx",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "xyiw",
+      "expect": {
+        "buffer": "ab cd\n",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "d\n",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          },
+          "0": {
+            "text": "d\n",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "aw_on_empty_last_row_fails",
+      "buffer": "ab cd\nx",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "xdaw",
+      "expect": {
+        "buffer": "ab cd\n",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "iw_count_on_emptied_last_row",
+      "buffer": "abc\nx",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "xd2iw",
+      "expect": {
+        "buffer": "abc\n",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "yiw_count_on_emptied_last_row",
+      "buffer": "abc\nx",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "xy2iw",
+      "expect": {
+        "buffer": "abc\n",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "indent_iw_count_on_emptied_last_row",
+      "buffer": "abc\nx",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "x>2iw",
+      "expect": {
+        "buffer": "abc\n",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "iW_count_on_emptied_last_row",
+      "buffer": "abc def\nx",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "xd2iW",
+      "expect": {
+        "buffer": "abc def\n",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "iw_count_two_empty_rows",
+      "buffer": "foo\n\n\nbar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d3iw",
+      "expect": {
+        "buffer": "",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo\n\n\nbar\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "foo\n\n\nbar\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "iw_count_two_empty_rows_rows_only",
+      "buffer": "foo\n\n\nbar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d2iw",
+      "expect": {
+        "buffer": "\nbar",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo\n\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "foo\n\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "yiw_count_two_empty_rows",
+      "buffer": "foo\n\n\nbar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "y3iw",
+      "expect": {
+        "buffer": "foo\n\n\nbar",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo\n\n\nbar",
+            "linewise": false
+          },
+          "0": {
+            "text": "foo\n\n\nbar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "indent_iw_count_two_empty_rows",
+      "buffer": "foo\n\n\nbar baz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ">4iw",
+      "expect": {
+        "buffer": "    foo\n\n\n    bar baz",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "iw_count_three_empty_rows",
+      "buffer": "foo\n\n\n\nbar baz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d3iw",
+      "expect": {
+        "buffer": "bar baz",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo\n\n\n\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "foo\n\n\n\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "iw_count_three_empty_rows_then_word",
+      "buffer": "foo\n\n\n\nbar baz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d4iw",
+      "expect": {
+        "buffer": " baz",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo\n\n\n\nbar",
+            "linewise": false
+          },
+          "1": {
+            "text": "foo\n\n\n\nbar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "iw_count_empty_rows_then_indent",
+      "buffer": "foo\n\n\n  bar baz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d3iw",
+      "expect": {
+        "buffer": "bar baz",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo\n\n\n  ",
+            "linewise": false
+          },
+          "1": {
+            "text": "foo\n\n\n  ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "yiw_count_empty_rows_then_indent",
+      "buffer": "foo\n\n\n  bar baz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "y4iw",
+      "expect": {
+        "buffer": "foo\n\n\n  bar baz",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo\n\n\n  bar",
+            "linewise": false
+          },
+          "0": {
+            "text": "foo\n\n\n  bar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "iw_count_from_empty_row",
+      "buffer": "foo\n\n\n\nbar baz",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "d3iw",
+      "expect": {
+        "buffer": "foo\n baz",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\n\n\nbar",
+            "linewise": false
+          },
+          "1": {
+            "text": "\n\n\nbar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "iw_count_lone_blank_after_empty_row",
+      "buffer": "a\n\n b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d3iw",
+      "expect": {
+        "buffer": "",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n\n b\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "a\n\n b\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "yiw_count_one_letter_after_empty_row",
+      "buffer": "x.y\n\nz",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "y3iW",
+      "expect": {
+        "buffer": "x.y\n\nz",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "yaw_count_over_empty_rows",
+      "buffer": "\na \n\na\n  b c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "y2aw",
+      "expect": {
+        "buffer": "\na \n\na\n  b c",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\na \n",
+            "linewise": false
+          },
+          "0": {
+            "text": "\na \n",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "yaw_on_blank_row_before_empty_row",
+      "buffer": "ab cd\n  \n\n b",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "yaw",
+      "expect": {
+        "buffer": "ab cd\n  \n\n b",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "  \n",
+            "linewise": false
+          },
+          "0": {
+            "text": "  \n",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "yaw_count_empty_rows_as_words",
+      "buffer": "\n\n\n\n b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "y3aW",
+      "expect": {
+        "buffer": "\n\n\n\n b",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\n\n\n\n b",
+            "linewise": false
+          },
+          "0": {
+            "text": "\n\n\n\n b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "iw_on_empty_row_does_nothing",
+      "buffer": "a\n\nb",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "diw",
+      "expect": {
+        "buffer": "a\n\nb",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "aw_on_empty_row",
+      "buffer": "a\n\nb",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "daw",
+      "expect": {
+        "buffer": "a",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\nb\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "\nb\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "iw_count_past_end",
+      "buffer": "foo bar baz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d9iw",
+      "expect": {
+        "buffer": "foo bar baz",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "aw_count_past_end",
+      "buffer": "foo bar",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "d2aw",
+      "expect": {
+        "buffer": "foo bar",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "iw_punctuation",
+      "buffer": "foo.bar",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "diw",
+      "expect": {
+        "buffer": "foo.",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bar",
+            "linewise": false
+          },
+          "-": {
+            "text": "bar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "iW_big_word",
+      "buffer": "foo.bar baz",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "diW",
+      "expect": {
+        "buffer": " baz",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo.bar",
+            "linewise": false
+          },
+          "-": {
+            "text": "foo.bar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "aW_big_word",
+      "buffer": "foo.bar baz",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "daW",
+      "expect": {
+        "buffer": "baz",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo.bar ",
+            "linewise": false
+          },
+          "-": {
+            "text": "foo.bar ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "aW_no_blanks",
+      "buffer": "foo.bar",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "daW",
+      "expect": {
+        "buffer": "",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo.bar",
+            "linewise": false
+          },
+          "-": {
+            "text": "foo.bar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "yiw_moves_to_start",
+      "buffer": "foo bar",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "yiw",
+      "expect": {
+        "buffer": "foo bar",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bar",
+            "linewise": false
+          },
+          "0": {
+            "text": "bar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "i_paren",
+      "buffer": "f(a, (b), c)",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "di(",
+      "expect": {
+        "buffer": "f(a, (), c)",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b",
+            "linewise": false
+          },
+          "-": {
+            "text": "b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "i_paren_count_2",
+      "buffer": "f(a, (b), c)",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "d2i(",
+      "expect": {
+        "buffer": "f()",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a, (b), c",
+            "linewise": false
+          },
+          "-": {
+            "text": "a, (b), c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "a_paren_on_open",
+      "buffer": "f(a, (b), c)",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "da(",
+      "expect": {
+        "buffer": "f(a, , c)",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "(b)",
+            "linewise": false
+          },
+          "-": {
+            "text": "(b)",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "i_close_paren_alias_on_outer_open",
+      "buffer": "f(a, (b), c)",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "di)",
+      "expect": {
+        "buffer": "f()",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a, (b), c",
+            "linewise": false
+          },
+          "-": {
+            "text": "a, (b), c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ib_on_close",
+      "buffer": "f(a, (b), c)",
+      "cursor": [
+        0,
+        11
+      ],
+      "keys": "dib",
+      "expect": {
+        "buffer": "f()",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a, (b), c",
+            "linewise": false
+          },
+          "-": {
+            "text": "a, (b), c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ab_alias",
+      "buffer": "x (a b) y",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "dab",
+      "expect": {
+        "buffer": "x  y",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "(a b)",
+            "linewise": false
+          },
+          "-": {
+            "text": "(a b)",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "a_close_paren_alias",
+      "buffer": "x (a b) y",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "da)",
+      "expect": {
+        "buffer": "x  y",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "(a b)",
+            "linewise": false
+          },
+          "-": {
+            "text": "(a b)",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "i_paren_next_on_row",
+      "buffer": "f(a, (b), c)",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "di(",
+      "expect": {
+        "buffer": "f()",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a, (b), c",
+            "linewise": false
+          },
+          "-": {
+            "text": "a, (b), c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "i_paren_next_row",
+      "buffer": "x\n(a)",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "di(",
+      "expect": {
+        "buffer": "x\n()",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "a_paren_next_row",
+      "buffer": "x\n(a)",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "da(",
+      "expect": {
+        "buffer": "x\n",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "(a)",
+            "linewise": false
+          },
+          "-": {
+            "text": "(a)",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "i_paren_none_after",
+      "buffer": "(a) xyz",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "di(",
+      "expect": {
+        "buffer": "(a) xyz",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "i_paren_close_first_fails",
+      "buffer": "x ) (a)",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "di(",
+      "expect": {
+        "buffer": "x ) (a)",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "i_paren_outside_any",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "di(",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "i_paren_empty",
+      "buffer": "f()",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "di(",
+      "expect": {
+        "buffer": "f()",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "a_paren_empty",
+      "buffer": "f()",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "da(",
+      "expect": {
+        "buffer": "f",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "()",
+            "linewise": false
+          },
+          "-": {
+            "text": "()",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "i_paren_escaped",
+      "buffer": "f(a\\(b)",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "di(",
+      "expect": {
+        "buffer": "f()",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\\(b",
+            "linewise": false
+          },
+          "-": {
+            "text": "a\\(b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "i_paren_skips_quoted",
+      "buffer": "f(a, \")\", b)",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "di(",
+      "expect": {
+        "buffer": "f()",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a, \")\", b",
+            "linewise": false
+          },
+          "-": {
+            "text": "a, \")\", b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "i_paren_unterminated_string",
+      "buffer": "(\"a\nb)",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "di(",
+      "expect": {
+        "buffer": "()",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\"a\nb",
+            "linewise": false
+          },
+          "1": {
+            "text": "\"a\nb",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "i_paren_odd_quotes_row",
+      "buffer": "f(a\n\"b) c\"d\" e",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "di(",
+      "expect": {
+        "buffer": "f() c\"d\" e",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n\"b",
+            "linewise": false
+          },
+          "1": {
+            "text": "a\n\"b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "i_paren_quoted_open",
+      "buffer": "f(\"(\", x)",
+      "cursor": [
+        0,
+        7
+      ],
+      "keys": "di(",
+      "expect": {
+        "buffer": "f(\"(\", x)",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "i_paren_count_nested_after",
+      "buffer": "x ((a))",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d2i(",
+      "expect": {
+        "buffer": "x (())",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "a_paren_count_nested_after",
+      "buffer": "x ((a))",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d2a(",
+      "expect": {
+        "buffer": "x ()",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "(a)",
+            "linewise": false
+          },
+          "-": {
+            "text": "(a)",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "i_brace_count_nested_after",
+      "buffer": "x {{a}}",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d2i{",
+      "expect": {
+        "buffer": "x {{}}",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "a_paren_count_after_unmatched_opener",
+      "buffer": "\n(ab(cd)a",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2dab",
+      "expect": {
+        "buffer": "\n(aba",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "(cd)",
+            "linewise": false
+          },
+          "-": {
+            "text": "(cd)",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "i_paren_count_after_leading_closer",
+      "buffer": "x )(((a)))",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d2i(",
+      "expect": {
+        "buffer": "x )((()))",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "a_paren_count_after_leading_closer",
+      "buffer": "x )(((a)))",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d2a(",
+      "expect": {
+        "buffer": "x )(())",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "(a)",
+            "linewise": false
+          },
+          "-": {
+            "text": "(a)",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "yi_brace_count_after_leading_closer",
+      "buffer": "x }{{{a}}}",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "y2iB",
+      "expect": {
+        "buffer": "x }{{{a}}}",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "0": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ya_brace_count_after_leading_closer",
+      "buffer": "x }{{{a}}}",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "y2a}",
+      "expect": {
+        "buffer": "x }{{{a}}}",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "{a}",
+            "linewise": false
+          },
+          "0": {
+            "text": "{a}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "iw_count_onto_emptied_last_row",
+      "buffer": "ab\nx",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "jxky2iw",
+      "expect": {
+        "buffer": "ab\n",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab\n",
+            "linewise": true
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          },
+          "0": {
+            "text": "ab\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "iW_count_onto_emptied_last_row",
+      "buffer": "ab\nx",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "jxky2iW",
+      "expect": {
+        "buffer": "ab\n",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab\n",
+            "linewise": true
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          },
+          "0": {
+            "text": "ab\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "d_iw_count_onto_emptied_last_row",
+      "buffer": "ab\nx",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "jxkd2iw",
+      "expect": {
+        "buffer": "",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab\n",
+            "linewise": true
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          },
+          "1": {
+            "text": "ab\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "i_paren_count_without_pair",
+      "buffer": "x (a) (b)",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d2i(",
+      "expect": {
+        "buffer": "x (a) (b)",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "indent_empty_inner",
+      "buffer": "{\n\t}",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": ">iB",
+      "expect": {
+        "buffer": "{\n        }",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "i_paren_multi_row",
+      "buffer": "x (a\nb) z",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "di(",
+      "expect": {
+        "buffer": "x () z",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\nb",
+            "linewise": false
+          },
+          "1": {
+            "text": "a\nb",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "i_paren_open_ends_row",
+      "buffer": "x = (\n  1,\n  2)",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "di(",
+      "expect": {
+        "buffer": "x = (\n)",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "  1,\n  2",
+            "linewise": false
+          },
+          "1": {
+            "text": "  1,\n  2",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "i_brace_whole_rows",
+      "buffer": "fn {\n    body\n}",
+      "cursor": [
+        1,
+        4
+      ],
+      "keys": "di{",
+      "expect": {
+        "buffer": "fn {\n}",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "    body\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "    body\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "a_brace_multi_row",
+      "buffer": "fn {\n    body\n}",
+      "cursor": [
+        1,
+        4
+      ],
+      "keys": "da{",
+      "expect": {
+        "buffer": "fn ",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "{\n    body\n}",
+            "linewise": false
+          },
+          "1": {
+            "text": "{\n    body\n}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "iB_alias",
+      "buffer": "fn {\n    body\n}",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "diB",
+      "expect": {
+        "buffer": "fn {\n}",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "    body\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "    body\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "i_close_brace_indented_close",
+      "buffer": "fn {\n    body\n  }",
+      "cursor": [
+        1,
+        4
+      ],
+      "keys": "di}",
+      "expect": {
+        "buffer": "fn {\n  }",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "    body\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "    body\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "i_brace_rows_caret_first_non_blank",
+      "buffer": "x {\n  a\n  b\n    }",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "di{",
+      "expect": {
+        "buffer": "x {\n    }",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "  a\n  b\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "  a\n  b\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "i_brace_blanks_after_open",
+      "buffer": "fn {  \n    body\n}",
+      "cursor": [
+        1,
+        4
+      ],
+      "keys": "di{",
+      "expect": {
+        "buffer": "fn {\n}",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "  \n    body",
+            "linewise": false
+          },
+          "1": {
+            "text": "  \n    body",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "i_brace_text_after_open",
+      "buffer": "fn {a\n    body\n}",
+      "cursor": [
+        1,
+        4
+      ],
+      "keys": "di{",
+      "expect": {
+        "buffer": "fn {\n}",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n    body",
+            "linewise": false
+          },
+          "1": {
+            "text": "a\n    body",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "i_brace_empty_rows",
+      "buffer": "{\n}",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "di{",
+      "expect": {
+        "buffer": "{\n}",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "i_brace_one_empty_row",
+      "buffer": "{\n\n}",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "di{",
+      "expect": {
+        "buffer": "{\n}",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "a_brace_whole_rows",
+      "buffer": "{\n a\n}\n  x",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "da{",
+      "expect": {
+        "buffer": "  x",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "{\n a\n}\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "{\n a\n}\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "aB_nested",
+      "buffer": "{a {b} c}",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "daB",
+      "expect": {
+        "buffer": "{a  c}",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "{b}",
+            "linewise": false
+          },
+          "-": {
+            "text": "{b}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "a_close_brace_outer",
+      "buffer": "{a {b} c}",
+      "cursor": [
+        0,
+        7
+      ],
+      "keys": "da}",
+      "expect": {
+        "buffer": "",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "{a {b} c}",
+            "linewise": false
+          },
+          "-": {
+            "text": "{a {b} c}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "i_brace_count_2",
+      "buffer": "{a {b} c}",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "d2i{",
+      "expect": {
+        "buffer": "{}",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a {b} c",
+            "linewise": false
+          },
+          "-": {
+            "text": "a {b} c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "yi_paren_moves_to_start",
+      "buffer": "f(abc)",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "yi(",
+      "expect": {
+        "buffer": "f(abc)",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc",
+            "linewise": false
+          },
+          "0": {
+            "text": "abc",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "yi_brace_rows",
+      "buffer": "fn {\n    body\n}",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yi{",
+      "expect": {
+        "buffer": "fn {\n    body\n}",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "    body\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "    body\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "i_quote",
+      "buffer": "say \"hi there\" now",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "di\"",
+      "expect": {
+        "buffer": "say \"\" now",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "hi there",
+            "linewise": false
+          },
+          "-": {
+            "text": "hi there",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "a_quote_trailing_blanks",
+      "buffer": "say \"hi there\" now",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "da\"",
+      "expect": {
+        "buffer": "say now",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\"hi there\" ",
+            "linewise": false
+          },
+          "-": {
+            "text": "\"hi there\" ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "a_quote_leading_blanks",
+      "buffer": "say \"hi there\"",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "da\"",
+      "expect": {
+        "buffer": "say",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " \"hi there\"",
+            "linewise": false
+          },
+          "-": {
+            "text": " \"hi there\"",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "a_quote_leading_before_comma",
+      "buffer": "say \"hi there\",x",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "da\"",
+      "expect": {
+        "buffer": "say,x",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " \"hi there\"",
+            "linewise": false
+          },
+          "-": {
+            "text": " \"hi there\"",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "a_quote_all_trailing",
+      "buffer": "say \"hi\"  x",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "da\"",
+      "expect": {
+        "buffer": "say x",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\"hi\"  ",
+            "linewise": false
+          },
+          "-": {
+            "text": "\"hi\"  ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "i_quote_before_first",
+      "buffer": "say \"hi there\" now",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "di\"",
+      "expect": {
+        "buffer": "say \"\" now",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "hi there",
+            "linewise": false
+          },
+          "-": {
+            "text": "hi there",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "a_quote_before_first",
+      "buffer": "say \"hi there\" now",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "da\"",
+      "expect": {
+        "buffer": "say now",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\"hi there\" ",
+            "linewise": false
+          },
+          "-": {
+            "text": "\"hi there\" ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "i_quote_after_last_fails",
+      "buffer": "say \"hi there\" now",
+      "cursor": [
+        0,
+        16
+      ],
+      "keys": "di\"",
+      "expect": {
+        "buffer": "say \"hi there\" now",
+        "cursor": [
+          0,
+          16
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "i_quote_between_strings",
+      "buffer": "\"a\" x \"b\"",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "di\"",
+      "expect": {
+        "buffer": "\"a\"\"b\"",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " x ",
+            "linewise": false
+          },
+          "-": {
+            "text": " x ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "i_quote_on_opening",
+      "buffer": "\"a\" x \"b\"",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "di\"",
+      "expect": {
+        "buffer": "\"\" x \"b\"",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "i_quote_on_closing",
+      "buffer": "\"a\" x \"b\"",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "di\"",
+      "expect": {
+        "buffer": "\"\" x \"b\"",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "i_quote_on_second_opening",
+      "buffer": "\"a\" x \"b\"",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "di\"",
+      "expect": {
+        "buffer": "\"a\" x \"\"",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b",
+            "linewise": false
+          },
+          "-": {
+            "text": "b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "i_quote_count_2",
+      "buffer": "\"a\" x \"b\"",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "d2i\"",
+      "expect": {
+        "buffer": "\"ab\"",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\" x \"",
+            "linewise": false
+          },
+          "-": {
+            "text": "\" x \"",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "i_quote_escaped",
+      "buffer": "\"a\\\"b\" c",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "di\"",
+      "expect": {
+        "buffer": "\"\" c",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\\\"b",
+            "linewise": false
+          },
+          "-": {
+            "text": "a\\\"b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "i_quote_on_escaped",
+      "buffer": "\"a\\\"b\" c",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "di\"",
+      "expect": {
+        "buffer": "\"\" c",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\\\"b",
+            "linewise": false
+          },
+          "-": {
+            "text": "a\\\"b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "i_quote_escaped_backslash",
+      "buffer": "\"a\\\\\"b\" c",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "di\"",
+      "expect": {
+        "buffer": "\"\"b\" c",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\\\\",
+            "linewise": false
+          },
+          "-": {
+            "text": "a\\\\",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "i_single_quote_on_escaped_first",
+      "buffer": ")x.y\\'q'  ",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "yi'",
+      "expect": {
+        "buffer": ")x.y\\'q'  ",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "q",
+            "linewise": false
+          },
+          "0": {
+            "text": "q",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "i_quote_escaped_first",
+      "buffer": "x\\\"a\"b\"",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "di\"",
+      "expect": {
+        "buffer": "x\\\"\"b\"",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "i_quote_empty",
+      "buffer": "\"\" x",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "di\"",
+      "expect": {
+        "buffer": "\"\" x",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "a_quote_whole_row",
+      "buffer": "\"a\"",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "da\"",
+      "expect": {
+        "buffer": "",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\"a\"",
+            "linewise": false
+          },
+          "-": {
+            "text": "\"a\"",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "i_quote_no_quotes",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "di\"",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "i_single_quote",
+      "buffer": "it's 'a b' ok",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "di'",
+      "expect": {
+        "buffer": "it's '' ok",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a b",
+            "linewise": false
+          },
+          "-": {
+            "text": "a b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "a_single_quote",
+      "buffer": "it's 'a b' ok",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "da'",
+      "expect": {
+        "buffer": "it's ok",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "'a b' ",
+            "linewise": false
+          },
+          "-": {
+            "text": "'a b' ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ya_quote_moves_to_start",
+      "buffer": "x \"ab\" y",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "ya\"",
+      "expect": {
+        "buffer": "x \"ab\" y",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\"ab\" ",
+            "linewise": false
+          },
+          "0": {
+            "text": "\"ab\" ",
+            "linewise": false
+          }
+        }
+      }
+    }
+  ]
+}

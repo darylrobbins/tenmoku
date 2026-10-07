@@ -1,0 +1,1457 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "named_yank",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\"ayw",
+      "expect": {
+        "buffer": "abc def",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc ",
+            "linewise": false
+          },
+          "a": {
+            "text": "abc ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "named_yank_leaves_0",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yy\"bjyw",
+      "expect": {
+        "buffer": "abc\ndef",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "def",
+            "linewise": false
+          },
+          "0": {
+            "text": "def",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "named_delete_line_also_writes_1",
+      "buffer": "one\ntwo\nthree",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\"add",
+      "expect": {
+        "buffer": "two\nthree",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "one\n",
+            "linewise": true
+          },
+          "a": {
+            "text": "one\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "named_small_delete_skips_minus",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\"adw",
+      "expect": {
+        "buffer": "def",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc ",
+            "linewise": false
+          },
+          "a": {
+            "text": "abc ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "named_replaces",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\"aywW\"ayw",
+      "expect": {
+        "buffer": "abc def",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "def",
+            "linewise": false
+          },
+          "a": {
+            "text": "def",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "append_charwise",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "\"ayl\"Ayl",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bb",
+            "linewise": false
+          },
+          "a": {
+            "text": "bb",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "append_lines_to_chars",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "\"ayl\"Ayy",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b\nabc\n",
+            "linewise": true
+          },
+          "a": {
+            "text": "b\nabc\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "append_chars_to_lines",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "\"ayy\"Ayl",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc\nb\n",
+            "linewise": true
+          },
+          "a": {
+            "text": "abc\nb\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "append_to_empty",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\"Qyw",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc",
+            "linewise": false
+          },
+          "q": {
+            "text": "abc",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "uppercase_reads_lowercase",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\"ayl\"Ap",
+      "expect": {
+        "buffer": "aabc",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "a": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "black_hole_delete",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yw\"_dw",
+      "expect": {
+        "buffer": "def",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc ",
+            "linewise": false
+          },
+          "0": {
+            "text": "abc ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "black_hole_line",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "\"_dd",
+      "expect": {
+        "buffer": "def",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "black_hole_put",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yl\"_p",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "0": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "numbered_shift",
+      "buffer": "a\nb\nc\nd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dddddd",
+      "expect": {
+        "buffer": "d",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "c\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "b\n",
+            "linewise": true
+          },
+          "3": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "numbered_shift_drops_9",
+      "buffer": "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dddddddddddddddddddd",
+      "expect": {
+        "buffer": "11",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "10\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "10\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "9\n",
+            "linewise": true
+          },
+          "3": {
+            "text": "8\n",
+            "linewise": true
+          },
+          "4": {
+            "text": "7\n",
+            "linewise": true
+          },
+          "5": {
+            "text": "6\n",
+            "linewise": true
+          },
+          "6": {
+            "text": "5\n",
+            "linewise": true
+          },
+          "7": {
+            "text": "4\n",
+            "linewise": true
+          },
+          "8": {
+            "text": "3\n",
+            "linewise": true
+          },
+          "9": {
+            "text": "2\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "multi_row_charwise_delete_writes_1",
+      "buffer": "ab\ncd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "de",
+      "expect": {
+        "buffer": "a",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b\ncd",
+            "linewise": false
+          },
+          "1": {
+            "text": "b\ncd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "small_delete_writes_minus",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dwx",
+      "expect": {
+        "buffer": "ef",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "d",
+            "linewise": false
+          },
+          "-": {
+            "text": "d",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "small_delete_leaves_1",
+      "buffer": "a\nb c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ddx",
+      "expect": {
+        "buffer": " c",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b",
+            "linewise": false
+          },
+          "-": {
+            "text": "b",
+            "linewise": false
+          },
+          "1": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "yank_writes_0",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ywdw",
+      "expect": {
+        "buffer": "def",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc ",
+            "linewise": false
+          },
+          "-": {
+            "text": "abc ",
+            "linewise": false
+          },
+          "0": {
+            "text": "abc ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "yank_unnamed_register_name",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\"\"yw",
+      "expect": {
+        "buffer": "abc def",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc ",
+            "linewise": false
+          },
+          "0": {
+            "text": "abc ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "percent_delete_writes_1_and_minus",
+      "buffer": "(a) b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d%",
+      "expect": {
+        "buffer": " b",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "(a)",
+            "linewise": false
+          },
+          "-": {
+            "text": "(a)",
+            "linewise": false
+          },
+          "1": {
+            "text": "(a)",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "named_percent_delete",
+      "buffer": "(a) b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\"ad%",
+      "expect": {
+        "buffer": " b",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "(a)",
+            "linewise": false
+          },
+          "1": {
+            "text": "(a)",
+            "linewise": false
+          },
+          "a": {
+            "text": "(a)",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "quote_quote_delete_writes_0",
+      "buffer": "a\nb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\"\"dd",
+      "expect": {
+        "buffer": "b",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "a\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "quote_quote_small_delete",
+      "buffer": "a b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\"\"dw",
+      "expect": {
+        "buffer": "b",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a ",
+            "linewise": false
+          },
+          "0": {
+            "text": "a ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "numbered_name_delete_points_at_1",
+      "buffer": "a\nb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\"2dd",
+      "expect": {
+        "buffer": "b",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "a\n",
+            "linewise": true
+          },
+          "3": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "minus_name_line_delete",
+      "buffer": "a\nb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\"-dd",
+      "expect": {
+        "buffer": "b",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n",
+            "linewise": true
+          },
+          "-": {
+            "text": "a\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "empty_yank_clears",
+      "buffer": "ab\n\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ylj$y$",
+      "expect": {
+        "buffer": "ab\n\nc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "empty_named_yank_clears",
+      "buffer": "ab\n\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\"ayljy0\"ay$p",
+      "expect": {
+        "buffer": "ab\n\nc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "empty_delete_keeps",
+      "buffer": "ab\n\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dljx",
+      "expect": {
+        "buffer": "b\n\nc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "P_linewise_empty_row",
+      "buffer": "bar\nx.y",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "DddP",
+      "expect": {
+        "buffer": "\nx.y",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\n",
+            "linewise": true
+          },
+          "-": {
+            "text": "bar",
+            "linewise": false
+          },
+          "1": {
+            "text": "\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "numbered_register_named",
+      "buffer": "a\nb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\"3yy",
+      "expect": {
+        "buffer": "a\nb",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n",
+            "linewise": true
+          },
+          "3": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "minus_register_named",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\"-yl",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "p_charwise",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "ylp",
+      "expect": {
+        "buffer": "abbc",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b",
+            "linewise": false
+          },
+          "0": {
+            "text": "b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "p_charwise_count",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "yl3p",
+      "expect": {
+        "buffer": "abbbbc",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b",
+            "linewise": false
+          },
+          "0": {
+            "text": "b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "P_charwise",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "ylP",
+      "expect": {
+        "buffer": "abbc",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b",
+            "linewise": false
+          },
+          "0": {
+            "text": "b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "P_charwise_count",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "yl3P",
+      "expect": {
+        "buffer": "abbbbc",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b",
+            "linewise": false
+          },
+          "0": {
+            "text": "b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "p_charwise_multi_row",
+      "buffer": "ab\ncd\nxy",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "yejp",
+      "expect": {
+        "buffer": "ab\ncdb\ncd\nxy",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b\ncd",
+            "linewise": false
+          },
+          "0": {
+            "text": "b\ncd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "P_charwise_multi_row",
+      "buffer": "ab\ncd\nxy",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "yejP",
+      "expect": {
+        "buffer": "ab\ncb\ncdd\nxy",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b\ncd",
+            "linewise": false
+          },
+          "0": {
+            "text": "b\ncd",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "p_linewise",
+      "buffer": "one\ntwo",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "yyp",
+      "expect": {
+        "buffer": "one\none\ntwo",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "one\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "P_linewise",
+      "buffer": "one\ntwo",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "yyP",
+      "expect": {
+        "buffer": "one\none\ntwo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "one\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "p_linewise_count",
+      "buffer": "one\ntwo",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "yy3p",
+      "expect": {
+        "buffer": "one\ntwo\ntwo\ntwo\ntwo",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "two\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "p_linewise_last_row",
+      "buffer": "a\nb",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "kyyjp",
+      "expect": {
+        "buffer": "a\nb\na",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "p_linewise_first_non_blank",
+      "buffer": "  one\ntwo",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "kyyjP",
+      "expect": {
+        "buffer": "  one\n  one\ntwo",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "  one\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "  one\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "p_named",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\"ayyj\"ap",
+      "expect": {
+        "buffer": "abc\ndef\nabc",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc\n",
+            "linewise": true
+          },
+          "a": {
+            "text": "abc\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "P_named_count",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\"aywW\"byw0\"b2P",
+      "expect": {
+        "buffer": "defdefabc def",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "def",
+            "linewise": false
+          },
+          "a": {
+            "text": "abc ",
+            "linewise": false
+          },
+          "b": {
+            "text": "def",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "p_numbered",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dddd\"2p",
+      "expect": {
+        "buffer": "c\na",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "b\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "p_minus",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dw\"-P",
+      "expect": {
+        "buffer": "abc def",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc ",
+            "linewise": false
+          },
+          "-": {
+            "text": "abc ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "p_empty_register",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "p",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "p_on_empty_row",
+      "buffer": "abc\n\nx",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ylj2p",
+      "expect": {
+        "buffer": "abc\naa\nx",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "0": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "p_after_delete_line",
+      "buffer": "one\ntwo\nthree",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ddp",
+      "expect": {
+        "buffer": "two\none\nthree",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "one\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "p_multibyte",
+      "buffer": "añb",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "ylp",
+      "expect": {
+        "buffer": "aññb",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ñ",
+            "linewise": false
+          },
+          "0": {
+            "text": "ñ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "xp_swaps",
+      "buffer": "ab",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xp",
+      "expect": {
+        "buffer": "ba",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    }
+  ]
+}

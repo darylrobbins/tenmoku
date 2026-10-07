@@ -19,9 +19,10 @@ pub enum Operator {
 /// `word_forward word_backward word_end`, and `W B E` the `big_word_` ones;
 /// `0 ^ $` are `line_start first_non_blank line_end`; `gg G` are
 /// `document_start document_end`; and `f F t T` are `find_forward
-/// find_backward till_forward till_backward`, carrying the char. `line` is
-/// the target of a doubled operator such as `dd`: `count` lines from the
-/// caret's, like Vim's `_`.
+/// find_backward till_forward till_backward`, carrying the char, and `; ,`
+/// are `repeat_find repeat_find_reverse`; `%` is `match_pair` (with a count,
+/// the row `count` percent down the text). `line` is the target of a doubled
+/// operator such as `dd`: `count` lines from the caret's, like Vim's `_`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Motion {
@@ -44,7 +45,53 @@ pub enum Motion {
     FindBackward(char),
     TillForward(char),
     TillBackward(char),
+    RepeatFind,
+    RepeatFindReverse,
+    MatchPair,
     Line,
+}
+
+/// How an operator takes a motion's range (`:help exclusive`).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum RangeClass {
+    /// Up to the target, not including it: `h l w b 0 ^ F T`.
+    Exclusive,
+    /// Up to and including the target: `e $ f t %`.
+    Inclusive,
+    /// Whole rows: `j k gg G` and a doubled operator.
+    Linewise,
+}
+
+impl Motion {
+    /// Its class as an operator's target. `;` and `,` take the class of the
+    /// find they repeat, which only the last find knows: alone they say
+    /// [`RangeClass::Inclusive`], as `f` and `t` are. `%` with a count is
+    /// linewise.
+    pub fn class(self) -> RangeClass {
+        match self {
+            Self::Left
+            | Self::Right
+            | Self::WordForward
+            | Self::WordBackward
+            | Self::BigWordForward
+            | Self::BigWordBackward
+            | Self::LineStart
+            | Self::FirstNonBlank
+            | Self::FindBackward(_)
+            | Self::TillBackward(_) => RangeClass::Exclusive,
+            Self::WordEnd
+            | Self::BigWordEnd
+            | Self::LineEnd
+            | Self::FindForward(_)
+            | Self::TillForward(_)
+            | Self::RepeatFind
+            | Self::RepeatFindReverse
+            | Self::MatchPair => RangeClass::Inclusive,
+            Self::Up | Self::Down | Self::DocumentStart | Self::DocumentEnd | Self::Line => {
+                RangeClass::Linewise
+            }
+        }
+    }
 }
 
 /// `iw aw iW aW i( a( i{ a{ i" a" i' a'` (`ib` and `iB` are `i(` and `i{`).
@@ -91,6 +138,17 @@ pub struct OperateArgs {
     pub operator: Operator,
     pub target: Target,
     /// Both typed counts multiplied: `2d3w` is 6.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub register: Option<char>,
+}
+
+/// `vim.put`'s args: `p`, or `P` when `before`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PutArgs {
+    #[serde(default)]
+    pub before: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub count: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
