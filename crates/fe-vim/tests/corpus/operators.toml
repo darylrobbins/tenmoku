@@ -1097,3 +1097,111 @@ name = "df_sets_last_find"
 buffer = "a.b.c.d"
 cursor = [0, 0]
 keys = "df.;"
+
+[[case]]
+name = "percent_stray_close_line_comment_8"
+buffer = "**// /* */"
+cursor = [0, 8]
+keys = "%"
+
+[[case]]
+name = "d_percent_stray_close_line_comment_8"
+buffer = "**// /* */"
+cursor = [0, 8]
+keys = "d%"
+
+[[case]]
+name = "y_percent_stray_close_line_comment_8"
+buffer = "**// /* */"
+cursor = [0, 8]
+keys = "y%"
+
+[[case]]
+name = "percent_stray_close_line_comment_9"
+buffer = "**// /* */"
+cursor = [0, 9]
+keys = "%"
+
+[[case]]
+name = "d_percent_stray_close_line_comment_9"
+buffer = "**// /* */"
+cursor = [0, 9]
+keys = "d%"
+
+[[case]]
+name = "y_percent_stray_close_line_comment_9"
+buffer = "**// /* */"
+cursor = [0, 9]
+keys = "y%"
+
+[[case]]
+name = "percent_stray_close_line_comment_start_8"
+buffer = "*//x /* */"
+cursor = [0, 8]
+keys = "%"
+
+[[case]]
+name = "d_percent_stray_close_line_comment_start_8"
+buffer = "*//x /* */"
+cursor = [0, 8]
+keys = "d%"
+
+[[case]]
+name = "y_percent_stray_close_line_comment_start_8"
+buffer = "*//x /* */"
+cursor = [0, 8]
+keys = "y%"
+
+[[case]]
+name = "percent_stray_close_line_comment_start_9"
+buffer = "*//x /* */"
+cursor = [0, 9]
+keys = "%"
+
+[[case]]
+name = "d_percent_stray_close_line_comment_start_9"
+buffer = "*//x /* */"
+cursor = [0, 9]
+keys = "d%"
+
+[[case]]
+name = "y_percent_stray_close_line_comment_start_9"
+buffer = "*//x /* */"
+cursor = [0, 9]
+keys = "y%"
+
+[[case]]
+name = "percent_overlap_open_star_8"
+buffer = "/*//x/* */"
+cursor = [0, 8]
+keys = "%"
+
+[[case]]
+name = "d_percent_overlap_open_star_8"
+buffer = "/*//x/* */"
+cursor = [0, 8]
+keys = "d%"
+
+[[case]]
+name = "y_percent_overlap_open_star_8"
+buffer = "/*//x/* */"
+cursor = [0, 8]
+keys = "y%"
+
+[[case]]
+name = "percent_overlap_open_star_9"
+buffer = "/*//x/* */"
+cursor = [0, 9]
+keys = "%"
+
+[[case]]
+name = "d_percent_overlap_open_star_9"
+buffer = "/*//x/* */"
+cursor = [0, 9]
+keys = "d%"
+
+[[case]]
+name = "y_percent_overlap_open_star_9"
+buffer = "/*//x/* */"
+cursor = [0, 9]
+keys = "y%"

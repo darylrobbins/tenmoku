@@ -4278,6 +4278,374 @@
           }
         }
       }
+    },
+    {
+      "name": "percent_stray_close_line_comment_8",
+      "buffer": "**// /* */",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "%",
+      "expect": {
+        "buffer": "**// /* */",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "d_percent_stray_close_line_comment_8",
+      "buffer": "**// /* */",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "d%",
+      "expect": {
+        "buffer": "**// /* */",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "y_percent_stray_close_line_comment_8",
+      "buffer": "**// /* */",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "y%",
+      "expect": {
+        "buffer": "**// /* */",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "percent_stray_close_line_comment_9",
+      "buffer": "**// /* */",
+      "cursor": [
+        0,
+        9
+      ],
+      "keys": "%",
+      "expect": {
+        "buffer": "**// /* */",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "d_percent_stray_close_line_comment_9",
+      "buffer": "**// /* */",
+      "cursor": [
+        0,
+        9
+      ],
+      "keys": "d%",
+      "expect": {
+        "buffer": "**// /* */",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "y_percent_stray_close_line_comment_9",
+      "buffer": "**// /* */",
+      "cursor": [
+        0,
+        9
+      ],
+      "keys": "y%",
+      "expect": {
+        "buffer": "**// /* */",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "percent_stray_close_line_comment_start_8",
+      "buffer": "*//x /* */",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "%",
+      "expect": {
+        "buffer": "*//x /* */",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "d_percent_stray_close_line_comment_start_8",
+      "buffer": "*//x /* */",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "d%",
+      "expect": {
+        "buffer": "*//x /* */",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "y_percent_stray_close_line_comment_start_8",
+      "buffer": "*//x /* */",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "y%",
+      "expect": {
+        "buffer": "*//x /* */",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "percent_stray_close_line_comment_start_9",
+      "buffer": "*//x /* */",
+      "cursor": [
+        0,
+        9
+      ],
+      "keys": "%",
+      "expect": {
+        "buffer": "*//x /* */",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "d_percent_stray_close_line_comment_start_9",
+      "buffer": "*//x /* */",
+      "cursor": [
+        0,
+        9
+      ],
+      "keys": "d%",
+      "expect": {
+        "buffer": "*//x /* */",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "y_percent_stray_close_line_comment_start_9",
+      "buffer": "*//x /* */",
+      "cursor": [
+        0,
+        9
+      ],
+      "keys": "y%",
+      "expect": {
+        "buffer": "*//x /* */",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "percent_overlap_open_star_8",
+      "buffer": "/*//x/* */",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "%",
+      "expect": {
+        "buffer": "/*//x/* */",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "d_percent_overlap_open_star_8",
+      "buffer": "/*//x/* */",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "d%",
+      "expect": {
+        "buffer": "/",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "/*//x/* *",
+            "linewise": false
+          },
+          "-": {
+            "text": "/*//x/* *",
+            "linewise": false
+          },
+          "1": {
+            "text": "/*//x/* *",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "y_percent_overlap_open_star_8",
+      "buffer": "/*//x/* */",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "y%",
+      "expect": {
+        "buffer": "/*//x/* */",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "/*//x/* *",
+            "linewise": false
+          },
+          "0": {
+            "text": "/*//x/* *",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "percent_overlap_open_star_9",
+      "buffer": "/*//x/* */",
+      "cursor": [
+        0,
+        9
+      ],
+      "keys": "%",
+      "expect": {
+        "buffer": "/*//x/* */",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "d_percent_overlap_open_star_9",
+      "buffer": "/*//x/* */",
+      "cursor": [
+        0,
+        9
+      ],
+      "keys": "d%",
+      "expect": {
+        "buffer": "",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "/*//x/* */",
+            "linewise": false
+          },
+          "-": {
+            "text": "/*//x/* */",
+            "linewise": false
+          },
+          "1": {
+            "text": "/*//x/* */",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "y_percent_overlap_open_star_9",
+      "buffer": "/*//x/* */",
+      "cursor": [
+        0,
+        9
+      ],
+      "keys": "y%",
+      "expect": {
+        "buffer": "/*//x/* */",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "/*//x/* */",
+            "linewise": false
+          },
+          "0": {
+            "text": "/*//x/* */",
+            "linewise": false
+          }
+        }
+      }
     }
   ]
 }

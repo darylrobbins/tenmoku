@@ -216,6 +216,88 @@ pub(crate) enum Class {
 /// `record_char_table_with_neovim` test (`tests/support/chars.lua`).
 const CHARS: &str = include_str!("chars.txt");
 
+/// The width-1 characters that nvim 0.12.4 shows two columns wide when the
+/// next character is U+FE0F (recorded with `strdisplaywidth()`): not a
+/// keycap's base, and not once anything comes between.
+const VS16_WIDENED: &[std::ops::RangeInclusive<char>] = &[
+    '\u{A9}'..='\u{A9}',
+    '\u{AD}'..='\u{AE}',
+    '\u{61C}'..='\u{61C}',
+    '\u{2028}'..='\u{2029}',
+    '\u{203C}'..='\u{203C}',
+    '\u{2049}'..='\u{2049}',
+    '\u{2122}'..='\u{2122}',
+    '\u{2139}'..='\u{2139}',
+    '\u{2194}'..='\u{2199}',
+    '\u{21A9}'..='\u{21AA}',
+    '\u{2328}'..='\u{2328}',
+    '\u{23CF}'..='\u{23CF}',
+    '\u{23ED}'..='\u{23EF}',
+    '\u{23F1}'..='\u{23F2}',
+    '\u{23F8}'..='\u{23FA}',
+    '\u{24C2}'..='\u{24C2}',
+    '\u{25AA}'..='\u{25AB}',
+    '\u{25B6}'..='\u{25B6}',
+    '\u{25C0}'..='\u{25C0}',
+    '\u{25FB}'..='\u{25FC}',
+    '\u{2600}'..='\u{2604}',
+    '\u{260E}'..='\u{260E}',
+    '\u{2611}'..='\u{2611}',
+    '\u{2618}'..='\u{2618}',
+    '\u{261D}'..='\u{261D}',
+    '\u{2620}'..='\u{2620}',
+    '\u{2622}'..='\u{2623}',
+    '\u{2626}'..='\u{2626}',
+    '\u{262A}'..='\u{262A}',
+    '\u{262E}'..='\u{262F}',
+    '\u{2638}'..='\u{263A}',
+    '\u{2640}'..='\u{2640}',
+    '\u{2642}'..='\u{2642}',
+    '\u{265F}'..='\u{2660}',
+    '\u{2663}'..='\u{2663}',
+    '\u{2665}'..='\u{2666}',
+    '\u{2668}'..='\u{2668}',
+    '\u{267B}'..='\u{267B}',
+    '\u{267E}'..='\u{267E}',
+    '\u{2692}'..='\u{2692}',
+    '\u{2694}'..='\u{2697}',
+    '\u{2699}'..='\u{2699}',
+    '\u{269B}'..='\u{269C}',
+    '\u{26A0}'..='\u{26A0}',
+    '\u{26A7}'..='\u{26A7}',
+    '\u{26B0}'..='\u{26B1}',
+    '\u{26C8}'..='\u{26C8}',
+    '\u{26CF}'..='\u{26CF}',
+    '\u{26D1}'..='\u{26D1}',
+    '\u{26D3}'..='\u{26D3}',
+    '\u{26E9}'..='\u{26E9}',
+    '\u{26F0}'..='\u{26F1}',
+    '\u{26F4}'..='\u{26F4}',
+    '\u{26F7}'..='\u{26F9}',
+    '\u{2702}'..='\u{2702}',
+    '\u{2708}'..='\u{2709}',
+    '\u{270C}'..='\u{270D}',
+    '\u{270F}'..='\u{270F}',
+    '\u{2712}'..='\u{2712}',
+    '\u{2714}'..='\u{2714}',
+    '\u{2716}'..='\u{2716}',
+    '\u{271D}'..='\u{271D}',
+    '\u{2721}'..='\u{2721}',
+    '\u{2733}'..='\u{2734}',
+    '\u{2744}'..='\u{2744}',
+    '\u{2747}'..='\u{2747}',
+    '\u{2763}'..='\u{2764}',
+    '\u{27A1}'..='\u{27A1}',
+    '\u{2934}'..='\u{2935}',
+    '\u{2B05}'..='\u{2B07}',
+    '\u{13430}'..='\u{1343F}',
+    '\u{1BCA0}'..='\u{1BCA3}',
+    '\u{1D173}'..='\u{1D17A}',
+    '\u{1F170}'..='\u{1F171}',
+    '\u{1F17E}'..='\u{1F17F}',
+    '\u{E0001}'..='\u{E0001}',
+];
+
 /// `ch`'s class and display width, from [`CHARS`].
 fn char_info(ch: char) -> (u32, usize) {
     static RUNS: OnceLock<Vec<(u32, u32, usize)>> = OnceLock::new();
@@ -294,8 +376,12 @@ impl Line {
         let ch = grapheme.chars().next().unwrap_or(' ');
         match ch {
             '\t' => tab - column % tab,
-            // Emoji presentation (VS16) makes it two columns wide.
-            _ if grapheme.contains('\u{fe0f}') => char_info(ch).1.max(2),
+            // Emoji presentation (VS16) right after one of these two columns.
+            _ if grapheme.chars().nth(1) == Some('\u{fe0f}')
+                && VS16_WIDENED.iter().any(|run| run.contains(&ch)) =>
+            {
+                2
+            }
             _ => char_info(ch).1,
         }
     }
@@ -767,42 +853,63 @@ pub(crate) fn match_pair(text: &Text, offset: usize) -> Option<Match> {
 }
 
 /// The `/*` that `%` matches with the `*/` at `close` in `text` (which
-/// runs to the end of that `*/`), as nvim picks it, in one pass. A `/*`
-/// after a `//` line comment on its row doesn't count, nor one right after
-/// a `*` (unless it's `/*/`). The nearest that counts is the match unless a
-/// `*/` follows it; an earlier one still open wins over it, one that no
-/// `*/` follows at all, even overlapping it as `/*/` does.
+/// runs to the end of that `*/`), as nvim's backward scan picks it, in one
+/// pass: from the `*/`, back through the text, counting each `/*` that
+/// isn't right after a `*` and doesn't sit at or after a `//` line comment
+/// on its row; the first `*/` met ends the scan, matching the earliest
+/// counted `/*` after it, or, with none counted, an overlapping `/*/`.
 fn comment_open(text: &[u8], close: usize) -> Option<usize> {
-    let marker = |ix: usize, first: u8, second: u8| text[ix] == first && text[ix + 1] == second;
-    let last_close = (0..close).rev().find(|&ix| marker(ix, b'*', b'/'));
-    let (mut commented, mut earliest, mut nearest) = (false, None, None);
-    for ix in 0..close.saturating_sub(1) {
-        if text[ix] == b'\n' {
-            commented = false;
+    let row_start = |ix: usize| {
+        text[..ix]
+            .iter()
+            .rposition(|&b| b == b'\n')
+            .map_or(0, |nl| nl + 1)
+    };
+    // Where a `//` begins on the row at `start`, unless it ends a `*/` and
+    // starts a `/*`; nvim's `check_linecomment`.
+    let line_comment = |start: usize| {
+        let row = &text[start..];
+        let end = row.iter().position(|&b| b == b'\n').unwrap_or(row.len());
+        (0..end.saturating_sub(1))
+            .find(|&ix| {
+                row[ix] == b'/'
+                    && row[ix + 1] == b'/'
+                    && (ix == 0 || row[ix - 1] != b'*' || row.get(ix + 2) != Some(&b'*'))
+            })
+            .map_or(usize::MAX, |ix| start + ix)
+    };
+    let mut start = row_start(close);
+    let mut comment = line_comment(start);
+    let mut pos = close;
+    let mut counted = None;
+    loop {
+        if pos == start {
+            if start == 0 {
+                return counted;
+            }
+            // Onto the previous row's end.
+            pos = start - 1;
+            start = row_start(pos);
+            comment = line_comment(start);
+        } else {
+            pos -= 1;
+        }
+        if pos == start {
             continue;
         }
-        let after_star = ix > 0 && text[ix - 1] == b'*';
-        if marker(ix, b'/', b'*') && !commented && (!after_star || text.get(ix + 2) == Some(&b'/'))
+        if text[pos - 1] == b'/'
+            && text[pos] == b'*'
+            && (pos == start + 1 || text[pos - 2] != b'*')
+            && pos < comment
         {
-            nearest = Some(ix);
-            if earliest.is_none() && last_close.is_none_or(|last| ix >= last) {
-                earliest = Some(ix);
+            counted = Some(pos - 1);
+        } else if text[pos - 1] == b'*' && text[pos] == b'/' {
+            if counted.is_some() {
+                return counted;
             }
-        }
-        // A `//` starts a line comment, unless its first `/` ends a `*/`.
-        if marker(ix, b'/', b'/') && !after_star {
-            commented = true;
+            return (pos > start + 1 && text[pos - 2] == b'/' && pos <= comment).then(|| pos - 2);
         }
     }
-    let nearest = nearest?;
-    if last_close.is_some_and(|last| last >= nearest + 2) {
-        return None;
-    }
-    Some(
-        earliest
-            .filter(|&earliest| earliest <= nearest)
-            .unwrap_or(nearest),
-    )
 }
 
 /// A preprocessor conditional on a row: its `#`'s column and its kind.
