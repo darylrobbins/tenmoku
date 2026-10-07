@@ -46,15 +46,12 @@
     (expression_statement
       (assignment_expression left: (variable_name (name) @name)) @definition.variable)))
 
-; list($a, $b) = $pair; and [$a, $b] = $pair; there: each name is its own
-; item.
-(program
-  (expression_statement
-    (assignment_expression
-      left: (list_literal (variable_name (name) @name) @definition.variable))))
-
-(namespace_definition
-  body: (compound_statement
-    (expression_statement
-      (assignment_expression
-        left: (list_literal (variable_name (name) @name) @definition.variable)))))
+; list($a, $b) = $pair; and [$a, [$b, $c]] = $pair; there: each name, at
+; any depth, is its own item. A key, $k in [$k => $v] = $row;, is read,
+; not assigned. See #bound? in outline.rs.
+((list_literal
+  [
+    (variable_name (name) @name) @definition.variable
+    (by_ref (variable_name (name) @name) @definition.variable)
+  ])
+  (#bound? @definition.variable program namespace_definition))

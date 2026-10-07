@@ -38,8 +38,9 @@
   (#not-function? @definition.field))
 
 ; A static data member defined outside its class, int X::count = 0;, at
-; file scope or in a namespace, also as a template. Named count; one whose
-; qualifier is a namespace, int N::x = 0;, is a variable below.
+; file scope or in a namespace, also as a template, through any number of
+; template headers. Named count; one whose qualifier names a namespace,
+; int N::x = 0;, is a variable below: see #member? in outline.rs.
 ((declaration
   declarator: [
     (qualified_identifier)
@@ -51,21 +52,6 @@
     (attributed_declarator)
   ] @name @definition.field) @_declaration
   (#scope? @_declaration translation_unit declaration_list)
-  (#member? @definition.field)
-  (#not-function? @definition.field))
-
-((template_declaration
-  (declaration
-    declarator: [
-      (qualified_identifier)
-      (init_declarator)
-      (pointer_declarator)
-      (array_declarator)
-      (reference_declarator)
-      (parenthesized_declarator)
-      (attributed_declarator)
-    ] @name @definition.field)) @_template
-  (#scope? @_template translation_unit declaration_list)
   (#member? @definition.field)
   (#not-function? @definition.field))
 
@@ -88,19 +74,4 @@
     (attributed_declarator)
   ] @name @definition.variable) @_declaration
   (#scope? @_declaration translation_unit declaration_list)
-  (#not-member? @definition.variable))
-
-((template_declaration
-  (declaration
-    declarator: [
-      (identifier)
-      (qualified_identifier)
-      (init_declarator)
-      (pointer_declarator)
-      (array_declarator)
-      (reference_declarator)
-      (parenthesized_declarator)
-      (attributed_declarator)
-    ] @name @definition.variable)) @_template
-  (#scope? @_template translation_unit declaration_list)
   (#not-member? @definition.variable))

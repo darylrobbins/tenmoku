@@ -30,19 +30,28 @@
     (dot_index_expression field: (identifier) @name)
   ]) @definition.function
 
-; M.callback = function(event) ... end, local f = function() ... end: one
-; target and one value. In local a, b = function() end, 1, a and b are
-; variables, as the definitions query lists them.
+; M.callback = function(event) ... end, local f = function() ... end: a
+; target assigned a function, the value at its place, also with more
+; values. With one target the item is the statement. With several, as g in
+; local g, h = function() end, 1, the item is the target, as a variable's
+; is in the definitions query, which lists h.
 ((assignment_statement
   (variable_list
     name: [
       (identifier) @name
       (dot_index_expression field: (identifier) @name)
-    ])
-  (expression_list
-    .
-    value: (function_definition) .)) @definition.function
-  (#sole? @name))
+    ])) @definition.function
+  (#sole? @name)
+  (#function-valued? @name))
+
+((assignment_statement
+  (variable_list
+    name: [
+      (identifier) @name @definition.function
+      (dot_index_expression field: (identifier) @name) @definition.function
+    ]))
+  (#not-sole? @name)
+  (#function-valued? @name))
 
 (field
   name: (identifier) @name

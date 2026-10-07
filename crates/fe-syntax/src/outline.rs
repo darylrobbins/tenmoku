@@ -13,8 +13,8 @@
 //! query as one query.
 
 use std::{
-    cell::OnceCell,
-    collections::{HashMap, HashSet},
+    cell::{OnceCell, RefCell},
+    collections::HashMap,
     ops::Range,
     sync::OnceLock,
 };
@@ -242,6 +242,7 @@ impl OutlineJob {
             text,
             root: self.tree.root_node(),
             cpp_scopes: OnceCell::new(),
+            ruby_scopes: RefCell::default(),
         };
         let mut cursor = QueryCursor::new();
         // Predicates like `#match?` read node text straight from the rope.
@@ -524,7 +525,7 @@ fn declarator_end(mut node: Node) -> Node {
 /// The bytes of the name `node` stands for: its own, except for a Ruby
 /// symbol, `:name` in `attr_reader :name`, which names `name`, and a C++
 /// conversion operator, `operator char*() const`, named up to its
-/// parameters, `operator char*`.
+/// parameters, `operator char*`, also through a reference: `operator int&`.
 fn name_range(node: Node) -> Range<usize> {
     let range = node.byte_range();
     match node.kind() {
@@ -535,7 +536,13 @@ fn name_range(node: Node) -> Range<usize> {
                 if inner.kind() == "abstract_function_declarator" {
                     break;
                 }
-                declarator = inner.child_by_field_name("declarator");
+                // Reference and parenthesized abstract declarators have no
+                // field for the declarator they wrap.
+                declarator = inner.child_by_field_name("declarator").or_else(|| {
+                    let mut cursor = inner.walk();
+                    (inner.named_children(&mut cursor))
+                        .find(|child| child.kind().starts_with("abstract_"))
+                });
             }
             let parameters = declarator.and_then(|d| d.child_by_field_name("parameters"));
             range.start..parameters.map_or(range.end, |parameters| parameters.start_byte())
@@ -575,9 +582,10 @@ struct Predicate {
 enum Test {
     /// `(#scope? @node kind...)`: the scope of @node, a C or C++
     /// declaration, is one of the kinds. That's its nearest ancestor other
-    /// than preprocessor conditionals and a struct's, union's or class's
-    /// member list. One of those without a name is no scope, so its members
-    /// don't match.
+    /// than preprocessor conditionals, a struct's, union's or class's
+    /// member list and C++ template wrappers, however many: `template<class
+    /// T> template<class U> U A<T>::x;` is at file scope. One of those
+    /// without a name is no scope, so its members don't match.
     Scope(Vec<Box<str>>),
     /// `(#destructured? @node)`: @node is a name a JavaScript destructuring
     /// pattern binds, at any depth, in a declaration at the top of the
@@ -604,16 +612,38 @@ enum Test {
     Function(bool),
     /// `(#member? @node)`, or `#not-member?` for the opposite: @node, a C++
     /// definition, declaration or declarator, declares a member of a type
-    /// outside it, as `int X::f() { }` and `int X::count = 0;` do. A name
-    /// can't say whether its qualifier is a namespace or a type, so it's a
-    /// type unless the file defines a namespace of that name and no type:
-    /// a member defined in a .cpp file usually belongs to a class its header
-    /// declares.
+    /// outside it, as `int X::f() { }` and `int X::count = 0;` do, rather
+    /// than of a namespace. The qualifier is looked up as C++ does among
+    /// the namespaces, namespace aliases and types the file declares: its
+    /// first name from the declaration's namespace outwards, then each
+    /// name in the last, inline namespaces included. One that isn't found
+    /// is a type: a member defined in a .cpp file usually belongs to a
+    /// class its header declares. See [`CppScopes`].
     Member(bool),
     /// `(#sole? @node)`, or `#not-sole?` for the opposite: @node, a Lua
     /// assignment target or a name in one, as M or f in `M.f = ...`, is in
     /// a list of one target: `local x = 1` but not `local a, b = 1, 2`.
     Sole(bool),
+    /// `(#function-valued? @node)`: @node, a Lua assignment target or a
+    /// name in one, is assigned a function: the value at its place in the
+    /// list of values is a function definition, also in parentheses. g but
+    /// not h in `local g, h = function() end, 1`.
+    FunctionValued,
+    /// `(#bound? @node kind...)`: @node is a name a Scala, Swift or PHP
+    /// destructuring pattern binds, at any depth, in a declaration or an
+    /// assignment directly in a scope of one of the kinds: a, b and c in
+    /// `val (a, (b, c)) = pair`, `let (a, (b, c)) = pair` and
+    /// `[$a, [$b, $c]] = $pair;`, but not $k, a key, in `[$k => $v] = $row;`
+    /// nor A in `val (A, b) = pair`, which Scala matches against a constant.
+    /// The scope is the statement's parent, except that a Scala package's
+    /// and a PHP namespace's braces count as the package or namespace.
+    Bound(Vec<Box<str>>),
+    /// `(#assigned-in? @node kind...)`: @node, a Ruby assignment, is a
+    /// statement directly in a scope of one of the kinds, `program` or a
+    /// `class`'s or `module`'s body, or the value of such an assignment
+    /// through any number of others: B = 1 in `A = B = 1`, and C = [1, 2] in
+    /// `A, B = C = [1, 2]`.
+    AssignedIn(Vec<Box<str>>),
 }
 
 /// What the predicates of a match can look at besides its captures.
@@ -621,14 +651,49 @@ struct Context<'a> {
     text: &'a Text,
     root: Node<'a>,
     cpp_scopes: OnceCell<CppScopes>,
+    /// The scope of each Ruby assignment [`Test::AssignedIn`] has looked
+    /// at, by node id, so a long chain is climbed once.
+    ruby_scopes: RefCell<HashMap<usize, Option<Node<'a>>>>,
 }
 
-/// The names of the namespaces and the types a C++ file declares, for
-/// [`Test::Member`].
+/// What a C++ file declares where, for [`Test::Member`]: its namespaces,
+/// namespace aliases and types by their paths from the global namespace,
+/// `["A", "B"]` for `A::B`. A namespace without a name adds nothing to
+/// the paths in it.
 #[derive(Default)]
 struct CppScopes {
-    namespaces: HashSet<String>,
-    types: HashSet<String>,
+    declared: HashMap<Vec<String>, CppDeclared>,
+    /// The inline namespaces directly in each namespace, by name.
+    inline: HashMap<Vec<String>, Vec<String>>,
+    /// The namespaces each namespace's `using namespace` directives name.
+    using: HashMap<Vec<String>, Vec<CppQualifier>>,
+}
+
+enum CppDeclared {
+    Namespace,
+    Type,
+    /// `namespace M = A::B;`, declared in the namespace at `scope`.
+    Alias {
+        scope: Vec<String>,
+        target: CppQualifier,
+    },
+}
+
+/// The names before the last `::` of a qualified name, or all the names of
+/// a namespace alias's target.
+struct CppQualifier {
+    /// Whether it starts with `::`, from the global namespace.
+    global: bool,
+    /// None for a part that isn't a plain name: a template, as `Box<T>`,
+    /// or a decltype.
+    names: Vec<Option<String>>,
+}
+
+/// What a qualifier names.
+enum CppResolved {
+    Namespace(Vec<String>),
+    Type,
+    Unknown,
 }
 
 impl Predicate {
@@ -660,6 +725,9 @@ impl Predicate {
             "not-member?" if args.is_empty() => Test::Member(false),
             "sole?" if args.is_empty() => Test::Sole(true),
             "not-sole?" if args.is_empty() => Test::Sole(false),
+            "function-valued?" if args.is_empty() => Test::FunctionValued,
+            "bound?" if !args.is_empty() => Test::Bound(args),
+            "assigned-in?" if !args.is_empty() => Test::AssignedIn(args),
             _ => return None,
         };
         Some(Self {
@@ -670,7 +738,7 @@ impl Predicate {
 
     /// Whether the match with these captures meets the predicate. One whose
     /// node wasn't captured doesn't.
-    fn holds(&self, captures: &[QueryCapture], context: &Context) -> bool {
+    fn holds<'a>(&self, captures: &[QueryCapture<'a>], context: &Context<'a>) -> bool {
         let Some(node) = (captures.iter())
             .find(|capture| capture.index == self.capture)
             .map(|capture| capture.node)
@@ -692,8 +760,159 @@ impl Predicate {
             Test::Function(function) => declares_function(declared_name(node)) == *function,
             Test::Member(member) => cpp_member(node, context) == *member,
             Test::Sole(sole) => sole_target(node) == *sole,
+            Test::FunctionValued => lua_function_valued(node),
+            Test::Bound(kinds) => (bound_by(node, context.text).and_then(statement_scope))
+                .is_some_and(|scope| kinds.iter().any(|kind| **kind == *scope.kind())),
+            Test::AssignedIn(kinds) => ruby_assignment_scope(node, &context.ruby_scopes)
+                .is_some_and(|scope| kinds.iter().any(|kind| **kind == *scope.kind())),
         }
     }
+}
+
+/// Whether `node` is among the children of `parent` in `field`, which
+/// can hold several.
+fn in_field(parent: Node, field: &str, node: Node) -> bool {
+    let mut cursor = parent.walk();
+    parent
+        .children_by_field_name(field, &mut cursor)
+        .any(|child| child == node)
+}
+
+/// See [`Test::FunctionValued`].
+fn lua_function_valued(node: Node) -> bool {
+    let mut target = node;
+    let list = loop {
+        match target.parent() {
+            Some(parent) if parent.kind() == "variable_list" => break parent,
+            Some(parent) => target = parent,
+            None => return false,
+        }
+    };
+    let mut cursor = list.walk();
+    let Some(ix) = list
+        .children_by_field_name("name", &mut cursor)
+        .position(|name| name == target)
+    else {
+        return false;
+    };
+    let Some(statement) = list.parent() else {
+        return false;
+    };
+    let mut cursor = statement.walk();
+    let Some(values) =
+        (statement.named_children(&mut cursor)).find(|child| child.kind() == "expression_list")
+    else {
+        return false;
+    };
+    let mut cursor = values.walk();
+    let mut value = values.children_by_field_name("value", &mut cursor).nth(ix);
+    while let Some(node) = value.filter(|node| node.kind() == "parenthesized_expression") {
+        let mut cursor = node.walk();
+        value = (node.named_children(&mut cursor)).find(|child| child.kind() != "comment");
+    }
+    value.is_some_and(|value| value.kind() == "function_definition")
+}
+
+/// The declaration or assignment statement whose destructuring pattern
+/// binds `name`. See [`Test::Bound`].
+fn bound_by<'a>(name: Node<'a>, text: &Text) -> Option<Node<'a>> {
+    // A Scala name starting with a capital or a backquote, in a pattern,
+    // stands for a value to match, unless something@ binds it.
+    let parent = name.parent()?;
+    if name.kind() == "identifier"
+        && !(parent.kind() == "capture_pattern" && in_field(parent, "name", name))
+        && (chunks(text, name.byte_range()).next())
+            .and_then(|chunk| String::from_utf8_lossy(chunk).chars().next())
+            .is_some_and(|c| c.is_uppercase() || c == '`')
+    {
+        return None;
+    }
+    let mut node = name;
+    loop {
+        let parent = node.parent()?;
+        let binds = match parent.kind() {
+            // Scala.
+            "tuple_pattern" => true,
+            "typed_pattern" | "case_class_pattern" | "repeat_pattern" => {
+                in_field(parent, "pattern", node)
+            }
+            "infix_pattern" => in_field(parent, "left", node) || in_field(parent, "right", node),
+            "capture_pattern" => {
+                in_field(parent, "name", node) || in_field(parent, "pattern", node)
+            }
+            "val_definition" | "var_definition" => {
+                return in_field(parent, "pattern", node).then_some(parent);
+            }
+            // Swift.
+            "pattern" => true,
+            "property_declaration" => return in_field(parent, "name", node).then_some(parent),
+            // PHP. In [$k => $v], $k is a key, which is read.
+            "list_literal" => {
+                let mut next = node.next_sibling();
+                while let Some(comment) = next.filter(|next| next.kind() == "comment") {
+                    next = comment.next_sibling();
+                }
+                next.is_none_or(|next| next.kind() != "=>")
+            }
+            "by_ref" => true,
+            "assignment_expression" => {
+                let statement = parent.parent()?;
+                return (is_field(parent, "left", node)
+                    && statement.kind() == "expression_statement")
+                    .then_some(statement);
+            }
+            _ => false,
+        };
+        if !binds {
+            return None;
+        }
+        node = parent;
+    }
+}
+
+/// The scope [`Test::Bound`] describes.
+fn statement_scope(statement: Node) -> Option<Node> {
+    let parent = statement.parent()?;
+    let owner = parent.parent();
+    match (parent.kind(), owner.map(|owner| owner.kind())) {
+        ("template_body", Some("package_clause"))
+        | ("compound_statement", Some("namespace_definition")) => owner,
+        _ => Some(parent),
+    }
+}
+
+/// The scope [`Test::AssignedIn`] describes: the parent of the statement
+/// the assignment chain `assignment` is in, or the class or module whose
+/// body that is. `known` holds the scopes found so far, of every node
+/// climbed through, since each step up costs the node's depth.
+fn ruby_assignment_scope<'a>(
+    assignment: Node<'a>,
+    known: &RefCell<HashMap<usize, Option<Node<'a>>>>,
+) -> Option<Node<'a>> {
+    let mut known = known.borrow_mut();
+    let mut climbed = Vec::new();
+    let mut node = assignment;
+    let scope = loop {
+        if let Some(&scope) = known.get(&node.id()) {
+            break scope;
+        }
+        climbed.push(node.id());
+        let Some(parent) = node.parent() else {
+            break None;
+        };
+        match parent.kind() {
+            "assignment" if is_field(parent, "right", node) => {}
+            // H, I = J = 1, 2 assigns J = 1 and 2.
+            "right_assignment_list" => {}
+            "body_statement" => break parent.parent(),
+            _ => break Some(parent),
+        }
+        node = parent;
+    };
+    for id in climbed {
+        known.insert(id, scope);
+    }
+    scope
 }
 
 /// `node`'s field in `parent` is `field`.
@@ -710,27 +929,204 @@ fn cpp_member(mut node: Node, context: &Context) -> bool {
     {
         node = declarator;
     }
-    let mut node = declarator_end(node);
+    let node = declarator_end(node);
     if node.kind() != "qualified_identifier" {
         return false;
     }
-    // The innermost qualifier: X in A::X::f.
-    while let Some(name) =
-        (node.child_by_field_name("name")).filter(|name| name.kind() == "qualified_identifier")
-    {
-        node = name;
-    }
-    let Some(scope) = node.child_by_field_name("scope") else {
-        // ::f, in the global namespace.
-        return false;
-    };
-    if scope.kind() != "namespace_identifier" {
-        // A template, as in Box<T>::get.
-        return true;
-    }
+    let qualifier = CppQualifier::of_name(node, context.text);
     let scopes = (context.cpp_scopes).get_or_init(|| cpp_scopes(context.root, context.text));
-    let name = node_text(context.text, scope);
-    scopes.types.contains(&name) || !scopes.namespaces.contains(&name)
+    let from = cpp_namespace_of(node, context.text);
+    let mut budget = CPP_LOOKUP_BUDGET;
+    !matches!(
+        scopes.resolve(&from, &qualifier, &mut budget),
+        CppResolved::Namespace(_)
+    )
+}
+
+/// The most namespaces one [`CppScopes::resolve`] looks in, aliases and
+/// inline namespaces included, so a cycle of aliases ends.
+const CPP_LOOKUP_BUDGET: u32 = 64;
+
+impl CppQualifier {
+    /// The qualifier of `name`, a qualified identifier: A::B in A::B::f,
+    /// and none, from the global namespace, in ::f.
+    fn of_name(mut name: Node, text: &Text) -> Self {
+        let global = name.child_by_field_name("scope").is_none();
+        let mut names = Vec::new();
+        loop {
+            if let Some(scope) = name.child_by_field_name("scope") {
+                names
+                    .push((scope.kind() == "namespace_identifier").then(|| node_text(text, scope)));
+            }
+            match (name.child_by_field_name("name")).filter(|n| n.kind() == "qualified_identifier")
+            {
+                Some(inner) => name = inner,
+                None => break,
+            }
+        }
+        Self { global, names }
+    }
+
+    /// The names of `name`, a namespace identifier or a nested namespace
+    /// specifier as in `namespace A::B` and `namespace M = ::A::B;`.
+    fn of_namespace(name: Node, text: &Text) -> Self {
+        let (global, names) = namespace_names(name, text);
+        let names = names.into_iter().map(|(name, _)| Some(name)).collect();
+        Self { global, names }
+    }
+
+    /// The namespace `using namespace A::B;` names.
+    fn of_using(target: Node, text: &Text) -> Self {
+        let mut qualifier = match target.kind() {
+            "qualified_identifier" => Self::of_name(target, text),
+            _ => Self {
+                global: false,
+                names: Vec::new(),
+            },
+        };
+        (qualifier.names).push(Some(node_text(text, declared_name(target))));
+        qualifier
+    }
+}
+
+/// Whether the namespace identifier or nested namespace specifier `name`
+/// starts with `::`, and its names, each with whether `inline` marks it,
+/// as B in `namespace A::inline B`.
+fn namespace_names(name: Node, text: &Text) -> (bool, Vec<(String, bool)>) {
+    let mut global = false;
+    let mut inline = false;
+    let mut names = Vec::new();
+    // In order, without recursion: the specifiers nest.
+    let mut stack = vec![name];
+    while let Some(node) = stack.pop() {
+        match node.kind() {
+            "namespace_identifier" => {
+                names.push((node_text(text, node), inline));
+                inline = false;
+            }
+            "inline" => inline = true,
+            "::" => global |= names.is_empty() && node.start_byte() == name.start_byte(),
+            _ => {
+                let mut cursor = node.walk();
+                let children: Vec<Node> = node.children(&mut cursor).collect();
+                stack.extend(children.into_iter().rev());
+            }
+        }
+    }
+    (global, names)
+}
+
+impl CppScopes {
+    /// What `qualifier` names when a declaration in the namespace at
+    /// `from` uses it. `budget` counts down the namespaces looked in.
+    fn resolve(&self, from: &[String], qualifier: &CppQualifier, budget: &mut u32) -> CppResolved {
+        let Some((first, rest)) = qualifier.names.split_first() else {
+            return CppResolved::Namespace(Vec::new());
+        };
+        let Some(first) = first else {
+            return CppResolved::Type;
+        };
+        let outermost = if qualifier.global { 0 } else { from.len() };
+        let mut resolved = (0..=outermost)
+            .rev()
+            .find_map(|len| self.member(&from[..len], first, budget))
+            .unwrap_or(CppResolved::Unknown);
+        for name in rest {
+            resolved = match (resolved, name) {
+                (CppResolved::Namespace(path), Some(name)) => {
+                    (self.member(&path, name, budget)).unwrap_or(CppResolved::Unknown)
+                }
+                (CppResolved::Namespace(_), None) => CppResolved::Type,
+                // Everything in a type is a member of it.
+                (resolved, _) => return resolved,
+            };
+        }
+        resolved
+    }
+
+    /// What `name` names in the namespace at `path`, or in an inline
+    /// namespace in it or one its `using namespace` directives name, if
+    /// the file declares it.
+    fn member(&self, path: &[String], name: &str, budget: &mut u32) -> Option<CppResolved> {
+        *budget = budget.checked_sub(1)?;
+        let mut full = path.to_vec();
+        full.push(name.to_owned());
+        match self.declared.get(&full) {
+            Some(CppDeclared::Namespace) => return Some(CppResolved::Namespace(full)),
+            Some(CppDeclared::Type) => return Some(CppResolved::Type),
+            Some(CppDeclared::Alias { scope, target }) => {
+                // An alias names a namespace, also one declared elsewhere,
+                // as in namespace fs = std::filesystem;. Nothing is known
+                // to be in that one.
+                return Some(match self.resolve(scope, target, budget) {
+                    CppResolved::Namespace(path) => CppResolved::Namespace(path),
+                    _ => CppResolved::Namespace(full),
+                });
+            }
+            None => {}
+        }
+        let inline = (self.inline.get(path).into_iter().flatten()).find_map(|inline| {
+            let mut path = path.to_vec();
+            path.push(inline.clone());
+            self.member(&path, name, budget)
+        });
+        inline.or_else(|| {
+            (self.using.get(path).into_iter().flatten()).find_map(|target| {
+                match self.resolve(path, target, budget) {
+                    CppResolved::Namespace(used) => self.member(&used, name, budget),
+                    _ => None,
+                }
+            })
+        })
+    }
+}
+
+/// The path of the namespace `node` is declared in, through the names of
+/// the namespaces and types around it.
+fn cpp_namespace_of(node: Node, text: &Text) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut ancestor = node.parent();
+    while let Some(node) = ancestor {
+        parts.extend(cpp_scope_names(node, text).into_iter().rev());
+        ancestor = node.parent();
+    }
+    parts.reverse();
+    parts
+}
+
+/// The names `node` adds to the paths of what's declared in it: a
+/// namespace's names and a class's, struct's, union's or enum's name.
+/// Empty for anything else, a namespace without a name included.
+fn cpp_scope_names(node: Node, text: &Text) -> Vec<String> {
+    let Some(name) = node.child_by_field_name("name") else {
+        return Vec::new();
+    };
+    match node.kind() {
+        "namespace_definition" => (namespace_names(name, text).1)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect(),
+        "class_specifier" | "struct_specifier" | "union_specifier" | "enum_specifier" => {
+            match name.kind() {
+                // struct Outer::Inner { }.
+                "qualified_identifier" => {
+                    let mut names: Vec<String> = (CppQualifier::of_name(name, text).names)
+                        .into_iter()
+                        .flatten()
+                        .collect();
+                    names.push(node_text(text, declared_name(name)));
+                    names
+                }
+                // A specialization, struct Box<int> { }.
+                "template_type" => (name.child_by_field_name("name"))
+                    .map(|name| node_text(text, name))
+                    .into_iter()
+                    .collect(),
+                _ => vec![node_text(text, name)],
+            }
+        }
+        _ => Vec::new(),
+    }
 }
 
 /// Whether the Lua target `node`, or the target it's in, is the only one
@@ -746,49 +1142,110 @@ fn sole_target(node: Node) -> bool {
     })
 }
 
-/// See [`CppScopes`].
+/// See [`CppScopes`]. Function bodies are left out: what's declared in one
+/// can't be named from outside it.
 fn cpp_scopes(root: Node, text: &Text) -> CppScopes {
     let mut scopes = CppScopes::default();
-    let mut cursor = root.walk();
-    loop {
-        let node = cursor.node();
-        let name = node.child_by_field_name("name");
+    // Nodes to look at, each with the index in `paths` of the path of the
+    // namespace or type it's in.
+    let mut paths: Vec<Vec<String>> = vec![Vec::new()];
+    let mut stack = vec![(root, 0)];
+    while let Some((node, path_ix)) = stack.pop() {
+        let mut inner = path_ix;
         match node.kind() {
-            "namespace_definition" => {
-                if let Some(name) = name {
-                    let mut names = vec![name];
-                    if name.kind() == "nested_namespace_specifier" {
-                        let mut cursor = name.walk();
-                        names = name.named_children(&mut cursor).collect();
+            "compound_statement" => continue,
+            "namespace_definition"
+            | "class_specifier"
+            | "struct_specifier"
+            | "union_specifier"
+            | "enum_specifier" => {
+                let namespace = node.kind() == "namespace_definition";
+                let names = match node.child_by_field_name("name") {
+                    // inline namespace v1 and namespace A::inline v2.
+                    Some(name) if namespace => {
+                        let mut cursor = node.walk();
+                        let inline = node.children(&mut cursor).any(|c| c.kind() == "inline");
+                        let mut names = namespace_names(name, text).1;
+                        if let Some(last) = names.last_mut() {
+                            last.1 |= inline;
+                        }
+                        names
                     }
-                    for name in names {
-                        scopes.namespaces.insert(node_text(text, name));
+                    _ => (cpp_scope_names(node, text).into_iter())
+                        .map(|name| (name, false))
+                        .collect(),
+                };
+                if !names.is_empty() {
+                    let mut path = paths[path_ix].clone();
+                    for (name, inline) in names {
+                        if inline {
+                            scopes
+                                .inline
+                                .entry(path.clone())
+                                .or_default()
+                                .push(name.clone());
+                        }
+                        path.push(name);
+                        // namespace A::B declares A too; struct A::B only
+                        // defines B.
+                        if namespace {
+                            scopes.declared.insert(path.clone(), CppDeclared::Namespace);
+                        }
                     }
+                    if !namespace {
+                        scopes.declared.insert(path.clone(), CppDeclared::Type);
+                    }
+                    paths.push(path);
+                    inner = paths.len() - 1;
                 }
             }
-            "class_specifier" | "struct_specifier" | "union_specifier" | "enum_specifier"
-            | "alias_declaration" => {
-                scopes.types.extend(name.map(|name| node_text(text, name)));
+            "alias_declaration" => {
+                if let Some(name) = node.child_by_field_name("name") {
+                    let mut path = paths[path_ix].clone();
+                    path.push(node_text(text, name));
+                    scopes.declared.insert(path, CppDeclared::Type);
+                }
             }
             "type_definition" => {
                 let mut cursor = node.walk();
                 for declarator in node.children_by_field_name("declarator", &mut cursor) {
-                    scopes
-                        .types
-                        .insert(node_text(text, declared_name(declarator)));
+                    let mut path = paths[path_ix].clone();
+                    path.push(node_text(text, declared_name(declarator)));
+                    scopes.declared.insert(path, CppDeclared::Type);
+                }
+            }
+            // using namespace A::B;
+            "using_declaration" => {
+                let mut cursor = node.walk();
+                let directive = node.children(&mut cursor).any(|c| c.kind() == "namespace");
+                let target = node.named_children(&mut cursor).last();
+                if let Some(target) = target.filter(|_| directive) {
+                    let path = paths[path_ix].clone();
+                    let target = CppQualifier::of_using(target, text);
+                    scopes.using.entry(path).or_default().push(target);
+                }
+            }
+            "namespace_alias_definition" => {
+                let name = node.child_by_field_name("name");
+                let mut cursor = node.walk();
+                let target = (node.named_children(&mut cursor)).find(|child| Some(*child) != name);
+                if let (Some(name), Some(target)) = (name, target) {
+                    let mut path = paths[path_ix].clone();
+                    path.push(node_text(text, name));
+                    let alias = CppDeclared::Alias {
+                        scope: paths[path_ix].clone(),
+                        target: CppQualifier::of_namespace(target, text),
+                    };
+                    scopes.declared.insert(path, alias);
                 }
             }
             _ => {}
         }
-        if cursor.goto_first_child() {
-            continue;
-        }
-        while !cursor.goto_next_sibling() {
-            if !cursor.goto_parent() {
-                return scopes;
-            }
-        }
+        let mut cursor = node.walk();
+        let children: Vec<Node> = node.named_children(&mut cursor).collect();
+        stack.extend(children.into_iter().rev().map(|child| (child, inner)));
     }
+    scopes
 }
 
 fn node_text(text: &Text, node: Node) -> String {
@@ -808,6 +1265,7 @@ fn c_scope(node: Node) -> Option<Node> {
             | "preproc_elifdef"
             | "preproc_else"
             | "field_declaration_list"
+            | "template_declaration"
     ) {
         scope = scope.parent()?;
     }

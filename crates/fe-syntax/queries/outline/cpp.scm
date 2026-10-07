@@ -10,14 +10,10 @@
 ; parameters: operator char*.
 
 ; A function defined in a class, struct or union is a method, also in any
-; preprocessor branch of its body. These come before the plain function
-; pattern, so they win on the same node.
+; preprocessor branch of its body and as a template. These come before the
+; plain function pattern, so they win on the same node.
 ((function_definition declarator: (_) @name) @definition.method
   (#scope? @definition.method class_specifier struct_specifier union_specifier))
-
-((template_declaration
-  (function_definition declarator: (_) @name) @definition.method) @_template
-  (#scope? @_template class_specifier struct_specifier union_specifier))
 
 ; A member function declared in its class: double length() const;,
 ; X **clone();, operator bool() const;. Its item is the declarator, as a
@@ -32,14 +28,10 @@
   (#scope? @_declaration class_specifier struct_specifier union_specifier)
   (#function? @definition.method))
 
-((template_declaration
-  (declaration declarator: (_) @name @definition.method)) @_template
-  (#scope? @_template class_specifier struct_specifier union_specifier)
-  (#function? @definition.method))
-
 ; A member defined outside its class: double Point::length() const { },
-; X *X::clone(), A::B::X::f(). One whose qualifier is a namespace the file
-; defines, int N::f() { }, is a function: see #member? in outline.rs.
+; X *X::clone(), A::B::X::f(). One whose qualifier names a namespace or a
+; namespace alias the file declares, int N::f() { }, is a function: see
+; #member? in outline.rs.
 ((function_definition declarator: (_) @name) @definition.method
   (#member? @definition.method))
 

@@ -25,16 +25,10 @@
   (property_declaration
     name: (pattern bound_identifier: (simple_identifier) @name) @definition.variable))
 
-; let (a, b) = pair there, and in a type's body: each name is its own item.
-(source_file
-  (property_declaration
-    name: (pattern (pattern (simple_identifier) @name @definition.variable))))
+; let (a, (b, c)) = pair there, and in a type's body: each name, at any
+; depth, is its own item. See #bound? in outline.rs.
+((pattern (pattern (simple_identifier) @name @definition.variable))
+  (#bound? @name source_file))
 
-[
-  (class_body
-    (property_declaration
-      name: (pattern (pattern (simple_identifier) @name @definition.field))))
-  (enum_class_body
-    (property_declaration
-      name: (pattern (pattern (simple_identifier) @name @definition.field))))
-]
+((pattern (pattern (simple_identifier) @name @definition.field))
+  (#bound? @name class_body enum_class_body))

@@ -378,15 +378,20 @@ fn item(
 fn bindings_and_qualified_names() {
     use OutlineKind::*;
     let cases: [(&str, &str, Vec<_>); 12] = [
-        // Several targets are several variables, a function among them too.
+        // Several targets are several variables, but one assigned a
+        // function is a function.
         (
             "lua",
             "local a, b = 1, 2\nlocal c, d\ne, f = 3, 4\nlocal g, h = function() end, 1\n\
              local i = function() end\n",
-            ["a", "b", "c", "d", "e", "f", "g", "h"]
+            ["a", "b", "c", "d", "e", "f"]
                 .map(|name| item(Variable, name, None))
                 .into_iter()
-                .chain([item(Function, "i", None)])
+                .chain([
+                    item(Function, "g", None),
+                    item(Variable, "h", None),
+                    item(Function, "i", None),
+                ])
                 .collect(),
         ),
         // A default value's identifiers don't name the property.
