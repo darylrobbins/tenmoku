@@ -35,23 +35,26 @@
 ; values. With one target the item is the statement. With several, as g in
 ; local g, h = function() end, 1, the item is the target, as a variable's
 ; is in the definitions query, which lists h.
+; The tests take the target and its list, captured: a node's parent costs
+; its siblings, which a long list makes quadratic. A pattern for the only
+; target says so itself, which a long list's targets couldn't each be
+; matched against cheaply.
 ((assignment_statement
   (variable_list
-    name: [
-      (identifier) @name
-      (dot_index_expression field: (identifier) @name)
-    ])) @definition.function
-  (#sole? @name)
-  (#function-valued? @name))
+    . name: [
+      (identifier) @name @_target
+      (dot_index_expression field: (identifier) @name) @_target
+    ] .) @_list) @definition.function
+  (#function-valued? @_target @_list))
 
 ((assignment_statement
   (variable_list
     name: [
-      (identifier) @name @definition.function
-      (dot_index_expression field: (identifier) @name) @definition.function
-    ]))
-  (#not-sole? @name)
-  (#function-valued? @name))
+      (identifier) @name @_target @definition.function
+      (dot_index_expression field: (identifier) @name) @_target @definition.function
+    ]) @_list)
+  (#not-sole? @_target @_list)
+  (#function-valued? @_target @_list))
 
 (field
   name: (identifier) @name
@@ -60,15 +63,13 @@
 ; local M = {} or M = { ... } at the top of the file: Lua's modules and
 ; classes are tables. The item is the assignment, as for a variable of one
 ; target, which this pattern wins over.
-((chunk
+(chunk
   (variable_declaration
     (assignment_statement
-      (variable_list name: (identifier) @name)
+      (variable_list . name: (identifier) @name .)
       (expression_list . value: (table_constructor) .)) @definition.module))
-  (#sole? @name))
 
-((chunk
+(chunk
   (assignment_statement
-    (variable_list name: (identifier) @name)
+    (variable_list . name: (identifier) @name .)
     (expression_list . value: (table_constructor) .)) @definition.module)
-  (#sole? @name))

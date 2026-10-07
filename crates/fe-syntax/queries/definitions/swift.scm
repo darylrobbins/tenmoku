@@ -25,8 +25,8 @@
   (property_declaration
     name: (pattern bound_identifier: (simple_identifier) @name) @definition.variable))
 
-; let (a, (b, c)) = pair there, and in a type's body: each name, at any
-; depth, is its own item. See #bound? in outline.rs.
+; let (a, (left: b, right: c)) = pair there, and in a type's body: each
+; name, at any depth, is its own item, a label such as left not one. See #bound? in outline.rs.
 ((pattern (pattern (simple_identifier) @name @definition.variable))
   (#bound? @name source_file))
 

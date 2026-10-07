@@ -243,6 +243,7 @@ impl OutlineJob {
             root: self.tree.root_node(),
             cpp_scopes: OnceCell::new(),
             ruby_scopes: RefCell::default(),
+            lua_targets: RefCell::default(),
         };
         let mut cursor = QueryCursor::new();
         // Predicates like `#match?` read node text straight from the rope.
@@ -576,6 +577,8 @@ fn declares_function(name: Node) -> bool {
 /// of wrappers, or a node a pattern can't exclude.
 struct Predicate {
     capture: u32,
+    /// For the Lua tests, the capture of the list holding the target.
+    list: Option<u32>,
     test: Test,
 }
 
@@ -620,14 +623,15 @@ enum Test {
     /// is a type: a member defined in a .cpp file usually belongs to a
     /// class its header declares. See [`CppScopes`].
     Member(bool),
-    /// `(#sole? @node)`, or `#not-sole?` for the opposite: @node, a Lua
-    /// assignment target or a name in one, as M or f in `M.f = ...`, is in
-    /// a list of one target: `local x = 1` but not `local a, b = 1, 2`.
+    /// `(#sole? @target @list)`, or `#not-sole?` for the opposite: @target,
+    /// a Lua assignment target, as M.f in `M.f = ...`, is in @list, the
+    /// variable list, of one target: `local x = 1` but not `local a, b = 1,
+    /// 2`. A node's parent costs its siblings, so the list is captured.
     Sole(bool),
-    /// `(#function-valued? @node)`: @node, a Lua assignment target or a
-    /// name in one, is assigned a function: the value at its place in the
-    /// list of values is a function definition, also in parentheses. g but
-    /// not h in `local g, h = function() end, 1`.
+    /// `(#function-valued? @target @list)`: @target, a target in @list, is
+    /// assigned a function: the value at its place in the list of values is
+    /// a function definition, also in parentheses. g but not h in `local g,
+    /// h = function() end, 1`.
     FunctionValued,
     /// `(#bound? @node kind...)`: @node is a name a Scala, Swift or PHP
     /// destructuring pattern binds, at any depth, in a declaration or an
@@ -654,6 +658,18 @@ struct Context<'a> {
     /// The scope of each Ruby assignment [`Test::AssignedIn`] has looked
     /// at, by node id, so a long chain is climbed once.
     ruby_scopes: RefCell<HashMap<usize, Option<Node<'a>>>>,
+    /// What [`Test::Sole`] and [`Test::FunctionValued`] found of each Lua
+    /// target, by node id, for the whole target list at once.
+    lua_targets: RefCell<HashMap<usize, LuaTarget>>,
+}
+
+/// A Lua assignment target.
+#[derive(Clone, Copy)]
+struct LuaTarget {
+    /// It's the only one in its list.
+    sole: bool,
+    /// The value at its place is a function.
+    function: bool,
 }
 
 /// What a C++ file declares where, for [`Test::Member`]: its namespaces,
@@ -702,6 +718,20 @@ impl Predicate {
         let (QueryPredicateArg::Capture(capture), args) = predicate.args.split_first()? else {
             return None;
         };
+        if let ("sole?" | "not-sole?" | "function-valued?", [QueryPredicateArg::Capture(list)]) =
+            (&*predicate.operator, args)
+        {
+            let test = match &*predicate.operator {
+                "sole?" => Test::Sole(true),
+                "not-sole?" => Test::Sole(false),
+                _ => Test::FunctionValued,
+            };
+            return Some(Self {
+                capture: *capture,
+                list: Some(*list),
+                test,
+            });
+        }
         let args: Vec<Box<str>> = (args.iter())
             .map(|arg| match arg {
                 QueryPredicateArg::String(arg) => Some(arg.clone()),
@@ -723,15 +753,13 @@ impl Predicate {
             "not-function?" if args.is_empty() => Test::Function(false),
             "member?" if args.is_empty() => Test::Member(true),
             "not-member?" if args.is_empty() => Test::Member(false),
-            "sole?" if args.is_empty() => Test::Sole(true),
-            "not-sole?" if args.is_empty() => Test::Sole(false),
-            "function-valued?" if args.is_empty() => Test::FunctionValued,
             "bound?" if !args.is_empty() => Test::Bound(args),
             "assigned-in?" if !args.is_empty() => Test::AssignedIn(args),
             _ => return None,
         };
         Some(Self {
             capture: *capture,
+            list: None,
             test,
         })
     }
@@ -745,6 +773,11 @@ impl Predicate {
         else {
             return false;
         };
+        let list = (self.list).and_then(|list| {
+            (captures.iter())
+                .find(|capture| capture.index == list)
+                .map(|capture| capture.node)
+        });
         match &self.test {
             Test::Scope(kinds) => {
                 c_scope(node).is_some_and(|scope| kinds.iter().any(|kind| **kind == *scope.kind()))
@@ -759,8 +792,12 @@ impl Predicate {
             }
             Test::Function(function) => declares_function(declared_name(node)) == *function,
             Test::Member(member) => cpp_member(node, context) == *member,
-            Test::Sole(sole) => sole_target(node) == *sole,
-            Test::FunctionValued => lua_function_valued(node),
+            Test::Sole(sole) => {
+                list.is_some_and(|list| lua_target(node, list, &context.lua_targets).sole == *sole)
+            }
+            Test::FunctionValued => {
+                list.is_some_and(|list| lua_target(node, list, &context.lua_targets).function)
+            }
             Test::Bound(kinds) => (bound_by(node, context.text).and_then(statement_scope))
                 .is_some_and(|scope| kinds.iter().any(|kind| **kind == *scope.kind())),
             Test::AssignedIn(kinds) => ruby_assignment_scope(node, &context.ruby_scopes)
@@ -778,39 +815,50 @@ fn in_field(parent: Node, field: &str, node: Node) -> bool {
         .any(|child| child == node)
 }
 
-/// See [`Test::FunctionValued`].
-fn lua_function_valued(node: Node) -> bool {
-    let mut target = node;
-    let list = loop {
-        match target.parent() {
-            Some(parent) if parent.kind() == "variable_list" => break parent,
-            Some(parent) => target = parent,
-            None => return false,
-        }
-    };
-    let mut cursor = list.walk();
-    let Some(ix) = list
-        .children_by_field_name("name", &mut cursor)
-        .position(|name| name == target)
-    else {
-        return false;
-    };
-    let Some(statement) = list.parent() else {
-        return false;
-    };
-    let mut cursor = statement.walk();
-    let Some(values) =
-        (statement.named_children(&mut cursor)).find(|child| child.kind() == "expression_list")
-    else {
-        return false;
-    };
-    let mut cursor = values.walk();
-    let mut value = values.children_by_field_name("value", &mut cursor).nth(ix);
-    while let Some(node) = value.filter(|node| node.kind() == "parenthesized_expression") {
-        let mut cursor = node.walk();
-        value = (node.named_children(&mut cursor)).find(|child| child.kind() != "comment");
+/// What [`Test::Sole`] and [`Test::FunctionValued`] ask of the Lua target
+/// `target`, a child of `list`. The first time for a list, each of its
+/// targets is paired with its value in one pass, so a long assignment
+/// costs its length once.
+fn lua_target(target: Node, list: Node, known: &RefCell<HashMap<usize, LuaTarget>>) -> LuaTarget {
+    let mut known = known.borrow_mut();
+    if let Some(&found) = known.get(&target.id()) {
+        return found;
     }
-    value.is_some_and(|value| value.kind() == "function_definition")
+    let mut cursor = list.walk();
+    let targets: Vec<Node> = list.children_by_field_name("name", &mut cursor).collect();
+    let values = (list.parent()).and_then(|statement| {
+        let mut cursor = statement.walk();
+        (statement.named_children(&mut cursor)).find(|child| child.kind() == "expression_list")
+    });
+    let values: Vec<Node> = values.map_or_else(Vec::new, |values| {
+        let mut cursor = values.walk();
+        values
+            .children_by_field_name("value", &mut cursor)
+            .collect()
+    });
+    let sole = targets.len() == 1;
+    for (ix, target) in targets.into_iter().enumerate() {
+        let function = values.get(ix).copied().is_some_and(is_lua_function);
+        known.insert(target.id(), LuaTarget { sole, function });
+    }
+    known.get(&target.id()).copied().unwrap_or(LuaTarget {
+        sole: false,
+        function: false,
+    })
+}
+
+/// Whether the Lua expression `value` is a function, parenthesized or not.
+fn is_lua_function(mut value: Node) -> bool {
+    while value.kind() == "parenthesized_expression" {
+        let mut cursor = value.walk();
+        let Some(inner) =
+            (value.named_children(&mut cursor)).find(|child| child.kind() != "comment")
+        else {
+            return false;
+        };
+        value = inner;
+    }
+    value.kind() == "function_definition"
 }
 
 /// The declaration or assignment statement whose destructuring pattern
@@ -827,12 +875,24 @@ fn bound_by<'a>(name: Node<'a>, text: &Text) -> Option<Node<'a>> {
     {
         return None;
     }
+    // A Swift tuple label, as left in (left: b, right: c), isn't a name.
+    if name.kind() == "simple_identifier" {
+        let mut next = name.next_sibling();
+        while let Some(comment) = next.filter(|next| next.kind() == "comment") {
+            next = comment.next_sibling();
+        }
+        if next.is_some_and(|next| next.kind() == ":") {
+            return None;
+        }
+    }
     let mut node = name;
     loop {
         let parent = node.parent()?;
         let binds = match parent.kind() {
             // Scala.
-            "tuple_pattern" => true,
+            "tuple_pattern" | "named_tuple_pattern" => true,
+            // (name = n): the label comes first and binds nothing.
+            "named_pattern" => parent.named_child(0) != Some(node),
             "typed_pattern" | "case_class_pattern" | "repeat_pattern" => {
                 in_field(parent, "pattern", node)
             }
@@ -904,6 +964,9 @@ fn ruby_assignment_scope<'a>(
             "assignment" if is_field(parent, "right", node) => {}
             // H, I = J = 1, 2 assigns J = 1 and 2.
             "right_assignment_list" => {}
+            // A = (B = 1): parentheses around the one statement change
+            // nothing.
+            "parenthesized_statements" if sole_statement(parent) => {}
             "body_statement" => break parent.parent(),
             _ => break Some(parent),
         }
@@ -913,6 +976,16 @@ fn ruby_assignment_scope<'a>(
         known.insert(id, scope);
     }
     scope
+}
+
+/// Whether `parenthesized` has one statement, comments aside.
+fn sole_statement(parenthesized: Node) -> bool {
+    let mut cursor = parenthesized.walk();
+    parenthesized
+        .named_children(&mut cursor)
+        .filter(|child| child.kind() != "comment")
+        .count()
+        == 1
 }
 
 /// `node`'s field in `parent` is `field`.
@@ -936,9 +1009,12 @@ fn cpp_member(mut node: Node, context: &Context) -> bool {
     let qualifier = CppQualifier::of_name(node, context.text);
     let scopes = (context.cpp_scopes).get_or_init(|| cpp_scopes(context.root, context.text));
     let from = cpp_namespace_of(node, context.text);
-    let mut budget = CPP_LOOKUP_BUDGET;
+    let mut lookup = CppLookup {
+        budget: CPP_LOOKUP_BUDGET,
+        active: Vec::new(),
+    };
     !matches!(
-        scopes.resolve(&from, &qualifier, &mut budget),
+        scopes.resolve(&from, &qualifier, &mut lookup),
         CppResolved::Namespace(_)
     )
 }
@@ -946,6 +1022,17 @@ fn cpp_member(mut node: Node, context: &Context) -> bool {
 /// The most namespaces one [`CppScopes::resolve`] looks in, aliases and
 /// inline namespaces included, so a cycle of aliases ends.
 const CPP_LOOKUP_BUDGET: u32 = 64;
+
+/// The state of one [`CppScopes::resolve`].
+struct CppLookup {
+    /// What's left of [`CPP_LOOKUP_BUDGET`].
+    budget: u32,
+    /// The `using namespace` directives being resolved, each by the path of
+    /// the namespace it's in and its index there. Resolving one's target
+    /// skips it, so the search goes on in the enclosing namespaces, as in
+    /// namespace B { using namespace A; }, where A is the global one.
+    active: Vec<(Vec<String>, usize)>,
+}
 
 impl CppQualifier {
     /// The qualifier of `name`, a qualified identifier: A::B in A::B::f,
@@ -1018,8 +1105,13 @@ fn namespace_names(name: Node, text: &Text) -> (bool, Vec<(String, bool)>) {
 
 impl CppScopes {
     /// What `qualifier` names when a declaration in the namespace at
-    /// `from` uses it. `budget` counts down the namespaces looked in.
-    fn resolve(&self, from: &[String], qualifier: &CppQualifier, budget: &mut u32) -> CppResolved {
+    /// `from` uses it. `lookup` counts down the namespaces looked in.
+    fn resolve(
+        &self,
+        from: &[String],
+        qualifier: &CppQualifier,
+        lookup: &mut CppLookup,
+    ) -> CppResolved {
         let Some((first, rest)) = qualifier.names.split_first() else {
             return CppResolved::Namespace(Vec::new());
         };
@@ -1029,12 +1121,12 @@ impl CppScopes {
         let outermost = if qualifier.global { 0 } else { from.len() };
         let mut resolved = (0..=outermost)
             .rev()
-            .find_map(|len| self.member(&from[..len], first, budget))
+            .find_map(|len| self.member(&from[..len], first, lookup))
             .unwrap_or(CppResolved::Unknown);
         for name in rest {
             resolved = match (resolved, name) {
                 (CppResolved::Namespace(path), Some(name)) => {
-                    (self.member(&path, name, budget)).unwrap_or(CppResolved::Unknown)
+                    (self.member(&path, name, lookup)).unwrap_or(CppResolved::Unknown)
                 }
                 (CppResolved::Namespace(_), None) => CppResolved::Type,
                 // Everything in a type is a member of it.
@@ -1047,8 +1139,8 @@ impl CppScopes {
     /// What `name` names in the namespace at `path`, or in an inline
     /// namespace in it or one its `using namespace` directives name, if
     /// the file declares it.
-    fn member(&self, path: &[String], name: &str, budget: &mut u32) -> Option<CppResolved> {
-        *budget = budget.checked_sub(1)?;
+    fn member(&self, path: &[String], name: &str, lookup: &mut CppLookup) -> Option<CppResolved> {
+        lookup.budget = lookup.budget.checked_sub(1)?;
         let mut full = path.to_vec();
         full.push(name.to_owned());
         match self.declared.get(&full) {
@@ -1058,7 +1150,7 @@ impl CppScopes {
                 // An alias names a namespace, also one declared elsewhere,
                 // as in namespace fs = std::filesystem;. Nothing is known
                 // to be in that one.
-                return Some(match self.resolve(scope, target, budget) {
+                return Some(match self.resolve(scope, target, lookup) {
                     CppResolved::Namespace(path) => CppResolved::Namespace(path),
                     _ => CppResolved::Namespace(full),
                 });
@@ -1068,16 +1160,27 @@ impl CppScopes {
         let inline = (self.inline.get(path).into_iter().flatten()).find_map(|inline| {
             let mut path = path.to_vec();
             path.push(inline.clone());
-            self.member(&path, name, budget)
+            self.member(&path, name, lookup)
         });
-        inline.or_else(|| {
-            (self.using.get(path).into_iter().flatten()).find_map(|target| {
-                match self.resolve(path, target, budget) {
-                    CppResolved::Namespace(used) => self.member(&used, name, budget),
-                    _ => None,
-                }
-            })
-        })
+        if inline.is_some() {
+            return inline;
+        }
+        let directives = self.using.get(path)?;
+        for (ix, target) in directives.iter().enumerate() {
+            let key = (path.to_vec(), ix);
+            if lookup.active.contains(&key) {
+                continue;
+            }
+            lookup.active.push(key);
+            let resolved = self.resolve(path, target, lookup);
+            lookup.active.pop();
+            if let CppResolved::Namespace(used) = resolved
+                && let Some(found) = self.member(&used, name, lookup)
+            {
+                return Some(found);
+            }
+        }
+        None
     }
 }
 
@@ -1127,19 +1230,6 @@ fn cpp_scope_names(node: Node, text: &Text) -> Vec<String> {
         }
         _ => Vec::new(),
     }
-}
-
-/// Whether the Lua target `node`, or the target it's in, is the only one
-/// in its list. See [`Test::Sole`].
-fn sole_target(node: Node) -> bool {
-    let mut list = node.parent();
-    while let Some(parent) = list.filter(|parent| parent.kind() != "variable_list") {
-        list = parent.parent();
-    }
-    list.is_some_and(|list| {
-        let mut cursor = list.walk();
-        list.children_by_field_name("name", &mut cursor).count() == 1
-    })
 }
 
 /// See [`CppScopes`]. Function bodies are left out: what's declared in one
@@ -1218,7 +1308,9 @@ fn cpp_scopes(root: Node, text: &Text) -> CppScopes {
             "using_declaration" => {
                 let mut cursor = node.walk();
                 let directive = node.children(&mut cursor).any(|c| c.kind() == "namespace");
-                let target = node.named_children(&mut cursor).last();
+                let target = (node.named_children(&mut cursor))
+                    .filter(|child| matches!(child.kind(), "identifier" | "qualified_identifier"))
+                    .last();
                 if let Some(target) = target.filter(|_| directive) {
                     let path = paths[path_ix].clone();
                     let target = CppQualifier::of_using(target, text);
@@ -1228,7 +1320,13 @@ fn cpp_scopes(root: Node, text: &Text) -> CppScopes {
             "namespace_alias_definition" => {
                 let name = node.child_by_field_name("name");
                 let mut cursor = node.walk();
-                let target = (node.named_children(&mut cursor)).find(|child| Some(*child) != name);
+                let target = (node.named_children(&mut cursor)).find(|child| {
+                    Some(*child) != name
+                        && matches!(
+                            child.kind(),
+                            "namespace_identifier" | "nested_namespace_specifier"
+                        )
+                });
                 if let (Some(name), Some(target)) = (name, target) {
                     let mut path = paths[path_ix].clone();
                     path.push(node_text(text, name));

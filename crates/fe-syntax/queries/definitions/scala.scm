@@ -30,7 +30,8 @@
 ]
 
 ; The names a pattern binds there: a, b and c in val (a, (b, c)) = pair,
-; and x in val Some(x: Int) = opt. See #bound? in outline.rs.
+; x in val Some(x: Int) = opt, x in val (all @ x, y) = pair and n in
+; val (name = n) = person, whose label name isn't one. See #bound? in outline.rs.
 (
   [
     (tuple_pattern (identifier) @name @definition.variable)
@@ -40,6 +41,8 @@
     (infix_pattern left: (identifier) @name @definition.variable)
     (infix_pattern right: (identifier) @name @definition.variable)
     (capture_pattern name: (identifier) @name @definition.variable)
+    (capture_pattern pattern: (identifier) @name @definition.variable)
+    (named_pattern . (identifier) . (comment)* . (identifier) @name @definition.variable)
   ]
   (#bound? @name compilation_unit package_clause))
 
@@ -83,6 +86,8 @@
     (infix_pattern left: (identifier) @name @definition.field)
     (infix_pattern right: (identifier) @name @definition.field)
     (capture_pattern name: (identifier) @name @definition.field)
+    (capture_pattern pattern: (identifier) @name @definition.field)
+    (named_pattern . (identifier) . (comment)* . (identifier) @name @definition.field)
   ]
   (#bound? @name template_body enum_body))
 
