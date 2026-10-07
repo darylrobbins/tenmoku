@@ -1,0 +1,884 @@
+# Motion cases for fe-vim's oracle. Hand-written: name, buffer (rows joined
+# with \n, no trailing newline), cursor = [row, byte column] and keys in vim
+# notation. What nvim does with each is recorded in motions.expected.json by
+# the ignored `record_corpus_with_neovim` test; edit a case, then re-record.
+
+# h and l stay on the line.
+[[case]]
+name = "h_moves_left"
+buffer = "hello world"
+cursor = [0, 4]
+keys = "h"
+
+[[case]]
+name = "h_with_count"
+buffer = "hello world"
+cursor = [0, 8]
+keys = "3h"
+
+[[case]]
+name = "h_stops_at_line_start"
+buffer = "abc\nhello"
+cursor = [1, 2]
+keys = "9h"
+
+[[case]]
+name = "l_moves_right"
+buffer = "hello"
+cursor = [0, 0]
+keys = "l"
+
+[[case]]
+name = "l_with_count"
+buffer = "hello world"
+cursor = [0, 1]
+keys = "4l"
+
+[[case]]
+name = "l_stops_at_last_char"
+buffer = "hello\nworld"
+cursor = [0, 3]
+keys = "5l"
+
+[[case]]
+name = "l_at_line_end_stays"
+buffer = "abc\ndef"
+cursor = [0, 2]
+keys = "l"
+
+[[case]]
+name = "l_over_multibyte"
+buffer = "añb€c"
+cursor = [0, 0]
+keys = "3l"
+
+[[case]]
+name = "l_over_combining_grapheme"
+buffer = "éxy"
+cursor = [0, 0]
+keys = "l"
+
+[[case]]
+name = "h_over_combining_grapheme"
+buffer = "aéx"
+cursor = [0, 4]
+keys = "h"
+
+[[case]]
+name = "l_on_empty_line"
+buffer = "abc\n\ndef"
+cursor = [1, 0]
+keys = "l"
+
+# j and k keep the goal column.
+[[case]]
+name = "j_moves_down"
+buffer = "one\ntwo\nthree"
+cursor = [0, 1]
+keys = "j"
+
+[[case]]
+name = "j_with_count"
+buffer = "a\nb\nc\nd\ne\nf"
+cursor = [0, 0]
+keys = "4j"
+
+[[case]]
+name = "j_count_past_the_end"
+buffer = "alpha\nbeta\ngamma"
+cursor = [0, 2]
+keys = "99j"
+
+[[case]]
+name = "k_moves_up"
+buffer = "one\ntwo\nthree"
+cursor = [2, 2]
+keys = "k"
+
+[[case]]
+name = "k_count_past_the_start"
+buffer = "alpha\nbeta\ngamma"
+cursor = [2, 3]
+keys = "50k"
+
+[[case]]
+name = "j_onto_shorter_line"
+buffer = "abcdefgh\nab\nabcdefgh"
+cursor = [0, 6]
+keys = "j"
+
+[[case]]
+name = "jj_keeps_goal_across_shorter_line"
+buffer = "abcdefgh\nab\nabcdefgh"
+cursor = [0, 6]
+keys = "jj"
+
+[[case]]
+name = "j_keeps_goal_across_empty_line"
+buffer = "abcdef\n\nabcdef"
+cursor = [0, 4]
+keys = "2j"
+
+[[case]]
+name = "k_keeps_goal_across_shorter_line"
+buffer = "abcdefgh\nxy\nabcdefgh"
+cursor = [2, 5]
+keys = "kk"
+
+[[case]]
+name = "goal_resets_after_h"
+buffer = "abcdefgh\nab\nabcdefgh"
+cursor = [0, 6]
+keys = "jhj"
+
+[[case]]
+name = "j_onto_tab_row"
+buffer = "abcdefgh\n\tab"
+cursor = [0, 6]
+keys = "j"
+
+[[case]]
+name = "j_into_a_tab"
+buffer = "abcdefgh\n\txyz"
+cursor = [0, 2]
+keys = "j"
+
+[[case]]
+name = "j_from_a_tab"
+buffer = "\tab\nabcdefgh"
+cursor = [0, 0]
+keys = "j"
+
+[[case]]
+name = "k_past_wide_tabs"
+buffer = "a\tb\tc\nabcdefghijkl"
+cursor = [1, 9]
+keys = "k"
+
+[[case]]
+name = "j_over_multibyte_columns"
+buffer = "añbñc\nxyzwv"
+cursor = [0, 5]
+keys = "j"
+
+[[case]]
+name = "j_onto_combining_row"
+buffer = "abcd\naéxy"
+cursor = [0, 2]
+keys = "j"
+
+# w b e
+[[case]]
+name = "w_next_word"
+buffer = "foo bar baz"
+cursor = [0, 0]
+keys = "w"
+
+[[case]]
+name = "w_with_count"
+buffer = "foo bar baz qux"
+cursor = [0, 0]
+keys = "3w"
+
+[[case]]
+name = "w_punctuation_runs"
+buffer = "foo.bar(baz)->qux"
+cursor = [0, 0]
+keys = "4w"
+
+[[case]]
+name = "w_crosses_lines"
+buffer = "foo bar\n  baz qux"
+cursor = [0, 4]
+keys = "w"
+
+[[case]]
+name = "w_stops_at_empty_line"
+buffer = "foo\n\nbar"
+cursor = [0, 0]
+keys = "w"
+
+[[case]]
+name = "w_skips_blank_only_line"
+buffer = "foo\n   \nbar"
+cursor = [0, 0]
+keys = "w"
+
+[[case]]
+name = "w_at_last_word"
+buffer = "foo bar"
+cursor = [0, 4]
+keys = "w"
+
+[[case]]
+name = "w_count_past_the_end"
+buffer = "one two\nthree four"
+cursor = [0, 0]
+keys = "20w"
+
+[[case]]
+name = "w_multibyte_words"
+buffer = "café über straße"
+cursor = [0, 0]
+keys = "2w"
+
+[[case]]
+name = "w_from_whitespace"
+buffer = "foo    bar"
+cursor = [0, 4]
+keys = "w"
+
+[[case]]
+name = "b_previous_word"
+buffer = "foo bar baz"
+cursor = [0, 8]
+keys = "b"
+
+[[case]]
+name = "b_from_mid_word"
+buffer = "foo bar baz"
+cursor = [0, 6]
+keys = "b"
+
+[[case]]
+name = "b_with_count_and_punctuation"
+buffer = "foo.bar(baz)->qux"
+cursor = [0, 14]
+keys = "3b"
+
+[[case]]
+name = "b_crosses_lines"
+buffer = "foo bar\n  baz"
+cursor = [1, 2]
+keys = "b"
+
+[[case]]
+name = "b_stops_at_empty_line"
+buffer = "foo\n\nbar"
+cursor = [2, 0]
+keys = "b"
+
+[[case]]
+name = "b_count_past_the_start"
+buffer = "one two\nthree"
+cursor = [1, 3]
+keys = "10b"
+
+[[case]]
+name = "e_word_end"
+buffer = "foo bar baz"
+cursor = [0, 0]
+keys = "e"
+
+[[case]]
+name = "e_from_word_end"
+buffer = "foo bar baz"
+cursor = [0, 2]
+keys = "e"
+
+[[case]]
+name = "e_with_count_and_punctuation"
+buffer = "foo.bar(baz)->qux"
+cursor = [0, 0]
+keys = "4e"
+
+[[case]]
+name = "e_skips_empty_lines"
+buffer = "foo\n\n\nbar"
+cursor = [0, 2]
+keys = "e"
+
+[[case]]
+name = "e_count_past_the_end"
+buffer = "one two\nthree"
+cursor = [0, 0]
+keys = "9e"
+
+[[case]]
+name = "e_multibyte_and_combining"
+buffer = "café ñandú"
+cursor = [0, 0]
+keys = "2e"
+
+# W B E
+[[case]]
+name = "big_w_skips_punctuation"
+buffer = "foo.bar(baz) qux"
+cursor = [0, 0]
+keys = "W"
+
+[[case]]
+name = "big_w_with_count_across_lines"
+buffer = "a.b c-d\ne:f g"
+cursor = [0, 0]
+keys = "3W"
+
+[[case]]
+name = "big_b_back"
+buffer = "foo.bar(baz) qux"
+cursor = [0, 13]
+keys = "B"
+
+[[case]]
+name = "big_b_with_count"
+buffer = "a.b c-d\ne:f g"
+cursor = [1, 4]
+keys = "2B"
+
+[[case]]
+name = "big_e_end"
+buffer = "foo.bar(baz) qux"
+cursor = [0, 0]
+keys = "E"
+
+[[case]]
+name = "big_e_with_count"
+buffer = "a.b c-d\ne:f g"
+cursor = [0, 0]
+keys = "3E"
+
+[[case]]
+name = "big_w_stops_at_empty_line"
+buffer = "x.y\n\nz"
+cursor = [0, 0]
+keys = "W"
+
+# 0 ^ $
+[[case]]
+name = "zero_line_start"
+buffer = "    indented"
+cursor = [0, 7]
+keys = "0"
+
+[[case]]
+name = "caret_first_non_blank"
+buffer = "    indented"
+cursor = [0, 9]
+keys = "^"
+
+[[case]]
+name = "caret_first_non_blank_after_tab"
+buffer = "\t  x = 1"
+cursor = [0, 6]
+keys = "^"
+
+[[case]]
+name = "caret_on_blank_line"
+buffer = "a\n    \nb"
+cursor = [1, 0]
+keys = "^"
+
+[[case]]
+name = "caret_from_line_start"
+buffer = "   abc"
+cursor = [0, 0]
+keys = "^"
+
+[[case]]
+name = "dollar_line_end"
+buffer = "hello world"
+cursor = [0, 0]
+keys = "$"
+
+[[case]]
+name = "dollar_with_count"
+buffer = "one\ntwo\nthree"
+cursor = [0, 0]
+keys = "2$"
+
+[[case]]
+name = "dollar_count_past_the_end"
+buffer = "one\ntwo\nthree"
+cursor = [0, 1]
+keys = "5$"
+
+[[case]]
+name = "dollar_then_j_keeps_line_end"
+buffer = "short\nmuch longer line\nmid one"
+cursor = [0, 0]
+keys = "$jj"
+
+[[case]]
+name = "dollar_on_empty_line"
+buffer = "\nabc"
+cursor = [0, 0]
+keys = "$"
+
+[[case]]
+name = "dollar_multibyte_end"
+buffer = "añb€"
+cursor = [0, 0]
+keys = "$"
+
+[[case]]
+name = "ten_j_counts_with_zero"
+buffer = "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl\nm"
+cursor = [0, 0]
+keys = "10j"
+
+# gg G
+[[case]]
+name = "big_g_last_line"
+buffer = "one\ntwo\nthree"
+cursor = [0, 1]
+keys = "G"
+
+[[case]]
+name = "big_g_with_count"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [3, 2]
+keys = "2G"
+
+[[case]]
+name = "big_g_count_past_the_end"
+buffer = "one\ntwo\nthree"
+cursor = [0, 0]
+keys = "99G"
+
+[[case]]
+name = "one_big_g_first_line"
+buffer = "alpha\nbeta\ngamma"
+cursor = [2, 3]
+keys = "1G"
+
+[[case]]
+name = "gg_first_line_keeps_column"
+buffer = "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end"
+cursor = [0, 4]
+keys = "Ggg"
+
+[[case]]
+name = "gg_with_count"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [0, 0]
+keys = "3gg"
+
+[[case]]
+name = "gg_count_past_the_end"
+buffer = "one\ntwo\nthree"
+cursor = [0, 2]
+keys = "40gg"
+
+[[case]]
+name = "big_g_after_dollar_keeps_line_end"
+buffer = "ab\nabcdef"
+cursor = [0, 0]
+keys = "$G"
+
+# f t F T
+[[case]]
+name = "f_finds_char"
+buffer = "fn foo(a, b) {"
+cursor = [0, 4]
+keys = "fb"
+
+[[case]]
+name = "f_with_count"
+buffer = "a,b,c,d,e"
+cursor = [0, 0]
+keys = "3f,"
+
+[[case]]
+name = "f_fails_and_stays"
+buffer = "hello world"
+cursor = [0, 2]
+keys = "fz"
+
+[[case]]
+name = "f_count_past_matches_stays"
+buffer = "a,b,c"
+cursor = [0, 0]
+keys = "5f,"
+
+[[case]]
+name = "f_stays_on_line"
+buffer = "abc\nxyz"
+cursor = [0, 0]
+keys = "fx"
+
+[[case]]
+name = "f_multibyte_target"
+buffer = "añb€c€d"
+cursor = [0, 0]
+keys = "2f€"
+
+[[case]]
+name = "f_tab_target"
+buffer = "a\tb\tc"
+cursor = [0, 0]
+keys = "f<Tab>"
+
+[[case]]
+name = "t_till_char"
+buffer = "hello world"
+cursor = [0, 0]
+keys = "to"
+
+[[case]]
+name = "t_with_count"
+buffer = "a,b,c,d"
+cursor = [0, 0]
+keys = "2t,"
+
+[[case]]
+name = "t_adjacent_stays"
+buffer = "ab,c,d"
+cursor = [0, 1]
+keys = "t,"
+
+[[case]]
+name = "big_f_backward"
+buffer = "hello world"
+cursor = [0, 9]
+keys = "Fo"
+
+[[case]]
+name = "big_f_with_count"
+buffer = "a,b,c,d,e"
+cursor = [0, 8]
+keys = "2F,"
+
+[[case]]
+name = "big_f_fails_and_stays"
+buffer = "abc"
+cursor = [0, 2]
+keys = "Fz"
+
+[[case]]
+name = "big_t_till_backward"
+buffer = "hello world"
+cursor = [0, 9]
+keys = "To"
+
+[[case]]
+name = "big_t_with_count"
+buffer = "a,b,c,d,e"
+cursor = [0, 8]
+keys = "3T,"
+
+[[case]]
+name = "big_t_adjacent_stays"
+buffer = "a,b,c"
+cursor = [0, 2]
+keys = "T,"
+
+# Mixed
+[[case]]
+name = "motions_chain"
+buffer = "fn main() {\n    let x = 1;\n}"
+cursor = [0, 0]
+keys = "jwwe$b0"
+
+[[case]]
+name = "leading_whitespace_and_tabs_w"
+buffer = "\t\tfoo\n  \tbar"
+cursor = [0, 0]
+keys = "2w"
+
+[[case]]
+name = "e_over_tabs"
+buffer = "a\t\tbc\td"
+cursor = [0, 0]
+keys = "2e"
+
+# Goal columns through motions that fail or don't move.
+[[case]]
+name = "goal_kept_by_failed_f"
+buffer = "abcdefgh\nab\nabcdefgh"
+cursor = [0, 6]
+keys = "jfzj"
+
+[[case]]
+name = "goal_kept_by_failed_l"
+buffer = "abcdefgh\nab\nabcdefgh"
+cursor = [0, 6]
+keys = "jlj"
+
+[[case]]
+name = "goal_kept_by_failed_h_on_empty_line"
+buffer = "abcdefgh\n\nabcdefgh"
+cursor = [0, 6]
+keys = "jhj"
+
+[[case]]
+name = "goal_kept_by_failed_h"
+buffer = "a\nabcdefgh"
+cursor = [1, 6]
+keys = "khj"
+
+[[case]]
+name = "goal_kept_by_failed_big_f"
+buffer = "ab\nabcdefgh"
+cursor = [1, 6]
+keys = "kFzj"
+
+[[case]]
+name = "goal_kept_by_t_onto_next_char"
+buffer = "abcdefgh\nab,c\nabcdefgh"
+cursor = [0, 6]
+keys = "jt,j"
+
+[[case]]
+name = "goal_reset_by_big_t_onto_previous_char"
+buffer = "ab\nabcdefgh"
+cursor = [1, 6]
+keys = "kTaj"
+
+[[case]]
+name = "goal_reset_by_b"
+buffer = "abcdefgh\nab\nabcdefgh"
+cursor = [0, 6]
+keys = "jbj"
+
+[[case]]
+name = "goal_reset_by_failed_b"
+buffer = "a\nabcdefgh"
+cursor = [1, 6]
+keys = "kbj"
+
+[[case]]
+name = "goal_reset_by_w_at_the_end"
+buffer = "abcdefgh\nab"
+cursor = [0, 6]
+keys = "jwk"
+
+[[case]]
+name = "goal_reset_by_e_at_the_end"
+buffer = "abcdefgh\nab"
+cursor = [0, 6]
+keys = "jek"
+
+[[case]]
+name = "goal_reset_by_zero_at_line_start"
+buffer = "a\nabcdefgh"
+cursor = [1, 6]
+keys = "k0j"
+
+[[case]]
+name = "goal_reset_by_caret"
+buffer = "a\nabcdefgh"
+cursor = [1, 6]
+keys = "k^j"
+
+[[case]]
+name = "goal_kept_by_failed_k"
+buffer = "abcdefgh\nab"
+cursor = [1, 1]
+keys = "$kkj"
+
+[[case]]
+name = "goal_kept_by_failed_j"
+buffer = "abcdefgh\nab"
+cursor = [0, 6]
+keys = "jjk"
+
+[[case]]
+name = "failed_count_dollar_aims_at_line_ends"
+buffer = "abcdefgh\nab"
+cursor = [0, 6]
+keys = "j3$k"
+
+[[case]]
+name = "gg_after_g_keeps_goal"
+buffer = "abcdefgh\nab\nabcdefgh"
+cursor = [0, 6]
+keys = "jGgg"
+
+# Wide characters, other scripts' word classes and `^`'s blanks.
+[[case]]
+name = "j_from_wide_chars"
+buffer = "日本語x\nabcdefgh"
+cursor = [0, 3]
+keys = "j"
+
+[[case]]
+name = "j_onto_wide_chars"
+buffer = "abcdefgh\n日本語x"
+cursor = [0, 3]
+keys = "j"
+
+[[case]]
+name = "j_from_emoji"
+buffer = "😀😀x\nabcdefgh"
+cursor = [0, 4]
+keys = "j"
+
+[[case]]
+name = "j_from_fullwidth"
+buffer = "ａｂｃ\nabcdefgh"
+cursor = [0, 6]
+keys = "j"
+
+[[case]]
+name = "j_from_control_chars"
+buffer = "\u0001\u0002x\nabcdefgh"
+cursor = [0, 2]
+keys = "j"
+
+[[case]]
+name = "w_latin_then_cjk"
+buffer = "abc日本語 x"
+cursor = [0, 0]
+keys = "w"
+
+[[case]]
+name = "w_cjk_then_latin"
+buffer = "日本語abc x"
+cursor = [0, 0]
+keys = "w"
+
+[[case]]
+name = "w_hiragana_then_katakana"
+buffer = "ひらがなカタカナ x"
+cursor = [0, 0]
+keys = "w"
+
+[[case]]
+name = "w_into_hangul"
+buffer = "ab한국cd x"
+cursor = [0, 0]
+keys = "2w"
+
+[[case]]
+name = "w_superscript_is_punctuation"
+buffer = "ab²cd x"
+cursor = [0, 0]
+keys = "w"
+
+[[case]]
+name = "w_ordinal_is_punctuation"
+buffer = "abªcd x"
+cursor = [0, 0]
+keys = "w"
+
+[[case]]
+name = "w_emoji_and_punctuation"
+buffer = "😀.😀 x"
+cursor = [0, 0]
+keys = "3w"
+
+[[case]]
+name = "b_over_micro_sign_word"
+buffer = "xµy z"
+cursor = [0, 5]
+keys = "b"
+
+[[case]]
+name = "caret_with_count"
+buffer = "  ab\n  cd\n  ef"
+cursor = [0, 0]
+keys = "3^"
+
+[[case]]
+name = "caret_skips_only_space_and_tab"
+buffer = " x"
+cursor = [0, 2]
+keys = "^"
+
+[[case]]
+name = "caret_on_nbsp_only_line"
+buffer = "a\n   "
+cursor = [1, 0]
+keys = "^"
+
+[[case]]
+name = "w_over_nbsp_blank"
+buffer = "a b c"
+cursor = [0, 0]
+keys = "w"
+
+[[case]]
+name = "w_over_arabic_indic_digit"
+buffer = "ab١cd ef"
+cursor = [0, 0]
+keys = "w"
+
+[[case]]
+name = "w_emoji_then_star_symbol"
+buffer = "😀.☆ x"
+cursor = [0, 0]
+keys = "2w"
+
+[[case]]
+name = "big_w_vertical_tab_is_not_blank"
+buffer = "ab\u000bcd ef"
+cursor = [0, 0]
+keys = "W"
+
+[[case]]
+name = "b_over_cjk_and_latin"
+buffer = "x 日本語abc"
+cursor = [0, 13]
+keys = "2b"
+
+[[case]]
+name = "e_over_hangul"
+buffer = "한국어 ab"
+cursor = [0, 0]
+keys = "e"
+
+[[case]]
+name = "j_from_wide_angle_bracket"
+buffer = "a〈b\nabcdef"
+cursor = [0, 4]
+keys = "j"
+
+[[case]]
+name = "j_from_escaped_control"
+buffer = "a\u0080b\nabcdefghi"
+cursor = [0, 3]
+keys = "j"
+
+[[case]]
+name = "k_onto_wide_chars"
+buffer = "日本語x\nabcdefgh"
+cursor = [1, 5]
+keys = "k"
+
+[[case]]
+name = "gg_onto_escaped_control"
+buffer = "a\u0080b\nabcdefghi"
+cursor = [1, 6]
+keys = "gg"
+
+[[case]]
+name = "big_t_onto_combining_grapheme"
+buffer = "xáyz"
+cursor = [0, 5]
+keys = "Ta"
+
+[[case]]
+name = "t_before_combining_grapheme"
+buffer = "xyáz"
+cursor = [0, 0]
+keys = "ta"
+
+[[case]]
+name = "t_after_combining_grapheme"
+buffer = "xábc"
+cursor = [0, 0]
+keys = "tc"
+
+[[case]]
+name = "j_from_emoji_presentation"
+buffer = "x❤️y\nabcdef"
+cursor = [0, 7]
+keys = "j"
+
+[[case]]
+name = "j_onto_emoji_presentation"
+buffer = "abcdef\nx❤️y"
+cursor = [0, 3]
+keys = "j"
+
+[[case]]
+name = "j_from_text_presentation_emoji"
+buffer = "x😀︎y\nabcdef"
+cursor = [0, 8]
+keys = "j"
+
+[[case]]
+name = "k_onto_emoji_presentation"
+buffer = "x❤️yz\nabcdef"
+cursor = [1, 2]
+keys = "k"

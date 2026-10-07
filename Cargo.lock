@@ -1850,6 +1850,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "fe-vim"
+version = "0.1.0"
+dependencies = [
+ "fe-buffer",
+ "fe-command",
+ "fe-editor",
+ "fe-text",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "toml 1.1.6+spec-1.1.0",
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "fe-workbench"
 version = "0.1.0"
 dependencies = [
