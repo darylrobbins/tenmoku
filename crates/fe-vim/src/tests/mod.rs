@@ -13,6 +13,7 @@ mod registers;
 mod repeat;
 mod state;
 mod undo;
+mod visual;
 
 /// Steps `keys` through the reducer from nothing pending. Every key but the
 /// last must wait; returns what the last did.

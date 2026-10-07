@@ -49,7 +49,8 @@ impl HeadlessVim {
         }
     }
 
-    /// Feeds `keys` (vim notation) one at a time. A committed invocation is
+    /// Feeds `keys` (vim notation) one at a time, the visual selection
+    /// painted again before each ([`HeadlessVim::sync_visual`]). A committed invocation is
     /// stamped with the context as it is once the reducer has cleared its
     /// pending input, then dispatched. Stops at the first key forwarded or
     /// invocation that fails.
@@ -61,6 +62,7 @@ impl HeadlessVim {
     /// any other key is forwarded.
     pub fn feed(&mut self, keys: &str) -> Result<(), FeedError> {
         for key in parse_keys(keys)? {
+            self.sync_visual();
             if self.state.mode() == Mode::Insert {
                 self.type_key(key)?;
                 continue;
@@ -97,6 +99,13 @@ impl HeadlessVim {
         Ok(())
     }
 
+    /// Paints the visual selection again from the vim cursor and anchor, as
+    /// the host does once the model catches up with other origins' edits
+    /// ([`VimState::sync_visual`]); `feed` does it before each key.
+    pub fn sync_visual(&mut self) {
+        self.state.sync_visual(&mut self.model);
+    }
+
     /// Runs one invocation as given, context included.
     pub fn dispatch(
         &mut self,
@@ -116,12 +125,27 @@ impl HeadlessVim {
         text.slice_to_string(0..text.len())
     }
 
-    /// The primary caret's head as a row and a byte column.
+    /// The primary caret's head as a row and a byte column; in a visual
+    /// mode, the vim cursor ([`VimState::visual_cursor`]).
     pub fn cursor(&self) -> (u32, usize) {
-        let point = self
-            .model
-            .text()
-            .offset_to_point(self.model.primary_selection().head());
+        let head = self.state.visual_cursor(&self.model);
+        self.point(head.unwrap_or_else(|| self.model.primary_selection().head()))
+    }
+
+    /// In a visual mode, the anchor as a row and a byte column.
+    pub fn visual_anchor(&self) -> Option<(u32, usize)> {
+        let anchor = self.state.visual_anchor(&self.model)?;
+        Some(self.point(anchor))
+    }
+
+    /// `'<` or `'>` as a row and a byte column ([`VimState::mark`]).
+    pub fn mark(&self, name: char) -> Option<(u32, usize)> {
+        let mark = self.state.mark(name)?;
+        Some(mark.position(self.model.snapshot()))
+    }
+
+    fn point(&self, offset: usize) -> (u32, usize) {
+        let point = self.model.text().offset_to_point(offset);
         (point.row, point.column as usize)
     }
 

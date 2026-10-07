@@ -9,8 +9,8 @@ use fe_command::{
 use fe_editor::{EditorModel, commands::EditorHost};
 
 use crate::{
-    CountArgs, InsertArgs, MoveArgs, OperateArgs, PutArgs, Registers, ReplaceCharArgs, VimState,
-    edit, history, insert, motion, operator, repeat,
+    CountArgs, InsertArgs, MoveArgs, OperateArgs, PutArgs, Registers, ReplaceCharArgs, SelectArgs,
+    VimState, VisualArgs, edit, history, insert, motion, operator, repeat, visual,
 };
 
 /// What vim's commands run against: an editor's model, its host, its vim
@@ -33,9 +33,15 @@ impl CommandTarget for VimCommands {
 
 /// Vim's registry: `vim.move`, `vim.operate`, `vim.put`, `vim.insert`,
 /// `vim.normal_mode`, `vim.join`, `vim.replace_char`, `vim.toggle_case`,
-/// `vim.undo`, `vim.redo` and `vim.repeat`.
+/// `vim.undo`, `vim.redo`, `vim.repeat`, and for the visual modes
+/// `vim.visual`, `vim.visual_exit`, `vim.visual_swap`, `vim.reselect` and
+/// `vim.select`.
 pub fn registry() -> Registry<VimCommands> {
     let normal = ContextPredicate::parse("editor && vim.mode == normal")
+        .expect("vim's context predicate parses");
+    let visual_mode =
+        ContextPredicate::parse("editor && vim.visual").expect("vim's context predicate parses");
+    let normal_or_visual = ContextPredicate::parse("editor && (vim.mode == normal || vim.visual)")
         .expect("vim's context predicate parses");
     let insert_mode = ContextPredicate::parse("editor && vim.mode == insert")
         .expect("vim's context predicate parses");
@@ -54,9 +60,9 @@ pub fn registry() -> Registry<VimCommands> {
         )
         .expect("vim command IDs are valid and distinct")
         .description(
-            "Moves every caret by a vim motion, `count` times or to row `count`; the count is bounded by the text.",
+            "Moves every caret by a vim motion, `count` times or to row `count`; the count is bounded by the text. In a visual mode it moves the vim cursor, keeping the anchor.",
         )
-        .context(normal.clone())
+        .context(normal_or_visual.clone())
         .mutates_buffer(false);
     registry
         .register_with_args(
@@ -68,9 +74,9 @@ pub fn registry() -> Registry<VimCommands> {
         )
         .expect("vim command IDs are valid and distinct")
         .description(
-            "Applies a vim operator (delete, yank, change, indent, outdent) to a motion or text object at every caret, filling the registers as vim does; one transaction for all carets. Change then starts an insert session in the same transaction.",
+            "Applies a vim operator (delete, yank, change, indent, outdent) to a motion or text object at every caret, filling the registers as vim does; one transaction for all carets. Change then starts an insert session in the same transaction. In a visual mode it acts on the selection, as do toggle_case, lowercase, uppercase, join and replace.",
         )
-        .context(normal.clone())
+        .context(normal_or_visual.clone())
         .mutates_buffer(true);
     registry
         .register_with_args(
@@ -196,5 +202,63 @@ pub fn registry() -> Registry<VimCommands> {
         )
         .context(normal)
         .mutates_buffer(true);
+    registry
+        .register_with_args(
+            "vim.visual",
+            "Vim Visual Mode",
+            |target: &mut VimTarget<'_>, _: &Actor, args: VisualArgs| visual::visual(target, args),
+        )
+        .expect("vim command IDs are valid and distinct")
+        .description(
+            "Enters charwise or linewise visual mode at the primary caret, switches to that kind from the other, or leaves it if it's the current one.",
+        )
+        .context(normal_or_visual.clone())
+        .mutates_buffer(false);
+    registry
+        .register(
+            "vim.visual_exit",
+            "Vim Leave Visual Mode",
+            |target: &mut VimTarget<'_>, _: &Actor| visual::exit(target),
+        )
+        .expect("vim command IDs are valid and distinct")
+        .description("Leaves visual mode, keeping its extent for `gv`, `'<` and `'>`.")
+        .context(visual_mode.clone())
+        .mutates_buffer(false);
+    registry
+        .register(
+            "vim.visual_swap",
+            "Vim Swap Selection Ends",
+            |target: &mut VimTarget<'_>, _: &Actor| visual::swap(target),
+        )
+        .expect("vim command IDs are valid and distinct")
+        .description("Moves the visual cursor to the other end of the selection.")
+        .context(visual_mode.clone())
+        .mutates_buffer(false);
+    registry
+        .register(
+            "vim.reselect",
+            "Vim Reselect",
+            |target: &mut VimTarget<'_>, _: &Actor| visual::reselect(target),
+        )
+        .expect("vim command IDs are valid and distinct")
+        .description(
+            "Selects the last visual extent again, in its kind; in visual mode the current extent becomes the last.",
+        )
+        .context(normal_or_visual)
+        .mutates_buffer(false);
+    registry
+        .register_with_args(
+            "vim.select",
+            "Vim Select Text Object",
+            |target: &mut VimTarget<'_>, _: &Actor, args: SelectArgs| {
+                visual::select_object(target, args)
+            },
+        )
+        .expect("vim command IDs are valid and distinct")
+        .description(
+            "Selects a text object in visual mode, or extends the selection by `count` more of it.",
+        )
+        .context(visual_mode)
+        .mutates_buffer(false);
     registry
 }

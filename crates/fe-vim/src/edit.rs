@@ -244,24 +244,46 @@ pub(crate) fn replace_char(
 /// by the ignored `record_case_table_with_neovim` test
 /// (`tests/support/case.lua`).
 const CASES: &str = include_str!("case.txt");
+/// nvim's visual `u` and `U`, in the same form, written by the ignored
+/// `record_lower_upper_tables_with_neovim` test
+/// (`tests/support/lower_upper.lua`).
+const LOWER: &str = include_str!("lower.txt");
+const UPPER: &str = include_str!("upper.txt");
 
-/// `ch` with its case toggled as nvim's `~` does it.
-pub(crate) fn toggled(ch: char) -> char {
-    static PAIRS: OnceLock<Vec<(u32, u32)>> = OnceLock::new();
-    let pairs = PAIRS.get_or_init(|| {
-        let hex = |field: &str| u32::from_str_radix(field, 16).expect("case.txt is hex");
-        CASES
+/// `ch` as the table `source` of `from:to` pairs maps it.
+fn mapped(ch: char, source: &'static str, pairs: &'static OnceLock<Vec<(u32, u32)>>) -> char {
+    let pairs = pairs.get_or_init(|| {
+        let hex = |field: &str| u32::from_str_radix(field, 16).expect("case tables are hex");
+        source
             .split_whitespace()
             .map(|pair| {
-                let (from, to) = pair.split_once(':').expect("case.txt pairs are from:to");
+                let (from, to) = pair.split_once(':').expect("case table pairs are from:to");
                 (hex(from), hex(to))
             })
             .collect()
     });
     match pairs.binary_search_by_key(&u32::from(ch), |&(from, _)| from) {
-        Ok(ix) => char::from_u32(pairs[ix].1).expect("case.txt holds scalar values"),
+        Ok(ix) => char::from_u32(pairs[ix].1).expect("case tables hold scalar values"),
         Err(_) => ch,
     }
+}
+
+/// `ch` with its case toggled as nvim's `~` does it.
+pub(crate) fn toggled(ch: char) -> char {
+    static PAIRS: OnceLock<Vec<(u32, u32)>> = OnceLock::new();
+    mapped(ch, CASES, &PAIRS)
+}
+
+/// `ch` as nvim's visual `u` leaves it.
+pub(crate) fn lowered(ch: char) -> char {
+    static PAIRS: OnceLock<Vec<(u32, u32)>> = OnceLock::new();
+    mapped(ch, LOWER, &PAIRS)
+}
+
+/// `ch` as nvim's visual `U` leaves it.
+pub(crate) fn raised(ch: char) -> char {
+    static PAIRS: OnceLock<Vec<(u32, u32)>> = OnceLock::new();
+    mapped(ch, UPPER, &PAIRS)
 }
 
 /// `vim.toggle_case`: toggles the case of the `count` graphemes from each

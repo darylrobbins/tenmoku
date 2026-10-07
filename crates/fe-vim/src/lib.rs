@@ -5,16 +5,19 @@
 //! or `r`) in one [`Pending`] value and never sees the buffer. A complete
 //! command comes out as an [`Invocation`](fe_command::Invocation) of one of
 //! vim's commands (`vim.move`, `vim.operate`, `vim.put`, `vim.insert`,
-//! `vim.join`, `vim.replace_char`, `vim.toggle_case`, `vim.undo`, `vim.redo`
-//! and `vim.repeat`), dispatched through [`registry`] against a
-//! [`VimTarget`], which carries the host's shared [`Registers`].
+//! `vim.join`, `vim.replace_char`, `vim.toggle_case`, `vim.undo`, `vim.redo`,
+//! `vim.repeat`, `vim.visual`, `vim.visual_exit`, `vim.visual_swap`,
+//! `vim.reselect` and `vim.select`), dispatched through [`registry`] against
+//! a [`VimTarget`], which carries the host's shared [`Registers`].
 //! [`VimState`] holds the mode, the pending value, the goal columns, the
-//! last character search, the open insert session, the last change for `.`
-//! and the carets before each change for `u`, and publishes `vim.mode`
-//! (plus `vim.pending` and `vim.pending_kind` while a command is incomplete)
-//! on the editor's own context frame, so keymap bindings can be scoped to a
-//! mode. With vim off nothing stamps the frame and `vim.mode` is never set.
-//! The design is `docs/decisions/vim-engine.md` (§1, §4, §9 and §10).
+//! last character search, the open insert session, the visual selection and
+//! the last one (`gv`, `'<` and `'>`), the last change for `.` and the
+//! carets before each change for `u`, and publishes `vim.mode` (plus
+//! `vim.pending` and `vim.pending_kind` while a command is incomplete, and
+//! the flag `vim.visual` in a visual mode) on the editor's own context
+//! frame, so keymap bindings can be scoped to a mode. With vim off nothing
+//! stamps the frame and `vim.mode` is never set. The design is
+//! `docs/decisions/vim-engine.md` (§1, §4, §9 and §10).
 //!
 //! An insert session (`i a I A o O`, or the change operator `c`) is one
 //! `fe_buffer` transaction with the actor's origin, opened by the command
@@ -23,6 +26,20 @@
 //! the transaction, and `vim.normal_mode` (bound to `Esc` and `ctrl-[`)
 //! ends it. `.` replays the last change, and the text its session typed, as
 //! one transaction.
+//!
+//! In the visual modes (`v` charwise, `V` linewise; `vim.mode` is `visual`
+//! or `visual_line`) keys still go to [`step`], which [`VimState`] tells the
+//! mode is on, so an operator acts on the selection at once
+//! (`Target::Selection`, or `Target::SelectedLines` for `X D Y C S R`), as do
+//! `~ u U J r{char}`, and `i`/`a` select text objects (`vim.select`). The vim
+//! cursor and the anchor are anchors on grapheme starts (or a row's end,
+//! after `$`), and the model's one selection mirrors them, taking the
+//! grapheme under the cursor, so the editor paints and copies what vim
+//! would take; hosts paint the block cursor at
+//! [`VimState::visual_cursor`] and drive a mouse drag through
+//! [`VimState::select_visual`]. Leaving a visual mode by any path keeps its
+//! extent for `gv` and as `'<` and `'>` ([`VimState::mark`]). `.` repeats a
+//! change over a selection on as much text from the caret.
 //!
 //! # Clean room
 //!
@@ -34,31 +51,60 @@
 //! `tests/corpus/` is the spec: when unsure, add a case and record what nvim
 //! does with the ignored `record_corpus_with_neovim` test. Tables nvim
 //! computes per code point are recorded the same way: `src/chars.txt`
-//! (word classes and widths) and `src/case.txt` (what `~` does).
+//! (word classes and widths), `src/case.txt` (what `~` does), and
+//! `src/lower.txt` and `src/upper.txt` (what visual `u` and `U` do).
 //!
 //! # Cards
 //!
-//! M7 builds this crate in three cards:
+//! M7 built this crate in three cards:
 //!
 //! 1. The keys, the whole pending-input grammar, `vim.mode`, `vim.move` and
 //!    its motions (`h j k l w b e W B E 0 ^ $ gg G f t F T`), and the Neovim
 //!    oracle with its recorder.
 //! 2. `vim.operate` with `d y > <`, text objects, `%`, `;` and `,`,
 //!    registers, and `x X D p P`.
-//! 3. This one: insert sessions as one transaction, `c C s S i a I A o O`,
-//!    `J r ~`, `u <C-r>` and `.`.
+//! 3. Insert sessions as one transaction, `c C s S i a I A o O`, `J r ~`,
+//!    `u <C-r>` and `.`.
 //!
-//! Later cards add the visual modes, macros, marks, search and ex, and the
-//! GPUI wiring of `vim-engine.md` §10: key routing (the keymap first, then
-//! [`step`] in normal mode, text input in insert mode), cursor shapes, the
-//! `Esc` and `ctrl-[` bindings and the `vim.enabled` setting. That wiring
-//! also ends a session when a command other than typing runs in insert mode
-//! (cursor keys are macOS editor commands there), standing in for Vim's
-//! `<C-g>u`, and types `Enter` in insert mode through
+//! The GPUI wiring of `vim-engine.md` §10 came next: key routing (the
+//! keymap first, then [`step`] in normal mode, text input in insert mode),
+//! cursor shapes, the `Esc` and `ctrl-[` bindings and the `vim.enabled`
+//! setting. It also ends a session when a command other than typing runs in
+//! insert mode ([`VimState::split_session`], standing in for Vim's
+//! `<C-g>u`), and types `Enter` in insert mode through
 //! [`VimState::line_break`], as `HeadlessVim` does, so the indentation a
 //! line break copies is 'autoindent'.
 //!
+//! The second batch starts with this card, charwise and linewise visual
+//! mode: `v V`, operators over the selection, `o`, `gv`, `'<` and `'>`, and
+//! `.` after a visual change. Later cards add blockwise visual mode (`<C-v>`)
+//! with `p` and `P` over a selection and blockwise registers; search; ex
+//! commands (`:'<,'>` among them); the command line; the clipboard; marks
+//! and macros; replace mode, increment and folds; scrolling; and the GPUI
+//! wiring of the visual modes (their key bindings, painting the selection
+//! and the block cursor, mouse drags and the status bar).
+//!
 //! # Known limits
+//!
+//! - `'<` and `'>` keep a byte column on a row anchored at its start, as
+//!   nvim's marks do: rows put in or taken out above move them, edits
+//!   within their row don't. nvim also moves marks on rows that a change
+//!   joins or replaces; fe-vim does so for the changes over a selection
+//!   (their own `'<` and `'>`, or through `.` earlier ones): rows a
+//!   charwise `d`, `c` or `J` joins to the first, rows a linewise `c`
+//!   replaced, and rows deleted at the end of the text, where the marks
+//!   stay past the new end as nvim's do. Other joins (`J`, `x` at a row's
+//!   end in normal mode) leave a mark on the joined row at its old column,
+//!   and text with line breaks put in at the start of a mark's row moves
+//!   the mark down, as a row opened above does, where nvim keeps it for a
+//!   charwise put.
+//! - A count before `.` after a visual change replaces the operator's count
+//!   (how many times `>` and `<` shift), not the amount of text.
+//! - In a visual mode, `aw` growing backwards onto a word after the row's
+//!   indentation takes all of the indentation.
+//! - After `.` of a change over a selection with `>` or `<`, the caret goes
+//!   to the column the repeated selection ended at, which can differ from
+//!   nvim's past wide characters and tabs.
 //!
 //! - Undo and redo put the carets back from fe-vim's own record of where
 //!   each change began, as (row, byte column) pairs. Another origin's edits
@@ -140,10 +186,11 @@ mod register;
 mod repeat;
 mod state;
 mod text_object;
+mod visual;
 
 pub use args::{
     CountArgs, InsertArgs, InsertAt, Motion, MoveArgs, OperateArgs, Operator, PutArgs, RangeClass,
-    ReplaceCharArgs, Target, TextObject,
+    ReplaceCharArgs, SelectArgs, Target, TextObject, VisualArgs, VisualKind,
 };
 pub use commands::{VimCommands, VimTarget, registry};
 pub use headless::{FeedError, HeadlessVim};
@@ -152,6 +199,7 @@ pub use reducer::{Pending, PendingKind, Step, step};
 pub use register::{Register, RegisterError, Registers, Write};
 pub use repeat::{Change, LastChange};
 pub use state::{Mode, VimState, context};
+pub use visual::Mark;
 
 #[cfg(test)]
 mod tests;

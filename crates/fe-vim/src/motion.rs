@@ -13,10 +13,14 @@ use fe_editor::EditorModel;
 use fe_text::Text;
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::{Motion, MoveArgs, VimState, state::Goals};
+use crate::{Mode, Motion, MoveArgs, VimState, state::Goals, visual};
 
-/// Moves every caret by `args`; returns whether any selection changed.
+/// Moves every caret by `args` (in a visual mode, the vim cursor); returns
+/// whether any selection changed.
 pub(crate) fn apply(model: &mut EditorModel, state: &mut VimState, args: MoveArgs) -> bool {
+    if let Mode::Visual(_) = state.mode {
+        return visual::move_cursor(model, state, args);
+    }
     // Caught up first, so the positions read are the ones moved from.
     model.sync_display();
     let text = model.text().clone();

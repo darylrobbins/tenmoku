@@ -94,6 +94,13 @@ pub(crate) struct Outcome {
     pub(crate) mode: String,
     /// Each non-empty register of `" 0-9 - a-z`.
     pub(crate) registers: BTreeMap<String, Register>,
+    /// The visual anchor (`getpos('v')`), if the keys end in a visual mode.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) visual: Option<(u32, usize)>,
+    /// `'<` and `'>`, those that are set: a linewise `'>` is on its row's
+    /// last byte.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) marks: BTreeMap<String, (u32, usize)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -112,6 +119,10 @@ pub(crate) struct NvimResult {
     pub(crate) cursor: (u32, usize),
     pub(crate) mode: String,
     pub(crate) registers: BTreeMap<String, Register>,
+    #[serde(default)]
+    pub(crate) visual: Option<(u32, usize)>,
+    #[serde(default)]
+    pub(crate) marks: BTreeMap<String, (u32, usize)>,
 }
 
 impl NvimResult {
@@ -121,6 +132,8 @@ impl NvimResult {
             cursor: self.cursor,
             mode: self.mode,
             registers: self.registers,
+            visual: self.visual,
+            marks: self.marks,
         }
     }
 }
@@ -239,6 +252,8 @@ fn mode_name(nvim: &str) -> &str {
         "n" => "normal",
         "no" => "operator_pending",
         "i" => "insert",
+        "v" => "visual",
+        "V" => "visual_line",
         other => other,
     }
 }
@@ -262,19 +277,37 @@ fn registers(vim: &HeadlessVim) -> BTreeMap<String, Register> {
         .collect()
 }
 
+/// `vim`'s `'<` and `'>`, those that are set.
+fn marks(vim: &HeadlessVim) -> BTreeMap<String, (u32, usize)> {
+    ['<', '>']
+        .into_iter()
+        .filter_map(|name| Some((name.to_string(), vim.mark(name)?)))
+        .collect()
+}
+
 /// Drives `recorded`'s keys through [`HeadlessVim`] and compares the buffer,
-/// the cursor, the mode and the registers with nvim's.
+/// the cursor, the mode, the registers, the visual anchor and the `'<` and
+/// `'>` marks with nvim's.
 pub(crate) fn check(recorded: &Recorded) -> Result<(), String> {
     let (case, expect) = (recorded.case(), &recorded.expect);
     let mut vim = HeadlessVim::new(&case.buffer, case.cursor);
     vim.feed(&case.keys)
         .map_err(|error| format!("{}: {error}", case.name))?;
-    let got = (vim.text(), vim.cursor(), vim.mode(), registers(&vim));
+    let got = (
+        vim.text(),
+        vim.cursor(),
+        vim.mode(),
+        registers(&vim),
+        vim.visual_anchor(),
+        marks(&vim),
+    );
     let want = (
         expect.buffer.clone(),
         expect.cursor,
         mode_name(&expect.mode),
         expect.registers.clone(),
+        expect.visual,
+        expect.marks.clone(),
     );
     if got != want {
         return Err(format!(

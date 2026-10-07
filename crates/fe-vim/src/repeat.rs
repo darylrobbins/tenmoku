@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::{
     CountArgs, InsertArgs, Mode, OperateArgs, PutArgs, ReplaceCharArgs, VimTarget, edit, insert,
-    operator,
+    operator, visual,
 };
 
 /// A change `.` can repeat: a committed `vim.operate` (not a yank),
@@ -130,6 +130,7 @@ fn replay(
     last: &LastChange,
 ) -> Result<Dispatched<TransactionId>, CommandError> {
     let dispatched = match *change {
+        Change::Operate(args) if args.target.is_selection() => visual::repeat(target, actor, args)?,
         Change::Operate(args) => operator::operate(target, actor, args)?,
         Change::Put(args) => operator::put(target, actor, args)?,
         Change::Insert(args) => insert::insert(target, actor, args)?,

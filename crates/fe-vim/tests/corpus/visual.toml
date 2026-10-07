@@ -1,0 +1,1146 @@
+# Visual-mode cases for fe-vim's oracle: v and V with motions and counts,
+# switching kind, o, gv, <Esc> and the '< and '> marks, each operator over a
+# selection in both kinds, text objects, empty rows, multibyte and combining
+# graphemes, $, counts and dot-repeat. Hand-written: name, buffer (rows
+# joined with \n, no trailing newline), cursor = [row, byte column] and keys
+# in vim notation. What nvim does with each is recorded in
+# visual.expected.json by the ignored `record_corpus_with_neovim` test; edit
+# a case, then re-record.
+
+# v and V with motions and counts.
+[[case]]
+name = "v_alone"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "v"
+
+[[case]]
+name = "v_l"
+buffer = "abc def"
+cursor = [0, 1]
+keys = "vl"
+
+[[case]]
+name = "v_count_l"
+buffer = "abc def"
+cursor = [0, 1]
+keys = "v3l"
+
+[[case]]
+name = "v_h_backwards"
+buffer = "abc def"
+cursor = [0, 4]
+keys = "vh"
+
+[[case]]
+name = "v_w_across_rows"
+buffer = "abc\ndef ghi"
+cursor = [0, 1]
+keys = "vw"
+
+[[case]]
+name = "v_count_e"
+buffer = "ab cd ef"
+cursor = [0, 0]
+keys = "v2e"
+
+[[case]]
+name = "v_l_onto_row_end"
+buffer = "abc"
+cursor = [0, 1]
+keys = "vll"
+
+[[case]]
+name = "v_j_past_short_row_end"
+buffer = "abcdef\nab\nabcdef"
+cursor = [0, 4]
+keys = "vj"
+
+[[case]]
+name = "v_jj_keeps_goal"
+buffer = "abcdef\nab\nabcdef"
+cursor = [0, 4]
+keys = "vjj"
+
+[[case]]
+name = "v_j_onto_empty_row"
+buffer = "abcdef\n\nabcdef"
+cursor = [0, 4]
+keys = "vj"
+
+[[case]]
+name = "v_G_keeps_column"
+buffer = "abcdef\nab"
+cursor = [0, 2]
+keys = "vG"
+
+[[case]]
+name = "v_gg"
+buffer = "abcdef\nab"
+cursor = [1, 1]
+keys = "vgg"
+
+[[case]]
+name = "v_find"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "vfe"
+
+[[case]]
+name = "V_alone"
+buffer = "abc\ndef"
+cursor = [0, 1]
+keys = "V"
+
+[[case]]
+name = "V_count_j"
+buffer = "a\nb\nc\nd"
+cursor = [0, 0]
+keys = "V2j"
+
+[[case]]
+name = "V_k"
+buffer = "abc\ndef ghi"
+cursor = [1, 5]
+keys = "Vk"
+
+# Switching kind, and leaving by the kind's own key.
+[[case]]
+name = "v_then_V"
+buffer = "abc\ndef"
+cursor = [0, 1]
+keys = "vjV"
+
+[[case]]
+name = "V_then_v"
+buffer = "abc\ndef"
+cursor = [0, 1]
+keys = "Vjv"
+
+[[case]]
+name = "v_v_leaves"
+buffer = "abc def"
+cursor = [0, 1]
+keys = "vlv"
+
+[[case]]
+name = "V_V_leaves"
+buffer = "abc\ndef"
+cursor = [0, 1]
+keys = "VjV"
+
+# o.
+[[case]]
+name = "o_swaps"
+buffer = "abc def"
+cursor = [0, 1]
+keys = "vllo"
+
+[[case]]
+name = "o_then_move"
+buffer = "abc\ndef"
+cursor = [0, 1]
+keys = "vjoh"
+
+[[case]]
+name = "O_swaps_too"
+buffer = "abc def"
+cursor = [0, 1]
+keys = "vlO"
+
+# <Esc> and the '< and '> marks.
+[[case]]
+name = "esc_marks"
+buffer = "abc def"
+cursor = [0, 5]
+keys = "vh<Esc>"
+
+[[case]]
+name = "esc_marks_linewise"
+buffer = "abc def\nghi"
+cursor = [0, 4]
+keys = "Vj<Esc>"
+
+[[case]]
+name = "esc_from_row_end"
+buffer = "abcdef\nab\nabcdef"
+cursor = [0, 4]
+keys = "vj<Esc>"
+
+[[case]]
+name = "esc_drops_count"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "vl3<Esc>"
+
+[[case]]
+name = "esc_ends_find_only"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "vlf<Esc>"
+
+# gv.
+[[case]]
+name = "gv_after_row_above"
+buffer = "abc def\nghi"
+cursor = [0, 4]
+keys = "vl<Esc>ggOx<Esc>gv"
+
+[[case]]
+name = "gv_linewise_after_row_above"
+buffer = "abc def\nghi"
+cursor = [0, 4]
+keys = "Vj<Esc>ggOx<Esc>gv"
+
+[[case]]
+name = "gv_without_extent"
+buffer = "abc"
+cursor = [0, 1]
+keys = "gv"
+
+[[case]]
+name = "gv_in_visual_swaps"
+buffer = "abc def"
+cursor = [0, 4]
+keys = "vl<Esc>0vgv"
+
+[[case]]
+name = "gv_twice_in_visual"
+buffer = "abc def"
+cursor = [0, 4]
+keys = "vl<Esc>0vgvgv"
+
+[[case]]
+name = "gv_after_delete"
+buffer = "abc def\nghi"
+cursor = [0, 4]
+keys = "vld0gv"
+
+[[case]]
+name = "gv_row_end"
+buffer = "abc def\nghi"
+cursor = [0, 4]
+keys = "vl$<Esc>gv"
+
+[[case]]
+name = "gv_cursor_first"
+buffer = "abc def\nghi"
+cursor = [0, 5]
+keys = "vh<Esc>gv"
+
+# Operators, charwise.
+[[case]]
+name = "v_d"
+buffer = "abc def ghi"
+cursor = [0, 4]
+keys = "vld"
+
+[[case]]
+name = "v_x"
+buffer = "abc def ghi"
+cursor = [0, 4]
+keys = "vlx"
+
+[[case]]
+name = "v_y"
+buffer = "abc def ghi"
+cursor = [0, 5]
+keys = "vhy"
+
+[[case]]
+name = "v_c"
+buffer = "abc def ghi"
+cursor = [0, 4]
+keys = "vlcX<Esc>"
+
+[[case]]
+name = "v_s"
+buffer = "abc def ghi"
+cursor = [0, 4]
+keys = "vlsX<Esc>"
+
+[[case]]
+name = "v_indent"
+buffer = "  abc def\n  ghi jkl\nmno"
+cursor = [0, 5]
+keys = "vj>"
+
+[[case]]
+name = "v_outdent"
+buffer = "  abc def\n  ghi jkl\nmno"
+cursor = [1, 5]
+keys = "vk<"
+
+[[case]]
+name = "v_toggle_case"
+buffer = "abc def\nghi jkl"
+cursor = [0, 1]
+keys = "vj~"
+
+[[case]]
+name = "v_lowercase"
+buffer = "ABC DEF\nGHI JKL"
+cursor = [0, 1]
+keys = "vju"
+
+[[case]]
+name = "v_uppercase"
+buffer = "abc def\nghi jkl"
+cursor = [1, 1]
+keys = "vkU"
+
+[[case]]
+name = "v_join"
+buffer = "abc def\nghi jkl\nmno"
+cursor = [0, 1]
+keys = "vjJ"
+
+[[case]]
+name = "v_join_indented"
+buffer = "aa\n   bb\n  cc\ndd"
+cursor = [0, 1]
+keys = "vjjJ"
+
+[[case]]
+name = "v_join_last_row"
+buffer = "abc def\nghi"
+cursor = [1, 1]
+keys = "vJ"
+
+[[case]]
+name = "v_replace"
+buffer = "abc def\nghi jkl"
+cursor = [0, 1]
+keys = "vjrx"
+
+[[case]]
+name = "v_X"
+buffer = "  abc def\n  ghi jkl\nmno"
+cursor = [0, 5]
+keys = "vjX"
+
+[[case]]
+name = "v_D"
+buffer = "aa\nbb\ncc\ndd\nee"
+cursor = [1, 1]
+keys = "vjjD"
+
+[[case]]
+name = "v_Y"
+buffer = "  abc def\n  ghi jkl\nmno"
+cursor = [1, 5]
+keys = "vkY"
+
+[[case]]
+name = "v_Y_one_row"
+buffer = "  abc def\n  ghi jkl\nmno"
+cursor = [0, 6]
+keys = "vhY"
+
+[[case]]
+name = "v_C"
+buffer = "  abc def\n  ghi jkl\nmno"
+cursor = [0, 5]
+keys = "vjCX<Esc>"
+
+[[case]]
+name = "v_S"
+buffer = "  abc def\n  ghi jkl\nmno"
+cursor = [0, 5]
+keys = "vjSX<Esc>"
+
+[[case]]
+name = "v_R"
+buffer = "  abc def\n  ghi jkl\nmno"
+cursor = [0, 5]
+keys = "vjRX<Esc>"
+
+[[case]]
+name = "v_d_over_rows"
+buffer = "abc def\n  ghi jkl\nmno"
+cursor = [0, 5]
+keys = "vjd"
+
+[[case]]
+name = "v_d_backwards_over_rows"
+buffer = "aaa\nbbbb\ncc\ndd"
+cursor = [1, 2]
+keys = "vkd"
+
+[[case]]
+name = "v_c_over_rows"
+buffer = "aaa\nbbbb\ncc\ndd\nee"
+cursor = [0, 1]
+keys = "vjcX<Esc>"
+
+[[case]]
+name = "v_y_over_rows"
+buffer = "abc def\n  ghi jkl\nmno"
+cursor = [0, 5]
+keys = "vjy"
+
+# Operators, linewise.
+[[case]]
+name = "V_d"
+buffer = "  abc def\n  ghi jkl\nmno"
+cursor = [0, 5]
+keys = "Vjd"
+
+[[case]]
+name = "V_x"
+buffer = "  abc def\n  ghi jkl\nmno"
+cursor = [1, 5]
+keys = "Vkx"
+
+[[case]]
+name = "V_y"
+buffer = "  abc def\n  ghi jkl\nmno"
+cursor = [0, 5]
+keys = "Vjy"
+
+[[case]]
+name = "V_y_cursor_above"
+buffer = "  abc def\n  ghi jkl\nmno"
+cursor = [1, 5]
+keys = "Vky"
+
+[[case]]
+name = "V_c"
+buffer = "aa\nbb\ncc\ndd\nee"
+cursor = [1, 1]
+keys = "VjjcX<Esc>"
+
+[[case]]
+name = "V_s"
+buffer = "  abc def\n  ghi jkl\nmno"
+cursor = [1, 5]
+keys = "VksX<Esc>"
+
+[[case]]
+name = "V_indent"
+buffer = "  abc def\n  ghi jkl\nmno"
+cursor = [0, 5]
+keys = "Vj>"
+
+[[case]]
+name = "V_outdent_count"
+buffer = "  abc def\n  ghi jkl\nmno"
+cursor = [1, 5]
+keys = "Vk3<"
+
+[[case]]
+name = "V_toggle_case"
+buffer = "  abc def\n  ghi jkl\nmno"
+cursor = [0, 5]
+keys = "Vj~"
+
+[[case]]
+name = "V_lowercase"
+buffer = "  ABC DEF\n  GHI JKL\nmno"
+cursor = [1, 5]
+keys = "Vku"
+
+[[case]]
+name = "V_uppercase"
+buffer = "  abc def\n  ghi jkl\nmno"
+cursor = [0, 5]
+keys = "VjU"
+
+[[case]]
+name = "V_join"
+buffer = "  abc def\n  ghi jkl\nmno"
+cursor = [0, 5]
+keys = "VjJ"
+
+[[case]]
+name = "V_replace"
+buffer = "  abc def\n  ghi jkl\nmno"
+cursor = [1, 5]
+keys = "Vkrx"
+
+[[case]]
+name = "V_X"
+buffer = "  abc def\n  ghi jkl\nmno"
+cursor = [1, 5]
+keys = "VkX"
+
+[[case]]
+name = "V_D"
+buffer = "  abc def\n  ghi jkl\nmno"
+cursor = [0, 5]
+keys = "VjD"
+
+[[case]]
+name = "V_Y"
+buffer = "  abc def\n  ghi jkl\nmno"
+cursor = [1, 5]
+keys = "VkY"
+
+[[case]]
+name = "V_C"
+buffer = "  abc def\n  ghi jkl\nmno"
+cursor = [1, 5]
+keys = "VkCX<Esc>"
+
+[[case]]
+name = "V_S"
+buffer = "  abc def\n  ghi jkl\nmno"
+cursor = [1, 5]
+keys = "VkSX<Esc>"
+
+[[case]]
+name = "V_R"
+buffer = "  abc def\n  ghi jkl\nmno"
+cursor = [1, 5]
+keys = "VkRX<Esc>"
+
+# Text objects.
+[[case]]
+name = "viw"
+buffer = "aaa bbb ccc"
+cursor = [0, 4]
+keys = "viw"
+
+[[case]]
+name = "viw_repeated"
+buffer = "aaa bbb ccc"
+cursor = [0, 4]
+keys = "viwiwiw"
+
+[[case]]
+name = "iw_backwards"
+buffer = "aaa bbb ccc"
+cursor = [0, 6]
+keys = "vhiwiw"
+
+[[case]]
+name = "v_count_iw"
+buffer = "aaa bbb ccc"
+cursor = [0, 4]
+keys = "v2iw"
+
+[[case]]
+name = "vaw_repeated"
+buffer = "aaa bbb ccc"
+cursor = [0, 4]
+keys = "vawaw"
+
+[[case]]
+name = "Viw_is_charwise"
+buffer = "aaa bbb ccc"
+cursor = [0, 4]
+keys = "Viwd"
+
+[[case]]
+name = "vi_paren"
+buffer = "f(a, (b c), d)"
+cursor = [0, 7]
+keys = "vi("
+
+[[case]]
+name = "vi_paren_repeated"
+buffer = "f(a, (b c), d)"
+cursor = [0, 7]
+keys = "vi(i("
+
+[[case]]
+name = "va_paren_repeated"
+buffer = "f(a, (b c), d)"
+cursor = [0, 7]
+keys = "va(a("
+
+[[case]]
+name = "vi_paren_then_a_paren"
+buffer = "f(a, (b c), d)"
+cursor = [0, 7]
+keys = "vi(a("
+
+[[case]]
+name = "va_quote"
+buffer = "x \"ab cd\" y"
+cursor = [0, 4]
+keys = "va\""
+
+[[case]]
+name = "vi_quote_repeated"
+buffer = "x \"ab cd\" y"
+cursor = [0, 4]
+keys = "vi\"i\""
+
+[[case]]
+name = "vi_paren_over_rows"
+buffer = "f(\n  a\n)"
+cursor = [1, 2]
+keys = "vi(d"
+
+# Empty rows.
+[[case]]
+name = "v_empty_row_y"
+buffer = "abc\n\ndef"
+cursor = [1, 0]
+keys = "vy"
+
+[[case]]
+name = "v_empty_row_d"
+buffer = "abc\n\ndef"
+cursor = [1, 0]
+keys = "vd"
+
+[[case]]
+name = "v_onto_empty_row_y"
+buffer = "abcdef\n\nabcdef"
+cursor = [0, 4]
+keys = "vjy"
+
+[[case]]
+name = "v_over_empty_row_d"
+buffer = "  abc def\n\n  ghi jkl\nmno"
+cursor = [0, 5]
+keys = "vjjd"
+
+[[case]]
+name = "V_over_empty_rows_d"
+buffer = "a\n\n\nb"
+cursor = [0, 0]
+keys = "Vjjd"
+
+# Multibyte and combining graphemes.
+[[case]]
+name = "v_combining_y"
+buffer = "abc\nde\u0301f"
+cursor = [1, 1]
+keys = "vy"
+
+[[case]]
+name = "v_combining_d"
+buffer = "de\u0301fg"
+cursor = [0, 0]
+keys = "vld"
+
+[[case]]
+name = "v_wide_y"
+buffer = "日本語abc"
+cursor = [0, 3]
+keys = "vly"
+
+[[case]]
+name = "v_multibyte_row_end_y"
+buffer = "aé\nb"
+cursor = [0, 0]
+keys = "v$y"
+
+[[case]]
+name = "v_multibyte_toggle_case"
+buffer = "éxéy"
+cursor = [0, 0]
+keys = "vlll~"
+
+# $ in visual mode.
+[[case]]
+name = "v_dollar"
+buffer = "abc\ndef"
+cursor = [0, 1]
+keys = "v$"
+
+[[case]]
+name = "v_dollar_y"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = "v$y"
+
+[[case]]
+name = "v_dollar_d_joins"
+buffer = "abc\ndef"
+cursor = [0, 1]
+keys = "v$d"
+
+[[case]]
+name = "v_dollar_last_row_y"
+buffer = "abc\ndef"
+cursor = [1, 0]
+keys = "v$y"
+
+[[case]]
+name = "v_dollar_j_y"
+buffer = "abc\ndefgh"
+cursor = [0, 0]
+keys = "v$jy"
+
+[[case]]
+name = "v_dollar_h"
+buffer = "abcdef"
+cursor = [0, 2]
+keys = "v$h"
+
+[[case]]
+name = "v_dollar_indent"
+buffer = "  abc def\n  ghi jkl\nmno"
+cursor = [0, 8]
+keys = "v$j>"
+
+# A count with >.
+[[case]]
+name = "v_count_indent"
+buffer = "  abc def\n  ghi jkl\nmno"
+cursor = [0, 5]
+keys = "vj3>"
+
+[[case]]
+name = "V_count_indent"
+buffer = "a\nb\nc"
+cursor = [0, 0]
+keys = "Vj2>"
+
+# . after visual changes.
+[[case]]
+name = "dot_v_d"
+buffer = "abcdefgh\nabcdefgh"
+cursor = [0, 1]
+keys = "vlldj."
+
+[[case]]
+name = "dot_v_d_past_row_end"
+buffer = "abcdefgh\nabc"
+cursor = [0, 1]
+keys = "vllld."
+
+[[case]]
+name = "dot_v_d_rows"
+buffer = "abcd\nabcdefgh\nab\nabcdefgh\nx"
+cursor = [0, 1]
+keys = "vjlllldj."
+
+[[case]]
+name = "dot_v_dollar_d"
+buffer = "abc\nabcdefgh\nx"
+cursor = [0, 1]
+keys = "v$d."
+
+[[case]]
+name = "dot_v_c"
+buffer = "abcdefgh\nabcdefgh"
+cursor = [0, 1]
+keys = "vlcXY<Esc>j."
+
+[[case]]
+name = "dot_v_toggle_case"
+buffer = "abcdefgh\nabcdefgh"
+cursor = [0, 1]
+keys = "vl~j."
+
+[[case]]
+name = "dot_v_D"
+buffer = "abcdefgh\nabcdefgh\nabcdefgh"
+cursor = [0, 1]
+keys = "vlDj."
+
+[[case]]
+name = "dot_V_d"
+buffer = "abcdefgh\nabcdefgh\nabcdefgh\nabcdefgh"
+cursor = [0, 1]
+keys = "Vjdj."
+
+[[case]]
+name = "dot_V_indent"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = "Vj>j."
+
+[[case]]
+name = "dot_V_c"
+buffer = "abcdefgh\nabcdefgh"
+cursor = [0, 1]
+keys = "VcXY<Esc>j."
+
+[[case]]
+name = "dot_V_join"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = "VjJj."
+
+# Found by comparing random cases with nvim: word motions and objects at the
+# end of the text, b from a row's end, aw growing backwards, objects at rows'
+# ends and over empty rows, . by display columns and past the last row, and
+# the marks of rows a change joins or deletes at the end.
+
+[[case]]
+name = "v_e_to_end_of_text"
+buffer = "abc def"
+cursor = [0, 6]
+keys = "ve"
+
+[[case]]
+name = "v_w_to_end_of_text"
+buffer = "abc def  "
+cursor = [0, 4]
+keys = "vw"
+
+[[case]]
+name = "v_b_from_row_end"
+buffer = "ab cd"
+cursor = [0, 0]
+keys = "v$b"
+
+[[case]]
+name = "iw_repeated_to_end_of_text"
+buffer = "abc def"
+cursor = [0, 4]
+keys = "viwiw"
+
+[[case]]
+name = "aw_backwards_from_blank"
+buffer = "aaa bbb ccc"
+cursor = [0, 9]
+keys = "vhaw"
+
+[[case]]
+name = "aw_backwards_from_word"
+buffer = "aaa bbb ccc"
+cursor = [0, 10]
+keys = "vhawaw"
+
+[[case]]
+name = "vaw_on_empty_rows"
+buffer = "x\n\n\ny z"
+cursor = [1, 0]
+keys = "vaw"
+
+[[case]]
+name = "vaW_on_empty_rows_d"
+buffer = "x\n\n\ny z\n\nw"
+cursor = [1, 0]
+keys = "vaWd"
+
+[[case]]
+name = "vi_paren_to_row_end_y"
+buffer = "(a\n  (b c)\n)"
+cursor = [0, 0]
+keys = "vi(y"
+
+[[case]]
+name = "vi_quote_in_larger_selection"
+buffer = "x \"ab cd\" y"
+cursor = [0, 7]
+keys = "vli\""
+
+[[case]]
+name = "dot_v_d_wide_columns"
+buffer = "日本x\nabcdef"
+cursor = [0, 0]
+keys = "vldj0."
+
+[[case]]
+name = "dot_v_d_tab_columns"
+buffer = "\tab\nabcdefgh"
+cursor = [0, 0]
+keys = "vdj0."
+
+[[case]]
+name = "dot_v_d_rows_past_end"
+buffer = "word\n   indented\nlast row"
+cursor = [0, 1]
+keys = "v2jdgg."
+
+[[case]]
+name = "dot_v_dollar_cursor_first"
+buffer = "word\n   indented\nlast row"
+cursor = [2, 4]
+keys = "vgg$d."
+
+[[case]]
+name = "dot_joins_marked_row"
+buffer = "  one two\n\tthree\nfour five six\nx"
+cursor = [1, 4]
+keys = "v3lldk."
+
+[[case]]
+name = "dot_J_moves_marks"
+buffer = "  one two\n\tthree\nfour five six\nx"
+cursor = [1, 4]
+keys = "v$WJgg."
+
+[[case]]
+name = "V_J_on_last_row"
+buffer = "ab\ncd"
+cursor = [1, 1]
+keys = "VJ"
+
+[[case]]
+name = "marks_past_end_after_V_d"
+buffer = "a\nb\nc"
+cursor = [1, 0]
+keys = "Vjd"
+
+[[case]]
+name = "marks_past_end_after_V_c"
+buffer = "aa\nbb\ncc"
+cursor = [1, 0]
+keys = "VjcX<Esc>"
+
+[[case]]
+name = "marks_on_deleted_row_after_s"
+buffer = "aaa\n\nbbbb ccc\n\n  dd"
+cursor = [2, 2]
+keys = "v<Down>sZ<Esc>"
+
+# From review: empty brackets and quotes, iw and iW growing over empty rows,
+# finds from a row's end, u and U on titlecase letters, . after a one-row $
+
+# change from different columns, and J moving the marks of every joined row.
+
+[[case]]
+name = "vi_empty_parens_d"
+buffer = "a()z"
+cursor = [0, 1]
+keys = "vi(d"
+
+[[case]]
+name = "vi_empty_parens_on_close_d"
+buffer = "a()z"
+cursor = [0, 2]
+keys = "vi(d"
+
+[[case]]
+name = "vi_empty_braces_d"
+buffer = "a{}z"
+cursor = [0, 1]
+keys = "vi{d"
+
+[[case]]
+name = "vi_empty_double_quotes_d"
+buffer = "a\"\"z"
+cursor = [0, 1]
+keys = "vi\"d"
+
+[[case]]
+name = "vi_empty_single_quotes_d"
+buffer = "a''z"
+cursor = [0, 1]
+keys = "vi'd"
+
+[[case]]
+name = "vi_empty_quotes_from_close"
+buffer = "a\"\"z"
+cursor = [0, 2]
+keys = "vi\""
+
+[[case]]
+name = "iw_grows_over_empty_row"
+buffer = "abc\n\ndef"
+cursor = [0, 0]
+keys = "viwiw"
+
+[[case]]
+name = "iw_grows_over_empty_row_d"
+buffer = "abc\n\ndef"
+cursor = [0, 0]
+keys = "viwiwd"
+
+[[case]]
+name = "iW_grows_over_empty_row"
+buffer = "abc\n\ndef"
+cursor = [0, 0]
+keys = "viWiW"
+
+[[case]]
+name = "iw_grows_over_empty_rows"
+buffer = "abc\n\n\ndef"
+cursor = [0, 0]
+keys = "viwiwiw"
+
+[[case]]
+name = "v_count_iw_over_empty_row"
+buffer = "abc\n\ndef"
+cursor = [0, 0]
+keys = "v2iw"
+
+[[case]]
+name = "iw_grows_back_onto_empty_row"
+buffer = "abc\n\ndef"
+cursor = [2, 2]
+keys = "vhiwiw"
+
+[[case]]
+name = "v_F_from_row_end"
+buffer = "abc"
+cursor = [0, 0]
+keys = "v$Fc"
+
+[[case]]
+name = "v_F_count_from_row_end"
+buffer = "abcabc"
+cursor = [0, 0]
+keys = "v$2Fb"
+
+[[case]]
+name = "v_T_adjacent_from_row_end"
+buffer = "abc"
+cursor = [0, 0]
+keys = "v$Tc"
+
+[[case]]
+name = "v_T_from_row_end"
+buffer = "abc"
+cursor = [0, 0]
+keys = "v$Tb"
+
+[[case]]
+name = "v_F_repeat_from_row_end"
+buffer = "abcab"
+cursor = [0, 0]
+keys = "v$Fa;"
+
+[[case]]
+name = "v_lowercase_titlecase"
+buffer = "ǅǈǋǲ"
+cursor = [0, 0]
+keys = "v$u"
+
+[[case]]
+name = "v_uppercase_titlecase"
+buffer = "ǅǈǋǲ"
+cursor = [0, 0]
+keys = "v$U"
+
+[[case]]
+name = "v_toggle_titlecase"
+buffer = "ǅǈǋǲ"
+cursor = [0, 0]
+keys = "v$~"
+
+[[case]]
+name = "dot_dollar_from_column_0"
+buffer = "abcdefgh\nxyz\nabcdefgh"
+cursor = [0, 4]
+keys = "v$dj0."
+
+[[case]]
+name = "dot_dollar_from_column_1"
+buffer = "abcdefgh\nxyz\nabcdefgh"
+cursor = [0, 4]
+keys = "v$dj0l."
+
+[[case]]
+name = "dot_dollar_from_column_3"
+buffer = "abcdefgh\nxyz\nabcdefgh"
+cursor = [0, 4]
+keys = "v$dj03l."
+
+[[case]]
+name = "dot_dollar_from_column_2"
+buffer = "abcde\nxyzuvw\nqqq"
+cursor = [0, 2]
+keys = "v$d."
+
+[[case]]
+name = "dot_dollar_over_rows_reversed"
+buffer = "abcdefgh\nabcdefgh\nabcdefgh"
+cursor = [1, 4]
+keys = "vk$dj03l."
+
+[[case]]
+name = "dot_J_intermediate_row_marks"
+buffer = "aa\nbb\ncc\ndd\nee\nff\ngg"
+cursor = [2, 1]
+keys = "vjjJggj."
+
+[[case]]
+name = "dot_J_one_row_joins_marked_row"
+buffer = "aa\nbb\ncc\ndd\nee\nff\ngg"
+cursor = [2, 1]
+keys = "vJggj."
+
+# From review round 2: counted iw and iW growing back from a row's end and
+# from an empty last row, iw counts growing backwards, and . after a one-row
+
+# $ change from a caret on a tab.
+
+[[case]]
+name = "v_count_iw_from_row_end"
+buffer = "abc"
+cursor = [0, 0]
+keys = "v$o$2iw"
+
+[[case]]
+name = "v_count_iW_from_row_end"
+buffer = "abc"
+cursor = [0, 0]
+keys = "v$o$2iW"
+
+[[case]]
+name = "v_iw_from_row_end"
+buffer = "abc"
+cursor = [0, 0]
+keys = "v$o$iw"
+
+[[case]]
+name = "v_count_iw_from_row_end_over_blanks"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "v$o$3iw"
+
+[[case]]
+name = "v_count_iw_from_row_end_lone_char"
+buffer = "ab c"
+cursor = [0, 0]
+keys = "v$o$2iw"
+
+[[case]]
+name = "v_count_iw_from_empty_last_row_d"
+buffer = "abc"
+cursor = [0, 0]
+keys = "Go<Esc>v2iwd"
+
+[[case]]
+name = "v_count_iW_from_empty_last_row_d"
+buffer = "abc"
+cursor = [0, 0]
+keys = "Go<Esc>v2iWd"
+
+[[case]]
+name = "v_iw_from_empty_last_row"
+buffer = "abc"
+cursor = [0, 0]
+keys = "Go<Esc>viw"
+
+[[case]]
+name = "v_count_iw_from_empty_last_row_over_blanks_d"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "Go<Esc>v3iwd"
+
+[[case]]
+name = "iw_count_grows_backwards"
+buffer = "aaa bbb ccc"
+cursor = [0, 10]
+keys = "vh2iw"
+
+[[case]]
+name = "iw_count_grows_backwards_over_blanks"
+buffer = "aaa bbb ccc"
+cursor = [0, 10]
+keys = "vh3iw"
+
+[[case]]
+name = "dot_dollar_from_tab_at_column_0"
+buffer = "abcde\nxyzuvw\n\tabcdef"
+cursor = [0, 2]
+keys = "v$dj0."
+
+[[case]]
+name = "dot_dollar_from_tab_at_column_1"
+buffer = "abcde\nxyzuvw\na\tbcdef"
+cursor = [0, 2]
+keys = "v$dj0l."
+
+[[case]]
+name = "dot_dollar_toggle_case_from_tab"
+buffer = "abcde\na\tbcdef\nxyz"
+cursor = [0, 2]
+keys = "v$~j0l."
+
+[[case]]
+name = "iW_back_at_start_of_text_keeps_kind_y"
+buffer = "word\n   indented\nlast row"
+cursor = [0, 2]
+keys = "VBiWy"

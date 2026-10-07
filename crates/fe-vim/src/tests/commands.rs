@@ -10,7 +10,7 @@ fn move_dispatches_through_the_registry() {
     let meta = registry.get(&id).expect("vim.move is registered");
     assert_eq!(
         meta.context,
-        Some(ContextPredicate::parse("editor && vim.mode == normal").unwrap())
+        Some(ContextPredicate::parse("editor && (vim.mode == normal || vim.visual)").unwrap())
     );
     assert!(!meta.mutates_buffer);
     assert!(meta.args_schema.is_some());
@@ -51,11 +51,17 @@ fn move_dispatches_through_the_registry() {
 #[test]
 fn operate_and_put_are_registered() {
     let registry = registry();
-    for id in ["vim.operate", "vim.put"] {
+    for (id, context) in [
+        (
+            "vim.operate",
+            "editor && (vim.mode == normal || vim.visual)",
+        ),
+        ("vim.put", "editor && vim.mode == normal"),
+    ] {
         let meta = registry.get(&id.parse().unwrap()).expect(id);
         assert_eq!(
             meta.context,
-            Some(ContextPredicate::parse("editor && vim.mode == normal").unwrap()),
+            Some(ContextPredicate::parse(context).unwrap()),
             "{id}"
         );
         assert!(meta.mutates_buffer, "{id}");

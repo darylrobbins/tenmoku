@@ -4,7 +4,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// `d y c > <`.
+/// `d y c > <`, and over a visual selection only, `~ u U J r{char}`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Operator {
@@ -13,6 +13,12 @@ pub enum Operator {
     Change,
     Indent,
     Outdent,
+    ToggleCase,
+    Lowercase,
+    Uppercase,
+    Join,
+    /// `r{char}`: every grapheme but line breaks becomes the char.
+    Replace(char),
 }
 
 /// A motion, by its keys: `h l k j` are `left right up down`; `w b e` are
@@ -118,13 +124,47 @@ pub enum TextObject {
 pub enum Target {
     Motion(Motion),
     TextObject(TextObject),
+    /// The visual selection, as its kind takes it: in a visual mode only.
+    Selection,
+    /// The visual selection's rows, whole: `X D Y C S R`.
+    SelectedLines,
+}
+
+impl Target {
+    /// Whether it's the visual selection's.
+    pub fn is_selection(self) -> bool {
+        matches!(self, Self::Selection | Self::SelectedLines)
+    }
+}
+
+/// A visual mode's kind: `v` or `V`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum VisualKind {
+    Char,
+    Line,
+}
+
+/// `vim.visual`'s args: `v` or `V`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct VisualArgs {
+    pub kind: VisualKind,
+}
+
+/// `vim.select`'s args: a text object typed in a visual mode.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SelectArgs {
+    pub text_object: TextObject,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<u32>,
 }
 
 /// `vim.move`'s args.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct MoveArgs {
     pub motion: Motion,
-    /// Keep each selection's tail, extending it (visual mode, later).
+    /// Keep each selection's tail, extending it. In a visual mode the
+    /// anchor stays whatever it says.
     #[serde(default)]
     pub extend: bool,
     /// The typed count; `None` when there was none, so `G` and `1G` differ.
@@ -137,7 +177,8 @@ pub struct MoveArgs {
 pub struct OperateArgs {
     pub operator: Operator,
     pub target: Target,
-    /// Both typed counts multiplied: `2d3w` is 6.
+    /// Both typed counts multiplied: `2d3w` is 6. Over a selection, how
+    /// many times `>` and `<` shift; the others ignore it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub count: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

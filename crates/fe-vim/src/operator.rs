@@ -20,7 +20,7 @@ use crate::{
     Change, Motion, MoveArgs, OperateArgs, Operator, PutArgs, RangeClass, Register, Registers,
     Target, VimState, VimTarget, Write, history, insert,
     motion::{self, Cursor},
-    text_object,
+    text_object, visual,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -425,19 +425,49 @@ fn keeping_last_change<R>(
     result
 }
 
-/// `vim.operate`.
+/// `vim.operate`: over a motion or text object in normal mode, or over the
+/// selection in a visual mode (see `visual::operate`). `~ u U J r{char}` act
+/// only on a selection.
 pub(crate) fn operate(
     target: &mut VimTarget<'_>,
     actor: &Actor,
     args: OperateArgs,
 ) -> Result<Dispatched<TransactionId>, CommandError> {
-    keeping_last_change(target, |target| operate_unless_failing(target, actor, args))
+    if args.target.is_selection() {
+        return keeping_last_change(target, |target| visual::operate(target, actor, args));
+    }
+    if !matches!(
+        args.operator,
+        Operator::Delete | Operator::Yank | Operator::Change | Operator::Indent | Operator::Outdent
+    ) {
+        return Err(CommandError::new(format!(
+            "{:?} acts only on a visual selection",
+            args.operator
+        )));
+    }
+    keeping_last_change(target, |target| {
+        operate_unless_failing(target, actor, args, None)
+    })
+}
+
+/// `d y c > <` over a visual selection's `span`, from one caret at the vim
+/// cursor, its goal column held in the state: the operator code as for a
+/// motion, without the adjustments motions get (`:help exclusive`). A count
+/// is how many times `>` and `<` shift.
+pub(crate) fn operate_span(
+    target: &mut VimTarget<'_>,
+    actor: &Actor,
+    args: OperateArgs,
+    span: Span,
+) -> Result<Dispatched<TransactionId>, CommandError> {
+    operate_unless_failing(target, actor, args, Some(span))
 }
 
 fn operate_unless_failing(
     target: &mut VimTarget<'_>,
     actor: &Actor,
     args: OperateArgs,
+    selected: Option<Span>,
 ) -> Result<Dispatched<TransactionId>, CommandError> {
     if let Some(name) = args.register {
         Registers::check(name).map_err(|error| CommandError::new(error.to_string()))?;
@@ -492,6 +522,9 @@ fn operate_unless_failing(
                 Target::TextObject(object) => {
                     text_object::select(&text, head, object, args.count.unwrap_or(1))
                 }
+                Target::Selection | Target::SelectedLines => {
+                    selected.clone().unwrap_or(Span::Failed)
+                }
             };
             let start = match (&span, args.target) {
                 (Span::Chars(range), _) => Some(range.start),
@@ -508,7 +541,7 @@ fn operate_unless_failing(
                 _ => None,
             };
             let span = match args.operator {
-                Operator::Delete => whole_rows(&text, span),
+                Operator::Delete if selected.is_none() => whole_rows(&text, span),
                 _ => span,
             };
             (span, start)
@@ -600,9 +633,13 @@ fn operate_unless_failing(
         shifted.sort_unstable();
         shifted.dedup();
         let indent = args.operator == Operator::Indent;
+        let times = match selected {
+            Some(_) => args.count.unwrap_or(1).max(1) as usize,
+            None => 1,
+        };
         let edits: Vec<(Range<usize>, String)> = shifted
             .into_iter()
-            .filter_map(|row| shift(&text, row, indent, tab))
+            .filter_map(|row| shift(&text, row, indent, tab, tab.saturating_mul(times)))
             .collect();
         let (transaction, snapshot) = apply(model, edits, origin(actor));
         if let Some(id) = transaction {
@@ -775,16 +812,20 @@ fn operate_unless_failing(
             Ok(Dispatched::new(Effect::Changed)
                 .with_transactions(transaction.into_iter().collect()))
         }
-        Operator::Indent | Operator::Outdent | Operator::Change => {
-            unreachable!("shifted or changed above")
-        }
+        _ => unreachable!("shifted or changed above, or refused"),
     }
 }
 
-/// `>>` or `<<` on `row`: its leading blanks rewritten as spaces, one
-/// 'shiftwidth' (the tab size) more or less wide. Empty rows are left
-/// alone, as are rows whose indent wouldn't change.
-fn shift(text: &Text, row: u32, indent: bool, tab: usize) -> Option<(Range<usize>, String)> {
+/// `>>` or `<<` on `row`: its leading blanks rewritten as spaces, `by`
+/// columns (a 'shiftwidth', the tab size, per shift) more or less wide.
+/// Empty rows are left alone, as are rows whose indent wouldn't change.
+fn shift(
+    text: &Text,
+    row: u32,
+    indent: bool,
+    tab: usize,
+    by: usize,
+) -> Option<(Range<usize>, String)> {
     let line = text.row_to_string(row);
     if line.is_empty() {
         return None;
@@ -798,8 +839,8 @@ fn shift(text: &Text, row: u32, indent: bool, tab: usize) -> Option<(Range<usize
         _ => column + 1,
     });
     let width = match indent {
-        true => width + tab,
-        false => width.saturating_sub(tab),
+        true => width.saturating_add(by),
+        false => width.saturating_sub(by),
     };
     let spaces = " ".repeat(width);
     let start = text.row_start(row);

@@ -5,10 +5,11 @@ use fe_command::{ContextFrame, ContextStack};
 use fe_editor::{EditorModel, commands::CONTEXT};
 
 use crate::{
-    LastChange, Motion, Pending, Step, VimKey,
+    LastChange, Motion, Pending, Step, VimKey, VisualKind,
     history::Carets,
     insert::{Closing, Session},
     step,
+    visual::{Extent, LastVisual, Visual},
 };
 
 /// The context key holding the mode's name.
@@ -17,8 +18,10 @@ const MODE: &str = "vim.mode";
 const PENDING: &str = "vim.pending";
 /// What the incomplete command waits on: [`crate::PendingKind::name`].
 const PENDING_KIND: &str = "vim.pending_kind";
+/// The flag set in every visual mode, so a binding can name them all.
+const VISUAL: &str = "vim.visual";
 
-/// The editing mode. The visual modes come later.
+/// The editing mode.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Mode {
     #[default]
@@ -26,6 +29,9 @@ pub enum Mode {
     /// An insert session is open: typed text goes to the editor, not
     /// [`step`].
     Insert,
+    /// `v` or `V`: keys go to [`step`], which reads operators as acting on
+    /// the selection.
+    Visual(VisualKind),
 }
 
 /// Each caret's head and its goal column.
@@ -52,6 +58,12 @@ pub struct VimState {
     pub(crate) carets: Carets,
     /// Set while `.` replays a change inside its own transaction.
     pub(crate) replaying: bool,
+    /// Set in a visual mode: its anchor and cursor.
+    pub(crate) visual: Option<Visual>,
+    /// The last visual mode's extent, for `gv`, `'<` and `'>`.
+    pub(crate) last_visual: Option<LastVisual>,
+    /// How much text the last change over a selection took, for `.`.
+    pub(crate) visual_extent: Option<Extent>,
 }
 
 impl VimState {
@@ -118,29 +130,34 @@ impl VimState {
         self.last_change.as_ref()
     }
 
-    /// `vim.mode`: `normal`, `insert`, or `operator_pending` while an
-    /// operator waits for its target.
+    /// `vim.mode`: `normal`, `insert`, `visual`, `visual_line`, or
+    /// `operator_pending` while an operator waits for its target.
     pub fn mode_name(&self) -> &'static str {
         match self.mode {
             Mode::Normal if self.pending.has_operator() => "operator_pending",
             Mode::Normal => "normal",
             Mode::Insert => "insert",
+            Mode::Visual(VisualKind::Char) => "visual",
+            Mode::Visual(VisualKind::Line) => "visual_line",
         }
     }
 
-    /// Runs [`step`] on the pending input and keeps what it leaves pending:
-    /// nothing, unless it waits.
+    /// Runs [`step`] on the pending input, read in the mode it's in, and
+    /// keeps what it leaves pending: nothing, unless it waits.
     pub fn feed(&mut self, key: VimKey) -> Step {
-        let result = step(std::mem::take(&mut self.pending), key);
+        let visual = matches!(self.mode, Mode::Visual(_));
+        let pending = std::mem::take(&mut self.pending).in_visual(visual);
+        let result = step(pending, key);
         if let Step::Wait(pending) = &result {
             self.pending = pending.clone();
         }
         result
     }
 
-    /// Publishes the mode on `frame`, the editor's own: `vim.mode`, plus the
-    /// flag `vim.pending` and `vim.pending_kind` while anything is pending,
-    /// a bare count or a completed `"a` included.
+    /// Publishes the mode on `frame`, the editor's own: `vim.mode`, the flag
+    /// `vim.visual` in a visual mode, plus the flag `vim.pending` and
+    /// `vim.pending_kind` while anything is pending, a bare count or a
+    /// completed `"a` included.
     ///
     /// The host stamps the context for every key (and each frame), so an
     /// open insert session follows the buffer's edits made since then,
@@ -150,6 +167,12 @@ impl VimState {
             session.follow_edits();
         }
         let mut frame = frame.set(MODE, self.mode_name());
+        match self.mode {
+            Mode::Visual(_) => frame = frame.flag(VISUAL),
+            _ => {
+                frame.flags.remove(VISUAL);
+            }
+        }
         match self.pending.kind() {
             Some(kind) => frame.flag(PENDING).set(PENDING_KIND, kind.name()),
             None => {

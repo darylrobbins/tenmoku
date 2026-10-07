@@ -7,12 +7,20 @@ use crate::{
     VimKey,
     args::{
         CountArgs, InsertArgs, InsertAt, Motion, MoveArgs, OperateArgs, Operator, PutArgs,
-        ReplaceCharArgs, Target, TextObject,
+        ReplaceCharArgs, SelectArgs, Target, TextObject, VisualArgs, VisualKind,
     },
 };
 
 /// The whole incomplete command: counts, `"{reg}`, an operator and a prefix
-/// awaiting its next key. The default is nothing pending.
+/// awaiting its next key. The default is nothing pending, in normal mode.
+///
+/// It also says whether a visual mode is on, which [`step`] can't see
+/// otherwise: there an operator acts on the selection at once, `i` and `a`
+/// start text objects, and `<Esc>` leaves the mode. [`VimState`] sets that
+/// before each key ([`Pending::visual`] starts from it); it isn't pending
+/// input, so [`Pending::kind`] ignores it.
+///
+/// [`VimState`]: crate::VimState
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Pending {
     /// The product of the counts already finished (`2` of `2d3`).
@@ -22,6 +30,7 @@ pub struct Pending {
     register: Option<char>,
     operator: Option<Operator>,
     prefix: Option<Prefix>,
+    visual: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -87,6 +96,29 @@ impl Pending {
         Self::default()
     }
 
+    /// Nothing pending, in a visual mode.
+    pub fn visual() -> Self {
+        Self {
+            visual: true,
+            ..Self::default()
+        }
+    }
+
+    /// Whether it's read in a visual mode.
+    pub fn is_visual(&self) -> bool {
+        self.visual
+    }
+
+    /// The same pending input, read in a visual mode or not.
+    pub(crate) fn in_visual(self, visual: bool) -> Self {
+        Self { visual, ..self }
+    }
+
+    /// Nothing is pending (in either mode).
+    fn is_empty(&self) -> bool {
+        self.kind().is_none()
+    }
+
     /// What it waits on, by the last thing typed; `None` if nothing is
     /// pending.
     pub fn kind(&self) -> Option<PendingKind> {
@@ -121,7 +153,7 @@ impl Pending {
 
     /// A key that doesn't continue the command.
     fn reject(&self) -> Step {
-        if *self == Self::default() {
+        if self.is_empty() {
             Step::Forward
         } else {
             Step::Cancel
@@ -144,11 +176,11 @@ impl Pending {
                 "vim.move",
                 MoveArgs {
                     motion,
-                    extend: false,
+                    extend: self.visual,
                     count: self.count,
                 },
             ),
-            (None, Target::TextObject(_)) => Step::Cancel,
+            (None, _) => Step::Cancel,
         }
     }
 
@@ -165,6 +197,8 @@ impl Pending {
                 ..self
             }),
             Prefix::G if ch == 'g' => self.commit(Target::Motion(Motion::DocumentStart)),
+            // `gv`, which drops a count.
+            Prefix::G if ch == 'v' && self.operator.is_none() => invocation("vim.reselect", ()),
             Prefix::Find(motion) => self.commit(Target::Motion(match motion {
                 Motion::FindForward(_) => Motion::FindForward(ch),
                 Motion::FindBackward(_) => Motion::FindBackward(ch),
@@ -172,9 +206,23 @@ impl Pending {
                 _ => Motion::TillBackward(ch),
             })),
             Prefix::Object { inner } => match text_object(ch, inner) {
+                Some(text_object) if self.visual => {
+                    self.end_count();
+                    invocation(
+                        "vim.select",
+                        SelectArgs {
+                            text_object,
+                            count: self.count,
+                        },
+                    )
+                }
                 Some(object) => self.commit(Target::TextObject(object)),
                 None => Step::Cancel,
             },
+            Prefix::Replace if self.visual => {
+                self.operator = Some(Operator::Replace(ch));
+                self.commit(Target::Selection)
+            }
             Prefix::Replace => {
                 self.end_count();
                 invocation(
@@ -190,17 +238,29 @@ impl Pending {
     }
 }
 
-/// Reads one key in normal or operator-pending mode. Pure: it sees only the
-/// pending value and the key, never a model or buffer.
+/// Reads one key in normal, operator-pending or a visual mode (as `pending`
+/// says). Pure: it sees only the pending value and the key, never a model or
+/// buffer.
+///
+/// The named arrows are `h l k j` after a count or an operator, and in a
+/// visual mode; with nothing pending in normal mode they're forwarded, to
+/// the editor's own cursor keys.
 pub fn step(mut pending: Pending, key: VimKey) -> Step {
     if let Some(prefix) = pending.prefix.take() {
         return pending.complete(prefix, key);
     }
+    let continues = pending.visual || !pending.is_empty();
     let ch = match key {
         VimKey::Char(ch) => ch,
+        // In a visual mode it leaves the mode, dropping a count or register.
+        VimKey::Esc if pending.visual => return invocation("vim.visual_exit", ()),
         VimKey::Esc => return Step::Cancel,
+        VimKey::Left if continues => 'h',
+        VimKey::Right if continues => 'l',
+        VimKey::Up if continues => 'k',
+        VimKey::Down if continues => 'j',
         // In normal mode vim wins ctrl keys (§10).
-        VimKey::Ctrl('r') if pending.operator.is_none() => {
+        VimKey::Ctrl('r') if pending.operator.is_none() && !pending.visual => {
             pending.end_count();
             return invocation(
                 "vim.redo",
@@ -226,8 +286,12 @@ pub fn step(mut pending: Pending, key: VimKey) -> Step {
         'F' => Prefix::Find(Motion::FindBackward(' ')),
         't' => Prefix::Find(Motion::TillForward(' ')),
         'T' => Prefix::Find(Motion::TillBackward(' ')),
-        'i' | 'a' if pending.operator.is_some() => Prefix::Object { inner: ch == 'i' },
+        'i' | 'a' if pending.operator.is_some() || pending.visual => {
+            Prefix::Object { inner: ch == 'i' }
+        }
         'r' if pending.operator.is_none() => Prefix::Replace,
+        _ if pending.visual => return pending.visual_key(ch),
+        'v' | 'V' if pending.is_empty() => return visual(ch),
         _ => {
             if let Some(operator) = operator(ch) {
                 return match pending.operator {
@@ -294,6 +358,48 @@ pub fn step(mut pending: Pending, key: VimKey) -> Step {
     pending.end_count();
     pending.prefix = Some(prefix);
     Step::Wait(pending)
+}
+
+impl Pending {
+    /// A key in a visual mode that isn't a prefix: an operator acts on the
+    /// selection at once.
+    fn visual_key(mut self, ch: char) -> Step {
+        use Operator::*;
+        let (operator, target) = match ch {
+            // A count or register is dropped.
+            'v' | 'V' => return visual(ch),
+            'o' | 'O' => return invocation("vim.visual_swap", ()),
+            'd' | 'x' => (Delete, Target::Selection),
+            'y' => (Yank, Target::Selection),
+            'c' | 's' => (Change, Target::Selection),
+            '>' => (Indent, Target::Selection),
+            '<' => (Outdent, Target::Selection),
+            '~' => (ToggleCase, Target::Selection),
+            'u' => (Lowercase, Target::Selection),
+            'U' => (Uppercase, Target::Selection),
+            'J' => (Join, Target::Selection),
+            'X' | 'D' => (Delete, Target::SelectedLines),
+            'Y' => (Yank, Target::SelectedLines),
+            'C' | 'S' | 'R' => (Change, Target::SelectedLines),
+            _ => {
+                return match motion(ch) {
+                    Some(motion) => self.commit(Target::Motion(motion)),
+                    None => self.reject(),
+                };
+            }
+        };
+        self.operator = Some(operator);
+        self.commit(target)
+    }
+}
+
+/// `vim.visual` for `v` or `V`.
+fn visual(ch: char) -> Step {
+    let kind = match ch {
+        'v' => VisualKind::Char,
+        _ => VisualKind::Line,
+    };
+    invocation("vim.visual", VisualArgs { kind })
 }
 
 fn invocation(command: &str, args: impl Serialize) -> Step {

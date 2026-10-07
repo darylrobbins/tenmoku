@@ -950,8 +950,8 @@ pub(crate) fn change(
             // empty row) still writes, as nvim does.
             Span::Chars(range) => {
                 let inclusive = match args.target {
-                    Target::TextObject(_) => true,
                     Target::Motion(motion) => motion.class() == RangeClass::Inclusive,
+                    _ => true,
                 };
                 (
                     None,

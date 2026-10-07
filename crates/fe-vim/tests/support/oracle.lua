@@ -2,6 +2,9 @@
 -- Run by the ignored `record_corpus_with_neovim` test:
 --   nvim --clean --headless -l oracle.lua <cases.json> <results.json>
 -- Each case is {name, buffer, cursor = {row, byte_col}, keys}, rows from 0.
+-- A result also holds `visual = {row, byte_col}`, the visual anchor
+-- (getpos('v')), only when the case ends in a visual mode, and
+-- `marks = {"<": {row, byte_col}, ">": ...}` for the marks that are set.
 
 local input, output = arg[1], arg[2]
 
@@ -60,6 +63,26 @@ for _, case in ipairs(vim.json.decode(read(input))) do
   vim.api.nvim_feedkeys(keys, "xt", false)
 
   local cursor = vim.api.nvim_win_get_cursor(0)
+  local mode = vim.api.nvim_get_mode().mode
+  local visual = nil
+  if mode == "v" or mode == "V" then
+    local pos = vim.fn.getpos("v")
+    visual = { pos[2] - 1, pos[3] - 1 }
+  end
+  local marks = nil
+  for _, name in ipairs({ "<", ">" }) do
+    local pos = vim.fn.getpos("'" .. name)
+    if pos[2] ~= 0 then
+      local col = pos[3] - 1
+      -- A linewise '> is at v:maxcol: record its row's last byte.
+      if col >= vim.v.maxcol - 1 then
+        local line = vim.api.nvim_buf_get_lines(0, pos[2] - 1, pos[2], false)[1] or ""
+        col = math.max(#line - 1, 0)
+      end
+      marks = marks or vim.empty_dict()
+      marks[name] = { pos[2] - 1, col }
+    end
+  end
   local registers = vim.empty_dict()
   for _, reg in ipairs(recorded) do
     local text = vim.fn.getreg(reg)
@@ -71,8 +94,10 @@ for _, case in ipairs(vim.json.decode(read(input))) do
     name = case.name,
     buffer = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n"),
     cursor = { cursor[1] - 1, cursor[2] },
-    mode = vim.api.nvim_get_mode().mode,
+    mode = mode,
     registers = registers,
+    visual = visual,
+    marks = marks,
   })
 end
 

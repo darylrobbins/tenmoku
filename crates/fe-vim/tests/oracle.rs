@@ -124,6 +124,8 @@ fn expected(nvim: &str, cases: &[Case]) -> String {
                     cursor: case.cursor,
                     mode: "n".to_string(),
                     registers: Default::default(),
+                    visual: None,
+                    marks: Default::default(),
                 },
             )
         })
