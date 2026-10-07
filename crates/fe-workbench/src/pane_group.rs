@@ -360,6 +360,8 @@ struct Press {
     divider: Divider,
     at: Point<Pixels>,
     ratios: Vec<f32>,
+    /// The tree's topology generation when pressed.
+    generation: u64,
 }
 
 /// Where a tab moves to.
@@ -383,6 +385,8 @@ pub struct PaneGroup {
     root: Member,
     /// The border being dragged.
     press: Option<Press>,
+    /// Counts changes to the tree's topology, which invalidate a press.
+    generation: u64,
     /// Calls of [`PaneGroup::move_tab`].
     #[cfg(test)]
     pub(crate) moves: usize,
@@ -393,6 +397,7 @@ impl PaneGroup {
         Self {
             root: Member::Pane(pane),
             press: None,
+            generation: 0,
             #[cfg(test)]
             moves: 0,
         }
@@ -411,11 +416,13 @@ impl PaneGroup {
 
     /// Puts `new` beside `old`, in `direction` from it.
     pub(crate) fn split(&mut self, old: &Entity<Pane>, new: Entity<Pane>, direction: Direction) {
+        self.generation += 1;
         self.root.split(old, new, direction);
     }
 
     /// Removes `pane`, unless it's the last.
     pub(crate) fn remove(&mut self, pane: &Entity<Pane>) {
+        self.generation += 1;
         self.root.remove(pane);
     }
 
@@ -475,6 +482,7 @@ impl PaneGroup {
             divider,
             at,
             ratios,
+            generation: self.generation,
         });
         Some(())
     }
@@ -492,7 +500,7 @@ impl PaneGroup {
         let press = self
             .press
             .as_ref()
-            .filter(|press| press.divider == *divider)?;
+            .filter(|press| press.divider == *divider && press.generation == self.generation)?;
         let (axis, members) = self.root.axis_at(&divider.path)?;
         let (a, b) = (divider.ix.checked_sub(1)?, divider.ix);
         if press.ratios.len() != members.len() || b >= members.len() {
@@ -519,8 +527,7 @@ impl PaneGroup {
     /// for a drag or a key. Into another pane, it goes at the index given,
     /// shown and focused; if that pane shows its file already, that tab is
     /// shown instead and the moved one closes, as long as its unsaved
-    /// changes live on in another tab. A split makes the pane first, unless
-    /// the tab is its pane's only one and would split from it. Within its
+    /// changes live on in another tab. A split makes the pane first. Within its
     /// own pane, the tab moves to the index. Returns the pane the tab went
     /// to (or that showed its file), and whether it was split off for the
     /// move: the workbench then watches it if so, activates it and closes a
@@ -544,15 +551,11 @@ impl PaneGroup {
             .tabs()
             .iter()
             .position(|open| open.id() == tab)?;
-        let only = source.read(cx).tabs().len() == 1;
         let (target, index, new) = match destination {
             Destination::Pane { pane, index } if in_group(&pane) && in_group(source) => {
                 (pane, index, false)
             }
             Destination::Split { pane, direction } if in_group(&pane) && in_group(source) => {
-                if only && pane == *source {
-                    return None;
-                }
                 let new = pane.update(cx, |pane, cx| cx.new(|cx| pane.new_peer(cx)));
                 self.split(&pane, new.clone(), direction);
                 (new, None, true)

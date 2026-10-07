@@ -130,8 +130,14 @@ pub(crate) fn marker(tabs: &[Bounds<Pixels>], index: usize, bar: Bounds<Pixels>)
         (None, Some(last)) => last.right(),
         (None, None) => bar.left() + px(1.),
     };
+    // Tabs can reach past the bar, scrolled or long.
+    let x = (x - px(1.)).clamp(bar.left(), (bar.right() - px(2.)).max(bar.left()));
     Bounds {
-        origin: point(x - px(1.), bar.top()),
+        origin: point(x, bar.top()),
         size: size(px(2.), TAB_HEIGHT),
     }
 }
+
+#[cfg(test)]
+#[path = "pane_drag_followup_tests.rs"]
+mod followup_tests;

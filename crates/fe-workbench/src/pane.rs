@@ -12,7 +12,7 @@ use std::{
 use fe_buffer::{Bias, Buffer};
 use fe_editor::EditorModel;
 use fe_gpui::{EditorSettings, EditorTheme, EditorView, SettingsEvent};
-use fe_ui::{TabBar, UiTheme};
+use fe_ui::{TAB_HEIGHT, TabBar, UiTheme};
 use gpui::{
     App, AppContext as _, Bounds, Context, DragMoveEvent, Entity, EntityId, EventEmitter,
     FocusHandle, Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Pixels,
@@ -468,6 +468,11 @@ impl Pane {
         let Some(target) = self.drop_target(at) else {
             return;
         };
+        // A pane's only tab dropped on its own pane stays as it is.
+        let own = dragged.pane.entity_id() == self.id;
+        if own && self.tabs.len() == 1 && self.tabs[0].id() == dragged.tab {
+            return;
+        }
         cx.emit(TabDropped {
             dragged: dragged.clone(),
             destination: target.destination(cx.entity()),
@@ -496,7 +501,19 @@ impl Pane {
             .h(hint.size.height)
             .bg(fill)
             .child(record(&self.hint_bounds));
-        Some(element.into_any_element())
+        if !matches!(self.hover?, DropTarget::TabBar(_)) {
+            return Some(element.into_any_element());
+        }
+        // The marker is clipped to the tab bar.
+        let clip = div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .w(self.bounds().size.width)
+            .h(TAB_HEIGHT)
+            .overflow_hidden()
+            .child(element);
+        Some(clip.into_any_element())
     }
 
     /// Whether a tab other than `editor`'s, in this pane or another, shows
@@ -626,6 +643,11 @@ impl Pane {
     /// Where tab `ix` was laid out in the last frame.
     pub(crate) fn tab_bounds(&self, ix: usize) -> Option<gpui::Bounds<gpui::Pixels>> {
         self.tab_scroll.bounds_for_item(ix)
+    }
+
+    /// Scrolls the tab bar left by `by`.
+    pub(crate) fn scroll_tabs(&self, by: Pixels) {
+        self.tab_scroll.set_offset(gpui::point(-by, gpui::px(0.)));
     }
 
     /// Where the content below the tab bar was laid out in the last frame.
