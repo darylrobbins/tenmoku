@@ -297,6 +297,9 @@ impl Workbench {
     /// error from the panel is logged. Asked again while the panel shows,
     /// it does nothing.
     fn prompt_open(&mut self, op: OpenOp, window: &mut Window, cx: &mut Context<Self>) {
+        if op == OpenOp::Settings {
+            return self.open_settings(window, cx);
+        }
         if self.prompting {
             return;
         }
@@ -319,12 +322,39 @@ impl Workbench {
                 .update_in(cx, |workbench, window, cx| {
                     workbench.prompting = false;
                     match (op, path) {
-                        (_, None) => {}
+                        (_, None) | (OpenOp::Settings, Some(_)) => {}
                         (OpenOp::Folder, Some(path)) => workbench.set_root(path, window, cx),
                         (OpenOp::File, Some(path)) => workbench
                             .active
                             .update(cx, |pane, cx| pane.open(path, window, cx)),
                     }
+                })
+                .ok();
+        })
+        .detach();
+    }
+
+    /// Opens the user's `settings.toml` in the active pane, creating it from
+    /// the template first, in the background, if it's missing.
+    fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(path) = open::settings_path(cx) else {
+            log::error!("can't open settings: there's no config directory");
+            return;
+        };
+        let created = cx.background_spawn({
+            let path = path.clone();
+            async move { open::create_settings(&path) }
+        });
+        cx.spawn_in(window, async move |workbench, cx| {
+            if let Err(error) = created.await {
+                log::error!("can't create {}: {error}", path.display());
+                return;
+            }
+            workbench
+                .update_in(cx, |workbench, window, cx| {
+                    workbench
+                        .active
+                        .update(cx, |pane, cx| pane.open(path, window, cx))
                 })
                 .ok();
         })

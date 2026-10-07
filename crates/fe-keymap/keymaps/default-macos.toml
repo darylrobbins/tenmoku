@@ -277,6 +277,11 @@ command = "workbench.open_folder"
 context = "workbench"
 
 [[bindings]]
+keys = "cmd-,"
+command = "workbench.open_settings"
+context = "workbench"
+
+[[bindings]]
 keys = "cmd-p"
 command = "quick_open.toggle"
 context = "workbench"

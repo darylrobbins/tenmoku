@@ -21,6 +21,13 @@ command = "app.show_all"
 separator = true
 
 [[menus.items]]
+title = "Settings…"
+command = "workbench.open_settings"
+
+[[menus.items]]
+separator = true
+
+[[menus.items]]
 title = "Services"
 system = "services"
 

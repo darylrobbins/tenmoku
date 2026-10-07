@@ -6,7 +6,12 @@
 //! hand: a folder re-roots the workbench in place
 //! ([`crate::Workbench::set_root`]), and a file opens in the active pane.
 
-use std::rc::Rc;
+use std::{
+    fs,
+    io::{self, Write as _},
+    path::PathBuf,
+    rc::Rc,
+};
 
 use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry};
 use fe_gpui::commands::RunCommand;
@@ -19,11 +24,14 @@ pub(crate) enum OpenOp {
     Folder,
     /// Pick a file to open in the active pane.
     File,
+    /// Open the user's `settings.toml`, creating it from the template.
+    Settings,
 }
 
 impl OpenOp {
     /// How the open panel is shown for it: one folder, or one file.
     pub(crate) fn prompt(self) -> PathPromptOptions {
+        debug_assert_ne!(self, OpenOp::Settings, "settings need no open panel");
         let folder = self == OpenOp::Folder;
         PathPromptOptions {
             files: !folder,
@@ -55,6 +63,7 @@ pub(crate) fn registry() -> Registry<OpenCommands> {
     let commands = [
         ("workbench.open_folder", "Open Folder…", OpenOp::Folder),
         ("workbench.open_file", "Open File…", OpenOp::File),
+        ("workbench.open_settings", "Settings…", OpenOp::Settings),
     ];
     let mut registry = Registry::new();
     for (id, title, op) in commands {
@@ -78,4 +87,42 @@ pub(crate) fn op(run: &RunCommand, cx: &App) -> Option<OpenOp> {
         log::warn!("{error}");
     }
     op
+}
+
+/// Where the tests say the user's config directory is, instead of the
+/// environment's: `None` is an app with no config directory.
+#[cfg(test)]
+pub(crate) struct ConfigDirOverride(pub Option<PathBuf>);
+
+#[cfg(test)]
+impl Global for ConfigDirOverride {}
+
+/// The user's `settings.toml`, if there's a config directory.
+pub(crate) fn settings_path(cx: &App) -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Some(over) = cx.try_global::<ConfigDirOverride>() {
+        return over
+            .0
+            .as_ref()
+            .map(|dir| dir.join(fe_config::paths::SETTINGS_FILE));
+    }
+    let _ = cx;
+    fe_config::user_settings_path()
+}
+
+/// Writes the settings template to `path`, with its directory, unless the
+/// file exists, which is never overwritten.
+pub(crate) fn create_settings(path: &std::path::Path) -> io::Result<()> {
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        Ok(mut file) => file.write_all(fe_config::USER_SETTINGS_TEMPLATE.as_bytes()),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(error),
+    }
 }

@@ -118,6 +118,14 @@ fn watch_config(
     window: WindowHandle<Workbench>,
     cx: &mut App,
 ) {
+    // The watcher skips a directory that's missing, so Settings… creating
+    // the user's file in a config directory made after launch wouldn't be
+    // seen until a restart.
+    if let Some(dir) = fe_config::config_dir()
+        && let Err(error) = std::fs::create_dir_all(&dir)
+    {
+        log::warn!("can't create {}: {error}", dir.display());
+    }
     let (sender, batches) = async_channel::unbounded();
     let paths = settings.paths().into_iter().chain(keymap.paths()).collect();
     let watcher = ConfigWatcher::new(paths, move |batch| {

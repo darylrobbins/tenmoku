@@ -1,0 +1,20 @@
+# fastedit settings.
+#
+# This file reloads when you save it. A project's `.fastedit/settings.toml`
+# overrides it, key by key. Uncomment a line to change that setting.
+
+[editor]
+# The font family. Unset, the first installed of JetBrains Mono, SF Mono and Menlo.
+# font_family = "JetBrains Mono"
+
+# The font size, in points (6 to 72).
+# font_size = 13.0
+
+# The line height, as a multiple of the font size (1 to 3).
+# line_height = 1.6
+
+# How many columns a tab advances to the next multiple of (1 to 16).
+# tab_size = 4
+
+# Whether long lines wrap at the window's edge.
+# soft_wrap = false

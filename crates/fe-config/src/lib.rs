@@ -18,5 +18,9 @@ pub use paths::{config_dir, config_dir_from, project_settings_path, user_setting
 pub use settings::{EditorSettings, Settings, SettingsEvent, SettingsStore, settings_schema};
 pub use watch::ConfigWatcher;
 
+/// The `settings.toml` a new user starts from: every key commented out at its
+/// default, so it changes nothing until edited.
+pub const USER_SETTINGS_TEMPLATE: &str = include_str!("../settings-template.toml");
+
 #[cfg(test)]
 mod tests;
