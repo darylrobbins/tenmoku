@@ -28,7 +28,9 @@ jobs:
       - name: fe-syntax builds with no languages and with each alone
         run: scripts/check-syntax-features.sh
       - name: Screenshots match their goldens
-        run: cargo run -p fe-gpui --example screenshots
+        run: |
+          cargo run -p fe-gpui --example screenshots
+          cargo run -p fe-workbench --example screenshots
       - name: Upload screenshot diffs
         if: failure()
         uses: actions/upload-artifact@v4

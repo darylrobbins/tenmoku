@@ -1918,6 +1918,8 @@ dependencies = [
  "fe-syntax",
  "fe-ui",
  "gpui-pre",
+ "gpui-pre-platform",
+ "image",
  "log",
  "tempfile",
 ]

@@ -15,7 +15,7 @@ The core crates (`fe-text`, `fe-buffer`, `fe-display`, `fe-editor`,
 | Frame layout | `fe-display/src/layout/tests.rs` | Scrolling, autoscroll, visible rows, selection and cursor rectangles, line numbers, fold markers, style runs and hit testing, with soft-wrapped and folded rows, laid out against a fake monospace measurer (tabs, wide chars), with no window |
 | Key bindings | `fe-gpui/src/tests.rs` | Real keystrokes go through the real keymap into a focused editor in a headless GPUI window. One table row per binding, plus typing, input-method composition, clipboard and save. `bindings_are_all_tested` fails if a binding has no row |
 | Keystroke latency harness | `crates/fe-gpui/tests/keystroke_latency.rs` | The `keystroke` bench's harness (`fe-gpui/benches/keystroke/harness.rs`), run with no text system or renderer on the small corpus: typing and moving each give a sample whose instants are in order and whose stages add up to the total, `reset` restores the text, selections and scroll position, and a keystroke that changes nothing gives no frame instead of hanging. Nothing is timed against a threshold; the numbers are in PERF.md |
-| Screenshots | `fe-gpui/examples/screenshots/`, `golden/` | The editor view, rendered off screen by the real Metal renderer, matches a golden PNG per scene: highlighted Rust, a multi-line selection, three carets, tab indentation, a long line cut off at the right edge, a three-digit gutter, Markdown with a Python fence, and 400 KB of C. See [Screenshots](#screenshots) |
+| Screenshots | `fe-gpui/examples/screenshots/`, `golden/` | The editor view, rendered off screen by the real Metal renderer, matches a golden PNG per scene: highlighted Rust, a multi-line selection, three carets, tab indentation, a long line cut off at the right edge, a three-digit gutter, Markdown with a Python fence, and 400 KB of C; and, from `fe-workbench/examples/screenshots/`, the workbench: tree, tabs and editor. See [Screenshots](#screenshots) |
 
 Mutation testing (`cargo mutants -p <crate>`) is worth running by hand before a
 milestone, to find code the tests don't actually check. It isn't part of CI.
@@ -70,7 +70,26 @@ freed. `--if-below` does nothing while that much is free.
 cargo run -p fe-gpui --example screenshots                       # compare every scene with its golden
 UPDATE_SCREENSHOTS=1 cargo run -p fe-gpui --example screenshots  # rewrite the goldens
 cargo run -p fe-gpui --example screenshots -- render out.png path/to/file [--size 800x480]
+
+cargo run -p fe-workbench --example screenshots                  # the workbench scene
+UPDATE_SCREENSHOTS=1 cargo run -p fe-workbench --example screenshots
+cargo run -p fe-workbench --example screenshots -- render out.png path/to/dir [--size 1000x600]
 ```
+
+The workbench scene lives in `crates/fe-workbench/examples/screenshots/`, with
+its golden in `golden/workbench.png`. It includes fe-gpui's `compare.rs` by
+`#[path]`, so the comparison, its tolerances and the failure output below are
+shared, and its `compare::tests` run for it as well. The scene is
+`workbench`, 1000×600 logical pixels: a demo project written into
+`<tempdir>/demo` with `src/` expanded, `README.md` and `src/main.rs` open
+(`main.rs` active, a caret at its start, Rust highlighted), `main.rs` selected
+in the Project dock, the unified title bar on and the editor font pinned to
+Menlo. The harness registers `fe_ui::Assets` so tree icons and chevrons draw;
+AppKit's traffic lights aren't part of an off-screen render. Its failures write
+`target/screenshots/workbench.actual.png` and `workbench.diff.png`, which CI
+uploads with fe-gpui's. `render` shows a folder in the workbench with nothing
+opened. A change to the default layout's look regenerates this golden in the
+same change.
 
 Scenes render through GPUI's `VisualTestAppContext`: a window at
 (-10000, -10000), 800×480 logical pixels, drawn by Metal and read back from
