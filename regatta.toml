@@ -101,7 +101,8 @@ shared_append_only = [
 
 [caps]
 # Lanes share one target dir (see top), so each costs little disk; builds queue on its lock.
-lanes_max = 3
+# 4 since 2026-10-07 (user-approved), with disk headroom guarded by scripts/ci-env.sh (T158).
+lanes_max = 4
 
 [review]
 on_finish = true
