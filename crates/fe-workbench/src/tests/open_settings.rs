@@ -150,49 +150,187 @@ fn no_config_directory_opens_nothing(cx: &mut TestAppContext) {
     );
 }
 
-/// A second request that finds the file created but not yet written waits
-/// for the write, so what it then opens is complete. (Threads, not the
-/// test executor: parking it would wait on the paused write.)
-#[test]
-fn overlapping_requests_wait_for_the_write() {
-    use crate::open::{AFTER_CREATE, create_settings};
+/// Serializes the tests that set the process-wide hook.
+static HOOKED: Mutex<()> = Mutex::new(());
+
+fn hook_path(path: &std::path::Path, hook: crate::open::Hook) {
+    *crate::open::HOOK.lock().unwrap() = Some((path.to_owned(), hook));
+}
+
+/// A request that overlaps an initialization waits for it, and what the
+/// editor then shows is the whole template. (The first request runs on a
+/// thread of its own, paused after creating its file; the second is the
+/// Settings command, whose wait releases the first, so nothing depends on
+/// timing.)
+#[gpui::test]
+fn overlapping_requests_wait_for_the_write(cx: &mut TestAppContext) {
+    use crate::open::{Stage, create_settings};
+    let _hooked = HOOKED.lock().unwrap_or_else(|e| e.into_inner());
+    let project = tempfile::tempdir().unwrap();
     let config = tempfile::tempdir().unwrap();
     let file = config.path().join("settings.toml");
+    let (workbench, cx) = workbench_with(cx, project.path(), Some(config.path().to_owned()));
 
-    let (created_tx, created_rx) = std::sync::mpsc::channel();
+    let (paused_tx, paused_rx) = std::sync::mpsc::channel();
+    let (waiting_tx, waiting_rx) = std::sync::mpsc::channel();
     let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
-    let (created_tx, release_rx) = (Mutex::new(created_tx), Mutex::new(release_rx));
-    *AFTER_CREATE.lock().unwrap() = Some((
-        file.clone(),
-        std::sync::Arc::new(move || {
-            created_tx.lock().unwrap().send(()).unwrap();
-            release_rx.lock().unwrap().recv().unwrap();
+    let (paused_tx, waiting_tx, release_rx) = (
+        Mutex::new(paused_tx),
+        Mutex::new(waiting_tx),
+        Mutex::new(release_rx),
+    );
+    hook_path(
+        &file,
+        std::sync::Arc::new(move |stage| {
+            match stage {
+                Stage::Write => {
+                    paused_tx.lock().unwrap().send(()).unwrap();
+                    release_rx.lock().unwrap().recv().unwrap();
+                }
+                Stage::Wait => waiting_tx.lock().unwrap().send(()).unwrap(),
+                Stage::Cleanup => {}
+            }
+            Ok(())
         }),
-    ));
+    );
     let first = std::thread::spawn({
         let file = file.clone();
         move || create_settings(&file)
     });
-    created_rx.recv().unwrap();
-    assert_eq!(fs::read_to_string(&file).unwrap(), "");
-
-    let (read_tx, read_rx) = std::sync::mpsc::channel();
-    let second = std::thread::spawn({
-        let file = file.clone();
-        move || {
-            create_settings(&file).unwrap();
-            read_tx.send(fs::read_to_string(&file).unwrap()).unwrap();
-        }
+    paused_rx.recv().unwrap();
+    // Releases the first once the command's request is waiting on it.
+    let releaser = std::thread::spawn(move || {
+        waiting_rx.recv().unwrap();
+        release_tx.send(()).unwrap();
     });
-    assert!(
-        read_rx
-            .recv_timeout(std::time::Duration::from_millis(200))
-            .is_err(),
-        "the second request returned before the write finished"
-    );
-    AFTER_CREATE.lock().unwrap().take();
-    release_tx.send(()).unwrap();
+
+    cx.simulate_keystrokes("cmd-,");
+    // The command's request returns once the first is released; wait, with
+    // a bound, for its tab.
+    let mut opened = false;
+    for _ in 0..500 {
+        cx.run_until_parked();
+        if tabs(&workbench, cx).1.as_ref() == Some(&file) {
+            opened = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    releaser.join().unwrap();
     first.join().unwrap().unwrap();
-    second.join().unwrap();
-    assert_eq!(read_rx.recv().unwrap(), USER_SETTINGS_TEMPLATE);
+    crate::open::HOOK.lock().unwrap().take();
+    assert!(opened, "the Settings command never opened the file");
+
+    let editor = workbench.read_with(cx, |workbench, cx| {
+        workbench.pane().read(cx).active_editor().cloned().unwrap()
+    });
+    let text = editor.read_with(cx, |view, _| view.model().text().to_string());
+    assert_eq!(text, USER_SETTINGS_TEMPLATE);
+    assert_eq!(tabs(&workbench, cx), (vec![file.clone()], Some(file)));
+}
+
+/// Two requests overlapping a failing write both get its error, and
+/// neither opens anything; the file isn't left behind, and a later
+/// request, finding the failure over, succeeds. A failing cleanup adds to
+/// the error without leaving the file in place.
+#[test]
+fn a_failed_write_is_every_waiters_error() {
+    use crate::open::{Stage, create_settings};
+    let _hooked = HOOKED.lock().unwrap_or_else(|e| e.into_inner());
+    for cleanup_fails in [false, true] {
+        let config = tempfile::tempdir().unwrap();
+        let file = config.path().join("settings.toml");
+        let (paused_tx, paused_rx) = std::sync::mpsc::channel();
+        let (waiting_tx, waiting_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let (paused_tx, waiting_tx, release_rx) = (
+            Mutex::new(paused_tx),
+            Mutex::new(waiting_tx),
+            Mutex::new(release_rx),
+        );
+        hook_path(
+            &file,
+            std::sync::Arc::new(move |stage| match stage {
+                Stage::Write => {
+                    paused_tx.lock().unwrap().send(()).unwrap();
+                    release_rx.lock().unwrap().recv().unwrap();
+                    Err(std::io::Error::other("disk full"))
+                }
+                Stage::Wait => {
+                    waiting_tx.lock().unwrap().send(()).unwrap();
+                    Ok(())
+                }
+                Stage::Cleanup if cleanup_fails => Err(std::io::Error::other("busy")),
+                Stage::Cleanup => Ok(()),
+            }),
+        );
+        let first = std::thread::spawn({
+            let file = file.clone();
+            move || create_settings(&file)
+        });
+        paused_rx.recv().unwrap();
+        let waiters: Vec<_> = (0..2)
+            .map(|_| {
+                let file = file.clone();
+                std::thread::spawn(move || create_settings(&file))
+            })
+            .collect();
+        for _ in &waiters {
+            waiting_rx.recv().unwrap();
+        }
+        release_tx.send(()).unwrap();
+
+        let errors: Vec<_> = std::iter::once(first)
+            .chain(waiters)
+            .map(|t| t.join().unwrap().unwrap_err().to_string())
+            .collect();
+        assert!(errors.iter().all(|e| e.contains("disk full")), "{errors:?}");
+        assert_eq!(errors.iter().any(|e| e.contains("busy")), cleanup_fails);
+        assert!(!file.exists(), "no incomplete file at the path");
+
+        crate::open::HOOK.lock().unwrap().take();
+        create_settings(&file).unwrap();
+        assert_eq!(fs::read_to_string(&file).unwrap(), USER_SETTINGS_TEMPLATE);
+    }
+}
+
+/// Temporary files already there, a symlink among them, aren't written
+/// through or removed, and a leftover link to the finished file (as after
+/// a failed cleanup) doesn't let a later initialization truncate it.
+#[test]
+fn temporary_files_are_exclusive() {
+    use crate::open::{Stage, create_settings};
+    let _hooked = HOOKED.lock().unwrap_or_else(|e| e.into_inner());
+    let config = tempfile::tempdir().unwrap();
+    let file = config.path().join("settings.toml");
+    let victim = config.path().join("victim");
+    fs::write(&victim, "keep\n").unwrap();
+    for n in 0..8 {
+        let temp = config
+            .path()
+            .join(format!("settings.toml.{}-{n}.tmp", std::process::id()));
+        std::os::unix::fs::symlink(&victim, &temp).unwrap();
+    }
+    create_settings(&file).unwrap();
+    assert_eq!(fs::read_to_string(&file).unwrap(), USER_SETTINGS_TEMPLATE);
+    assert_eq!(fs::read_to_string(&victim).unwrap(), "keep\n");
+
+    // Published, then cleanup fails: still a success. Back up the file and
+    // initialize again: the backup, hard-linked to the leftover, is intact.
+    fs::remove_file(&file).unwrap();
+    hook_path(
+        &file,
+        std::sync::Arc::new(|stage| match stage {
+            Stage::Cleanup => Err(std::io::Error::other("busy")),
+            _ => Ok(()),
+        }),
+    );
+    create_settings(&file).unwrap();
+    crate::open::HOOK.lock().unwrap().take();
+    let backup = config.path().join("settings.toml.bak");
+    fs::write(&backup, "").unwrap();
+    fs::rename(&file, &backup).unwrap();
+    fs::write(&backup, "# mine\n").unwrap();
+    create_settings(&file).unwrap();
+    assert_eq!(fs::read_to_string(&backup).unwrap(), "# mine\n");
 }

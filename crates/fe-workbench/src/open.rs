@@ -9,9 +9,12 @@
 use std::{
     fs,
     io::{self, Write as _},
-    path::PathBuf,
+    path::{Path, PathBuf},
     rc::Rc,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Condvar, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry};
@@ -111,65 +114,152 @@ pub(crate) fn settings_path(cx: &App) -> Option<PathBuf> {
     fe_config::user_settings_path()
 }
 
+/// What overlapping requests for one path share: the outcome of the
+/// request that initializes it, once it has one.
+struct Flight {
+    outcome: Mutex<Option<Result<(), (io::ErrorKind, String)>>>,
+    done: Condvar,
+}
+
 /// Writes the settings template to `path`, with its directory, unless the
 /// file exists, which is never overwritten.
 ///
-/// Requests for the same path are serialized, so one that finds the file
-/// there finds it complete: it was written whole, or, if the write failed,
-/// removed again for the next request to retry and report its own error.
-pub(crate) fn create_settings(path: &std::path::Path) -> io::Result<()> {
-    let lock = {
-        static LOCKS: Mutex<Vec<(PathBuf, Arc<Mutex<()>>)>> = Mutex::new(Vec::new());
-        let mut locks = LOCKS.lock().unwrap_or_else(|e| e.into_inner());
-        match locks.iter().find(|(p, _)| p == path) {
-            Some((_, lock)) => lock.clone(),
+/// The template is written to a temporary file and linked into place, so
+/// the file is there whole or not at all, even if cleanup after a failed
+/// write fails too. Requests overlapping an initialization wait for it and
+/// get its outcome, an error included, rather than retrying; the next
+/// request after it starts afresh.
+pub(crate) fn create_settings(path: &Path) -> io::Result<()> {
+    static FLIGHTS: Mutex<Vec<(PathBuf, Arc<Flight>)>> = Mutex::new(Vec::new());
+    let (flight, leader) = {
+        let mut flights = FLIGHTS.lock().unwrap_or_else(|e| e.into_inner());
+        match flights.iter().find(|(p, _)| p == path) {
+            Some((_, flight)) => (flight.clone(), false),
             None => {
-                let lock = Arc::new(Mutex::new(()));
-                locks.push((path.to_owned(), lock.clone()));
-                lock
+                let flight = Arc::new(Flight {
+                    outcome: Mutex::new(None),
+                    done: Condvar::new(),
+                });
+                flights.push((path.to_owned(), flight.clone()));
+                (flight, true)
             }
         }
     };
-    let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(dir) = path.parent() {
+    if !leader {
+        #[cfg(test)]
+        hook(path, Stage::Wait).ok();
+        let mut outcome = flight.outcome.lock().unwrap_or_else(|e| e.into_inner());
+        while outcome.is_none() {
+            outcome = flight.done.wait(outcome).unwrap_or_else(|e| e.into_inner());
+        }
+        return match outcome.clone().expect("the loop ends with an outcome") {
+            Ok(()) => Ok(()),
+            Err((kind, message)) => Err(io::Error::new(kind, message)),
+        };
+    }
+    let result = initialize(path);
+    // Out of the list first, so a request after this one starts afresh.
+    FLIGHTS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|(_, f)| !Arc::ptr_eq(f, &flight));
+    *flight.outcome.lock().unwrap_or_else(|e| e.into_inner()) = Some(
+        result
+            .as_ref()
+            .map(|_| ())
+            .map_err(|e| (e.kind(), e.to_string())),
+    );
+    flight.done.notify_all();
+    result
+}
+
+fn initialize(path: &Path) -> io::Result<()> {
+    let dir = path.parent();
+    if let Some(dir) = dir {
         fs::create_dir_all(dir)?;
     }
-    match fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-    {
-        Ok(mut file) => {
-            #[cfg(test)]
-            after_create_hook(path);
-            let written = file.write_all(fe_config::USER_SETTINGS_TEMPLATE.as_bytes());
-            if written.is_err() {
-                drop(file);
-                let _ = fs::remove_file(path);
-            }
-            written
+    if path.exists() {
+        return Ok(());
+    }
+    // A name no other file has, made exclusively, so nothing existing (or
+    // a symlink) is written through, and only what this attempt made is
+    // ever removed.
+    static SEQ: AtomicUsize = AtomicUsize::new(0);
+    let name = path.file_name().unwrap_or_default();
+    let mut attempts = 0;
+    let (temp, file) = loop {
+        let mut temp_name = name.to_owned();
+        temp_name.push(format!(
+            ".{}-{}.tmp",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        let temp = dir.unwrap_or(Path::new("")).join(temp_name);
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+        {
+            Ok(file) => break (temp, file),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists && attempts < 100 => attempts += 1,
+            Err(e) => return Err(e),
         }
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
-        Err(error) => Err(error),
+    };
+    let written = (|| {
+        let mut file = file;
+        #[cfg(test)]
+        hook(path, Stage::Write)?;
+        file.write_all(fe_config::USER_SETTINGS_TEMPLATE.as_bytes())?;
+        file.sync_all()
+    })();
+    // Linking fails if `path` has appeared meanwhile, which stays as is.
+    let linked = written.and_then(|()| match fs::hard_link(&temp, path) {
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+        other => other,
+    });
+    #[cfg(test)]
+    let removed = hook(path, Stage::Cleanup).and_then(|()| fs::remove_file(&temp));
+    #[cfg(not(test))]
+    let removed = fs::remove_file(&temp);
+    match (linked, removed) {
+        (Ok(()), _) => Ok(()),
+        (Err(error), Ok(())) => Err(error),
+        (Err(error), Err(cleanup)) => Err(io::Error::new(
+            error.kind(),
+            format!(
+                "{error} (and removing {} failed: {cleanup})",
+                temp.display()
+            ),
+        )),
     }
 }
 
+/// The steps of initializing a test can intercept.
 #[cfg(test)]
-pub(crate) type Hook = Arc<dyn Fn() + Send + Sync>;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Stage {
+    /// The temporary file is created, the template not yet written; an
+    /// error fails the write.
+    Write,
+    /// The temporary file is about to be removed; an error fails that.
+    Cleanup,
+    /// A request found an initialization under way and is about to wait.
+    Wait,
+}
 
-/// Runs between `create_settings` creating the file and writing it, for
-/// the one path a test names.
 #[cfg(test)]
-pub(crate) static AFTER_CREATE: Mutex<Option<(PathBuf, Hook)>> = Mutex::new(None);
+pub(crate) type Hook = Arc<dyn Fn(Stage) -> io::Result<()> + Send + Sync>;
+
+/// Intercepts the one path a test names.
+#[cfg(test)]
+pub(crate) static HOOK: Mutex<Option<(PathBuf, Hook)>> = Mutex::new(None);
 
 #[cfg(test)]
-fn after_create_hook(path: &std::path::Path) {
-    let hook = match AFTER_CREATE.lock().unwrap().as_ref() {
+fn hook(path: &Path, stage: Stage) -> io::Result<()> {
+    let hook = match HOOK.lock().unwrap().as_ref() {
         Some((hooked, hook)) if hooked == path => Some(hook.clone()),
         _ => None,
     };
     // Called unlocked: it blocks.
-    if let Some(hook) = hook {
-        hook();
-    }
+    hook.map_or(Ok(()), |hook| hook(stage))
 }
