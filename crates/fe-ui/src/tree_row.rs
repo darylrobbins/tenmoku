@@ -147,7 +147,11 @@ impl RenderOnce for TreeRow {
         let colors = self.colors();
         let hover = self.theme.row_hover;
         let label = &self.label;
+        // Hover is styled here, so the box needs an ID: GPUI keeps hover state
+        // and asks for a redraw on entry and exit only for identified
+        // elements. Scoped under the row's ID, it's stable across frames.
         let selection = div()
+            .id("selection")
             .absolute()
             .top_0()
             .bottom_0()

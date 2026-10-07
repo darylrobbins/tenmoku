@@ -766,3 +766,7 @@ impl ProjectPanel {
         ))
     }
 }
+
+#[cfg(test)]
+#[path = "project_panel_hover_tests.rs"]
+mod hover_tests;
