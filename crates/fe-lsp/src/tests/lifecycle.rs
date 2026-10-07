@@ -19,7 +19,7 @@ use super::{Events, WAIT, answer, manager, wait_until};
 use crate::fake::{
     Echo, FakeServer, InitializeReply, OnExit, Record, Script, Writes, initialize_result,
 };
-use crate::server::{QUEUED_MAX, STEPS_PER_YIELD};
+use crate::server::{QUEUED_MAX, STDERR_GRACE, STEPS_PER_YIELD};
 use crate::{
     ExitInfo, LspError, LspManager, ManualClock, PositionEncoding, ServerId, ServerIo,
     ServerLauncher, ServerProcess, ServerSpec, ServerStatus,
@@ -266,12 +266,24 @@ fn shutdown_sequence() {
 #[test]
 fn start_after_a_stop_starts_afresh() {
     let root = tempfile::tempdir().unwrap();
+    let clock = Arc::new(ManualClock::new());
     let fake = FakeServer::new(Script::default());
-    let (mut manager, events) = manager(fake.launcher(), None);
+    let (mut manager, events) = manager(fake.launcher(), Some(clock.clone()));
     let mut id = start(&mut manager, &events, "restart", root.path());
-    for launch in 1..=20 {
+    // Crashes restart it, until the 6th in 3 minutes stops it.
+    for (n, launch) in (1..=5).zip(1..) {
         fake.wait_initialized_at(launch);
         fake.crash_at(launch);
+        assert_eq!(events.status(id), ServerStatus::Restarting(n));
+        let backoff = Duration::from_secs(1 << (n - 1));
+        clock.wait_for_sleep(backoff);
+        clock.advance(backoff);
+        assert_eq!(events.status(id), ServerStatus::Starting);
+    }
+    for launch in 6..=20 {
+        fake.wait_initialized_at(launch);
+        fake.crash_at(launch);
+        // A start doesn't renew the budget, so each crash now stops it.
         assert!(matches!(events.status(id), ServerStatus::Stopped(Some(_))));
         // Started as soon as the stop is heard: never the dead server.
         let again = start(&mut manager, &events, "restart", root.path());
@@ -281,15 +293,20 @@ fn start_after_a_stop_starts_afresh() {
 }
 
 #[test]
-fn initialize_failure_stops_the_server() {
+fn initialize_failure_restarts_the_server() {
     let root = tempfile::tempdir().unwrap();
-    let stopped = |manager: &LspManager, events: &Events, id| {
-        let ServerStatus::Stopped(Some(why)) = events.status(id) else {
-            panic!("not stopped with an error");
-        };
-        wait_until("the server thread to end", || manager.thread_finished(id));
-        why
+    // A crash: it restarts, having logged why on its thread.
+    let stopped = |manager: &LspManager, events: &Events, id, name: &str| {
+        assert_eq!(events.status(id), ServerStatus::Restarting(1));
+        assert!(!manager.thread_finished(id));
+        super::logs_from(&format!("fe-lsp {name}"))
+            .into_iter()
+            .find(|line| line.ends_with("restarting in 1 s"))
+            .expect("the crash logged")
     };
+    for name in ["init-error", "init-timeout", "init-eof"] {
+        super::capture_logs(&format!("fe-lsp {name}"));
+    }
 
     // An error answer.
     let fake = FakeServer::new(Script {
@@ -301,7 +318,7 @@ fn initialize_failure_stops_the_server() {
     });
     let (mut manager, events) = manager(fake.launcher(), None);
     let id = start(&mut manager, &events, "init-error", root.path());
-    let why = stopped(&manager, &events, id);
+    let why = stopped(&manager, &events, id, "init-error");
     assert!(why.contains("initialize failed"), "{why}");
     assert!(
         why.contains("Could not find a valid TypeScript installation"),
@@ -320,7 +337,7 @@ fn initialize_failure_stops_the_server() {
     clock.advance(Duration::from_millis(29_999));
     events.assert_quiet();
     clock.advance(Duration::from_millis(1));
-    let why = stopped(&manager, &events, id);
+    let why = stopped(&manager, &events, id, "init-timeout");
     assert!(
         why.contains("didn't answer initialize within 30 s"),
         "{why}"
@@ -337,9 +354,13 @@ fn initialize_failure_stops_the_server() {
         records.iter().any(|r| r.method() == "initialize")
     });
     fake.crash();
-    let why = stopped(&manager, &events, id);
+    let why = stopped(&manager, &events, id, "init-eof");
     assert!(why.contains("before answering initialize"), "{why}");
-    assert!(why.contains("EOF"), "{why}");
+    // The fake closes its output and exits together: either may come first.
+    assert!(
+        why.contains("EOF") || why.contains("exited with code 1"),
+        "{why}"
+    );
 }
 
 #[test]
@@ -477,10 +498,13 @@ fn floods_do_not_hold_up_stop_or_deadlines() {
     let id = start(&mut manager, &events, "flood-init", root.path());
     clock.wait_for_sleep(Duration::from_secs(30));
     clock.advance(Duration::from_secs(30));
-    let ServerStatus::Stopped(Some(why)) = events.status(id) else {
-        panic!("not stopped with an error");
-    };
-    assert!(why.contains("within 30 s"), "{why}");
+    // Its stderr never stops being ready: read for 1 s more on the clock.
+    clock.wait_for_sleep(STDERR_GRACE);
+    clock.advance(STDERR_GRACE);
+    // A crash: stopped while it waits to restart.
+    assert_eq!(events.status(id), ServerStatus::Restarting(1));
+    manager.stop(id);
+    assert_eq!(events.status(id), ServerStatus::Stopped(None));
     wait_until("the server thread to end", || manager.thread_finished(id));
     assert_eq!(kills.load(Ordering::SeqCst), 1);
 
@@ -504,6 +528,9 @@ fn floods_do_not_hold_up_stop_or_deadlines() {
     clock.advance(Duration::from_secs(1));
     assert_eq!(events.status(id), ServerStatus::Stopped(None));
     assert_eq!(kills.load(Ordering::SeqCst), 1);
+    clock.wait_for_sleep(STDERR_GRACE);
+    clock.advance(STDERR_GRACE);
+    wait_until("the server thread to end", || manager.thread_finished(id));
 
     // A host flooding requests from another thread doesn't hold up a stop.
     let fake = FakeServer::new(Script::default());
@@ -524,8 +551,10 @@ fn floods_do_not_hold_up_stop_or_deadlines() {
         let manager = manager.clone();
         let flooding = flooding.clone();
         move || {
+            // Kept, since a request whose caller has gone isn't sent.
+            let mut kept = Vec::new();
             while flooding.load(Ordering::SeqCst) {
-                drop(manager.lock().unwrap().request::<Echo>(id, json!({})));
+                kept.push(manager.lock().unwrap().request::<Echo>(id, json!({})));
             }
         }
     });

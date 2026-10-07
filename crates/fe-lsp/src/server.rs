@@ -22,10 +22,18 @@
 //! - Every open it performs activates its identity first (identity.rs),
 //!   and when the session ends, however it ends, its identities are
 //!   retired before anything else is reported.
-//! - However the session ends, the documents the manager routed to it
-//!   ([`Routes`]), open or still queued, go on to wherever the manager now
-//!   places them: another server (a restart's new instance), or its lot
-//!   to wait. The rest are dropped.
+//! - A session ending in a crash (restart.rs) keeps its documents and the
+//!   manager's commands for the next session on the same thread, after a
+//!   backoff. Otherwise, however the session ends, the documents the
+//!   manager routed to it ([`Routes`]), open or still queued, go on to
+//!   wherever the manager now places them: another server (a restart's new
+//!   instance), or its lot to wait. The rest are dropped.
+//! - The actor watches the process too: an exit while not shutting down
+//!   ends the session as a crash, even if the server's output stays open
+//!   (a descendant holding it, say).
+//! - Readiness (readiness.rs) is tracked from what the router hears, with
+//!   its timers on the actor's clock, and every change of what it shows is
+//!   a status event.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
@@ -37,7 +45,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::task::{Context, Poll, Waker};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_lsp::{MainLoop, ServerSocket};
 use fe_buffer::{BufferId, Version};
@@ -47,26 +55,30 @@ use futures::stream::FuturesUnordered;
 use futures::{
     AsyncRead, AsyncReadExt, AsyncWrite, Future, FutureExt, StreamExt, pin_mut, select_biased,
 };
-use lsp_types::notification::{DidChangeConfiguration, Exit, Initialized};
+use lsp_types::notification::{Cancel, DidChangeConfiguration, Exit, Initialized};
 use lsp_types::request::{Initialize, Request, Shutdown};
 use lsp_types::{
-    ClientCapabilities, ClientInfo, CompletionClientCapabilities, CompletionItemCapability,
-    CompletionItemCapabilityResolveSupport, DiagnosticTag, DidChangeConfigurationParams,
-    DynamicRegistrationClientCapabilities, GeneralClientCapabilities, GotoCapability,
-    HoverClientCapabilities, InitializeParams, InitializeResult, InitializedParams, MarkupKind,
-    PositionEncodingKind, PublishDiagnosticsClientCapabilities, ServerCapabilities, TagSupport,
-    TextDocumentClientCapabilities, TextDocumentSyncClientCapabilities, Url,
-    WindowClientCapabilities, WorkspaceClientCapabilities, WorkspaceFolder,
-    WorkspaceSymbolClientCapabilities,
+    CancelParams, ClientCapabilities, ClientInfo, CompletionClientCapabilities,
+    CompletionItemCapability, CompletionItemCapabilityResolveSupport, DiagnosticTag,
+    DidChangeConfigurationParams, DynamicRegistrationClientCapabilities, GeneralClientCapabilities,
+    GotoCapability, HoverClientCapabilities, InitializeParams, InitializeResult, InitializedParams,
+    MarkupKind, NumberOrString, PositionEncodingKind, PublishDiagnosticsClientCapabilities,
+    ServerCapabilities, TagSupport, TextDocumentClientCapabilities,
+    TextDocumentSyncClientCapabilities, Url, WindowClientCapabilities, WorkspaceClientCapabilities,
+    WorkspaceFolder, WorkspaceSymbolClientCapabilities,
 };
 
 use crate::clock::Clock;
 use crate::document::{Admitted, Document, Link, Note, Opening, SyncPolicy};
 use crate::encoding::PositionEncoding;
-use crate::event::{LspError, LspEvent, NOT_OPEN, ServerId, ServerStatus};
+use crate::event::{LspError, LspEvent, NOT_OPEN, ServerId, ServerStatus, SharedLog};
 use crate::identity::{EndSession, Identities, SessionId};
-use crate::launcher::{ServerIo, ServerLauncher, ServerProcess, ServerSpec};
-use crate::router::{ClientState, client_router};
+use crate::launcher::{ExitInfo, ServerIo, ServerLauncher, ServerProcess, ServerSpec};
+use crate::readiness::Readiness;
+use crate::registration::Registrations;
+use crate::requests::{Issue, Orphans, Out, Settled};
+use crate::restart::{Carry, SharedCrashes, Verdict, Waited};
+use crate::router::{ClientState, Signal, client_router};
 
 /// How long `initialize` may take before the start counts as failed.
 pub(crate) const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -82,14 +94,14 @@ pub(crate) const QUEUED_MAX: u64 = 32;
 /// event the host never nudged about (a save after the edits were already
 /// sent, say) still reaches the server.
 pub(crate) const BACKSTOP: Duration = Duration::from_millis(250);
+/// The most commands a backstop drain lets go ahead of it.
+pub(crate) const DRAIN_BEHIND_MAX: usize = 1024;
+
+/// A sleep on the actor's clock.
+type Timer = Pin<Box<dyn Future<Output = ()> + Send>>;
 
 /// The manager's event sink, shared by every server thread.
 pub(crate) type Sink = Arc<Mutex<dyn FnMut(LspEvent) + Send>>;
-
-/// Issues one request on the server's socket, given the id async-lsp will
-/// number it with. It must send before returning (see [`send_request`]),
-/// and the future it returns answers the caller.
-pub(crate) type Issue = Box<dyn FnOnce(&ServerSocket, i32) -> BoxFuture<'static, ()> + Send>;
 
 /// Admits a request on a document, given what it's admitted with: on
 /// success, the [`Issue`] that sends it; on failure, it answers the caller
@@ -125,6 +137,9 @@ pub(crate) enum Command {
     /// New `settings` for the spec: they answer `workspace/configuration`
     /// from now on, and `workspace/didChangeConfiguration` carries them.
     Configure(serde_json::Value),
+    /// Drain every open document: a backstop tick queued it, behind the
+    /// commands already waiting, so drains can't starve them.
+    Drain,
     /// The LSP and buffer versions in a document's ring.
     #[cfg(test)]
     Ring(BufferId, oneshot::Sender<Vec<(i32, Version)>>),
@@ -219,37 +234,24 @@ impl Queue {
     }
 }
 
-/// What the session learned from `initialize`, readable from the manager.
+/// What the current session learned, readable from the manager. Each
+/// session starts it afresh.
 #[derive(Default)]
 pub(crate) struct Session {
     pub(crate) capabilities: Option<ServerCapabilities>,
     pub(crate) encoding: Option<PositionEncoding>,
+    pub(crate) registrations: Registrations,
+    /// How many orphans the actor holds, and the most it has held.
+    #[cfg(test)]
+    pub(crate) orphans: (usize, usize),
+    /// Once a test sets it: each request and document notification the
+    /// actor hands async-lsp, in order.
+    #[cfg(test)]
+    pub(crate) handed: Option<Vec<String>>,
 }
 
 /// Resolves when a server thread has ended.
 pub(crate) type Done = futures::future::Shared<oneshot::Receiver<()>>;
-
-/// Holds a server thread's command receiver until its actor takes it, and
-/// hands its queued documents on if the thread ends before (a panic, say).
-struct Unhanded {
-    commands: Option<mpsc::UnboundedReceiver<Command>>,
-    routes: Routes,
-    identities: Identities,
-}
-
-impl Unhanded {
-    fn hand_over(&mut self) {
-        if let Some(mut commands) = self.commands.take() {
-            hand_over(&mut commands, Vec::new(), &self.routes, &self.identities);
-        }
-    }
-}
-
-impl Drop for Unhanded {
-    fn drop(&mut self) {
-        self.hand_over();
-    }
-}
 
 /// Everything a server thread starts with.
 pub(crate) struct Server {
@@ -274,6 +276,12 @@ pub(crate) struct Server {
     pub(crate) after: Option<Done>,
     /// Dropped when this thread ends, for the instance replacing it.
     pub(crate) done: Option<oneshot::Sender<()>>,
+    /// The crashes of servers with this name and root, and the epoch of
+    /// them this instance counts in.
+    pub(crate) crashes: SharedCrashes,
+    pub(crate) epoch: u64,
+    /// Where its stderr and `window/logMessage` go.
+    pub(crate) log: SharedLog,
 }
 
 impl Server {
@@ -303,19 +311,25 @@ impl Server {
             name: self.spec.name.clone(),
             sink: self.sink.clone(),
         };
-        let mut unhanded = Unhanded {
-            commands: Some(self.commands),
+        // Hands the queued documents on however the thread ends, a panic
+        // included, unless a session's actor has them.
+        let (_, spent) = oneshot::channel();
+        let mut carry = Carry {
+            commands: std::mem::replace(&mut self.commands, mpsc::unbounded().1),
+            stop: std::mem::replace(&mut self.stop, spent),
+            openings: Vec::new(),
+            settings: self.spec.settings.clone(),
             routes: self.routes.clone(),
             identities: self.identities.clone(),
         };
         status.send(ServerStatus::Starting);
         if let Some(after) = self.after.take() {
             // A stop first: one that came while waiting wins over the end.
-            let waited = async_io::block_on(futures::future::select(&mut self.stop, after));
+            let waited = async_io::block_on(futures::future::select(&mut carry.stop, after));
             if let Either::Left((_, after)) = waited {
                 // Stopped before it launched. Whatever replaces it must still
                 // wait for the one before, so this thread ends after that.
-                unhanded.hand_over();
+                carry.hand_over();
                 status.send(ServerStatus::Stopped(None));
                 let _ = async_io::block_on(after);
                 return;
@@ -324,46 +338,112 @@ impl Server {
         let folder = match workspace_folder(&self.root) {
             Ok(folder) => folder,
             Err(err) => {
-                unhanded.hand_over();
+                carry.hand_over();
                 return status.send(ServerStatus::Stopped(Some(err)));
             }
         };
-        // A stop that came after the wait, or with none to wait for, wins
-        // too: nothing is launched for a spec already replaced.
-        if !matches!(self.stop.try_recv(), Ok(None)) {
-            unhanded.hand_over();
-            return status.send(ServerStatus::Stopped(None));
+        let mut session_id = self.session_id;
+        loop {
+            // A stop that came after the wait, or with none to wait for, wins
+            // too: nothing is launched for a spec already replaced.
+            if !matches!(carry.stop.try_recv(), Ok(None)) {
+                carry.hand_over();
+                return status.send(ServerStatus::Stopped(None));
+            }
+            let io = match self.launcher.launch(&self.spec, &self.root) {
+                Ok(io) => io,
+                // Not a crash (§3.5), even on a restart: nothing ran, and
+                // trying again is for the user (`lsp.restart`).
+                Err(err) => {
+                    carry.hand_over();
+                    return status
+                        .send(ServerStatus::Stopped(Some(launch_error(&self.spec, &err))));
+                }
+            };
+            // A stop that came while it launched (which may block: a login
+            // shell, a container): nothing has been sent to it yet, so it's
+            // killed rather than initialized, and its successor needn't wait
+            // for an `initialize` answer first.
+            if !matches!(carry.stop.try_recv(), Ok(None)) {
+                let mut process = io.process;
+                async_io::block_on(kill(&mut *process));
+                carry.hand_over();
+                return status.send(ServerStatus::Stopped(None));
+            }
+            let (why, at, kept) = match self.session(io, session_id, &folder, &status, carry) {
+                Ended::Stopped => return,
+                Ended::Crashed { why, at, carry } => (why, at, carry),
+            };
+            carry = kept;
+            // A stop that came while it crashed (during a recycle's
+            // shutdown, say) is a stop, not a crash.
+            if !matches!(carry.stop.try_recv(), Ok(None)) {
+                carry.hand_over();
+                return status.send(ServerStatus::Stopped(None));
+            }
+            // What it gives up with is the spec as it ran: its settings as
+            // last configured.
+            let ran = ServerSpec {
+                settings: carry.settings.clone(),
+                ..self.spec.clone()
+            };
+            let verdict = lock(&self.crashes).crash(at, self.epoch, &ran);
+            let (n, after) = match verdict {
+                Verdict::Restart { n, after } => (n, after),
+                Verdict::GiveUp => {
+                    log::warn!("{why}; it crashed too often, so it stays stopped");
+                    carry.hand_over();
+                    return status.send(ServerStatus::Stopped(Some(why)));
+                }
+                Verdict::Superseded => {
+                    log::info!("{why}; a restart replaced it");
+                    carry.hand_over();
+                    return status.send(ServerStatus::Stopped(None));
+                }
+            };
+            log::warn!("{why}; restarting in {} s", after.as_secs());
+            status.send(ServerStatus::Restarting(n));
+            if let Waited::Stopped = async_io::block_on(carry.wait_out(&*self.clock, after)) {
+                return status.send(ServerStatus::Stopped(None));
+            }
+            session_id = self.identities.new_session();
+            status.send(ServerStatus::Starting);
         }
+    }
+
+    /// Runs one session on `io`, until it stops or crashes.
+    fn session(
+        &self,
+        io: ServerIo,
+        session_id: SessionId,
+        folder: &WorkspaceFolder,
+        status: &StatusSink,
+        mut carry: Carry,
+    ) -> Ended {
         let ServerIo {
             input,
             output,
             stderr,
-            mut process,
-        } = match self.launcher.launch(&self.spec, &self.root) {
-            Ok(io) => io,
-            Err(err) => {
-                unhanded.hand_over();
-                return status.send(ServerStatus::Stopped(Some(err.to_string())));
-            }
-        };
-        // A stop that came while it launched (which may block: a login
-        // shell, a container): nothing has been sent to it yet, so it's
-        // killed rather than initialized, and its successor needn't wait
-        // for an `initialize` answer first.
-        if !matches!(self.stop.try_recv(), Ok(None)) {
-            async_io::block_on(kill(&mut *process));
-            unhanded.hand_over();
-            return status.send(ServerStatus::Stopped(None));
-        }
-
+            process,
+        } = io;
+        *lock(&self.session) = Session::default();
         let queue = Rc::new(Queue::default());
-        let settings = Rc::new(RefCell::new(self.spec.settings.clone()));
+        let settings = Rc::new(RefCell::new(carry.settings.clone()));
+        let readiness = Arc::new(Mutex::new(Readiness::new(&self.spec)));
+        let signal = Rc::new(Signal::default());
         let (main_loop, socket) = MainLoop::new_client(|socket| {
             client_router(ClientState {
                 name: self.spec.name.clone(),
                 folder: folder.clone(),
                 settings: settings.clone(),
                 queue: queue.clone(),
+                server: self.id,
+                sink: self.sink.clone(),
+                clock: self.clock.clone(),
+                readiness: readiness.clone(),
+                signal: signal.clone(),
+                log: self.log.clone(),
+                session: self.session.clone(),
                 _socket: socket,
             })
         });
@@ -397,45 +477,85 @@ impl Server {
                 }
             }
         };
-        let stderr = drain_stderr(self.spec.name.clone(), stderr, over);
+        let stderr = drain_stderr(
+            self.spec.name.clone(),
+            stderr,
+            self.log.clone(),
+            self.clock.clone(),
+            over,
+        );
+        let backlog = carry.reopen();
         let actor = Actor {
-            _end: EndSession(self.identities.clone(), self.session_id),
-            status,
-            spec: self.spec,
+            _end: EndSession(self.identities.clone(), session_id),
+            status: status.clone(),
+            spec: self.spec.clone(),
             settings,
-            folder,
-            clock: self.clock,
-            session: self.session,
+            folder: folder.clone(),
+            clock: self.clock.clone(),
+            session: self.session.clone(),
             socket,
-            stop: self.stop,
-            routes: self.routes,
+            routes: self.routes.clone(),
             next_id: 0,
             queue,
             sent: 0,
             pending: FuturesUnordered::new(),
-            backlog: VecDeque::new(),
+            orphans: Orphans::default(),
+            backlog,
             documents: HashMap::new(),
             link: Link {
                 policy: SyncPolicy::from_capabilities(&ServerCapabilities::default()),
                 encoding: PositionEncoding::Utf16,
-                identities: self.identities,
+                identities: self.identities.clone(),
                 server: self.id,
-                session: self.session_id,
+                session: session_id,
                 versions: HashMap::new(),
                 outbox: VecDeque::new(),
             },
             tick: None,
-            drain_due: false,
+            drain_queued: false,
+            moving: None,
+            readiness,
+            signal,
+            due: None,
+            shown: ServerStatus::Starting,
             stopping: false,
-            // Last, so nothing can panic between the hand from `unhanded`
-            // to the actor, which hands queued documents on when dropped.
-            commands: unhanded.commands.take().expect("not handed over"),
+            carry,
         };
-        async_io::block_on(futures::future::join3(
+        let (_, ended, ()) = async_io::block_on(futures::future::join3(
             main_loop,
             actor.run(process, loop_done, session_over),
             stderr,
         ));
+        ended
+    }
+}
+
+/// How a session ended.
+enum Ended {
+    /// Asked to stop, or it couldn't go on: its end has been reported, and
+    /// its documents handed on.
+    Stopped,
+    /// It crashed, and nothing has been reported yet: its documents are in
+    /// the carry, for the next session.
+    /// `at` is when it was found, before any cleanup.
+    Crashed {
+        why: String,
+        at: Instant,
+        carry: Carry,
+    },
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// What a failed launch stops the server with: "<name> not found" when
+/// there's nothing to run (Q2 (a)), else the launcher's error.
+fn launch_error(spec: &ServerSpec, err: &io::Error) -> String {
+    if err.kind() == io::ErrorKind::NotFound {
+        format!("{} not found", spec.name)
+    } else {
+        err.to_string()
     }
 }
 
@@ -458,6 +578,8 @@ impl StatusSink {
 }
 
 type LoopDone = oneshot::Receiver<async_lsp::Result<()>>;
+/// Resolves when the server's process has gone.
+type Exited<'a> = futures::future::Fuse<Pin<Box<dyn Future<Output = ExitInfo> + Send + 'a>>>;
 
 struct Actor {
     /// Retires the session's identities if the actor goes some way that
@@ -471,8 +593,6 @@ struct Actor {
     clock: Arc<dyn Clock>,
     session: Arc<Mutex<Session>>,
     socket: ServerSocket,
-    commands: mpsc::UnboundedReceiver<Command>,
-    stop: oneshot::Receiver<()>,
     routes: Routes,
     /// The id async-lsp gives the next request.
     next_id: i32,
@@ -481,24 +601,39 @@ struct Actor {
     /// each followed by [`Taken`].
     sent: u64,
     /// Requests in flight; each answers its caller.
-    pending: FuturesUnordered<BoxFuture<'static, ()>>,
-    /// Commands made while starting, carried out once initialized, ahead
-    /// of new ones.
+    pending: FuturesUnordered<BoxFuture<'static, Settled>>,
+    /// Requests abandoned and not yet answered (requests.rs).
+    orphans: Orphans,
+    /// Commands carried out once initialized, ahead of new ones: those
+    /// made while starting, and those a backstop tick moved here ahead of
+    /// its [`Command::Drain`].
     backlog: VecDeque<Command>,
     documents: HashMap<BufferId, Document>,
     /// How the server asked for documents to be synced, and the outbox.
     link: Link,
     /// The next [`BACKSTOP`] tick, while documents are open.
-    tick: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
-    /// A tick came: drain every document once there's room to send what
-    /// that makes. Ticks while it waits add nothing, so a server that
-    /// doesn't read can't make the outbox grow.
-    drain_due: bool,
+    tick: Option<Timer>,
+    /// A [`Command::Drain`] waits in the backlog: ticks meanwhile add
+    /// nothing, so a server that doesn't read can't make the outbox grow.
+    drain_queued: bool,
+    /// A drain is being queued: how many waiting commands have been moved
+    /// ahead of it so far ([`Actor::move_for_drain`]).
+    moving: Option<usize>,
+    readiness: Arc<Mutex<Readiness>>,
+    /// Raised by the router when `readiness` changed.
+    signal: Rc<Signal>,
+    /// When readiness next has something to do on its own, and the timer.
+    due: Option<(Instant, Timer)>,
+    /// The status last reported.
+    shown: ServerStatus,
     /// The manager asked for a stop.
     stopping: bool,
+    /// The manager's commands and stop, kept across sessions.
+    carry: Carry,
 }
 
-/// However the actor ends, a panic included, its documents go on.
+/// However the actor ends, a panic included, its documents go on, unless
+/// they're carried into the next session.
 impl Drop for Actor {
     fn drop(&mut self) {
         self.hand_over();
@@ -510,15 +645,28 @@ enum Started {
     /// Asked to stop, and the server never got as far as answering
     /// `initialize`.
     Stopped,
-    Failed(String),
+    Crashed(String),
+}
+
+/// Why a running session ends.
+enum End {
+    Stop,
+    Crash(String),
+    /// Too many orphans: shut it down, then restart it as after a crash.
+    Recycle(String),
 }
 
 enum Step {
     Next(Next),
     Stop,
     Tick,
-    Answered,
+    Settled(Settled),
+    Orphaned,
+    Readiness,
+    /// Readiness's timer came due.
+    Due,
     LoopEnded(Result<async_lsp::Result<()>, oneshot::Canceled>),
+    Exited(ExitInfo),
 }
 
 impl Actor {
@@ -527,71 +675,115 @@ impl Actor {
         mut process: Box<dyn ServerProcess>,
         mut loop_done: LoopDone,
         _session_over: oneshot::Sender<()>,
-    ) {
-        match self.initialize(&mut loop_done).await {
-            Started::Running => {}
-            Started::Stopped => {
-                kill(&mut *process).await;
-                return self.stopped(None);
+    ) -> Ended {
+        let end = {
+            let mut exited = process.exited().fuse();
+            match self.initialize(&mut loop_done, &mut exited).await {
+                Started::Running if self.stopping => End::Stop,
+                Started::Running => self.serve(&mut loop_done, &mut exited).await,
+                Started::Stopped => {
+                    drop(exited);
+                    kill(&mut *process).await;
+                    self.stopped(None);
+                    return Ended::Stopped;
+                }
+                Started::Crashed(why) => End::Crash(why),
             }
-            Started::Failed(why) => {
+        };
+        // When a crash was found: cleaning up (a recycle's shutdown, say)
+        // takes time that mustn't count.
+        let at = self.clock.now();
+        match end {
+            End::Stop => {
+                self.shutdown(&mut *process).await;
+                Ended::Stopped
+            }
+            End::Crash(why) => {
+                // Callers waiting get `ServerDown` now.
+                self.pending = FuturesUnordered::new();
                 kill(&mut *process).await;
-                return self.stopped(Some(why));
+                self.crashed(why, at)
+            }
+            End::Recycle(why) => {
+                self.pending = FuturesUnordered::new();
+                log::warn!("{why}; recycling the session");
+                self.shut_down(&mut *process).await;
+                self.crashed(why, at)
             }
         }
+    }
+
+    /// Carries out commands until the session ends.
+    async fn serve(&mut self, loop_done: &mut LoopDone, exited: &mut Exited<'_>) -> End {
         let mut budget = Budget::default();
-        while !self.stopping {
+        loop {
+            self.move_for_drain();
             let step = select_biased! {
-                _ = &mut self.stop => Step::Stop,
-                ended = loop_done => Step::LoopEnded(ended),
-                () = self.pending.select_next_some() => Step::Answered,
+                _ = &mut self.carry.stop => Step::Stop,
+                ended = &mut *loop_done => Step::LoopEnded(ended),
+                exit = &mut *exited => Step::Exited(exit),
+                settled = self.pending.select_next_some() => Step::Settled(settled),
+                () = self.orphans.answered().fuse() => Step::Orphaned,
+                () = futures::future::poll_fn(|cx| self.signal.poll_raised(cx)).fuse() => {
+                    Step::Readiness
+                }
+                () = wait_due(&mut self.due).fuse() => Step::Due,
                 () = wait_tick(&mut self.tick).fuse() => Step::Tick,
                 next = next_command(
                     &self.queue,
                     self.sent,
                     &mut self.link.outbox,
-                    self.drain_due,
                     &mut self.backlog,
-                    &mut self.commands,
+                    &mut self.carry.commands,
                 ).fuse() => Step::Next(next),
             };
             match step {
                 Step::Next(Next::Out(Outgoing::Note(note))) => self.notify(note),
                 Step::Next(Next::Out(Outgoing::Request(issue))) => self.issue(issue),
                 Step::Next(Next::Command(Some(command))) => self.command(command),
-                Step::Stop => {
-                    self.hand_over();
-                    break;
-                }
                 // Every sender gone means the manager retired it (its stop
                 // is on its way) or has gone itself: a stop either way.
                 Step::Next(Next::Command(None)) => {
                     log::debug!("{}: its commands ended", self.spec.name);
-                    self.hand_over();
-                    break;
+                    return End::Stop;
                 }
-                Step::Next(Next::DrainAll) => {
-                    self.drain_due = false;
-                    let ids: Vec<BufferId> = self.documents.keys().copied().collect();
-                    for id in ids {
-                        self.drain(id);
-                    }
-                }
+                Step::Stop => return End::Stop,
                 Step::Tick => {
                     self.tick = None;
-                    self.drain_due = true;
+                    self.queue_drain();
                     self.arm_tick();
                 }
-                Step::Answered => {}
-                Step::LoopEnded(ended) => {
-                    kill(&mut *process).await;
-                    let why = format!("{} stopped: {}", self.spec.name, loop_end(ended));
-                    return self.stopped(Some(why));
+                Step::Settled(Settled::Answered) | Step::Orphaned => {}
+                Step::Settled(Settled::Abandoned { id, orphan }) => {
+                    self.cancel(id);
+                    if !self.orphans.adopt(orphan) {
+                        return End::Recycle(format!(
+                            "{} left more than {} cancelled requests unanswered",
+                            self.spec.name,
+                            crate::requests::ORPHANS_MAX,
+                        ));
+                    }
                 }
+                Step::Readiness => self.readiness_changed(),
+                Step::Due => {
+                    self.due = None;
+                    self.readiness_changed();
+                }
+                Step::LoopEnded(ended) => {
+                    return End::Crash(format!("{} stopped: {}", self.spec.name, loop_end(ended)));
+                }
+                Step::Exited(exit) => {
+                    return End::Crash(format!("{} {}", self.spec.name, describe(exit)));
+                }
+            }
+            #[cfg(test)]
+            {
+                let held = self.orphans.len();
+                let mut session = lock(&self.session);
+                session.orphans = (held, session.orphans.1.max(held));
             }
             budget.spend().await;
         }
-        self.shutdown(&mut *process).await;
     }
 
     /// The id for a request about to be sent.
@@ -601,17 +793,47 @@ impl Actor {
         id
     }
 
+    /// Sends `issue`, unless its caller has gone already.
     fn issue(&mut self, issue: Issue) {
+        if issue.gone() {
+            return;
+        }
+        #[cfg(test)]
+        self.handed(issue.method().to_owned());
         let id = self.take_id();
-        self.pending.push(issue(&self.socket, id));
+        self.pending.push(issue.issue(Out {
+            socket: &self.socket,
+            id,
+            readiness: &self.readiness,
+        }));
         // If the loop has gone, `loop_done` says so.
         let _ = self.socket.emit(Taken);
         self.sent += 1;
     }
 
     fn notify(&mut self, note: Note) {
+        #[cfg(test)]
+        self.handed(note.describe());
         // If the loop has gone, `loop_done` says so.
         let _ = note.send(&self.socket);
+        let _ = self.socket.emit(Taken);
+        self.sent += 1;
+    }
+
+    /// Records what was handed to async-lsp, if the test asked.
+    #[cfg(test)]
+    fn handed(&self, what: String) {
+        if let Some(handed) = &mut lock(&self.session).handed {
+            handed.push(what);
+        }
+    }
+
+    /// `$/cancelRequest` for request `id`. Its order with requests doesn't
+    /// matter (that request has been sent), so it skips the window.
+    fn cancel(&mut self, id: i32) {
+        let _ = self.socket.notify::<Cancel>(CancelParams {
+            id: NumberOrString::Number(id),
+        });
         let _ = self.socket.emit(Taken);
         self.sent += 1;
     }
@@ -647,7 +869,6 @@ impl Actor {
                 }
                 if self.documents.is_empty() {
                     self.tick = None;
-                    self.drain_due = false;
                 }
             }
             Command::Admit {
@@ -661,12 +882,20 @@ impl Actor {
             }
             Command::Configure(settings) => {
                 self.settings.replace(settings.clone());
+                self.carry.settings = settings.clone();
                 // If the loop has gone, `loop_done` says so.
                 let _ = self
                     .socket
                     .notify::<DidChangeConfiguration>(DidChangeConfigurationParams { settings });
                 let _ = self.socket.emit(Taken);
                 self.sent += 1;
+            }
+            Command::Drain => {
+                self.drain_queued = false;
+                let ids: Vec<BufferId> = self.documents.keys().copied().collect();
+                for id in ids {
+                    self.drain(id);
+                }
             }
             #[cfg(test)]
             Command::Ring(buffer, answer) => {
@@ -676,30 +905,100 @@ impl Actor {
         }
     }
 
+    /// Starts queueing a drain of every document behind the commands
+    /// waiting now, unless one is queued or on its way.
+    fn queue_drain(&mut self) {
+        if !self.drain_queued && self.moving.is_none() {
+            self.moving = Some(0);
+        }
+    }
+
+    /// Moves up to [`STEPS_PER_YIELD`] waiting commands into the backlog
+    /// for a drain being queued, and queues it once none are left, or once
+    /// [`DRAIN_BEHIND_MAX`] have gone ahead of it: a step at a time, so a
+    /// flood of commands can't keep the actor from its stop and deadlines,
+    /// nor put the drain off for ever.
+    fn move_for_drain(&mut self) {
+        let Some(moved) = self.moving.as_mut() else {
+            return;
+        };
+        for _ in 0..STEPS_PER_YIELD {
+            if *moved >= DRAIN_BEHIND_MAX {
+                break;
+            }
+            match self.carry.commands.try_recv() {
+                Ok(command) => {
+                    self.backlog.push_back(command);
+                    *moved += 1;
+                }
+                Err(_) => {
+                    *moved = DRAIN_BEHIND_MAX;
+                    break;
+                }
+            }
+        }
+        if *moved >= DRAIN_BEHIND_MAX {
+            self.moving = None;
+            self.backlog.push_back(Command::Drain);
+            self.drain_queued = true;
+        }
+    }
+
     /// Forwards the routed documents, open or still queued, to where the
     /// manager now places them ([`Routes`]), at the text drained so far:
     /// what the buffer did since waits in its subscription for the next
     /// server's drains. Closes the command channel first, and takes every
     /// command still in it; the others are dropped with the session.
     fn hand_over(&mut self) {
-        let mut openings: Vec<Opening> = self
+        self.carry.openings.extend(
+            self.documents
+                .drain()
+                .map(|(_, document)| document.into_opening()),
+        );
+        // Opened later than those, so they go after them.
+        self.carry
+            .openings
+            .extend(self.backlog.drain(..).filter_map(|command| match command {
+                Command::Open(opening) => Some(*opening),
+                _ => None,
+            }));
+        self.tick = None;
+        self.drain_queued = false;
+        self.moving = None;
+        self.carry.hand_over();
+    }
+
+    /// The session crashed: its identities are retired, and its documents
+    /// and commands go to the next session ([`Carry`]).
+    fn crashed(mut self, why: String, at: Instant) -> Ended {
+        self.link.identities.end_session(self.link.session);
+        {
+            let mut session = lock(&self.session);
+            session.capabilities = None;
+            session.encoding = None;
+            session.registrations = Registrations::default();
+        }
+        let documents: Vec<Opening> = self
             .documents
             .drain()
             .map(|(_, document)| document.into_opening())
             .collect();
-        // Opened later than those, so they go after them.
-        openings.extend(self.backlog.drain(..).filter_map(|command| match command {
-            Command::Open(opening) => Some(*opening),
-            _ => None,
-        }));
-        self.tick = None;
-        self.drain_due = false;
-        hand_over(
-            &mut self.commands,
-            openings,
-            &self.routes,
-            &self.link.identities,
-        );
+        self.carry.openings.extend(documents);
+        for command in std::mem::take(&mut self.backlog) {
+            self.carry.hold(command);
+        }
+        self.link.outbox.clear();
+        let (_, stop) = oneshot::channel();
+        let spent = Carry {
+            commands: mpsc::unbounded().1,
+            stop,
+            openings: Vec::new(),
+            settings: serde_json::Value::Null,
+            routes: self.routes.clone(),
+            identities: self.link.identities.clone(),
+        };
+        let carry = std::mem::replace(&mut self.carry, spent);
+        Ended::Crashed { why, at, carry }
     }
 
     fn drain(&mut self, buffer: BufferId) {
@@ -738,7 +1037,38 @@ impl Actor {
         }
     }
 
-    async fn initialize(&mut self, loop_done: &mut LoopDone) -> Started {
+    /// Brings readiness up to now: applies what time changed, reports what
+    /// it shows if that changed, and arms its next timer.
+    fn readiness_changed(&mut self) {
+        let now = self.clock.now();
+        let mut readiness = lock(&self.readiness);
+        readiness.tick(now);
+        if readiness.take_fallback() {
+            log::warn!(
+                "{}: no experimental/serverStatus within {} s of initialize; routing by \
+                 progress, and its empty answers are never final",
+                self.spec.name,
+                crate::readiness::STATUS_WAIT.as_secs(),
+            );
+        }
+        let view = readiness.view();
+        let next = readiness.next_due();
+        drop(readiness);
+        if view != self.shown {
+            self.shown = view.clone();
+            self.status.send(view);
+        }
+        match next {
+            Some(at) if self.due.as_ref().is_none_or(|(armed, _)| *armed != at) => {
+                let sleep = self.clock.sleep(at.saturating_duration_since(now));
+                self.due = Some((at, sleep));
+            }
+            Some(_) => {}
+            None => self.due = None,
+        }
+    }
+
+    async fn initialize(&mut self, loop_done: &mut LoopDone, exited: &mut Exited<'_>) -> Started {
         let params = initialize_params(&self.spec, &self.folder);
         self.take_id();
         let reply = send_request::<Initialize>(&self.socket, params).fuse();
@@ -751,13 +1081,13 @@ impl Actor {
             if stopping {
                 Started::Stopped
             } else {
-                Started::Failed(why)
+                Started::Crashed(why)
             }
         };
         let result = loop {
             select_biased! {
                 result = reply => break result,
-                _ = &mut self.stop => {
+                _ = &mut self.carry.stop => {
                     self.stopping = true;
                     self.hand_over();
                 }
@@ -768,6 +1098,13 @@ impl Actor {
                         loop_end(ended),
                     ));
                 }
+                exit = &mut *exited => {
+                    return failed(self.stopping, format!(
+                        "{} {} before answering initialize",
+                        self.spec.name,
+                        describe(exit),
+                    ));
+                }
                 () = timeout => {
                     return failed(self.stopping, format!(
                         "{} didn't answer initialize within {} s",
@@ -775,7 +1112,7 @@ impl Actor {
                         INITIALIZE_TIMEOUT.as_secs(),
                     ));
                 }
-                command = self.commands.next() => match command {
+                command = self.carry.commands.next() => match command {
                     // So a configuration request during the start gets
                     // them; the notification waits.
                     Some(Command::Configure(settings)) => {
@@ -825,6 +1162,11 @@ impl Actor {
                 ),
             );
         }
+        if self.stopping {
+            return Started::Running;
+        }
+        lock(&self.readiness).initialized(self.clock.now());
+        self.readiness_changed();
         Started::Running
     }
 
@@ -845,14 +1187,14 @@ impl Actor {
         };
         self.link.policy = SyncPolicy::from_capabilities(&result.capabilities);
         self.link.encoding = encoding;
-        let mut session = self.session.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut session = lock(&self.session);
         session.capabilities = Some(result.capabilities);
         session.encoding = Some(encoding);
     }
 
-    /// `shutdown` (up to 2 s), `exit`, up to 1 s for the process to go,
-    /// then `kill`. Whatever the server does after `exit` (a non-zero code,
-    /// closing its output) is a normal stop.
+    /// Stops the session at the manager's request: its documents go on,
+    /// its identities are retired and its callers answered, then
+    /// [`shut_down`](Self::shut_down).
     async fn shutdown(&mut self, process: &mut dyn ServerProcess) {
         // However it came to stop, its documents go on first.
         self.hand_over();
@@ -864,7 +1206,15 @@ impl Actor {
         self.link.outbox.clear();
         self.documents.clear();
         self.tick = None;
-        self.drain_due = false;
+        self.drain_queued = false;
+        self.shut_down(process).await;
+        self.stopped(None);
+    }
+
+    /// `shutdown` (up to 2 s), `exit`, up to 1 s for the process to go,
+    /// then `kill`. Whatever the server does after `exit` (a non-zero code,
+    /// closing its output) is a normal stop.
+    async fn shut_down(&mut self, process: &mut dyn ServerProcess) {
         self.take_id();
         let reply = send_request::<Shutdown>(&self.socket, ()).fuse();
         let timeout = self.clock.sleep(SHUTDOWN_TIMEOUT).fuse();
@@ -902,17 +1252,30 @@ impl Actor {
             );
             kill(process).await;
         }
-        self.stopped(None);
     }
 
     /// Reports the session over. The manager sees the command channel
     /// closed first, so a `start` prompted by this status starts afresh.
     fn stopped(&mut self, why: Option<String>) {
-        // A session ending on its own (a failed start, a crash) hands its
-        // documents back too.
+        // A session ending on its own (a failed start) hands its documents
+        // back too.
         self.hand_over();
         self.link.identities.end_session(self.link.session);
         self.status.send(ServerStatus::Stopped(why));
+    }
+}
+
+/// How a process went, for a crash's message.
+fn describe(exit: ExitInfo) -> String {
+    match exit {
+        ExitInfo {
+            code: Some(code), ..
+        } => format!("exited with code {code}"),
+        ExitInfo {
+            signal: Some(signal),
+            ..
+        } => format!("was killed by signal {signal}"),
+        ExitInfo { .. } => "exited".into(),
     }
 }
 
@@ -931,7 +1294,7 @@ async fn kill(process: &mut dyn ServerProcess) {
 /// empty: a send the channel counted before the close may still be on its
 /// way into the queue, and an open there would be dropped with the
 /// receiver. Sends the close comes before fail, and their documents wait.
-fn hand_over(
+pub(crate) fn hand_over(
     commands: &mut mpsc::UnboundedReceiver<Command>,
     mut openings: Vec<Opening>,
     routes: &Routes,
@@ -983,38 +1346,61 @@ fn loop_end(ended: Result<async_lsp::Result<()>, oneshot::Canceled>) -> String {
     }
 }
 
-/// Logs the server's stderr until it closes or the session ends. Card 4
-/// keeps it for `lsp.show_log`.
+/// Keeps the server's stderr in its log ring, and logs it, until it
+/// closes or the session ends. Then it reads on, a step at a time, for as
+/// long as there's something ready to read, however much, so a crashing
+/// server's last words are kept, the ring holding the newest. It stops at
+/// the end of the stream, when nothing more is ready, or, for a stream
+/// that never stops being ready (something else keeps writing it),
+/// [`STDERR_GRACE`] on the clock after the session ended.
 async fn drain_stderr(
     name: String,
     stderr: Option<Pin<Box<dyn AsyncRead + Send>>>,
+    ring: SharedLog,
+    clock: Arc<dyn Clock>,
     over: futures::future::Shared<oneshot::Receiver<()>>,
 ) {
     let Some(mut stderr) = stderr else { return };
-    let drain = async {
-        let mut buf = vec![0; 4096];
-        let mut budget = Budget::default();
-        while let Ok(n @ 1..) = stderr.read(&mut buf).await {
-            log::debug!(
-                "{name} stderr: {}",
-                String::from_utf8_lossy(&buf[..n]).trim_end()
-            );
-            budget.spend().await;
+    let mut buf = vec![0; 4096];
+    let keep = |bytes: &[u8]| {
+        lock(&ring).push(bytes);
+        log::debug!(
+            "{name} stderr: {}",
+            String::from_utf8_lossy(bytes).trim_end()
+        );
+    };
+    {
+        let drain = async {
+            let mut budget = Budget::default();
+            while let Ok(n @ 1..) = stderr.read(&mut buf).await {
+                keep(&buf[..n]);
+                budget.spend().await;
+            }
+        }
+        .fuse();
+        pin_mut!(drain);
+        let mut over = over.fuse();
+        select_biased! {
+            _ = over => {}
+            () = drain => return,
         }
     }
-    .fuse();
-    pin_mut!(drain);
-    let mut over = over.fuse();
-    select_biased! {
-        _ = over => {}
-        () = drain => {}
+    let mut grace = clock.sleep(STDERR_GRACE);
+    let mut budget = Budget::default();
+    while grace.as_mut().now_or_never().is_none()
+        && let Some(Ok(n @ 1..)) = stderr.read(&mut buf).now_or_never()
+    {
+        keep(&buf[..n]);
+        budget.spend().await;
     }
 }
 
+/// How long stderr that never stops being ready is read after its
+/// session ended.
+pub(crate) const STDERR_GRACE: Duration = Duration::from_secs(1);
+
 enum Next {
     Out(Outgoing),
-    /// Drain every document: a backstop tick came.
-    DrainAll,
     /// `None` once every sender has gone: the manager retired the server
     /// (its places point elsewhere, and its stop is on its way) or has
     /// gone itself.
@@ -1022,14 +1408,15 @@ enum Next {
 }
 
 /// What to do next, once async-lsp's queue has room: send what's first in
-/// the outbox, else a due backstop drain, else carry out the
-/// startup backlog, then commands. So the outbox only fills when it's
-/// empty and there's room, from one drain or one command at a time.
+/// the outbox, else carry out the backlog (where a backstop tick queues
+/// its drain, behind the commands waiting then), then new commands. So
+/// the outbox only fills when it's empty and there's room, from one drain
+/// or one command at a time, and commands and drains take turns in the
+/// order they came.
 async fn next_command(
     queue: &Queue,
     sent: u64,
     outbox: &mut VecDeque<Outgoing>,
-    drain_due: bool,
     backlog: &mut VecDeque<Command>,
     commands: &mut mpsc::UnboundedReceiver<Command>,
 ) -> Next {
@@ -1037,17 +1424,22 @@ async fn next_command(
     if let Some(out) = outbox.pop_front() {
         return Next::Out(out);
     }
-    if drain_due {
-        return Next::DrainAll;
-    }
     match backlog.pop_front() {
         Some(command) => Next::Command(Some(command)),
         None => Next::Command(commands.next().await),
     }
 }
 
+/// Resolves when readiness's timer is due; never, while it isn't running.
+async fn wait_due(due: &mut Option<(Instant, Timer)>) {
+    match due {
+        Some((_, timer)) => timer.await,
+        None => futures::future::pending().await,
+    }
+}
+
 /// Resolves when the backstop tick is due; never, while it isn't running.
-async fn wait_tick(tick: &mut Option<Pin<Box<dyn Future<Output = ()> + Send>>>) {
+async fn wait_tick(tick: &mut Option<Timer>) {
     match tick {
         Some(tick) => tick.await,
         None => futures::future::pending().await,

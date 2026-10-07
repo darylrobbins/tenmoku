@@ -1772,12 +1772,30 @@ root.
   between rust-analyzer's phases, and a gap over 500 ms would latch `Ready`
   early in `progress` mode. Because empty answers in `progress` mode are
   never final, that costs only routing, not correctness. Not measured.
-- **rust-analyzer's `experimental/serverStatus`.** Never observed: the probe
-  didn't set `experimental.serverStatusNotification`. Card 4 must check two
-  things. First, that it arrives. Second, whether `quiescent` waits for cache
-  priming and ignores flycheck. If either fails, the built-in spec switches
-  rust-analyzer to `progress` mode, and its empty answers stop being final
-  too (§3.4).
+- **rust-analyzer's `experimental/serverStatus`: checked in card 4
+  (2026-10-07).** A scratch harness (not committed) ran the 1.98.1 rustup
+  component (`rust-analyzer 1.98.1 (48a229ce 2026-09-01)`) on this
+  repository, with `experimental.serverStatusNotification = true` and
+  `cargo.targetDir = true`, at a load average of about 260. Times are seconds
+  after `initialize` was sent:
+  - **It arrives.** `quiescent: false` at 0.15 s, with the first
+    `Fetching` progress, then `quiescent: true` at 107.35 s. Those were the
+    only two statuses in the 254 s run (`health` "ok" both times).
+  - **`quiescent` waits for cache priming.** Startup ran Fetching, Building
+    CrateGraph, Roots Scanned, Building compile-time-deps (2.4 → 62.3 s),
+    Loading proc-macros, Fetching again, then cache priming ("Indexing",
+    `rustAnalyzer/cachePriming`) from 90.17 to 107.32 s. `quiescent: true`
+    came 30 ms after cache priming ended, with no token open.
+  - **`quiescent` ignores flycheck.** Flycheck (`rust-analyzer/flycheck/0`,
+    "cargo check") began 0.2 s after the quiescent status and ran to 127.5 s;
+    a `didSave` started a second run from 127.8 to 241.8 s. No status came
+    during either, so `quiescent` stayed true.
+
+  Both checks hold, so the built-in rust-analyzer spec keeps
+  `server-status` mode. For the 500 ms settle (next item): the gaps with no
+  progress open in this run were 102, 0, 15, 1 and 76 ms during startup, and
+  237 ms between cache priming and the first flycheck, so the progress rule
+  would have latched at about 107.8 s here too, with flycheck ignored.
 - **How often "search instead of empty" helps or hurts.** For pyright and
   typescript-language-server, a true "no definition" (a builtin, say) shows
   search's guesses, labelled "by search". Not measured for frequency.
@@ -1792,9 +1810,12 @@ root.
   the 2026-10-05 standalone release. The component is older, so its encoding
   negotiation should be re-checked in card 10. The negotiation code has been
   stable, but this wasn't verified.
-- **rust-analyzer without client file watching.** Whether it falls back to its
-  own watcher when `didChangeWatchedFiles` isn't offered was not checked
-  (§7).
+- **rust-analyzer without client file watching: checked in card 4
+  (2026-10-07).** In the same run, fe-lsp's capabilities (no
+  `didChangeWatchedFiles`), a function appended on disk to a file the client
+  never opened was found by `workspace/symbol` at the first query, 6.3 s
+  later. So rust-analyzer watches the disk itself when the client doesn't
+  offer file watching (§7).
 - **Whether async-lsp upstream would take a cancel-on-drop or
   request-id change** (§2.1, option b). Not asked.
 - **Cost of the cross-file offset conversion** for references in unopened

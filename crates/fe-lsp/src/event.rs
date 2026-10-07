@@ -15,16 +15,32 @@ pub enum LspEvent {
         name: String,
         status: ServerStatus,
     },
+    /// The server asked for a message to be shown (`window/showMessage`).
+    ShowMessage {
+        server: ServerId,
+        name: String,
+        typ: lsp_types::MessageType,
+        message: String,
+    },
 }
 
 /// Where a server is in its life.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ServerStatus {
-    /// From launch until it's ready.
+    /// From launch until it's ready, with no counted progress open.
     Starting,
+    /// Not ready yet, with work-done progress open: the title of the
+    /// latest begun.
+    Indexing { title: String },
+    /// Ready (§3.4), until the session ends: requests go to it.
+    Ready,
+    /// The *n*th crash within 3 minutes ended its session; it starts again
+    /// after a backoff (§3.5).
+    Restarting(u32),
     /// Gone for good: `None` after a requested stop, otherwise why it
-    /// stopped. Its thread has ended or is about to.
+    /// stopped (it couldn't launch, or crashed too often). Its thread has
+    /// ended or is about to.
     Stopped(Option<String>),
 }
 
@@ -79,5 +95,34 @@ impl LspError {
             },
             err => Self::Protocol(err.to_string()),
         }
+    }
+}
+
+/// How much of each server's stderr and `window/logMessage` is kept.
+pub(crate) const LOG_BYTES: usize = 64 * 1024;
+
+/// The last [`LOG_BYTES`] a server wrote to stderr or logged, across its
+/// sessions, read with [`LspManager::log`](crate::LspManager::log).
+#[derive(Default)]
+pub(crate) struct LogRing(std::collections::VecDeque<u8>);
+
+pub(crate) type SharedLog = std::sync::Arc<std::sync::Mutex<LogRing>>;
+
+impl LogRing {
+    pub(crate) fn push(&mut self, bytes: &[u8]) {
+        let bytes = &bytes[bytes.len().saturating_sub(LOG_BYTES)..];
+        let over = (self.0.len() + bytes.len()).saturating_sub(LOG_BYTES);
+        self.0.drain(..over);
+        self.0.extend(bytes);
+    }
+
+    /// What's kept, from its first whole character on.
+    pub(crate) fn text(&self) -> String {
+        let bytes: Vec<u8> = self.0.iter().copied().collect();
+        let start = bytes
+            .iter()
+            .position(|&b| b & 0xc0 != 0x80)
+            .unwrap_or(bytes.len());
+        String::from_utf8_lossy(&bytes[start..]).into_owned()
     }
 }

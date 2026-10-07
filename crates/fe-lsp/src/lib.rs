@@ -21,6 +21,10 @@
 //! - Documents are synced from the buffer's own events: the host hands
 //!   [`LspManager::open`] a `fe_buffer::Subscription`, and the server's
 //!   thread drains it ([`LspManager::changed`] nudges it to).
+//! - A server that crashes restarts as a new session, within a rolling
+//!   budget; its status events say where it is, from `Starting` through
+//!   `Ready` to `Restarting(n)` or `Stopped`. Every reply says whether an
+//!   empty result is final ([`Reply`]).
 //!
 //! Two facts for a host embedding fe-lsp:
 //!
@@ -43,7 +47,11 @@ mod event;
 mod identity;
 mod launcher;
 mod manager;
+mod readiness;
+mod registration;
 mod registry;
+mod requests;
+mod restart;
 mod router;
 mod server;
 
@@ -66,3 +74,4 @@ pub use launcher::{
     ServerLauncher, ServerProcess, ServerSpec, UnversionedDiagnostics,
 };
 pub use manager::{DEFAULT_MAX_FILE_BYTES, LspManager};
+pub use requests::{ORPHANS_MAX, Reply};

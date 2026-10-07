@@ -43,7 +43,7 @@ fn request_admission_by_version() {
         |admitted| json!({ "admitted": admitted.document.sent.lsp_version }),
     );
     let (result, admitted) = answer(reply).unwrap();
-    assert_eq!(result["params"], json!({ "admitted": 1 }));
+    assert_eq!(result.result["params"], json!({ "admitted": 1 }));
     let order: Vec<String> = s
         .fake
         .records()

@@ -28,7 +28,7 @@ struct Session {
     manager: LspManager,
     clock: Arc<ManualClock>,
     server: ServerId,
-    _events: Events,
+    events: Events,
 }
 
 /// A buffer synced to [`Session`]'s server.
@@ -47,12 +47,17 @@ impl Session {
             .unwrap();
         assert_eq!(events.status(server), ServerStatus::Starting);
         fake.wait_initialized();
+        // Ready, so readiness's timer is done with and only the backstop
+        // sleeps.
+        clock.wait_for_sleep(crate::readiness::SETTLE);
+        clock.advance(crate::readiness::SETTLE);
+        assert_eq!(events.status(server), ServerStatus::Ready);
         Self {
             fake,
             manager,
             clock,
             server,
-            _events: events,
+            events,
         }
     }
 
@@ -751,11 +756,18 @@ fn close_keeps_order_with_nudges_and_requests() {
 
 #[test]
 fn subscriptions_go_with_the_server() {
-    // A crash after opening.
+    // A crash after opening keeps it for the next session; a stop while
+    // the server waits to restart drops it.
     let mut session = Session::new(Script::default());
     let mut doc = session.open("a.txt", "one\n", "text");
     assert!(session.manager.is_subscribed(doc.buffer.id()));
     session.fake.crash();
+    assert_eq!(
+        session.events.status(session.server),
+        ServerStatus::Restarting(1)
+    );
+    assert!(session.manager.is_subscribed(doc.buffer.id()));
+    session.manager.stop(session.server);
     super::wait_until("the subscription to go", || {
         !session.manager.is_subscribed(doc.buffer.id())
     });
@@ -774,10 +786,9 @@ fn subscriptions_go_with_the_server() {
     open_buffer(&mut manager, server, &mut buffer, "b.txt").unwrap();
     assert!(manager.is_subscribed(buffer.id()));
     fake_clock.advance(Duration::from_secs(1));
-    assert!(matches!(
-        events.status(server),
-        ServerStatus::Stopped(Some(_))
-    ));
+    assert_eq!(events.status(server), ServerStatus::Restarting(1));
+    assert!(manager.is_subscribed(buffer.id()));
+    manager.stop(server);
     super::wait_until("the subscription to go", || {
         !manager.is_subscribed(buffer.id())
     });

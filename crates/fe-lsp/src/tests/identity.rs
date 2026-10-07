@@ -86,8 +86,8 @@ fn versions_and_incarnations() {
     assert_ne!(identity.0, session);
     assert!(seen.insert(identity), "{identity:?} reused");
 
-    // Ending a session retires that session's identities and no others,
-    // before its end is reported.
+    // Ending a session (a crash, here) retires that session's identities
+    // and no others, before its end is reported.
     let other = s
         .manager
         .start(ServerSpec::new("other", "fake-server"), Path::new(ROOT))
@@ -104,7 +104,7 @@ fn versions_and_incarnations() {
     s.events.probe(move |event| {
         if let LspEvent::Status {
             server,
-            status: ServerStatus::Stopped(_),
+            status: ServerStatus::Restarting(_),
             ..
         } = event
             && *server == again
@@ -117,10 +117,7 @@ fn versions_and_incarnations() {
         }
     });
     s.fake.crash_at(2);
-    assert!(matches!(
-        s.events.status(again),
-        ServerStatus::Stopped(Some(_))
-    ));
+    assert_eq!(s.events.status(again), ServerStatus::Restarting(1));
     assert_eq!(at_end.recv().unwrap(), (None, Some(on_other)));
     assert_eq!(s.manager.active_identity(c.id(), again), None);
     assert_eq!(s.manager.active_identity(d.id(), other), Some(on_other));

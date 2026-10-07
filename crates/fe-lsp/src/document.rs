@@ -196,6 +196,18 @@ pub(crate) enum Note {
 }
 
 impl Note {
+    /// The method and document, as `didClose file:///a`.
+    #[cfg(test)]
+    pub(crate) fn describe(&self) -> String {
+        let (method, uri) = match self {
+            Self::Open(p) => ("didOpen", &p.text_document.uri),
+            Self::Change(p) => ("didChange", &p.text_document.uri),
+            Self::Save(p) => ("didSave", &p.text_document.uri),
+            Self::Close(p) => ("didClose", &p.text_document.uri),
+        };
+        format!("{method} {uri}")
+    }
+
     pub(crate) fn send(self, socket: &async_lsp::ServerSocket) -> async_lsp::Result<()> {
         match self {
             Self::Open(params) => socket.notify::<DidOpenTextDocument>(params),

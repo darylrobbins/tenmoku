@@ -8,10 +8,12 @@
 //! A [`Script`] says how it answers `initialize`, `shutdown`, `exit` and
 //! any other method; a method it doesn't script is echoed back (see
 //! [`Echo`]). Its delays are measured on a [`Clock`]. It records every
-//! message it receives, with request ids, and every reply it sends, each
-//! tagged with the launch (1, 2, …) it belongs to, and it can send
-//! requests and notifications of its own or crash on cue. It can also hold
-//! or step the client's writes to it (see [`Writes`]).
+//! message it receives, with request ids, including the client's answers
+//! to its own requests, and every reply it sends, each tagged with the
+//! launch (1, 2, …) it belongs to. It can send requests and notifications
+//! of its own, write to stderr, crash or exit on cue, and answer the
+//! client's `$/cancelRequest`s. It can also hold or step the client's
+//! writes to it (see [`Writes`]).
 //!
 //! It keeps a [`Replica`] of each document the client syncs to it,
 //! applying `didOpen`, `didChange`, `didSave` and `didClose` with a
@@ -59,6 +61,10 @@ pub struct Script {
     /// Answers to other requests, by method. Unscripted methods are
     /// echoed.
     pub replies: HashMap<String, Scripted>,
+    /// Whether a `$/cancelRequest` for a request still being answered
+    /// answers it at once with `RequestCancelled` (-32800), as a compliant
+    /// server does. Otherwise it's only recorded.
+    pub answer_cancels: bool,
 }
 
 /// A scripted answer to a request, given after `delay` on the fake's
@@ -101,6 +107,7 @@ impl Default for Script {
             answer_shutdown: true,
             on_exit: OnExit::Exit(0),
             replies: HashMap::new(),
+            answer_cancels: false,
         }
     }
 }
@@ -191,6 +198,12 @@ pub enum Record {
         id: NumberOrString,
         method: String,
     },
+    /// The client answered the fake's request `id`: its result, or its
+    /// error's code and message.
+    Response {
+        id: NumberOrString,
+        result: Result<Value, (i32, String)>,
+    },
 }
 
 impl Record {
@@ -199,6 +212,7 @@ impl Record {
             Self::Request { method, .. }
             | Self::Notification { method, .. }
             | Self::Replied { method, .. } => method,
+            Self::Response { .. } => "",
         }
     }
 
@@ -231,6 +245,10 @@ pub enum Writes {
     /// whatever is sent, and the test sees what the client did in between.
     /// Meant for one launch's writes at a time.
     Stepped,
+    /// One at a time, as a slow reader takes them: each waits (`Pending`)
+    /// until [`FakeServer::allow_write`] lets one through, without blocking
+    /// the client's thread meanwhile.
+    Paced,
 }
 
 /// An error a client answered the fake's request with.
@@ -277,6 +295,9 @@ struct State {
     documents: HashMap<Url, Replica>,
     /// Document notifications the fake couldn't apply, and why.
     sync_errors: Vec<String>,
+    /// Answers `RequestCancelled` to the client's requests being answered,
+    /// by launch and id, while `answer_cancels` is set.
+    cancels: HashMap<(usize, String), oneshot::Sender<()>>,
 }
 
 /// Ends the fake's main loop.
@@ -288,6 +309,7 @@ struct Stop;
 struct Launched {
     socket: ClientSocket,
     exit: ExitSender,
+    stderr: mpsc::UnboundedSender<Vec<u8>>,
 }
 
 type ExitSender = Arc<Mutex<Option<oneshot::Sender<ExitInfo>>>>;
@@ -340,6 +362,7 @@ impl FakeServer {
                     write_waiting: false,
                     documents: HashMap::new(),
                     sync_errors: Vec::new(),
+                    cancels: HashMap::new(),
                 }),
                 changed: Condvar::new(),
                 clock,
@@ -484,10 +507,33 @@ impl FakeServer {
         state.writes == Writes::Stepped && state.write_waiting && state.allowed == 0
     }
 
-    /// With writes stepped, lets one more through.
+    /// With writes stepped or paced, lets one more through.
     pub fn allow_write(&self) {
-        self.lock().allowed += 1;
+        let mut state = self.lock();
+        state.allowed += 1;
+        let held = std::mem::take(&mut state.held);
+        drop(state);
         self.shared.changed.notify_all();
+        for waker in held {
+            waker.wake();
+        }
+    }
+
+    /// With writes paced, blocks until the writes let through have been
+    /// made and the client waits to write again. Panics after 10 s.
+    pub fn wait_paced(&self) {
+        let deadline = Instant::now() + WAIT;
+        let mut state = self.lock();
+        while state.allowed > 0 || state.held.is_empty() {
+            let now = Instant::now();
+            assert!(now < deadline, "fake: the paced writes weren't made");
+            state = self
+                .shared
+                .changed
+                .wait_timeout(state, (deadline - now).min(Duration::from_millis(10)))
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+        }
     }
 
     /// Whether a client write may go now. While writes are stepped, it
@@ -501,6 +547,16 @@ impl FakeServer {
             match state.writes {
                 Writes::Open => return Poll::Ready(()),
                 Writes::Held => {
+                    if !state.held.iter().any(|held| held.will_wake(cx.waker())) {
+                        state.held.push(cx.waker().clone());
+                    }
+                    return Poll::Pending;
+                }
+                Writes::Paced if state.allowed > 0 => {
+                    state.allowed -= 1;
+                    return Poll::Ready(());
+                }
+                Writes::Paced => {
                     if !state.held.iter().any(|held| held.will_wake(cx.waker())) {
                         state.held.push(cx.waker().clone());
                     }
@@ -581,6 +637,28 @@ impl FakeServer {
                 }),
             }
         })
+    }
+
+    /// Changes the script's answer to `method` from now on.
+    pub fn set_reply(&self, method: &str, reply: Scripted) {
+        self.lock().script.replies.insert(method.to_owned(), reply);
+    }
+
+    /// Writes `bytes` to the latest launch's stderr.
+    pub fn stderr(&self, bytes: &[u8]) {
+        let _ = self.session().stderr.unbounded_send(bytes.to_vec());
+    }
+
+    /// Exits the latest launch with `code`, leaving its transport open, as
+    /// when a descendant still holds the server's stdout.
+    pub fn exit_keeping_output(&self, code: i32) {
+        send_exit(
+            &self.session().exit,
+            ExitInfo {
+                code: Some(code),
+                signal: None,
+            },
+        );
     }
 
     /// Crashes the latest launch: closes the transport (the client reads
@@ -834,6 +912,7 @@ impl ServerLauncher for FakeLauncher {
     fn launch(&self, spec: &ServerSpec, root: &Path) -> io::Result<ServerIo> {
         let (client_reads, server_writes) = pipe();
         let (server_reads, client_writes) = pipe();
+        let (stderr_reads, stderr_writes) = pipe();
         let (exit, exited) = oneshot::channel();
         let exit: ExitSender = Arc::new(Mutex::new(Some(exit)));
         let mut state = self.fake.lock();
@@ -841,7 +920,11 @@ impl ServerLauncher for FakeLauncher {
         let fake = self.fake.clone();
         let (main_loop, socket) =
             MainLoop::new_server(|client| fake_router(fake, launch, client, exit.clone()));
-        let session = Launched { socket, exit };
+        let session = Launched {
+            socket,
+            exit,
+            stderr: stderr_writes.0,
+        };
         state
             .launch_threads
             .push(thread::current().name().map(str::to_owned));
@@ -849,6 +932,12 @@ impl ServerLauncher for FakeLauncher {
         state.sessions.push(session.clone());
         drop(state);
         let ended = session.exit.clone();
+        let server_reads = Tap {
+            pipe: server_reads,
+            fake: self.fake.clone(),
+            launch,
+            seen: Vec::new(),
+        };
         thread::Builder::new()
             .name(format!("fake {}", spec.name))
             .spawn(move || {
@@ -865,7 +954,7 @@ impl ServerLauncher for FakeLauncher {
                 fake: self.fake.clone(),
             }),
             output: Box::pin(client_reads),
-            stderr: None,
+            stderr: Some(Box::pin(stderr_reads)),
             process: Box::new(FakeProcess {
                 fake: self.fake.clone(),
                 session,
@@ -943,8 +1032,36 @@ fn fake_router(
             );
             let script = fake.lock().script.clone();
             let clock = fake.shared.clock.clone();
+            let cancelled = script.answer_cancels.then(|| {
+                let (cancel, cancelled) = oneshot::channel();
+                fake.lock()
+                    .cancels
+                    .insert((launch, id_key(&req.id)), cancel);
+                cancelled
+            });
             async move {
-                let answer = answer(&script, &*clock, &req).await;
+                let answer = {
+                    let answer = answer(&script, &*clock, &req).fuse();
+                    let cancelled = async {
+                        let cancelled = match cancelled {
+                            Some(cancelled) => cancelled.await.is_ok(),
+                            None => false,
+                        };
+                        if !cancelled {
+                            futures::future::pending::<()>().await;
+                        }
+                    }
+                    .fuse();
+                    futures::pin_mut!(answer, cancelled);
+                    futures::select_biased! {
+                        answer = answer => answer,
+                        () = cancelled => Err(ResponseError::new(
+                            async_lsp::ErrorCode::REQUEST_CANCELLED,
+                            "cancelled",
+                        )),
+                    }
+                };
+                fake.lock().cancels.remove(&(launch, id_key(&req.id)));
                 fake.record(
                     launch,
                     Record::Replied {
@@ -958,6 +1075,15 @@ fn fake_router(
         .unhandled_notification(|session, notif: AnyNotification| {
             let fake = &session.fake;
             fake.record_notification(session.launch, &notif.method, &notif.params);
+            if notif.method == "$/cancelRequest"
+                && let Some(id) = notif.params.get("id")
+                && let Ok(id) = serde_json::from_value::<NumberOrString>(id.clone())
+            {
+                let cancel = fake.lock().cancels.remove(&(session.launch, id_key(&id)));
+                if let Some(cancel) = cancel {
+                    let _ = cancel.send(());
+                }
+            }
             if notif.method == "exit" {
                 let on_exit = fake.lock().script.on_exit;
                 match on_exit {
@@ -1024,6 +1150,68 @@ async fn answer(
             Ok(json!({ "id": req.id, "params": req.params }))
         }
     }
+}
+
+fn id_key(id: &NumberOrString) -> String {
+    match id {
+        NumberOrString::Number(n) => n.to_string(),
+        NumberOrString::String(s) => format!("{s:?}"),
+    }
+}
+
+/// The fake's input, read through: records each response the client
+/// sends (to the fake's own requests), which the main loop consumes
+/// without telling the router.
+struct Tap {
+    pipe: PipeReader,
+    fake: FakeServer,
+    launch: usize,
+    /// Bytes read and not yet parsed into whole messages.
+    seen: Vec<u8>,
+}
+
+impl AsyncRead for Tap {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        out: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        let this = &mut *self;
+        let n = ready!(Pin::new(&mut this.pipe).poll_read(cx, out))?;
+        this.seen.extend_from_slice(&out[..n]);
+        while let Some((message, used)) = frame(&this.seen) {
+            this.seen.drain(..used);
+            let is_response = message.get("method").is_none();
+            if let (true, Some(id)) = (is_response, message.get("id")) {
+                let id = serde_json::from_value(id.clone()).unwrap_or(NumberOrString::Number(-1));
+                let result = match message.get("error") {
+                    Some(error) => Err((
+                        error["code"].as_i64().unwrap_or(0) as i32,
+                        error["message"].as_str().unwrap_or("").to_owned(),
+                    )),
+                    None => Ok(message.get("result").cloned().unwrap_or(Value::Null)),
+                };
+                this.fake
+                    .record(this.launch, Record::Response { id, result });
+            }
+        }
+        Poll::Ready(Ok(n))
+    }
+}
+
+/// The first whole `Content-Length` framed message in `bytes`, and how
+/// many bytes it took.
+fn frame(bytes: &[u8]) -> Option<(Value, usize)> {
+    let header_end = bytes.windows(4).position(|w| w == b"\r\n\r\n")? + 4;
+    let header = std::str::from_utf8(&bytes[..header_end]).ok()?;
+    let length: usize = header.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.eq_ignore_ascii_case("content-length")
+            .then(|| value.trim().parse().ok())?
+    })?;
+    let body = bytes.get(header_end..header_end + length)?;
+    let message = serde_json::from_slice(body).unwrap_or(Value::Null);
+    Some((message, header_end + length))
 }
 
 /// `R`, answered as plain JSON.

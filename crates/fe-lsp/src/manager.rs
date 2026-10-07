@@ -5,6 +5,11 @@
 //! instance per (server, root), started by the first document that needs
 //! it and left running when its last document closes. One with no server
 //! to go to waits, parked, until settings or a host spec give it one.
+//!
+//! A server that crashes restarts itself (restart.rs); the manager keeps
+//! each (server, root)'s crash list and log ring across the instances it
+//! starts there, so a server that gave up stays stopped until
+//! [`LspManager::restart`] or a new spec, and its log outlives it.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -24,13 +29,16 @@ use lsp_types::{ServerCapabilities, Url};
 use crate::clock::{Clock, SystemClock};
 use crate::document::{Admitted, Attached, Opening, Subscribed, language_id};
 use crate::encoding::PositionEncoding;
-use crate::event::{LspError, LspEvent, NOT_OPEN, ServerId};
+use crate::event::{LspError, LspEvent, NOT_OPEN, ServerId, SharedLog};
 use crate::identity::{Identities, IncarnationId, SessionId};
 use crate::launcher::{ServerLauncher, ServerSpec};
 use crate::registry::{Registry, needs_restart, server_for};
-use crate::server::{
-    Admit, Command, Done, Issue, Place, Routes, Server, Session, Sink, send_request,
-};
+use crate::requests::{Reply, call, timeout, within};
+use crate::restart::SharedCrashes;
+use crate::server::{Admit, Command, Done, Place, Routes, Server, Session, Sink};
+
+/// A reply, with the id the actor mirrored for its request.
+pub(crate) type WithId<T> = (i32, Result<Reply<T>, LspError>);
 
 /// The default [`LspManager::max_file_bytes`]: 50 MB, the size past which
 /// fastedit highlights only the viewport.
@@ -57,6 +65,10 @@ pub struct LspManager {
     /// Which identity of each open buffer is active on each server,
     /// shared with the servers' threads.
     identities: Identities,
+    /// The crashes of the servers started at each (name, root).
+    crashes: HashMap<(String, PathBuf), SharedCrashes>,
+    /// The log ring of the servers started at each (name, root).
+    logs: HashMap<(String, PathBuf), SharedLog>,
     max_file_bytes: usize,
     next_id: u64,
 }
@@ -129,6 +141,8 @@ impl LspManager {
             retiring: HashMap::new(),
             registry: Registry::default(),
             identities: Identities::default(),
+            crashes: HashMap::new(),
+            logs: HashMap::new(),
             max_file_bytes: DEFAULT_MAX_FILE_BYTES,
             next_id: 0,
         }
@@ -218,6 +232,10 @@ impl LspManager {
     /// already running there. The launcher runs on that thread, and the
     /// sink hears how the start went. Errs only if the thread can't be
     /// made.
+    ///
+    /// It starts even a server that stopped after too many crashes, but
+    /// with the crashes counted so far: only [`restart`](Self::restart)
+    /// clears them.
     pub fn start(&mut self, spec: ServerSpec, root: &Path) -> io::Result<ServerId> {
         self.start_server(spec, root, false)
     }
@@ -294,6 +312,13 @@ impl LspManager {
         let after = self.retiring.get(&key).cloned();
         let session = Arc::new(Mutex::new(Session::default()));
         let name = spec.name.clone();
+        let crashes = self.crashes.entry(key.clone()).or_default().clone();
+        let epoch = {
+            let mut crashes = lock(&crashes);
+            crashes.last = Some((spec.clone(), routed));
+            crashes.epoch
+        };
+        let log = self.logs.entry(key.clone()).or_default().clone();
         let thread = Server {
             id,
             spec: spec.clone(),
@@ -309,6 +334,9 @@ impl LspManager {
             routes: self.routes.clone(),
             after,
             done: Some(done_sender),
+            crashes,
+            epoch,
+            log,
         }
         .spawn()?;
         self.retiring.remove(&key);
@@ -329,8 +357,8 @@ impl LspManager {
         Ok(id)
     }
 
-    /// Shuts `server` down (§3.4) on its own thread; the sink hears
-    /// `Stopped(None)` when it has gone. Requests still waiting get
+    /// Shuts `server` down (§3.4) on its own thread, or ends its wait to
+    /// restart; the sink hears `Stopped(None)` when it has gone. Requests still waiting get
     /// [`LspError::ServerDown`]. Its documents go with it, routed ones too:
     /// they're no longer tracked, as if closed, and a host wanting them
     /// synced again opens them again. (One that a crash or a settings
@@ -351,6 +379,67 @@ impl LspManager {
         }
     }
 
+    /// Restarts the server `name` for the workspace at `root`
+    /// (`lsp.restart`): forgets its crashes, shuts down the instance
+    /// running there if there is one, and starts it again, even from
+    /// `Stopped` after too many crashes. A server [`open`](Self::open)
+    /// routes documents to starts with its spec as settings and host specs
+    /// give it now, and its documents go to the new instance; one started
+    /// with [`start`](Self::start) starts with the spec it last ran with,
+    /// and documents opened on it go with the old instance, as with
+    /// [`stop`](Self::stop). Returns the new instance, or `None` if
+    /// there's no such server to start. Errs only if its thread can't be
+    /// made.
+    pub fn restart(&mut self, name: &str, root: &Path) -> io::Result<Option<ServerId>> {
+        self.prune();
+        let key = (name.to_owned(), root.to_owned());
+        let last = self.crashes.get(&key).and_then(|crashes| {
+            let mut crashes = lock(crashes);
+            crashes.clear();
+            crashes.last.clone()
+        });
+        let specs = self.registry.specs();
+        let configured = specs.iter().find(|spec| spec.name == name).cloned();
+        let running = self
+            .servers
+            .iter()
+            .find(|(_, handle)| handle.name == name && handle.root == root)
+            .map(|(&id, handle)| (id, handle.routed, handle.spec.clone()));
+        let (spec, routed) = match running {
+            Some((id, true, _)) => {
+                self.retire(id, &specs);
+                match configured {
+                    Some(spec) => (spec, true),
+                    None => return Ok(None),
+                }
+            }
+            Some((id, false, spec)) => {
+                self.stop(id);
+                (spec, false)
+            }
+            None => match (last, configured) {
+                (Some((_, true)) | None, Some(spec)) => (spec, true),
+                (Some((spec, false)), _) => (spec, false),
+                (_, None) => return Ok(None),
+            },
+        };
+        let id = self.start_server(spec, root, routed)?;
+        if routed {
+            self.place_waiting(&specs, Some(&key));
+        }
+        Ok(Some(id))
+    }
+
+    /// The last 64 KiB of what the server `name` for the workspace at
+    /// `root` wrote to stderr or sent as `window/logMessage`, across its
+    /// sessions and instances (`lsp.show_log`).
+    pub fn log(&self, name: &str, root: &Path) -> String {
+        self.logs
+            .get(&(name.to_owned(), root.to_owned()))
+            .map(|log| lock(log).text())
+            .unwrap_or_default()
+    }
+
     /// Stops tracking `buffer`: retires its identity, drops its
     /// subscription, its place and any opening waiting for it. Returns the
     /// server it was synced to.
@@ -368,12 +457,19 @@ impl LspManager {
     }
 
     /// Sends `R` to `server`. A request made while the server starts is
-    /// sent once it has initialized. The future may be awaited anywhere.
+    /// sent once it has initialized; one made while it waits to restart,
+    /// or in flight when it crashes, answers [`LspError::ServerDown`]. The
+    /// future may be awaited anywhere.
+    ///
+    /// Dropping the future cancels the request (`$/cancelRequest`), or,
+    /// if it hasn't been sent yet, keeps it from being sent. One not
+    /// answered within its method's `lsp.timeouts` of the call is
+    /// cancelled too, and answers [`LspError::Timeout`].
     pub fn request<R: Request>(
         &self,
         server: ServerId,
         params: R::Params,
-    ) -> impl Future<Output = Result<R::Result, LspError>> + Send + 'static {
+    ) -> impl Future<Output = Result<Reply<R::Result>, LspError>> + Send + 'static {
         self.request_with_id::<R>(server, params)
             .map(|answer| answer.and_then(|(_, result)| result))
     }
@@ -384,20 +480,26 @@ impl LspManager {
         &self,
         server: ServerId,
         params: R::Params,
-    ) -> impl Future<Output = Result<(i32, Result<R::Result, LspError>), LspError>> + Send + 'static
-    {
+    ) -> impl Future<Output = Result<WithId<R::Result>, LspError>> + Send + 'static {
         let (answer, answered) = oneshot::channel();
-        let issue: Issue = Box::new(move |socket, id| {
-            let reply = send_request::<R>(socket, params);
-            Box::pin(async move {
-                let _ = answer.send((id, reply.await.map_err(LspError::from_lsp)));
-            })
-        });
+        let issue = call::<R, _>(answer, params, |id, reply| (id, reply));
         if let Some(handle) = self.servers.get(&server) {
             // A server that has gone drops the request, and with it `answer`.
             let _ = handle.commands.unbounded_send(Command::Request(issue));
         }
-        answered.map(|answer| answer.map_err(|oneshot::Canceled| LspError::ServerDown))
+        let answered =
+            answered.map(|answer| answer.map_err(|oneshot::Canceled| LspError::ServerDown));
+        within(
+            answered,
+            self.timeout::<R>(),
+            &*self.clock,
+            Err(LspError::Timeout),
+        )
+    }
+
+    /// How long `R` may take, from `lsp.timeouts`.
+    fn timeout<R: Request>(&self) -> Option<std::time::Duration> {
+        timeout(R::METHOD, &self.registry.settings().timeouts)
     }
 
     /// Sends `R` about open buffer `buffer`, computed on its `version`
@@ -412,13 +514,14 @@ impl LspManager {
     /// - if the document is over [`max_file_bytes`](Self::max_file_bytes),
     ///   `Unavailable("too large for the language server")`.
     ///
-    /// The future may be awaited anywhere.
+    /// Cancelled and timed out as [`request`](Self::request) is. The future
+    /// may be awaited anywhere.
     pub fn document_request<R: Request>(
         &self,
         buffer: BufferId,
         version: Version,
         params: impl FnOnce(&Admitted) -> R::Params + Send + 'static,
-    ) -> impl Future<Output = Result<(R::Result, Admitted), LspError>> + Send + 'static {
+    ) -> impl Future<Output = Result<(Reply<R::Result>, Admitted), LspError>> + Send + 'static {
         let (answer, answered) = oneshot::channel();
         let admit: Admit = Box::new(move |admission| {
             let admitted = match admission {
@@ -428,12 +531,9 @@ impl LspManager {
                     return None;
                 }
             };
-            Some(Box::new(move |socket, _| {
-                let reply = send_request::<R>(socket, params(&admitted));
-                Box::pin(async move {
-                    let reply = reply.await.map_err(LspError::from_lsp);
-                    let _ = answer.send(reply.map(|result| (result, admitted)));
-                })
+            let params = params(&admitted);
+            Some(call::<R, _>(answer, params, move |_, reply| {
+                reply.map(|reply| (reply, admitted))
             }))
         });
         match self.server_of(buffer) {
@@ -449,7 +549,13 @@ impl LspManager {
                 admit(Err(LspError::Unavailable(NOT_OPEN.into())));
             }
         }
-        answered.map(|answer| answer.unwrap_or(Err(LspError::ServerDown)))
+        let answered = answered.map(|answer| answer.unwrap_or(Err(LspError::ServerDown)));
+        within(
+            answered,
+            self.timeout::<R>(),
+            &*self.clock,
+            Err(LspError::Timeout),
+        )
     }
 
     /// Starts syncing buffer `buffer`, at `path`, to the server for
@@ -560,6 +666,16 @@ impl LspManager {
         };
         let spec = server_for(specs, &route.language)?.clone();
         let root = route.root.clone();
+        if let Some(crashes) = self.crashes.get(&(spec.name.clone(), root.clone())) {
+            let mut crashes = lock(crashes);
+            match &crashes.given_up {
+                // It stays stopped until a restart.
+                Some(given_up) if *given_up == spec => return None,
+                // A new spec gets a fresh budget.
+                Some(_) => crashes.clear(),
+                None => {}
+            }
+        }
         match self.start_server(spec, &root, true) {
             Ok(server) => Some(server),
             Err(err) => {
@@ -861,6 +977,37 @@ impl LspManager {
         )
     }
 
+    /// The ids of `server`'s current session's registrations.
+    #[cfg(test)]
+    pub(crate) fn registrations(&self, server: ServerId) -> Vec<String> {
+        self.session(server, |session| Some(session.registrations.ids()))
+            .unwrap_or_default()
+    }
+
+    /// How many orphans `server`'s current session holds, and the most it
+    /// has held.
+    #[cfg(test)]
+    pub(crate) fn orphans(&self, server: ServerId) -> (usize, usize) {
+        self.session(server, |session| Some(session.orphans))
+            .unwrap_or_default()
+    }
+
+    /// Starts recording what `server`'s current session hands async-lsp.
+    #[cfg(test)]
+    pub(crate) fn record_handed(&self, server: ServerId) {
+        if let Some(handle) = self.servers.get(&server) {
+            lock(&handle.session).handed = Some(Vec::new());
+        }
+    }
+
+    /// What `server`'s current session handed async-lsp since
+    /// [`record_handed`](Self::record_handed).
+    #[cfg(test)]
+    pub(crate) fn handed(&self, server: ServerId) -> Vec<String> {
+        self.session(server, |session| session.handed.clone())
+            .unwrap_or_default()
+    }
+
     /// Whether `server`'s thread has ended.
     #[cfg(test)]
     pub(crate) fn thread_finished(&self, server: ServerId) -> bool {
@@ -887,4 +1034,8 @@ fn is_under(path: &Path, root: &Path) -> bool {
         && !path
             .components()
             .any(|component| component == Component::ParentDir)
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }

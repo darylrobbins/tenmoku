@@ -2,12 +2,17 @@
 //! `crate::fake` (declared in lib.rs, so fe-workbench can share it).
 
 mod admission;
+mod cancel;
 mod encoding;
 mod identity;
 mod launcher;
 mod lifecycle;
+mod readiness;
+mod registration;
 mod registry;
+mod restart;
 mod router;
+mod status;
 mod sync;
 
 use std::future::Future;
@@ -77,6 +82,23 @@ impl Events {
                 }) if from == server => return status,
                 Ok(_) => {}
                 Err(RecvTimeoutError::Timeout) => panic!("no status from {server:?} in {WAIT:?}"),
+                Err(RecvTimeoutError::Disconnected) => panic!("the manager has gone"),
+            }
+        }
+    }
+
+    /// Waits for the next event that `pick` takes.
+    fn until<T>(&self, what: &str, mut pick: impl FnMut(LspEvent) -> Option<T>) -> T {
+        let deadline = Instant::now() + WAIT;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match self.0.recv_timeout(left) {
+                Ok(event) => {
+                    if let Some(picked) = pick(event) {
+                        return picked;
+                    }
+                }
+                Err(RecvTimeoutError::Timeout) => panic!("no {what} in {WAIT:?}"),
                 Err(RecvTimeoutError::Disconnected) => panic!("the manager has gone"),
             }
         }
@@ -198,6 +220,46 @@ impl Started {
             .into_iter()
             .map(|(method, _)| method["textDocument/".len()..].to_owned())
             .collect()
+    }
+}
+
+/// A server started from `spec` on the fake, with a manual clock, and
+/// initialized.
+struct Clocked {
+    fake: FakeServer,
+    clock: Arc<ManualClock>,
+    manager: LspManager,
+    server: ServerId,
+    events: Events,
+}
+
+impl Clocked {
+    fn new(spec: ServerSpec, script: Script) -> Self {
+        let fake = FakeServer::new(script);
+        let clock = Arc::new(ManualClock::new());
+        let (mut manager, events) = manager(fake.launcher(), Some(clock.clone()));
+        let server = manager.start(spec, Path::new(ROOT)).unwrap();
+        assert_eq!(events.status(server), ServerStatus::Starting);
+        fake.wait_initialized();
+        Self {
+            fake,
+            clock,
+            manager,
+            server,
+            events,
+        }
+    }
+
+    /// Asserts `server`'s next status is `status`.
+    fn expect(&self, status: ServerStatus) {
+        assert_eq!(self.events.status(self.server), status);
+    }
+
+    /// Lets readiness's 500 ms pass and sees the server `Ready`.
+    fn settle(&self) {
+        self.clock.wait_for_sleep(crate::readiness::SETTLE);
+        self.clock.advance(crate::readiness::SETTLE);
+        self.expect(ServerStatus::Ready);
     }
 }
 

@@ -797,7 +797,7 @@ fn a_fixed_command_brings_back_the_documents_of_a_failed_server() {
     assert_eq!(events.status(failed), ServerStatus::Starting);
     assert_eq!(
         events.status(failed),
-        ServerStatus::Stopped(Some("missing not found".into()))
+        ServerStatus::Stopped(Some("pyright not found".into()))
     );
     // It waits, and edits meanwhile are drained as they're nudged.
     wait_until("the document to wait", || {
@@ -826,7 +826,7 @@ fn a_fixed_command_brings_back_the_documents_of_a_failed_server() {
     assert_eq!(events.status(failed), ServerStatus::Starting);
     assert_eq!(
         events.status(failed),
-        ServerStatus::Stopped(Some("missing not found".into()))
+        ServerStatus::Stopped(Some("pyright not found".into()))
     );
     manager.register_spec(ServerSpec {
         languages: strings(&["python"]),
@@ -853,7 +853,7 @@ fn a_fixed_command_brings_back_the_documents_of_a_failed_server() {
     assert_eq!(events.status(failed), ServerStatus::Starting);
     assert_eq!(
         events.status(failed),
-        ServerStatus::Stopped(Some("missing not found".into()))
+        ServerStatus::Stopped(Some("pyright not found".into()))
     );
     wait_until("the document to wait", || {
         manager.server_of(a.id()).is_none()

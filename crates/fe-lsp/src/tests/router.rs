@@ -74,7 +74,7 @@ fn unknown_notifications_do_not_stop_the_loop() {
     fake.notify::<CustomUnknown>(json!(null));
     fake.notify::<TypescriptVersion>(json!({ "version": "6.0.3" }));
     let reply = async_io::block_on(manager.request::<Echo>(id, json!({ "after": true })));
-    assert_eq!(reply.unwrap()["params"], json!({ "after": true }));
+    assert_eq!(reply.unwrap().result["params"], json!({ "after": true }));
 
     for method in ["telemetry/event", "custom/unknown", "$/typescriptVersion"] {
         wait_until(&format!("{method} to be logged"), || {
@@ -174,7 +174,7 @@ fn mirrored_request_ids_match() {
     let records = fake.records();
     for (n, reply) in replies.into_iter().enumerate() {
         let (mirrored, result) = reply.unwrap();
-        let echoed = result.unwrap();
+        let echoed = result.unwrap().result;
         assert_eq!(echoed["params"]["n"], json!(n));
         let received = records
             .iter()
@@ -271,7 +271,7 @@ fn scripted_replies_reach_the_caller() {
         .unwrap();
 
     assert_eq!(
-        async_io::block_on(manager.request::<Answered>(id, json!({}))),
+        async_io::block_on(manager.request::<Answered>(id, json!({}))).map(|r| r.result),
         Ok(json!({ "items": [1, 2, 3] }))
     );
     assert_eq!(
@@ -293,5 +293,8 @@ fn scripted_replies_reach_the_caller() {
     let late = manager.request::<Delayed>(id, json!({}));
     clock.wait_for_sleep(Duration::from_secs(5));
     clock.advance(Duration::from_secs(5));
-    assert_eq!(async_io::block_on(late), Ok(json!("late")));
+    assert_eq!(
+        async_io::block_on(late).map(|r| r.result),
+        Ok(json!("late"))
+    );
 }
