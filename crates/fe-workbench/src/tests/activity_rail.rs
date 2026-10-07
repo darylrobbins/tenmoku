@@ -6,7 +6,7 @@ use std::{fs, path::Path, time::Duration};
 
 use fe_buffer::Buffer;
 use fe_keymap::{DEFAULT_KEYMAP_PATH, DEFAULT_MACOS, Keymap, KeymapLayer};
-use fe_ui::{Icon, RAIL_WIDTH, TAB_HEIGHT};
+use fe_ui::{Icon, RAIL_WIDTH, ROW_HEIGHT, TAB_HEIGHT};
 use gpui::{
     AssetSource as _, Entity, Focusable as _, Modifiers, TestAppContext, VisualTestContext, point,
 };
@@ -82,7 +82,8 @@ fn the_rail_stays_when_the_dock_hides(cx: &mut TestAppContext) {
     });
     assert_eq!(rail.right(), window.width, "{rail:?}");
     assert_eq!(rail.size.width, RAIL_WIDTH);
-    assert_eq!(rail.size.height, window.height);
+    // Above the status bar.
+    assert_eq!(rail.size.height, window.height - ROW_HEIGHT);
     assert_eq!(column.right(), rail.left(), "{column:?}");
     assert_eq!(column.size.width, PANEL_WIDTH);
     let right = pane.read_with(cx, |pane, _| pane.bounds().right());

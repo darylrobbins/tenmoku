@@ -215,6 +215,13 @@ impl Text {
         self.clip_offset(self.row_start(point.row) + column, Bias::Left)
     }
 
+    /// The number of chars (Unicode scalar values) before `offset`, which is
+    /// clamped to [`Text::len`]. An offset inside a char counts the chars
+    /// before that one. O(log n), from the rope's char metric.
+    pub fn offset_to_char(&self, offset: usize) -> usize {
+        self.rope.byte_to_char_idx(offset.min(self.len()))
+    }
+
     pub fn offset_to_utf16(&self, offset: usize) -> usize {
         self.rope.byte_to_utf16_idx(offset.min(self.len()))
     }

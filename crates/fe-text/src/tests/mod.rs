@@ -2,6 +2,7 @@ use proptest::prelude::*;
 
 use super::*;
 
+mod char_offsets;
 mod large;
 
 #[test]

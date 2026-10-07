@@ -9,17 +9,18 @@ use std::{
 use fe_buffer::Buffer;
 use fe_editor::EditorModel;
 use fe_gpui::{EditorSettings, EditorTheme, EditorView, SettingsEvent, commands::RunCommand};
-use fe_ui::UiTheme;
+use fe_ui::{ROW_HEIGHT, UiTheme};
 use gpui::{
     App, AppContext as _, Context, DismissEvent, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _,
-    Subscription, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
+    Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Render, StyleRefinement,
+    Styled as _, Subscription, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
 };
 
 use crate::{
     Dock, DockPanel, KEY_CONTEXT, OutlinePanel, Pane, PaneGroup, Picker, ProjectPanel, QuickOpen,
-    SearchPanel,
+    SearchPanel, StatusBar,
     dock::{self, DockEvent, DockOp},
+    language_picker::LanguagePicker,
     open::{self, OpenOp},
     outline_panel,
     pane::{PaneEvent, Peers, TabId, file_name},
@@ -27,6 +28,7 @@ use crate::{
     pane_group::{self, Destination, Direction, PaneOp},
     picker::{self, PaletteOp},
     project_panel::{self, PanelEvent, PanelOp},
+    status_bar::{self, StatusOp},
 };
 
 /// Shown in a tab when fastedit starts with nothing to open.
@@ -74,6 +76,13 @@ pub fn resolve_launch(arg: Option<PathBuf>) -> Launch {
     }
 }
 
+/// The palette shown over the window: one at a time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Palette {
+    QuickOpen,
+    Language,
+}
+
 /// The workbench was re-rooted at the folder it carries, by
 /// [`Workbench::set_root`], for whatever indexes the root to follow.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -96,8 +105,11 @@ pub struct Workbench {
     /// own notification isn't passed back.
     echoes: HashSet<EntityId>,
     quick_open: Entity<Picker<QuickOpen>>,
-    /// Whether the quick-open palette shows.
-    palette: bool,
+    language_picker: Entity<Picker<LanguagePicker>>,
+    /// The palette that shows, if one does.
+    palette: Option<Palette>,
+    status_bar: Entity<StatusBar>,
+    status_bar_visible: bool,
     /// The editor whose file the project panel last revealed.
     revealed: Option<EntityId>,
     /// The launch file the host is reading, and the pane it opens in, until
@@ -111,6 +123,8 @@ pub struct Workbench {
     /// on a new root.
     root_subscriptions: [Subscription; 3],
     _rail: Subscription,
+    /// To the language picker's dismissal and blur.
+    _language_picker: [Subscription; 2],
 }
 
 impl EventEmitter<RootChanged> for Workbench {}
@@ -161,6 +175,10 @@ impl Workbench {
             },
         );
         let root_subscriptions = Self::follow_root(&panel, &quick_open, window, cx);
+        let language_picker =
+            cx.new(|cx| Picker::new(LanguagePicker::new(ui), "Select a language…", ui, cx));
+        let language_subscriptions =
+            Self::follow_palette(&language_picker, Palette::Language, window, cx);
         let mut workbench = Self {
             panel,
             dock,
@@ -171,13 +189,17 @@ impl Workbench {
             editors: HashMap::new(),
             echoes: HashSet::new(),
             quick_open,
-            palette: false,
+            language_picker,
+            palette: None,
+            status_bar: cx.new(|_| StatusBar::new(ui)),
+            status_bar_visible: true,
             revealed: None,
             launch_read: launch_read.map(|path| (path, pane.downgrade())),
             prompting: false,
             ui,
             root_subscriptions,
             _rail: rail,
+            _language_picker: language_subscriptions,
         };
         workbench.watch(&pane, window, cx);
         workbench.track_editors(cx);
@@ -213,38 +235,56 @@ impl Workbench {
                     .update(cx, |picker, cx| picker.delegate.fs_changed(changes, cx)),
             },
         );
-        // Hidden once picked from, dismissed or left: focus is elsewhere by
-        // then, unless nothing was focused before it opened.
+        let [dismissed, left] = Self::follow_palette(quick_open, Palette::QuickOpen, window, cx);
+        [open, dismissed, left]
+    }
+
+    /// Hides `picker`, shown as `palette`, once it's picked from, dismissed
+    /// or left. Its events once another palette shows instead are ignored.
+    fn follow_palette<D: crate::PickerDelegate>(
+        picker: &Entity<Picker<D>>,
+        palette: Palette,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> [Subscription; 2] {
+        // Focus is elsewhere by then, unless nothing was focused before it
+        // opened.
         let dismissed = cx.subscribe_in(
-            quick_open,
+            picker,
             window,
-            |workbench, picker, _: &DismissEvent, window, cx| {
+            move |workbench, picker, _: &DismissEvent, window, cx| {
                 if picker.focus_handle(cx).is_focused(window) {
                     window.focus(&workbench.focus_handle(cx), cx);
                 }
-                workbench.palette = false;
+                // Not once another palette shows instead, its input focused.
+                if workbench.palette == Some(palette) {
+                    workbench.palette = None;
+                }
                 cx.notify();
             },
         );
         // Left for another element, or the window deactivated: GPUI blurs
         // then too, focus staying on the input. That's dismissed as Escape
         // would be, so focus doesn't stay on an input no longer drawn.
+        let weak = picker.downgrade();
         let left = cx.on_blur(
-            &quick_open.focus_handle(cx),
+            &picker.focus_handle(cx),
             window,
-            |workbench, window, cx| {
-                if !workbench.palette {
+            move |workbench, window, cx| {
+                if workbench.palette != Some(palette) {
                     return;
                 }
-                let picker = workbench.quick_open.clone();
+                let Some(picker) = weak.upgrade() else {
+                    return;
+                };
                 if picker.focus_handle(cx).is_focused(window) {
                     picker.update(cx, |picker, cx| picker.dismiss(window, cx));
                 }
-                workbench.palette = false;
+                workbench.palette = None;
                 cx.notify();
             },
         );
-        [open, dismissed, left]
+        [dismissed, left]
     }
 
     /// Re-roots the workbench at `root`, in this window: a new project
@@ -260,7 +300,7 @@ impl Workbench {
     /// `.fastedit/settings.toml`: a new root's project settings aren't
     /// loaded.
     pub fn set_root(&mut self, root: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        if self.palette {
+        if self.palette == Some(Palette::QuickOpen) {
             // Dismissed as Escape would be, as the palette's subscriptions
             // go with it.
             let picker = self.quick_open.clone();
@@ -268,7 +308,7 @@ impl Workbench {
             if picker.focus_handle(cx).contains_focused(window, cx) {
                 window.focus(&self.focus_handle(cx), cx);
             }
-            self.palette = false;
+            self.palette = None;
         }
         let panel_focused = self.panel.focus_handle(cx).contains_focused(window, cx);
         let ui = self.ui;
@@ -630,13 +670,18 @@ impl Workbench {
         &self.quick_open
     }
 
+    /// Whether the quick-open palette shows.
     pub fn palette_open(&self) -> bool {
-        self.palette
+        self.palette == Some(Palette::QuickOpen)
     }
 
-    /// Shows the quick-open palette, focused, or dismisses it.
+    /// Shows the quick-open palette, focused, in place of any other, or
+    /// dismisses it.
     fn toggle_quick_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let show = !self.palette;
+        let show = !self.palette_open();
+        if show {
+            self.dismiss_palette(window, cx);
+        }
         let previous = window.focused(cx);
         self.quick_open.update(cx, |picker, cx| {
             if show {
@@ -646,8 +691,74 @@ impl Workbench {
                 picker.dismiss(window, cx);
             }
         });
-        self.palette = show;
+        self.palette = show.then_some(Palette::QuickOpen);
         cx.notify();
+    }
+
+    /// The language picker, shown by `language.select`.
+    #[cfg(test)]
+    pub(crate) fn language_picker(&self) -> &Entity<Picker<LanguagePicker>> {
+        &self.language_picker
+    }
+
+    /// Whether the language picker shows.
+    #[cfg(test)]
+    pub(crate) fn language_picker_open(&self) -> bool {
+        self.palette == Some(Palette::Language)
+    }
+
+    /// Shows the language picker, focused, for the active editor, in place
+    /// of any other palette, or afresh if it shows. Nothing without an
+    /// active editor.
+    fn select_language(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(editor) = self.active_editor(cx).cloned() else {
+            return;
+        };
+        // Dismissing it would hide it again once its dismissal lands.
+        if self.palette != Some(Palette::Language) {
+            self.dismiss_palette(window, cx);
+        }
+        self.language_picker.update(cx, |picker, cx| {
+            picker.delegate.opened(&editor, cx);
+            picker.show(window, cx);
+        });
+        self.palette = Some(Palette::Language);
+        cx.notify();
+    }
+
+    /// Dismisses the palette that shows, as Escape would.
+    fn dismiss_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.palette.take() {
+            Some(Palette::QuickOpen) => self
+                .quick_open
+                .update(cx, |picker, cx| picker.dismiss(window, cx)),
+            Some(Palette::Language) => self
+                .language_picker
+                .update(cx, |picker, cx| picker.dismiss(window, cx)),
+            None => {}
+        }
+    }
+
+    /// The status bar, for a host to set its own items on.
+    pub fn status_bar(&self) -> &Entity<StatusBar> {
+        &self.status_bar
+    }
+
+    pub fn status_bar_visible(&self) -> bool {
+        self.status_bar_visible
+    }
+
+    /// Shows or hides the status bar, as `view.toggle_status_bar` does.
+    pub fn set_status_bar_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        self.status_bar_visible = visible;
+        cx.notify();
+    }
+
+    fn run_status_op(&mut self, op: StatusOp, window: &mut Window, cx: &mut Context<Self>) {
+        match op {
+            StatusOp::ToggleStatusBar => self.set_status_bar_visible(!self.status_bar_visible, cx),
+            StatusOp::SelectLanguage => self.select_language(window, cx),
+        }
     }
 
     /// The active tab's editor, unless a file being read or a read error
@@ -656,26 +767,39 @@ impl Workbench {
         self.active.read(cx).active_editor()
     }
 
-    /// Tells the outline which editor is active, if that changed, and has
-    /// the project panel reveal its file. Every tab change redraws, though
-    /// not every one notifies (focusing an open tab only focuses it), so the
-    /// workbench calls it as it renders. With splits, it's the active pane's
-    /// active editor.
-    fn follow_active_editor(&mut self, window: &Window, cx: &mut Context<Self>) {
+    /// Tells the outline and the status bar which editor is active, if that
+    /// changed, and has the project panel reveal its file. Every tab change
+    /// redraws, though not every one notifies (focusing an open tab only
+    /// focuses it), so the workbench calls it as it renders. With splits,
+    /// it's the active pane's active editor. Whether the status bar's editor
+    /// changed.
+    fn follow_active_editor(&mut self, window: &Window, cx: &mut Context<Self>) -> bool {
         let editor = self.active_editor(cx).cloned();
         let outline = self.dock.read(cx).outline().clone();
         outline.update(cx, |outline, cx| outline.set_editor(editor.as_ref(), cx));
         let id = editor.as_ref().map(Entity::entity_id);
+        let followed = self.status_bar.update(cx, |bar, cx| {
+            let followed = bar.editor_id() != id;
+            bar.set_editor(editor.as_ref(), cx);
+            followed
+        });
         let reveal = id != self.revealed;
         self.revealed = id;
         // The editor reparses as it renders, which notifies no one.
+        let status_bar = self.status_bar.clone();
         cx.defer_in(window, move |workbench, window, cx| {
             outline.update(cx, OutlinePanel::frame_drawn);
+            if followed {
+                // Drawn uncached, it's rendered again for the cache: now,
+                // rather than in whichever frame comes next.
+                status_bar.update(cx, |_, cx| cx.notify());
+            }
             if reveal {
                 workbench.reveal_active(cx);
             }
             workbench.leave_hidden_panel(window, cx);
         });
+        followed
     }
 
     /// Has the project panel select the active editor's file, if it has
@@ -759,7 +883,8 @@ impl Workbench {
     }
 
     /// Runs a `workbench.*` command on the active pane, a pane command, a
-    /// palette toggle or a dock command; others go on to the app.
+    /// palette toggle, a status bar command or a dock command; others go on
+    /// to the app.
     fn on_run_command(&mut self, run: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
         let Some(registry) =
             crate::registry(cx).filter(|registry| registry.get(&run.0.command).is_some())
@@ -769,6 +894,9 @@ impl Workbench {
             }
             if picker::op(run, cx) == Some(PaletteOp::ToggleQuickOpen) {
                 return self.toggle_quick_open(window, cx);
+            }
+            if let Some(op) = status_bar::op(run, cx) {
+                return self.run_status_op(op, window, cx);
             }
             if let Some(op) = pane_group::op(run, cx) {
                 return self.run_pane_op(op, window, cx);
@@ -812,18 +940,44 @@ impl Focusable for Workbench {
 impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         window.set_window_title(&self.active.read(cx).title(cx));
-        self.follow_active_editor(window, cx);
+        let followed = self.follow_active_editor(window, cx);
+        let main = div()
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .flex()
+            .child(self.panes.render(&self.ui, cx))
+            .child(self.dock.clone());
+        // Cached: frames the workbench redraws for other reasons reuse the
+        // bar's last render. Not in a frame that gave it another editor: a
+        // notification during a draw doesn't reach this frame's cache, nor
+        // ask for another frame.
+        let mut style = StyleRefinement::default().w_full().h(ROW_HEIGHT);
+        style.flex_shrink = Some(0.);
+        let status_bar = self.status_bar_visible.then(|| {
+            let bar = self.status_bar.clone();
+            if followed {
+                bar.into_any_element()
+            } else {
+                bar.cached(style).into_any_element()
+            }
+        });
         div()
             .key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::on_run_command))
             .relative()
             .size_full()
             .flex()
+            .flex_col()
             .bg(self.ui.background)
             .text_color(self.ui.text)
             .text_size(px(12.))
-            .child(self.panes.render(&self.ui, cx))
-            .child(self.dock.clone())
-            .when(self.palette, |root| root.child(self.quick_open.clone()))
+            .child(main)
+            .children(status_bar)
+            .map(|root| match self.palette {
+                Some(Palette::QuickOpen) => root.child(self.quick_open.clone()),
+                Some(Palette::Language) => root.child(self.language_picker.clone()),
+                None => root,
+            })
     }
 }

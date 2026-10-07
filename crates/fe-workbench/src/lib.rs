@@ -11,6 +11,7 @@
 //! and propagates.
 
 mod dock;
+mod language_picker;
 pub mod loader;
 mod open;
 mod outline_panel;
@@ -21,6 +22,7 @@ mod picker;
 mod project_panel;
 mod quick_open;
 mod search_panel;
+mod status_bar;
 mod workbench;
 
 use std::rc::Rc;
@@ -37,6 +39,7 @@ pub use picker::{Picker, PickerDelegate};
 pub use project_panel::{PANEL_WIDTH, PanelEvent, ProjectPanel};
 pub use quick_open::QuickOpen;
 pub use search_panel::SearchPanel;
+pub use status_bar::{StatusBar, StatusItem, StatusSide};
 pub use workbench::{Launch, RootChanged, WELCOME, Workbench, resolve_launch};
 
 /// The key context the workbench's root element sets.
@@ -67,6 +70,7 @@ pub fn init(cx: &mut App) {
     outline_panel::init(cx);
     pane_group::init(cx);
     project_panel::init(cx);
+    status_bar::init(cx);
 }
 
 fn registry(cx: &App) -> Option<Rc<Registry<WorkbenchCommands>>> {
@@ -113,6 +117,7 @@ pub fn command_catalog() -> Box<dyn CommandCatalog> {
         Box::new(outline_panel::registry()),
         Box::new(pane_group::registry()),
         Box::new(project_panel::registry()),
+        Box::new(status_bar::registry()),
         fe_gpui::commands::command_catalog(),
     ]))
 }

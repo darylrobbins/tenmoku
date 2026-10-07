@@ -135,6 +135,10 @@ title = "Toggle Dock"
 command = "dock.toggle"
 
 [[menus.items]]
+title = "Status Bar"
+command = "view.toggle_status_bar"
+
+[[menus.items]]
 separator = true
 
 [[menus.items]]
