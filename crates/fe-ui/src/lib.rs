@@ -5,6 +5,7 @@
 //! Depends on GPUI alone, never on a workspace crate. Written for fastedit:
 //! nothing here is copied from gpui-kit or elsewhere.
 
+mod activity_rail;
 mod assets;
 mod file_icons;
 mod highlighted_label;
@@ -13,8 +14,10 @@ mod tab_bar;
 mod text_input;
 mod theme;
 mod toggle_button;
+mod tooltip;
 mod tree_row;
 
+pub use activity_rail::{ActivityRail, RAIL_WIDTH, RailButton};
 pub use assets::Assets;
 pub use file_icons::{Icon, file_icon, folder_icon};
 pub use highlighted_label::{HighlightedLabel, char_ranges};
@@ -23,6 +26,7 @@ pub use tab_bar::{TAB_HEIGHT, Tab, TabBar};
 pub use text_input::{TextInput, TextInputEvent};
 pub use theme::{ROW_HEIGHT, UiTheme};
 pub use toggle_button::ToggleButton;
+pub use tooltip::Tooltip;
 pub use tree_row::{CHEVRON_WIDTH, ICON_SIZE, TREE_INDENT, TreeRow};
 
 #[cfg(test)]

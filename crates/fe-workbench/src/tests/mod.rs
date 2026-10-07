@@ -2,6 +2,7 @@
 //! the panel's rows and the pane's tabs, keys through the default keymap.
 //! Fixtures are `fe_project::fixture` trees in a temporary directory.
 
+mod activity_rail;
 mod launch;
 mod outline_panel;
 mod outline_panel_followups;

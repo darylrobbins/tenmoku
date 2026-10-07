@@ -144,12 +144,12 @@ fn the_dock_switches_panels(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("cmd-b");
     assert_eq!(state(cx), (true, DockPanel::Project));
 
-    // The header's Search tab shows search again: its results stayed, as
+    // The rail's Search button shows search again: its results stayed, as
     // did its query.
-    let tab = dock.read_with(cx, |dock, _| {
-        dock.tab_bounds(DockPanel::Search).expect("drawn")
+    let button = dock.read_with(cx, |dock, _| {
+        dock.rail_button_bounds(DockPanel::Search).expect("drawn")
     });
-    cx.simulate_click(tab.center(), Modifiers::none());
+    cx.simulate_click(button.center(), Modifiers::none());
     assert_eq!(state(cx), (true, DockPanel::Search));
     assert_eq!(shown(&search, cx), results);
     let query = search.read_with(cx, |search, cx| search.query(cx).pattern);

@@ -39,6 +39,8 @@ pub struct UiTheme {
     /// Where a dragged tab would land: the insertion marker in a tab bar,
     /// and, at low alpha, the part of a pane a drop would fill.
     pub drop_target: Hsla,
+    /// The bar beside the activity rail's highlighted button.
+    pub accent: Hsla,
 }
 
 impl UiTheme {
@@ -65,6 +67,7 @@ impl UiTheme {
             tab_inactive: rgb(0x121418).into(),
             dirty_dot: rgb(0xd19a66).into(),
             drop_target: rgb(0x4f7cc8).into(),
+            accent: rgb(0x4f7cc8).into(),
         }
     }
 }

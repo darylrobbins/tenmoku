@@ -18,7 +18,9 @@ use gpui::{
 
 use crate::{
     Dock, DockPanel, KEY_CONTEXT, OutlinePanel, Pane, PaneGroup, Picker, ProjectPanel, QuickOpen,
-    SearchPanel, dock, outline_panel,
+    SearchPanel,
+    dock::{self, DockEvent, DockOp},
+    outline_panel,
     pane::{PaneEvent, Peers, TabId, file_name},
     pane_drag::TabDropped,
     pane_group::{self, Destination, Direction, PaneOp},
@@ -96,7 +98,7 @@ pub struct Workbench {
     /// [`Workbench::file_read`] hands it over.
     launch_read: Option<(PathBuf, WeakEntity<Pane>)>,
     ui: UiTheme,
-    _subscriptions: [Subscription; 3],
+    _subscriptions: [Subscription; 4],
 }
 
 impl Workbench {
@@ -181,6 +183,15 @@ impl Workbench {
                 cx.notify();
             },
         );
+        // A rail click runs the op its panel's key would, or hides the dock.
+        let rail = cx.subscribe_in(
+            &dock,
+            window,
+            |workbench, dock, DockEvent::Rail(panel), window, cx| {
+                let op = dock.read(cx).rail_op(*panel);
+                workbench.run_dock_op(op, window, cx);
+            },
+        );
         let mut workbench = Self {
             panel,
             dock,
@@ -195,7 +206,7 @@ impl Workbench {
             revealed: None,
             launch_read: launch_read.map(|path| (path, pane.downgrade())),
             ui,
-            _subscriptions: [open, dismissed, left],
+            _subscriptions: [open, dismissed, left, rail],
         };
         workbench.watch(&pane, window, cx);
         workbench.track_editors(cx);
@@ -542,6 +553,22 @@ impl Workbench {
         }
     }
 
+    /// Does a dock op, for a key or a rail click, with the active editor as
+    /// the fallback focus: showing the project panel focuses it, and
+    /// showing the outline leaves focus where it is unless on a hidden
+    /// panel. False if the op is the search panel's to do.
+    fn run_dock_op(&mut self, op: DockOp, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let fallback = self.focus_handle(cx);
+        let done = self
+            .dock
+            .update(cx, |dock, cx| dock.run(op, &fallback, window, cx));
+        if op == DockOp::ShowProject {
+            window.focus(&self.panel.focus_handle(cx), cx);
+        }
+        self.leave_hidden_panel(window, cx);
+        done
+    }
+
     /// Opens the host's read of the launch file, `Ok(None)` being a new
     /// file, in the pane it was launched in, whatever that pane has shown
     /// since; see [`Launch::file`]. If that pane has closed, the read is
@@ -598,24 +625,12 @@ impl Workbench {
             if project_panel::op(run, cx) == Some(PanelOp::RevealActive) {
                 return self.reveal_active(cx);
             }
-            let fallback = self.focus_handle(cx);
-            if outline_panel::shows(run, cx) {
-                // Focus stays where it is, unless on search's hidden input.
-                self.dock.update(cx, |dock, cx| {
-                    dock.show(DockPanel::Outline, cx);
-                    dock.leave_search(&fallback, window, cx);
-                });
-                return self.leave_hidden_panel(window, cx);
-            }
-            let op = dock::op(run, cx);
-            let done = op.is_some_and(|op| {
-                self.dock
-                    .update(cx, |dock, cx| dock.run(op, &fallback, window, cx))
-            });
-            if op == Some(dock::DockOp::ShowProject) {
-                window.focus(&self.panel.focus_handle(cx), cx);
-            }
-            self.leave_hidden_panel(window, cx);
+            let op = if outline_panel::shows(run, cx) {
+                Some(DockOp::ShowOutline)
+            } else {
+                dock::op(run, cx)
+            };
+            let done = op.is_some_and(|op| self.run_dock_op(op, window, cx));
             if !done {
                 cx.propagate();
             }

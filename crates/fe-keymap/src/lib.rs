@@ -8,6 +8,7 @@
 
 mod keymap;
 mod keystroke;
+mod label;
 mod load;
 mod matcher;
 pub mod menu;
@@ -15,6 +16,7 @@ mod report;
 
 pub use keymap::{Binding, CatalogError, CommandCatalog, Entry, Keymap, KeymapLayer, Location};
 pub use keystroke::{Key, KeySequence, Keystroke, KeystrokeError, Modifiers};
+pub use label::macos_label;
 pub use load::{
     DEFAULT_KEYMAP_PATH, KEYMAP_FILE, KeymapEvent, KeymapStore, load_keymap, load_keymap_layer,
     user_keymap_path,

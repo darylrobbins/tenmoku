@@ -138,11 +138,6 @@ impl SearchPanel {
         &self.input
     }
 
-    /// The pane matches open in.
-    pub(crate) fn pane(&self) -> &WeakEntity<Pane> {
-        &self.pane
-    }
-
     /// Opens matches in `pane` from now on: the active one, as it changes.
     pub(crate) fn set_pane(&mut self, pane: WeakEntity<Pane>) {
         self.pane = pane;

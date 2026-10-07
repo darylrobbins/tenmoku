@@ -1,4 +1,4 @@
-//! Follow-ups to the search panel: focus when the dock's header switches
+//! Follow-ups to the search panel: focus when the dock's rail switches
 //! away from search, a click across a rerun, and highlights and selections
 //! in lines that aren't valid UTF-8 or whose byte matches split a char.
 
@@ -127,27 +127,27 @@ fn header_tabs_move_focus_off_the_search_input(cx: &mut TestAppContext) {
         dock.read_with(cx, |dock, _| (dock.is_visible(), dock.active()))
     };
     let click_tab = |panel: DockPanel, cx: &mut VisualTestContext| {
-        let tab = dock.read_with(cx, |dock, _| dock.tab_bounds(panel).expect("drawn"));
-        cx.simulate_click(tab.center(), Modifiers::none());
+        let button = dock.read_with(cx, |dock, _| dock.rail_button_bounds(panel).expect("drawn"));
+        cx.simulate_click(button.center(), Modifiers::none());
     };
-    let pane_focused = |cx: &mut VisualTestContext| {
-        let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
-        cx.update(|window, cx| pane.focus_handle(cx).is_focused(window))
+    // Project's button focuses the tree, as cmd-shift-e does.
+    let panel_focused = |cx: &mut VisualTestContext| {
+        let panel = workbench.read_with(cx, |workbench, _| workbench.panel().clone());
+        cx.update(|window, cx| panel.focus_handle(cx).is_focused(window))
     };
 
-    // No file open: focus goes to the pane.
     assert!(input_focused(&search, cx));
     click_tab(DockPanel::Project, cx);
     assert_eq!(state(cx), (true, DockPanel::Project));
     assert!(!input_focused(&search, cx));
-    assert!(pane_focused(cx));
+    assert!(panel_focused(cx));
     cx.simulate_keystrokes("cmd-b");
     assert!(!state(cx).0, "cmd-b works without another click");
     cx.simulate_keystrokes("cmd-shift-f");
     assert_eq!(state(cx), (true, DockPanel::Search));
     assert!(input_focused(&search, cx));
 
-    // With a file open, to its editor; the outline's tab does the same.
+    // With a file open, the outline's button focuses its editor.
     run("needle", cx);
     let row = result_center(&search, 1, cx);
     cx.simulate_click(row, Modifiers::none());
@@ -157,7 +157,11 @@ fn header_tabs_move_focus_off_the_search_input(cx: &mut TestAppContext) {
         assert!(input_focused(&search, cx));
         click_tab(panel, cx);
         assert_eq!(state(cx), (true, panel));
-        assert!(editor(&workbench, cx).2, "the editor has focus");
+        if panel == DockPanel::Project {
+            assert!(panel_focused(cx));
+        } else {
+            assert!(editor(&workbench, cx).2, "the editor has focus");
+        }
         cx.simulate_keystrokes("cmd-b");
         assert!(!state(cx).0);
         cx.simulate_keystrokes("cmd-b");
@@ -167,7 +171,7 @@ fn header_tabs_move_focus_off_the_search_input(cx: &mut TestAppContext) {
     assert_eq!(state(cx), (true, DockPanel::Search));
     assert!(input_focused(&search, cx));
 
-    // The search tab focuses the input, as cmd-shift-f does.
+    // The search button focuses the input, as cmd-shift-f does.
     click_tab(DockPanel::Project, cx);
     click_tab(DockPanel::Search, cx);
     assert_eq!(state(cx), (true, DockPanel::Search));
