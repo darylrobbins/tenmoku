@@ -270,6 +270,12 @@ keys = "cmd-shift-["
 command = "workbench.previous_tab"
 context = "workbench"
 
+# `workbench.open_file` has no key yet: it's in the File menu.
+[[bindings]]
+keys = "cmd-o"
+command = "workbench.open_folder"
+context = "workbench"
+
 [[bindings]]
 keys = "cmd-p"
 command = "quick_open.toggle"

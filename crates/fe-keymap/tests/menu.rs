@@ -317,7 +317,15 @@ fn hosts_extend_and_replace() {
         ]
     );
     // An item with a taken ID replaces it where it was.
-    assert_eq!(ids(&bar, "File")[0], "editor.save");
+    assert_eq!(
+        ids(&bar, "File")[..4],
+        [
+            "workbench.open_folder",
+            "workbench.open_file",
+            "-",
+            "editor.save"
+        ]
+    );
     assert_eq!(item(&bar, "File", "editor.save").title, "Save File");
     // The separator before Find in Files went with it.
     assert_eq!(

@@ -12,6 +12,7 @@
 
 mod dock;
 pub mod loader;
+mod open;
 mod outline_panel;
 mod pane;
 mod pane_drag;
@@ -36,7 +37,7 @@ pub use picker::{Picker, PickerDelegate};
 pub use project_panel::{PANEL_WIDTH, PanelEvent, ProjectPanel};
 pub use quick_open::QuickOpen;
 pub use search_panel::SearchPanel;
-pub use workbench::{Launch, WELCOME, Workbench, resolve_launch};
+pub use workbench::{Launch, RootChanged, WELCOME, Workbench, resolve_launch};
 
 /// The key context the workbench's root element sets.
 pub const KEY_CONTEXT: &str = "workbench";
@@ -62,6 +63,7 @@ pub fn init(cx: &mut App) {
     cx.set_global(Commands(Rc::new(new_registry())));
     picker::init(cx);
     dock::init(cx);
+    open::init(cx);
     outline_panel::init(cx);
     pane_group::init(cx);
     project_panel::init(cx);
@@ -107,6 +109,7 @@ pub fn command_catalog() -> Box<dyn CommandCatalog> {
         Box::new(new_registry()),
         Box::new(picker::registry()),
         Box::new(dock::registry()),
+        Box::new(open::registry()),
         Box::new(outline_panel::registry()),
         Box::new(pane_group::registry()),
         Box::new(project_panel::registry()),

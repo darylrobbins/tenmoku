@@ -4,6 +4,7 @@
 
 mod activity_rail;
 mod launch;
+mod open_folder;
 mod outline_panel;
 mod outline_panel_followups;
 mod pane_cycle;

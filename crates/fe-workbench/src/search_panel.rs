@@ -143,6 +143,14 @@ impl SearchPanel {
         self.pane = pane;
     }
 
+    /// Searches under `root` from now on: cancels the running search and
+    /// clears its results. The query and options stay, to run again.
+    pub(crate) fn set_root(&mut self, root: PathBuf, cx: &mut Context<Self>) {
+        self.restart(cx);
+        self.root = Some(root);
+        self.status = Status::Idle;
+    }
+
     /// The query the input and options make.
     pub fn query(&self, cx: &gpui::App) -> SearchQuery {
         SearchQuery {

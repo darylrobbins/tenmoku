@@ -136,6 +136,13 @@ impl Dock {
         &self.project
     }
 
+    /// Shows `project` in the old one's place, for a new root. The dock's
+    /// visibility and active panel stay.
+    pub(crate) fn set_project(&mut self, project: Entity<ProjectPanel>, cx: &mut Context<Self>) {
+        self.project = project;
+        cx.notify();
+    }
+
     pub fn search(&self) -> &Entity<SearchPanel> {
         &self.search
     }

@@ -35,6 +35,17 @@ command = "app.quit"
 name = "File"
 
 [[menus.items]]
+title = "Open Folder…"
+command = "workbench.open_folder"
+
+[[menus.items]]
+title = "Open File…"
+command = "workbench.open_file"
+
+[[menus.items]]
+separator = true
+
+[[menus.items]]
 title = "Save"
 command = "editor.save"
 

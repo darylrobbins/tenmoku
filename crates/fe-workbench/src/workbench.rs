@@ -11,15 +11,16 @@ use fe_editor::EditorModel;
 use fe_gpui::{EditorSettings, EditorTheme, EditorView, SettingsEvent, commands::RunCommand};
 use fe_ui::UiTheme;
 use gpui::{
-    App, AppContext as _, Context, DismissEvent, Entity, EntityId, FocusHandle, Focusable,
-    InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _, Subscription,
-    WeakEntity, Window, div, prelude::FluentBuilder as _, px,
+    App, AppContext as _, Context, DismissEvent, Entity, EntityId, EventEmitter, FocusHandle,
+    Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _,
+    Subscription, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
 };
 
 use crate::{
     Dock, DockPanel, KEY_CONTEXT, OutlinePanel, Pane, PaneGroup, Picker, ProjectPanel, QuickOpen,
     SearchPanel,
     dock::{self, DockEvent, DockOp},
+    open::{self, OpenOp},
     outline_panel,
     pane::{PaneEvent, Peers, TabId, file_name},
     pane_drag::TabDropped,
@@ -73,6 +74,11 @@ pub fn resolve_launch(arg: Option<PathBuf>) -> Launch {
     }
 }
 
+/// The workbench was re-rooted at the folder it carries, by
+/// [`Workbench::set_root`], for whatever indexes the root to follow.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RootChanged(pub PathBuf);
+
 pub struct Workbench {
     panel: Entity<ProjectPanel>,
     dock: Entity<Dock>,
@@ -97,9 +103,17 @@ pub struct Workbench {
     /// The launch file the host is reading, and the pane it opens in, until
     /// [`Workbench::file_read`] hands it over.
     launch_read: Option<(PathBuf, WeakEntity<Pane>)>,
+    /// Whether the open panel shows: it doesn't block the window, and
+    /// another isn't shown until it's answered.
+    prompting: bool,
     ui: UiTheme,
-    _subscriptions: [Subscription; 4],
+    /// To the project panel's and the palette's events: replaced with them
+    /// on a new root.
+    root_subscriptions: [Subscription; 3],
+    _rail: Subscription,
 }
+
+impl EventEmitter<RootChanged> for Workbench {}
 
 impl Workbench {
     /// Opens `launch`. `settings` configure the editors it opens (tab size,
@@ -136,12 +150,59 @@ impl Workbench {
             let outline = cx.new(|_| OutlinePanel::new(ui));
             Dock::new(panel.clone(), search, outline, ui)
         });
-        let quick_open = cx.new(|cx| {
-            let delegate = QuickOpen::new(root, pane.downgrade(), ui);
-            Picker::new(delegate, "Go to file…", ui, cx)
-        });
+        let quick_open = Self::new_quick_open(root, pane.downgrade(), ui, cx);
+        // A rail click runs the op its panel's key would, or hides the dock.
+        let rail = cx.subscribe_in(
+            &dock,
+            window,
+            |workbench, dock, DockEvent::Rail(panel), window, cx| {
+                let op = dock.read(cx).rail_op(*panel);
+                workbench.run_dock_op(op, window, cx);
+            },
+        );
+        let root_subscriptions = Self::follow_root(&panel, &quick_open, window, cx);
+        let mut workbench = Self {
+            panel,
+            dock,
+            panes: PaneGroup::new(pane.clone()),
+            active: pane.clone(),
+            peers: Peers::default(),
+            pane_subscriptions: HashMap::new(),
+            editors: HashMap::new(),
+            echoes: HashSet::new(),
+            quick_open,
+            palette: false,
+            revealed: None,
+            launch_read: launch_read.map(|path| (path, pane.downgrade())),
+            prompting: false,
+            ui,
+            root_subscriptions,
+            _rail: rail,
+        };
+        workbench.watch(&pane, window, cx);
+        workbench.track_editors(cx);
+        workbench
+    }
+
+    /// The quick-open palette for `root`, opening files in `pane`.
+    fn new_quick_open(
+        root: Option<PathBuf>,
+        pane: WeakEntity<Pane>,
+        ui: UiTheme,
+        cx: &mut Context<Self>,
+    ) -> Entity<Picker<QuickOpen>> {
+        cx.new(|cx| Picker::new(QuickOpen::new(root, pane, ui), "Go to file…", ui, cx))
+    }
+
+    /// Subscribes to a root's project panel and quick-open palette.
+    fn follow_root(
+        panel: &Entity<ProjectPanel>,
+        quick_open: &Entity<Picker<QuickOpen>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> [Subscription; 3] {
         let open = cx.subscribe_in(
-            &panel,
+            panel,
             window,
             |workbench, _, event, window, cx| match event {
                 PanelEvent::OpenFile(path) => workbench
@@ -155,7 +216,7 @@ impl Workbench {
         // Hidden once picked from, dismissed or left: focus is elsewhere by
         // then, unless nothing was focused before it opened.
         let dismissed = cx.subscribe_in(
-            &quick_open,
+            quick_open,
             window,
             |workbench, picker, _: &DismissEvent, window, cx| {
                 if picker.focus_handle(cx).is_focused(window) {
@@ -183,34 +244,91 @@ impl Workbench {
                 cx.notify();
             },
         );
-        // A rail click runs the op its panel's key would, or hides the dock.
-        let rail = cx.subscribe_in(
-            &dock,
-            window,
-            |workbench, dock, DockEvent::Rail(panel), window, cx| {
-                let op = dock.read(cx).rail_op(*panel);
-                workbench.run_dock_op(op, window, cx);
-            },
-        );
-        let mut workbench = Self {
-            panel,
-            dock,
-            panes: PaneGroup::new(pane.clone()),
-            active: pane.clone(),
-            peers: Peers::default(),
-            pane_subscriptions: HashMap::new(),
-            editors: HashMap::new(),
-            echoes: HashSet::new(),
-            quick_open,
-            palette: false,
-            revealed: None,
-            launch_read: launch_read.map(|path| (path, pane.downgrade())),
-            ui,
-            _subscriptions: [open, dismissed, left, rail],
-        };
-        workbench.watch(&pane, window, cx);
-        workbench.track_editors(cx);
-        workbench
+        [open, dismissed, left]
+    }
+
+    /// Re-roots the workbench at `root`, in this window: a new project
+    /// panel lists it in the background, and a new quick-open palette
+    /// indexes it once opened. The old ones are dropped, and with them the
+    /// old tree, its watcher, and the old index's walk; their batches land
+    /// nowhere. Search searches `root` from now on, its running search
+    /// cancelled and its results cleared, the query and options kept. The
+    /// dock keeps its visibility and active panel, and open tabs, dirty
+    /// ones included, stay open. Emits [`RootChanged`].
+    ///
+    /// The host's settings watcher keeps the launch root's
+    /// `.fastedit/settings.toml`: a new root's project settings aren't
+    /// loaded.
+    pub fn set_root(&mut self, root: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        if self.palette {
+            // Dismissed as Escape would be, as the palette's subscriptions
+            // go with it.
+            let picker = self.quick_open.clone();
+            picker.update(cx, |picker, cx| picker.dismiss(window, cx));
+            if picker.focus_handle(cx).contains_focused(window, cx) {
+                window.focus(&self.focus_handle(cx), cx);
+            }
+            self.palette = false;
+        }
+        let panel_focused = self.panel.focus_handle(cx).contains_focused(window, cx);
+        let ui = self.ui;
+        let panel = cx.new(|cx| ProjectPanel::new(Some(root.clone()), ui, cx));
+        let quick_open = Self::new_quick_open(Some(root.clone()), self.active.downgrade(), ui, cx);
+        self.root_subscriptions = Self::follow_root(&panel, &quick_open, window, cx);
+        let search = self.dock.update(cx, |dock, cx| {
+            dock.set_project(panel.clone(), cx);
+            dock.search().clone()
+        });
+        search.update(cx, |search, cx| search.set_root(root.clone(), cx));
+        self.panel = panel;
+        self.quick_open = quick_open;
+        if panel_focused {
+            window.focus(&self.panel.focus_handle(cx), cx);
+        }
+        // So the new tree reveals the active file, if it's under the root.
+        self.revealed = None;
+        cx.emit(RootChanged(root));
+        cx.notify();
+    }
+
+    /// Shows the open panel for `op`, then opens what's picked: a folder
+    /// re-roots the workbench, and a file opens in the active pane as a
+    /// tree click does, the root staying. Cancelling does nothing, and an
+    /// error from the panel is logged. Asked again while the panel shows,
+    /// it does nothing.
+    fn prompt_open(&mut self, op: OpenOp, window: &mut Window, cx: &mut Context<Self>) {
+        if self.prompting {
+            return;
+        }
+        self.prompting = true;
+        let answer = cx.prompt_for_paths(op.prompt());
+        cx.spawn_in(window, async move |workbench, cx| {
+            let path = match answer.await {
+                Ok(Ok(Some(paths))) => paths.into_iter().next(),
+                Ok(Ok(None)) => None,
+                Ok(Err(error)) => {
+                    log::warn!("the open panel failed: {error}");
+                    None
+                }
+                Err(_) => {
+                    log::warn!("the open panel went without an answer");
+                    None
+                }
+            };
+            workbench
+                .update_in(cx, |workbench, window, cx| {
+                    workbench.prompting = false;
+                    match (op, path) {
+                        (_, None) => {}
+                        (OpenOp::Folder, Some(path)) => workbench.set_root(path, window, cx),
+                        (OpenOp::File, Some(path)) => workbench
+                            .active
+                            .update(cx, |pane, cx| pane.open(path, window, cx)),
+                    }
+                })
+                .ok();
+        })
+        .detach();
     }
 
     pub fn panel(&self) -> &Entity<ProjectPanel> {
@@ -616,6 +734,9 @@ impl Workbench {
         let Some(registry) =
             crate::registry(cx).filter(|registry| registry.get(&run.0.command).is_some())
         else {
+            if let Some(op) = open::op(run, cx) {
+                return self.prompt_open(op, window, cx);
+            }
             if picker::op(run, cx) == Some(PaletteOp::ToggleQuickOpen) {
                 return self.toggle_quick_open(window, cx);
             }
