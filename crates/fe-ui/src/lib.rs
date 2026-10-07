@@ -7,8 +7,10 @@
 
 mod activity_rail;
 mod assets;
+mod breadcrumbs;
 mod file_icons;
 mod highlighted_label;
+mod icon_button;
 mod palette;
 mod status_bar;
 mod tab_bar;
@@ -20,8 +22,10 @@ mod tree_row;
 
 pub use activity_rail::{ActivityRail, RAIL_WIDTH, RailButton};
 pub use assets::Assets;
+pub use breadcrumbs::{Breadcrumbs, Crumb, CrumbKind, TOOLBAR_HEIGHT};
 pub use file_icons::{Icon, file_icon, folder_icon};
 pub use highlighted_label::{HighlightedLabel, char_ranges};
+pub use icon_button::IconButton;
 pub use palette::{PALETTE_WIDTH, PaletteFrame};
 pub use status_bar::{StatusBarFrame, StatusEntry};
 pub use tab_bar::{TAB_HEIGHT, Tab, TabBar};

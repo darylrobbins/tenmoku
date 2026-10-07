@@ -26,10 +26,12 @@ use crate::{
     pane::{PaneEvent, Peers, TabId, file_name},
     pane_drag::TabDropped,
     pane_group::{self, Destination, Direction, PaneOp},
+    pane_toolbar::{self, NavButtons, SymbolChain, ToolbarRequest},
     picker::{self, PaletteOp},
     project_panel::{self, PanelEvent, PanelOp},
     status_bar::{self, StatusOp},
     title_bar,
+    toolbar_picker::ToolbarPicker,
 };
 
 /// Shown in a tab when fastedit starts with nothing to open.
@@ -82,6 +84,7 @@ pub fn resolve_launch(arg: Option<PathBuf>) -> Launch {
 enum Palette {
     QuickOpen,
     Language,
+    Toolbar,
 }
 
 /// The workbench was re-rooted at the folder it carries, by
@@ -97,8 +100,9 @@ pub struct Workbench {
     active: Entity<Pane>,
     /// `panes`' panes, which each of them sees.
     peers: Peers,
-    /// Per pane: its notifications, its events and tabs dropped on it.
-    pane_subscriptions: HashMap<EntityId, [Subscription; 3]>,
+    /// Per pane: its notifications, its events, tabs dropped on it and its
+    /// toolbar's requests.
+    pane_subscriptions: HashMap<EntityId, [Subscription; 4]>,
     /// Per open editor: its notifications, passed on to the editors that
     /// share its buffer.
     editors: HashMap<EntityId, Subscription>,
@@ -129,6 +133,24 @@ pub struct Workbench {
     _rail: Subscription,
     /// To the language picker's dismissal and blur.
     _language_picker: [Subscription; 2],
+    /// What the panes' toolbar crumbs and "…" list.
+    toolbar_picker: Entity<Picker<ToolbarPicker>>,
+    _toolbar_picker: [Subscription; 2],
+    /// Whether the panes show their toolbars.
+    breadcrumbs: bool,
+    nav: NavButtons,
+    /// What the active pane's symbol chain was last worked out for: the
+    /// pane, the editor, its caret and the outline: `None` if none can come
+    /// (plain text, an unsupported language, a file too large), `Some(None)`
+    /// while it's still to land, else its generation.
+    chain_key: Option<(EntityId, EntityId, usize, Option<Option<u64>>)>,
+    /// To the outline, so a landed outline updates the crumbs.
+    _outline: Subscription,
+    #[cfg(test)]
+    pub(crate) chains_computed: usize,
+    /// Every command the workbench was dispatched, oldest first.
+    #[cfg(test)]
+    pub(crate) commands_run: Vec<fe_command::Invocation>,
 }
 
 impl EventEmitter<RootChanged> for Workbench {}
@@ -164,10 +186,10 @@ impl Workbench {
             }
             pane
         });
+        let outline = cx.new(|_| OutlinePanel::new(ui));
         let dock = cx.new(|cx| {
             let search = cx.new(|cx| SearchPanel::new(root.clone(), pane.downgrade(), ui, cx));
-            let outline = cx.new(|_| OutlinePanel::new(ui));
-            Dock::new(panel.clone(), search, outline, ui)
+            Dock::new(panel.clone(), search, outline.clone(), ui)
         });
         let quick_open = Self::new_quick_open(root, pane.downgrade(), ui, cx);
         // A rail click runs the op its panel's key would, or hides the dock.
@@ -184,6 +206,12 @@ impl Workbench {
             cx.new(|cx| Picker::new(LanguagePicker::new(ui), "Select a language…", ui, cx));
         let language_subscriptions =
             Self::follow_palette(&language_picker, Palette::Language, window, cx);
+        let toolbar_picker = cx.new(|cx| {
+            let delegate = ToolbarPicker::new(outline.downgrade(), ui);
+            Picker::new(delegate, "Filter…", ui, cx)
+        });
+        let toolbar_subscriptions =
+            Self::follow_palette(&toolbar_picker, Palette::Toolbar, window, cx);
         let mut workbench = Self {
             panel,
             dock,
@@ -207,6 +235,22 @@ impl Workbench {
             root_subscriptions,
             _rail: rail,
             _language_picker: language_subscriptions,
+            toolbar_picker,
+            _toolbar_picker: toolbar_subscriptions,
+            breadcrumbs: true,
+            nav: NavButtons::default(),
+            chain_key: None,
+            _outline: cx.observe(&outline, |workbench, _, cx| {
+                if workbench.palette == Some(Palette::Toolbar) {
+                    let picker = workbench.toolbar_picker.clone();
+                    picker.update(cx, |picker, cx| picker.delegate.outline_changed(cx));
+                }
+                cx.notify()
+            }),
+            #[cfg(test)]
+            chains_computed: 0,
+            #[cfg(test)]
+            commands_run: Vec::new(),
         };
         workbench.watch(&pane, window, cx);
         workbench.track_editors(cx);
@@ -307,6 +351,10 @@ impl Workbench {
     /// `.fastedit/settings.toml`: a new root's project settings aren't
     /// loaded.
     pub fn set_root(&mut self, root: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        if self.palette == Some(Palette::Toolbar) {
+            // Its directories are listed relative to the old root.
+            self.dismiss_palette(window, cx);
+        }
         if self.palette == Some(Palette::QuickOpen) {
             // Dismissed as Escape would be, as the palette's subscriptions
             // go with it.
@@ -335,6 +383,12 @@ impl Workbench {
         // So the new tree reveals the active file, if it's under the root.
         self.revealed = None;
         self.root = Some(root.clone());
+        for pane in self.panes.panes() {
+            let root = Some(root.clone());
+            pane.update(cx, |pane, cx| {
+                pane.update_toolbar(|toolbar| toolbar.root = root, cx)
+            });
+        }
         cx.emit(RootChanged(root));
         cx.notify();
     }
@@ -435,7 +489,17 @@ impl Workbench {
     /// Joins `pane` to the workbench's: it sees the others, and retitles
     /// the window, closes once emptied and becomes active on a click.
     fn watch(&mut self, pane: &Entity<Pane>, window: &mut Window, cx: &mut Context<Self>) {
-        pane.update(cx, |pane, _| pane.set_peers(self.peers.clone()));
+        pane.update(cx, |pane, cx| {
+            pane.set_peers(self.peers.clone());
+            pane.update_toolbar(
+                |toolbar| {
+                    toolbar.visible = self.breadcrumbs;
+                    toolbar.nav = self.nav;
+                    toolbar.root = self.root.clone();
+                },
+                cx,
+            );
+        });
         let changed = cx.observe_in(pane, window, Self::pane_changed);
         let events = cx.subscribe_in(
             pane,
@@ -458,8 +522,15 @@ impl Workbench {
                 workbench.move_tab_to(&source, tab, destination, window, cx);
             },
         );
+        let requested = cx.subscribe_in(
+            pane,
+            window,
+            |workbench, pane, request: &ToolbarRequest, window, cx| {
+                workbench.open_toolbar_picker(pane, request.clone(), window, cx)
+            },
+        );
         self.pane_subscriptions
-            .insert(pane.entity_id(), [changed, events, dropped]);
+            .insert(pane.entity_id(), [changed, events, dropped, requested]);
         self.sync_peers();
     }
 
@@ -743,8 +814,112 @@ impl Workbench {
             Some(Palette::Language) => self
                 .language_picker
                 .update(cx, |picker, cx| picker.dismiss(window, cx)),
+            Some(Palette::Toolbar) => self
+                .toolbar_picker
+                .update(cx, |picker, cx| picker.dismiss(window, cx)),
             None => {}
         }
+    }
+
+    /// Shows the toolbar picker, focused, for `request` from `pane`, in
+    /// place of any other palette, or afresh if it shows.
+    fn open_toolbar_picker(
+        &mut self,
+        pane: &Entity<Pane>,
+        request: ToolbarRequest,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.palette != Some(Palette::Toolbar) {
+            self.dismiss_palette(window, cx);
+        }
+        let input = self.toolbar_picker.focus_handle(cx);
+        let previous = window.focused(cx).filter(|focused| *focused != input);
+        let (pane, root) = (pane.downgrade(), self.root.clone());
+        self.toolbar_picker.update(cx, |picker, cx| {
+            picker.delegate.open(request, pane, root, previous, cx);
+            picker.show(window, cx);
+        });
+        self.palette = Some(Palette::Toolbar);
+        cx.notify();
+    }
+
+    /// The toolbar picker, shown by a crumb or "…".
+    #[cfg(test)]
+    pub(crate) fn toolbar_picker(&self) -> Option<&Entity<Picker<ToolbarPicker>>> {
+        (self.palette == Some(Palette::Toolbar)).then_some(&self.toolbar_picker)
+    }
+
+    /// Shows or hides every pane's toolbar, as `view.toggle_breadcrumbs`
+    /// does.
+    fn toggle_breadcrumbs(&mut self, cx: &mut Context<Self>) {
+        self.breadcrumbs = !self.breadcrumbs;
+        self.chain_key = None;
+        let visible = self.breadcrumbs;
+        for pane in self.panes.panes() {
+            pane.update(cx, |pane, cx| {
+                pane.update_toolbar(|toolbar| toolbar.visible = visible, cx)
+            });
+        }
+        cx.notify();
+    }
+
+    /// Enables back and forward in every pane, as a navigation history
+    /// will.
+    #[cfg(test)]
+    pub(crate) fn set_nav_buttons(&mut self, nav: NavButtons, cx: &mut Context<Self>) {
+        self.nav = nav;
+        for pane in self.panes.panes() {
+            pane.update(cx, |pane, cx| {
+                pane.update_toolbar(|toolbar| toolbar.nav = nav, cx)
+            });
+        }
+    }
+
+    /// Pushes the symbols enclosing `editor`'s caret into the active pane,
+    /// from the outline shown for it, if the toolbars show and the pane (a
+    /// tab moved keeps its editor), the editor, its caret or the outline
+    /// moved since the last time.
+    fn push_symbols(&mut self, editor: Option<&Entity<EditorView>>, cx: &mut Context<Self>) {
+        let Some(editor) = editor.filter(|_| self.breadcrumbs) else {
+            return;
+        };
+        let caret = pane_toolbar::caret(editor.read(cx));
+        let outline = self.dock.read(cx).outline().read(cx);
+        let followed = outline.shown_for(editor.entity_id());
+        let shown = followed.flatten();
+        let key = (
+            self.active.entity_id(),
+            editor.entity_id(),
+            caret,
+            followed.map(|shown| shown.map(|(_, generation)| generation)),
+        );
+        if self.chain_key == Some(key) {
+            return;
+        }
+        self.chain_key = Some(key);
+        // A pane made active again keeps its chain until the outline
+        // following it there lands, unless its caret moved: so a click on
+        // one of its crumbs, which activates it on the way down, still lands.
+        let kept = &self.active.read(cx).toolbar().symbols;
+        if key.3 == Some(None) && kept.editor == Some(key.1) && kept.caret == caret {
+            return;
+        }
+        #[cfg(test)]
+        {
+            self.chains_computed += 1;
+        }
+        let chain = SymbolChain {
+            editor: Some(editor.entity_id()),
+            caret,
+            generation: key.3.flatten().unwrap_or_default(),
+            items: shown.map_or_else(Vec::new, |(outline, _)| {
+                pane_toolbar::symbol_chain(outline, caret)
+            }),
+        };
+        self.active.update(cx, |pane, cx| {
+            pane.update_toolbar(|toolbar| toolbar.symbols = chain, cx)
+        });
     }
 
     /// The status bar, for a host to set its own items on.
@@ -799,6 +974,7 @@ impl Workbench {
         let editor = self.active_editor(cx).cloned();
         let outline = self.dock.read(cx).outline().clone();
         outline.update(cx, |outline, cx| outline.set_editor(editor.as_ref(), cx));
+        self.push_symbols(editor.as_ref(), cx);
         let id = editor.as_ref().map(Entity::entity_id);
         let followed = self.status_bar.update(cx, |bar, cx| {
             let followed = bar.editor_id() != id;
@@ -908,6 +1084,8 @@ impl Workbench {
     /// palette toggle, a status bar command or a dock command; others go on
     /// to the app.
     fn on_run_command(&mut self, run: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
+        #[cfg(test)]
+        self.commands_run.push(run.0.clone());
         let Some(registry) =
             crate::registry(cx).filter(|registry| registry.get(&run.0.command).is_some())
         else {
@@ -925,6 +1103,9 @@ impl Workbench {
             }
             if project_panel::op(run, cx) == Some(PanelOp::RevealActive) {
                 return self.reveal_active(cx);
+            }
+            if pane_toolbar::toggles(run, cx) {
+                return self.toggle_breadcrumbs(cx);
             }
             let op = if outline_panel::shows(run, cx) {
                 Some(DockOp::ShowOutline)
@@ -1003,6 +1184,7 @@ impl Render for Workbench {
             .map(|root| match self.palette {
                 Some(Palette::QuickOpen) => root.child(self.quick_open.clone()),
                 Some(Palette::Language) => root.child(self.language_picker.clone()),
+                Some(Palette::Toolbar) => root.child(self.toolbar_picker.clone()),
                 None => root,
             })
     }

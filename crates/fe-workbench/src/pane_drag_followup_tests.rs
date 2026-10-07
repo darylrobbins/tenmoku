@@ -234,8 +234,9 @@ fn painted_marker_is_inside_the_bar(cx: &mut TestAppContext) {
     draw(cx);
     let [left, right] = <[_; 2]>::try_from(panes(&workbench, cx)).expect("two panes");
     // Scrolled so the long tab's middle is just inside the bar's end, its
-    // right edge far past it.
-    let bar = left.read_with(cx, |pane, _| pane.bounds());
+    // right edge far past it. The bar is its viewport, left of its buttons.
+    let bar = left.read_with(cx, |pane, _| pane.tab_bar_bounds());
+    assert!(bar.right() < left.read_with(cx, |pane, _| pane.bounds().right()));
     let last = tab(&left, 1, cx);
     let by = last.center().x - bar.right() + px(50.);
     left.read_with(cx, |pane, _| pane.scroll_tabs(by));
@@ -243,7 +244,10 @@ fn painted_marker_is_inside_the_bar(cx: &mut TestAppContext) {
     let last = tab(&left, 1, cx);
     assert!(last.right() > bar.right() + px(100.), "{last:?} {bar:?}");
     let to = point(bar.right() - px(5.), last.center().y);
-    drag_hover(tab(&right, 0, cx).center(), to, cx);
+    // Pressed near its left end: the long tab's middle is under the tab
+    // bar's buttons.
+    let from = tab(&right, 0, cx);
+    drag_hover(point(from.left() + px(20.), from.center().y), to, cx);
     let marker = left.read_with(cx, |pane, _| pane.drop_hint_bounds());
     {
         let marker = marker.expect("a marker shows");
@@ -252,6 +256,14 @@ fn painted_marker_is_inside_the_bar(cx: &mut TestAppContext) {
             "{marker:?} {bar:?}"
         );
     }
+    // Over the tab bar's buttons, it stays left of them.
+    let pane = left.read_with(cx, |pane, _| pane.bounds());
+    let over = point(pane.right() - px(5.), last.center().y);
+    cx.simulate_mouse_move(over, MouseButton::Left, Modifiers::none());
+    draw(cx);
+    let marker = left.read_with(cx, |pane, _| pane.drop_hint_bounds());
+    let marker = marker.expect("a marker shows");
+    assert!(marker.right() <= bar.right(), "{marker:?} {bar:?}");
 }
 
 fn drag_hover(from: Point<Pixels>, to: Point<Pixels>, cx: &mut VisualTestContext) {

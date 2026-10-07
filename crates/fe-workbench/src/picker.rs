@@ -111,7 +111,7 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     /// Selects row `ix`, clamped to the rows, and scrolls it into view.
-    fn select(&mut self, ix: usize, cx: &mut Context<Self>) {
+    pub(crate) fn select(&mut self, ix: usize, cx: &mut Context<Self>) {
         self.selected = ix.min(self.delegate.match_count().saturating_sub(1));
         self.scroll
             .scroll_to_item(self.selected, ScrollStrategy::Nearest);

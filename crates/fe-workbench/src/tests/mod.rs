@@ -10,6 +10,7 @@ mod outline_panel;
 mod outline_panel_followups;
 mod pane_cycle;
 mod pane_drag;
+mod pane_toolbar;
 mod project_panel;
 mod quick_open;
 mod quick_open_races;

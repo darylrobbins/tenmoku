@@ -18,12 +18,14 @@ mod outline_panel;
 mod pane;
 mod pane_drag;
 mod pane_group;
+mod pane_toolbar;
 mod picker;
 mod project_panel;
 mod quick_open;
 mod search_panel;
 mod status_bar;
 mod title_bar;
+mod toolbar_picker;
 mod workbench;
 
 use std::rc::Rc;
@@ -71,6 +73,7 @@ pub fn init(cx: &mut App) {
     open::init(cx);
     outline_panel::init(cx);
     pane_group::init(cx);
+    pane_toolbar::init(cx);
     project_panel::init(cx);
     status_bar::init(cx);
 }
@@ -118,6 +121,7 @@ pub fn command_catalog() -> Box<dyn CommandCatalog> {
         Box::new(open::registry()),
         Box::new(outline_panel::registry()),
         Box::new(pane_group::registry()),
+        Box::new(pane_toolbar::registry()),
         Box::new(project_panel::registry()),
         Box::new(status_bar::registry()),
         fe_gpui::commands::command_catalog(),

@@ -306,13 +306,14 @@ fn hosts_extend_and_replace() {
     );
     assert_eq!(ids(&bar, "Tools"), ["tools.run_tests"]);
     assert_eq!(
-        &ids(&bar, "View")[..7],
+        &ids(&bar, "View")[..8],
         [
             "dock.show_project",
             "search.show",
             "outline.show",
             "dock.toggle",
             "terminal.toggle",
+            "view.toggle_breadcrumbs",
             "view.toggle_status_bar",
             "-"
         ]

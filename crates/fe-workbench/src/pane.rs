@@ -10,9 +10,13 @@ use std::{
 };
 
 use fe_buffer::{Bias, Buffer};
+use fe_command::Source;
 use fe_editor::EditorModel;
 use fe_gpui::{EditorSettings, EditorTheme, EditorView, SettingsEvent};
-use fe_ui::{TAB_HEIGHT, TabBar, UiTheme};
+use fe_ui::{
+    Breadcrumbs, Crumb, CrumbKind, Icon, IconButton, TAB_HEIGHT, TOOLBAR_HEIGHT, TabBar, Tooltip,
+    UiTheme, file_icon,
+};
 use gpui::{
     App, AppContext as _, Bounds, Context, DragMoveEvent, Entity, EntityId, EventEmitter,
     FocusHandle, Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Pixels,
@@ -22,6 +26,7 @@ use gpui::{
 use crate::{
     loader,
     pane_drag::{self, DraggedTab, DropTarget, DropZone, TabDropped, TabGhost},
+    pane_toolbar::{self, NavButtons, Toolbar, ToolbarRequest},
 };
 
 /// A tab's ID, which stays with it as tabs open, close and move: its
@@ -65,9 +70,9 @@ pub struct Pane {
     /// Reads running, so a second click on a file being read doesn't read it
     /// again. Dropping one cancels it.
     reads: HashMap<PathBuf, Task<()>>,
-    /// Why the file opened last couldn't be read, shown in the active tab's
-    /// place until another tab is shown.
-    error: Option<String>,
+    /// The file opened last and why it couldn't be read, shown in the
+    /// active tab's place until another tab is shown.
+    error: Option<(PathBuf, String)>,
     /// What to select in the file opened last once its editor exists.
     reveal: Option<(PathBuf, Reveal)>,
     theme: EditorTheme,
@@ -81,6 +86,8 @@ pub struct Pane {
     bounds: Rc<Cell<Bounds<Pixels>>>,
     /// Where it laid out the content below the tab bar.
     content_bounds: Rc<Cell<Bounds<Pixels>>>,
+    /// Where it laid out the tab bar, left of its buttons.
+    tab_bar_bounds: Rc<Cell<Bounds<Pixels>>>,
     /// Where a tab dragged over the pane would drop.
     hover: Option<DropTarget>,
     /// Where the last frame laid out the drop marker or overlay.
@@ -90,6 +97,15 @@ pub struct Pane {
     id: EntityId,
     /// Whether the pane's last tab closed: see [`Pane::take_emptied`].
     emptied: bool,
+    toolbar: Toolbar,
+    /// The tab bar's buttons' laid-out bounds.
+    #[cfg(test)]
+    actions: ScrollHandle,
+    /// The crumbs the last frame drew: label, kind and icon.
+    #[cfg(test)]
+    drawn_crumbs: Vec<(String, CrumbKind, Option<Icon>)>,
+    #[cfg(test)]
+    last_tooltip: Rc<RefCell<Option<String>>>,
 }
 
 impl Pane {
@@ -113,11 +129,19 @@ impl Pane {
             tab_scroll: ScrollHandle::new(),
             bounds: Rc::default(),
             content_bounds: Rc::default(),
+            tab_bar_bounds: Rc::default(),
             hover: None,
             hint_bounds: Rc::default(),
             peers: Peers::default(),
             id: cx.entity_id(),
             emptied: false,
+            toolbar: Toolbar::default(),
+            #[cfg(test)]
+            actions: ScrollHandle::new(),
+            #[cfg(test)]
+            drawn_crumbs: Vec::new(),
+            #[cfg(test)]
+            last_tooltip: Rc::default(),
         }
     }
 
@@ -126,6 +150,20 @@ impl Pane {
         let mut pane = Self::new(self.theme.clone(), self.settings.clone(), self.ui, cx);
         pane.peers = self.peers.clone();
         pane
+    }
+
+    pub(crate) fn toolbar(&self) -> &Toolbar {
+        &self.toolbar
+    }
+
+    /// Changes the toolbar's state: see [`crate::pane_toolbar`].
+    pub(crate) fn update_toolbar(
+        &mut self,
+        update: impl FnOnce(&mut Toolbar),
+        cx: &mut Context<Self>,
+    ) {
+        update(&mut self.toolbar);
+        cx.notify();
     }
 
     /// Joins the workbench's panes, `peers`.
@@ -320,7 +358,8 @@ impl Pane {
             Err(error) => {
                 log::error!("cannot open {}: {error}", path.display());
                 if last {
-                    self.error = Some(format!("Cannot open {}: {error}", path.display()));
+                    let message = format!("Cannot open {}: {error}", path.display());
+                    self.error = Some((path.clone(), message));
                     window.focus(&self.focus, cx);
                     cx.emit(PaneEvent::Activated);
                 }
@@ -485,7 +524,8 @@ impl Pane {
         let origin = self.bounds().origin;
         let (hint, fill) = match self.hover? {
             DropTarget::TabBar(index) => {
-                let marker = pane_drag::marker(&self.tab_layout(), index, self.bounds());
+                let bar = self.tab_bar_bounds.get();
+                let marker = pane_drag::marker(&self.tab_layout(), index, bar);
                 (marker, self.ui.drop_target)
             }
             DropTarget::Content(zone) => {
@@ -504,12 +544,12 @@ impl Pane {
         if !matches!(self.hover?, DropTarget::TabBar(_)) {
             return Some(element.into_any_element());
         }
-        // The marker is clipped to the tab bar.
+        // The marker is clipped to the tab bar, left of its buttons.
         let clip = div()
             .absolute()
             .top_0()
             .left_0()
-            .w(self.bounds().size.width)
+            .w(self.tab_bar_bounds.get().size.width)
             .h(TAB_HEIGHT)
             .overflow_hidden()
             .child(element);
@@ -650,9 +690,31 @@ impl Pane {
         self.tab_scroll.set_offset(gpui::point(-by, gpui::px(0.)));
     }
 
+    /// Where the tab bar, left of its buttons, was laid out in the last
+    /// frame.
+    pub(crate) fn tab_bar_bounds(&self) -> Bounds<Pixels> {
+        self.tab_bar_bounds.get()
+    }
+
     /// Where the content below the tab bar was laid out in the last frame.
     pub(crate) fn content_bounds(&self) -> Bounds<Pixels> {
         self.content_bounds.get()
+    }
+
+    /// Where the tab bar's button `ix` (Split Right, Split Down, then "…")
+    /// was laid out in the last frame.
+    pub(crate) fn action_bounds(&self, ix: usize) -> Option<Bounds<Pixels>> {
+        self.actions.bounds_for_item(ix)
+    }
+
+    /// The crumbs the last frame drew: label, kind and icon.
+    pub(crate) fn drawn_crumbs(&self) -> &[(String, CrumbKind, Option<Icon>)] {
+        &self.drawn_crumbs
+    }
+
+    /// The text of the last tooltip built.
+    pub(crate) fn last_tooltip(&self) -> Option<String> {
+        self.last_tooltip.borrow().clone()
     }
 
     /// Where a hovering tab would drop.
@@ -670,6 +732,8 @@ impl Pane {
 impl EventEmitter<PaneEvent> for Pane {}
 
 impl EventEmitter<TabDropped> for Pane {}
+
+impl EventEmitter<ToolbarRequest> for Pane {}
 
 impl Focusable for Pane {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -715,7 +779,7 @@ impl Render for Pane {
             .children(tabs);
         let body = if let Some(path) = &self.opening {
             self.message(format!("Loading {}…", file_name(Some(path))))
-        } else if let Some(error) = &self.error {
+        } else if let Some((_, error)) = &self.error {
             self.message(error.clone())
         } else if let Some(tab) = self.tabs.get(self.active) {
             tab.editor.clone().into_any_element()
@@ -752,7 +816,8 @@ impl Render for Pane {
             .flex_col()
             .bg(self.ui.background)
             .child(record(&self.bounds))
-            .child(tab_bar)
+            .child(self.tab_row(tab_bar, cx))
+            .children(self.toolbar_row(cx))
             .child(
                 div()
                     .relative()
@@ -769,6 +834,201 @@ impl Render for Pane {
 impl Pane {
     fn on_drop(&mut self, dragged: &DraggedTab, window: &mut Window, cx: &mut Context<Self>) {
         self.dropped(dragged, window.mouse_position(), cx);
+    }
+}
+
+/// The tab bar's buttons and the toolbar: see [`crate::pane_toolbar`].
+impl Pane {
+    /// The tab bar, then the split and "…" buttons, which stay put as the
+    /// tabs scroll, drawn as one bar.
+    fn tab_row(&mut self, tab_bar: TabBar, cx: &mut Context<Self>) -> impl IntoElement {
+        let split = |id, icon, title, command: &'static str| {
+            self.button(id, icon, title, Some(command))
+                .on_click(move |_, window, cx| {
+                    pane_toolbar::dispatch(command, Source::Mouse, window, cx)
+                })
+        };
+        let split_right = split(
+            "split-right",
+            Icon::Columns2,
+            "Split Right",
+            "pane.split_right",
+        );
+        let split_down = split("split-down", Icon::Rows2, "Split Down", "pane.split_down");
+        let more = self
+            .button("pane-menu", Icon::Ellipsis, "More Actions", None)
+            .on_click(cx.listener(|pane, _, window, cx| {
+                pane.request(ToolbarRequest::PaneCommands, window, cx)
+            }));
+        let strip = div()
+            .id("pane-actions")
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(gpui::px(2.))
+            .px_1()
+            .h(TAB_HEIGHT)
+            .bg(self.ui.panel_background)
+            .border_b_1()
+            .border_color(self.ui.border)
+            .child(split_right)
+            .child(split_down)
+            .child(more);
+        #[cfg(test)]
+        let strip = gpui::StatefulInteractiveElement::track_scroll(strip, &self.actions);
+        div()
+            .flex()
+            .flex_none()
+            .w_full()
+            .h(TAB_HEIGHT)
+            .on_drop(cx.listener(Self::on_drop))
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_w_0()
+                    .child(tab_bar)
+                    .child(record(&self.tab_bar_bounds)),
+            )
+            .child(strip)
+    }
+
+    /// Back and forward, then the crumbs; nothing while hidden.
+    fn toolbar_row(&mut self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
+        #[cfg(test)]
+        self.drawn_crumbs.clear();
+        if !self.toolbar.visible {
+            return None;
+        }
+        let nav = |button: IconButton, enabled: bool, command: &'static str| {
+            button.disabled(!enabled).on_click(move |_, window, cx| {
+                pane_toolbar::dispatch(command, Source::Mouse, window, cx)
+            })
+        };
+        let NavButtons { back, forward } = self.toolbar.nav;
+        let back_button = self.button("back", Icon::ArrowLeft, "Go Back", Some("nav.back"));
+        let forward_button = self.button(
+            "forward",
+            Icon::ArrowRight,
+            "Go Forward",
+            Some("nav.forward"),
+        );
+        let crumbs = self.crumbs(cx);
+        #[cfg(test)]
+        {
+            self.drawn_crumbs = crumbs
+                .iter()
+                .map(|crumb| (crumb.label.to_string(), crumb.kind, crumb.icon))
+                .collect();
+        }
+        let toolbar = div()
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap_1()
+            .px_1()
+            .w_full()
+            .h(TOOLBAR_HEIGHT)
+            .overflow_hidden()
+            .bg(self.ui.panel_background)
+            .border_b_1()
+            .border_color(self.ui.border)
+            .debug_selector(|| "pane-toolbar".into())
+            // A tab dropped here goes where the marker in the tab bar says.
+            .on_drop(cx.listener(Self::on_drop))
+            .child(nav(back_button, back, "nav.back"))
+            .child(nav(forward_button, forward, "nav.forward"))
+            .child(Breadcrumbs::new(crumbs, &self.ui));
+        Some(toolbar)
+    }
+
+    /// A button with a tooltip of `title` and `command`'s key.
+    fn button(
+        &self,
+        id: &'static str,
+        icon: Icon,
+        title: &'static str,
+        command: Option<&'static str>,
+    ) -> IconButton {
+        let ui = self.ui;
+        #[cfg(test)]
+        let last_tooltip = self.last_tooltip.clone();
+        IconButton::new(id, icon, &self.ui).tooltip(move |_, cx| {
+            let shortcut = command.and_then(|command| pane_toolbar::shortcut(command, cx));
+            let tooltip = Tooltip::new(title, shortcut, &ui);
+            #[cfg(test)]
+            last_tooltip.replace(Some(tooltip.text()));
+            cx.new(|_| tooltip).into()
+        })
+    }
+
+    /// The path crumbs of the file shown, being read or that failed to be
+    /// read, then the symbol chain if it's of the editor shown.
+    fn crumbs(&self, cx: &mut Context<Self>) -> Vec<Crumb> {
+        let path = match (&self.opening, &self.error) {
+            (Some(path), _) | (None, Some((path, _))) => Some(Some(path.as_path())),
+            (None, None) => self.tabs.get(self.active).map(|tab| tab.path.as_deref()),
+        };
+        let Some(path) = path else {
+            return Vec::new();
+        };
+        let path_crumbs = pane_toolbar::path_crumbs(path, self.toolbar.root.as_deref());
+        let mut crumbs: Vec<_> =
+            path_crumbs
+                .into_iter()
+                .map(|crumb| {
+                    let kind = if crumb.file {
+                        CrumbKind::File
+                    } else {
+                        CrumbKind::Path
+                    };
+                    let mut element = Crumb::new(crumb.label.clone(), kind);
+                    if crumb.file {
+                        element = element.icon(file_icon(&crumb.label));
+                    }
+                    let Some(dir) = crumb.dir else {
+                        return element;
+                    };
+                    let select = crumb
+                        .file
+                        .then(|| path.and_then(Path::file_name).map(ToOwned::to_owned))
+                        .flatten();
+                    let request = ToolbarRequest::Entries { dir, select };
+                    element.on_click(cx.listener(move |pane, _, window, cx| {
+                        pane.request(request.clone(), window, cx)
+                    }))
+                })
+                .collect();
+        let chain = &self.toolbar.symbols;
+        let editor = self
+            .active_editor()
+            .filter(|editor| chain.editor == Some(editor.entity_id()));
+        if let Some(editor) = editor {
+            let mut names = Vec::new();
+            for (item, name) in &chain.items {
+                names.push(name.clone());
+                let request = ToolbarRequest::Symbols {
+                    editor: editor.downgrade(),
+                    generation: chain.generation,
+                    item: *item,
+                    names: names.clone(),
+                };
+                crumbs.push(
+                    Crumb::new(name.clone(), CrumbKind::Symbol).on_click(cx.listener(
+                        move |pane, _, window, cx| pane.request(request.clone(), window, cx),
+                    )),
+                );
+            }
+        }
+        crumbs
+    }
+
+    /// A toolbar click asks the workbench for `request`, the active editor
+    /// focused first, so focus goes back to it once the picker opened is
+    /// dismissed.
+    fn request(&mut self, request: ToolbarRequest, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(&self.focus_target(cx), cx);
+        cx.emit(request);
     }
 }
 

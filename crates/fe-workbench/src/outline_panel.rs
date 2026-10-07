@@ -212,6 +212,18 @@ impl OutlinePanel {
         cx.notify();
     }
 
+    /// The outline for `editor`, if it's the editor followed and can have
+    /// one: `Some(None)` until the first lands, else the outline shown with
+    /// its generation. `None` for plain text, an unsupported language or a
+    /// file too large.
+    pub(crate) fn shown_for(&self, editor: EntityId) -> Option<Option<(&Outline, u64)>> {
+        if self.editor_id() != Some(editor) || self.status != Status::Outline {
+            return None;
+        }
+        let outline = self.outline.as_ref();
+        Some(outline.map(|(outline, _)| (outline, self.generation)))
+    }
+
     /// The outline's items, if it's shown.
     fn items(&self) -> &[fe_syntax::OutlineItem] {
         match (&self.status, &self.outline) {
