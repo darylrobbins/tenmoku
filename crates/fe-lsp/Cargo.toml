@@ -1,0 +1,36 @@
+[package]
+name = "fe-lsp"
+description = "Language server client: a thread per server over async-lsp. Must not depend on GPUI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# The in-process fake server (`fe_lsp::fake`), for other crates' tests.
+test-support = []
+
+[dependencies]
+async-io.workspace = true
+async-lsp.workspace = true
+async-process.workspace = true
+futures.workspace = true
+log.workspace = true
+lsp-types.workspace = true
+rustix.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+# Not used yet: document sync (fe-text, fe-buffer) and `[lsp]` settings
+# (fe-config) arrive in later cards. Declared now so fe-lsp's Cargo.lock
+# entry doesn't change under them.
+fe-buffer.workspace = true
+fe-config.workspace = true
+fe-text.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

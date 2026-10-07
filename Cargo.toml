@@ -28,6 +28,7 @@ fe-ui = { path = "crates/fe-ui" }
 fe-workbench = { path = "crates/fe-workbench" }
 fe-nav = { path = "crates/fe-nav" }
 fe-vim = { path = "crates/fe-vim" }
+fe-lsp = { path = "crates/fe-lsp" }
 
 # GPUI comes from the `gpui-pre-*` crates.io snapshots of Zed (Apache-2.0).
 # 0.3.7 is zed@1a28cff. Every snapshot crate must be bumped together; to move to
@@ -55,6 +56,18 @@ grep-searcher = "0.1"
 # The host's channel from the config watcher to the main thread (already in
 # the lock through gpui).
 async-channel = "2"
+
+# Language server client (fe-lsp). async-lsp is pinned with `=`: fe-lsp mirrors
+# its request-id counter (docs/decisions/lsp-client.md §2.1). Without default
+# features it adds no tokio; lsp-types is the version async-lsp requires.
+async-lsp = { version = "=0.2.4", default-features = false, features = ["omni-trait"] }
+lsp-types = "=0.95.1"
+# fe-lsp's runtime: a thread per server under async-io, processes through
+# async-process, `killpg` through rustix (all already in the lock).
+async-io = "2"
+async-process = "2"
+futures = "0.3"
+rustix = { version = "1", default-features = false, features = ["std", "process"] }
 
 # PNG decode/encode for the fe-gpui screenshot goldens (already in the lock through gpui).
 image = { version = "0.25", default-features = false, features = ["png"] }
