@@ -55,6 +55,14 @@ pub enum LspError {
     Protocol(String),
 }
 
+/// [`LspError::Unavailable`]'s reasons for a request on a document (§4.1).
+/// The buffer moved on from the version the request was computed on.
+pub(crate) const BUFFER_CHANGED: &str = "buffer changed";
+/// The document is over the size limit, so the server doesn't have it.
+pub(crate) const TOO_LARGE: &str = "too large for the language server";
+/// The document isn't open on a language server.
+pub(crate) const NOT_OPEN: &str = "not open on a language server";
+
 impl LspError {
     pub(crate) fn from_lsp(err: async_lsp::Error) -> Self {
         match err {

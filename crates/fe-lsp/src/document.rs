@@ -26,12 +26,19 @@
 //! document or with an opening still queued: a close, a crash, a failed
 //! start, a panic) drops the subscription too, so no buffer keeps queueing
 //! events for a server that will never drain them.
+//!
+//! Each incarnation (identity.rs) keeps a ring of the last [`RING`]
+//! versions sent, to admit requests and decode replies against. Its LSP
+//! versions go on across reopens within a session: a reopen's `didOpen`
+//! uses the URI's last version plus 1. A document whose text is over its
+//! size limit isn't open on the server: it's closed when an edit takes it
+//! over, and opened again once one brings it back under.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use fe_buffer::{BufferEvent, BufferId, Subscription, Version};
+use fe_buffer::{BufferEvent, BufferId, Edit, Subscription, Version};
 use fe_text::Text;
 use lsp_types::notification::{
     DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, DidSaveTextDocument,
@@ -44,6 +51,9 @@ use lsp_types::{
 };
 
 use crate::encoding::{PositionEncoding, to_lsp};
+use crate::event::{BUFFER_CHANGED, LspError, NOT_OPEN, ServerId, TOO_LARGE};
+use crate::identity::{Generation, Identities, IncarnationId, Point, SessionId};
+use crate::server::Outgoing;
 
 /// The most edits one `didChange` sends as ranges; more go as the whole
 /// text.
@@ -207,6 +217,10 @@ pub(crate) struct Opening {
     pub(crate) subscription: Attached,
     pub(crate) uri: Url,
     pub(crate) language_id: String,
+    /// The open generation the manager issued it under.
+    pub(crate) generation: Generation,
+    /// A text longer than this, in bytes, isn't synced.
+    pub(crate) max_bytes: usize,
 }
 
 /// The LSP `languageId` for a buffer of fe-syntax's `language` (§3.2): a
@@ -221,77 +235,239 @@ pub(crate) fn language_id(language: &str, path: &Path) -> String {
     .to_owned()
 }
 
+/// How many versions sent each open document keeps (§4.1).
+pub(crate) const RING: usize = 32;
+
+/// One version of a document as sent to its server: an entry of the
+/// document's ring.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct SentVersion {
+    /// The `version` the server was told.
+    pub lsp_version: i32,
+    /// The buffer version it is.
+    pub version: Version,
+    /// The text the server has at it.
+    pub text: Text,
+    /// The batches that took the previous version sent to this one, in
+    /// order: none for a `didOpen`, one or more for a `didChange`.
+    pub edits: Vec<Arc<[Edit]>>,
+}
+
+/// A document open on a server, at the version the server has.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct SentDocument {
+    pub buffer: BufferId,
+    pub uri: Url,
+    /// The incarnation the server has open, to check a reply against
+    /// [`LspManager::active_identity`](crate::LspManager::active_identity)
+    /// when it lands.
+    pub identity: (SessionId, IncarnationId),
+    pub sent: SentVersion,
+}
+
+/// What a request on a document went out with (§4.1), to decode its reply
+/// against.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct Admitted {
+    /// The session's position encoding.
+    pub encoding: PositionEncoding,
+    /// The document, at the version the request named.
+    pub document: SentDocument,
+    /// Every other document the server has open, at its current version.
+    pub others: Vec<SentDocument>,
+}
+
+/// What a document needs from its server's actor to sync.
+pub(crate) struct Link {
+    pub(crate) policy: SyncPolicy,
+    pub(crate) encoding: PositionEncoding,
+    pub(crate) identities: Identities,
+    pub(crate) server: ServerId,
+    pub(crate) session: SessionId,
+    /// The last LSP version sent for each URI closed in this session, so
+    /// a reopen goes on from it.
+    pub(crate) versions: HashMap<Url, i32>,
+    /// Document notifications and admitted requests waiting for room in
+    /// async-lsp's queue, sent ahead of anything else.
+    pub(crate) outbox: VecDeque<Outgoing>,
+}
+
+impl Link {
+    fn send(&mut self, note: Note) {
+        self.outbox.push_back(Outgoing::Note(note));
+    }
+}
+
 /// One open document on one server.
 pub(crate) struct Document {
+    buffer: BufferId,
     uri: Url,
+    language_id: String,
     subscription: Attached,
-    /// The text the server has.
-    sent: Text,
-    /// The buffer version `sent` is.
+    generation: Generation,
+    max_bytes: usize,
+    /// The buffer's text as of the last batch drained.
+    text: Text,
+    /// The buffer version `text` is.
     at: Version,
-    /// The LSP version of the last `didOpen` or `didChange`.
-    version: i32,
+    /// While the server has the document.
+    synced: Option<Synced>,
+}
+
+/// An incarnation: the document from its `didOpen` to its `didClose`.
+struct Synced {
+    identity: (SessionId, IncarnationId),
+    /// The last [`RING`] versions sent, oldest first. Never empty: the
+    /// newest is what the server has.
+    ring: VecDeque<SentVersion>,
+}
+
+impl Synced {
+    fn newest(&self) -> &SentVersion {
+        self.ring
+            .back()
+            .expect("a synced document's ring has its didOpen")
+    }
+
+    fn push(&mut self, sent: SentVersion) {
+        if self.ring.len() == RING {
+            self.ring.pop_front();
+        }
+        self.ring.push_back(sent);
+    }
 }
 
 /// The `didChange` being built from a run of batches.
 #[derive(Default)]
 struct Run {
-    batches: usize,
+    batches: Vec<Arc<[Edit]>>,
     /// Send the whole text rather than `changes`.
     whole: bool,
     changes: Vec<TextDocumentContentChangeEvent>,
 }
 
 impl Document {
-    /// Queues `didOpen`, at LSP version 0, with the LF text.
-    pub(crate) fn open(opening: Opening, policy: SyncPolicy, out: &mut VecDeque<Note>) -> Self {
-        let document = Self {
+    /// Starts syncing `opening`: activates a new incarnation, then queues
+    /// its `didOpen` with the LF text, at the URI's last version in this
+    /// session plus 1, or 0. A document over its size limit isn't opened
+    /// until it's back under.
+    ///
+    /// `None` if the open is stale: the manager closed the buffer since it
+    /// issued the open. It then inserts nothing and sends nothing.
+    pub(crate) fn open(opening: Opening, link: &mut Link) -> Option<Self> {
+        let mut document = Self {
+            buffer: opening.buffer,
             uri: opening.uri,
+            language_id: opening.language_id,
             subscription: opening.subscription,
-            sent: opening.text,
+            generation: opening.generation,
+            max_bytes: opening.max_bytes,
+            text: opening.text,
             at: opening.version,
-            version: 0,
+            synced: None,
         };
-        if policy.open_close {
-            out.push_back(Note::Open(DidOpenTextDocumentParams {
-                text_document: TextDocumentItem {
-                    uri: document.uri.clone(),
-                    language_id: opening.language_id,
-                    version: document.version,
-                    text: document.sent.to_string(),
-                },
-            }));
+        link.identities.pause(Point::Activate);
+        if !link.policy.open_close || document.oversized() {
+            // Nothing to send, but its events still drain.
+            return link
+                .identities
+                .is_current(document.buffer, document.generation)
+                .then_some(document);
         }
-        document
+        document.activate(link).then_some(document)
+    }
+
+    fn oversized(&self) -> bool {
+        self.text.len() > self.max_bytes
+    }
+
+    /// Activates a new incarnation and queues its `didOpen`. False if the
+    /// open is stale.
+    fn activate(&mut self, link: &mut Link) -> bool {
+        let Some(incarnation) =
+            link.identities
+                .activate(self.buffer, self.generation, link.server, link.session)
+        else {
+            return false;
+        };
+        let version = link.versions.get(&self.uri).map_or(0, |last| last + 1);
+        link.send(Note::Open(DidOpenTextDocumentParams {
+            text_document: TextDocumentItem {
+                uri: self.uri.clone(),
+                language_id: self.language_id.clone(),
+                version,
+                text: self.text.to_string(),
+            },
+        }));
+        self.synced = Some(Synced {
+            identity: (link.session, incarnation),
+            ring: VecDeque::from([SentVersion {
+                lsp_version: version,
+                version: self.at,
+                text: self.text.clone(),
+                edits: Vec::new(),
+            }]),
+        });
+        true
     }
 
     /// Queues `didClose`, after a last drain of what the buffer did until
     /// the manager detached it, so a save just before closing still
-    /// reaches the server.
-    pub(crate) fn close(
-        mut self,
-        policy: SyncPolicy,
-        encoding: PositionEncoding,
-        out: &mut VecDeque<Note>,
-    ) {
-        self.drain(policy, encoding, out);
-        if policy.open_close {
-            out.push_back(Note::Close(DidCloseTextDocumentParams {
-                text_document: TextDocumentIdentifier { uri: self.uri },
-            }));
-        }
+    /// reaches the server. The manager has retired its identity already.
+    pub(crate) fn close(mut self, link: &mut Link) {
+        self.drain(link);
+        self.deactivate(link);
     }
 
-    /// Takes the subscription's events and queues what they become.
-    pub(crate) fn drain(
-        &mut self,
-        policy: SyncPolicy,
-        encoding: PositionEncoding,
-        out: &mut VecDeque<Note>,
-    ) {
+    /// Queues `didClose`, if the server has the document, and keeps its
+    /// last version for a reopen.
+    fn deactivate(&mut self, link: &mut Link) {
+        let Some(synced) = self.synced.take() else {
+            return;
+        };
+        // The highest, should two buffers have had the URI open.
+        let last = synced.newest().lsp_version;
+        link.versions
+            .entry(self.uri.clone())
+            .and_modify(|version| *version = last.max(*version))
+            .or_insert(last);
+        link.send(Note::Close(DidCloseTextDocumentParams {
+            text_document: TextDocumentIdentifier {
+                uri: self.uri.clone(),
+            },
+        }));
+    }
+
+    /// Closes a document that grew past its size limit: retires its own
+    /// identity, unless the manager has closed the buffer since, then
+    /// `didClose`.
+    fn close_oversized(&mut self, link: &mut Link) {
+        let Some(synced) = &self.synced else { return };
+        link.identities.pause(Point::Retire);
+        link.identities
+            .retire(self.buffer, self.generation, link.server, synced.identity);
+        self.deactivate(link);
+    }
+
+    /// Takes the subscription's events and queues what they become. A
+    /// batch that takes the document over its size limit closes it, and
+    /// one that brings it back under opens it again.
+    pub(crate) fn drain(&mut self, link: &mut Link) {
         let events = self.subscription.0.take_events();
-        if !policy.open_close {
-            // Nothing is sent, but the queue mustn't grow either.
+        if !link.policy.open_close {
+            // Nothing is sent, but the queue mustn't grow either, and the
+            // size limit still goes by the latest text.
+            for event in events {
+                if let BufferEvent::Edited { to, text, .. } = event
+                    && to > self.at
+                {
+                    self.text = text;
+                    self.at = to;
+                }
+            }
             return;
         }
         let whole = self.too_much(&events);
@@ -309,39 +485,54 @@ impl Document {
                         // Already in the text the document opened with.
                         continue;
                     }
-                    run.batches += 1;
-                    // A gap (`from` isn't what was sent) means batches went
-                    // missing, so only the whole text is right.
-                    run.whole |=
-                        whole || from != self.at || policy.change == TextDocumentSyncKind::FULL;
+                    // A gap (`from` isn't what was drained) means batches
+                    // went missing, so only the whole text is right.
+                    let gap = from != self.at;
+                    if self.synced.is_some() && text.len() > self.max_bytes {
+                        // The run so far goes as it was, never with the
+                        // oversized text, and then the document closes.
+                        self.flush(std::mem::take(&mut run), link);
+                        self.close_oversized(link);
+                    }
+                    let before = std::mem::replace(&mut self.text, text);
+                    self.at = to;
+                    if self.synced.is_none() {
+                        if !self.oversized() {
+                            self.activate(link);
+                        }
+                        continue;
+                    }
+                    run.whole |= whole || gap || link.policy.change == TextDocumentSyncKind::FULL;
                     if run.whole {
                         run.changes.clear();
                     } else {
                         run.changes.extend(edits.iter().rev().map(|edit| {
                             TextDocumentContentChangeEvent {
                                 range: Some(Range::new(
-                                    to_lsp(&self.sent, edit.old.start, encoding),
-                                    to_lsp(&self.sent, edit.old.end, encoding),
+                                    to_lsp(&before, edit.old.start, link.encoding),
+                                    to_lsp(&before, edit.old.end, link.encoding),
                                 )),
                                 range_length: None,
-                                text: text.slice_to_string(edit.new.clone()),
+                                text: self.text.slice_to_string(edit.new.clone()),
                             }
                         }));
                     }
-                    self.sent = text;
-                    self.at = to;
+                    run.batches.push(edits);
                 }
                 BufferEvent::Saved { version } => {
                     if version < self.at {
                         // Saved before the version the document opened with.
                         continue;
                     }
-                    self.flush(std::mem::take(&mut run), policy, out);
-                    if let Some(include_text) = policy.save {
+                    self.flush(std::mem::take(&mut run), link);
+                    if self.synced.is_none() {
+                        continue;
+                    }
+                    if let Some(include_text) = link.policy.save {
                         let text = if !include_text {
                             None
                         } else if version == self.at {
-                            Some(self.sent.to_string())
+                            Some(self.text.to_string())
                         } else {
                             // Can't happen: events arrive in order, and
                             // every batch up to `version` came before.
@@ -352,7 +543,7 @@ impl Document {
                             );
                             None
                         };
-                        out.push_back(Note::Save(DidSaveTextDocumentParams {
+                        link.send(Note::Save(DidSaveTextDocumentParams {
                             text_document: TextDocumentIdentifier {
                                 uri: self.uri.clone(),
                             },
@@ -362,7 +553,7 @@ impl Document {
                 }
             }
         }
-        self.flush(run, policy, out);
+        self.flush(run, link);
     }
 
     /// Whether the batches in `events` that aren't sent yet hold more than
@@ -390,29 +581,92 @@ impl Document {
     }
 
     /// Queues the `didChange` for `run`, if it changed anything the server
-    /// is told of.
-    fn flush(&mut self, run: Run, policy: SyncPolicy, out: &mut VecDeque<Note>) {
-        if run.batches == 0 || policy.change == TextDocumentSyncKind::NONE {
+    /// is told of, and keeps the version it makes in the ring.
+    fn flush(&mut self, run: Run, link: &mut Link) {
+        let Some(synced) = &mut self.synced else {
+            return;
+        };
+        if run.batches.is_empty() || link.policy.change == TextDocumentSyncKind::NONE {
             return;
         }
         let content_changes = if run.whole {
             vec![TextDocumentContentChangeEvent {
                 range: None,
                 range_length: None,
-                text: self.sent.to_string(),
+                text: self.text.to_string(),
             }]
         } else if run.changes.is_empty() {
             return;
         } else {
             run.changes
         };
-        self.version += 1;
-        out.push_back(Note::Change(DidChangeTextDocumentParams {
+        let version = synced.newest().lsp_version + 1;
+        synced.push(SentVersion {
+            lsp_version: version,
+            version: self.at,
+            text: self.text.clone(),
+            edits: run.batches,
+        });
+        link.send(Note::Change(DidChangeTextDocumentParams {
             text_document: VersionedTextDocumentIdentifier {
                 uri: self.uri.clone(),
-                version: self.version,
+                version,
             },
             content_changes,
         }));
+    }
+
+    /// Admits a request computed on buffer version `version`, once drained
+    /// (§4.1): the version the server has, if that's `version`.
+    pub(crate) fn admit(&self, version: Version) -> Result<SentDocument, LspError> {
+        if self.oversized() {
+            return Err(LspError::Unavailable(TOO_LARGE.into()));
+        }
+        let Some(synced) = &self.synced else {
+            return Err(LspError::Unavailable(NOT_OPEN.into()));
+        };
+        let sent = synced.newest();
+        if sent.version == version {
+            Ok(SentDocument {
+                buffer: self.buffer,
+                uri: self.uri.clone(),
+                identity: synced.identity,
+                sent: sent.clone(),
+            })
+        } else {
+            // The buffer moved on while the request waited: it isn't
+            // rebased. (A version newer than the server has can only be
+            // one the server isn't told of: a server syncing no changes.)
+            if sent.version < version {
+                log::debug!(
+                    "{}: a request on {version:?}, but the server has {:?}",
+                    self.uri,
+                    sent.version
+                );
+            }
+            Err(LspError::Unavailable(BUFFER_CHANGED.into()))
+        }
+    }
+
+    /// The document at the version the server has, if it has it.
+    pub(crate) fn current(&self) -> Option<SentDocument> {
+        self.synced.as_ref().map(|synced| SentDocument {
+            buffer: self.buffer,
+            uri: self.uri.clone(),
+            identity: synced.identity,
+            sent: synced.newest().clone(),
+        })
+    }
+
+    /// The LSP and buffer versions in the ring, oldest first.
+    #[cfg(test)]
+    pub(crate) fn ring(&self) -> Vec<(i32, Version)> {
+        self.synced.as_ref().map_or_else(Vec::new, |synced| {
+            synced
+                .ring
+                .iter()
+                .map(|sent| (sent.lsp_version, sent.version))
+                .collect()
+        })
     }
 }

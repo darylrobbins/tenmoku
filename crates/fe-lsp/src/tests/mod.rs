@@ -1,20 +1,30 @@
 //! Unit tests, one module per area. They run servers through the fake in
 //! `crate::fake` (declared in lib.rs, so fe-workbench can share it).
 
+mod admission;
 mod encoding;
+mod identity;
 mod launcher;
 mod lifecycle;
 mod router;
 mod sync;
 
 use std::future::Future;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
+use fe_buffer::{Buffer, Origin};
 use futures::FutureExt;
+use lsp_types::Url;
+use serde_json::{Value, json};
 
-use crate::{Clock, LspEvent, LspManager, ServerId, ServerLauncher, ServerStatus, SystemClock};
+use crate::fake::{Echo, FakeServer, Record, Replica, Script};
+use crate::{
+    Clock, LspEvent, LspManager, ManualClock, ServerId, ServerLauncher, ServerSpec, ServerStatus,
+    SystemClock,
+};
 
 /// How long a test waits for anything before failing.
 const WAIT: Duration = Duration::from_secs(10);
@@ -25,19 +35,34 @@ fn manager(
     clock: Option<Arc<dyn Clock>>,
 ) -> (LspManager, Events) {
     let (sender, receiver) = std::sync::mpsc::channel();
-    let sink = move |event| {
-        let _ = sender.send(event);
+    let probe = Probe::default();
+    let sink = {
+        let probe = probe.clone();
+        move |event| {
+            if let Some(probe) = &mut *probe.lock().unwrap_or_else(PoisonError::into_inner) {
+                probe(&event);
+            }
+            let _ = sender.send(event);
+        }
     };
     let manager = match clock {
         Some(clock) => LspManager::with_clock(launcher, clock, sink),
         None => LspManager::new(launcher, sink),
     };
-    (manager, Events(receiver))
+    (manager, Events(receiver, probe))
 }
 
-struct Events(Receiver<LspEvent>);
+/// Sees each event in the sink, on the server's thread, as it's reported.
+type Probe = Arc<Mutex<Option<Box<dyn FnMut(&LspEvent) + Send>>>>;
+
+struct Events(Receiver<LspEvent>, Probe);
 
 impl Events {
+    /// Calls `probe` with each event from now on, in the sink.
+    fn probe(&self, probe: impl FnMut(&LspEvent) + Send + 'static) {
+        *self.1.lock().unwrap_or_else(PoisonError::into_inner) = Some(Box::new(probe));
+    }
+
     /// The next status `server` reports.
     fn status(&self, server: ServerId) -> ServerStatus {
         let deadline = Instant::now() + WAIT;
@@ -61,6 +86,117 @@ impl Events {
         if let Ok(event) = self.0.recv_timeout(Duration::from_millis(100)) {
             panic!("unexpected {event:?}");
         }
+    }
+}
+
+const ROOT: &str = "/fake/root";
+
+/// A server started on the fake, with a manual clock that never moves, so
+/// no backstop tick drains behind a test's back.
+struct Started {
+    fake: FakeServer,
+    manager: LspManager,
+    server: ServerId,
+    events: Events,
+}
+
+impl Started {
+    fn new(script: Script) -> Self {
+        let fake = FakeServer::new(script);
+        let clock: Arc<dyn Clock> = Arc::new(ManualClock::new());
+        let (mut manager, events) = manager(fake.launcher(), Some(clock));
+        let server = manager
+            .start(ServerSpec::new("fake", "fake-server"), Path::new(ROOT))
+            .unwrap();
+        assert_eq!(events.status(server), ServerStatus::Starting);
+        fake.wait_initialized();
+        Self {
+            fake,
+            manager,
+            server,
+            events,
+        }
+    }
+
+    /// Opens `buffer` as `name` under the root on `server`, without
+    /// waiting for anything.
+    fn open_on(&mut self, server: ServerId, buffer: &mut Buffer, name: &str) -> Url {
+        let path = PathBuf::from(ROOT).join(name);
+        let subscription = buffer.subscribe();
+        self.manager
+            .open(
+                server,
+                buffer.id(),
+                buffer.text().clone(),
+                buffer.version(),
+                subscription,
+                &path,
+                "text",
+            )
+            .unwrap();
+        Url::from_file_path(&path).unwrap()
+    }
+
+    fn open(&mut self, buffer: &mut Buffer, name: &str) -> Url {
+        self.open_on(self.server, buffer, name)
+    }
+
+    /// Opens `buffer` and waits for its `didOpen`.
+    fn open_synced(&mut self, buffer: &mut Buffer, name: &str) -> Url {
+        let uri = self.open(buffer, name);
+        self.fake
+            .wait_for_document(&uri, "didOpen", |r| r.is_some_and(|r| r.open));
+        uri
+    }
+
+    /// Edits `buffer`, nudges its server and waits until the replica at
+    /// `uri` has `version`.
+    fn edit(
+        &self,
+        buffer: &mut Buffer,
+        uri: &Url,
+        edit: (std::ops::Range<usize>, &str),
+        version: i32,
+    ) -> Replica {
+        buffer
+            .edit([edit], Origin::User)
+            .expect("the edit changed something");
+        self.manager.changed(buffer.id());
+        self.fake
+            .wait_for_document(uri, &format!("version {version}"), |r| {
+                r.is_some_and(|r| r.version >= version)
+            })
+            .unwrap()
+    }
+
+    /// Returns once the fake has read everything the actor sent before
+    /// now: a request goes behind it, and the fake answers in order.
+    fn barrier(&self) {
+        answer(self.manager.request::<Echo>(self.server, json!({}))).unwrap();
+    }
+
+    /// The document notifications the fake got for `uri`, in order.
+    fn notes(&self, uri: &Url) -> Vec<(String, Value)> {
+        self.fake
+            .records()
+            .into_iter()
+            .filter_map(|record| match record {
+                Record::Notification { method, params }
+                    if params["textDocument"]["uri"] == json!(uri) =>
+                {
+                    Some((method, params))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The methods of [`notes`](Self::notes), without `textDocument/`.
+    fn methods(&self, uri: &Url) -> Vec<String> {
+        self.notes(uri)
+            .into_iter()
+            .map(|(method, _)| method["textDocument/".len()..].to_owned())
+            .collect()
     }
 }
 

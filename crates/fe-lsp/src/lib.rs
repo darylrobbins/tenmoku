@@ -35,6 +35,7 @@ mod clock;
 mod document;
 mod encoding;
 mod event;
+mod identity;
 mod launcher;
 mod manager;
 mod router;
@@ -50,10 +51,12 @@ mod tests;
 #[cfg(any(test, feature = "test-support"))]
 pub use clock::ManualClock;
 pub use clock::{Clock, SystemClock};
+pub use document::{Admitted, SentDocument, SentVersion};
 pub use encoding::{PositionEncoding, from_lsp, to_lsp};
 pub use event::{LspError, LspEvent, ServerId, ServerStatus};
+pub use identity::{IncarnationId, SessionId};
 pub use launcher::{
     ExitInfo, LocalLauncher, ReadinessMode, ServerIo, ServerLauncher, ServerProcess, ServerSpec,
     UnversionedDiagnostics,
 };
-pub use manager::LspManager;
+pub use manager::{DEFAULT_MAX_FILE_BYTES, LspManager};

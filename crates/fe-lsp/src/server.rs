@@ -16,6 +16,12 @@
 //!   notifications take their turn in the same window as requests, so they
 //!   stay in order with them, and a drain only runs when the window has
 //!   room and what the last one made has gone.
+//! - A request on a document is admitted there too (§4.1): the actor
+//!   drains the document first, and sends the request right behind what
+//!   that queued, only if the server has the version it was computed on.
+//! - Every open it performs activates its identity first (identity.rs),
+//!   and when the session ends, however it ends, its identities are
+//!   retired before anything else is reported.
 
 use std::cell::Cell;
 use std::collections::{HashMap, VecDeque};
@@ -30,7 +36,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use async_lsp::{MainLoop, ServerSocket};
-use fe_buffer::BufferId;
+use fe_buffer::{BufferId, Version};
 use futures::channel::{mpsc, oneshot};
 use futures::future::{BoxFuture, Either};
 use futures::stream::FuturesUnordered;
@@ -51,9 +57,10 @@ use lsp_types::{
 };
 
 use crate::clock::Clock;
-use crate::document::{Document, Note, Opening, SyncPolicy};
+use crate::document::{Admitted, Document, Link, Note, Opening, SyncPolicy};
 use crate::encoding::PositionEncoding;
-use crate::event::{LspEvent, ServerId, ServerStatus};
+use crate::event::{LspError, LspEvent, NOT_OPEN, ServerId, ServerStatus};
+use crate::identity::{EndSession, Identities, SessionId};
 use crate::launcher::{ServerIo, ServerLauncher, ServerProcess, ServerSpec};
 use crate::router::{ClientState, client_router};
 
@@ -80,6 +87,19 @@ pub(crate) type Sink = Arc<Mutex<dyn FnMut(LspEvent) + Send>>;
 /// and the future it returns answers the caller.
 pub(crate) type Issue = Box<dyn FnOnce(&ServerSocket, i32) -> BoxFuture<'static, ()> + Send>;
 
+/// Admits a request on a document, given what it's admitted with: on
+/// success, the [`Issue`] that sends it; on failure, it answers the caller
+/// with the error and returns `None`.
+pub(crate) type Admit = Box<dyn FnOnce(Result<Admitted, LspError>) -> Option<Issue> + Send>;
+
+/// What waits in the actor's outbox for room in async-lsp's queue.
+pub(crate) enum Outgoing {
+    Note(Note),
+    /// An admitted request, sent right behind the notifications that
+    /// brought its document to the version it names.
+    Request(Issue),
+}
+
 /// What the manager asks of the actor. Anything that must keep its order
 /// with requests (document sync, say) comes through here and
 /// [`QUEUED_MAX`]'s window, or it would overtake the requests the actor
@@ -92,6 +112,15 @@ pub(crate) enum Command {
     Changed(BufferId),
     /// Drain a document one last time, then `didClose`.
     Close(BufferId),
+    /// A request on a document, computed on buffer version `version`.
+    Admit {
+        buffer: BufferId,
+        version: Version,
+        admit: Admit,
+    },
+    /// The LSP and buffer versions in a document's ring.
+    #[cfg(test)]
+    Ring(BufferId, oneshot::Sender<Vec<(i32, Version)>>),
 }
 
 /// The event the actor queues behind each request or notification it hands
@@ -145,6 +174,9 @@ pub(crate) struct Server {
     pub(crate) clock: Arc<dyn Clock>,
     pub(crate) sink: Sink,
     pub(crate) session: Arc<Mutex<Session>>,
+    /// This run's id, and the table its documents' identities go in.
+    pub(crate) session_id: SessionId,
+    pub(crate) identities: Identities,
     pub(crate) commands: mpsc::UnboundedReceiver<Command>,
     /// Resolves (either way) when the manager wants the server stopped.
     /// Apart from the commands, so a stream of requests can't delay it.
@@ -240,6 +272,7 @@ impl Server {
         };
         let stderr = drain_stderr(self.spec.name.clone(), stderr, over);
         let actor = Actor {
+            _end: EndSession(self.identities.clone(), self.session_id),
             status,
             spec: self.spec,
             folder,
@@ -253,10 +286,16 @@ impl Server {
             sent: 0,
             pending: FuturesUnordered::new(),
             backlog: VecDeque::new(),
-            outbox: VecDeque::new(),
             documents: HashMap::new(),
-            sync: SyncPolicy::from_capabilities(&ServerCapabilities::default()),
-            encoding: PositionEncoding::Utf16,
+            link: Link {
+                policy: SyncPolicy::from_capabilities(&ServerCapabilities::default()),
+                encoding: PositionEncoding::Utf16,
+                identities: self.identities,
+                server: self.id,
+                session: self.session_id,
+                versions: HashMap::new(),
+                outbox: VecDeque::new(),
+            },
             tick: None,
             drain_due: false,
             stopping: false,
@@ -290,6 +329,9 @@ impl StatusSink {
 type LoopDone = oneshot::Receiver<async_lsp::Result<()>>;
 
 struct Actor {
+    /// Retires the session's identities if the actor goes some way that
+    /// doesn't (a panic).
+    _end: EndSession,
     status: StatusSink,
     spec: ServerSpec,
     folder: WorkspaceFolder,
@@ -309,13 +351,9 @@ struct Actor {
     /// Commands made while starting, carried out once initialized, ahead
     /// of new ones.
     backlog: VecDeque<Command>,
-    /// Document notifications waiting for room in async-lsp's queue, sent
-    /// ahead of anything else.
-    outbox: VecDeque<Note>,
     documents: HashMap<BufferId, Document>,
-    /// How the server asked for documents to be synced.
-    sync: SyncPolicy,
-    encoding: PositionEncoding,
+    /// How the server asked for documents to be synced, and the outbox.
+    link: Link,
     /// The next [`BACKSTOP`] tick, while documents are open.
     tick: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
     /// A tick came: drain every document once there's room to send what
@@ -370,14 +408,15 @@ impl Actor {
                 next = next_command(
                     &self.queue,
                     self.sent,
-                    &mut self.outbox,
+                    &mut self.link.outbox,
                     self.drain_due,
                     &mut self.backlog,
                     &mut self.commands,
                 ).fuse() => Step::Next(next),
             };
             match step {
-                Step::Next(Next::Note(note)) => self.notify(note),
+                Step::Next(Next::Out(Outgoing::Note(note))) => self.notify(note),
+                Step::Next(Next::Out(Outgoing::Request(issue))) => self.issue(issue),
                 Step::Next(Next::Command(Some(command))) => self.command(command),
                 Step::Next(Next::Command(None)) | Step::Stop => break,
                 Step::Next(Next::DrainAll) => {
@@ -427,8 +466,8 @@ impl Actor {
     }
 
     /// Carries out a command once initialized. A document command only
-    /// queues notifications in the outbox, which goes out ahead of the
-    /// next command.
+    /// queues notifications (and an admitted request) in the outbox, which
+    /// goes out ahead of the next command.
     fn command(&mut self, command: Command) {
         match command {
             Command::Request(issue) => self.issue(issue),
@@ -437,29 +476,67 @@ impl Actor {
                 // The manager closes a buffer before opening it again, so
                 // its document has gone by now; replace it if it hasn't.
                 if let Some(old) = self.documents.remove(&buffer) {
-                    old.close(self.sync, self.encoding, &mut self.outbox);
+                    old.close(&mut self.link);
                 }
-                let document = Document::open(*opening, self.sync, &mut self.outbox);
-                self.documents.insert(buffer, document);
+                // A stale open is dropped, and its subscription with it.
+                if let Some(document) = Document::open(*opening, &mut self.link) {
+                    self.documents.insert(buffer, document);
+                }
                 self.arm_tick();
             }
             Command::Changed(buffer) => self.drain(buffer),
             Command::Close(buffer) => {
                 if let Some(document) = self.documents.remove(&buffer) {
-                    document.close(self.sync, self.encoding, &mut self.outbox);
+                    document.close(&mut self.link);
                 }
                 if self.documents.is_empty() {
                     self.tick = None;
                     self.drain_due = false;
                 }
             }
+            Command::Admit {
+                buffer,
+                version,
+                admit,
+            } => {
+                if let Some(issue) = admit(self.admit(buffer, version)) {
+                    self.link.outbox.push_back(Outgoing::Request(issue));
+                }
+            }
+            #[cfg(test)]
+            Command::Ring(buffer, answer) => {
+                let ring = self.documents.get(&buffer).map(Document::ring);
+                let _ = answer.send(ring.unwrap_or_default());
+            }
         }
     }
 
     fn drain(&mut self, buffer: BufferId) {
         if let Some(document) = self.documents.get_mut(&buffer) {
-            document.drain(self.sync, self.encoding, &mut self.outbox);
+            document.drain(&mut self.link);
         }
+    }
+
+    /// Drains `buffer`'s document, then admits a request computed on
+    /// `version` if the server now has that version.
+    fn admit(&mut self, buffer: BufferId, version: Version) -> Result<Admitted, LspError> {
+        self.drain(buffer);
+        let document = self
+            .documents
+            .get(&buffer)
+            .ok_or_else(|| LspError::Unavailable(NOT_OPEN.into()))?;
+        let admitted = document.admit(version)?;
+        let others = self
+            .documents
+            .iter()
+            .filter(|(other, _)| **other != buffer)
+            .filter_map(|(_, other)| other.current())
+            .collect();
+        Ok(Admitted {
+            encoding: self.link.encoding,
+            document: admitted,
+            others,
+        })
     }
 
     /// Starts the [`BACKSTOP`] timer if documents are open and it isn't
@@ -563,8 +640,8 @@ impl Actor {
                 PositionEncoding::Utf16
             }
         };
-        self.sync = SyncPolicy::from_capabilities(&result.capabilities);
-        self.encoding = encoding;
+        self.link.policy = SyncPolicy::from_capabilities(&result.capabilities);
+        self.link.encoding = encoding;
         let mut session = self.session.lock().unwrap_or_else(PoisonError::into_inner);
         session.capabilities = Some(result.capabilities);
         session.encoding = Some(encoding);
@@ -574,11 +651,12 @@ impl Actor {
     /// then `kill`. Whatever the server does after `exit` (a non-zero code,
     /// closing its output) is a normal stop.
     async fn shutdown(&mut self, process: &mut dyn ServerProcess) {
+        self.link.identities.end_session(self.link.session);
         // Callers of requests in flight or kept back get `ServerDown` now,
         // and those of requests still unread once the session is over.
         self.pending = FuturesUnordered::new();
         self.backlog.clear();
-        self.outbox.clear();
+        self.link.outbox.clear();
         self.documents.clear();
         self.tick = None;
         self.drain_due = false;
@@ -625,6 +703,7 @@ impl Actor {
     /// Reports the session over. The manager sees the command channel
     /// closed first, so a `start` prompted by this status starts afresh.
     fn stopped(&mut self, why: Option<String>) {
+        self.link.identities.end_session(self.link.session);
         self.commands.close();
         self.status.send(ServerStatus::Stopped(why));
     }
@@ -686,28 +765,28 @@ async fn drain_stderr(
 }
 
 enum Next {
-    Note(Note),
+    Out(Outgoing),
     /// Drain every document: a backstop tick came.
     DrainAll,
     /// `None` once the manager has gone.
     Command(Option<Command>),
 }
 
-/// What to do next, once async-lsp's queue has room: send the outbox's
-/// first notification, else a due backstop drain, else carry out the
+/// What to do next, once async-lsp's queue has room: send what's first in
+/// the outbox, else a due backstop drain, else carry out the
 /// startup backlog, then commands. So the outbox only fills when it's
 /// empty and there's room, from one drain or one command at a time.
 async fn next_command(
     queue: &Queue,
     sent: u64,
-    outbox: &mut VecDeque<Note>,
+    outbox: &mut VecDeque<Outgoing>,
     drain_due: bool,
     backlog: &mut VecDeque<Command>,
     commands: &mut mpsc::UnboundedReceiver<Command>,
 ) -> Next {
     futures::future::poll_fn(|cx| queue.poll_room(sent, cx)).await;
-    if let Some(note) = outbox.pop_front() {
-        return Next::Note(note);
+    if let Some(out) = outbox.pop_front() {
+        return Next::Out(out);
     }
     if drain_due {
         return Next::DrainAll;

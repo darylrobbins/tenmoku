@@ -681,34 +681,47 @@ fn open_buffer(
 
 #[test]
 fn close_keeps_order_with_nudges_and_requests() {
-    let (fake, fake_clock, mut manager, server, _events) = starting(Script::default());
-    // All made while the server starts, so none is carried out before
-    // close or the reopen.
-    let mut a = Buffer::new("a\n");
-    let a_uri = open_buffer(&mut manager, server, &mut a, "a.txt").unwrap();
-    a.edit([(0..0, "1")], Origin::User).unwrap();
-    manager.changed(a.id());
-    let first = manager.request::<Echo>(server, json!({ "n": 1 }));
-    manager.close(a.id());
-    let mut b = Buffer::new("b\n");
-    let b_uri = open_buffer(&mut manager, server, &mut b, "b.txt").unwrap();
-    b.edit([(0..0, "2")], Origin::User).unwrap();
-    manager.changed(b.id());
-    let second = manager.request::<Echo>(server, json!({ "n": 2 }));
-    open_buffer(&mut manager, server, &mut b, "b.txt").unwrap();
+    let mut session = Session::new(Script::default());
+    // Opened first: an open still queued when its buffer closes is stale
+    // and sends nothing (tests/identity.rs).
+    let mut a = session.open("a.txt", "a\n", "text");
+    let mut b = session.open("b.txt", "b\n", "text");
+    // With writes held, the actor fills async-lsp's queue and then waits,
+    // so none of what follows is carried out before close or the reopen.
+    session.fake.set_writes(crate::fake::Writes::Held);
+    let fillers: Vec<_> = (0..crate::server::QUEUED_MAX + 8)
+        .map(|_| session.manager.request::<Echo>(session.server, json!({})))
+        .collect();
+    a.edit(vec![(0..0, "1")]);
+    session.manager.changed(a.buffer.id());
+    let first = session
+        .manager
+        .request::<Echo>(session.server, json!({ "n": 1 }));
+    session.manager.close(a.buffer.id());
+    b.edit(vec![(0..0, "2")]);
+    session.manager.changed(b.buffer.id());
+    let second = session
+        .manager
+        .request::<Echo>(session.server, json!({ "n": 2 }));
+    let b_uri = open_buffer(&mut session.manager, session.server, &mut b.buffer, "b.txt").unwrap();
 
-    fake_clock.advance(Duration::from_secs(1));
+    session.fake.set_writes(crate::fake::Writes::Open);
+    for filler in fillers {
+        answer(filler).unwrap();
+    }
     answer(first).unwrap();
     answer(second).unwrap();
-    fake.wait_for_document(&b_uri, "the reopen", |r| {
-        r.is_some_and(|r| r.open && r.version == 0)
+    // b was at version 1 when it closed.
+    session.fake.wait_for_document(&b_uri, "the reopen", |r| {
+        r.is_some_and(|r| r.open && r.version == 2)
     });
+    let (fake, a_uri) = (&session.fake, &a.uri);
     let order: Vec<String> = fake
         .records()
         .into_iter()
         .filter_map(|record| match record {
             Record::Request { method, params, .. } if method == "fake/echo" => {
-                Some(format!("echo {}", params["n"]))
+                params.get("n").map(|n| format!("echo {n}"))
             }
             Record::Notification { method, params } if method.starts_with("textDocument/") => {
                 let uri = params["textDocument"]["uri"].as_str().unwrap().to_owned();
@@ -722,10 +735,10 @@ fn close_keeps_order_with_nudges_and_requests() {
         order,
         [
             "didOpen a",
+            "didOpen b",
             "didChange a",
             "echo 1",
             "didClose a",
-            "didOpen b",
             "didChange b",
             "echo 2",
             "didClose b",
