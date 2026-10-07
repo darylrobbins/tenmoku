@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     hash::{DefaultHasher, Hash, Hasher},
     mem,
     ops::Range,
@@ -17,18 +17,15 @@ use fe_display::{
 };
 use fe_syntax::{Syntax, SyntaxDriver};
 use gpui::{
-    App, Bounds, ContentMask, CursorStyle, DecorationRun, Element, ElementId, ElementInputHandler,
-    Entity, Font, FontId, GlobalElementId, Hitbox, HitboxBehavior, Hsla, InspectorElementId,
-    IntoElement, LayoutId, LineLayout, Pixels, Point, Style, TextAlign, TextRun, TextSystem,
-    Window, WindowTextSystem, fill, point, px, relative, size,
+    App, Bounds, ContentMask, CursorStyle, DecorationRun, DispatchPhase, Element, ElementId,
+    ElementInputHandler, Entity, Font, FontId, Global, GlobalElementId, Hitbox, HitboxBehavior,
+    Hsla, InspectorElementId, IntoElement, LayoutId, LineLayout, MouseDownEvent, MouseEvent,
+    MouseExitEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, PinchEvent, Pixels, Point,
+    ScrollWheelEvent, Style, TextAlign, TextRun, TextSystem, WeakEntity, Window, WindowId,
+    WindowTextSystem, fill, point, px, relative, size,
 };
 
 use crate::{EditorTheme, EditorView, FrameTiming};
-
-/// The gutter's chevron on a folded row, which unfolds it.
-const FOLDED_CHEVRON: &str = "›";
-/// The gutter's chevron on a row that can fold.
-const UNFOLDED_CHEVRON: &str = "⌄";
 
 /// What one frame laid out: kept by the view for hit testing and IME.
 pub(crate) struct FrameLayout {
@@ -42,8 +39,9 @@ pub(crate) struct FrameLayout {
     long_rows: LongRows,
     glyph_widths: GlyphWidths,
     tab_size: usize,
-    /// The fold toggles' chevrons: folded, then unfolded.
-    chevrons: [Line; 2],
+    /// Over the fold column, whose hovering shows the chevrons of folds that
+    /// are open.
+    fold_column: Hitbox,
     /// Over the fold toggles and markers, which show a pointing hand.
     clickable: Vec<Hitbox>,
     /// When prepaint started and how long it took, for [`FrameTiming`].
@@ -469,19 +467,14 @@ impl Element for EditorElement {
             |range| styled_highlights(syntax, theme, range),
             |rows| fold_headers(syntax, rows),
         );
-        let chevrons = [FOLDED_CHEVRON, UNFOLDED_CHEVRON].map(|chevron| {
-            let run = StyleRun {
-                len: chevron.len(),
-                style: theme.gutter_foreground,
-            };
-            shaper.shape(chevron, &[run])
-        });
         let to_window = |rect: Rect| {
             Bounds::new(
                 bounds.origin + point(px(rect.x), px(rect.y)),
                 size(px(rect.width), px(rect.height)),
             )
         };
+        let fold_column =
+            window.insert_hitbox(to_window(frame.fold_column), HitboxBehavior::Normal);
         let clickable = frame
             .fold_click_areas()
             .map(|area| window.insert_hitbox(to_window(area.rect), HitboxBehavior::Normal))
@@ -499,7 +492,7 @@ impl Element for EditorElement {
             long_rows,
             glyph_widths,
             tab_size,
-            chevrons,
+            fold_column,
             clickable,
             prepaint_started: started,
             prepaint_took: started.elapsed(),
@@ -521,6 +514,7 @@ impl Element for EditorElement {
         let theme = view.theme.clone();
         let focus = view.focus.clone();
         let accepts_text = view.accepts_text();
+        let column_hovered = view.fold_column_hovered;
         let mut layout = layout.take().expect("prepaint ran");
         let block = view.block_cursor();
         let carets: Vec<_> = match focus.is_focused(window) {
@@ -541,6 +535,8 @@ impl Element for EditorElement {
         let line_height = px(frame.line_height);
         #[cfg(test)]
         let mut painted = Vec::new();
+        #[cfg(test)]
+        let mut painted_chevrons = Vec::new();
 
         // In vim's normal mode nothing types: neither keys nor an input
         // method insert text.
@@ -597,19 +593,48 @@ impl Element for EditorElement {
             for (origin, number) in &frame.line_numbers {
                 number.paint(layout.to_window(*origin), line_height, window, cx);
             }
+            // Folded rows' chevrons always show; the rest only while the
+            // pointer is over the fold column.
             for toggle in &frame.fold_toggles {
-                let chevron = &layout.chevrons[usize::from(!toggle.folded)];
-                let rect = toggle.rect;
-                let origin = layout.to_window(Vec2 {
-                    x: rect.x + (rect.width - chevron.width()) / 2.,
-                    y: rect.y,
-                });
-                chevron.paint(origin, line_height, window, cx);
+                if !toggle.folded && !column_hovered {
+                    continue;
+                }
+                let chevron = layout.bounds(frame.chevron_box(toggle));
+                paint_chevron(chevron, toggle.folded, theme.gutter_foreground, window);
+                #[cfg(test)]
+                painted_chevrons.push((toggle.buffer_row, toggle.folded, chevron));
             }
         });
         for hitbox in &layout.clickable {
             window.set_cursor_style(CursorStyle::PointingHand, hitbox);
         }
+        // Window-wide, so leaving the editor for another part of the window
+        // clears the flag too. Every event that places the pointer counts,
+        // not just moves: a window can move under a still pointer and then
+        // be clicked or scrolled.
+        let hitbox = layout.fold_column.clone();
+        let view = self.view.downgrade();
+        on_pointer_event::<MouseMoveEvent>(&view, &hitbox, window);
+        on_pointer_event::<MouseDownEvent>(&view, &hitbox, window);
+        on_pointer_event::<MouseUpEvent>(&view, &hitbox, window);
+        on_pointer_event::<ScrollWheelEvent>(&view, &hitbox, window);
+        on_pointer_event::<PinchEvent>(&view, &hitbox, window);
+        {
+            let view = view.clone();
+            window.on_mouse_event(move |_: &MouseExitEvent, phase, window, cx| {
+                if phase == DispatchPhase::Bubble {
+                    let id = window.window_handle().window_id();
+                    cx.default_global::<PointerOutside>().0.insert(id);
+                    set_fold_column_hovered(&view, false, cx);
+                }
+            });
+        }
+        // Once this frame is the rendered one, check the column against the
+        // still pointer, so a column moving under or away from it (a dock
+        // opening, the gutter widening) shows or hides the chevrons.
+        window.defer(cx, move |window, cx| {
+            reconcile_fold_column(&view, &hitbox, window, cx);
+        });
 
         let painted_at = Instant::now();
         let timing = FrameTiming {
@@ -624,8 +649,87 @@ impl Element for EditorElement {
             #[cfg(test)]
             {
                 view.painted_carets = painted;
+                view.painted_chevrons = painted_chevrons;
             }
         });
+    }
+}
+
+/// The windows the pointer has left and not moved in since, as the editors'
+/// listeners saw it. GPUI keeps the last position after the pointer leaves.
+#[derive(Default)]
+struct PointerOutside(HashSet<WindowId>);
+
+impl Global for PointerOutside {}
+
+/// On each `E`, which places the pointer in the window, reconciles the
+/// view's fold column hover with it.
+fn on_pointer_event<E: MouseEvent>(
+    view: &WeakEntity<EditorView>,
+    column: &Hitbox,
+    window: &mut Window,
+) {
+    let (view, column) = (view.clone(), column.clone());
+    window.on_mouse_event(move |_: &E, phase, window, cx| {
+        if phase == DispatchPhase::Bubble {
+            let id = window.window_handle().window_id();
+            cx.default_global::<PointerOutside>().0.remove(&id);
+            reconcile_fold_column(&view, &column, window, cx);
+        }
+    });
+}
+
+/// Sets whether the pointer is over `column` in the rendered frame. Unlike
+/// [`Hitbox::is_hovered`], this holds after a key press too (GPUI's
+/// keyboard modality suppresses hover, but a key doesn't move the pointer),
+/// while still honouring clipping and whatever covers the column.
+fn reconcile_fold_column(
+    view: &WeakEntity<EditorView>,
+    column: &Hitbox,
+    window: &Window,
+    cx: &mut App,
+) {
+    let id = window.window_handle().window_id();
+    let outside = cx
+        .try_global::<PointerOutside>()
+        .is_some_and(|outside| outside.0.contains(&id));
+    let hovered = !outside && column.is_hovered_at(window.mouse_position(), window);
+    set_fold_column_hovered(view, hovered, cx);
+}
+
+fn set_fold_column_hovered(view: &WeakEntity<EditorView>, hovered: bool, cx: &mut App) {
+    view.update(cx, |view, cx| {
+        if view.fold_column_hovered != hovered {
+            view.fold_column_hovered = hovered;
+            cx.notify();
+        }
+    })
+    .ok();
+}
+
+/// The three points of a chevron stroked in `chevron`: pointing down for a
+/// fold that's open, right for a folded one. It spans 60% of the box across
+/// and 30% along.
+pub(crate) fn chevron_points(chevron: Bounds<Pixels>, folded: bool) -> [Point<Pixels>; 3] {
+    let side = chevron.size.width;
+    let centre = chevron.center();
+    let (across, along) = (side * 0.3, side * 0.15);
+    let at = |x: Pixels, y: Pixels| centre + point(x, y);
+    if folded {
+        [at(-along, -across), at(along, px(0.)), at(-along, across)]
+    } else {
+        [at(-across, -along), at(px(0.), along), at(across, -along)]
+    }
+}
+
+fn paint_chevron(chevron: Bounds<Pixels>, folded: bool, color: Hsla, window: &mut Window) {
+    let [start, tip, end] = chevron_points(chevron, folded);
+    let mut path = PathBuilder::stroke((chevron.size.width / 12.).max(px(1.)));
+    path.move_to(start);
+    path.line_to(tip);
+    path.line_to(end);
+    if let Ok(path) = path.build() {
+        window.paint_path(path, color);
     }
 }
 

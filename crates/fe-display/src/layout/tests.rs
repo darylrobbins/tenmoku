@@ -1,5 +1,5 @@
 //! Frame layout against a fake monospace measurer: every char is one 10 px
-//! cell, CJK and emoji two. Rows are 20 px; the gutter is 70 px for files of
+//! cell, CJK and emoji two. Rows are 20 px; the gutter is 87.5 px for files of
 //! under 1000 rows.
 //!
 //! Notation: `|` is a caret, `[…]` a selection whose head is at its end, and
@@ -11,7 +11,7 @@ use super::*;
 
 pub(super) const CELL: f32 = 10.;
 pub(super) const LINE: f32 = 20.;
-pub(super) const GUTTER: f32 = 70.;
+pub(super) const GUTTER: f32 = 87.5;
 pub(super) const WIDTH: f32 = 400.;
 
 pub(super) fn advance(ch: char) -> f32 {
@@ -205,13 +205,13 @@ fn vertical_scroll() {
 
 #[test]
 fn horizontal_scroll() {
-    // The text area is 330 px wide; autoscroll keeps the caret 4 em (40 px)
+    // The text area is 312.5 px wide; autoscroll keeps the caret 4 em (40 px)
     // from either side, and scrolling stops 4 em past the widest row.
     let long = "x".repeat(100);
     let cases = [
-        (format!("{}|{}", &long[..50], &long[50..]), 0., true, 210.),
+        (format!("{}|{}", &long[..50], &long[50..]), 0., true, 227.5),
         (format!("|{long}"), 300., true, 0.),
-        (format!("|{long}"), 5000., false, 710.),
+        (format!("|{long}"), 5000., false, 727.5),
         (format!("|{long}"), -10., false, 0.),
         ("|ab".to_string(), 50., false, 0.),
     ];
@@ -285,7 +285,7 @@ fn line_numbers_are_right_aligned_and_mark_caret_rows() {
         .iter()
         .map(|(origin, line)| (line.text.as_str(), line.runs[0].style, origin.x, origin.y))
         .collect();
-    // Numbers end 2 em left of the text.
+    // Numbers end at the fold column, 3.75 em left of the text.
     assert_eq!(numbers[0], ("1", "number", 40., 0.));
     assert_eq!(numbers[9], ("10", "active", 30., 9. * LINE));
     assert_eq!(numbers[11], ("12", "number", 30., 11. * LINE));

@@ -223,8 +223,11 @@ fn carets_selections_and_clicks_far_right() {
         ]
     );
 
-    // Autoscroll brings the row's end into view.
+    // Autoscroll brings the row's end into view. Past 2^26 px, scroll
+    // positions are multiples of 8 px, so the caret may be up to 4 px past
+    // the margin.
     let frame = editor.lay_out(&[(len, len)], 0., true, &mut Mono, |_| Vec::new());
+    let in_margins = GUTTER + 4. * CELL - 4.0..=WIDTH - 4. * CELL + 4.;
     assert!(in_margins.contains(&frame.cursors[0].x));
     assert_eq!(editor.caret_x(&frame, len), frame.cursors[0].x);
     assert_eq!(editor.offset_at(&frame, WIDTH), len);

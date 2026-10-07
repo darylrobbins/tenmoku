@@ -8,6 +8,9 @@ use super::{
     *,
 };
 
+/// The fold column's width: 3.75 em.
+const COLUMN: f32 = 3.75 * CELL;
+
 /// Lays out `text` in a 400 × `height` editor scrolled right by `scroll_x`,
 /// its rows wrapped or folded by `configure`, with the rows `candidates`
 /// lists heading fold candidates. Returns the frame and the buffer rows the
@@ -75,12 +78,7 @@ fn toggles_for_candidates_and_folds() {
     // Rows 0–10, less the folded 4 and 9, fit.
     assert_eq!(asked, vec![0..11]);
     let toggle = |display_row: u32, buffer_row: u32, folded: bool| FoldToggle {
-        rect: rect(
-            GUTTER - 2. * CELL,
-            display_row as f32 * LINE,
-            2. * CELL,
-            LINE,
-        ),
+        rect: rect(GUTTER - COLUMN, display_row as f32 * LINE, COLUMN, LINE),
         buffer_row,
         folded,
     };
@@ -143,12 +141,8 @@ fn click_areas_are_clipped_to_what_shows() {
         folded,
     };
     let toggles = [
-        area(rect(GUTTER - 2. * CELL, LINE, 2. * CELL, LINE), 1, true),
-        area(
-            rect(GUTTER - 2. * CELL, 2. * LINE, 2. * CELL, 10.),
-            3,
-            false,
-        ),
+        area(rect(GUTTER - COLUMN, LINE, COLUMN, LINE), 1, true),
+        area(rect(GUTTER - COLUMN, 2. * LINE, COLUMN, 10.), 3, false),
     ];
     // Half the marker after `abc` is scrolled under the gutter.
     let marker = area(rect(GUTTER, LINE, 5., LINE), 1, true);

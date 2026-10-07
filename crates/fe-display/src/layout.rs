@@ -28,6 +28,15 @@ const SLICE_MARGIN_EMS: f32 = 32.;
 /// Shown after a row whose following rows are folded.
 pub const FOLD_MARKER: &str = "⋯";
 
+/// The width of the fold column, the strip between the line numbers and the
+/// text where chevrons go, in ems.
+pub const FOLD_COLUMN_EMS: f32 = 3.75;
+/// The side of a chevron's box, in ems, padded by the rest of the column on
+/// either side (0.75 em each).
+pub const FOLD_CHEVRON_EMS: f32 = 2.25;
+/// The most of a row's height a chevron's box takes, so it fits short rows.
+pub const FOLD_CHEVRON_LINE_FRACTION: f32 = 0.875;
+
 /// A point, or an offset such as the scroll position, in pixels.
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub struct Vec2 {
@@ -153,6 +162,11 @@ pub struct Frame<L> {
     pub selections: Vec<Rect>,
     pub cursors: Vec<Rect>,
     pub line_numbers: Vec<(Vec2, L)>,
+    /// The strip between the line numbers and the text, the frame's height,
+    /// where chevrons go.
+    pub fold_column: Rect,
+    /// The side of a chevron's square box.
+    pub fold_chevron: f32,
     /// Chevrons in the gutter of the rows that can fold or are folded.
     pub fold_toggles: Vec<FoldToggle>,
     /// [`FOLD_MARKER`]s after rows with folded rows below.
@@ -329,6 +343,19 @@ impl<L: MeasuredLine> Frame<L> {
         }
     }
 
+    /// The square a toggle's chevron is drawn in, centred on its rect: the
+    /// fold column's centre across and the row's centre down.
+    pub fn chevron_box(&self, toggle: &FoldToggle) -> Rect {
+        let side = self.fold_chevron;
+        let rect = toggle.rect;
+        Rect {
+            x: rect.x + (rect.width - side) / 2.,
+            y: rect.y + (rect.height - side) / 2.,
+            width: side,
+            height: side,
+        }
+    }
+
     /// Where clicks fold or unfold rows: the fold toggles, then the fold
     /// markers as folded toggles, each clipped to what's shown of it.
     pub fn fold_click_areas(&self) -> impl Iterator<Item = FoldToggle> + '_ {
@@ -411,7 +438,7 @@ const CURSOR_WIDTH: f32 = 2.;
 /// The gutter's width, which fits the line numbers of `buffer_rows` rows.
 pub fn gutter_width(buffer_rows: u32, em: f32) -> f32 {
     let digits = buffer_rows.to_string().len().max(3) as f32;
-    em * (digits + 4.)
+    em * (digits + 2. + FOLD_COLUMN_EMS)
 }
 
 /// The width to soft wrap at in an editor `width` wide: what's right of the
@@ -457,6 +484,7 @@ pub fn layout_frame<M: TextMeasure>(
 
     let row_count = display.row_count();
     let text_left = gutter_width(text.row_count(), em);
+    let fold_column_width = em * FOLD_COLUMN_EMS;
     let text_width = width - text_left;
 
     // Keep the primary cursor a few rows from the top and bottom edges.
@@ -730,7 +758,7 @@ pub fn layout_frame<M: TextMeasure>(
             };
             let line = shape(&(row.buffer_row + 1).to_string(), style);
             let origin = Vec2 {
-                x: text_left - em * 2. - line.width(),
+                x: text_left - fold_column_width - line.width(),
                 y: row_top(row.row),
             };
             (origin, line)
@@ -770,9 +798,9 @@ pub fn layout_frame<M: TextMeasure>(
             let folded = heads_fold(row.buffer_row);
             (folded || candidates.binary_search(&row.buffer_row).is_ok()).then(|| FoldToggle {
                 rect: Rect {
-                    x: text_left - em * 2.,
+                    x: text_left - fold_column_width,
                     y: row_top(row.row),
-                    width: em * 2.,
+                    width: fold_column_width,
                     height: line_height,
                 },
                 buffer_row: row.buffer_row,
@@ -794,6 +822,13 @@ pub fn layout_frame<M: TextMeasure>(
         selections: selection_rects,
         cursors,
         line_numbers,
+        fold_column: Rect {
+            x: text_left - fold_column_width,
+            y: 0.,
+            width: fold_column_width,
+            height,
+        },
+        fold_chevron: (em * FOLD_CHEVRON_EMS).min(line_height * FOLD_CHEVRON_LINE_FRACTION),
         fold_toggles,
         fold_markers,
     }
@@ -866,6 +901,8 @@ pub fn row_runs<S: Clone>(
 
 #[cfg(test)]
 mod cluster_row_tests;
+#[cfg(test)]
+mod fold_column_tests;
 #[cfg(test)]
 mod fold_gutter_tests;
 #[cfg(test)]

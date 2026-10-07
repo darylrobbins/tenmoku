@@ -57,9 +57,16 @@ pub struct EditorView {
     pub(crate) vim: Option<fe_vim::VimState>,
     /// The vim switch's generation this view last synced with.
     pub(crate) vim_generation: u64,
+    /// The pointer is over the fold column, so the chevrons of folds that
+    /// are open show too.
+    pub(crate) fold_column_hovered: bool,
     /// The carets the last frame painted, in window coordinates.
     #[cfg(test)]
     pub(crate) painted_carets: Vec<Bounds<Pixels>>,
+    /// The chevrons the last frame painted: buffer row, folded, and box in
+    /// window coordinates.
+    #[cfg(test)]
+    pub(crate) painted_chevrons: Vec<(u32, bool, Bounds<Pixels>)>,
 }
 
 /// What a mouse drag extends: characters, or whole words or rows starting
@@ -92,8 +99,11 @@ impl EditorView {
             frame_timings: FrameTimings::default(),
             vim: None,
             vim_generation: 0,
+            fold_column_hovered: false,
             #[cfg(test)]
             painted_carets: Vec::new(),
+            #[cfg(test)]
+            painted_chevrons: Vec::new(),
         };
         crate::vim::register(&view.focus, cx);
         view.sync_vim(cx);
@@ -645,3 +655,6 @@ mod window_tests;
 
 #[cfg(test)]
 mod reveal_tests;
+
+#[cfg(test)]
+mod fold_hover_tests;
