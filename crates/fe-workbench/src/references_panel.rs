@@ -72,6 +72,10 @@ pub struct ReferencesPanel {
     root: Option<PathBuf>,
     /// Where the caret was when they were asked for.
     from: Option<Place>,
+    /// The (path relative to the root, range end) of each reference opened
+    /// from this run: where the caret may be after one lands, though other
+    /// landings may be still loading.
+    opened: Vec<(PathBuf, usize)>,
     /// The current run's, which only its batches carry.
     generation: u64,
     /// The current run's: set when another starts, or the panel goes.
@@ -100,6 +104,7 @@ impl ReferencesPanel {
             word: None,
             root: None,
             from: None,
+            opened: Vec::new(),
             generation: 0,
             cancel: Arc::default(),
             running: None,
@@ -129,6 +134,7 @@ impl ReferencesPanel {
         self.word = None;
         self.root = None;
         self.from = None;
+        self.opened.clear();
         self.scroll.scroll_to_item(0, ScrollStrategy::Top);
         cx.notify();
         self.generation
@@ -321,15 +327,17 @@ impl ReferencesPanel {
             .read(cx)
             .caret_place(cx)
             .is_some_and(|here| !self.lands_at(&here, workbench.read(cx), cx));
+        self.opened.push((location.rel.clone(), location.range.end));
         workbench.update(cx, |workbench, cx| {
             workbench.list_jump(record, &location, window, cx)
         });
     }
 
-    /// Whether `here` is where one of the references opens, as the editor
-    /// showing it has it now: the end of its range, or that end clamped to a
-    /// file that has shrunk since it was found. Not where the references
-    /// were asked for, though one ends there.
+    /// Whether `here` is where a reference this panel opened left the caret,
+    /// as the editor showing it has it now: the end of its range, or that end
+    /// clamped to a file that has shrunk since it was found. Not where the
+    /// references were asked for, though one ends there; nor the end of one
+    /// not opened, which the caret was moved to.
     fn lands_at(&self, here: &Place, workbench: &Workbench, cx: &App) -> bool {
         if self.from.as_ref() == Some(here) {
             return false;
@@ -344,11 +352,9 @@ impl ReferencesPanel {
         let text = editor
             .filter(|model| model.path() == Some(here.path.as_path()))
             .map(|model| model.text());
-        (self.files.iter())
-            .filter(|file| file.rel == rel)
-            .flat_map(|file| &file.refs)
-            .any(|reference| {
-                let end = reference.location.range.end;
+        (self.opened.iter())
+            .filter(|(opened, _)| opened == rel)
+            .any(|&(_, end)| {
                 here.offset == end
                     || text.is_some_and(|text| text.clip_offset(end, Bias::Right) == here.offset)
             })

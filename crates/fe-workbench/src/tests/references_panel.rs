@@ -624,6 +624,55 @@ fn opening_records_where_the_caret_moved_to(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn moving_to_an_unopened_reference_end_is_recorded(cx: &mut TestAppContext) {
+    let main = "mod a;\n\nfn main() {\n    a::helper();\n}\n";
+    let a = "pub fn helper() {}\n\npub fn run() {\n    helper();\n}\n";
+    let (_dir, root) = project(&[("src/a.rs", a), ("src/main.rs", main)]);
+    let (workbench, cx) = opened(cx, &root, "src/main.rs");
+    let caret = caret_on(&workbench, "helper", cx);
+    cx.simulate_keystrokes("shift-f12");
+    settle(cx);
+    let panel = references(&workbench, cx);
+    let locations = panel.read_with(cx, |panel, _| panel.locations());
+    let end_of = |rel: &str, nth: usize| {
+        let all = locations
+            .iter()
+            .filter(|l| l.rel.as_path() == std::path::Path::new(rel));
+        all.map(|l| l.range.end).nth(nth).unwrap()
+    };
+    let place = |cx: &mut VisualTestContext| {
+        let (path, selection, _) = at(&workbench, cx);
+        (path, selection.end)
+    };
+    let move_to = |at: usize, cx: &mut VisualTestContext| {
+        let editor = workbench.read_with(cx, |workbench, cx| workbench.active_editor(cx).cloned());
+        editor
+            .unwrap()
+            .update(cx, |editor, _| editor.model_mut().set_cursor(at));
+    };
+
+    // Before the first open: the end of a reference never opened.
+    let first = end_of("src/main.rs", 0);
+    assert_ne!(first, caret);
+    move_to(first, cx);
+    click(&panel, 3, cx);
+    assert_eq!(place(cx).0, root.join("src/a.rs"));
+
+    // Between opens: the end of another unopened one.
+    let other = end_of("src/a.rs", 1);
+    move_to(other, cx);
+    click(&panel, 4, cx);
+
+    focus_editor(&workbench, cx);
+    cx.simulate_keystrokes("ctrl--");
+    settle(cx);
+    assert_eq!(place(cx), (root.join("src/a.rs"), other));
+    cx.simulate_keystrokes("ctrl--");
+    settle(cx);
+    assert_eq!(place(cx), (root.join("src/main.rs"), first));
+}
+
+#[gpui::test]
 fn empty_states(cx: &mut TestAppContext) {
     // No root: nothing runs.
     let (_dir, root) = project(&[("src/main.rs", MAIN)]);
