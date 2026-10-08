@@ -107,6 +107,13 @@ lanes_max = 4
 [review]
 on_finish = true
 
+# No automatic escalation when review rounds run out (2026-10-08, user-approved): T174's escalation
+# to max-effort Opus re-read a 2,000-line file at 400k tokens of context, and a card that keeps
+# failing review is usually too big. Exhaustion now goes to a person (findings_override), and the
+# lead splits, respecs, or files the rest as a follow-up.
+[routing]
+escalate_on = ["gate_failed_3x"]
+
 # Review follow-ups run on Sonnet whatever their size: their specs name each fix, and as of
 # 2026-10-07 they were 38% of tasks. The first matching rule wins, so this comes first.
 [[routing.rules]]
