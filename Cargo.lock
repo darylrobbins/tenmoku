@@ -1920,6 +1920,7 @@ dependencies = [
  "fe-project",
  "fe-syntax",
  "fe-ui",
+ "futures",
  "gpui-pre",
  "gpui-pre-platform",
  "image",

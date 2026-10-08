@@ -152,10 +152,13 @@ impl OutlinePanel {
         let language = syntax.language();
         let editor = editor.entity_id();
         #[cfg(test)]
-        let ran = self.counters.started(cx);
+        let (ran, gate) = self.counters.started(cx);
         let found = cx.background_spawn(async move {
             #[cfg(test)]
-            ran();
+            {
+                gate.await;
+                ran();
+            }
             job.run()
         });
         self.job = Some(cx.spawn(async move |panel, cx| {
@@ -406,25 +409,57 @@ struct TestCounters {
     started: usize,
     /// Jobs that ran, and of them those that ran off the main thread.
     ran: std::sync::Arc<std::sync::Mutex<(usize, usize)>>,
+    /// While set, jobs started wait for [`OutlinePanel::release_jobs`]
+    /// before they run; the senders are the jobs waiting.
+    held: Option<Vec<futures::channel::oneshot::Sender<()>>>,
 }
 
 #[cfg(test)]
 impl TestCounters {
     /// Counts a job started, and returns what the job calls as it runs.
-    fn started(&mut self, cx: &App) -> impl FnOnce() + Send + 'static {
+    /// The job also awaits the returned gate before it runs.
+    fn started(
+        &mut self,
+        cx: &App,
+    ) -> (
+        impl FnOnce() + Send + 'static,
+        impl Future<Output = ()> + Send + 'static,
+    ) {
         self.started += 1;
+        let (release, gate) = futures::channel::oneshot::channel();
+        match &mut self.held {
+            Some(held) => held.push(release),
+            None => drop(release.send(())),
+        }
+        let gate = async move {
+            gate.await.ok();
+        };
         let ran = self.ran.clone();
         let executor = cx.background_executor().clone();
-        move || {
+        let ran = move || {
             let mut ran = ran.lock().unwrap();
             ran.0 += 1;
             ran.1 += usize::from(!executor.is_main_thread());
-        }
+        };
+        (ran, gate)
     }
 }
 
 #[cfg(test)]
 impl OutlinePanel {
+    /// Holds the jobs started from now until [`Self::release_jobs`], so they
+    /// don't run however long the executor does.
+    pub(crate) fn hold_jobs(&mut self) {
+        self.counters.held.get_or_insert_default();
+    }
+
+    /// Lets the held jobs, and the ones started from now, run.
+    pub(crate) fn release_jobs(&mut self) {
+        for release in self.counters.held.take().unwrap_or_default() {
+            release.send(()).ok();
+        }
+    }
+
     /// The rows shown, as `(depth, name)`.
     pub(crate) fn rows(&self) -> Vec<(u32, String)> {
         self.items()

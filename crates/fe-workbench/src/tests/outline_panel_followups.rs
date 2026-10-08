@@ -37,11 +37,26 @@ fn language(editor: &Entity<EditorView>, cx: &mut VisualTestContext) -> Option<&
 
 /// Sets the editor's language, and lets the update's effects flush, which
 /// draws the window: the editor parses within its render, and the panel
-/// refreshes once the frame is drawn. The executor doesn't run, so a job
-/// that starts doesn't land.
+/// refreshes once the frame is drawn. The in-render parse has a time budget,
+/// so under load it can overrun and finish on a background thread instead;
+/// then the executor runs until the parse is installed and the window is
+/// drawn again. A job held by the panel doesn't run meanwhile.
 fn set_language(editor: &Entity<EditorView>, name: &str, cx: &mut VisualTestContext) {
     editor.update(cx, |editor, cx| editor.set_language(Some(name), cx));
     cx.update(|window, cx| window.draw(cx).clear(cx));
+    while !parsed(editor, cx) {
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+    }
+}
+
+/// Whether the editor's syntax is parsed at the text's version.
+fn parsed(editor: &Entity<EditorView>, cx: &mut VisualTestContext) -> bool {
+    editor.read_with(cx, |editor, _| {
+        editor.syntax().is_some_and(|syntax| {
+            !syntax.needs_parse() && syntax.version() == editor.model().snapshot().version()
+        })
+    })
 }
 
 /// F3: a job for Python, started while a Rust file was set to Python, lands
@@ -78,6 +93,9 @@ fn a_job_for_a_language_switched_away_from_lands_unshown(cx: &mut TestAppContext
         ]
     );
 
+    // Python's job is held, so it can't land while the parse of either
+    // language is waited for.
+    outline.update(cx, |outline, _| outline.hold_jobs());
     let started = jobs_started(&outline, cx);
     set_language(&editor, "python", cx);
     assert_eq!(language(&editor, cx), Some("python"));
@@ -87,6 +105,7 @@ fn a_job_for_a_language_switched_away_from_lands_unshown(cx: &mut TestAppContext
     assert_eq!(language(&editor, cx), Some("rust"));
     assert_eq!(rows(&outline, cx), shown);
 
+    outline.update(cx, |outline, _| outline.release_jobs());
     cx.run_until_parked();
     assert_eq!(rows(&outline, cx), shown, "Rust's outline stays");
     // Python's outline was dropped as it landed, rather than shown until a
