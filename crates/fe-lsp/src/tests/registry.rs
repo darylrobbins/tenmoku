@@ -31,6 +31,8 @@ use crate::{
     ServerIo, ServerLauncher, ServerSpec, ServerStatus,
 };
 
+mod routed_save;
+
 /// A manager on the fake, with a clock that never moves.
 fn routed() -> (FakeServer, LspManager, Events) {
     let fake = FakeServer::new(Script::default());

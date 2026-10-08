@@ -134,6 +134,9 @@ struct Feed {
     subscription: Option<Subscription>,
     /// Events taken from the subscription at `close`, still to drain.
     detached: Vec<BufferEvent>,
+    /// A save a catch-up drained that applies to the version it caught up
+    /// to, for the `didOpen` that follows to send after itself.
+    caught_up_save: Option<Version>,
 }
 
 impl Subscribed {
@@ -141,6 +144,7 @@ impl Subscribed {
         Self(Arc::new(Mutex::new(Feed {
             subscription: Some(subscription),
             detached: Vec::new(),
+            caught_up_save: None,
         })))
     }
 
@@ -156,6 +160,16 @@ impl Subscribed {
             events.extend(subscription.drain());
         }
         events
+    }
+
+    /// Remembers `save` as the save of the version a catch-up reached, or
+    /// forgets the remembered one for a later edit.
+    fn set_caught_up_save(&self, save: Option<Version>) {
+        self.lock().caught_up_save = save;
+    }
+
+    fn take_caught_up_save(&self) -> Option<Version> {
+        self.lock().caught_up_save.take()
     }
 
     /// Drops the subscription, keeping the events it queued until now for
@@ -239,14 +253,21 @@ impl Opening {
     /// Brings the opening up to the buffer's latest edit, so a document
     /// waiting for a server doesn't keep a queue of events.
     pub(crate) fn catch_up(&mut self) {
+        let mut save = self.subscription.0.take_caught_up_save();
         for event in self.subscription.0.take_events() {
-            if let BufferEvent::Edited { to, text, .. } = event
-                && to > self.version
-            {
-                self.text = text;
-                self.version = to;
+            match event {
+                BufferEvent::Edited { to, text, .. } if to > self.version => {
+                    self.text = text;
+                    self.version = to;
+                    save = None;
+                }
+                BufferEvent::Saved { version } if version >= self.version => {
+                    save = Some(version);
+                }
+                _ => {}
             }
         }
+        self.subscription.0.set_caught_up_save(save);
     }
 }
 
@@ -396,6 +417,7 @@ impl Document {
             at: opening.version,
             synced: None,
         };
+        let saved = document.subscription.0.take_caught_up_save();
         link.identities.pause(Point::Activate);
         if !link.policy.open_close || document.oversized() {
             // Nothing to send, but its events still drain.
@@ -404,7 +426,41 @@ impl Document {
                 .is_current(document.buffer, document.generation)
                 .then_some(document);
         }
-        document.activate(link).then_some(document)
+        if !document.activate(link) {
+            return None;
+        }
+        // A save `catch_up` drained, of the version the `didOpen` carries.
+        if saved == Some(document.at) {
+            document.send_save(document.at, link);
+        }
+        Some(document)
+    }
+
+    /// Queues `didSave` for `version`, if the server wants saves.
+    fn send_save(&mut self, version: Version, link: &mut Link) {
+        let Some(include_text) = link.policy.save else {
+            return;
+        };
+        let text = if !include_text {
+            None
+        } else if version == self.at {
+            Some(self.text.to_string())
+        } else {
+            // Can't happen: events arrive in order, and every batch up to
+            // `version` came before.
+            log::warn!(
+                "{}: saved {version:?}, but only {:?} was seen; didSave carries no text",
+                self.uri,
+                self.at,
+            );
+            None
+        };
+        link.send(Note::Save(DidSaveTextDocumentParams {
+            text_document: TextDocumentIdentifier {
+                uri: self.uri.clone(),
+            },
+            text,
+        }));
     }
 
     fn oversized(&self) -> bool {
@@ -571,28 +627,7 @@ impl Document {
                     if self.synced.is_none() {
                         continue;
                     }
-                    if let Some(include_text) = link.policy.save {
-                        let text = if !include_text {
-                            None
-                        } else if version == self.at {
-                            Some(self.text.to_string())
-                        } else {
-                            // Can't happen: events arrive in order, and
-                            // every batch up to `version` came before.
-                            log::warn!(
-                                "{}: saved {version:?}, but only {:?} was seen; didSave carries no text",
-                                self.uri,
-                                self.at,
-                            );
-                            None
-                        };
-                        link.send(Note::Save(DidSaveTextDocumentParams {
-                            text_document: TextDocumentIdentifier {
-                                uri: self.uri.clone(),
-                            },
-                            text,
-                        }));
-                    }
+                    self.send_save(version, link);
                 }
             }
         }
