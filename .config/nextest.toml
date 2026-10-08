@@ -9,14 +9,15 @@ fail-fast = false
 [profile.ci.junit]
 path = "junit.xml"
 
-# These four tests use the real FSEvents, which under load can deliver late or
+# These five tests use the real FSEvents, which under load can deliver late or
 # not at all, and no timeout bounds that. A pass after a retry is reported
 # FLAKY in the JUnit report.
 [[profile.ci.overrides]]
 filter = '''
 (package(fe-config) and (test(=tests::watch::hot_reload_applies_valid_and_keeps_last_good)
   or test(=tests::watch::symlink_targets_are_watched)
-  or test(=tests::watch::watcher_follows_links_changed_while_registering)))
+  or test(=tests::watch::watcher_follows_links_changed_while_registering)
+  or test(=tests::watch_late::late_user_event_does_not_hide_project_edit)))
 or (package(fe-keymap) and test(=tests::load::hot_reload_swaps_the_keymap))
 '''
 retries = 2

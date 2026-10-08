@@ -279,8 +279,10 @@ fn watcher_follows_links_changed_while_registering() {
 /// Fixture and hook events can arrive late, after the first batch, so later
 /// batches may name the unchanged user file too. Each is reloaded, and the
 /// loop ends once the project's edit is loaded. With `await_user`, it also
-/// waits for a later batch naming the user file, which the caller's `extra`
-/// guarantees, so the tolerant loop certainly takes one.
+/// waits for a later batch naming the user file. The caller's `extra` may
+/// cause one, but its write can land before the OS stream for `a` runs, and
+/// is then lost, so after the first batch the test rewrites the user's target
+/// itself, which the watcher certainly sees, so the tolerant loop takes one.
 pub(super) fn project_edit_seen_while_registering(
     await_user: bool,
     extra: impl Fn(&Path, &Path) + Send + 'static,
@@ -320,6 +322,9 @@ pub(super) fn project_edit_seen_while_registering(
     .unwrap();
     let batch = || batches.recv_timeout(TIMEOUT).expect("a batch in time");
     assert_eq!(batch(), [user.clone(), project.clone()]);
+    if await_user {
+        settings_in(&a, "");
+    }
     fs::write(&to_c, "editor.font_size = 18\n").unwrap();
     let mut seen_user = false;
     loop {
