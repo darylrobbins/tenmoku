@@ -69,7 +69,10 @@ pub fn registry() -> Registry<VimCommands> {
             "vim.operate",
             "Vim Operate",
             |target: &mut VimTarget<'_>, actor: &Actor, args: OperateArgs| {
-                operator::operate(target, actor, args)
+                {
+                    insert::adopt_closing(target.state);
+                    operator::operate(target, actor, args)
+                }
             },
         )
         .expect("vim command IDs are valid and distinct")
@@ -83,7 +86,10 @@ pub fn registry() -> Registry<VimCommands> {
             "vim.put",
             "Vim Put",
             |target: &mut VimTarget<'_>, actor: &Actor, args: PutArgs| {
-                operator::put(target, actor, args)
+                {
+                    insert::adopt_closing(target.state);
+                    operator::put(target, actor, args)
+                }
             },
         )
         .expect("vim command IDs are valid and distinct")
@@ -97,7 +103,10 @@ pub fn registry() -> Registry<VimCommands> {
             "vim.insert",
             "Vim Insert",
             |target: &mut VimTarget<'_>, actor: &Actor, args: InsertArgs| {
-                insert::insert(target, actor, args)
+                {
+                    insert::adopt_closing(target.state);
+                    insert::insert(target, actor, args)
+                }
             },
         )
         .expect("vim command IDs are valid and distinct")
@@ -123,7 +132,10 @@ pub fn registry() -> Registry<VimCommands> {
             "vim.join",
             "Vim Join Lines",
             |target: &mut VimTarget<'_>, actor: &Actor, args: CountArgs| {
-                edit::join(target, actor, args)
+                {
+                    insert::adopt_closing(target.state);
+                    edit::join(target, actor, args)
+                }
             },
         )
         .expect("vim command IDs are valid and distinct")
@@ -137,7 +149,10 @@ pub fn registry() -> Registry<VimCommands> {
             "vim.replace_char",
             "Vim Replace Character",
             |target: &mut VimTarget<'_>, actor: &Actor, args: ReplaceCharArgs| {
-                edit::replace_char(target, actor, args)
+                {
+                    insert::adopt_closing(target.state);
+                    edit::replace_char(target, actor, args)
+                }
             },
         )
         .expect("vim command IDs are valid and distinct")
@@ -151,7 +166,10 @@ pub fn registry() -> Registry<VimCommands> {
             "vim.toggle_case",
             "Vim Toggle Case",
             |target: &mut VimTarget<'_>, actor: &Actor, args: CountArgs| {
-                edit::toggle_case(target, actor, args)
+                {
+                    insert::adopt_closing(target.state);
+                    edit::toggle_case(target, actor, args)
+                }
             },
         )
         .expect("vim command IDs are valid and distinct")
@@ -241,7 +259,10 @@ pub fn registry() -> Registry<VimCommands> {
             "vim.visual_put",
             "Vim Put Over Selection",
             |target: &mut VimTarget<'_>, actor: &Actor, args: PutArgs| {
-                visual::put(target, actor, args)
+                {
+                    insert::adopt_closing(target.state);
+                    visual::put(target, actor, args)
+                }
             },
         )
         .expect("vim command IDs are valid and distinct")

@@ -403,6 +403,9 @@ enum End {
 pub(crate) struct Closing {
     ledger: Arc<Mutex<Ledger>>,
     replaying: bool,
+    /// The session's own carets record, which a newer session mustn't
+    /// overwrite or close before this one is adopted.
+    carets: Option<history::Pending>,
 }
 
 /// Adopts the outcome of a session a clone ended, if it's published: the
@@ -421,11 +424,15 @@ pub(crate) fn adopt_closing(state: &mut VimState) {
         End::Ended(closed) => closed.clone(),
         _ => return,
     };
-    let replaying = closing.replaying;
-    state.closing = None;
+    let Some(Closing {
+        replaying, carets, ..
+    }) = state.closing.take()
+    else {
+        return;
+    };
     state.last_change = Some(closed.last_change);
     if !replaying {
-        state.carets.close(closed.transaction);
+        state.carets.settle(carets, closed.transaction);
     }
 }
 
@@ -1553,6 +1560,7 @@ fn end(model: &mut EditorModel, state: &mut VimState, how: Ending) -> Option<Tra
                     state.closing = Some(Closing {
                         ledger: Arc::clone(&session.ledger),
                         replaying,
+                        carets: (!replaying).then(|| state.carets.take_pending()).flatten(),
                     })
                 }
             }

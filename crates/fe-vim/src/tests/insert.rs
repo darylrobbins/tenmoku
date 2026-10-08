@@ -661,6 +661,121 @@ fn closing_a_session_locks_nothing_while_measuring() {
 }
 
 #[test]
+fn a_retained_clone_adopts_its_session_before_any_newer_change() {
+    // The outer state ends the session while a clone is ending it, and the
+    // clone is kept. Its next commands are a normal edit, then a second
+    // insert session: each finds the first session's outcome adopted first,
+    // so `.` repeats the newer change and undo and redo restore both
+    // transactions' carets.
+    let mut vim = HeadlessVim::new("ab\ncd", (0, 1));
+    vim.feed("3ix").unwrap();
+    let clone = Rc::new(RefCell::new(vim.state().clone()));
+    let mut split = vim.model().split();
+    split.set_cursor(vim.model().primary_selection().head());
+    let ended = Rc::new(Cell::new(false));
+    let measuring = {
+        let (ended, clone) = (Rc::clone(&ended), Rc::clone(&clone));
+        Measuring::new(move |edited| {
+            if !edited || ended.replace(true) {
+                return;
+            }
+            let mut clone = clone.borrow_mut();
+            let normal_mode = Invocation::of("vim.normal_mode")
+                .unwrap()
+                .context(context(&clone));
+            let (mut host, mut registers) = (HeadlessHost::new(), Registers::new());
+            let mut target = VimTarget {
+                model: &mut split,
+                host: &mut host,
+                state: &mut clone,
+                registers: &mut registers,
+            };
+            registry().dispatch(&mut target, &normal_mode).unwrap();
+        })
+    };
+    vim.feed("<Esc>").unwrap();
+    drop(measuring);
+    assert_eq!(vim.text(), "axxxb\ncd");
+    let mut clone = Rc::try_unwrap(clone).ok().unwrap().into_inner();
+    let (mut host, mut registers) = (HeadlessHost::new(), Registers::new());
+    let mut run = |model: &mut EditorModel, state: &mut VimState, invocation: Invocation| {
+        let invocation = invocation.context(context(state));
+        let mut target = VimTarget {
+            model,
+            host: &mut host,
+            state,
+            registers: &mut registers,
+        };
+        registry().dispatch(&mut target, &invocation).unwrap();
+        target.model.sync_display();
+    };
+    let text = |model: &EditorModel| model.text().slice_to_string(0..model.text().len());
+    let model = vim.model_mut();
+
+    // A newer normal edit comes before the first session is adopted: `.`
+    // repeats it, not the insert.
+    model.set_cursor(4);
+    run(model, &mut clone, commit("rZ"));
+    assert_eq!(text(model), "axxxZ\ncd");
+    model.set_cursor(0);
+    run(model, &mut clone, commit("."));
+    assert_eq!(text(model), "ZxxxZ\ncd");
+
+    // A second insert session, opened before the first is adopted, keeps
+    // both transactions' carets.
+    let mut vim = HeadlessVim::new("ab\ncd", (0, 1));
+    vim.feed("3ix").unwrap();
+    let clone = Rc::new(RefCell::new(vim.state().clone()));
+    let mut split = vim.model().split();
+    split.set_cursor(vim.model().primary_selection().head());
+    let ended = Rc::new(Cell::new(false));
+    let measuring = {
+        let (ended, clone) = (Rc::clone(&ended), Rc::clone(&clone));
+        Measuring::new(move |edited| {
+            if !edited || ended.replace(true) {
+                return;
+            }
+            let mut clone = clone.borrow_mut();
+            let normal_mode = Invocation::of("vim.normal_mode")
+                .unwrap()
+                .context(context(&clone));
+            let (mut host, mut registers) = (HeadlessHost::new(), Registers::new());
+            let mut target = VimTarget {
+                model: &mut split,
+                host: &mut host,
+                state: &mut clone,
+                registers: &mut registers,
+            };
+            registry().dispatch(&mut target, &normal_mode).unwrap();
+        })
+    };
+    vim.feed("<Esc>").unwrap();
+    drop(measuring);
+    let mut clone = Rc::try_unwrap(clone).ok().unwrap().into_inner();
+    let model = vim.model_mut();
+    model.set_cursor(4);
+    run(model, &mut clone, commit("i"));
+    model.insert("y");
+    run(
+        model,
+        &mut clone,
+        Invocation::of("vim.normal_mode").unwrap(),
+    );
+    assert_eq!(text(model), "axxxyb\ncd");
+    for (keys, expected, head) in [
+        ("u", "axxxb\ncd", 4),
+        ("u", "ab\ncd", 1),
+        ("<C-r>", "axxxb\ncd", 1),
+        ("<C-r>", "axxxyb\ncd", 4),
+    ] {
+        model.set_cursor(0);
+        run(model, &mut clone, commit(keys));
+        assert_eq!(text(model), expected, "{keys}");
+        assert_eq!(model.primary_selection().head(), head, "{keys}");
+    }
+}
+
+#[test]
 fn a_caret_inside_a_grapheme_is_on_it() {
     // Another origin puts a combining mark at the caret, leaving it inside
     // `é`: a command takes the caret to be on that grapheme, as nvim does

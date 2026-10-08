@@ -29,8 +29,11 @@ pub(crate) struct Carets {
     entries: VecDeque<(TransactionId, Vec<(u32, usize)>)>,
     /// An insert session's, held apart until its transaction closes: one
     /// that changed nothing isn't kept, and mustn't push a real one out.
-    pending: Option<(TransactionId, Vec<(u32, usize)>)>,
+    pending: Option<Pending>,
 }
+
+/// A transaction's carets, held until it closes.
+pub(crate) type Pending = (TransactionId, Vec<(u32, usize)>);
 
 impl Carets {
     /// Notes `carets` as those before `id`, unless `id` already has some: a
@@ -59,6 +62,21 @@ impl Carets {
     /// nothing, and `fe_buffer` dropped it.
     pub(crate) fn close(&mut self, kept: Option<TransactionId>) {
         if let Some((id, carets)) = self.pending.take()
+            && kept == Some(id)
+        {
+            self.record(id, carets);
+        }
+    }
+
+    /// Lets go of the pending record, for a session a clone is still ending
+    /// (see `insert::Closing`): a newer session may note its own meanwhile.
+    pub(crate) fn take_pending(&mut self) -> Option<Pending> {
+        self.pending.take()
+    }
+
+    /// A [`Carets::take_pending`] record's transaction closed as `kept`.
+    pub(crate) fn settle(&mut self, pending: Option<Pending>, kept: Option<TransactionId>) {
+        if let Some((id, carets)) = pending
             && kept == Some(id)
         {
             self.record(id, carets);
