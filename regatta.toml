@@ -19,7 +19,8 @@ commit = true
 # A cold build of GPUI takes several minutes.
 setup = "20m"
 stage = "30m"
-review = "15m"
+# Codex timed out twice at 15m reviewing T174's ~1,500-line diff (2026-10-08).
+review = "30m"
 
 [[components]]
 name = "fastedit"
