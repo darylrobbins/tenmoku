@@ -129,29 +129,21 @@ pub fn module_specifiers(
         stopped.get()
     };
     let mut found = Vec::new();
-    // A misread of the grammar that swallows the rest of the file after
-    // `<Foo extends="/" />` (a JSX attribute named `extends` is read as a
-    // type parameter's constraint) is cured in the text, once: every such
-    // attribute is respelled, and the file parsed again whole. That is one
-    // extra parse however many attributes there are.
-    // (A genuine `<T extends U>` is respelled too, so the original tree is
-    // read as well and the two results merged.)
-    if tree.root_node().has_error() {
-        match parse_corrected(language, text, &poll) {
-            Ok(Some((reparsed, buffer))) => {
-                query_range(
-                    compiled,
-                    &reparsed,
-                    buffer.text(),
-                    0..text.len(),
-                    &poll,
-                    &mut found,
-                );
-            }
-            Ok(None) => {}
-            Err(error) => return Err(error),
-        }
-    }
+    // tree-sitter's tsx grammar reads `<Foo extends="/" />` (a JSX attribute
+    // named `extends`) as a type parameter's constraint, and the `/` as a
+    // regex that swallows the rest of the file. Each `extends` TypeScript
+    // reads as an attribute is respelled, and the corrected text parsed
+    // once and read alone: the original tree's reading after a misread is
+    // wrong. A genuine constraint is never respelled.
+    let corrected = if language.name() == "tsx" && tree.root_node().has_error() {
+        parse_corrected(language, text, &poll)?
+    } else {
+        None
+    };
+    let (tree, text) = match &corrected {
+        Some((tree, buffer)) => (tree, buffer.text()),
+        None => (tree, text),
+    };
     query_range(compiled, tree, text, 0..text.len(), &poll, &mut found);
     if stopped.get() {
         return Err(ImportsError::Cancelled);
@@ -220,32 +212,204 @@ fn query_range(
 /// How many bytes the recovery scan reads between polls.
 const SCAN_POLL_BYTES: usize = 4096;
 
-/// What the scan last saw, apart from whitespace and comments.
-#[derive(Clone, Copy, PartialEq)]
-enum Token {
-    Less,
-    Name,
-    Other,
+/// Where a lookahead is in the trivia between two words.
+#[derive(Clone, Copy)]
+enum Trivia {
+    /// In whitespace, or before anything at all.
+    Space,
+    /// On the `*` of a `/*`.
+    Opening,
+    /// In a block comment.
+    Block,
+    /// On the `/` of a `*/`.
+    Closing,
+    /// In a line comment.
+    Line,
 }
 
-/// The offsets of each `extends` that follows `<` and a name, comments and
-/// any whitespace aside: `<Foo extends …`. Read as a type parameter's
-/// constraint, it breaks the grammar when it is really a JSX attribute. One
-/// pass over the text, polling every [`SCAN_POLL_BYTES`] bytes however they
-/// are spent; `None` once `poll` says to stop.
-fn extends_after_tag_name(text: &str, poll: &dyn Fn() -> bool) -> Option<Vec<usize>> {
-    #[derive(PartialEq)]
-    enum Mode {
-        Code,
-        Block,
-        Line,
-        Quoted(u8),
+impl Trivia {
+    const ALL: [Trivia; 5] = [
+        Trivia::Space,
+        Trivia::Opening,
+        Trivia::Block,
+        Trivia::Closing,
+        Trivia::Line,
+    ];
+
+    /// The state after `ch`, which the byte `next` follows, or `None` if
+    /// `ch` ends the trivia.
+    fn after(self, ch: char, next: Option<u8>) -> Option<Trivia> {
+        Some(match self {
+            Trivia::Opening => Trivia::Block,
+            Trivia::Block if ch == '*' && next == Some(b'/') => Trivia::Closing,
+            Trivia::Block => Trivia::Block,
+            Trivia::Closing => Trivia::Space,
+            Trivia::Line if matches!(ch, '\n' | '\r' | '\u{2028}' | '\u{2029}') => Trivia::Space,
+            Trivia::Line => Trivia::Line,
+            Trivia::Space if is_space(ch) => Trivia::Space,
+            Trivia::Space if ch == '/' && next == Some(b'*') => Trivia::Opening,
+            Trivia::Space if ch == '/' && next == Some(b'/') => Trivia::Line,
+            Trivia::Space => return None,
+        })
     }
+}
+
+/// Unicode `White_Space`, and the byte order mark.
+fn is_space(ch: char) -> bool {
+    ch.is_whitespace() || ch == '\u{feff}'
+}
+
+/// A superset of JavaScript's `ID_Continue`, so that combining marks,
+/// joiners and escapes never split a name.
+fn is_name_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '$' | '_' | '\\') || !(ch.is_ascii() || is_space(ch))
+}
+
+const EXTENDS: &[u8; 7] = b"extends";
+
+/// A list of `extends` offsets, linked through [`Lookaheads::starts`]: the
+/// indices of its first and last entries.
+#[derive(Clone, Copy)]
+struct Starts {
+    first: usize,
+    last: usize,
+}
+
+/// Every lookahead in flight from a `<`, by the state it is in.
+#[derive(Clone, Copy, Default)]
+struct States {
+    /// In the trivia after `<`.
+    before_name: [bool; 5],
+    /// In the name.
+    name: bool,
+    /// In the trivia after the name.
+    before_extends: [bool; 5],
+    /// Having read the first `k` letters of `extends`, at index `k`.
+    extends: [bool; 8],
+    /// In the trivia after `extends`: where each such `extends` starts.
+    after_extends: [Option<Starts>; 5],
+}
+
+/// The lookaheads of [`extends_after_tag_name`]. Lookaheads in the same
+/// state at the same offset read the same text from then on, so they are
+/// kept as one, and each step costs the same however many there are.
+#[derive(Default)]
+struct Lookaheads {
+    live: States,
+    /// Each `extends` offset a lookahead has read, and the index of the next
+    /// in its list (`usize::MAX` at the end), so lists join in O(1).
+    starts: Vec<(usize, usize)>,
+}
+
+impl Lookaheads {
+    fn is_empty(&self) -> bool {
+        let live = &self.live;
+        !live.name
+            && !live.before_name.contains(&true)
+            && !live.before_extends.contains(&true)
+            && !live.extends.contains(&true)
+            && live.after_extends.iter().all(Option::is_none)
+    }
+
+    /// Moves every lookahead past `ch`, at offset `at` and followed by the
+    /// byte `next`, adding to `found` the `extends` a lookahead decides on.
+    fn step(&mut self, at: usize, ch: char, next: Option<u8>, found: &mut Vec<usize>) {
+        let old = std::mem::take(&mut self.live);
+        for state in Trivia::ALL {
+            let i = state as usize;
+            if old.before_name[i] {
+                match state.after(ch, next) {
+                    Some(state) => self.live.before_name[state as usize] = true,
+                    None => self.live.name |= is_name_char(ch),
+                }
+            }
+            if old.before_extends[i] {
+                self.before_extends(state, ch, next);
+            }
+            if let Some(starts) = old.after_extends[i] {
+                self.after_extends(state, starts, ch, next, found);
+            }
+        }
+        if old.name {
+            if is_name_char(ch) {
+                self.live.name = true;
+            } else {
+                self.before_extends(Trivia::Space, ch, next);
+            }
+        }
+        for (k, &letter) in EXTENDS.iter().enumerate().skip(1) {
+            self.live.extends[k + 1] |= old.extends[k] && ch == char::from(letter);
+        }
+        if old.extends[EXTENDS.len()] && !is_name_char(ch) {
+            self.starts.push((at - EXTENDS.len(), usize::MAX));
+            let only = self.starts.len() - 1;
+            let starts = Starts {
+                first: only,
+                last: only,
+            };
+            self.after_extends(Trivia::Space, starts, ch, next, found);
+        }
+    }
+
+    fn before_extends(&mut self, state: Trivia, ch: char, next: Option<u8>) {
+        match state.after(ch, next) {
+            Some(state) => self.live.before_extends[state as usize] = true,
+            None => self.live.extends[1] |= ch == 'e',
+        }
+    }
+
+    /// TypeScript's rule: `extends` followed by the token `=`, `>` or `/` is
+    /// a JSX attribute, and anything else a type parameter's constraint.
+    /// (`==`, `===`, `=>` and `/=` are tokens of their own.)
+    fn after_extends(
+        &mut self,
+        state: Trivia,
+        starts: Starts,
+        ch: char,
+        next: Option<u8>,
+        found: &mut Vec<usize>,
+    ) {
+        match state.after(ch, next) {
+            Some(state) => {
+                let into = &mut self.live.after_extends[state as usize];
+                match into {
+                    Some(into) => {
+                        self.starts[into.last].1 = starts.first;
+                        into.last = starts.last;
+                    }
+                    None => *into = Some(starts),
+                }
+            }
+            None => {
+                let attribute = match ch {
+                    '=' => !matches!(next, Some(b'=' | b'>')),
+                    '/' => next != Some(b'='),
+                    _ => ch == '>',
+                };
+                let mut entry = starts.first;
+                while attribute && entry != usize::MAX {
+                    let (start, next) = self.starts[entry];
+                    found.push(start);
+                    entry = next;
+                }
+            }
+        }
+    }
+}
+
+/// The offset of each `extends` that TypeScript reads as a JSX attribute's
+/// name where tree-sitter's tsx grammar reads a type parameter's
+/// constraint: after `<` and a name, and before `=`, `>` or `/`, with
+/// whitespace and comments anywhere between. Every `<` in the text is tried,
+/// whatever it is in (a string, a comment, a regex, a template or JSX text):
+/// a letter changed there moves no token's boundary.
+///
+/// One pass over the text, however the lookaheads overlap, polling every
+/// [`SCAN_POLL_BYTES`] bytes; `None` once `poll` says to stop.
+fn extends_after_tag_name(text: &str, poll: &dyn Fn() -> bool) -> Option<Vec<usize>> {
     let bytes = text.as_bytes();
     let mut found = Vec::new();
-    let mut mode = Mode::Code;
-    let mut history = [Token::Other; 2];
-    let push = |history: &mut [Token; 2], token| *history = [history[1], token];
+    let mut lookaheads = Lookaheads::default();
     let mut polled = 0;
     let mut i = 0;
     while i < bytes.len() {
@@ -255,84 +419,37 @@ fn extends_after_tag_name(text: &str, poll: &dyn Fn() -> bool) -> Option<Vec<usi
                 return None;
             }
         }
-        let byte = bytes[i];
-        match mode {
-            Mode::Block => {
-                if byte == b'*' && bytes.get(i + 1) == Some(&b'/') {
-                    mode = Mode::Code;
-                    i += 1;
+        if lookaheads.is_empty() {
+            let end = (polled + SCAN_POLL_BYTES).min(bytes.len());
+            match bytes[i..end].iter().position(|&byte| byte == b'<') {
+                Some(at) => {
+                    recovery_reads(at);
+                    i += at;
                 }
-                i += 1;
-            }
-            Mode::Line => {
-                if byte == b'\n' {
-                    mode = Mode::Code;
-                }
-                i += 1;
-            }
-            Mode::Quoted(quote) => {
-                match byte {
-                    b'\\' => i += 1,
-                    b'\n' => mode = Mode::Code,
-                    _ if byte == quote => mode = Mode::Code,
-                    _ => {}
-                }
-                i += 1;
-            }
-            Mode::Code => {
-                let ch = text[i..].chars().next()?;
-                if ch.is_whitespace() {
-                    i += ch.len_utf8();
-                } else if byte == b'/' && bytes.get(i + 1) == Some(&b'*') {
-                    mode = Mode::Block;
-                    i += 2;
-                } else if byte == b'/' && bytes.get(i + 1) == Some(&b'/') {
-                    mode = Mode::Line;
-                    i += 2;
-                } else if byte == b'\'' || byte == b'"' {
-                    mode = Mode::Quoted(byte);
-                    push(&mut history, Token::Other);
-                    i += 1;
-                } else if ch == '_' || ch == '$' || ch.is_alphanumeric() {
-                    let start = i;
-                    while let Some(ch) = text[i..].chars().next() {
-                        if !(ch == '_' || ch == '$' || ch.is_alphanumeric()) {
-                            break;
-                        }
-                        i += ch.len_utf8();
-                        if i - polled >= SCAN_POLL_BYTES {
-                            polled = i;
-                            if poll() {
-                                return None;
-                            }
-                        }
-                    }
-                    if &text[start..i] == "extends" && history == [Token::Less, Token::Name] {
-                        found.push(start);
-                    }
-                    push(&mut history, Token::Name);
-                } else {
-                    push(
-                        &mut history,
-                        if byte == b'<' {
-                            Token::Less
-                        } else {
-                            Token::Other
-                        },
-                    );
-                    i += ch.len_utf8();
+                None => {
+                    recovery_reads(end - i);
+                    i = end;
+                    continue;
                 }
             }
         }
+        let Some(ch) = text[i..].chars().next() else {
+            break;
+        };
+        let after = i + ch.len_utf8();
+        lookaheads.step(i, ch, bytes.get(after).copied(), &mut found);
+        if ch == '<' {
+            lookaheads.live.before_name[Trivia::Space as usize] = true;
+        }
+        recovery_reads(after - i);
+        i = after;
     }
     Some(found)
 }
 
-/// The text with each `extends` after `<` and a name respelled `extendz`,
-/// and its tree. A genuine constraint (`<T extends U>`) is respelled too,
-/// which can only break the reading of that one construct: the caller
-/// reads the original tree as well. No offset changes. `Ok(None)` if there
-/// is no such word or the parse failed.
+/// The text with each `extends` that [`extends_after_tag_name`] finds
+/// respelled `extendz`, and its tree. No offset changes. `Ok(None)` if
+/// there is no such word or the parse failed.
 fn parse_corrected(
     language: &Language,
     text: &Text,
@@ -353,6 +470,7 @@ fn parse_corrected(
         return Ok(None);
     };
     let buffer = Buffer::new(&corrected);
+    recovery_reads(corrected.len());
     let mut parser = Parser::new();
     if parser.set_language(&language.grammar).is_err() {
         return Ok(None);
@@ -362,6 +480,14 @@ fn parse_corrected(
         None if poll() => Err(ImportsError::Cancelled),
         None => Ok(None),
     }
+}
+
+/// Counts `bytes` the recovery reads, for the tests' linearity checks.
+fn recovery_reads(bytes: usize) {
+    #[cfg(test)]
+    crate::tests::imports_recovery::RECOVERY_READS.with(|reads| reads.set(reads.get() + bytes));
+    #[cfg(not(test))]
+    let _ = bytes;
 }
 
 /// Whether a captured string is a module: not the text of a regex (see

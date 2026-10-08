@@ -2,6 +2,7 @@ use fe_buffer::Buffer;
 
 use crate::{
     ImportsError, Syntax, language_by_name, module_specifiers, module_specifiers_supported,
+    tests::imports_recovery::read_in_linear_time,
 };
 
 thread_local! {
@@ -189,9 +190,8 @@ fn a_great_many_jsx_attributes_named_extends_are_read_in_linear_time() {
     let n = 20_000;
     let mut text = "const x = <A extends=\"/\" />;\n".repeat(n);
     text.push_str("import a from './a';\n");
-    let started = std::time::Instant::now();
-    assert_eq!(specifiers("tsx", &text), ["./a"]);
-    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    // (Counted in bytes read, not timed.)
+    assert_eq!(read_in_linear_time(&text), ["./a"]);
 }
 
 #[test]
@@ -211,18 +211,59 @@ fn a_cancel_stops_the_recovery() {
 #[test]
 fn a_jsx_attribute_named_extends_in_any_spelling_keeps_later_imports() {
     let forms = [
-        "<Foo extends foo=\"/\" />",
-        "<Foo extends bar />",
         "<Foo extends\u{a0}=\"/\" />",
         "<Foo extends\u{2003}=\"/\" />",
         "<Foo extends /* c */ =\"/\" />",
         "<Foo /* c */ extends=\"/\" />",
         "<Foo extends // c\n =\"/\" />",
-        "<Foo extends a=\"/\" b=\"/\" />",
+        "<Foo extends\u{feff}/>",
+        "<Foo extends>text</Foo>",
     ];
     for form in forms {
         let text = format!("const el = {form}; import a from './a';\nimport b from './b';\n");
         assert_eq!(specifiers("tsx", &text), ["./a", "./b"], "{form:?}");
+    }
+    // tsc reads these as a generic arrow function's type parameters, with
+    // errors ("',' expected"): they are invalid TSX, and keep only what the
+    // grammar's own recovery gives.
+    let rejected = [
+        "<Foo extends foo=\"/\" />",
+        "<Foo extends bar />",
+        "<Foo extends a=\"/\" b=\"/\" />",
+    ];
+    for form in rejected {
+        let text = format!("const el = {form}; import a from './a';\nimport b from './b';\n");
+        assert_eq!(specifiers("tsx", &text), ["./b"], "{form:?}");
+    }
+}
+
+#[test]
+fn only_the_tokens_tsc_reads_after_extends_respell_it() {
+    let scan = |text: &str| super::extends_after_tag_name(text, &|| false).unwrap();
+    for attribute in ["=\"/\"", ">", "/>", "/ >", "=/**/1", "//\n="] {
+        let text = format!("<Foo extends{attribute}");
+        assert_eq!(scan(&text), [5], "{text:?}");
+    }
+    // `==`, `===`, `=>` and `/=` are tokens of their own: tsc reads type
+    // parameters.
+    for other in ["==", "===", "=>", "/=", " string>", "", "*/="] {
+        let text = format!("<Foo extends{other}");
+        assert_eq!(scan(&text), [] as [usize; 0], "{text:?}");
+    }
+    // Lookaheads that meet keep every `extends` they read.
+    let text = "<a extends /* <b extends /* */ = <c extends // <d extends //\n>";
+    let mut found = scan(text);
+    found.sort();
+    assert_eq!(found, [3, 17, 36, 50]);
+}
+
+#[test]
+fn a_line_comment_after_extends_ends_at_every_line_terminator() {
+    // (A buffer holds no CR, so the scan is read directly.)
+    for terminator in ["\n", "\r", "\u{2028}", "\u{2029}"] {
+        let text = format!("<Foo extends // c{terminator}=\"/\" />");
+        let found = super::extends_after_tag_name(&text, &|| false);
+        assert_eq!(found, Some(vec![5]), "{terminator:?}");
     }
 }
 
