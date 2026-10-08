@@ -14,6 +14,8 @@ use gpui::{
 };
 
 use super::open_root;
+
+mod goto;
 use crate::{Pane, Workbench, pane_toolbar::NavButtons};
 
 const MAIN: &str = "\

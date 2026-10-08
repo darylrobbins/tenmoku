@@ -342,10 +342,15 @@ impl ToolbarPicker {
         }
     }
 
-    /// A pick is a jump: back returns to the caret as it is now.
+    /// A pick is a jump: back returns to the caret as it is now. A running
+    /// go-to-definition is dropped first, as `nav_jump` does, so its answer
+    /// can't land over the pick.
     fn push_history(&self, cx: &mut Context<Picker<Self>>) {
         if let Some(workbench) = self.workbench.upgrade() {
-            workbench.update(cx, |workbench, cx| workbench.push_history(cx));
+            workbench.update(cx, |workbench, cx| {
+                workbench.nav_state.goto.next();
+                workbench.push_history(cx)
+            });
         }
     }
 
