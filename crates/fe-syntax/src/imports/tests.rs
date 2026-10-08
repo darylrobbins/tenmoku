@@ -207,3 +207,52 @@ fn a_cancel_stops_the_recovery() {
     });
     assert_eq!(result, Err(ImportsError::Cancelled));
 }
+
+#[test]
+fn a_jsx_attribute_named_extends_in_any_spelling_keeps_later_imports() {
+    let forms = [
+        "<Foo extends foo=\"/\" />",
+        "<Foo extends bar />",
+        "<Foo extends\u{a0}=\"/\" />",
+        "<Foo extends\u{2003}=\"/\" />",
+        "<Foo extends /* c */ =\"/\" />",
+        "<Foo /* c */ extends=\"/\" />",
+        "<Foo extends // c\n =\"/\" />",
+        "<Foo extends a=\"/\" b=\"/\" />",
+    ];
+    for form in forms {
+        let text = format!("const el = {form}; import a from './a';\nimport b from './b';\n");
+        assert_eq!(specifiers("tsx", &text), ["./a", "./b"], "{form:?}");
+    }
+}
+
+#[test]
+fn genuine_type_parameter_constraints_keep_their_imports() {
+    let text = "import a from './a';\nconst f = <T extends string>(x: T) => x;\n\
+                function g<T extends U = V>(x: T) {}\nclass C<T extends D> {}\n\
+                import b from './b';\n";
+    assert_eq!(specifiers("typescript", text), ["./a", "./b"]);
+    assert_eq!(specifiers("tsx", text), ["./a", "./b"]);
+}
+
+#[test]
+fn a_cancel_stops_the_recovery_scan_between_occurrences() {
+    let poll_count = |text: &str| {
+        let syntax = syntax("tsx", text);
+        let mut polls = 0;
+        let result = module_specifiers(&syntax, &mut || {
+            polls += 1;
+            polls > 3
+        });
+        (result, polls)
+    };
+    // A large gap with no `extends`, and a long whitespace run after one.
+    let gap = format!(
+        "const x = <A extends=\"/\" />;\n{}const y = <A extends{}=\"/\" />;\nimport a from './a';\n",
+        "// padding\n".repeat(50_000),
+        " ".repeat(500_000)
+    );
+    let (result, polls) = poll_count(&gap);
+    assert_eq!(result, Err(ImportsError::Cancelled));
+    assert!(polls <= 4, "polled {polls} times");
+}

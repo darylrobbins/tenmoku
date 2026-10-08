@@ -134,19 +134,24 @@ pub fn module_specifiers(
     // type parameter's constraint) is cured in the text, once: every such
     // attribute is respelled, and the file parsed again whole. That is one
     // extra parse however many attributes there are.
-    let corrected;
-    let (tree, text) = if tree.root_node().has_error() {
+    // (A genuine `<T extends U>` is respelled too, so the original tree is
+    // read as well and the two results merged.)
+    if tree.root_node().has_error() {
         match parse_corrected(language, text, &poll) {
-            Ok(Some(reparsed)) => {
-                corrected = reparsed;
-                (&corrected.0, corrected.1.text())
+            Ok(Some((reparsed, buffer))) => {
+                query_range(
+                    compiled,
+                    &reparsed,
+                    buffer.text(),
+                    0..text.len(),
+                    &poll,
+                    &mut found,
+                );
             }
-            Ok(None) => (tree, text),
+            Ok(None) => {}
             Err(error) => return Err(error),
         }
-    } else {
-        (tree, text)
-    };
+    }
     query_range(compiled, tree, text, 0..text.len(), &poll, &mut found);
     if stopped.get() {
         return Err(ImportsError::Cancelled);
@@ -212,32 +217,137 @@ fn query_range(
     }
 }
 
-/// The text with each `extends` that is followed by `=` respelled
-/// `extendz`, and its tree. Nothing but a JSX attribute is named that, so no
-/// other reading changes, and no offset does. `Ok(None)` if there is no such
-/// attribute or the parse failed.
+/// How many bytes the recovery scan reads between polls.
+const SCAN_POLL_BYTES: usize = 4096;
+
+/// What the scan last saw, apart from whitespace and comments.
+#[derive(Clone, Copy, PartialEq)]
+enum Token {
+    Less,
+    Name,
+    Other,
+}
+
+/// The offsets of each `extends` that follows `<` and a name, comments and
+/// any whitespace aside: `<Foo extends …`. Read as a type parameter's
+/// constraint, it breaks the grammar when it is really a JSX attribute. One
+/// pass over the text, polling every [`SCAN_POLL_BYTES`] bytes however they
+/// are spent; `None` once `poll` says to stop.
+fn extends_after_tag_name(text: &str, poll: &dyn Fn() -> bool) -> Option<Vec<usize>> {
+    #[derive(PartialEq)]
+    enum Mode {
+        Code,
+        Block,
+        Line,
+        Quoted(u8),
+    }
+    let bytes = text.as_bytes();
+    let mut found = Vec::new();
+    let mut mode = Mode::Code;
+    let mut history = [Token::Other; 2];
+    let push = |history: &mut [Token; 2], token| *history = [history[1], token];
+    let mut polled = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        if i - polled >= SCAN_POLL_BYTES {
+            polled = i;
+            if poll() {
+                return None;
+            }
+        }
+        let byte = bytes[i];
+        match mode {
+            Mode::Block => {
+                if byte == b'*' && bytes.get(i + 1) == Some(&b'/') {
+                    mode = Mode::Code;
+                    i += 1;
+                }
+                i += 1;
+            }
+            Mode::Line => {
+                if byte == b'\n' {
+                    mode = Mode::Code;
+                }
+                i += 1;
+            }
+            Mode::Quoted(quote) => {
+                match byte {
+                    b'\\' => i += 1,
+                    b'\n' => mode = Mode::Code,
+                    _ if byte == quote => mode = Mode::Code,
+                    _ => {}
+                }
+                i += 1;
+            }
+            Mode::Code => {
+                let ch = text[i..].chars().next()?;
+                if ch.is_whitespace() {
+                    i += ch.len_utf8();
+                } else if byte == b'/' && bytes.get(i + 1) == Some(&b'*') {
+                    mode = Mode::Block;
+                    i += 2;
+                } else if byte == b'/' && bytes.get(i + 1) == Some(&b'/') {
+                    mode = Mode::Line;
+                    i += 2;
+                } else if byte == b'\'' || byte == b'"' {
+                    mode = Mode::Quoted(byte);
+                    push(&mut history, Token::Other);
+                    i += 1;
+                } else if ch == '_' || ch == '$' || ch.is_alphanumeric() {
+                    let start = i;
+                    while let Some(ch) = text[i..].chars().next() {
+                        if !(ch == '_' || ch == '$' || ch.is_alphanumeric()) {
+                            break;
+                        }
+                        i += ch.len_utf8();
+                        if i - polled >= SCAN_POLL_BYTES {
+                            polled = i;
+                            if poll() {
+                                return None;
+                            }
+                        }
+                    }
+                    if &text[start..i] == "extends" && history == [Token::Less, Token::Name] {
+                        found.push(start);
+                    }
+                    push(&mut history, Token::Name);
+                } else {
+                    push(
+                        &mut history,
+                        if byte == b'<' {
+                            Token::Less
+                        } else {
+                            Token::Other
+                        },
+                    );
+                    i += ch.len_utf8();
+                }
+            }
+        }
+    }
+    Some(found)
+}
+
+/// The text with each `extends` after `<` and a name respelled `extendz`,
+/// and its tree. A genuine constraint (`<T extends U>`) is respelled too,
+/// which can only break the reading of that one construct: the caller
+/// reads the original tree as well. No offset changes. `Ok(None)` if there
+/// is no such word or the parse failed.
 fn parse_corrected(
     language: &Language,
     text: &Text,
     poll: &dyn Fn() -> bool,
 ) -> Result<Option<(Tree, Buffer)>, ImportsError> {
-    let mut bytes = text.slice_to_string(0..text.len()).into_bytes();
-    let mut at = 0;
-    let mut changed = false;
-    while let Some(found) = bytes[at..].windows(7).position(|word| word == b"extends") {
-        if poll() {
-            return Err(ImportsError::Cancelled);
-        }
-        let end = at + found + 7;
-        let next = bytes[end..].iter().find(|b| !b.is_ascii_whitespace());
-        if next == Some(&b'=') {
-            bytes[end - 1] = b'z';
-            changed = true;
-        }
-        at = end;
-    }
-    if !changed {
+    let source = text.slice_to_string(0..text.len());
+    let Some(found) = extends_after_tag_name(&source, poll) else {
+        return Err(ImportsError::Cancelled);
+    };
+    if found.is_empty() {
         return Ok(None);
+    }
+    let mut bytes = source.into_bytes();
+    for start in found {
+        bytes[start + 6] = b'z';
     }
     let Ok(corrected) = String::from_utf8(bytes) else {
         return Ok(None);
