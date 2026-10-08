@@ -66,20 +66,22 @@ struct Writes {
 }
 
 /// Reads the trust file at `path` as it is now (one gone bad stays as it
-/// is), applies `decisions` and writes it back. A failure is logged: the
-/// decisions hold for the session.
+/// is), applies `decisions` and writes it back, all under the store's
+/// lock so another fastedit's write can't be lost. A failure is logged:
+/// the decisions hold for the session.
 fn write(path: &Path, decisions: &BTreeMap<PathBuf, (bool, u64)>) {
-    let mut store = TrustStore::load(path);
-    for (folder, &(trusted, _)) in decisions {
-        store.decide(folder, trusted);
-        if folder.to_str().is_none() {
-            log::error!(
-                "{} isn't UTF-8, so its trust can't be saved; it holds for this session",
-                folder.display()
-            );
+    let updated = TrustStore::update(path, |store| {
+        for (folder, &(trusted, _)) in decisions {
+            store.decide(folder, trusted);
+            if folder.to_str().is_none() {
+                log::error!(
+                    "{} isn't UTF-8, so its trust can't be saved; it holds for this session",
+                    folder.display()
+                );
+            }
         }
-    }
-    if let Err(error) = store.save() {
+    });
+    if let Err(error) = updated {
         log::error!(
             "can't save trust decisions in {}: {error}; they hold for this session",
             path.display()

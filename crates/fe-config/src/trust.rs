@@ -82,6 +82,36 @@ impl TrustStore {
         }
     }
 
+    /// A locked reload-apply-save of the file at `path`: takes an exclusive
+    /// lock on `<path>.lock` (created, mode 0600, beside the file and never
+    /// removed), [`load`](Self::load)s the file as it is now, runs `apply`
+    /// on it, and [`save`](Self::save)s, holding the lock throughout. Two
+    /// updates, in this process or another fastedit, never interleave, so
+    /// neither writes over the other's decision with a stale snapshot.
+    /// Blocks while another holds the lock.
+    ///
+    /// Errs if the lock can't be taken, or as `save` does (a bad file is
+    /// left as it is).
+    pub fn update(path: impl Into<PathBuf>, apply: impl FnOnce(&mut Self)) -> io::Result<()> {
+        let path = path.into();
+        let mut lock_name = path.file_name().unwrap_or_default().to_owned();
+        lock_name.push(".lock");
+        let lock_path = path.with_file_name(lock_name);
+        create_dir(lock_path.parent().unwrap_or(Path::new(".")))?;
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .mode(0o600)
+            .open(&lock_path)?;
+        lock.lock()?;
+        let mut store = Self::load(path);
+        apply(&mut store);
+        // The lock is released when `lock` drops, after the save.
+        store.save()
+    }
+
     /// The trust of canonical folder `folder`: the decision of the nearest
     /// of it and its ancestors that has one, by components (so `/ab` isn't
     /// under `/a`). No I/O.
@@ -190,10 +220,7 @@ fn write(path: &Path, contents: &[u8]) -> io::Result<()> {
         .parent()
         .filter(|dir| !dir.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(dir)?;
+    create_dir(dir)?;
     let name = path.file_name().unwrap_or_default().to_string_lossy();
     let temporary = dir.join(format!(
         ".{name}.{}.{}.tmp",
@@ -214,4 +241,17 @@ fn write(path: &Path, contents: &[u8]) -> io::Result<()> {
         let _ = fs::remove_file(&temporary);
     }
     written
+}
+
+/// Creates `dir` and its missing ancestors, mode 0700.
+fn create_dir(dir: &Path) -> io::Result<()> {
+    let dir = if dir.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        dir
+    };
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)
 }
