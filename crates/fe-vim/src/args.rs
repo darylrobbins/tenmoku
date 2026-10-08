@@ -4,7 +4,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// `d y c > <`, and over a visual selection only, `~ u U J r{char}`.
+/// `d y c > <`, and over a visual selection only, `~ u U J r{char}`, and
+/// over a block `I` and `A`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Operator {
@@ -19,6 +20,13 @@ pub enum Operator {
     Join,
     /// `r{char}`: every grapheme but line breaks becomes the char.
     Replace(char),
+    /// `I` over a block: an insert session at its left edge, the typed text
+    /// then going in on every row of it that reaches that edge.
+    Insert,
+    /// `A` over a block: an insert session after its right edge (or each
+    /// row's end, after `$`), the typed text then going in on every row of
+    /// it, short rows padded with spaces.
+    Append,
 }
 
 /// A motion, by its keys: `h l k j` are `left right up down`; `w b e` are
@@ -126,29 +134,48 @@ pub enum Target {
     TextObject(TextObject),
     /// The visual selection, as its kind takes it: in a visual mode only.
     Selection,
-    /// The visual selection's rows, whole: `X D Y C S R`.
+    /// The visual selection's rows, whole: `X D Y C S R`. In a block, `X`
+    /// and `Y` take the block itself, as `d` and `y` do (`S` and `R` its
+    /// rows).
     SelectedLines,
+    /// `D` and `C` in a block: its rows from its left edge to their ends.
+    /// Elsewhere it's [`Target::SelectedLines`].
+    SelectedToEnd,
 }
 
 impl Target {
     /// Whether it's the visual selection's.
     pub fn is_selection(self) -> bool {
-        matches!(self, Self::Selection | Self::SelectedLines)
+        matches!(
+            self,
+            Self::Selection | Self::SelectedLines | Self::SelectedToEnd
+        )
     }
 }
 
-/// A visual mode's kind: `v` or `V`.
+/// A visual mode's kind: `v`, `V` or `<C-v>`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum VisualKind {
     Char,
     Line,
+    /// A rectangle of display columns over the rows between the anchor and
+    /// the cursor.
+    Block,
 }
 
-/// `vim.visual`'s args: `v` or `V`.
+/// `vim.visual`'s args: `v`, `V` or `<C-v>`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct VisualArgs {
     pub kind: VisualKind,
+}
+
+/// `vim.visual_swap`'s args: `o`, or `O` when `same_row`, which in a block
+/// moves to the other corner on the cursor's row (elsewhere it's `o`).
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct SwapArgs {
+    #[serde(default)]
+    pub same_row: bool,
 }
 
 /// `vim.select`'s args: a text object typed in a visual mode.
@@ -185,7 +212,7 @@ pub struct OperateArgs {
     pub register: Option<char>,
 }
 
-/// `vim.put`'s args: `p`, or `P` when `before`.
+/// The args of `vim.put` and `vim.visual_put`: `p`, or `P` when `before`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct PutArgs {
     #[serde(default)]

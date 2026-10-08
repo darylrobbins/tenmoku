@@ -4,11 +4,14 @@
 use fe_editor::commands::EditorHost;
 
 /// A register's text, and whether it holds whole lines (its text then ends
-/// in `\n`).
+/// in `\n`) or a block.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Register {
     pub text: String,
     pub linewise: bool,
+    /// A block's width in display columns (nvim's `getregtype()` is
+    /// `<C-v>{width}`): its text is its rows joined by `\n`.
+    pub block_width: Option<usize>,
 }
 
 impl Register {
@@ -16,6 +19,16 @@ impl Register {
         Self {
             text: text.into(),
             linewise,
+            block_width: None,
+        }
+    }
+
+    /// A block `width` columns wide, of `rows`.
+    pub fn block(rows: &[String], width: usize) -> Self {
+        Self {
+            text: rows.join("\n"),
+            linewise: false,
+            block_width: Some(width),
         }
     }
 }
@@ -84,8 +97,9 @@ impl Registers {
     }
 
     /// What a put of register `name` (`"` if `None`) inserts. The clipboard
-    /// holds lines when its text ends in a line break; its `\r\n` and `\r`
-    /// read as `\n`.
+    /// holds lines when its text ends in a line break, and never a block; its
+    /// `\r\n` and `\r` read as `\n`. A block written to it is its rows
+    /// joined by `\n`.
     pub fn read(
         &self,
         name: Option<char>,
@@ -176,16 +190,24 @@ impl Registers {
     }
 }
 
-/// `old` with `new` appended: whole lines if either is.
+/// `old` with `new` appended, as nvim appends: whole lines if either is; to
+/// a block, `new`'s rows as more rows, the block keeping its width; to
+/// characters, its text (a block's rows joined by `\n`).
 fn append(old: Register, new: Register) -> Register {
+    if let (Some(width), false) = (old.block_width, new.linewise) {
+        let rows: Vec<String> = [old.text, new.text].into();
+        return Register::block(&rows, width);
+    }
     if !old.linewise && !new.linewise {
         return Register::new(old.text + &new.text, false);
     }
-    let line = |mut text: String| {
-        if !text.ends_with('\n') {
+    // Each row becomes a line, a block's or characters' empty last one too.
+    let line = |register: Register| {
+        let mut text = register.text;
+        if !register.linewise || !text.ends_with('\n') {
             text.push('\n');
         }
         text
     };
-    Register::new(line(old.text) + &line(new.text), true)
+    Register::new(line(old) + &line(new), true)
 }

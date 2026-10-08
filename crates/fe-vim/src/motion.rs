@@ -302,10 +302,10 @@ const VS16_WIDENED: &[std::ops::RangeInclusive<char>] = &[
     '\u{E0001}'..='\u{E0001}',
 ];
 
-/// `ch`'s class and display width, from [`CHARS`].
-fn char_info(ch: char) -> (u32, usize) {
+/// [`CHARS`]' runs: the first code point of each, its class and width.
+fn runs() -> &'static [(u32, u32, usize)] {
     static RUNS: OnceLock<Vec<(u32, u32, usize)>> = OnceLock::new();
-    let runs = RUNS.get_or_init(|| {
+    RUNS.get_or_init(|| {
         let hex = |field: &str| u32::from_str_radix(field, 16).expect("chars.txt is hex");
         let run = |run: &str| {
             let mut fields = run.split(':').map(hex);
@@ -313,10 +313,22 @@ fn char_info(ch: char) -> (u32, usize) {
             (next(), next(), next() as usize)
         };
         CHARS.split_whitespace().map(run).collect()
-    });
+    })
+}
+
+/// `ch`'s class and display width, from [`CHARS`].
+fn char_info(ch: char) -> (u32, usize) {
+    let runs = runs();
     let ix = runs.partition_point(|run| run.0 <= u32::from(ch));
     let (_, class, width) = runs[ix - 1];
     (class, width)
+}
+
+/// The most display columns a grapheme other than a tab takes (a format
+/// character shown as `<200b>`, by [`CHARS`]).
+pub(crate) fn widest() -> usize {
+    let width = runs().iter().filter(|run| run.0 != u32::from('\t'));
+    width.map(|run| run.2).max().unwrap_or(1).max(2)
 }
 
 /// A grapheme's class is its first character's, as in nvim.
@@ -337,12 +349,15 @@ pub(crate) struct Line {
 
 impl Line {
     pub(crate) fn new(text: &Text, row: u32) -> Self {
-        let line = text.row_to_string(row);
-        let starts = line.grapheme_indices(true).map(|(ix, _)| ix).collect();
-        let start = text.row_start(row);
+        Self::of(text.row_start(row), text.row_to_string(row))
+    }
+
+    /// `text` as a row starting at byte `start`.
+    pub(crate) fn of(start: usize, text: String) -> Self {
+        let starts = text.grapheme_indices(true).map(|(ix, _)| ix).collect();
         Self {
             start,
-            text: line,
+            text,
             starts,
         }
     }
@@ -375,7 +390,7 @@ impl Line {
     }
 
     /// The display width of grapheme `ix` starting at display `column`.
-    fn width(&self, ix: usize, column: usize, tab: usize) -> usize {
+    pub(crate) fn width(&self, ix: usize, column: usize, tab: usize) -> usize {
         let grapheme = self.grapheme(ix);
         let ch = grapheme.chars().next().unwrap_or(' ');
         match ch {

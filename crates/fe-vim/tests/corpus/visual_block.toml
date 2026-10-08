@@ -1,0 +1,1136 @@
+# Blockwise visual mode cases for fe-vim's oracle: <C-v> and <C-q> with
+# motions, o and O, every operator over a block, I and A with short and
+# empty rows and $A, blocks over tabs and wide characters, blockwise
+# registers put with p and P, . after a block change, and p and P in each
+# visual kind with each kind of register. Hand-written: name, buffer (rows
+# joined with \n, no trailing newline), cursor = [row, byte column] and keys
+# in vim notation. What nvim does with each is recorded in
+# visual_block.expected.json by the ignored `record_corpus_with_neovim`
+# test; edit a case, then re-record.
+
+# <C-v> and <C-q> with motions, ending in blockwise visual mode.
+[[case]]
+name = "cv_alone"
+buffer = "abcd\nabcd"
+cursor = [0, 1]
+keys = "<C-v>"
+
+[[case]]
+name = "cq_is_cv"
+buffer = "abcd\nabcd"
+cursor = [0, 1]
+keys = "<C-q>jl"
+
+[[case]]
+name = "cv_j_l"
+buffer = "abcd\nab\n\tx\nabcd"
+cursor = [0, 1]
+keys = "<C-v>3jl"
+
+[[case]]
+name = "cv_k_h"
+buffer = "abcd\nabcd\nabcd"
+cursor = [2, 2]
+keys = "<C-v>kkh"
+
+[[case]]
+name = "cv_w"
+buffer = "ab cd\nab cd"
+cursor = [0, 0]
+keys = "<C-v>jw"
+
+[[case]]
+name = "cv_dollar"
+buffer = "abcd\nab\n\tx\nabcd"
+cursor = [0, 1]
+keys = "<C-v>3j$"
+
+[[case]]
+name = "cv_dollar_then_h"
+buffer = "abcd\nab\n\tx\nabcd"
+cursor = [0, 1]
+keys = "<C-v>3j$h"
+
+[[case]]
+name = "cv_onto_short_row"
+buffer = "abcdef\nab\nabcd"
+cursor = [0, 4]
+keys = "<C-v>j"
+
+[[case]]
+name = "cv_toggles_off"
+buffer = "abcd\n\nabcd"
+cursor = [0, 0]
+keys = "<C-v>jj<C-v>"
+
+[[case]]
+name = "cv_from_v"
+buffer = "abcd\nabcd"
+cursor = [0, 1]
+keys = "vjl<C-v>"
+
+[[case]]
+name = "cv_to_V"
+buffer = "abcd\nabcd"
+cursor = [0, 1]
+keys = "<C-v>jlV"
+
+[[case]]
+name = "cv_esc_marks"
+buffer = "abcd\nabcd\nabcd"
+cursor = [0, 3]
+keys = "<C-v>jhh<Esc>"
+
+
+# o and O.
+[[case]]
+name = "cv_o"
+buffer = "abcd\nab\n\tx\nabcd"
+cursor = [0, 1]
+keys = "<C-v>3jlo"
+
+[[case]]
+name = "cv_O"
+buffer = "abcd\nab\n\tx\nabcd"
+cursor = [0, 1]
+keys = "<C-v>3jlO"
+
+[[case]]
+name = "cv_O_wide"
+buffer = "ybecAb\t中b\nea中中\nb c"
+cursor = [0, 4]
+keys = "<C-v>jO"
+
+
+# Operators over a block.
+[[case]]
+name = "block_d"
+buffer = "abcd\nab\n\tx\nabcd"
+cursor = [0, 1]
+keys = "<C-v>3jld"
+
+[[case]]
+name = "block_x"
+buffer = "abcd\nab\n\tx\nabcd"
+cursor = [0, 1]
+keys = "<C-v>3jlx"
+
+[[case]]
+name = "block_y"
+buffer = "abcd\nab\n\tx\nabcd"
+cursor = [0, 1]
+keys = "<C-v>3jly"
+
+[[case]]
+name = "block_y_dollar"
+buffer = "abcd\nab\n\tx\nabcd"
+cursor = [0, 1]
+keys = "<C-v>3j$y"
+
+[[case]]
+name = "block_y_short_rows"
+buffer = "abcd\na\n\nabcd"
+cursor = [0, 2]
+keys = "<C-v>3jly"
+
+[[case]]
+name = "block_c"
+buffer = "abcd\nab\n\tx\nabcd"
+cursor = [0, 1]
+keys = "<C-v>3jlcXY<Esc>"
+
+[[case]]
+name = "block_c_nothing_typed"
+buffer = "abcd\na\nab\nabcd"
+cursor = [0, 1]
+keys = "<C-v>3jlc<Esc>"
+
+[[case]]
+name = "block_s"
+buffer = "abcd\nab\n\tx\nabcd"
+cursor = [0, 1]
+keys = "<C-v>3jls12<Esc>"
+
+[[case]]
+name = "block_indent"
+buffer = "abcd\nab\n\tx\nabcd"
+cursor = [0, 1]
+keys = "<C-v>3jl>"
+
+[[case]]
+name = "block_indent_blanks_before"
+buffer = "a\tb\nbAbed"
+cursor = [1, 4]
+keys = "<C-v>k>"
+
+[[case]]
+name = "block_outdent"
+buffer = "abcd\nab\n\tx\nabcd"
+cursor = [0, 1]
+keys = "<C-v>3jl<lt>"
+
+[[case]]
+name = "block_outdent_tabs"
+buffer = "a   b\na\n      b\na\tb"
+cursor = [0, 1]
+keys = "<C-v>3jl<lt>"
+
+[[case]]
+name = "block_outdent_twice"
+buffer = "a   b\na\n      b\na\tb"
+cursor = [0, 1]
+keys = "<C-v>3jl2<lt>"
+
+[[case]]
+name = "block_toggle_case"
+buffer = "abcd\na\nab\nabcd"
+cursor = [1, 0]
+keys = "<C-v>jjl~"
+
+[[case]]
+name = "block_lowercase"
+buffer = "ABCD\nABCD"
+cursor = [0, 1]
+keys = "<C-v>jlu"
+
+[[case]]
+name = "block_uppercase"
+buffer = "abcd\nab\n\tx\nabcd"
+cursor = [0, 1]
+keys = "<C-v>3jlU"
+
+[[case]]
+name = "block_replace"
+buffer = "abcd\nab\n\tx\nabcd"
+cursor = [0, 1]
+keys = "<C-v>3jlrX"
+
+[[case]]
+name = "block_replace_short_rows"
+buffer = "abcd\na\nab\nabcd"
+cursor = [0, 1]
+keys = "<C-v>3jlrX"
+
+[[case]]
+name = "block_join"
+buffer = "abcd\nab\n\tx\nabcd"
+cursor = [0, 1]
+keys = "<C-v>3jlJ"
+
+[[case]]
+name = "block_D"
+buffer = "abcd\nab\n\tx\nabcd"
+cursor = [0, 1]
+keys = "<C-v>3jlD"
+
+[[case]]
+name = "block_X"
+buffer = "abcd\nab\n\tx\nabcd"
+cursor = [0, 1]
+keys = "<C-v>3jlX"
+
+[[case]]
+name = "block_Y"
+buffer = "abcd\nab\n\tx\nabcd"
+cursor = [0, 1]
+keys = "<C-v>3jlY"
+
+[[case]]
+name = "block_C"
+buffer = "abcd\nab\n\tx\nabcd"
+cursor = [0, 1]
+keys = "<C-v>3jlC12<Esc>"
+
+[[case]]
+name = "block_S"
+buffer = "abcd\nab\n\tx\nabcd"
+cursor = [0, 1]
+keys = "<C-v>3jlS12<Esc>"
+
+[[case]]
+name = "block_R"
+buffer = "abcd\nab\nabcd\nend"
+cursor = [0, 1]
+keys = "<C-v>jjlR12<Esc>"
+
+[[case]]
+name = "block_d_undo"
+buffer = "abcd\nabcd\nabcd"
+cursor = [0, 1]
+keys = "<C-v>jldu"
+
+
+# I and A, with short and empty rows, and $A.
+[[case]]
+name = "block_I"
+buffer = "abcd\nab\n\tx\nabcd"
+cursor = [0, 1]
+keys = "<C-v>3jlIXY<Esc>"
+
+[[case]]
+name = "block_I_short_rows"
+buffer = "abcd\na\nab\nabcd"
+cursor = [0, 1]
+keys = "<C-v>3jIX<Esc>"
+
+[[case]]
+name = "block_I_empty_rows"
+buffer = "abcd\n\nabcd"
+cursor = [0, 1]
+keys = "<C-v>jjIX<Esc>"
+
+[[case]]
+name = "block_I_empty_row_at_start"
+buffer = "abcd\n\nabcd"
+cursor = [0, 0]
+keys = "<C-v>jjIX<Esc>"
+
+[[case]]
+name = "block_I_nothing_typed"
+buffer = "abcd\na\nab\nabcd"
+cursor = [0, 1]
+keys = "<C-v>3jlI<Esc>"
+
+[[case]]
+name = "block_I_line_break"
+buffer = "abcd\nab\nabcd"
+cursor = [0, 1]
+keys = "<C-v>jjIX<CR>Y<Esc>"
+
+[[case]]
+name = "block_A"
+buffer = "abcd\nab\n\tx\nabcd"
+cursor = [0, 1]
+keys = "<C-v>3jlAXY<Esc>"
+
+[[case]]
+name = "block_A_short_rows"
+buffer = "abcd\na\nab\nabcd"
+cursor = [0, 1]
+keys = "<C-v>3jlAX<Esc>"
+
+[[case]]
+name = "block_A_empty_rows"
+buffer = "abcd\n\nabcd"
+cursor = [0, 1]
+keys = "<C-v>jjAX<Esc>"
+
+[[case]]
+name = "block_dollar_A"
+buffer = "abcd\nab\n\tx\nabcd"
+cursor = [0, 1]
+keys = "<C-v>3j$AXY<Esc>"
+
+[[case]]
+name = "block_A_undo"
+buffer = "abcd\nabcd\nabcd"
+cursor = [0, 1]
+keys = "<C-v>jlAX<Esc>u"
+
+
+# Tabs and wide characters.
+[[case]]
+name = "block_d_wide"
+buffer = "a中b\nabcd\nab中\nx"
+cursor = [0, 0]
+keys = "<C-v>2jld"
+
+[[case]]
+name = "block_y_wide"
+buffer = "a中b\nabcd\nab中\nx"
+cursor = [1, 1]
+keys = "<C-v>jjy"
+
+[[case]]
+name = "block_I_wide"
+buffer = "abcd\ne中Ab\n中  \nabcd"
+cursor = [0, 2]
+keys = "<C-v>3jIZ<Esc>"
+
+[[case]]
+name = "block_A_wide"
+buffer = "abcd\ne中Ab\n中  \nabcd"
+cursor = [0, 1]
+keys = "<C-v>3jAZ<Esc>"
+
+[[case]]
+name = "block_c_wide"
+buffer = "abcd\ne中Ab\n中  \nabcd"
+cursor = [0, 2]
+keys = "<C-v>3jcZ<Esc>"
+
+[[case]]
+name = "block_replace_wide"
+buffer = "abc\n中x\nabcd"
+cursor = [0, 1]
+keys = "<C-v>jjlr中"
+
+[[case]]
+name = "block_replace_tab"
+buffer = "a\tx\nabcd"
+cursor = [1, 2]
+keys = "<C-v>krZ"
+
+[[case]]
+name = "block_I_tab"
+buffer = "\tx\nabcd\nabcd"
+cursor = [0, 0]
+keys = "jl<C-v>kIZ<Esc>"
+
+
+# A blockwise register put with p and P.
+[[case]]
+name = "block_p_short_row"
+buffer = "abcd\nab\nabcd"
+cursor = [0, 1]
+keys = "<C-v>jlyjp"
+
+[[case]]
+name = "block_p_past_end"
+buffer = "abcd\nab\nabcd"
+cursor = [0, 1]
+keys = "<C-v>jlyjjp"
+
+[[case]]
+name = "block_P"
+buffer = "abcd\nabcd\nabcd"
+cursor = [0, 1]
+keys = "<C-v>jlyjP"
+
+[[case]]
+name = "block_p_count"
+buffer = "abcd\nab\nabcd"
+cursor = [0, 1]
+keys = "<C-v>jly2p"
+
+[[case]]
+name = "block_p_dollar"
+buffer = "abcd\nab\nabcd"
+cursor = [0, 1]
+keys = "<C-v>jlyjj$p"
+
+[[case]]
+name = "block_p_empty_row"
+buffer = "abcd\nab\n\nabcd"
+cursor = [0, 1]
+keys = "<C-v>jlyjjp"
+
+[[case]]
+name = "block_P_tab"
+buffer = "a\tbc\nabcd\nabcd"
+cursor = [1, 0]
+keys = "<C-v>jlykkP"
+
+[[case]]
+name = "block_p_wide"
+buffer = "ab\nx中y\nab"
+cursor = [0, 0]
+keys = "<C-v>jjyjlp"
+
+
+# . after a block change.
+[[case]]
+name = "block_I_dot"
+buffer = "abcd\nabcd\nabcd\nabcd"
+cursor = [0, 0]
+keys = "<C-v>jlIXY<Esc>jj."
+
+[[case]]
+name = "block_A_dot"
+buffer = "abcd\nabcd\nab\nab"
+cursor = [0, 0]
+keys = "<C-v>jllAX<Esc>jj."
+
+[[case]]
+name = "block_dollar_A_dot"
+buffer = "abcd\nabcd\nabcd\nabcd"
+cursor = [0, 0]
+keys = "<C-v>j$AXY<Esc>jj."
+
+[[case]]
+name = "block_d_dot"
+buffer = "abcd\nabcd"
+cursor = [0, 1]
+keys = "<C-v>jld."
+
+[[case]]
+name = "block_d_dot_short_rows"
+buffer = "abcdef\nabcdef\nab\nab"
+cursor = [0, 0]
+keys = "<C-v>j4ldjj."
+
+[[case]]
+name = "block_d_dot_tab"
+buffer = "qqqqq\nb\t\taAb"
+cursor = [0, 0]
+keys = "<C-v>4ldjl."
+
+
+# p and P in each visual kind with each kind of register.
+[[case]]
+name = "v_p_char"
+buffer = "xy abcd\nefgh"
+cursor = [0, 0]
+keys = "ywwvlp"
+
+[[case]]
+name = "v_P_char"
+buffer = "xy abcd\nefgh"
+cursor = [0, 0]
+keys = "ywwvlP"
+
+[[case]]
+name = "v_p_char_named"
+buffer = "xy abcd\nefgh"
+cursor = [0, 0]
+keys = "\"ayewwvl\"ap"
+
+[[case]]
+name = "v_p_char_to_end"
+buffer = "xy abcd\nefgh"
+cursor = [0, 0]
+keys = "ywwv$p"
+
+[[case]]
+name = "v_p_line"
+buffer = "xy\nabcd\nefgh"
+cursor = [0, 0]
+keys = "yyjvlp"
+
+[[case]]
+name = "v_P_line"
+buffer = "  xy\nabcd"
+cursor = [0, 0]
+keys = "yyjvlP"
+
+[[case]]
+name = "v_p_block"
+buffer = "xy\nabcd\nefgh\nijkl"
+cursor = [0, 0]
+keys = "j<C-v>jly0kvp"
+
+[[case]]
+name = "V_p_char"
+buffer = "xy abcd\nefgh"
+cursor = [0, 0]
+keys = "yejVp"
+
+[[case]]
+name = "V_P_char"
+buffer = "  xy\nabcd"
+cursor = [0, 0]
+keys = "y$jVP"
+
+[[case]]
+name = "V_p_line"
+buffer = "xy\nabcd\nefgh"
+cursor = [0, 0]
+keys = "yyjVjp"
+
+[[case]]
+name = "V_P_line"
+buffer = "xy\nabcd\nefgh"
+cursor = [0, 0]
+keys = "yyjVP"
+
+[[case]]
+name = "V_p_block"
+buffer = "xy\nabcd\nefgh\nijkl"
+cursor = [0, 0]
+keys = "j<C-v>jlyGVp"
+
+[[case]]
+name = "V_P_block_count"
+buffer = "xy\nabcd\nefgh\nijkl"
+cursor = [1, 0]
+keys = "<C-v>jlyggV2P"
+
+[[case]]
+name = "cv_p_char"
+buffer = "xy\nabcd\nefgh\nijkl"
+cursor = [0, 0]
+keys = "ye<C-v>jjlp"
+
+[[case]]
+name = "cv_P_char"
+buffer = "xy\nabcd\na\nabcd"
+cursor = [0, 0]
+keys = "yejl<C-v>jjlP"
+
+[[case]]
+name = "cv_p_char_count"
+buffer = "xy\nabcd\nefgh\nijkl"
+cursor = [0, 0]
+keys = "ye<C-v>jjl2p"
+
+[[case]]
+name = "cv_p_line"
+buffer = "xy\nabcd\nefgh\nijkl"
+cursor = [0, 0]
+keys = "yyjl<C-v>jlp"
+
+[[case]]
+name = "cv_p_line_cursor_above"
+buffer = "xy\nabcd\nefgh\nijkl"
+cursor = [0, 0]
+keys = "yyjjl<C-v>klp"
+
+[[case]]
+name = "cv_P_line"
+buffer = "xy\nabcd\nefgh\nijkl"
+cursor = [0, 0]
+keys = "yyjl<C-v>jlP"
+
+[[case]]
+name = "cv_p_block"
+buffer = "xy\nabcd\nefgh\nijkl"
+cursor = [1, 0]
+keys = "<C-v>jlyjl<C-v>jlp"
+
+[[case]]
+name = "cv_P_block_taller"
+buffer = "xy\nabcd\nefgh\nijkl"
+cursor = [1, 0]
+keys = "<C-v>jlykl<C-v>jjP"
+
+[[case]]
+name = "cv_p_block_one_cell"
+buffer = "xy\nabcd\nefgh\nijkl"
+cursor = [1, 0]
+keys = "<C-v>jlykl<C-v>p"
+
+[[case]]
+name = "cv_p_empty_register"
+buffer = "abcd\nabcd"
+cursor = [0, 1]
+keys = "<C-v>jlp"
+
+# Review follow-ups: the paste matrix's P cases, . after p and P over a
+# block, appending to a block register, r<Tab>, I with nothing typed, tabs
+# in a put block's rows, < past a wide character, an empty block yank.
+[[case]]
+name = "cv_P_block"
+buffer = "xy\nabcd\nefgh\nijkl"
+cursor = [0, 0]
+keys = "j<C-v>jly0kvP"
+
+[[case]]
+name = "block_P_short_row_and_past_end"
+buffer = "abcd\nabcd\nabcd\na"
+cursor = [0, 2]
+keys = "<C-v>jjlyjjjP"
+
+[[case]]
+name = "block_P_past_end"
+buffer = "abcd\nabcd\nab"
+cursor = [0, 1]
+keys = "<C-v>jlyjjP"
+
+[[case]]
+name = "cv_p_dot"
+buffer = "xy\nabcdef\nghijkl\nmnopqr"
+cursor = [0, 0]
+keys = "yejl<C-v>jlpj."
+
+[[case]]
+name = "cv_P_dot"
+buffer = "xy\nabcdef\nghijkl\nmnopqr"
+cursor = [0, 0]
+keys = "yejl<C-v>jlPj."
+
+[[case]]
+name = "block_append_to_block_register"
+buffer = "abcd\nefgh"
+cursor = [0, 0]
+keys = "<C-v>jl\"ayl<C-v>jl\"Ay"
+
+[[case]]
+name = "chars_append_to_block_register"
+buffer = "abcd\nefgh"
+cursor = [0, 0]
+keys = "<C-v>jl\"ayvl\"Ay"
+
+[[case]]
+name = "block_append_to_chars_register"
+buffer = "abcd\nefgh"
+cursor = [0, 0]
+keys = "vl\"ay<C-v>jl\"Ay"
+
+[[case]]
+name = "block_replace_with_tab"
+buffer = "abc\ndef"
+cursor = [0, 1]
+keys = "<C-v>jr<Tab>"
+
+[[case]]
+name = "block_replace_with_tab_wider"
+buffer = "abcd\ndefg"
+cursor = [0, 1]
+keys = "<C-v>jlr<Tab>"
+
+[[case]]
+name = "block_I_nothing_typed_split_tab"
+buffer = "a\tb\nabcd"
+cursor = [0, 2]
+keys = "<C-v>j2hI<Esc>"
+
+[[case]]
+name = "block_I_nothing_typed_then_undo"
+buffer = "xa\tb\nabcd"
+cursor = [0, 0]
+keys = "x$<C-v>j2hI<Esc>u"
+
+[[case]]
+name = "block_p_tab_row_unpadded"
+buffer = "abcdefgh\na\tX\n0123456789\n0123456789"
+cursor = [0, 0]
+keys = "<C-v>jlllyjj2p"
+
+[[case]]
+name = "block_p_leading_tab_row_padded"
+buffer = "abcdefgh\n\tX\n0123456789\n0123456789"
+cursor = [0, 0]
+keys = "<C-v>jllllyjjp"
+
+[[case]]
+name = "block_outdent_wide_then_blanks"
+buffer = "ab中  \nabcdef"
+cursor = [0, 6]
+keys = "<C-v>j2h<lt>"
+
+[[case]]
+name = "block_P_empty_yank_pads"
+buffer = "\nx"
+cursor = [0, 0]
+keys = "<C-v>yjP"
+
+[[case]]
+name = "block_p_empty_yank"
+buffer = "\nx"
+cursor = [0, 0]
+keys = "<C-v>yjp"
+
+# Review round 2: appending to a block keeps its width, tabs in a put
+# block's rows, < past a wide character with text after, I with a tab
+# straddling the first row's column.
+[[case]]
+name = "chars_append_keeps_block_width"
+buffer = "ab\nabcd"
+cursor = [0, 0]
+keys = "<C-v>\"ayjvll\"Ay"
+
+[[case]]
+name = "block_append_keeps_block_width"
+buffer = "ab\nabcd"
+cursor = [0, 0]
+keys = "<C-v>\"ay<C-v>jl\"Ay"
+
+[[case]]
+name = "block_p_tab_row_wide_block"
+buffer = "abcdefghij\na\tX\nabcdefghij\n0123456789\n0123456789\n0123456789"
+cursor = [0, 0]
+keys = "<C-v>jj9ly3j2p"
+
+[[case]]
+name = "block_P_tab_row_padded"
+buffer = "abcdefghij\nab\tX\nabcdefghij\n0123456789\n0123456789\n0123456789"
+cursor = [0, 0]
+keys = "<C-v>jj7ly3jlP"
+
+[[case]]
+name = "cv_p_block_tab_row"
+buffer = "abcdefgh\na\tX\nabcdefgh\n0123456789\n0123456789"
+cursor = [0, 0]
+keys = "<C-v>jj7lyjjjl<C-v>jlp"
+
+[[case]]
+name = "block_outdent_wide_then_text"
+buffer = "ab中 x\nabcdefghij"
+cursor = [0, 5]
+keys = "<C-v>jh<lt>"
+
+[[case]]
+name = "block_outdent_wide_kept"
+buffer = "ab中      x\nabcdefghij"
+cursor = [0, 5]
+keys = "<C-v>jh<lt>"
+
+[[case]]
+name = "block_outdent_wide_twice"
+buffer = "ab中      x\nabcdefghij"
+cursor = [0, 5]
+keys = "<C-v>jh2<lt>"
+
+[[case]]
+name = "block_I_first_row_tab"
+buffer = "a\tb\nabcdef"
+cursor = [0, 2]
+keys = "<C-v>j2hIX<Esc>"
+
+[[case]]
+name = "block_s_first_row_tab"
+buffer = "y\tbyd \n\nbc\ndyb中b中\t\t"
+cursor = [0, 2]
+keys = "<C-v>2jsq<Esc>"
+
+# Lines whose first is empty put over each kind of selection.
+[[case]]
+name = "V_p_line_empty_first"
+buffer = "a\n\nb"
+cursor = [1, 0]
+keys = "yjGVp"
+
+[[case]]
+name = "V_p_line_empty_first_count"
+buffer = "\na"
+cursor = [0, 0]
+keys = "yyjV2p"
+
+[[case]]
+name = "V_p_line_empty_first_marks"
+buffer = "a\n\nb\nc\nd"
+cursor = [1, 0]
+keys = "yjjjVp"
+
+[[case]]
+name = "v_p_line_empty_first"
+buffer = "a\n\nb\ncd"
+cursor = [1, 0]
+keys = "yjGlvp"
+
+[[case]]
+name = "cv_P_line_empty_first"
+buffer = "a\n\nb\ncd\nef"
+cursor = [1, 0]
+keys = "yjjj<C-v>jP"
+
+[[case]]
+name = "cv_p_line_empty_first"
+buffer = "a\n\nb\ncd\nef"
+cursor = [1, 0]
+keys = "yjjj<C-v>jp"
+
+# . after a change to the rows' ends, from a caret right of a later row's end.
+[[case]]
+name = "block_D_dot_short_last"
+buffer = "abcd\nabcd\nabcd\nx"
+cursor = [3, 0]
+keys = "xgg0l<C-v>jDjjl."
+
+[[case]]
+name = "block_D_dot_shorter_last"
+buffer = "abcd\nabcd\nabcd\nab"
+cursor = [0, 1]
+keys = "<C-v>jDjjll."
+
+[[case]]
+name = "block_dollar_d_dot_short_last"
+buffer = "abcd\nabcd\nabcd\nab"
+cursor = [0, 1]
+keys = "<C-v>j$djjll."
+
+[[case]]
+name = "block_C_dot_short_last"
+buffer = "abcd\nabcd\nabcd\nab"
+cursor = [0, 1]
+keys = "<C-v>jCX<Esc>jjll."
+
+# A count before I and A.
+[[case]]
+name = "block_I_count"
+buffer = "abcd\nabcd\nabcd"
+cursor = [0, 1]
+keys = "<C-v>j3IX<Esc>"
+
+[[case]]
+name = "block_A_count"
+buffer = "abcd\nabcd\nabcd"
+cursor = [0, 1]
+keys = "<C-v>j3AX<Esc>"
+
+[[case]]
+name = "block_I_count_dot"
+buffer = "abcd\nabcd\nabcd\nabcd"
+cursor = [0, 1]
+keys = "<C-v>j2IXY<Esc>jj."
+
+[[case]]
+name = "block_dollar_A_count"
+buffer = "abcd\nab\nabc"
+cursor = [0, 1]
+keys = "<C-v>jj$2A;<Esc>"
+
+[[case]]
+name = "block_c_count"
+buffer = "abcd\nabcd\nabcd"
+cursor = [0, 1]
+keys = "<C-v>jl3cX<Esc>"
+
+# O on a block one tab wide, and after $.
+[[case]]
+name = "cv_O_tab"
+buffer = "\t\nb 中\t"
+cursor = [0, 0]
+keys = "<C-v>Ojy"
+
+[[case]]
+name = "cv_dollar_O"
+buffer = "abcd\nab\nabcde"
+cursor = [0, 1]
+keys = "<C-v>jj$Oy"
+
+[[case]]
+name = "cv_dollar_O_j"
+buffer = "abcd\nab\nabcde\nabcdef"
+cursor = [0, 1]
+keys = "<C-v>j$Ojy"
+
+# A block appended to lines, and lines to a block, each ending in an empty row.
+[[case]]
+name = "cv_append_block_to_lines"
+buffer = "a\nb\nx"
+cursor = [2, 0]
+keys = "xgg\"ayyj<C-v>j\"Ay"
+
+[[case]]
+name = "cv_append_lines_to_block"
+buffer = "a\n\nb"
+cursor = [0, 0]
+keys = "<C-v>j\"ayG\"Ayy"
+
+# Lines appended to characters ending in a line break.
+[[case]]
+name = "v_append_lines_to_chars_ending_in_break"
+buffer = "abcd\nefgh\nijkl\nmnop"
+cursor = [0, 1]
+keys = "v$\"ayG\"Ayy"
+
+# . from a caret whose goal is the row's end ($).
+[[case]]
+name = "block_A_dot_from_dollar"
+buffer = "abcdef\nabcdef\nab\nabcdefgh"
+cursor = [0, 1]
+keys = "<C-v>jlAX<Esc>jj$."
+
+[[case]]
+name = "block_d_dot_from_dollar"
+buffer = "abcdef\nabcdef\nab\nabcdefgh"
+cursor = [0, 1]
+keys = "<C-v>jldjj$."
+
+[[case]]
+name = "block_r_dot_from_dollar"
+buffer = "abcdef\nabcdef\nab\nabcdefgh"
+cursor = [0, 1]
+keys = "<C-v>jlrxjj$."
+
+# O with the cursor on an empty row.
+[[case]]
+name = "cv_OO_empty_row"
+buffer = "abcdefgh\nab\n\nabcdefgh"
+cursor = [0, 1]
+keys = "<C-v>jjOOy"
+
+[[case]]
+name = "cv_dollar_O_empty_row"
+buffer = "abcdefgh\nab\n\nabcdefgh"
+cursor = [0, 5]
+keys = "<C-v>$jjOy"
+
+[[case]]
+name = "cv_O_empty_row"
+buffer = "abcdefgh\nab\n\nabcdefgh"
+cursor = [0, 1]
+keys = "<C-v>jjOy"
+
+[[case]]
+name = "cv_O_empty_row_j"
+buffer = "abcdefgh\nab\n\nabcdefgh"
+cursor = [0, 3]
+keys = "<C-v>jjOjy"
+
+[[case]]
+name = "cv_O_short_row_k"
+buffer = "abcdefgh\nab\nabcdefgh"
+cursor = [0, 5]
+keys = "<C-v>jOky"
+
+[[case]]
+name = "cv_OO_short_row_j"
+buffer = "abcdefgh\nab\nabcdefgh"
+cursor = [0, 5]
+keys = "<C-v>jOOjy"
+
+[[case]]
+name = "cv_O_short_row_left"
+buffer = "abcdefgh\nab\nabcdefgh"
+cursor = [2, 0]
+keys = "<C-v>lllllkOy"
+
+[[case]]
+name = "cv_dollar_O_short_row_j"
+buffer = "abcdefgh\nab\nabcdefgh"
+cursor = [0, 3]
+keys = "<C-v>$jOjy"
+
+# Esc from a visual mode aims at the column the caret is at, after $ too.
+[[case]]
+name = "v_esc_j_from_short_row"
+buffer = "abcdefghijk\nab\nabcdefghijk"
+cursor = [0, 8]
+keys = "vj<Esc>j"
+
+[[case]]
+name = "cv_A_dollar_v_esc_dot"
+buffer = "abcdefgh\nabcdefgh\nabcdefgh\nabcdefgh"
+cursor = [0, 1]
+keys = "<C-v>jlAXY<Esc>$v<Esc>."
+
+[[case]]
+name = "cv_d_dollar_v_esc_dot"
+buffer = "abcdefgh\nabcdefgh\nabcdefgh\nabcdefgh"
+cursor = [0, 1]
+keys = "<C-v>jld$v<Esc>j."
+
+[[case]]
+name = "cv_dollar_esc_dot"
+buffer = "abcdefgh\nabcdefgh\nabcdefgh\nabcdefgh"
+cursor = [0, 1]
+keys = "<C-v>jld$<C-v><Esc>j."
+
+# O twice where a tab or wide character at the cursor spans the block.
+[[case]]
+name = "cv_OO_tab_spans"
+buffer = "\tx\nabcdefgh"
+cursor = [1, 0]
+keys = "<C-v>kOOjld"
+
+[[case]]
+name = "cv_OO_tab_inside"
+buffer = "a\tb\nabcdefgh\na\tb"
+cursor = [1, 3]
+keys = "<C-v>jOOy"
+
+[[case]]
+name = "cv_OO_wide"
+buffer = "世界abc\nabcdef\n世界"
+cursor = [1, 0]
+keys = "<C-v>jOOy"
+
+# p and P with nothing in the register over whole lines: the lines go.
+[[case]]
+name = "V_p_unset_first"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "Vp"
+
+[[case]]
+name = "V_p_unset_middle"
+buffer = "abc\ndef\nghi"
+cursor = [1, 1]
+keys = "Vp"
+
+[[case]]
+name = "V_p_unset_last"
+buffer = "abc\ndef\nghi"
+cursor = [2, 2]
+keys = "Vp"
+
+[[case]]
+name = "V_P_unset_first"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "VP"
+
+[[case]]
+name = "V_P_unset_last_two"
+buffer = "abc\n  def\nghi"
+cursor = [1, 0]
+keys = "VjP"
+
+[[case]]
+name = "V_p_unset_all"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = "VGp"
+
+[[case]]
+name = "V_p_empty_chars"
+buffer = "abc\ndef\nghi"
+cursor = [1, 0]
+keys = "\"ay0\"_ddV\"ap"
+
+[[case]]
+name = "V_p_empty_chars_last"
+buffer = "abc\n\nghi"
+cursor = [2, 0]
+keys = "ky$jVp"
+
+# `"_` holds empty characters, not nothing: over lines, p and P leave an
+# empty row, and p still keeps what it replaced.
+[[case]]
+name = "V_p_black_hole_first"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "V\"_p"
+
+[[case]]
+name = "V_p_black_hole_middle"
+buffer = "abc\ndef\nghi"
+cursor = [1, 1]
+keys = "V\"_p"
+
+[[case]]
+name = "V_p_black_hole_last"
+buffer = "abc\ndef\nghi"
+cursor = [2, 2]
+keys = "V\"_p"
+
+[[case]]
+name = "V_P_black_hole_first"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "V\"_P"
+
+[[case]]
+name = "V_P_black_hole_middle"
+buffer = "abc\ndef\nghi"
+cursor = [1, 1]
+keys = "V\"_P"
+
+[[case]]
+name = "V_P_black_hole_last"
+buffer = "abc\ndef\nghi"
+cursor = [2, 2]
+keys = "V\"_P"
+
+[[case]]
+name = "V_p_black_hole_last_undo"
+buffer = "abc\ndef\nghi"
+cursor = [2, 2]
+keys = "V\"_pu"
+
+# A count puts characters over lines once per row.
+[[case]]
+name = "V_p_black_hole_count"
+buffer = "abc\ndef\nghi"
+cursor = [1, 0]
+keys = "V2\"_p"
+
+[[case]]
+name = "V_p_chars_count"
+buffer = "abc\ndefg\nhij\nklmn"
+cursor = [1, 0]
+keys = "ylVj3p"
+
+[[case]]
+name = "V_P_chars_count"
+buffer = "abc\ndefg\nhij\nklmn"
+cursor = [1, 0]
+keys = "ylV2P"
+
+[[case]]
+name = "V_p_chars_rows_count"
+buffer = "abc\ndefg\nhij\nklmn"
+cursor = [0, 1]
+keys = "vjyjjV2p"

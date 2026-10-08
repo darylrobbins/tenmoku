@@ -5,8 +5,8 @@ use fe_command::{DispatchError, Dispatched, Invocation, Registry, Source};
 use fe_editor::{EditorModel, commands::HeadlessHost};
 
 use crate::{
-    KeyError, Mode, Registers, Step, VimCommands, VimKey, VimState, VimTarget, context, parse_keys,
-    registry,
+    KeyError, Mode, Registers, Splits, Step, VimCommands, VimKey, VimState, VimTarget, context,
+    parse_keys, registry,
 };
 
 /// An [`EditorModel`] with a [`HeadlessHost`], a [`VimState`], registers
@@ -97,6 +97,16 @@ impl HeadlessVim {
             _ => return Err(FeedError::Forwarded(key)),
         }
         Ok(())
+    }
+
+    /// Runs `command` as the host runs an editor command in insert mode,
+    /// splitting the session around it ([`VimState::split_session`]).
+    pub fn split_session<R>(
+        &mut self,
+        splits: Splits,
+        command: impl FnOnce(&mut EditorModel) -> R,
+    ) -> R {
+        self.state.split_session(&mut self.model, splits, command)
     }
 
     /// Paints the visual selection again from the vim cursor and anchor, as

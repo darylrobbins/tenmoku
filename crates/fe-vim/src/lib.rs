@@ -7,7 +7,8 @@
 //! vim's commands (`vim.move`, `vim.operate`, `vim.put`, `vim.insert`,
 //! `vim.join`, `vim.replace_char`, `vim.toggle_case`, `vim.undo`, `vim.redo`,
 //! `vim.repeat`, `vim.visual`, `vim.visual_exit`, `vim.visual_swap`,
-//! `vim.reselect` and `vim.select`), dispatched through [`registry`] against
+//! `vim.visual_put`, `vim.reselect` and `vim.select`), dispatched through
+//! [`registry`] against
 //! a [`VimTarget`], which carries the host's shared [`Registers`].
 //! [`VimState`] holds the mode, the pending value, the goal columns, the
 //! last character search, the open insert session, the visual selection and
@@ -40,6 +41,41 @@
 //! [`VimState::select_visual`]. Leaving a visual mode by any path keeps its
 //! extent for `gv` and as `'<` and `'>` ([`VimState::mark`]). `.` repeats a
 //! change over a selection on as much text from the caret.
+//!
+//! Blockwise visual mode (`<C-v>` or `<C-q>`; `vim.mode` is `visual_block`)
+//! selects the rectangle of display columns between the anchor and the
+//! cursor, each taking its grapheme's columns, over the rows between them;
+//! after `$` each row to its end, until a horizontal motion. On the model
+//! it's one selection per row, over the graphemes the rectangle overlaps (a
+//! row ending before it gets none), so the editor paints and copies it
+//! (`cmd-c` joins the rows with `\n`). `o` goes to the opposite corner and
+//! `O` to the other one on the cursor's row. Operators act on each row's
+//! part (`:help blockwise-operators`): a tab or wide character only partly
+//! inside counts as spaces for its columns there, which a delete leaves for
+//! its columns outside. `d x y X Y` and `D` (to the rows' ends) write a
+//! blockwise [`Register`], its rows joined by `\n` with its width
+//! (`Register::block_width`), and `p` and `P` put one as a block from the
+//! caret's column, padding short rows (and each row to the block's width,
+//! a tab in it counting a whole tab stop, as nvim measures it) and adding
+//! rows past the end. `c s C`
+//! delete it and `I` and `A` (`$A` at each row's end) open an insert session
+//! on its first row whose text `Esc` types on the other rows too, in the
+//! same transaction, where the block's column fell on each as the session
+//! opened: on those still as they were then (rows another origin put in or
+//! took out around them don't matter), so a row whose text they changed
+//! meanwhile, or joined to another, gets none, and their text is never
+//! touched. As in nvim, what `Esc` types there is what the first row grew
+//! by, taken from where typing began on it, and the cursor keys
+//! ([`VimState::split_session`]) keep the block: typing begun at or left of
+//! the block's left column for `A` (left of the row's end for `$A`), or
+//! right of `I`'s column if none began at it, moves where that text comes
+//! from and goes, and it goes in if the cursor is on that row then (`c`:
+//! wherever it is). Another origin's edit on that row before the end of
+//! that text leaves it unknown, and nothing goes on the other rows. `S R`
+//! and `J` take its rows. In
+//! every visual mode `p` and `P` (`vim.visual_put`) replace the selection
+//! with a register in one edit, `p` leaving what it replaced in the
+//! registers as a delete would.
 //!
 //! # Clean room
 //!
@@ -75,14 +111,15 @@
 //! [`VimState::line_break`], as `HeadlessVim` does, so the indentation a
 //! line break copies is 'autoindent'.
 //!
-//! The second batch starts with this card, charwise and linewise visual
-//! mode: `v V`, operators over the selection, `o`, `gv`, `'<` and `'>`, and
-//! `.` after a visual change. Later cards add blockwise visual mode (`<C-v>`)
-//! with `p` and `P` over a selection and blockwise registers; search; ex
-//! commands (`:'<,'>` among them); the command line; the clipboard; marks
-//! and macros; replace mode, increment and folds; scrolling; and the GPUI
-//! wiring of the visual modes (their key bindings, painting the selection
-//! and the block cursor, mouse drags and the status bar).
+//! The second batch started with charwise and linewise visual mode: `v V`,
+//! operators over the selection, `o`, `gv`, `'<` and `'>`, and `.` after a
+//! visual change. Its second card added blockwise visual mode (`<C-v>`),
+//! block insert and append, blockwise registers, and `p` and `P` in every
+//! visual mode. Later cards add search; ex commands (`:'<,'>` among them);
+//! the command line; the clipboard; marks and macros; replace mode,
+//! increment and folds; scrolling; and the GPUI wiring of the visual modes
+//! (their key bindings, painting the selection and the block cursor, mouse
+//! drags and the status bar).
 //!
 //! # Known limits
 //!
@@ -99,12 +136,47 @@
 //!   the mark down, as a row opened above does, where nvim keeps it for a
 //!   charwise put.
 //! - A count before `.` after a visual change replaces the operator's count
-//!   (how many times `>` and `<` shift), not the amount of text.
+//!   (how many times `>` and `<` shift, or `I` and `A` over a block type),
+//!   not the amount of text; nvim keeps the change's own count.
 //! - In a visual mode, `aw` growing backwards onto a word after the row's
 //!   indentation takes all of the indentation.
 //! - After `.` of a change over a selection with `>` or `<`, the caret goes
 //!   to the column the repeated selection ended at, which can differ from
 //!   nvim's past wide characters and tabs.
+//! - `I` and `A` in charwise and linewise visual mode do nothing; nvim's
+//!   (undocumented) behaviour there isn't followed.
+//! - A blockwise register goes in once, at the primary caret, leaving one
+//!   caret.
+//! - A yank or delete over a block takes at most 64 MiB, the most one put
+//!   may put in. Rows ending before a block take spaces as wide as it, so
+//!   one over a wide block and many short rows can take far more than the
+//!   text holds: past that it's refused before anything changes (into `_`,
+//!   which writes nothing, it goes ahead). Appending to a register (`"A`)
+//!   isn't bounded so.
+//! - Where nvim's blockwise commands look like accidents, fe-vim does the
+//!   regular thing: `A` on a block's first row past a wide character
+//!   straddling its column types the whole character on the other rows
+//!   (nvim types the last bytes of it); `p` and `P` over a block after `$`
+//!   with characters put them at the block's left column; and the goal
+//!   column after an operator over a block whose corner is a tab is the
+//!   tab's.
+//! - After the cursor keys split a session over a block, `Esc` types
+//!   nothing on another of its rows the session typed on meanwhile (nvim
+//!   types there too, at the block's column), and what it types on the
+//!   others is undone with the text typed since the last split, where nvim
+//!   undoes `c`'s with the change itself: `fe_buffer` can't add to a closed
+//!   undo step. With nothing typed since, undo puts the caret where typing
+//!   resumed, not where `Esc` left it. After the session's own edit joins
+//!   the row below to the block's first row, `Esc` types nothing on the
+//!   others, as nvim does after `I` (after `A` and `c` nvim types the text
+//!   the join brought too), unless the session typed that line break. After
+//!   a line break typed on the first row, nvim numbers the block's rows
+//!   from it, typing on the rows the line break put in and not on the
+//!   block's last; fe-vim types on the block's own rows. Edits from another view of the buffer with the
+//!   session's origin count as the session's own, as everywhere in insert
+//!   mode. Where a tab or a wide character lies between the block's column
+//!   and where typing began on its first row, nvim mixes bytes and display
+//!   columns (typing nothing, or broken bytes); fe-vim counts columns.
 //!
 //! - Undo and redo put the carets back from fe-vim's own record of where
 //!   each change began, as (row, byte column) pairs. Another origin's edits
@@ -190,7 +262,7 @@ mod visual;
 
 pub use args::{
     CountArgs, InsertArgs, InsertAt, Motion, MoveArgs, OperateArgs, Operator, PutArgs, RangeClass,
-    ReplaceCharArgs, SelectArgs, Target, TextObject, VisualArgs, VisualKind,
+    ReplaceCharArgs, SelectArgs, SwapArgs, Target, TextObject, VisualArgs, VisualKind,
 };
 pub use commands::{VimCommands, VimTarget, registry};
 pub use headless::{FeedError, HeadlessVim};

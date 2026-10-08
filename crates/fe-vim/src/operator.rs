@@ -47,6 +47,28 @@ pub(crate) fn apply<S: Into<Arc<str>>>(
     applied
 }
 
+/// [`apply`] for edits in `steps`, each in the text the one before leaves,
+/// as one transaction: the model catches up (measuring text) only once the
+/// last is in, so nothing edits the buffer between them. Returns the
+/// transaction once it closes, if it changed anything.
+pub(crate) fn apply_steps(
+    model: &mut EditorModel,
+    steps: impl IntoIterator<Item = Vec<(Range<usize>, String)>>,
+    origin: Origin,
+) -> (Option<TransactionId>, BufferSnapshot) {
+    let applied = {
+        let mut buffer = model.buffer_mut();
+        buffer.start_transaction(origin.clone());
+        for edits in steps {
+            buffer.edit(edits, origin.clone());
+        }
+        (buffer.end_transaction(), buffer.snapshot())
+    };
+    #[cfg(test)]
+    measured(model, true);
+    applied
+}
+
 /// Catches the model up (`EditorModel::sync_display`), which measures text
 /// as [`apply`] does.
 pub(crate) fn sync(model: &mut EditorModel) {
@@ -522,7 +544,7 @@ fn operate_unless_failing(
                 Target::TextObject(object) => {
                     text_object::select(&text, head, object, args.count.unwrap_or(1))
                 }
-                Target::Selection | Target::SelectedLines => {
+                Target::Selection | Target::SelectedLines | Target::SelectedToEnd => {
                     selected.clone().unwrap_or(Span::Failed)
                 }
             };
@@ -872,7 +894,8 @@ fn put_unless_failing(
         .read(args.register, &mut **host)
         .map_err(|error| CommandError::new(error.to_string()))?;
     state.last_change = Some(Change::Put(args).into());
-    let Some(value) = value.filter(|value| !value.text.is_empty()) else {
+    let Some(value) = value.filter(|value| !value.text.is_empty() || value.block_width.is_some())
+    else {
         return Ok(Dispatched::new(Effect::Nothing));
     };
     // What the buffer will hold: its line breaks, and lines ending in one
@@ -895,6 +918,37 @@ fn put_unless_failing(
             "putting {count} copies of {} bytes would insert more than {MAX_PUT} bytes",
             payload.len()
         )));
+    }
+    if let Some(width) = value.block_width {
+        // A block goes in once, from the primary caret's column: after its
+        // grapheme for `p` (on an empty row, at its start), or at it for `P`.
+        let head = Cursor::at(&text, model.primary_selection().head());
+        let tab = model.tab_size().max(1);
+        let column = match (args.before, head.line.len()) {
+            (false, len) if len > 0 => {
+                let start = head.line.start_column(head.ix, tab);
+                start + head.line.width(head.ix, start, tab)
+            }
+            _ => head.line.start_column(head.ix, tab),
+        };
+        if visual::put_size(&payload, (width, count), column, tab).is_none_or(|size| size > MAX_PUT)
+        {
+            return Err(CommandError::new(format!(
+                "putting {count} copies of a {width} column block would insert more than {MAX_PUT} bytes"
+            )));
+        }
+        let rows: Vec<&str> = payload.split('\n').collect();
+        let (edits, [start, ..]) =
+            visual::put_block(&text, (head.row, column), &rows, (width, count), tab);
+        let (transaction, snapshot) = apply(model, edits, origin(actor));
+        if let Some(id) = transaction {
+            state.carets.record(id, carets_before);
+        }
+        land(model, &snapshot, [start]);
+        state.goals = None;
+        return Ok(
+            Dispatched::new(Effect::Changed).with_transactions(transaction.into_iter().collect())
+        );
     }
     let row = |offset: usize| text.offset_to_point(offset).row;
     // Each caret's insertion point, text, and where its caret goes: an

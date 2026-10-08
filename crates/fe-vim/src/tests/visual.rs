@@ -149,7 +149,7 @@ fn reducer_and_commands() {
     );
     // A prefix's `<Esc>` cancels only it; what isn't vim's here is forwarded.
     assert_eq!(run_visual("f<Esc>"), Step::Cancel);
-    for keys in ["p", ".", "I", "q", "<C-r>"] {
+    for keys in [".", "I", "q", "<C-r>"] {
         assert_eq!(run_visual(keys), Step::Forward, "{keys}");
     }
     assert_eq!(Pending::visual().kind(), None);

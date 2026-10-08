@@ -40,6 +40,7 @@ use crate::{
     Registers, Target, VimState, VimTarget, Write, history,
     motion::Cursor,
     operator::{MAX_PUT, Op, Span, apply, caret, grapheme_len, merge, row_end, sync},
+    visual,
 };
 
 /// An open insert session.
@@ -58,6 +59,312 @@ pub(crate) struct Session {
     opens: bool,
     /// It continues a session a split ended ([`VimState::split_session`]).
     resumed: bool,
+    /// Over a block, the block, which the sessions splits resume keep.
+    block: Option<Block>,
+}
+
+/// A block's rows below its first, where `Esc` types a session's text too
+/// (`:help v_b_I`, `v_b_A` and `v_b_c`): what its first row grew by, taken
+/// from where typing began on it, as nvim takes it ([`FirstRow`]).
+#[derive(Clone, Debug)]
+pub(crate) struct BlockRows {
+    /// Those reaching the block's column, or padded to it (`A`).
+    pub(crate) rows: Vec<BlockRow>,
+    /// What the text takes before it: on the first row, `A` went after a tab
+    /// in the block straddling the column, which nvim types with the text.
+    pub(crate) prefix: String,
+    /// Where `I` and `A` leave the caret once text went in: this display
+    /// column on the first row, or where typing began left of it (for `I`,
+    /// right of it too). `c` steps back as `Esc` does.
+    pub(crate) corner: Option<usize>,
+    /// The text the opening edits left, which the rows are placed in.
+    pub(crate) text: Text,
+    pub(crate) edge: Edge,
+    pub(crate) tab: usize,
+}
+
+/// Where `Esc` takes the text it types on a block's other rows from, and
+/// where it types it there, once typing began elsewhere on the first row
+/// (after a split: see [`VimState::split_session`]), as nvim does.
+#[derive(Copy, Clone, Debug)]
+pub(crate) enum Edge {
+    /// `c`: at the block's left column.
+    Fixed,
+    /// `I`: at the block's left column, or at the leftmost typing began
+    /// right of it, if none began at it.
+    Left,
+    /// `A`: past the block's right edge, or where typing began at or left
+    /// of the block's left column, as `I` types there.
+    Right,
+    /// `$A`: at each row's end, or as far left of the end of the block's
+    /// widest row, this wide, as typing began left of the first row's end
+    /// (a row short of that at its end); nowhere if that's further.
+    End(usize),
+}
+
+/// A block a session types on, and its first row as followed since the
+/// block's first session opened.
+#[derive(Clone, Debug)]
+struct Block {
+    rows: BlockRows,
+    /// Shared by clones of the state, and the sessions splits resume.
+    first: Arc<Mutex<FirstRow>>,
+}
+
+/// A block's first row, followed through every edit from the opening of
+/// the block's first session to its `Esc`: what the session's own edits
+/// grew it by (the row's length, as nvim measures it, so text after a line
+/// break typed on it isn't) is what `Esc` takes, from where typing began on
+/// it, as nvim does after the cursor keys split the session. Another
+/// origin's edit on it before the end of what's taken leaves where that is
+/// unknown, and so does the session's own edit taking out the line break
+/// ending it, unless the session typed that line break (joining the row
+/// below to it): `Esc` then types nothing on the other rows. Rows put in
+/// above it or taken out don't count.
+struct FirstRow {
+    events: Subscription,
+    /// The text as of the last batch followed, and where the row starts in
+    /// it.
+    text: Text,
+    start: usize,
+    /// The session typed the line break ending it now.
+    typed_ending: bool,
+    /// Where typing began on it when the block's session opened, from its
+    /// start.
+    column: usize,
+    /// How much the session's own edits grew its length.
+    grown: isize,
+    /// Where the open session began, from its start, if on it; the leftmost
+    /// a session that edited began at.
+    began: Option<usize>,
+    leftmost: Option<usize>,
+    /// The leftmost another origin edited it at, followed since.
+    other: Option<usize>,
+    /// The session's own edit took out a line break ending it that it
+    /// didn't type.
+    joined: bool,
+}
+
+impl fmt::Debug for FirstRow {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FirstRow")
+            .field("start", &self.start)
+            .field("grown", &self.grown)
+            .finish_non_exhaustive()
+    }
+}
+
+/// What `Esc` types on a block's other rows.
+struct Typed {
+    /// What goes before each count's copies of `text`.
+    prefix: String,
+    text: String,
+    /// The display column it goes at there, if not the block's.
+    column: Option<usize>,
+    /// The display column `I` and `A` leave the caret at on the first row.
+    corner: Option<usize>,
+}
+
+/// Where `Esc` types on one of [`BlockRows`], placed when the session opened
+/// as the block's column fell on the row (its `text`, in [`BlockRows::text`]):
+/// `place`, offsets from the row's start (a tab it splits, or the point the
+/// text goes in at), becomes `spaces.0` spaces with the text after
+/// `spaces.1` of them. `Esc` finds the row again by anchors at its `ends`,
+/// past text put in at either, and at the line break `ending` it, if one
+/// does: they follow rows put in or taken out around it, and an edit undone
+/// at once. One that's no longer as it was gets none, where the block's
+/// column falls there not being known any more: its text changed by another
+/// origin, joined to another row, or gone with its line break.
+#[derive(Clone, Debug)]
+pub(crate) struct BlockRow {
+    pub(crate) ends: Range<Anchor>,
+    pub(crate) ending: Option<Range<Anchor>>,
+    pub(crate) text: Range<usize>,
+    pub(crate) place: Range<usize>,
+    pub(crate) spaces: (usize, usize),
+}
+
+impl BlockRow {
+    /// Its anchors, in the order [`BlockRow::found`] takes them.
+    fn anchors(&self) -> impl Iterator<Item = Anchor> + '_ {
+        let ending = self
+            .ending
+            .iter()
+            .flat_map(|ending| [ending.start, ending.end]);
+        [self.ends.start, self.ends.end].into_iter().chain(ending)
+    }
+
+    /// Where the row starts in `text` if it's as it was, given where its
+    /// anchors are now, in order: still holding its text (`was`) between its
+    /// ends, or for an empty row, still one where the anchor at its start
+    /// is, which keeps just before the line break that ended it (the last
+    /// row's: the end of the text); and still ended by its line break.
+    fn found(
+        &self,
+        (text, was): (&Text, &Text),
+        anchors: &mut impl Iterator<Item = usize>,
+    ) -> Option<usize> {
+        let mut next = || anchors.next().expect("one offset per anchor");
+        let (start, end) = (next(), next());
+        let ending = self.ending.as_ref().map(|_| (next(), next()));
+        if ending.is_some_and(|(start, end)| start >= end) {
+            return None;
+        }
+        if self.text.is_empty() {
+            let point = text.offset_to_point(start);
+            return (point.column == 0 && row_end(text, point.row) == start).then_some(start);
+        }
+        let point = text.offset_to_point(start);
+        let same = start <= end
+            && point.column == 0
+            && row_end(text, point.row) == end
+            && text.range_eq(start..end, &was.slice_to_string(self.text.clone()));
+        same.then_some(start)
+    }
+}
+
+impl Block {
+    fn first(&self) -> MutexGuard<'_, FirstRow> {
+        self.first.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// What `Esc` types on the other rows, with the primary caret at `head`
+    /// in `first`'s text: what the first row grew by, taken from where
+    /// typing began (see [`Edge`]), with the prefix if none began left of
+    /// that, if what's taken is known and, for `I` and `A`, the caret is on
+    /// the row (`c` takes it wherever the caret is, as nvim does).
+    fn typed(&self, first: &FirstRow, head: usize) -> Option<Typed> {
+        let text = &first.text;
+        let point = text.offset_to_point(first.start);
+        let grown = usize::try_from(first.grown).ok()?;
+        let on_row = text.offset_to_point(head).row == point.row;
+        if first.joined || point.column != 0 || !(on_row || matches!(self.rows.edge, Edge::Fixed)) {
+            return None;
+        }
+        let line = text.slice_to_string(first.start..row_end(text, point.row));
+        let tab = self.rows.tab;
+        let columns = |at: usize| visual::width_from(&line[..line.floor_char_boundary(at)], 0, tab);
+        let began = first.leftmost.unwrap_or(first.column);
+        let at = columns(began);
+        let (from, place) = match self.rows.edge {
+            Edge::Left if began > first.column => (began, Some(at)),
+            Edge::Right if self.rows.corner.is_some_and(|left| at <= left) => (began, Some(at)),
+            Edge::End(width) if began < first.column => {
+                let column = width
+                    .checked_sub(first.column - began)
+                    .filter(|&at| at > 0)?;
+                (began, Some(column))
+            }
+            _ => (first.column, None),
+        };
+        // From the start of a character a fixed column falls inside, as
+        // nvim takes it.
+        let to = from + grown;
+        if to > line.len() || first.other.is_some_and(|other| other < first.start + to) {
+            return None;
+        }
+        let taken = &line[line.floor_char_boundary(from)..line.floor_char_boundary(to)];
+        let prefix = match began < first.column {
+            true => "",
+            false => self.rows.prefix.as_str(),
+        };
+        if taken.is_empty() && prefix.is_empty() {
+            return None;
+        }
+        let corner = self.rows.corner.map(|left| match self.rows.edge {
+            Edge::Left => at,
+            _ => left.min(at),
+        });
+        Some(Typed {
+            prefix: prefix.to_string(),
+            text: taken.to_string(),
+            column: place,
+            corner,
+        })
+    }
+}
+
+impl FirstRow {
+    /// Follows the buffer's edits since the last call: `origin`'s are the
+    /// session's (but for its undos and redos).
+    fn follow(&mut self, origin: &Origin) {
+        for event in self.events.drain() {
+            let BufferEvent::Edited {
+                origin: by,
+                kind,
+                edits,
+                text,
+                ..
+            } = event
+            else {
+                continue;
+            };
+            let own = &by == origin && kind == EditKind::Edit;
+            let old = std::mem::replace(&mut self.text, text);
+            let new = &self.text;
+            let start = self.start;
+            let end = row_end(&old, row(&old, start));
+            // Whole rows another origin put in or took out right above it.
+            let line_break = |text: &Text, at: usize| text.bytes_at(at).first() == Some(&b'\n');
+            let above = |edit: &Edit| {
+                !own && edit.old.end == start
+                    && !(edit.old.is_empty() && edit.new.is_empty())
+                    && (edit.new.is_empty() || line_break(new, edit.new.end - 1))
+                    && (edit.old.is_empty()
+                        || edit.old.start == 0
+                        || line_break(&old, edit.old.start - 1))
+            };
+            self.other = self.other.map(|other| point(&edits, other, true));
+            let mut past = false;
+            for edit in edits.iter() {
+                if edit.old.start > end || edit.old.end < start {
+                    continue;
+                }
+                if above(edit) {
+                    past |= edit.old.is_empty();
+                } else if !own {
+                    let at = edit.new.start;
+                    self.other = Some(self.other.map_or(at, |other| other.min(at)));
+                }
+            }
+            // The line break ending it, taken out, or put in by this batch.
+            let ended = end < old.len()
+                && edits
+                    .iter()
+                    .any(|edit| edit.old.start <= end && end < edit.old.end);
+            self.joined |= own && ended && !self.typed_ending;
+            self.start = point(&edits, start, past);
+            let new_end = row_end(new, row(new, self.start));
+            if edits
+                .iter()
+                .any(|edit| edit.new.start <= new_end && new_end < edit.new.end)
+            {
+                self.typed_ending = own;
+            } else if ended {
+                self.typed_ending = false;
+            }
+            if own {
+                self.grown += (new_end - self.start) as isize - (end - start) as isize;
+            }
+        }
+    }
+
+    /// Notes that a session begins at `head`, an offset in the text as of
+    /// the last batch followed.
+    fn begin(&mut self, head: usize) {
+        let end = row_end(&self.text, row(&self.text, self.start));
+        self.began = (self.start..=end)
+            .contains(&head)
+            .then(|| head - self.start);
+    }
+
+    /// Notes that the open session ends, having `edited` the text or not:
+    /// where it began counts then, if leftmost (as nvim's start of insert).
+    fn end(&mut self, edited: bool) {
+        if let Some(at) = self.began.take().filter(|_| edited) {
+            self.leftmost = Some(self.leftmost.map_or(at, |leftmost| leftmost.min(at)));
+        }
+    }
 }
 
 /// What an open session follows: the buffer's edits since it opened, and
@@ -75,6 +382,8 @@ struct Ledger {
     copies: Option<Copied>,
     /// How far ending the session has got, through this state or a clone.
     end: End,
+    /// Whether the session's origin edited the text since it opened.
+    edited: bool,
 }
 
 /// How far ending a session has got.
@@ -236,19 +545,27 @@ impl VimState {
     /// indentation on the rows the carets are on then, as nvim keeps it
     /// while the cursor stays on its row (`o<Left>`) and drops it once it
     /// leaves (`o<Up>`).
+    ///
+    /// A session over a block (`c`, `I` or `A`) keeps it: `Esc` types on its
+    /// other rows what its first row grew by, if the caret is on that row
+    /// then (for `c`, wherever it is), as the crate docs say.
     pub fn split_session<R>(
         &mut self,
         model: &mut EditorModel,
         splits: Splits,
         command: impl FnOnce(&mut EditorModel) -> R,
     ) -> R {
-        let Some(origin) = self.session.as_ref().map(|session| session.origin.clone()) else {
+        let Some((origin, block)) = self
+            .session
+            .as_ref()
+            .map(|session| (session.origin.clone(), session.block.clone()))
+        else {
             return command(model);
         };
         if splits == Splits::Edits {
             end(model, self, Ending::Split);
             let result = command(model);
-            resume(model, self, origin);
+            resume(model, self, origin, block);
             return result;
         }
         sync(model);
@@ -259,7 +576,7 @@ impl VimState {
         let result = command(model);
         if splits == Splits::Other || model.selections() != before {
             end(model, self, Ending::Moved(primary));
-            resume(model, self, origin);
+            resume(model, self, origin, block);
         }
         result
     }
@@ -267,8 +584,8 @@ impl VimState {
 
 /// Opens the session a split resumes ([`VimState::split_session`]): typing
 /// starts at each selection's start, where typing over it goes, and the
-/// selections stay.
-fn resume(model: &mut EditorModel, state: &mut VimState, origin: Origin) {
+/// selections stay. It goes on with a `block` the one before was over.
+fn resume(model: &mut EditorModel, state: &mut VimState, origin: Origin, block: Option<Block>) {
     model.sync_display();
     let text = model.text().clone();
     let mut heads: Vec<usize> = model
@@ -278,6 +595,11 @@ fn resume(model: &mut EditorModel, state: &mut VimState, origin: Origin) {
         .collect();
     heads.sort_unstable();
     heads.dedup();
+    if let (Some(block), Some(&head)) = (&block, heads.last()) {
+        let mut first = block.first();
+        first.follow(&origin);
+        first.begin(head);
+    }
     start(model, state, origin.clone(), &text, heads.iter().copied());
     let opened = {
         let mut buffer = model.buffer_mut();
@@ -292,6 +614,7 @@ fn resume(model: &mut EditorModel, state: &mut VimState, origin: Origin) {
         }),
         opens: false,
         resumed: true,
+        block,
     };
     open(state, opening, &heads, Indents::default(), opened);
 }
@@ -302,9 +625,12 @@ impl Session {
     }
 
     /// Follows the buffer's edits since the last call, so none wait to be:
-    /// see [`Ledger::follow`].
+    /// see [`Ledger::follow`] and [`FirstRow::follow`].
     pub(crate) fn follow_edits(&self) {
         self.ledger().follow(&self.origin);
+        if let Some(block) = &self.block {
+            block.first().follow(&self.origin);
+        }
     }
 
     /// Notes that the batch from version `from` was a line break typed in
@@ -397,6 +723,7 @@ impl Ledger {
             } else {
                 Whose::Typing
             };
+            self.edited |= whose != Whose::Other;
             self.indents.follow(&edits, &text, whose);
             self.breaks.retain(|&at| at > from);
         }
@@ -604,23 +931,11 @@ impl Indents {
 /// point, which stays before text put in at it and goes to the start of a
 /// replacement it was inside. Also whether any edit touched its bytes so.
 fn survive(edits: &[Edit], range: &Range<usize>) -> (Vec<Range<usize>>, bool) {
-    // `offset`, which lies after the first `passed` edits and before the
-    // rest, in the text after them all.
-    let shift = |offset: usize, passed: usize| match passed.checked_sub(1) {
-        Some(ix) => offset - edits[ix].old.end + edits[ix].new.end,
-        None => offset,
-    };
     if range.is_empty() {
-        let point = range.start;
-        let ix = edits.partition_point(|edit| edit.old.end < point);
-        let mapped = match edits.get(ix) {
-            Some(edit) if edit.old.start < point && point < edit.old.end => edit.new.start,
-            Some(edit) if edit.old.start < point => edit.new.end,
-            Some(edit) if edit.old.start == point => edit.new.start,
-            _ => shift(point, ix),
-        };
+        let mapped = point(edits, range.start, false);
         return (std::iter::once(mapped..mapped).collect(), false);
     }
+    let shift = |offset: usize, passed: usize| shifted(edits, offset, passed);
     let mut ix = edits.partition_point(|edit| edit.old.end <= range.start);
     let mut pieces = Vec::new();
     let mut touched = false;
@@ -637,6 +952,28 @@ fn survive(edits: &[Edit], range: &Range<usize>) -> (Vec<Range<usize>>, bool) {
         pieces.push(shift(from, ix)..shift(range.end, ix));
     }
     (pieces, touched)
+}
+
+/// Where `at`, an offset in the text before a batch of `edits`, is in the
+/// text after it: past text put in at it if `past`, else before it, past a
+/// replacement it ends, and at the start of one it's inside or starts.
+fn point(edits: &[Edit], at: usize, past: bool) -> usize {
+    let ix = edits.partition_point(|edit| edit.old.end < at || (past && edit.old.end == at));
+    match edits.get(ix) {
+        Some(edit) if edit.old.start < at && at < edit.old.end => edit.new.start,
+        Some(edit) if edit.old.start < at => edit.new.end,
+        Some(edit) if edit.old.start == at => edit.new.start,
+        _ => shifted(edits, at, ix),
+    }
+}
+
+/// `offset`, which lies after the first `passed` of `edits` and before the
+/// rest, in the text after them all.
+fn shifted(edits: &[Edit], offset: usize, passed: usize) -> usize {
+    match passed.checked_sub(1) {
+        Some(ix) => offset - edits[ix].old.end + edits[ix].new.end,
+        None => offset,
+    }
 }
 
 fn row(text: &Text, offset: usize) -> u32 {
@@ -710,6 +1047,7 @@ struct Opening {
     change: Change,
     opens: bool,
     resumed: bool,
+    block: Option<Block>,
 }
 
 /// Places a caret at each of `carets` (sorted, offsets in `snapshot`, the
@@ -746,7 +1084,7 @@ fn open(
     indents: Indents,
     (snapshot, events): (BufferSnapshot, Subscription),
 ) {
-    let regions = heads
+    let regions: Vec<Region> = heads
         .iter()
         .map(|&head| Region {
             start: snapshot.anchor_before(head),
@@ -759,6 +1097,7 @@ fn open(
         breaks: Vec::new(),
         copies: None,
         end: End::Open,
+        edited: false,
     }));
     let Opening {
         origin,
@@ -766,6 +1105,7 @@ fn open(
         change,
         opens,
         resumed,
+        block,
     } = opening;
     state.session = Some(Session {
         regions,
@@ -775,6 +1115,7 @@ fn open(
         change,
         opens,
         resumed,
+        block,
     });
     state.mode = Mode::Insert;
     state.pending = Default::default();
@@ -881,9 +1222,61 @@ pub(crate) fn insert(
         change: Change::Insert(args),
         opens,
         resumed: false,
+        block: None,
     };
     enter(model, state, opening, carets, opened);
     Ok(Dispatched::new(Effect::Changed))
+}
+
+/// Opens a session over a block (`c`, `I` or `A`) for `change`, whose text
+/// goes in `count` times: `edits` (sorted) open it, deleting the block or
+/// making room on its first row, and typing starts at `at`, an offset in the
+/// text after them, where undo puts the caret back. `rows` places the
+/// block's other rows in that text, and the first row is followed from
+/// there ([`FirstRow`]).
+pub(crate) fn block(
+    model: &mut EditorModel,
+    state: &mut VimState,
+    origin: Origin,
+    (change, count): (Change, u32),
+    (edits, at): (Vec<(Range<usize>, String)>, usize),
+    rows: impl FnOnce(&BufferSnapshot) -> BlockRows,
+) {
+    let id = model.buffer_mut().start_transaction(origin.clone());
+    let (snapshot, events, followed) = {
+        let mut buffer = model.buffer_mut();
+        buffer.edit(edits, origin.clone());
+        (buffer.snapshot(), buffer.subscribe(), buffer.subscribe())
+    };
+    let text = snapshot.text();
+    let begin = history::pair(text, at);
+    state.carets.record_pending(id, vec![begin]);
+    let point = text.offset_to_point(at);
+    let start = text.row_start(point.row);
+    let first = FirstRow {
+        events: followed,
+        text: text.clone(),
+        start,
+        typed_ending: false,
+        column: at - start,
+        grown: 0,
+        began: Some(at - start),
+        leftmost: None,
+        other: None,
+        joined: false,
+    };
+    let opening = Opening {
+        origin,
+        count,
+        change,
+        opens: false,
+        resumed: false,
+        block: Some(Block {
+            rows: rows(&snapshot),
+            first: Arc::new(Mutex::new(first)),
+        }),
+    };
+    enter(model, state, opening, vec![(at, None)], (snapshot, events));
 }
 
 /// Applies a session's opening `edits`, returning the snapshot right after
@@ -1045,6 +1438,7 @@ pub(crate) fn change(
         change: Change::Operate(args),
         opens: false,
         resumed: false,
+        block: None,
     };
     enter(model, state, opening, carets, opened);
     Ok(Dispatched::new(Effect::Changed))
@@ -1114,19 +1508,24 @@ fn end(model: &mut EditorModel, state: &mut VimState, how: Ending) -> Option<Tra
     let esc = matches!(how, Ending::Esc);
     state.mode = Mode::Normal;
     state.goals = None;
-    let session = state.session.take()?;
+    let mut session = state.session.take()?;
     let replaying = state.replaying;
     sync(model);
     let text = model.text().clone();
     let primary_start = session.regions.last().map(|region| region.start);
-    let typed_first = {
+    // Whether the rows the session began on were typed on, and whether it
+    // edited the text at all (not counting what `Esc` does).
+    let typed = {
         let mut ledger = session.ledger();
         ledger.follow(&session.origin);
         match std::mem::replace(&mut ledger.end, End::Ending) {
-            End::Open => Ok(primary_start.is_some_and(|start| {
-                let start = model.snapshot().resolve(&start);
-                ledger.indents.used_before(&text, start)
-            })),
+            End::Open => Ok((
+                primary_start.is_some_and(|start| {
+                    let start = model.snapshot().resolve(&start);
+                    ledger.indents.used_before(&text, start)
+                }),
+                ledger.edited,
+            )),
             end => {
                 let closed = match &end {
                     End::Ended(closed) => Some(closed.clone()),
@@ -1137,8 +1536,8 @@ fn end(model: &mut EditorModel, state: &mut VimState, how: Ending) -> Option<Tra
             }
         }
     };
-    let typed_first = match typed_first {
-        Ok(typed_first) => typed_first,
+    let (typed_first, edited) = match typed {
+        Ok(typed) => typed,
         // A clone of this state ended it already: this state takes the
         // outcome. One ending it now (from inside measuring text) has none
         // to give yet. Either way, its model's carets are made normal mode's.
@@ -1195,10 +1594,43 @@ fn end(model: &mut EditorModel, state: &mut VimState, how: Ending) -> Option<Tra
         .filter(|start| primary >= snapshot.resolve(start))
         .map(|start| (start, snapshot.anchor_before(primary)));
 
+    // Over a block, where this session typed on its first row, and at `Esc`
+    // what goes on its other rows (see [`Block::typed`]).
+    let block_typed = session.block.as_ref().and_then(|block| {
+        let mut first = block.first();
+        first.follow(&session.origin);
+        first.end(edited);
+        esc.then(|| block.typed(&first, model.primary_selection().head()))?
+    });
     if esc {
+        // Over a block, only as many copies as fit on all of its rows, with
+        // what goes in on its other rows besides (see [`type_on_rows`]).
+        if let (Some(block), Some(typed)) = (&session.block, &block_typed)
+            && !block.rows.rows.is_empty()
+        {
+            let rows = block.rows.rows.len();
+            let spaces = block.rows.rows.iter().map(|row| row.spaces.0);
+            let room = MAX_PUT
+                .saturating_sub(spaces.fold(0, usize::saturating_add))
+                .saturating_sub(rows.saturating_mul(typed.prefix.len()));
+            let each = typed.text.len().max(1).saturating_mul(rows + 1);
+            let fit = u32::try_from((room / each).max(1)).unwrap_or(u32::MAX);
+            session.count = session.count.min(fit);
+        }
         repeat_typed(model, &session, &ended);
     }
     drop_unused_indent(model, &session, matches!(how, Ending::Moved(_)));
+    // Over a block, `Esc` types that on the others too, once the carets
+    // stepped back, as nvim's does; `I` and `A` then leave the caret on the
+    // block's corner.
+    let corner = match (&session.block, &block_typed) {
+        (Some(block), Some(typed)) => {
+            step_back(model);
+            type_on_rows(model, &session.origin, block, typed, session.count);
+            Some(typed.corner)
+        }
+        _ => None,
+    };
 
     let snapshot = model.snapshot();
     let typed = kept.map_or_else(String::new, |(start, end)| {
@@ -1212,27 +1644,24 @@ fn end(model: &mut EditorModel, state: &mut VimState, how: Ending) -> Option<Tra
         state.carets.close(ended);
     }
 
-    if esc {
-        let text = model.text().clone();
-        let carets: Vec<ResolvedSelection> = model
-            .selections()
-            .iter()
-            .map(|selection| {
-                let head = selection.head();
-                let mut cursor = Cursor::at(&text, head);
-                // At a row's end, the clamp is the step back.
-                if cursor.offset() == head && cursor.ix > 0 {
-                    cursor.ix -= 1;
-                }
-                caret(cursor.offset())
-            })
-            .collect();
-        model.set_selections(carets);
+    if esc && corner.is_none() {
+        step_back(model);
     }
-    // A session a split resumed that changed nothing leaves `.` the change
-    // before the split, as nvim does.
+    if let (Some(Some(column)), Some(block)) = (corner, &session.block) {
+        let row = {
+            let mut first = block.first();
+            first.follow(&session.origin);
+            row(&first.text, first.start)
+        };
+        let text = model.text().clone();
+        let mut cursor = Cursor::at(&text, text.row_start(row));
+        cursor.vertical(row, Some(column), model.tab_size().max(1));
+        model.set_selections([caret(cursor.offset())]);
+    }
+    // A session a split resumed that edited nothing leaves `.` the change
+    // before the split, as nvim does, whatever `Esc` typed on a block.
     let last_change = match &state.last_change {
-        Some(last) if session.resumed && ended.is_none() => last.clone(),
+        Some(last) if session.resumed && !edited => last.clone(),
         _ => LastChange {
             change: session.change.clone(),
             inserted: Some(typed),
@@ -1245,6 +1674,119 @@ fn end(model: &mut EditorModel, state: &mut VimState, how: Ending) -> Option<Tra
     });
     state.last_change = Some(last_change);
     ended
+}
+
+/// Steps each caret back one grapheme, as `Esc` does, unless it's at its
+/// row's start.
+fn step_back(model: &mut EditorModel) {
+    let text = model.text().clone();
+    let carets: Vec<ResolvedSelection> = model
+        .selections()
+        .iter()
+        .map(|selection| {
+            let head = selection.head();
+            let mut cursor = Cursor::at(&text, head);
+            // At a row's end, the clamp is the step back.
+            if cursor.offset() == head && cursor.ix > 0 {
+                cursor.ix -= 1;
+            }
+            caret(cursor.offset())
+        })
+        .collect();
+    model.set_selections(carets);
+}
+
+/// Types `typed`, `count` times as the first row took it, on `block`'s other
+/// rows as `Esc` ends a session over it: on each that's as it was
+/// ([`BlockRow`]), at its place or at `typed`'s column, once where rows
+/// meet, and never on the first row or above it. At most [`MAX_PUT`] bytes
+/// go in, spaces included; past that, none do. The carets keep their rows
+/// and byte columns, as nvim's cursor does on a row typed on before it
+/// (`c`), which then lands on what went in.
+fn type_on_rows(
+    model: &mut EditorModel,
+    origin: &Origin,
+    block: &Block,
+    typed: &Typed,
+    count: u32,
+) {
+    sync(model);
+    let rows = &block.rows;
+    let snapshot = model.snapshot();
+    let text = snapshot.text();
+    let mut last = {
+        let mut first = block.first();
+        first.follow(origin);
+        row_end(text, row(text, first.start))
+    };
+    // All at once: they share the version the session opened at.
+    let anchors: Vec<Anchor> = rows.rows.iter().flat_map(BlockRow::anchors).collect();
+    let mut anchors = snapshot.resolve_many(&anchors).into_iter();
+    let mut places = Vec::new();
+    for row in &rows.rows {
+        let Some(start) = row.found((text, &rows.text), &mut anchors) else {
+            continue;
+        };
+        let Some((place, spaces)) = rows.place(row, typed.column) else {
+            continue;
+        };
+        let range = start + place.start..start + place.end;
+        if range.start <= last {
+            continue;
+        }
+        last = range.end;
+        places.push((range, spaces));
+    }
+    let copies = count.max(1) as usize;
+    let each = typed
+        .text
+        .len()
+        .checked_mul(copies)
+        .and_then(|each| each.checked_add(typed.prefix.len()));
+    let size = places.iter().try_fold(0usize, |size, (_, spaces)| {
+        size.checked_add(spaces.0)?.checked_add(each?)
+    });
+    if size.is_none_or(|size| size > MAX_PUT) {
+        return;
+    }
+    let typed = format!("{}{}", typed.prefix, typed.text.repeat(copies));
+    let edits = places
+        .into_iter()
+        .map(|(range, spaces)| (range, visual::spaced(&typed, spaces)));
+    let carets = history::pairs(model);
+    let (_, snapshot) = apply(model, edits, origin.clone());
+    let text = snapshot.text();
+    let heads: Vec<usize> = carets
+        .into_iter()
+        .map(|(row, column)| text.row_start(row) + column)
+        .collect();
+    place(model, &snapshot, &heads);
+}
+
+impl BlockRows {
+    /// Where `Esc` types on `row`, from its start, and the spaces it takes
+    /// (see [`BlockRow`]): at its place, or at display `column`, as `I`
+    /// types there (`$A`: a row short of it at its end).
+    fn place(
+        &self,
+        row: &BlockRow,
+        column: Option<usize>,
+    ) -> Option<(Range<usize>, (usize, usize))> {
+        let Some(column) = column else {
+            return Some((row.place.clone(), row.spaces));
+        };
+        let start = row.text.start;
+        let ix = self.text.offset_to_point(start).row;
+        match visual::insertion(&self.text, ix, (Some(column), false), self.tab, false) {
+            Some((range, spaces, at)) => {
+                Some((range.start - start..range.end - start, (spaces, at)))
+            }
+            None => matches!(self.edge, Edge::End(_)).then(|| {
+                let end = row.text.len();
+                (end..end, (0, 0))
+            }),
+        }
+    }
 }
 
 /// A count's copies at one caret, for [`repeat_typed`].

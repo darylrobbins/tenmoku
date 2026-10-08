@@ -108,6 +108,9 @@ pub(crate) struct Outcome {
 pub(crate) struct Register {
     pub(crate) text: String,
     pub(crate) linewise: bool,
+    /// A blockwise register's width (`getregtype()` is `<C-v>{width}`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) block_width: Option<usize>,
 }
 
 /// What `oracle.lua` writes per case.
@@ -254,6 +257,7 @@ fn mode_name(nvim: &str) -> &str {
         "i" => "insert",
         "v" => "visual",
         "V" => "visual_line",
+        "\u{16}" => "visual_block",
         other => other,
     }
 }
@@ -271,6 +275,7 @@ fn registers(vim: &HeadlessVim) -> BTreeMap<String, Register> {
             let register = Register {
                 text: register.text.clone(),
                 linewise: register.linewise,
+                block_width: register.block_width,
             };
             (!register.text.is_empty()).then(|| (name.to_string(), register))
         })

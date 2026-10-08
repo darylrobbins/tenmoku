@@ -7,7 +7,7 @@ use crate::{
     VimKey,
     args::{
         CountArgs, InsertArgs, InsertAt, Motion, MoveArgs, OperateArgs, Operator, PutArgs,
-        ReplaceCharArgs, SelectArgs, Target, TextObject, VisualArgs, VisualKind,
+        ReplaceCharArgs, SelectArgs, SwapArgs, Target, TextObject, VisualArgs, VisualKind,
     },
 };
 
@@ -31,6 +31,8 @@ pub struct Pending {
     operator: Option<Operator>,
     prefix: Option<Prefix>,
     visual: bool,
+    /// The visual mode is blockwise.
+    block: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -109,9 +111,13 @@ impl Pending {
         self.visual
     }
 
-    /// The same pending input, read in a visual mode or not.
-    pub(crate) fn in_visual(self, visual: bool) -> Self {
-        Self { visual, ..self }
+    /// The same pending input, read in a visual mode of `kind`, or not.
+    pub(crate) fn in_visual(self, kind: Option<VisualKind>) -> Self {
+        Self {
+            visual: kind.is_some(),
+            block: kind == Some(VisualKind::Block),
+            ..self
+        }
     }
 
     /// Nothing is pending (in either mode).
@@ -259,6 +265,15 @@ pub fn step(mut pending: Pending, key: VimKey) -> Step {
         VimKey::Right if continues => 'l',
         VimKey::Up if continues => 'k',
         VimKey::Down if continues => 'j',
+        // `<C-q>` is `<C-v>`, as in nvim.
+        VimKey::Ctrl('v' | 'q') if pending.visual || pending.is_empty() => {
+            return invocation(
+                "vim.visual",
+                VisualArgs {
+                    kind: VisualKind::Block,
+                },
+            );
+        }
         // In normal mode vim wins ctrl keys (§10).
         VimKey::Ctrl('r') if pending.operator.is_none() && !pending.visual => {
             pending.end_count();
@@ -368,7 +383,8 @@ impl Pending {
         let (operator, target) = match ch {
             // A count or register is dropped.
             'v' | 'V' => return visual(ch),
-            'o' | 'O' => return invocation("vim.visual_swap", ()),
+            'o' => return invocation("vim.visual_swap", ()),
+            'O' => return invocation("vim.visual_swap", SwapArgs { same_row: true }),
             'd' | 'x' => (Delete, Target::Selection),
             'y' => (Yank, Target::Selection),
             'c' | 's' => (Change, Target::Selection),
@@ -378,9 +394,24 @@ impl Pending {
             'u' => (Lowercase, Target::Selection),
             'U' => (Uppercase, Target::Selection),
             'J' => (Join, Target::Selection),
+            'D' if self.block => (Delete, Target::SelectedToEnd),
+            'C' if self.block => (Change, Target::SelectedToEnd),
             'X' | 'D' => (Delete, Target::SelectedLines),
             'Y' => (Yank, Target::SelectedLines),
             'C' | 'S' | 'R' => (Change, Target::SelectedLines),
+            'I' if self.block => (Insert, Target::Selection),
+            'A' if self.block => (Append, Target::Selection),
+            'p' | 'P' => {
+                self.end_count();
+                return invocation(
+                    "vim.visual_put",
+                    PutArgs {
+                        before: ch == 'P',
+                        count: self.count,
+                        register: self.register,
+                    },
+                );
+            }
             _ => {
                 return match motion(ch) {
                     Some(motion) => self.commit(Target::Motion(motion)),

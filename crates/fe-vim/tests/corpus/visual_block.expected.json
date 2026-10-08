@@ -1,0 +1,6350 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "cv_alone",
+      "buffer": "abcd\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>",
+      "expect": {
+        "buffer": "abcd\nabcd",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "\u0016",
+        "registers": {},
+        "visual": [
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "name": "cq_is_cv",
+      "buffer": "abcd\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-q>jl",
+      "expect": {
+        "buffer": "abcd\nabcd",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "\u0016",
+        "registers": {},
+        "visual": [
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "name": "cv_j_l",
+      "buffer": "abcd\nab\n\tx\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>3jl",
+      "expect": {
+        "buffer": "abcd\nab\n\tx\nabcd",
+        "cursor": [
+          3,
+          2
+        ],
+        "mode": "\u0016",
+        "registers": {},
+        "visual": [
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "name": "cv_k_h",
+      "buffer": "abcd\nabcd\nabcd",
+      "cursor": [
+        2,
+        2
+      ],
+      "keys": "<C-v>kkh",
+      "expect": {
+        "buffer": "abcd\nabcd\nabcd",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "\u0016",
+        "registers": {},
+        "visual": [
+          2,
+          2
+        ]
+      }
+    },
+    {
+      "name": "cv_w",
+      "buffer": "ab cd\nab cd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>jw",
+      "expect": {
+        "buffer": "ab cd\nab cd",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "\u0016",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "cv_dollar",
+      "buffer": "abcd\nab\n\tx\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>3j$",
+      "expect": {
+        "buffer": "abcd\nab\n\tx\nabcd",
+        "cursor": [
+          3,
+          4
+        ],
+        "mode": "\u0016",
+        "registers": {},
+        "visual": [
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "name": "cv_dollar_then_h",
+      "buffer": "abcd\nab\n\tx\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>3j$h",
+      "expect": {
+        "buffer": "abcd\nab\n\tx\nabcd",
+        "cursor": [
+          3,
+          3
+        ],
+        "mode": "\u0016",
+        "registers": {},
+        "visual": [
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "name": "cv_onto_short_row",
+      "buffer": "abcdef\nab\nabcd",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "<C-v>j",
+      "expect": {
+        "buffer": "abcdef\nab\nabcd",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "\u0016",
+        "registers": {},
+        "visual": [
+          0,
+          4
+        ]
+      }
+    },
+    {
+      "name": "cv_toggles_off",
+      "buffer": "abcd\n\nabcd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>jj<C-v>",
+      "expect": {
+        "buffer": "abcd\n\nabcd",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_from_v",
+      "buffer": "abcd\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "vjl<C-v>",
+      "expect": {
+        "buffer": "abcd\nabcd",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "\u0016",
+        "registers": {},
+        "visual": [
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "name": "cv_to_V",
+      "buffer": "abcd\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jlV",
+      "expect": {
+        "buffer": "abcd\nabcd",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "V",
+        "registers": {},
+        "visual": [
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "name": "cv_esc_marks",
+      "buffer": "abcd\nabcd\nabcd",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "<C-v>jhh<Esc>",
+      "expect": {
+        "buffer": "abcd\nabcd\nabcd",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_o",
+      "buffer": "abcd\nab\n\tx\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>3jlo",
+      "expect": {
+        "buffer": "abcd\nab\n\tx\nabcd",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "\u0016",
+        "registers": {},
+        "visual": [
+          3,
+          2
+        ]
+      }
+    },
+    {
+      "name": "cv_O",
+      "buffer": "abcd\nab\n\tx\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>3jlO",
+      "expect": {
+        "buffer": "abcd\nab\n\tx\nabcd",
+        "cursor": [
+          3,
+          1
+        ],
+        "mode": "\u0016",
+        "registers": {},
+        "visual": [
+          0,
+          2
+        ]
+      }
+    },
+    {
+      "name": "cv_O_wide",
+      "buffer": "ybecAb\t中b\nea中中\nb c",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "<C-v>jO",
+      "expect": {
+        "buffer": "ybecAb\t中b\nea中中\nb c",
+        "cursor": [
+          1,
+          5
+        ],
+        "mode": "\u0016",
+        "registers": {},
+        "visual": [
+          0,
+          5
+        ]
+      }
+    },
+    {
+      "name": "block_d",
+      "buffer": "abcd\nab\n\tx\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>3jld",
+      "expect": {
+        "buffer": "ad\na\n  x\nad",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bc\nb\n  \nbc",
+            "linewise": false,
+            "block_width": 2
+          },
+          "1": {
+            "text": "bc\nb\n  \nbc",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            3,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_x",
+      "buffer": "abcd\nab\n\tx\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>3jlx",
+      "expect": {
+        "buffer": "ad\na\n  x\nad",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bc\nb\n  \nbc",
+            "linewise": false,
+            "block_width": 2
+          },
+          "1": {
+            "text": "bc\nb\n  \nbc",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            3,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_y",
+      "buffer": "abcd\nab\n\tx\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>3jly",
+      "expect": {
+        "buffer": "abcd\nab\n\tx\nabcd",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bc\nb\n  \nbc",
+            "linewise": false,
+            "block_width": 2
+          },
+          "0": {
+            "text": "bc\nb\n  \nbc",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            3,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_y_dollar",
+      "buffer": "abcd\nab\n\tx\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>3j$y",
+      "expect": {
+        "buffer": "abcd\nab\n\tx\nabcd",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bcd\nb\n   x\nbcd",
+            "linewise": false,
+            "block_width": 4
+          },
+          "0": {
+            "text": "bcd\nb\n   x\nbcd",
+            "linewise": false,
+            "block_width": 4
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            3,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_y_short_rows",
+      "buffer": "abcd\na\n\nabcd",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "<C-v>3jly",
+      "expect": {
+        "buffer": "abcd\na\n\nabcd",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "cd\n  \n  \ncd",
+            "linewise": false,
+            "block_width": 2
+          },
+          "0": {
+            "text": "cd\n  \n  \ncd",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            3,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_c",
+      "buffer": "abcd\nab\n\tx\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>3jlcXY<Esc>",
+      "expect": {
+        "buffer": "aXYd\naXY\n XY x\naXYd",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bc\nb\n  \nbc",
+            "linewise": false,
+            "block_width": 2
+          },
+          "1": {
+            "text": "bc\nb\n  \nbc",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            3,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_c_nothing_typed",
+      "buffer": "abcd\na\nab\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>3jlc<Esc>",
+      "expect": {
+        "buffer": "ad\na\na\nad",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bc\n\nb\nbc",
+            "linewise": false,
+            "block_width": 2
+          },
+          "1": {
+            "text": "bc\n\nb\nbc",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            3,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_s",
+      "buffer": "abcd\nab\n\tx\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>3jls12<Esc>",
+      "expect": {
+        "buffer": "a12d\na12\n 12 x\na12d",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bc\nb\n  \nbc",
+            "linewise": false,
+            "block_width": 2
+          },
+          "1": {
+            "text": "bc\nb\n  \nbc",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            3,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_indent",
+      "buffer": "abcd\nab\n\tx\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>3jl>",
+      "expect": {
+        "buffer": "a    bcd\na    b\n        x\na    bcd",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            3,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_indent_blanks_before",
+      "buffer": "a\tb\nbAbed",
+      "cursor": [
+        1,
+        4
+      ],
+      "keys": "<C-v>k>",
+      "expect": {
+        "buffer": "a       b\nbAbe    d",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            1,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_outdent",
+      "buffer": "abcd\nab\n\tx\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>3jl<lt>",
+      "expect": {
+        "buffer": "abcd\nab\n x\nabcd",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            3,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_outdent_tabs",
+      "buffer": "a   b\na\n      b\na\tb",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>3jl<lt>",
+      "expect": {
+        "buffer": "ab\na\n  b\nab",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            3,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_outdent_twice",
+      "buffer": "a   b\na\n      b\na\tb",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>3jl2<lt>",
+      "expect": {
+        "buffer": "ab\na\n b\nab",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            3,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_toggle_case",
+      "buffer": "abcd\na\nab\nabcd",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "<C-v>jjl~",
+      "expect": {
+        "buffer": "abcd\nA\nAB\nABcd",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            3,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_lowercase",
+      "buffer": "ABCD\nABCD",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jlu",
+      "expect": {
+        "buffer": "AbcD\nAbcD",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_uppercase",
+      "buffer": "abcd\nab\n\tx\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>3jlU",
+      "expect": {
+        "buffer": "aBCd\naB\n\tx\naBCd",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            3,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_replace",
+      "buffer": "abcd\nab\n\tx\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>3jlrX",
+      "expect": {
+        "buffer": "aXXd\naX\n XX x\naXXd",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            3,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_replace_short_rows",
+      "buffer": "abcd\na\nab\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>3jlrX",
+      "expect": {
+        "buffer": "aXXd\na\naX\naXXd",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            3,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_join",
+      "buffer": "abcd\nab\n\tx\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>3jlJ",
+      "expect": {
+        "buffer": "abcd ab x abcd",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            0,
+            12
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_D",
+      "buffer": "abcd\nab\n\tx\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>3jlD",
+      "expect": {
+        "buffer": "a\na\n \na",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bcd\nb\n   x\nbcd",
+            "linewise": false,
+            "block_width": 4
+          },
+          "1": {
+            "text": "bcd\nb\n   x\nbcd",
+            "linewise": false,
+            "block_width": 4
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            3,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_X",
+      "buffer": "abcd\nab\n\tx\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>3jlX",
+      "expect": {
+        "buffer": "ad\na\n  x\nad",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bc\nb\n  \nbc",
+            "linewise": false,
+            "block_width": 2
+          },
+          "1": {
+            "text": "bc\nb\n  \nbc",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            3,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_Y",
+      "buffer": "abcd\nab\n\tx\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>3jlY",
+      "expect": {
+        "buffer": "abcd\nab\n\tx\nabcd",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bc\nb\n  \nbc",
+            "linewise": false,
+            "block_width": 2
+          },
+          "0": {
+            "text": "bc\nb\n  \nbc",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            3,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_C",
+      "buffer": "abcd\nab\n\tx\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>3jlC12<Esc>",
+      "expect": {
+        "buffer": "a12\na12\n 12\na12",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bcd\nb\n   x\nbcd",
+            "linewise": false,
+            "block_width": 4
+          },
+          "1": {
+            "text": "bcd\nb\n   x\nbcd",
+            "linewise": false,
+            "block_width": 4
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            3,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_S",
+      "buffer": "abcd\nab\n\tx\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>3jlS12<Esc>",
+      "expect": {
+        "buffer": "12",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abcd\nab\n\tx\nabcd\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "abcd\nab\n\tx\nabcd\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_R",
+      "buffer": "abcd\nab\nabcd\nend",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jjlR12<Esc>",
+      "expect": {
+        "buffer": "12\nend",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abcd\nab\nabcd\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "abcd\nab\nabcd\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_d_undo",
+      "buffer": "abcd\nabcd\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jldu",
+      "expect": {
+        "buffer": "abcd\nabcd\nabcd",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bc\nbc",
+            "linewise": false,
+            "block_width": 2
+          },
+          "1": {
+            "text": "bc\nbc",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_I",
+      "buffer": "abcd\nab\n\tx\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>3jlIXY<Esc>",
+      "expect": {
+        "buffer": "aXYbcd\naXYb\n XY   x\naXYbcd",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            3,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_I_short_rows",
+      "buffer": "abcd\na\nab\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>3jIX<Esc>",
+      "expect": {
+        "buffer": "aXbcd\naX\naXb\naXbcd",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            3,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_I_empty_rows",
+      "buffer": "abcd\n\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jjIX<Esc>",
+      "expect": {
+        "buffer": "aXbcd\n\naXbcd",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            2,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_I_empty_row_at_start",
+      "buffer": "abcd\n\nabcd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>jjIX<Esc>",
+      "expect": {
+        "buffer": "Xabcd\nX\nXabcd",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_I_nothing_typed",
+      "buffer": "abcd\na\nab\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>3jlI<Esc>",
+      "expect": {
+        "buffer": "abcd\na\nab\nabcd",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            3,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_I_line_break",
+      "buffer": "abcd\nab\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jjIX<CR>Y<Esc>",
+      "expect": {
+        "buffer": "aX\nYbcd\nab\nabcd",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            3,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_A",
+      "buffer": "abcd\nab\n\tx\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>3jlAXY<Esc>",
+      "expect": {
+        "buffer": "abcXYd\nab XY\n   XY x\nabcXYd",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            3,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_A_short_rows",
+      "buffer": "abcd\na\nab\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>3jlAX<Esc>",
+      "expect": {
+        "buffer": "abcXd\na  X\nab X\nabcXd",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            3,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_A_empty_rows",
+      "buffer": "abcd\n\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jjAX<Esc>",
+      "expect": {
+        "buffer": "abXcd\n  X\nabXcd",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            2,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_dollar_A",
+      "buffer": "abcd\nab\n\tx\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>3j$AXY<Esc>",
+      "expect": {
+        "buffer": "abcdXY\nabXY\n\txXY\nabcdXY",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            3,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_A_undo",
+      "buffer": "abcd\nabcd\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jlAX<Esc>u",
+      "expect": {
+        "buffer": "abcd\nabcd\nabcd",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_d_wide",
+      "buffer": "a中b\nabcd\nab中\nx",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>2jld",
+      "expect": {
+        "buffer": " b\ncd\n中\nx",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a \nab\nab",
+            "linewise": false,
+            "block_width": 2
+          },
+          "1": {
+            "text": "a \nab\nab",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            2,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_y_wide",
+      "buffer": "a中b\nabcd\nab中\nx",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "<C-v>jjy",
+      "expect": {
+        "buffer": "a中b\nabcd\nab中\nx",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b\nb\n",
+            "linewise": false,
+            "block_width": 1
+          },
+          "0": {
+            "text": "b\nb\n",
+            "linewise": false,
+            "block_width": 1
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            1
+          ],
+          ">": [
+            3,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_I_wide",
+      "buffer": "abcd\ne中Ab\n中  \nabcd",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "<C-v>3jIZ<Esc>",
+      "expect": {
+        "buffer": "abZcd\ne Z中Ab\n中Z  \nabZcd",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            3,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_A_wide",
+      "buffer": "abcd\ne中Ab\n中  \nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>3jAZ<Esc>",
+      "expect": {
+        "buffer": "abZcd\ne Z中Ab\n中Z  \nabZcd",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            3,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_c_wide",
+      "buffer": "abcd\ne中Ab\n中  \nabcd",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "<C-v>3jcZ<Esc>",
+      "expect": {
+        "buffer": "abZd\ne ZAb\n中Z \nabZd",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c\n \n \nc",
+            "linewise": false,
+            "block_width": 1
+          },
+          "1": {
+            "text": "c\n \n \nc",
+            "linewise": false,
+            "block_width": 1
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            3,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_replace_wide",
+      "buffer": "abc\n中x\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jjlr中",
+      "expect": {
+        "buffer": "a中\n 中\na中d",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            2,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_replace_tab",
+      "buffer": "a\tx\nabcd",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "<C-v>krZ",
+      "expect": {
+        "buffer": "aZZZx\naZZZ",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_I_tab",
+      "buffer": "\tx\nabcd\nabcd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "jl<C-v>kIZ<Esc>",
+      "expect": {
+        "buffer": "Z\tx\nZabcd\nabcd",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_p_short_row",
+      "buffer": "abcd\nab\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jlyjp",
+      "expect": {
+        "buffer": "abcd\nabbc\nabb cd",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bc\nb",
+            "linewise": false,
+            "block_width": 2
+          },
+          "0": {
+            "text": "bc\nb",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_p_past_end",
+      "buffer": "abcd\nab\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jlyjjp",
+      "expect": {
+        "buffer": "abcd\nab\nabbccd\n  b",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bc\nb",
+            "linewise": false,
+            "block_width": 2
+          },
+          "0": {
+            "text": "bc\nb",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_P",
+      "buffer": "abcd\nabcd\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jlyjP",
+      "expect": {
+        "buffer": "abcd\nabcbcd\nabcbcd",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bc\nbc",
+            "linewise": false,
+            "block_width": 2
+          },
+          "0": {
+            "text": "bc\nbc",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_p_count",
+      "buffer": "abcd\nab\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jly2p",
+      "expect": {
+        "buffer": "abbcbccd\nabb b\nabcd",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bc\nb",
+            "linewise": false,
+            "block_width": 2
+          },
+          "0": {
+            "text": "bc\nb",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_p_dollar",
+      "buffer": "abcd\nab\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jlyjj$p",
+      "expect": {
+        "buffer": "abcd\nab\nabcdbc\n    b",
+        "cursor": [
+          2,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bc\nb",
+            "linewise": false,
+            "block_width": 2
+          },
+          "0": {
+            "text": "bc\nb",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_p_empty_row",
+      "buffer": "abcd\nab\n\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jlyjjp",
+      "expect": {
+        "buffer": "abcd\nab\nbc\nb abcd",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bc\nb",
+            "linewise": false,
+            "block_width": 2
+          },
+          "0": {
+            "text": "bc\nb",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_P_tab",
+      "buffer": "a\tbc\nabcd\nabcd",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "<C-v>jlykkP",
+      "expect": {
+        "buffer": "aba\tbc\nababcd\nabcd",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab\nab",
+            "linewise": false,
+            "block_width": 2
+          },
+          "0": {
+            "text": "ab\nab",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            2,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_p_wide",
+      "buffer": "ab\nx中y\nab",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>jjyjlp",
+      "expect": {
+        "buffer": "ab\nx中ay\nab x\n   a",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\nx\na",
+            "linewise": false,
+            "block_width": 1
+          },
+          "0": {
+            "text": "a\nx\na",
+            "linewise": false,
+            "block_width": 1
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_I_dot",
+      "buffer": "abcd\nabcd\nabcd\nabcd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>jlIXY<Esc>jj.",
+      "expect": {
+        "buffer": "XYabcd\nXYabcd\nXYabcd\nXYabcd",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_A_dot",
+      "buffer": "abcd\nabcd\nab\nab",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>jllAX<Esc>jj.",
+      "expect": {
+        "buffer": "abcXd\nabcXd\nab X\nab X",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_dollar_A_dot",
+      "buffer": "abcd\nabcd\nabcd\nabcd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>j$AXY<Esc>jj.",
+      "expect": {
+        "buffer": "abcdXY\nabcdXY\nabcdXY\nabcdXY",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_d_dot",
+      "buffer": "abcd\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jld.",
+      "expect": {
+        "buffer": "a\na",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "d\nd",
+            "linewise": false,
+            "block_width": 2
+          },
+          "1": {
+            "text": "d\nd",
+            "linewise": false,
+            "block_width": 2
+          },
+          "2": {
+            "text": "bc\nbc",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_d_dot_short_rows",
+      "buffer": "abcdef\nabcdef\nab\nab",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>j4ldjj.",
+      "expect": {
+        "buffer": "f\nf\n\n",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab\nab",
+            "linewise": false,
+            "block_width": 5
+          },
+          "1": {
+            "text": "ab\nab",
+            "linewise": false,
+            "block_width": 5
+          },
+          "2": {
+            "text": "abcde\nabcde",
+            "linewise": false,
+            "block_width": 5
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_d_dot_tab",
+      "buffer": "qqqqq\nb\t\taAb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>4ldjl.",
+      "expect": {
+        "buffer": "\nb  aAb",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\t  ",
+            "linewise": false,
+            "block_width": 5
+          },
+          "-": {
+            "text": "\t  ",
+            "linewise": false,
+            "block_width": 5
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "v_p_char",
+      "buffer": "xy abcd\nefgh",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ywwvlp",
+      "expect": {
+        "buffer": "xy xy cd\nefgh",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab",
+            "linewise": false
+          },
+          "-": {
+            "text": "ab",
+            "linewise": false
+          },
+          "0": {
+            "text": "xy ",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            0,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "v_P_char",
+      "buffer": "xy abcd\nefgh",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ywwvlP",
+      "expect": {
+        "buffer": "xy xy cd\nefgh",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "xy ",
+            "linewise": false
+          },
+          "0": {
+            "text": "xy ",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            0,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "v_p_char_named",
+      "buffer": "xy abcd\nefgh",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\"ayewwvl\"ap",
+      "expect": {
+        "buffer": "xy abcd\nxygh",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ef",
+            "linewise": false
+          },
+          "-": {
+            "text": "ef",
+            "linewise": false
+          },
+          "a": {
+            "text": "xy",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "v_p_char_to_end",
+      "buffer": "xy abcd\nefgh",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ywwv$p",
+      "expect": {
+        "buffer": "xy xy efgh",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abcd\n",
+            "linewise": false
+          },
+          "0": {
+            "text": "xy ",
+            "linewise": false
+          },
+          "1": {
+            "text": "abcd\n",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            0,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "v_p_line",
+      "buffer": "xy\nabcd\nefgh",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yyjvlp",
+      "expect": {
+        "buffer": "xy\n\nxy\ncd\nefgh",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab",
+            "linewise": false
+          },
+          "-": {
+            "text": "ab",
+            "linewise": false
+          },
+          "0": {
+            "text": "xy\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            2,
+            0
+          ],
+          ">": [
+            2,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "v_P_line",
+      "buffer": "  xy\nabcd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yyjvlP",
+      "expect": {
+        "buffer": "  xy\n\n  xy\ncd",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "  xy\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "  xy\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            2,
+            0
+          ],
+          ">": [
+            2,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "v_p_block",
+      "buffer": "xy\nabcd\nefgh\nijkl",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "j<C-v>jly0kvp",
+      "expect": {
+        "buffer": "aby\nefabcd\nefgh\nijkl",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          },
+          "0": {
+            "text": "ab\nef",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_p_char",
+      "buffer": "xy abcd\nefgh",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yejVp",
+      "expect": {
+        "buffer": "xy abcd\nxy",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "efgh\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "xy",
+            "linewise": false
+          },
+          "1": {
+            "text": "efgh\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_P_char",
+      "buffer": "  xy\nabcd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "y$jVP",
+      "expect": {
+        "buffer": "  xy\n  xy",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "  xy",
+            "linewise": false
+          },
+          "0": {
+            "text": "  xy",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_p_line",
+      "buffer": "xy\nabcd\nefgh",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yyjVjp",
+      "expect": {
+        "buffer": "xy\nxy",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abcd\nefgh\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "xy\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "abcd\nefgh\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_P_line",
+      "buffer": "xy\nabcd\nefgh",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yyjVP",
+      "expect": {
+        "buffer": "xy\nxy\nefgh",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "xy\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "xy\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_p_block",
+      "buffer": "xy\nabcd\nefgh\nijkl",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "j<C-v>jlyGVp",
+      "expect": {
+        "buffer": "xy\nabcd\nefgh\nab\nef",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ijkl\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "ab\nef",
+            "linewise": false,
+            "block_width": 2
+          },
+          "1": {
+            "text": "ijkl\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            3,
+            0
+          ],
+          ">": [
+            4,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_P_block_count",
+      "buffer": "xy\nabcd\nefgh\nijkl",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "<C-v>jlyggV2P",
+      "expect": {
+        "buffer": "ab\nef\nab\nef\nabcd\nefgh\nijkl",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab\nef",
+            "linewise": false,
+            "block_width": 2
+          },
+          "0": {
+            "text": "ab\nef",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            3,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_p_char",
+      "buffer": "xy\nabcd\nefgh\nijkl",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ye<C-v>jjlp",
+      "expect": {
+        "buffer": "xy\nxycd\nxygh\nijkl",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "xy\nab\nef",
+            "linewise": false,
+            "block_width": 2
+          },
+          "0": {
+            "text": "xy",
+            "linewise": false
+          },
+          "1": {
+            "text": "xy\nab\nef",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_P_char",
+      "buffer": "xy\nabcd\na\nabcd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yejl<C-v>jjlP",
+      "expect": {
+        "buffer": "xy\naxyd\naxy\naxyd",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "xy",
+            "linewise": false
+          },
+          "0": {
+            "text": "xy",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            1
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_p_char_count",
+      "buffer": "xy\nabcd\nefgh\nijkl",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ye<C-v>jjl2p",
+      "expect": {
+        "buffer": "xyxy\nxyxycd\nxyxygh\nijkl",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "xy\nab\nef",
+            "linewise": false,
+            "block_width": 2
+          },
+          "0": {
+            "text": "xy",
+            "linewise": false
+          },
+          "1": {
+            "text": "xy\nab\nef",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_p_line",
+      "buffer": "xy\nabcd\nefgh\nijkl",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yyjl<C-v>jlp",
+      "expect": {
+        "buffer": "xy\nad\neh\nxy\nijkl",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bc\nfg",
+            "linewise": false,
+            "block_width": 2
+          },
+          "0": {
+            "text": "xy\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "bc\nfg",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            3,
+            0
+          ],
+          ">": [
+            3,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_p_line_cursor_above",
+      "buffer": "xy\nabcd\nefgh\nijkl",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yyjjl<C-v>klp",
+      "expect": {
+        "buffer": "xy\nad\nxy\neh\nijkl",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bc\nfg",
+            "linewise": false,
+            "block_width": 2
+          },
+          "0": {
+            "text": "xy\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "bc\nfg",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            2,
+            0
+          ],
+          ">": [
+            2,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_P_line",
+      "buffer": "xy\nabcd\nefgh\nijkl",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yyjl<C-v>jlP",
+      "expect": {
+        "buffer": "xy\nxy\nad\neh\nijkl",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "xy\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "xy\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_p_block",
+      "buffer": "xy\nabcd\nefgh\nijkl",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "<C-v>jlyjl<C-v>jlp",
+      "expect": {
+        "buffer": "xy\nabcd\neabh\niefl",
+        "cursor": [
+          2,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "fg\njk",
+            "linewise": false,
+            "block_width": 2
+          },
+          "0": {
+            "text": "ab\nef",
+            "linewise": false,
+            "block_width": 2
+          },
+          "1": {
+            "text": "fg\njk",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            2,
+            1
+          ],
+          ">": [
+            3,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_P_block_taller",
+      "buffer": "xy\nabcd\nefgh\nijkl",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "<C-v>jlykl<C-v>jjP",
+      "expect": {
+        "buffer": "xab\naefcd\negh\nijkl",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab\nef",
+            "linewise": false,
+            "block_width": 2
+          },
+          "0": {
+            "text": "ab\nef",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_p_block_one_cell",
+      "buffer": "xy\nabcd\nefgh\nijkl",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "<C-v>jlykl<C-v>p",
+      "expect": {
+        "buffer": "xab\naefbcd\nefgh\nijkl",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "y",
+            "linewise": false,
+            "block_width": 1
+          },
+          "-": {
+            "text": "y",
+            "linewise": false,
+            "block_width": 1
+          },
+          "0": {
+            "text": "ab\nef",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_p_empty_register",
+      "buffer": "abcd\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jlp",
+      "expect": {
+        "buffer": "ad\nad",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bc\nbc",
+            "linewise": false,
+            "block_width": 2
+          },
+          "1": {
+            "text": "bc\nbc",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_P_block",
+      "buffer": "xy\nabcd\nefgh\nijkl",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "j<C-v>jly0kvP",
+      "expect": {
+        "buffer": "aby\nefabcd\nefgh\nijkl",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab\nef",
+            "linewise": false,
+            "block_width": 2
+          },
+          "0": {
+            "text": "ab\nef",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_P_short_row_and_past_end",
+      "buffer": "abcd\nabcd\nabcd\na",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "<C-v>jjlyjjjP",
+      "expect": {
+        "buffer": "abcd\nabcd\nabcd\ncda\ncd\ncd",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "cd\ncd\ncd",
+            "linewise": false,
+            "block_width": 2
+          },
+          "0": {
+            "text": "cd\ncd\ncd",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            2,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_P_past_end",
+      "buffer": "abcd\nabcd\nab",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jlyjjP",
+      "expect": {
+        "buffer": "abcd\nabcd\nabcb\n bc",
+        "cursor": [
+          2,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bc\nbc",
+            "linewise": false,
+            "block_width": 2
+          },
+          "0": {
+            "text": "bc\nbc",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_p_dot",
+      "buffer": "xy\nabcdef\nghijkl\nmnopqr",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yejl<C-v>jlpj.",
+      "expect": {
+        "buffer": "xy\naxydef\ngxkl\nmnqr",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "yj\nop",
+            "linewise": false,
+            "block_width": 2
+          },
+          "0": {
+            "text": "xy",
+            "linewise": false
+          },
+          "1": {
+            "text": "yj\nop",
+            "linewise": false,
+            "block_width": 2
+          },
+          "2": {
+            "text": "bc\nhi",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            1
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_P_dot",
+      "buffer": "xy\nabcdef\nghijkl\nmnopqr",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yejl<C-v>jlPj.",
+      "expect": {
+        "buffer": "xy\naxydef\ngxkl\nmnqr",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "xy",
+            "linewise": false
+          },
+          "0": {
+            "text": "xy",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            1
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_append_to_block_register",
+      "buffer": "abcd\nefgh",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>jl\"ayl<C-v>jl\"Ay",
+      "expect": {
+        "buffer": "abcd\nefgh",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab\nef\nbc\nfg",
+            "linewise": false,
+            "block_width": 2
+          },
+          "a": {
+            "text": "ab\nef\nbc\nfg",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "chars_append_to_block_register",
+      "buffer": "abcd\nefgh",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>jl\"ayvl\"Ay",
+      "expect": {
+        "buffer": "abcd\nefgh",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab\nef\nab",
+            "linewise": false,
+            "block_width": 2
+          },
+          "a": {
+            "text": "ab\nef\nab",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_append_to_chars_register",
+      "buffer": "abcd\nefgh",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vl\"ay<C-v>jl\"Ay",
+      "expect": {
+        "buffer": "abcd\nefgh",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abab\nef",
+            "linewise": false
+          },
+          "a": {
+            "text": "abab\nef",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_replace_with_tab",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jr<Tab>",
+      "expect": {
+        "buffer": "a\tc\nd\tf",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_replace_with_tab_wider",
+      "buffer": "abcd\ndefg",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jlr<Tab>",
+      "expect": {
+        "buffer": "a\t\td\nd\t\tg",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_I_nothing_typed_split_tab",
+      "buffer": "a\tb\nabcd",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "<C-v>j2hI<Esc>",
+      "expect": {
+        "buffer": "a\tb\nabcd",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_I_nothing_typed_then_undo",
+      "buffer": "xa\tb\nabcd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "x$<C-v>j2hI<Esc>u",
+      "expect": {
+        "buffer": "xa\tb\nabcd",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_p_tab_row_unpadded",
+      "buffer": "abcdefgh\na\tX\n0123456789\n0123456789",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>jlllyjj2p",
+      "expect": {
+        "buffer": "abcdefgh\na\tX\n0abcdefabcdef123456789\n0a\tXa\tX123456789",
+        "cursor": [
+          2,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abcdef\na\tX",
+            "linewise": false,
+            "block_width": 6
+          },
+          "0": {
+            "text": "abcdef\na\tX",
+            "linewise": false,
+            "block_width": 6
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_p_leading_tab_row_padded",
+      "buffer": "abcdefgh\n\tX\n0123456789\n0123456789",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>jllllyjjp",
+      "expect": {
+        "buffer": "abcdefgh\n\tX\n0abcdef123456789\n0\tX 123456789",
+        "cursor": [
+          2,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abcdef\n\tX",
+            "linewise": false,
+            "block_width": 6
+          },
+          "0": {
+            "text": "abcdef\n\tX",
+            "linewise": false,
+            "block_width": 6
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_outdent_wide_then_blanks",
+      "buffer": "ab中  \nabcdef",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "<C-v>j2h<lt>",
+      "expect": {
+        "buffer": "ab \nabcdef",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            6
+          ],
+          ">": [
+            1,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_P_empty_yank_pads",
+      "buffer": "\nx",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>yjP",
+      "expect": {
+        "buffer": "\n x",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_p_empty_yank",
+      "buffer": "\nx",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>yjp",
+      "expect": {
+        "buffer": "\nx",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "chars_append_keeps_block_width",
+      "buffer": "ab\nabcd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>\"ayjvll\"Ay",
+      "expect": {
+        "buffer": "ab\nabcd",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\nabc",
+            "linewise": false,
+            "block_width": 1
+          },
+          "a": {
+            "text": "a\nabc",
+            "linewise": false,
+            "block_width": 1
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_append_keeps_block_width",
+      "buffer": "ab\nabcd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>\"ay<C-v>jl\"Ay",
+      "expect": {
+        "buffer": "ab\nabcd",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\nab\nab",
+            "linewise": false,
+            "block_width": 1
+          },
+          "a": {
+            "text": "a\nab\nab",
+            "linewise": false,
+            "block_width": 1
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_p_tab_row_wide_block",
+      "buffer": "abcdefghij\na\tX\nabcdefghij\n0123456789\n0123456789\n0123456789",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>jj9ly3j2p",
+      "expect": {
+        "buffer": "abcdefghij\na\tX\nabcdefghij\n0abcdefghijabcdefghij123456789\n0a\tX    a\tX    123456789\n0abcdefghijabcdefghij123456789",
+        "cursor": [
+          3,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abcdefghij\na\tX\nabcdefghij",
+            "linewise": false,
+            "block_width": 10
+          },
+          "0": {
+            "text": "abcdefghij\na\tX\nabcdefghij",
+            "linewise": false,
+            "block_width": 10
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            2,
+            9
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_P_tab_row_padded",
+      "buffer": "abcdefghij\nab\tX\nabcdefghij\n0123456789\n0123456789\n0123456789",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>jj7ly3jlP",
+      "expect": {
+        "buffer": "abcdefghij\nab\tX\nabcdefghij\n0abcdefgh123456789\n0ab\tX 123456789\n0abcdefgh123456789",
+        "cursor": [
+          3,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abcdefgh\nab\tX\nabcdefgh",
+            "linewise": false,
+            "block_width": 8
+          },
+          "0": {
+            "text": "abcdefgh\nab\tX\nabcdefgh",
+            "linewise": false,
+            "block_width": 8
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            2,
+            7
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_p_block_tab_row",
+      "buffer": "abcdefgh\na\tX\nabcdefgh\n0123456789\n0123456789",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>jj7lyjjjl<C-v>jlp",
+      "expect": {
+        "buffer": "abcdefgh\na\tX\nabcdefgh\n0abcdefgh3456789\n0a\tX  3456789\n abcdefgh",
+        "cursor": [
+          3,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "12\n12",
+            "linewise": false,
+            "block_width": 2
+          },
+          "0": {
+            "text": "abcdefgh\na\tX\nabcdefgh",
+            "linewise": false,
+            "block_width": 8
+          },
+          "1": {
+            "text": "12\n12",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            3,
+            1
+          ],
+          ">": [
+            5,
+            8
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_outdent_wide_then_text",
+      "buffer": "ab中 x\nabcdefghij",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "<C-v>jh<lt>",
+      "expect": {
+        "buffer": "ab x\nabcdefghij",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            5
+          ],
+          ">": [
+            1,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_outdent_wide_kept",
+      "buffer": "ab中      x\nabcdefghij",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "<C-v>jh<lt>",
+      "expect": {
+        "buffer": "ab中  x\nabcdefghij",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            5
+          ],
+          ">": [
+            1,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_outdent_wide_twice",
+      "buffer": "ab中      x\nabcdefghij",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "<C-v>jh2<lt>",
+      "expect": {
+        "buffer": "ab x\nabcdefghij",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            5
+          ],
+          ">": [
+            1,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_I_first_row_tab",
+      "buffer": "a\tb\nabcdef",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "<C-v>j2hIX<Esc>",
+      "expect": {
+        "buffer": "aX\tb\nabcdef",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_s_first_row_tab",
+      "buffer": "y\tbyd \n\nbc\ndyb中b中\t\t",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "<C-v>2jsq<Esc>",
+      "expect": {
+        "buffer": "y qyd \n\nbcq\ndyb中b中\t\t",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "  b\n   \n",
+            "linewise": false,
+            "block_width": 3
+          },
+          "1": {
+            "text": "  b\n   \n",
+            "linewise": false,
+            "block_width": 3
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            2,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_p_line_empty_first",
+      "buffer": "a\n\nb",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "yjGVp",
+      "expect": {
+        "buffer": "a\n\n\nb",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "\nb\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "b\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            2,
+            0
+          ],
+          ">": [
+            3,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_p_line_empty_first_count",
+      "buffer": "\na",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yyjV2p",
+      "expect": {
+        "buffer": "\n\n",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "a\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_p_line_empty_first_marks",
+      "buffer": "a\n\nb\nc\nd",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "yjjjVp",
+      "expect": {
+        "buffer": "a\n\nb\n\nb\nd",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "\nb\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "c\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            3,
+            0
+          ],
+          ">": [
+            4,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "v_p_line_empty_first",
+      "buffer": "a\n\nb\ncd",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "yjGlvp",
+      "expect": {
+        "buffer": "a\n\nb\nc\n\nb\n",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "d",
+            "linewise": false
+          },
+          "-": {
+            "text": "d",
+            "linewise": false
+          },
+          "0": {
+            "text": "\nb\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            4,
+            0
+          ],
+          ">": [
+            5,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_P_line_empty_first",
+      "buffer": "a\n\nb\ncd\nef",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "yjjj<C-v>jP",
+      "expect": {
+        "buffer": "a\n\nb\n\nb\nd\nf",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\nb\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "\nb\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            3,
+            0
+          ],
+          ">": [
+            4,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_p_line_empty_first",
+      "buffer": "a\n\nb\ncd\nef",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "yjjj<C-v>jp",
+      "expect": {
+        "buffer": "a\n\nb\nd\nf\n\nb",
+        "cursor": [
+          5,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c\ne",
+            "linewise": false,
+            "block_width": 1
+          },
+          "0": {
+            "text": "\nb\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "c\ne",
+            "linewise": false,
+            "block_width": 1
+          }
+        },
+        "marks": {
+          "<": [
+            5,
+            0
+          ],
+          ">": [
+            6,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_D_dot_short_last",
+      "buffer": "abcd\nabcd\nabcd\nx",
+      "cursor": [
+        3,
+        0
+      ],
+      "keys": "xgg0l<C-v>jDjjl.",
+      "expect": {
+        "buffer": "a\na\na\n",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bcd\n    ",
+            "linewise": false,
+            "block_width": 3
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          },
+          "1": {
+            "text": "bcd\n    ",
+            "linewise": false,
+            "block_width": 3
+          },
+          "2": {
+            "text": "bcd\nbcd",
+            "linewise": false,
+            "block_width": 3
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_D_dot_shorter_last",
+      "buffer": "abcd\nabcd\nabcd\nab",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jDjjll.",
+      "expect": {
+        "buffer": "a\na\nab\nab",
+        "cursor": [
+          2,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "cd\n",
+            "linewise": false,
+            "block_width": 2
+          },
+          "1": {
+            "text": "cd\n",
+            "linewise": false,
+            "block_width": 2
+          },
+          "2": {
+            "text": "bcd\nbcd",
+            "linewise": false,
+            "block_width": 3
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_dollar_d_dot_short_last",
+      "buffer": "abcd\nabcd\nabcd\nab",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>j$djjll.",
+      "expect": {
+        "buffer": "a\na\nab\nab",
+        "cursor": [
+          2,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "cd\n",
+            "linewise": false,
+            "block_width": 2
+          },
+          "1": {
+            "text": "cd\n",
+            "linewise": false,
+            "block_width": 2
+          },
+          "2": {
+            "text": "bcd\nbcd",
+            "linewise": false,
+            "block_width": 3
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_C_dot_short_last",
+      "buffer": "abcd\nabcd\nabcd\nab",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jCX<Esc>jjll.",
+      "expect": {
+        "buffer": "aX\naX\nabcX\nab",
+        "cursor": [
+          2,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "d\n  ",
+            "linewise": false,
+            "block_width": 1
+          },
+          "1": {
+            "text": "d\n  ",
+            "linewise": false,
+            "block_width": 1
+          },
+          "2": {
+            "text": "bcd\nbcd",
+            "linewise": false,
+            "block_width": 3
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_I_count",
+      "buffer": "abcd\nabcd\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>j3IX<Esc>",
+      "expect": {
+        "buffer": "aXXXbcd\naXXXbcd\nabcd",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_A_count",
+      "buffer": "abcd\nabcd\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>j3AX<Esc>",
+      "expect": {
+        "buffer": "abXXXcd\nabXXXcd\nabcd",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_I_count_dot",
+      "buffer": "abcd\nabcd\nabcd\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>j2IXY<Esc>jj.",
+      "expect": {
+        "buffer": "aXYXYbcd\naXYXYbcd\naXYXYbcd\naXYXYbcd",
+        "cursor": [
+          2,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_dollar_A_count",
+      "buffer": "abcd\nab\nabc",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jj$2A;<Esc>",
+      "expect": {
+        "buffer": "abcd;;\nab;;\nabc;;",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            2,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_c_count",
+      "buffer": "abcd\nabcd\nabcd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jl3cX<Esc>",
+      "expect": {
+        "buffer": "aXd\naXd\nabcd",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bc\nbc",
+            "linewise": false,
+            "block_width": 2
+          },
+          "1": {
+            "text": "bc\nbc",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_O_tab",
+      "buffer": "\t\nb 中\t",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>Ojy",
+      "expect": {
+        "buffer": "\t\nb 中\t",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\t\nb 中",
+            "linewise": false,
+            "block_width": 4
+          },
+          "0": {
+            "text": "\t\nb 中",
+            "linewise": false,
+            "block_width": 4
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_dollar_O",
+      "buffer": "abcd\nab\nabcde",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jj$Oy",
+      "expect": {
+        "buffer": "abcd\nab\nabcde",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bcd\nb\nbcde",
+            "linewise": false,
+            "block_width": 4
+          },
+          "0": {
+            "text": "bcd\nb\nbcde",
+            "linewise": false,
+            "block_width": 4
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            4
+          ],
+          ">": [
+            2,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_dollar_O_j",
+      "buffer": "abcd\nab\nabcde\nabcdef",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>j$Ojy",
+      "expect": {
+        "buffer": "abcd\nab\nabcde\nabcdef",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bc\nb\nbc",
+            "linewise": false,
+            "block_width": 2
+          },
+          "0": {
+            "text": "bc\nb\nbc",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            2,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_append_block_to_lines",
+      "buffer": "a\nb\nx",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "xgg\"ayyj<C-v>j\"Ay",
+      "expect": {
+        "buffer": "a\nb\n",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\nb\n\n",
+            "linewise": true
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          },
+          "a": {
+            "text": "a\nb\n\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_append_lines_to_block",
+      "buffer": "a\n\nb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>j\"ayG\"Ayy",
+      "expect": {
+        "buffer": "a\n\nb",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n\nb\n",
+            "linewise": true
+          },
+          "a": {
+            "text": "a\n\nb\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "v_append_lines_to_chars_ending_in_break",
+      "buffer": "abcd\nefgh\nijkl\nmnop",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "v$\"ayG\"Ayy",
+      "expect": {
+        "buffer": "abcd\nefgh\nijkl\nmnop",
+        "cursor": [
+          3,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bcd\n\nmnop\n",
+            "linewise": true
+          },
+          "a": {
+            "text": "bcd\n\nmnop\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            0,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_A_dot_from_dollar",
+      "buffer": "abcdef\nabcdef\nab\nabcdefgh",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jlAX<Esc>jj$.",
+      "expect": {
+        "buffer": "abcXdef\nabcXdef\nabX\nabcdefghX",
+        "cursor": [
+          2,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_d_dot_from_dollar",
+      "buffer": "abcdef\nabcdef\nab\nabcdefgh",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jldjj$.",
+      "expect": {
+        "buffer": "adef\nadef\na\na",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b\nbcdefgh",
+            "linewise": false,
+            "block_width": 7
+          },
+          "1": {
+            "text": "b\nbcdefgh",
+            "linewise": false,
+            "block_width": 7
+          },
+          "2": {
+            "text": "bc\nbc",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_r_dot_from_dollar",
+      "buffer": "abcdef\nabcdef\nab\nabcdefgh",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jlrxjj$.",
+      "expect": {
+        "buffer": "axxdef\naxxdef\nax\naxxxxxxx",
+        "cursor": [
+          2,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_OO_empty_row",
+      "buffer": "abcdefgh\nab\n\nabcdefgh",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jjOOy",
+      "expect": {
+        "buffer": "abcdefgh\nab\n\nabcdefgh",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab\nab\n",
+            "linewise": false,
+            "block_width": 2
+          },
+          "0": {
+            "text": "ab\nab\n",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_dollar_O_empty_row",
+      "buffer": "abcdefgh\nab\n\nabcdefgh",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "<C-v>$jjOy",
+      "expect": {
+        "buffer": "abcdefgh\nab\n\nabcdefgh",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abcdef\nab\n",
+            "linewise": false,
+            "block_width": 6
+          },
+          "0": {
+            "text": "abcdef\nab\n",
+            "linewise": false,
+            "block_width": 6
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            5
+          ],
+          ">": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_O_empty_row",
+      "buffer": "abcdefgh\nab\n\nabcdefgh",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jjOy",
+      "expect": {
+        "buffer": "abcdefgh\nab\n\nabcdefgh",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab\nab\n",
+            "linewise": false,
+            "block_width": 2
+          },
+          "0": {
+            "text": "ab\nab\n",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_O_empty_row_j",
+      "buffer": "abcdefgh\nab\n\nabcdefgh",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "<C-v>jjOjy",
+      "expect": {
+        "buffer": "abcdefgh\nab\n\nabcdefgh",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abcd\nab\n\nabcd",
+            "linewise": false,
+            "block_width": 4
+          },
+          "0": {
+            "text": "abcd\nab\n\nabcd",
+            "linewise": false,
+            "block_width": 4
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            3,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_O_short_row_k",
+      "buffer": "abcdefgh\nab\nabcdefgh",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "<C-v>jOky",
+      "expect": {
+        "buffer": "abcdefgh\nab\nabcdefgh",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "cdef",
+            "linewise": false,
+            "block_width": 4
+          },
+          "0": {
+            "text": "cdef",
+            "linewise": false,
+            "block_width": 4
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            0,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_OO_short_row_j",
+      "buffer": "abcdefgh\nab\nabcdefgh",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "<C-v>jOOjy",
+      "expect": {
+        "buffer": "abcdefgh\nab\nabcdefgh",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "cdef\n\ncdef",
+            "linewise": false,
+            "block_width": 4
+          },
+          "0": {
+            "text": "cdef\n\ncdef",
+            "linewise": false,
+            "block_width": 4
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            5
+          ],
+          ">": [
+            2,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_O_short_row_left",
+      "buffer": "abcdefgh\nab\nabcdefgh",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "<C-v>lllllkOy",
+      "expect": {
+        "buffer": "abcdefgh\nab\nabcdefgh",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab\nabc",
+            "linewise": false,
+            "block_width": 3
+          },
+          "0": {
+            "text": "ab\nabc",
+            "linewise": false,
+            "block_width": 3
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            2,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_dollar_O_short_row_j",
+      "buffer": "abcdefgh\nab\nabcdefgh",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "<C-v>$jOjy",
+      "expect": {
+        "buffer": "abcdefgh\nab\nabcdefgh",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "cd\n\ncd",
+            "linewise": false,
+            "block_width": 2
+          },
+          "0": {
+            "text": "cd\n\ncd",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            2,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "v_esc_j_from_short_row",
+      "buffer": "abcdefghijk\nab\nabcdefghijk",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "vj<Esc>j",
+      "expect": {
+        "buffer": "abcdefghijk\nab\nabcdefghijk",
+        "cursor": [
+          2,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            8
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_A_dollar_v_esc_dot",
+      "buffer": "abcdefgh\nabcdefgh\nabcdefgh\nabcdefgh",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jlAXY<Esc>$v<Esc>.",
+      "expect": {
+        "buffer": "abcXYdefgh XY\nabcXYdefgh XY\nabcdefgh\nabcdefgh",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            9
+          ],
+          ">": [
+            0,
+            9
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_d_dollar_v_esc_dot",
+      "buffer": "abcdefgh\nabcdefgh\nabcdefgh\nabcdefgh",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jld$v<Esc>j.",
+      "expect": {
+        "buffer": "adefgh\nadefg\nabcdeh\nabcdefgh",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "h\nfg",
+            "linewise": false,
+            "block_width": 2
+          },
+          "1": {
+            "text": "h\nfg",
+            "linewise": false,
+            "block_width": 2
+          },
+          "2": {
+            "text": "bc\nbc",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            5
+          ],
+          ">": [
+            0,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_dollar_esc_dot",
+      "buffer": "abcdefgh\nabcdefgh\nabcdefgh\nabcdefgh",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jld$<C-v><Esc>j.",
+      "expect": {
+        "buffer": "adefgh\nadefg\nabcdeh\nabcdefgh",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "h\nfg",
+            "linewise": false,
+            "block_width": 2
+          },
+          "1": {
+            "text": "h\nfg",
+            "linewise": false,
+            "block_width": 2
+          },
+          "2": {
+            "text": "bc\nbc",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            5
+          ],
+          ">": [
+            0,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_OO_tab_spans",
+      "buffer": "\tx\nabcdefgh",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "<C-v>kOOjld",
+      "expect": {
+        "buffer": "\tx\naefgh",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bcd",
+            "linewise": false,
+            "block_width": 3
+          },
+          "-": {
+            "text": "bcd",
+            "linewise": false,
+            "block_width": 3
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            1
+          ],
+          ">": [
+            1,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_OO_tab_inside",
+      "buffer": "a\tb\nabcdefgh\na\tb",
+      "cursor": [
+        1,
+        3
+      ],
+      "keys": "<C-v>jOOy",
+      "expect": {
+        "buffer": "a\tb\nabcdefgh\na\tb",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bcd\n\t",
+            "linewise": false,
+            "block_width": 3
+          },
+          "0": {
+            "text": "bcd\n\t",
+            "linewise": false,
+            "block_width": 3
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            3
+          ],
+          ">": [
+            2,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "cv_OO_wide",
+      "buffer": "世界abc\nabcdef\n世界",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "<C-v>jOOy",
+      "expect": {
+        "buffer": "世界abc\nabcdef\n世界",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab\n世",
+            "linewise": false,
+            "block_width": 2
+          },
+          "0": {
+            "text": "ab\n世",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            1
+          ],
+          ">": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_p_unset_first",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "Vp",
+      "expect": {
+        "buffer": "def\nghi",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "abc\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_p_unset_middle",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "Vp",
+      "expect": {
+        "buffer": "abc\nghi",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "def\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "def\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_p_unset_last",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        2,
+        2
+      ],
+      "keys": "Vp",
+      "expect": {
+        "buffer": "abc\ndef",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ghi\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "ghi\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_P_unset_first",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "VP",
+      "expect": {
+        "buffer": "def\nghi",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_P_unset_last_two",
+      "buffer": "abc\n  def\nghi",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "VjP",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_p_unset_all",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "VGp",
+      "expect": {
+        "buffer": "",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc\ndef\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "abc\ndef\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_p_empty_chars",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "\"ay0\"_ddV\"ap",
+      "expect": {
+        "buffer": "abc\n",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ghi\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "ghi\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_p_empty_chars_last",
+      "buffer": "abc\n\nghi",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "ky$jVp",
+      "expect": {
+        "buffer": "abc\n\n",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ghi\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "ghi\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            2,
+            0
+          ],
+          ">": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_p_black_hole_first",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "V\"_p",
+      "expect": {
+        "buffer": "\ndef\nghi",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "abc\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_p_black_hole_middle",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "V\"_p",
+      "expect": {
+        "buffer": "abc\n\nghi",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "def\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "def\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_p_black_hole_last",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        2,
+        2
+      ],
+      "keys": "V\"_p",
+      "expect": {
+        "buffer": "abc\ndef\n",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ghi\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "ghi\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            2,
+            0
+          ],
+          ">": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_P_black_hole_first",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "V\"_P",
+      "expect": {
+        "buffer": "\ndef\nghi",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_P_black_hole_middle",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "V\"_P",
+      "expect": {
+        "buffer": "abc\n\nghi",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_P_black_hole_last",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        2,
+        2
+      ],
+      "keys": "V\"_P",
+      "expect": {
+        "buffer": "abc\ndef\n",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            2,
+            0
+          ],
+          ">": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_p_black_hole_last_undo",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        2,
+        2
+      ],
+      "keys": "V\"_pu",
+      "expect": {
+        "buffer": "abc\ndef\nghi",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ghi\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "ghi\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            2,
+            0
+          ],
+          ">": [
+            2,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_p_black_hole_count",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "V2\"_p",
+      "expect": {
+        "buffer": "abc\n\n\nghi",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "def\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "def\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_p_chars_count",
+      "buffer": "abc\ndefg\nhij\nklmn",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "ylVj3p",
+      "expect": {
+        "buffer": "abc\nd\nd\nd\nklmn",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "defg\nhij\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "d",
+            "linewise": false
+          },
+          "1": {
+            "text": "defg\nhij\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            3,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_P_chars_count",
+      "buffer": "abc\ndefg\nhij\nklmn",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "ylV2P",
+      "expect": {
+        "buffer": "abc\nd\nd\nhij\nklmn",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "d",
+            "linewise": false
+          },
+          "0": {
+            "text": "d",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_p_chars_rows_count",
+      "buffer": "abc\ndefg\nhij\nklmn",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "vjyjjV2p",
+      "expect": {
+        "buffer": "abc\ndefg\nbc\nde\nbc\nde\nklmn",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "hij\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "bc\nde",
+            "linewise": false
+          },
+          "1": {
+            "text": "hij\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            2,
+            0
+          ],
+          ">": [
+            5,
+            1
+          ]
+        }
+      }
+    }
+  ]
+}

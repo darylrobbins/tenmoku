@@ -3,7 +3,7 @@
 --   nvim --clean --headless -l oracle.lua <cases.json> <results.json>
 -- Each case is {name, buffer, cursor = {row, byte_col}, keys}, rows from 0.
 -- A result also holds `visual = {row, byte_col}`, the visual anchor
--- (getpos('v')), only when the case ends in a visual mode, and
+-- (getpos('v')), only when the case ends in a visual mode (blockwise too), and
 -- `marks = {"<": {row, byte_col}, ">": ...}` for the marks that are set.
 
 local input, output = arg[1], arg[2]
@@ -65,7 +65,7 @@ for _, case in ipairs(vim.json.decode(read(input))) do
   local cursor = vim.api.nvim_win_get_cursor(0)
   local mode = vim.api.nvim_get_mode().mode
   local visual = nil
-  if mode == "v" or mode == "V" then
+  if mode == "v" or mode == "V" or mode == "\22" then
     local pos = vim.fn.getpos("v")
     visual = { pos[2] - 1, pos[3] - 1 }
   end
@@ -87,7 +87,13 @@ for _, case in ipairs(vim.json.decode(read(input))) do
   for _, reg in ipairs(recorded) do
     local text = vim.fn.getreg(reg)
     if text ~= "" then
-      registers[reg] = { text = text, linewise = vim.fn.getregtype(reg) == "V" }
+      local regtype = vim.fn.getregtype(reg)
+      local register = { text = text, linewise = regtype == "V" }
+      -- A blockwise register's type is `<C-v>` and its width.
+      if regtype:sub(1, 1) == "\22" then
+        register.block_width = tonumber(regtype:sub(2))
+      end
+      registers[reg] = register
     end
   end
   table.insert(results, {

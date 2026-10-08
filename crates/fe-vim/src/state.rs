@@ -29,8 +29,8 @@ pub enum Mode {
     /// An insert session is open: typed text goes to the editor, not
     /// [`step`].
     Insert,
-    /// `v` or `V`: keys go to [`step`], which reads operators as acting on
-    /// the selection.
+    /// `v`, `V` or `<C-v>`: keys go to [`step`], which reads operators as
+    /// acting on the selection.
     Visual(VisualKind),
 }
 
@@ -130,7 +130,8 @@ impl VimState {
         self.last_change.as_ref()
     }
 
-    /// `vim.mode`: `normal`, `insert`, `visual`, `visual_line`, or
+    /// `vim.mode`: `normal`, `insert`, `visual`, `visual_line`,
+    /// `visual_block`, or
     /// `operator_pending` while an operator waits for its target.
     pub fn mode_name(&self) -> &'static str {
         match self.mode {
@@ -139,14 +140,18 @@ impl VimState {
             Mode::Insert => "insert",
             Mode::Visual(VisualKind::Char) => "visual",
             Mode::Visual(VisualKind::Line) => "visual_line",
+            Mode::Visual(VisualKind::Block) => "visual_block",
         }
     }
 
     /// Runs [`step`] on the pending input, read in the mode it's in, and
     /// keeps what it leaves pending: nothing, unless it waits.
     pub fn feed(&mut self, key: VimKey) -> Step {
-        let visual = matches!(self.mode, Mode::Visual(_));
-        let pending = std::mem::take(&mut self.pending).in_visual(visual);
+        let kind = match self.mode {
+            Mode::Visual(kind) => Some(kind),
+            _ => None,
+        };
+        let pending = std::mem::take(&mut self.pending).in_visual(kind);
         let result = step(pending, key);
         if let Step::Wait(pending) = &result {
             self.pending = pending.clone();

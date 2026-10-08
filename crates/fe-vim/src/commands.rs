@@ -10,7 +10,7 @@ use fe_editor::{EditorModel, commands::EditorHost};
 
 use crate::{
     CountArgs, InsertArgs, MoveArgs, OperateArgs, PutArgs, Registers, ReplaceCharArgs, SelectArgs,
-    VimState, VisualArgs, edit, history, insert, motion, operator, repeat, visual,
+    SwapArgs, VimState, VisualArgs, edit, history, insert, motion, operator, repeat, visual,
 };
 
 /// What vim's commands run against: an editor's model, its host, its vim
@@ -34,8 +34,8 @@ impl CommandTarget for VimCommands {
 /// Vim's registry: `vim.move`, `vim.operate`, `vim.put`, `vim.insert`,
 /// `vim.normal_mode`, `vim.join`, `vim.replace_char`, `vim.toggle_case`,
 /// `vim.undo`, `vim.redo`, `vim.repeat`, and for the visual modes
-/// `vim.visual`, `vim.visual_exit`, `vim.visual_swap`, `vim.reselect` and
-/// `vim.select`.
+/// `vim.visual`, `vim.visual_exit`, `vim.visual_swap`, `vim.visual_put`,
+/// `vim.reselect` and `vim.select`.
 pub fn registry() -> Registry<VimCommands> {
     let normal = ContextPredicate::parse("editor && vim.mode == normal")
         .expect("vim's context predicate parses");
@@ -88,7 +88,7 @@ pub fn registry() -> Registry<VimCommands> {
         )
         .expect("vim command IDs are valid and distinct")
         .description(
-            "Puts a register after (or before) every caret, `count` times: whole lines below or above the caret's row. At most 64 MiB at once.",
+            "Puts a register after (or before) every caret, `count` times: whole lines below or above the caret's row, a block from the primary caret's column. At most 64 MiB at once.",
         )
         .context(normal.clone())
         .mutates_buffer(true);
@@ -210,7 +210,7 @@ pub fn registry() -> Registry<VimCommands> {
         )
         .expect("vim command IDs are valid and distinct")
         .description(
-            "Enters charwise or linewise visual mode at the primary caret, switches to that kind from the other, or leaves it if it's the current one.",
+            "Enters charwise, linewise or blockwise visual mode at the primary caret, switches to that kind from another, or leaves it if it's the current one.",
         )
         .context(normal_or_visual.clone())
         .mutates_buffer(false);
@@ -225,15 +225,31 @@ pub fn registry() -> Registry<VimCommands> {
         .context(visual_mode.clone())
         .mutates_buffer(false);
     registry
-        .register(
+        .register_with_args(
             "vim.visual_swap",
             "Vim Swap Selection Ends",
-            |target: &mut VimTarget<'_>, _: &Actor| visual::swap(target),
+            |target: &mut VimTarget<'_>, _: &Actor, args: SwapArgs| visual::swap(target, args),
         )
         .expect("vim command IDs are valid and distinct")
-        .description("Moves the visual cursor to the other end of the selection.")
+        .description(
+            "Moves the visual cursor to the other end of the selection; in a block with `same_row`, to the other corner on its row.",
+        )
         .context(visual_mode.clone())
         .mutates_buffer(false);
+    registry
+        .register_with_args(
+            "vim.visual_put",
+            "Vim Put Over Selection",
+            |target: &mut VimTarget<'_>, actor: &Actor, args: PutArgs| {
+                visual::put(target, actor, args)
+            },
+        )
+        .expect("vim command IDs are valid and distinct")
+        .description(
+            "Replaces the visual selection with a register, `count` times: `p` (`before` unset) leaves what it replaced in the registers, `P` leaves them as they were.",
+        )
+        .context(visual_mode.clone())
+        .mutates_buffer(true);
     registry
         .register(
             "vim.reselect",
