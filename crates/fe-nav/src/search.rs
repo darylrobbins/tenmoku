@@ -1217,10 +1217,10 @@ mod tests {
             }
         }
 
-        fn wait_started(&self) {
+        fn wait_started(&self, count: usize) {
             let (state, changed) = &*self.0;
             let state = state.lock().unwrap();
-            drop(changed.wait_while(state, |state| state.0 == 0));
+            drop(changed.wait_while(state, |state| state.0 < count));
         }
 
         fn started(&self) -> usize {
@@ -1236,11 +1236,19 @@ mod tests {
 
     /// Sets `cancel` once `gate` has started.
     fn cancel_when_started(gate: &Gate) -> (Arc<AtomicBool>, thread::JoinHandle<()>) {
+        cancel_when_started_count(gate, 1)
+    }
+
+    /// Sets `cancel` once `gate` has started `count` times.
+    fn cancel_when_started_count(
+        gate: &Gate,
+        count: usize,
+    ) -> (Arc<AtomicBool>, thread::JoinHandle<()>) {
         let cancel = Arc::new(AtomicBool::new(false));
         let canceller = thread::spawn({
             let (gate, cancel) = (gate.clone(), cancel.clone());
             move || {
-                gate.wait_started();
+                gate.wait_started(count);
                 cancel.store(true, Ordering::Relaxed);
             }
         });
@@ -1304,10 +1312,19 @@ mod tests {
         let dir = callers(2);
         let gate = Gate::default();
         let nav = unbuilt(dir.path())
-            .with_budget(Duration::from_millis(100))
+            .with_budget(Duration::from_secs(600))
             .with_extract(gate.extract());
-        // Each fallback blocks in its first extraction, past its request.
-        for _ in 0..FALLBACK_THREADS + 3 {
+        // Each fallback blocks in its first extraction, past its request. A
+        // request is cancelled once its fallback is known to be blocked, so
+        // nothing here depends on how fast a thread runs.
+        for i in 0..FALLBACK_THREADS {
+            let (cancel, canceller) = cancel_when_started_count(&gate, i + 1);
+            let answer = nav.definitions(&other(dir.path()), &cancel);
+            assert_eq!(answer, Err(NavError::Cancelled));
+            canceller.join().unwrap();
+        }
+        // With every slot held, the rest return at once without searching.
+        for _ in 0..3 {
             let defs = nav
                 .definitions(&other(dir.path()), &AtomicBool::new(false))
                 .unwrap();
@@ -1315,7 +1332,7 @@ mod tests {
         }
         let stats = nav.stats();
         assert_eq!(stats.searches, FALLBACK_THREADS);
-        assert!(gate.started() <= FALLBACK_THREADS);
+        assert_eq!(gate.started(), FALLBACK_THREADS);
         // Let go, they end, and the next request searches again.
         gate.release();
         let freed = Instant::now();
