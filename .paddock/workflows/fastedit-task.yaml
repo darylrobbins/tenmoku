@@ -13,7 +13,7 @@ nodes:
   brainstorm:
     type: agent
     profile: fastedit-readonly
-    permissions: ask   # claude:auto would approve edits the read-only profile denies
+    permissions: plan   # Claude blocks edits itself; the classifier reviews shell commands. Under ask, Paddock prompts for any command with sed or a redirect
     agent: architect
     tier: deep
     prompt: |
@@ -38,7 +38,7 @@ nodes:
   revise-brief:
     type: agent
     profile: fastedit-readonly
-    permissions: ask
+    permissions: plan
     agent: architect
     tier: deep
     prompt: |
@@ -65,7 +65,7 @@ nodes:
   plan:
     type: agent
     profile: fastedit-readonly
-    permissions: ask
+    permissions: plan
     tier: deep
     session: fresh
     skills: [writing-plans]
@@ -130,11 +130,12 @@ nodes:
     options: [retry, stop]
     route: driver
 
-  # Codex's effort comes from the workspace setting models.codex.thinking (high);
-  # tiers map only Claude models.
+  # Codex's effort comes from the workspace setting models.codex.thinking (high).
+  # Pin the model: by tier, Paddock passes Claude's model name (sonnet) to Codex, which rejects it.
   review:
     type: agent
     profile: fastedit-review
+    model: codex:gpt-6.1-sol
     join: any
     prompt: |
       Review this branch's diff against {{ inputs.baseRef }} for the board task
