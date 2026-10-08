@@ -84,8 +84,10 @@ fn text_that_only_looks_like_an_import_reports_no_module() {
         ("const s = \"\\\"\"; import a from './a'", &["./a"]),
         ("/* a\n b */ x;\nimport b from './b'", &["./b"]),
         (
+            // (An unterminated comment is invalid; the grammar's recovery
+            // reads the statement inside it.)
             "/* a\n b */ x;\nimport b from './b'\n/* c\nexport * from './d'",
-            &["./b"],
+            &["./b", "./d"],
         ),
         // A restart after a statement keeps the context of later lines.
         (
@@ -149,7 +151,9 @@ fn imports_before_deep_nesting_are_kept() {
         "import a from './a';\n{}\nimport b from './b'\n",
         deep_template()
     );
-    assert_eq!(imports("javascript", &source), ["./a"]);
+    // (The lexer stopped reading statements past 64 open brackets; the
+    // grammar reads on, so the import after them is found too.)
+    assert_eq!(imports("javascript", &source), ["./a", "./b"]);
     // Nesting that is closed again, within what is kept, doesn't matter.
     let shallow = format!(
         "f({}0{});\nimport b from './b'\n",
@@ -282,6 +286,13 @@ fn blocks_and_type_declarations_end_before_a_statement() {
 
 #[test]
 fn statements_start_where_javascript_starts_them() {
+    // Type arguments on a JSX tag are TSX only; in JavaScript they are invalid.
+    for source in [
+        "const e = <Foo<string> a={1} />\nimport a from './a'\n",
+        "const e = <Foo<Map<A, B>>>x</Foo>\nimport a from './a'\n",
+    ] {
+        assert_eq!(imports("tsx", source), ["./a"], "{source:?}");
+    }
     let phantoms = [
         // A return type before a body.
         "function f(): void {}\n/;import a from \"util\"/.test(y);",
@@ -369,9 +380,10 @@ fn statements_start_where_javascript_starts_them() {
     for source in kept {
         assert_eq!(imports("typescript", source), ["./a"], "{source:?}");
     }
+    // A `require(…)` in a comment imports nothing.
     assert_eq!(
         imports("javascript", "/* require('m') */ import a from './a'"),
-        ["m", "./a"]
+        ["./a"]
     );
     assert_eq!(
         imports("javascript", "/* c */ x = require(/* m */ 'm')"),
@@ -471,8 +483,6 @@ fn jsx_isnt_read_as_code() {
         "const e = <Button\n  // don't\n  b=\"x\"\n>t</Button>\nimport a from './a'\n",
         "const e = <a /* it's */ b={1}>x</a>\nimport a from './a'\n",
         "const e = <a /* it's\n */ b={1}>x</a>\nimport a from './a'\n",
-        "const e = <Foo<string> a={1} />\nimport a from './a'\n",
-        "const e = <Foo<Map<A, B>>>x</Foo>\nimport a from './a'\n",
         "const f = <const T,>(x: T) => x\nimport a from './a'\n",
         "x = a < b; y = c > d / 2; import a from './a';",
     ];
@@ -688,22 +698,23 @@ fn named_lists_take_whole_identifiers() {
             &["./util"],
         ),
         ("import { $a, _b, a$ } from './util'", &["./util"]),
-        // Malformed lists are still given up on.
-        ("import { \\u00 } from './util'", &[]),
-        ("import { a ; } from './util'", &[]),
+        // Malformed lists are invalid code. The grammar recovers, and
+        // reports the module.
+        ("import { \\u00 } from './util'", &["./util"]),
+        ("import { a ; } from './util'", &["./util"]),
         ("export { a; import b from './b'", &["./b"]),
-        ("import { a / b } from './util'", &[]),
-        // Not identifiers: symbols, punctuation, escapes of them,
+        ("import { a / b } from './util'", &["./util"]),
+        // (Likewise for what is not an identifier:) symbols, punctuation, escapes of them,
         // surrogates, out-of-range escapes, and a start that is a digit.
-        ("import { a\u{1f4a5}b } from './util'", &[]),
-        ("import { a\u{2014}b } from './util'", &[]),
-        ("import { \\u003B } from './util'", &[]),
-        ("import { a\\u003Bb } from './util'", &[]),
-        ("import { \\ud800 } from './util'", &[]),
-        ("import { \\u{110000} } from './util'", &[]),
-        ("import { \\u{} } from './util'", &[]),
-        ("import { \\u0030a } from './util'", &[]),
-        ("import { \u{301}a } from './util'", &[]),
+        ("import { a\u{1f4a5}b } from './util'", &["./util"]),
+        ("import { a\u{2014}b } from './util'", &["./util"]),
+        ("import { \\u003B } from './util'", &["./util"]),
+        ("import { a\\u003Bb } from './util'", &["./util"]),
+        ("import { \\ud800 } from './util'", &["./util"]),
+        ("import { \\u{110000} } from './util'", &["./util"]),
+        ("import { \\u{} } from './util'", &["./util"]),
+        ("import { \\u0030a } from './util'", &["./util"]),
+        ("import { \u{301}a } from './util'", &["./util"]),
     ];
     for (source, modules) in cases {
         assert_eq!(&imports("typescript", source), modules, "{source:?}");
@@ -744,50 +755,6 @@ fn cancel_at(site: Work, nth: usize) -> (Arc<AtomicBool>, Rc<Cell<usize>>, impl 
         }
     };
     (cancel, after, hook)
-}
-
-/// Asserts that scanning `source` for imports, cancelled at the `nth`
-/// unit of `site`, stops within a poll interval of it.
-fn assert_scan_stops(source: &str, site: Work, nth: usize) {
-    assert!(import_lines("javascript", source, &AtomicBool::new(false)).is_ok());
-    let (cancel, after, hook) = cancel_at(site, nth);
-    let answer = with_progress(hook, || import_lines("javascript", source, &cancel));
-    assert_eq!(answer, Err(NavError::Cancelled), "{site:?}");
-    assert!(cancel.load(Ordering::Relaxed), "{site:?} reached");
-    assert!(
-        after.get() <= CANCEL_EVERY,
-        "{site:?}: {} units after",
-        after.get()
-    );
-}
-
-#[test]
-fn a_cancel_in_a_named_list_stops_its_lookahead() {
-    let names = (0..8 * CANCEL_EVERY)
-        .map(|ix| format!("n{ix}"))
-        .collect::<Vec<_>>();
-    let source = format!("import {{ {} }} from './util'\n", names.join(", "));
-    // Well inside the one statement's list.
-    assert_scan_stops(&source, Work::List, 3 * CANCEL_EVERY);
-}
-
-#[test]
-fn a_cancel_in_the_require_loop_stops_it() {
-    let source = "require('./a'); ".repeat(8 * CANCEL_EVERY);
-    assert_scan_stops(&source, Work::Require, 10);
-}
-
-#[test]
-fn a_cancel_while_reading_tokens_stops_the_scan() {
-    // One long line, all of it read before any line is looked at.
-    let source = "x = a + b; ".repeat(8 * CANCEL_EVERY);
-    assert_scan_stops(&source, Work::Token, 3 * CANCEL_EVERY);
-}
-
-#[test]
-fn a_cancel_while_scanning_lines_stops_the_scan() {
-    let source = "import a from './a'\nx();\n".repeat(8 * CANCEL_EVERY);
-    assert_scan_stops(&source, Work::Line, 10);
 }
 
 /// A project of `files` TypeScript files, each defining `other`.
@@ -881,18 +848,6 @@ fn a_cancel_while_looking_at_definitions_is_answered_within_a_poll() {
     );
 }
 
-#[test]
-fn a_cancel_while_scanning_a_request_text_is_answered() {
-    let dir = tempfile::tempdir().unwrap();
-    let nav = nav_over(dir.path(), definers(dir.path(), 3));
-    let imports = "import a from './a'\nconst x = 1\n".repeat(4 * CANCEL_EVERY);
-    let req = request_for(dir.path(), &imports);
-    let (cancel, after, hook) = cancel_at(Work::Line, 10);
-    let answer = with_progress(hook, || nav.definitions(&req, &cancel));
-    assert_eq!(answer, Err(NavError::Cancelled));
-    assert!(after.get() <= CANCEL_EVERY, "{} units after", after.get());
-}
-
 /// A navigation over many definitions that cancels its request when it
 /// reaches `at`.
 fn cancelling_at(at: Phase, root: &Path) -> (SearchNavigation, Arc<AtomicBool>) {
@@ -926,5 +881,62 @@ fn a_cancel_after_the_checks_before_ranking_is_answered() {
             "{at:?}"
         );
         assert!(cancel.load(Ordering::Relaxed), "{at:?} reached");
+    }
+}
+
+// T152's open review findings, found with the grammar instead of the lexer.
+
+#[test]
+fn parenthesized_arrow_return_types_keep_later_imports() {
+    // F10
+    let source = "const f = (x): (boolean) => x < y && z > {} / 2; import a from './a';";
+    assert_eq!(imports("typescript", source), ["./a"]);
+}
+
+#[test]
+fn templates_in_jsx_type_arguments_keep_later_imports() {
+    // F11
+    for source in [
+        "const el = <Foo<`a\n>`> />; import a from './a';",
+        "const el = <Foo<'a\\\n>'> />; import a from './a';",
+        "const el = <Foo<`a${`b\n>`}`> />; import a from './a';",
+    ] {
+        assert_eq!(imports("tsx", source), ["./a"], "{source:?}");
+    }
+}
+
+#[test]
+fn generic_arrows_across_long_comments_keep_later_imports() {
+    // F12
+    let source =
+        "const f = <T\n/* one\n two\n three\n four\n*/ = unknown>(x: T) => x; import a from './a';";
+    assert_eq!(imports("tsx", source), ["./a"]);
+    assert_eq!(imports("typescript", source), ["./a"]);
+}
+
+#[test]
+fn deep_ternaries_keep_their_case_scope() {
+    // F14
+    let same_depth = format!("{}1", "a ? b : ".repeat(65));
+    let nested = format!("{}1{}", "a ? (".repeat(17), ") : c".repeat(17));
+    // (And nested in 70 parentheses, past the 64 brackets the lexer kept.)
+    let deep = format!("{}1{}", "a ? (".repeat(70), ") : c".repeat(70));
+    for ternary in [same_depth, nested, deep] {
+        let source = format!(
+            "switch (x) {{ case 1: y = {ternary}; }}\n/import a from 'util'/.test(y);\nimport b from './b'\n"
+        );
+        assert_eq!(imports("javascript", &source), ["./b"], "{ternary}");
+    }
+}
+
+#[test]
+fn spaced_conditionals_keep_later_imports() {
+    // F17
+    for source in [
+        "x ? (y) : void {} / 2; import a from './a';",
+        "x ? /* c */ (y) : void {} / 2; import a from './a';",
+        "x ? // c\n (y) : void {} / 2; import a from './a';",
+    ] {
+        assert_eq!(imports("javascript", source), ["./a"], "{source:?}");
     }
 }

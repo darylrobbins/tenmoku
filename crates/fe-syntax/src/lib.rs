@@ -22,6 +22,7 @@ mod detect;
 mod driver;
 mod fold;
 mod highlight;
+mod imports;
 mod injection;
 mod language;
 mod outline;
@@ -32,6 +33,7 @@ pub use detect::{detect_language_name, language_name_for_shebang};
 pub use driver::{Spawner, SyntaxDriver};
 pub use fold::{fold_range_at, fold_ranges};
 pub use highlight::{Highlight, HighlightSpan, resolve_theme};
+pub use imports::{ImportsError, module_specifiers, module_specifiers_supported};
 pub use language::{
     Language, language_by_name, language_for_path, language_name_for_path, language_names,
     loaded_language,

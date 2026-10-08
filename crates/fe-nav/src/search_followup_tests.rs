@@ -61,7 +61,8 @@ fn statements_on_one_line_are_all_read() {
         ("import a from './a'; /* import b from './b' */", &["./a"]),
         ("const s = \"; import x from './x'\"", &[]),
         ("f(); import x from './x'", &["./x"]),
-        ("f() import x from './x'", &[]),
+        // (Invalid code: the grammar's recovery reports the module.)
+        ("f() import x from './x'", &["./x"]),
         ("function f() {} import a from './a'", &["./a"]),
         ("export function f() {} export * from './b'", &["./b"]),
         // An unclosed list isn't one, and the scan goes on after it.
