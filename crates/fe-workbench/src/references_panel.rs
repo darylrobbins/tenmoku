@@ -16,6 +16,7 @@
 //! to the root they were found in.
 
 use std::{
+    collections::HashMap,
     ops::Range,
     path::PathBuf,
     rc::Rc,
@@ -34,7 +35,7 @@ use fe_nav::{
 };
 use fe_ui::{HighlightedLabel, ROW_HEIGHT, UiTheme};
 use gpui::{
-    AnyElement, App, AppContext as _, Context, ElementId, FocusHandle, Focusable, Global,
+    AnyElement, App, AppContext as _, Context, ElementId, EntityId, FocusHandle, Focusable, Global,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, ScrollStrategy, SharedString,
     StatefulInteractiveElement as _, Styled as _, Task, UniformListScrollHandle, WeakEntity,
     Window, div, prelude::FluentBuilder as _, px, uniform_list,
@@ -72,10 +73,11 @@ pub struct ReferencesPanel {
     root: Option<PathBuf>,
     /// Where the caret was when they were asked for.
     from: Option<Place>,
-    /// The (path relative to the root, range end) of each reference opened
-    /// from this run: where the caret may be after one lands, though other
-    /// landings may be still loading.
-    opened: Vec<(PathBuf, usize)>,
+    /// The (path relative to the root, range end) of the last reference this
+    /// run opened in each pane, by pane: where that pane's caret is, or will
+    /// be once its file is read, until the user moves it. A later open in the
+    /// pane supersedes the entry, as it does a read still pending.
+    opened: HashMap<EntityId, (PathBuf, usize)>,
     /// The current run's, which only its batches carry.
     generation: u64,
     /// The current run's: set when another starts, or the panel goes.
@@ -104,7 +106,7 @@ impl ReferencesPanel {
             word: None,
             root: None,
             from: None,
-            opened: Vec::new(),
+            opened: HashMap::new(),
             generation: 0,
             cancel: Arc::default(),
             running: None,
@@ -323,22 +325,30 @@ impl ReferencesPanel {
         let Some(workbench) = self.workbench.upgrade() else {
             return;
         };
+        let pane = workbench.read(cx).pane().entity_id();
         let record = workbench
             .read(cx)
             .caret_place(cx)
-            .is_some_and(|here| !self.lands_at(&here, workbench.read(cx), cx));
-        self.opened.push((location.rel.clone(), location.range.end));
+            .is_some_and(|here| !self.lands_at(&here, pane, workbench.read(cx), cx));
+        // Off the pane's last destination, the caret was moved: that landing
+        // is stale, and so is a pending one the pane no longer reads.
+        if record {
+            self.opened.remove(&pane);
+        }
+        self.opened
+            .insert(pane, (location.rel.clone(), location.range.end));
         workbench.update(cx, |workbench, cx| {
             workbench.list_jump(record, &location, window, cx)
         });
     }
 
-    /// Whether `here` is where a reference this panel opened left the caret,
-    /// as the editor showing it has it now: the end of its range, or that end
-    /// clamped to a file that has shrunk since it was found. Not where the
-    /// references were asked for, though one ends there; nor the end of one
-    /// not opened, which the caret was moved to.
-    fn lands_at(&self, here: &Place, workbench: &Workbench, cx: &App) -> bool {
+    /// Whether `here` is where the last reference this panel opened in `pane`,
+    /// the active one, left the caret, as the editor showing it has it now:
+    /// the end of its range, or that end clamped to a file that has shrunk
+    /// since it was found. Not where the references were asked for, though
+    /// one ends there; nor the end of one not opened, or opened before
+    /// another in the pane, or in another pane, which the caret was moved to.
+    fn lands_at(&self, here: &Place, pane: EntityId, workbench: &Workbench, cx: &App) -> bool {
         if self.from.as_ref() == Some(here) {
             return false;
         }
@@ -352,9 +362,9 @@ impl ReferencesPanel {
         let text = editor
             .filter(|model| model.path() == Some(here.path.as_path()))
             .map(|model| model.text());
-        (self.opened.iter())
+        (self.opened.get(&pane))
             .filter(|(opened, _)| opened == rel)
-            .any(|&(_, end)| {
+            .is_some_and(|&(_, end)| {
                 here.offset == end
                     || text.is_some_and(|text| text.clip_offset(end, Bias::Right) == here.offset)
             })

@@ -1110,3 +1110,89 @@ fn another_reference_opened_while_one_is_read(cx: &mut TestAppContext) {
     let (path, selection, _) = at(&workbench, cx);
     assert_eq!((path, selection), (root.join("src/main.rs"), caret..caret));
 }
+
+#[gpui::test]
+fn moving_back_to_an_earlier_opened_end_is_recorded(cx: &mut TestAppContext) {
+    let main = "mod a;\n\nfn main() {\n    a::helper();\n}\n";
+    let a = "pub fn helper() {}\n\npub fn run() {\n    helper();\n}\n";
+    let (_dir, root) = project(&[("src/a.rs", a), ("src/main.rs", main)]);
+    let (workbench, cx) = opened(cx, &root, "src/main.rs");
+    let caret = caret_on(&workbench, "helper", cx);
+    cx.simulate_keystrokes("shift-f12");
+    settle(cx);
+    let panel = references(&workbench, cx);
+    let locations = panel.read_with(cx, |panel, _| panel.locations());
+    let ends: Vec<usize> = (locations.iter())
+        .filter(|l| l.rel.as_path() == std::path::Path::new("src/a.rs"))
+        .map(|l| l.range.end)
+        .collect();
+    let place = |cx: &mut VisualTestContext| {
+        let (path, selection, _) = at(&workbench, cx);
+        (path, selection.end)
+    };
+
+    // Two references opened in a row; the caret then moved back to the end
+    // of the first, which is no longer where one left it.
+    click(&panel, 3, cx);
+    click(&panel, 4, cx);
+    let editor = workbench.read_with(cx, |workbench, cx| workbench.active_editor(cx).cloned());
+    editor
+        .unwrap()
+        .update(cx, |editor, _| editor.model_mut().set_cursor(ends[0]));
+    click(&panel, 1, cx);
+    assert_eq!(place(cx).0, root.join("src/main.rs"));
+
+    focus_editor(&workbench, cx);
+    cx.simulate_keystrokes("ctrl--");
+    settle(cx);
+    assert_eq!(place(cx), (root.join("src/a.rs"), ends[0]));
+    cx.simulate_keystrokes("ctrl--");
+    settle(cx);
+    assert_eq!(place(cx), (root.join("src/main.rs"), caret));
+}
+
+#[gpui::test]
+fn moving_to_the_end_of_a_superseded_reference_is_recorded(cx: &mut TestAppContext) {
+    let main = "mod a;\n\nfn main() {\n    a::helper();\n}\n";
+    let a = "pub fn helper() {}\n\npub fn run() {\n    helper();\n}\n";
+    let (_dir, root) = project(&[("src/a.rs", a), ("src/main.rs", main)]);
+    let (workbench, cx) = opened(cx, &root, "src/main.rs");
+    let caret = caret_on(&workbench, "helper", cx);
+    cx.simulate_keystrokes("shift-f12");
+    settle(cx);
+    let panel = references(&workbench, cx);
+    let locations = panel.read_with(cx, |panel, _| panel.locations());
+    let ends: Vec<usize> = (locations.iter())
+        .filter(|l| l.rel.as_path() == std::path::Path::new("src/a.rs"))
+        .map(|l| l.range.end)
+        .collect();
+    let place = |cx: &mut VisualTestContext| {
+        let (path, selection, _) = at(&workbench, cx);
+        (path, selection.end)
+    };
+    let bounds = |ix: usize, cx: &mut VisualTestContext| {
+        panel.read_with(cx, |panel, _| panel.row_bounds(ix).expect("drawn"))
+    };
+    let (second, first) = (bounds(4, cx), bounds(3, cx));
+
+    // The second reference is superseded by the first while a.rs is still
+    // read: it never lands.
+    cx.update(|window, cx| click_now(second.center(), window, cx));
+    cx.update(|window, cx| click_now(first.center(), window, cx));
+    settle(cx);
+    assert_eq!(place(cx), (root.join("src/a.rs"), ends[0]));
+    let editor = workbench.read_with(cx, |workbench, cx| workbench.active_editor(cx).cloned());
+    editor
+        .unwrap()
+        .update(cx, |editor, _| editor.model_mut().set_cursor(ends[1]));
+    click(&panel, 1, cx);
+    assert_eq!(place(cx).0, root.join("src/main.rs"));
+
+    focus_editor(&workbench, cx);
+    cx.simulate_keystrokes("ctrl--");
+    settle(cx);
+    assert_eq!(place(cx), (root.join("src/a.rs"), ends[1]));
+    cx.simulate_keystrokes("ctrl--");
+    settle(cx);
+    assert_eq!(place(cx), (root.join("src/main.rs"), caret));
+}
