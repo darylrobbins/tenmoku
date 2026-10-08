@@ -510,10 +510,10 @@ command = "references_panel.open"
 context = "ReferencesPanel"
 
 # Vim's layer, last so that it wins over the plain editor's bindings in the
-# same frame. In normal mode the arrows are vim's motions (`h l k j`), and the
-# editing keys are vim's (`vim.key` hands the keystroke to vim) rather than
-# the editor's. Vim's ctrl keys need no binding: no `ctrl-` binding applies
-# in the editor, so they reach vim unmatched.
+# same frame. In normal and visual mode the arrows are vim's motions
+# (`h l k j`), and the editing keys are vim's (`vim.key` hands the keystroke
+# to vim) rather than the editor's. Vim's ctrl keys need no binding: no
+# `ctrl-` binding applies in the editor, so they reach vim unmatched.
 
 [[bindings]]
 keys = "left"
@@ -592,6 +592,36 @@ context = "editor && vim.mode == normal"
 keys = "alt-backspace"
 command = "vim.key"
 context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "enter"
+command = "vim.key"
+context = "editor && vim.visual"
+
+[[bindings]]
+keys = "tab"
+command = "vim.key"
+context = "editor && vim.visual"
+
+[[bindings]]
+keys = "backspace"
+command = "vim.key"
+context = "editor && vim.visual"
+
+[[bindings]]
+keys = "shift-backspace"
+command = "vim.key"
+context = "editor && vim.visual"
+
+[[bindings]]
+keys = "delete"
+command = "vim.key"
+context = "editor && vim.visual"
+
+[[bindings]]
+keys = "alt-backspace"
+command = "vim.key"
+context = "editor && vim.visual"
 
 # Insert mode keeps the editor's keys; `escape` and `ctrl-[` end the session
 # and return to normal mode.

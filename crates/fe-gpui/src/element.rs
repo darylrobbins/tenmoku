@@ -413,6 +413,7 @@ impl Element for EditorElement {
             view.model
                 .fit_wrap_width(layout::wrap_width(width, rows, em));
             view.model.sync_display();
+            view.sync_visual();
         });
         // Wrap a slice of what's pending around the top of the viewport,
         // keeping the text at the top where it is unless the caret is about
@@ -581,10 +582,13 @@ impl Element for EditorElement {
                 .map(|&cursor| layout.bounds(cursor))
                 .collect(),
         };
+        let selections = selection_rects(&mut layout, view);
         let frame = &layout.frame;
         let line_height = px(frame.line_height);
         #[cfg(test)]
         let mut painted = Vec::new();
+        #[cfg(test)]
+        let mut painted_selections = Vec::new();
         #[cfg(test)]
         let mut painted_chevrons = Vec::new();
 
@@ -608,8 +612,11 @@ impl Element for EditorElement {
                     bounds: text_bounds,
                 }),
                 |window| {
-                    for &selection in &frame.selections {
-                        window.paint_quad(fill(layout.bounds(selection), theme.selection));
+                    for &selection in &selections {
+                        let selection = layout.bounds(selection);
+                        window.paint_quad(fill(selection, theme.selection));
+                        #[cfg(test)]
+                        painted_selections.push(selection);
                     }
                     // Under the text, so the glyph stays readable.
                     if block {
@@ -733,6 +740,7 @@ impl Element for EditorElement {
             #[cfg(test)]
             {
                 view.painted_carets = painted;
+                view.painted_selections = painted_selections;
                 view.painted_chevrons = painted_chevrons;
                 let underlines = underlines.iter().map(|&(bounds, _)| bounds).collect();
                 view.painted_hover = (underlines, hover.is_some());
@@ -962,6 +970,53 @@ fn block_carets(
         blocks.push(Rect { width, ..bar });
     }
     blocks.into_iter().map(|rect| layout.bounds(rect)).collect()
+}
+
+/// The frame's selection rects. In a vim visual mode, an empty row the
+/// visual extent takes shows as one space wide, as nvim shows it, rather
+/// than as the narrower mark of a selected line break; in a block, which
+/// selects nothing on an empty row, if the block starts at column 0.
+fn selection_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
+    let mut rects = layout.frame.selections.clone();
+    let model = &view.model;
+    let text = model.text();
+    let empty = |row: &fe_display::layout::RowLayout<_>| text.row_len(row.buffer_row) == 0;
+    if !layout.frame.rows.iter().any(empty) {
+        return rects;
+    }
+    let Some((anchor, cursor, block)) = view.vim.as_ref().and_then(|vim| {
+        let block = vim.mode() == fe_vim::Mode::Visual(fe_vim::VisualKind::Block);
+        Some((vim.visual_anchor(model)?, vim.visual_cursor(model)?, block))
+    }) else {
+        return rects;
+    };
+    let row_of = |offset: usize| text.offset_to_point(offset).row;
+    let at_column_0 = |offset: usize| offset == text.row_start(row_of(offset));
+    if block && !at_column_0(anchor) && !at_column_0(cursor) {
+        return rects;
+    }
+    let rows = row_of(anchor.min(cursor))..=row_of(anchor.max(cursor));
+    let FrameLayout {
+        frame,
+        long_rows,
+        glyph_widths,
+        ..
+    } = layout;
+    let space = glyph_widths.char_width(' ');
+    for row in &frame.rows {
+        if !rows.contains(&row.buffer_row) || !empty(row) {
+            continue;
+        }
+        let Some(bar) = frame.caret_bounds(row.start, long_rows, glyph_widths) else {
+            continue;
+        };
+        rects.retain(|rect| (rect.y - bar.y).abs() >= 0.5);
+        rects.push(Rect {
+            width: space,
+            ..bar
+        });
+    }
+    rects
 }
 
 /// The start of the grapheme `offset` is in, no further back than

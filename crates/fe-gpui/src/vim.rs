@@ -5,8 +5,8 @@
 //! With vim on, a focused editor's key context is
 //! `editor vim_mode=<mode>`, plus `vim_pending` and `vim_pending_kind`
 //! while a command is incomplete; [`crate::keymap`] reads them as
-//! `vim.mode`, `vim.pending` and `vim.pending_kind`. A keystroke in normal
-//! or operator-pending mode goes:
+//! `vim.mode`, `vim.pending` and `vim.pending_kind`. A keystroke in normal,
+//! operator-pending or a visual mode goes:
 //!
 //! 1. to the keymap, as always, unless a command is pending. A match runs,
 //!    except `vim.key`, which only says the keystroke is vim's here;
@@ -23,6 +23,17 @@
 //! [`VimState::line_break`]. Any other editor command, and a mouse click
 //! that moves the caret, splits the session
 //! ([`VimState::split_session`]), as Vim's cursor keys do.
+//!
+//! In the visual modes (`v`, `V`, `ctrl-v` or `ctrl-q`) the model's
+//! selection is the visual extent, which `fe-vim` keeps it as; each frame
+//! also makes it so again before its layout ([`EditorView::sync_visual`]),
+//! after another view's edits or an editor command that moved it, so
+//! `cmd-c` copies what `y` would yank and stays in visual mode. The block
+//! cursor paints on the vim cursor, not the selection's head. With vim on
+//! outside insert mode, a mouse drag enters charwise visual mode (a double
+//! click's drag by words, a triple click linewise), and a click, a bound
+//! click or a jump drops a pending command and leaves a visual mode
+//! ([`EditorView::cancel_vim`]).
 //!
 //! The keymap matches against each editor's live state, stamped onto its
 //! frame before matching ([`live_stack`]), not the context the last frame
@@ -44,6 +55,8 @@ use crate::{EditorView, commands::ViewHost, view::synced_syntax};
 /// The command a vim-layer binding names to hand its keystroke to the
 /// reducer. It's never dispatched from a key.
 pub(crate) const KEY: &str = "vim.key";
+/// Leaves a visual mode, as a click in one does.
+pub(crate) const VISUAL_EXIT: &str = "vim.visual_exit";
 /// Flips the switch, for this session.
 pub(crate) const TOGGLE: &str = "vim.toggle";
 
@@ -200,6 +213,9 @@ pub(crate) fn live_stack(
     };
     editor.update(cx, |view, cx| {
         view.sync_vim(cx);
+        // So `cmd-c` copies the visual extent even if no frame was drawn
+        // since another view's edit.
+        view.sync_visual();
         let pending = view
             .vim
             .as_ref()
@@ -327,13 +343,59 @@ impl EditorView {
         self.vim_mode().is_none_or(|mode| mode == "insert")
     }
 
+    /// In a visual mode, makes the model's selection the visual extent
+    /// again ([`VimState::sync_visual`]): after another view's edits, or an
+    /// editor command that moved it. Each frame does it before its layout,
+    /// and each keystroke before it's matched ([`live_stack`]), so what's
+    /// painted and what `cmd-c` copies is what an operator takes. An editor
+    /// key the vim layer doesn't bind, such as `home` or `cmd-a`, so does
+    /// nothing in a visual mode, and `cmd-x` and `cmd-v` edit and stay in
+    /// it, as `cmd-c` does.
+    pub(crate) fn sync_visual(&mut self) {
+        if let Some(state) = &mut self.vim {
+            state.sync_visual(&mut self.model);
+        }
+    }
+
+    /// Drops a pending command (as `escape` does), then leaves a visual
+    /// mode through `vim.visual_exit`, so `gv` brings its extent back:
+    /// before a click or a jump puts the caret somewhere else, so no count,
+    /// operator or `r` waiting for its key acts there. Outside a visual mode
+    /// with nothing pending it does nothing.
+    pub(crate) fn cancel_vim(&mut self, cx: &mut Context<Self>) {
+        self.sync_vim(cx);
+        let Some(state) = &mut self.vim else {
+            return;
+        };
+        if state.mode() == fe_vim::Mode::Insert {
+            return;
+        }
+        // One `escape` drops the whole command; in a visual mode it may
+        // also leave it.
+        if state.pending().kind().is_some()
+            && let Step::Commit(invocation) = state.feed(VimKey::Esc)
+        {
+            let context = stamp(fe_editor::commands::context(), Some(state));
+            self.run_vim(&invocation.context(context), cx);
+        }
+        let Some(state) = &self.vim else {
+            return;
+        };
+        if !matches!(state.mode(), fe_vim::Mode::Visual(_)) {
+            return;
+        }
+        let exit = Invocation::of(VISUAL_EXIT).expect("a valid command ID");
+        let context = stamp(fe_editor::commands::context(), Some(state));
+        self.run_vim(&exit.context(context), cx);
+    }
+
     /// Whether carets paint as blocks: in every vim mode but insert.
     pub(crate) fn block_cursor(&self) -> bool {
         self.vim_mode().is_some_and(|mode| mode != "insert")
     }
 
-    /// A keystroke the keymap left for the editor, in normal or
-    /// operator-pending mode: fed to the reducer.
+    /// A keystroke the keymap left for the editor, in normal,
+    /// operator-pending or a visual mode: fed to the reducer.
     pub(crate) fn on_vim_key(
         &mut self,
         event: &KeyDownEvent,
@@ -345,8 +407,8 @@ impl EditorView {
         }
     }
 
-    /// Feeds `keystroke` to the reducer, in normal or operator-pending
-    /// mode. Returns whether vim took it: it waits, cancels or commits.
+    /// Feeds `keystroke` to the reducer, in any mode but insert. Returns
+    /// whether vim took it: it waits, cancels or commits.
     /// Otherwise it's forwarded, to do nothing.
     fn feed_vim(
         &mut self,
@@ -440,3 +502,6 @@ mod tests;
 
 #[cfg(test)]
 mod insert_tests;
+
+#[cfg(test)]
+mod visual_tests;

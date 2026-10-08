@@ -6,6 +6,7 @@ use fe_display::layout::RowLayout;
 use fe_editor::EditorModel;
 use fe_keymap::{Key, Keystroke};
 use fe_syntax::{Language, ParseJob, Spawner, Syntax, SyntaxDriver};
+use fe_vim::VisualKind;
 use gpui::{
     App, AppContext as _, Bounds, Context, CursorStyle, EntityInputHandler, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, KeyContext, Modifiers, ModifiersChangedEvent,
@@ -76,6 +77,9 @@ pub struct EditorView {
     /// The carets the last frame painted, in window coordinates.
     #[cfg(test)]
     pub(crate) painted_carets: Vec<Bounds<Pixels>>,
+    /// The selection rects the last frame painted, in window coordinates.
+    #[cfg(test)]
+    pub(crate) painted_selections: Vec<Bounds<Pixels>>,
     /// The chevrons the last frame painted: buffer row, folded, and box in
     /// window coordinates.
     #[cfg(test)]
@@ -132,6 +136,8 @@ impl EditorView {
             ancestors: None,
             #[cfg(test)]
             painted_carets: Vec::new(),
+            #[cfg(test)]
+            painted_selections: Vec::new(),
             #[cfg(test)]
             painted_chevrons: Vec::new(),
             #[cfg(test)]
@@ -251,8 +257,12 @@ impl EditorView {
     /// on the next frame as caret movement does. Offsets that are stale, past
     /// the buffer or inside a char are clamped to the char boundary on their
     /// left, a reversed range is normalised, and a fold hiding the start is
-    /// opened. It doesn't focus the view.
+    /// opened. It doesn't focus the view. It ends vim's visual mode and any
+    /// pending vim command.
     pub fn select_and_reveal(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
+        // As a click does, a jump drops a pending vim command and leaves
+        // vim's visual mode.
+        self.cancel_vim(cx);
         let text = self.model.text();
         let start = text.clip_offset(range.start, Bias::Left);
         let end = text.clip_offset(range.end, Bias::Left);
@@ -299,6 +309,7 @@ impl EditorView {
         {
             // A bound click places the caret, then runs its command there as
             // its key would, from the view: it neither drags nor extends.
+            self.cancel_vim(cx);
             self.split_session(fe_vim::Splits::Moves, |model| model.set_cursor(offset), cx);
             self.drag = None;
             // The command may take the view away; a move finds it again.
@@ -311,6 +322,11 @@ impl EditorView {
             window.defer(cx, move |window, cx| {
                 focus.dispatch_action(&action, window, cx)
             });
+            return;
+        }
+        if self.vim_owns_mouse(cx) {
+            self.drag = Some(self.vim_mouse_down(event, cx));
+            self.changed(cx);
             return;
         }
         let click = |model: &mut EditorModel| match event.click_count {
@@ -563,6 +579,10 @@ impl EditorView {
             self.drag = None;
             return;
         }
+        if self.vim_owns_mouse(cx) {
+            self.vim_mouse_drag(drag, event.position, cx);
+            return;
+        }
         let offset = self.offset_for_position(event.position);
         self.split_session(
             fe_vim::Splits::Moves,
@@ -590,6 +610,113 @@ impl EditorView {
 
     fn on_mouse_up(&mut self, _: &MouseUpEvent, _: &mut Window, _: &mut Context<Self>) {
         self.drag = None;
+    }
+
+    /// Whether vim takes the mouse's clicks and drags: with vim on, outside
+    /// insert mode, as nvim's default `mouse=nvi` does.
+    fn vim_owns_mouse(&mut self, cx: &App) -> bool {
+        self.sync_vim(cx);
+        self.vim.is_some() && !self.accepts_text()
+    }
+
+    /// Where vim puts the cursor for a window position: on the grapheme
+    /// under it, or past a row's end at that end.
+    fn vim_offset_for_position(&mut self, position: Point<Pixels>) -> usize {
+        let text = self.model.text();
+        let under = self
+            .layout
+            .as_ref()
+            .and_then(|layout| layout.char_at(text, position));
+        under.unwrap_or_else(|| self.offset_for_position(position))
+    }
+
+    /// A click with vim owning the mouse. A plain click drops a pending
+    /// command, leaves a visual mode (`vim.visual_exit`, so `gv` brings it
+    /// back) and puts the caret at it; a shift-click extends charwise visual mode to it; a double
+    /// click selects its word in charwise visual mode, and a triple click
+    /// its row in linewise visual mode. Returns what a drag extends.
+    fn vim_mouse_down(&mut self, event: &MouseDownEvent, cx: &mut Context<Self>) -> Drag {
+        let at = self.vim_offset_for_position(event.position);
+        let visual = self.vim_visual_kind();
+        match event.click_count {
+            2 => {
+                let word = self.model.word_range_at(at);
+                self.select_visual(VisualKind::Char, word.start, last_of(&word));
+                Drag::Words(word)
+            }
+            3.. => {
+                self.select_visual(VisualKind::Line, at, at);
+                Drag::Rows(self.model.line_range_at(at))
+            }
+            _ if event.modifiers.shift => {
+                let anchor = self.vim_anchor();
+                self.select_visual(visual.unwrap_or(VisualKind::Char), anchor, at);
+                Drag::Chars
+            }
+            _ => {
+                self.cancel_vim(cx);
+                self.model.set_cursor(at);
+                Drag::Chars
+            }
+        }
+    }
+
+    /// A drag with vim owning the mouse: from the caret it started at, or
+    /// the visual anchor, into charwise visual mode (or the visual mode it's
+    /// in) over the grapheme under the pointer; from a double click's word,
+    /// whole words at a time; from a triple click's row, linewise.
+    fn vim_mouse_drag(&mut self, drag: Drag, position: Point<Pixels>, cx: &mut Context<Self>) {
+        let at = self.vim_offset_for_position(position);
+        match drag {
+            Drag::Chars => {
+                let anchor = self.vim_anchor();
+                let kind = self.vim_visual_kind();
+                // Still on the grapheme it started at: not a drag yet.
+                if kind.is_none() && at == anchor {
+                    return;
+                }
+                self.select_visual(kind.unwrap_or(VisualKind::Char), anchor, at);
+            }
+            Drag::Words(origin) => {
+                let under = self.model.word_range_at(at);
+                if under.start < origin.start {
+                    self.select_visual(VisualKind::Char, last_of(&origin), under.start);
+                } else {
+                    // An empty row's word is empty: the cursor goes on it.
+                    let last = match under.end > origin.end {
+                        true => last_of(&under),
+                        false => last_of(&origin),
+                    };
+                    self.select_visual(VisualKind::Char, origin.start, last);
+                }
+            }
+            Drag::Rows(origin) => self.select_visual(VisualKind::Line, origin.start, at),
+        }
+        self.changed(cx);
+    }
+
+    /// The visual mode's kind, if vim is in one.
+    fn vim_visual_kind(&self) -> Option<VisualKind> {
+        match self.vim.as_ref()?.mode() {
+            fe_vim::Mode::Visual(kind) => Some(kind),
+            _ => None,
+        }
+    }
+
+    /// The visual anchor in a visual mode, or else the primary caret.
+    fn vim_anchor(&self) -> usize {
+        self.vim
+            .as_ref()
+            .and_then(|vim| vim.visual_anchor(&self.model))
+            .unwrap_or_else(|| self.model.primary_selection().head())
+    }
+
+    /// Enters the visual mode of `kind` over `anchor` and `cursor`, or moves
+    /// the current one there ([`fe_vim::VimState::select_visual`]).
+    fn select_visual(&mut self, kind: VisualKind, anchor: usize, cursor: usize) {
+        if let Some(vim) = &mut self.vim {
+            vim.select_visual(&mut self.model, kind, anchor, cursor);
+        }
     }
 
     fn on_scroll(&mut self, event: &ScrollWheelEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -671,6 +798,12 @@ impl EditorView {
             .as_ref()
             .map(|range| self.model.snapshot().resolve_range(range))
     }
+}
+
+/// The offset of `range`'s last byte, which vim's cursor takes at its
+/// grapheme, or its start if it's empty.
+fn last_of(range: &Range<usize>) -> usize {
+    range.end.saturating_sub(1).max(range.start)
 }
 
 /// Measures chars in `theme`'s font, for soft wrap.

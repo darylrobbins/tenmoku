@@ -55,7 +55,8 @@ pub struct StatusItem {
 /// right, in this order. A host item set with one of them shows in that
 /// item's place.
 impl StatusItem {
-    /// `NORMAL` or `INSERT`, only with vim on: on the left, priority 0.
+    /// `NORMAL`, `INSERT`, `VISUAL`, `VISUAL LINE` or `VISUAL BLOCK`, only
+    /// with vim on: on the left, priority 0.
     pub const VIM_MODE: &str = "vim_mode";
     /// `Ln 12, Col 5`, then ` (17 selected)` or ` (3 selections)`: priority
     /// 100.
@@ -277,6 +278,9 @@ fn vim_mode_label(mode: &str) -> SharedString {
     match mode {
         "normal" | "operator_pending" => "NORMAL".into(),
         "insert" => "INSERT".into(),
+        "visual" => "VISUAL".into(),
+        "visual_line" => "VISUAL LINE".into(),
+        "visual_block" => "VISUAL BLOCK".into(),
         other => other.to_uppercase().into(),
     }
 }
@@ -410,3 +414,7 @@ pub(crate) fn op(run: &RunCommand, cx: &App) -> Option<StatusOp> {
 #[cfg(test)]
 #[path = "status_bar_vim_tests.rs"]
 mod vim_tests;
+
+#[cfg(test)]
+#[path = "status_bar_visual_tests.rs"]
+mod visual_tests;
