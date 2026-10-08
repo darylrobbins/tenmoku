@@ -212,6 +212,13 @@ impl Pane {
         })
     }
 
+    /// Whether the pane is reading a file whose caret place isn't known yet:
+    /// the reveal is by row and column, which can't be an offset before the
+    /// text exists.
+    pub(crate) fn place_pending(&self) -> bool {
+        self.opening.is_some() && self.pending_place().is_none()
+    }
+
     /// The theme editors open with.
     pub fn theme(&self) -> &EditorTheme {
         &self.theme

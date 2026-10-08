@@ -618,6 +618,11 @@ impl Workbench {
             NavOp::Back | NavOp::Forward => {
                 // A go-to-definition still running would jump from elsewhere.
                 self.nav_state.goto.next();
+                // The caret's place is unknown until the file is read: going
+                // now would lose it, so history is left as it is.
+                if self.active_editor(cx).is_none() && self.pane().read(cx).place_pending() {
+                    return;
+                }
                 let here = self.caret_place(cx);
                 let history = &mut self.nav_state.history;
                 let to = match op {

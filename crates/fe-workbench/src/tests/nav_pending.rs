@@ -9,10 +9,11 @@ use std::{
 use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 
 use super::open_root;
-use crate::{Workbench, nav::NavOp};
+use crate::{Workbench, nav::NavOp, pane::Reveal};
 
 const MAIN: &str = "mod util;\n\nfn main() {\n    util::helper();\n}\n";
 const UTIL: &str = "pub fn helper() {}\n";
+const MULTI: &str = "one\ntwo\nthree\n";
 const OTHER: &str = "fn other() {}\n";
 
 fn project() -> (tempfile::TempDir, PathBuf) {
@@ -24,6 +25,7 @@ fn project() -> (tempfile::TempDir, PathBuf) {
         ("util", UTIL),
         ("other", OTHER),
         ("third", OTHER),
+        ("multi", MULTI),
     ] {
         fs::write(root.join("src").join(format!("{rel}.rs")), text).unwrap();
     }
@@ -169,4 +171,70 @@ fn overlapping_navigation_opens_in_two_splits(cx: &mut TestAppContext) {
     });
     settle(cx);
     assert_eq!(at(&workbench, cx), (root.join("src/third.rs"), 5));
+}
+
+/// Opens `rel` in the active pane as a search result on row 1, columns
+/// 1..2 (offset 6 once read), then runs `op`, before any read lands.
+fn search_open_then(
+    workbench: &Entity<Workbench>,
+    root: &Path,
+    op: NavOp,
+    cx: &mut VisualTestContext,
+) {
+    workbench.update_in(cx, |workbench, window, cx| {
+        let pane = workbench.pane().clone();
+        let reveal = Reveal {
+            row: 1,
+            columns: 1..2,
+        };
+        pane.update(cx, |pane, cx| {
+            pane.open_at(root.join("src/multi.rs"), Some(reveal), window, cx)
+        });
+        workbench.run_nav_op(op, window, cx);
+    });
+    settle(cx);
+}
+
+#[gpui::test]
+fn back_while_a_search_result_on_a_later_row_is_read(cx: &mut TestAppContext) {
+    let (_dir, root) = project();
+    let (workbench, cx) = jumped(cx, &root);
+
+    // Back is deferred, not lost: history is intact once the file lands.
+    search_open_then(&workbench, &root, NavOp::Back, cx);
+    assert_eq!(at(&workbench, cx), (root.join("src/multi.rs"), 6));
+    workbench.update_in(cx, |workbench, window, cx| {
+        workbench.run_nav_op(NavOp::Back, window, cx)
+    });
+    settle(cx);
+    assert_eq!(at(&workbench, cx), (root.join("src/main.rs"), 7));
+    workbench.update_in(cx, |workbench, window, cx| {
+        workbench.run_nav_op(NavOp::Forward, window, cx)
+    });
+    settle(cx);
+    assert_eq!(at(&workbench, cx), (root.join("src/multi.rs"), 6));
+}
+
+#[gpui::test]
+fn forward_while_a_search_result_on_a_later_row_is_read(cx: &mut TestAppContext) {
+    let (_dir, root) = project();
+    let (workbench, cx) = jumped(cx, &root);
+    workbench.update_in(cx, |workbench, window, cx| {
+        workbench.run_nav_op(NavOp::Back, window, cx)
+    });
+    settle(cx);
+    assert_eq!(at(&workbench, cx), (root.join("src/main.rs"), 7));
+
+    search_open_then(&workbench, &root, NavOp::Forward, cx);
+    assert_eq!(at(&workbench, cx), (root.join("src/multi.rs"), 6));
+    workbench.update_in(cx, |workbench, window, cx| {
+        workbench.run_nav_op(NavOp::Forward, window, cx)
+    });
+    settle(cx);
+    assert_eq!(at(&workbench, cx), (root.join("src/util.rs"), 4));
+    workbench.update_in(cx, |workbench, window, cx| {
+        workbench.run_nav_op(NavOp::Back, window, cx)
+    });
+    settle(cx);
+    assert_eq!(at(&workbench, cx), (root.join("src/multi.rs"), 6));
 }
