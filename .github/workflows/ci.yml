@@ -17,12 +17,18 @@ jobs:
       - name: Install toolchain from rust-toolchain.toml
         run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+      # nextest, as the local gate (scripts/paddock-check.sh) runs it: some
+      # tests rely on each test having its own process, which `cargo test`
+      # doesn't give. The workspace has no doctests, which nextest skips.
       - name: Test
-        run: cargo test --workspace
+        run: cargo nextest run --workspace --profile ci
       - name: Core crates stay GPUI-free
         run: scripts/check-no-gpui.sh
       - name: fe-syntax builds with no languages and with each alone

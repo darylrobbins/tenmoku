@@ -27,7 +27,7 @@ are only caught by `fe-gpui`'s tests; add `--test-workspace true` to count them.
 ## Running
 
 ```zsh
-cargo test --workspace            # what CI runs on every push
+cargo nextest run --workspace     # what CI runs on every push; each test in its own process
 scripts/soak.sh                   # 50k cases per property, release (a few minutes);
                                   # run after changing undo/redo or anchor code
 scripts/check-syntax-features.sh  # fe-syntax with no languages, then each alone (CI runs it)

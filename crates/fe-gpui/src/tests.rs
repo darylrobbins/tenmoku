@@ -880,8 +880,9 @@ fn injected_languages_load_without_input(cx: &mut TestAppContext) {
 fn injected_languages_compiled_meanwhile_draw_again(cx: &mut TestAppContext) {
     cx.update(init);
     fe_syntax::language_by_name("markdown");
-    // No other test here uses Lua, and each has its own process under
-    // nextest.
+    // Each test has its own process under nextest, which CI and the gate
+    // use, so Lua isn't loaded yet. (`cargo test` shares one process, where
+    // `folds_follow_the_syntax_tree` may load it first.)
     assert!(fe_syntax::loaded_language("lua").is_none());
     let text = "```lua\nlocal x = 1\n```\n";
     let raced = Rc::new(Cell::new(false));
