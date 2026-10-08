@@ -25,6 +25,7 @@ mod persist;
 mod picker;
 mod project_panel;
 mod quick_open;
+mod references_panel;
 mod search_panel;
 mod status_bar;
 mod title_bar;
@@ -45,6 +46,7 @@ pub use persist::save_toggles_to;
 pub use picker::{Picker, PickerDelegate};
 pub use project_panel::{PANEL_WIDTH, PanelEvent, ProjectPanel};
 pub use quick_open::QuickOpen;
+pub use references_panel::ReferencesPanel;
 pub use search_panel::SearchPanel;
 pub use status_bar::{StatusBar, StatusItem, StatusSide};
 pub use title_bar::{TITLE_BAR_HEIGHT, TRAFFIC_LIGHT_INSET, TRAFFIC_LIGHTS, titlebar_options};
@@ -80,6 +82,7 @@ pub fn init(cx: &mut App) {
     pane_group::init(cx);
     pane_toolbar::init(cx);
     project_panel::init(cx);
+    references_panel::init(cx);
     status_bar::init(cx);
 }
 
@@ -129,6 +132,7 @@ pub fn command_catalog() -> Box<dyn CommandCatalog> {
         Box::new(pane_group::registry()),
         Box::new(pane_toolbar::registry()),
         Box::new(project_panel::registry()),
+        Box::new(references_panel::registry()),
         Box::new(status_bar::registry()),
         fe_gpui::commands::command_catalog(),
     ]))

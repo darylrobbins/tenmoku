@@ -1,7 +1,8 @@
-//! The right dock: one panel at a time, the project tree, project search or
-//! the outline, under a title row naming it, and picked from the activity
-//! rail on the window's right edge, which stays when the dock hides.
-//! Switching keeps each panel's state.
+//! The right dock: one panel at a time, the project tree, project search,
+//! the outline or find references' results, under a title row naming it,
+//! and picked from the activity rail on the window's right edge, which
+//! stays when the dock hides. Switching keeps each panel's state. The
+//! References button joins the rail once that panel has shown.
 //!
 //! Its commands, and the search panel's, are those of [`init`]'s registry:
 //! the dock's in the workbench's [`crate::KEY_CONTEXT`], the search options'
@@ -24,7 +25,7 @@ use gpui::{
 };
 
 use crate::{
-    OutlinePanel, PANEL_WIDTH, ProjectPanel,
+    OutlinePanel, PANEL_WIDTH, ProjectPanel, ReferencesPanel,
     search_panel::{self, SearchPanel},
 };
 
@@ -34,10 +35,12 @@ pub enum DockPanel {
     Project,
     Search,
     Outline,
+    References,
 }
 
 impl DockPanel {
-    /// The dock's panels, in the rail's order.
+    /// The panels the rail always has, in its order; References follows
+    /// once it has shown.
     pub const ALL: [DockPanel; 3] = [DockPanel::Project, DockPanel::Search, DockPanel::Outline];
 
     pub fn name(self) -> &'static str {
@@ -45,6 +48,7 @@ impl DockPanel {
             DockPanel::Project => "Project",
             DockPanel::Search => "Search",
             DockPanel::Outline => "Outline",
+            DockPanel::References => "References",
         }
     }
 
@@ -54,6 +58,7 @@ impl DockPanel {
             DockPanel::Project => "dock.show_project",
             DockPanel::Search => "search.show",
             DockPanel::Outline => "outline.show",
+            DockPanel::References => "nav.find_references",
         }
     }
 
@@ -63,6 +68,7 @@ impl DockPanel {
             DockPanel::Project => DockOp::ShowProject,
             DockPanel::Search => DockOp::ShowSearch,
             DockPanel::Outline => DockOp::ShowOutline,
+            DockPanel::References => DockOp::ShowReferences,
         }
     }
 }
@@ -73,6 +79,7 @@ pub(crate) fn panel_icon(panel: DockPanel) -> Icon {
         DockPanel::Project => Icon::Files,
         DockPanel::Search => Icon::Search,
         DockPanel::Outline => Icon::ListTree,
+        DockPanel::References => Icon::FileSymlink,
     }
 }
 
@@ -86,6 +93,9 @@ pub struct Dock {
     project: Entity<ProjectPanel>,
     search: Entity<SearchPanel>,
     outline: Entity<OutlinePanel>,
+    references: Entity<ReferencesPanel>,
+    /// Whether References has shown, which puts its button on the rail.
+    references_shown: bool,
     active: DockPanel,
     visible: bool,
     ui: UiTheme,
@@ -110,12 +120,15 @@ impl Dock {
         project: Entity<ProjectPanel>,
         search: Entity<SearchPanel>,
         outline: Entity<OutlinePanel>,
+        references: Entity<ReferencesPanel>,
         ui: UiTheme,
     ) -> Self {
         Self {
             project,
             search,
             outline,
+            references,
+            references_shown: false,
             active: DockPanel::Project,
             visible: true,
             ui,
@@ -149,6 +162,10 @@ impl Dock {
 
     pub fn outline(&self) -> &Entity<OutlinePanel> {
         &self.outline
+    }
+
+    pub fn references(&self) -> &Entity<ReferencesPanel> {
+        &self.references
     }
 
     /// The panel shown while the dock is visible.
@@ -200,6 +217,10 @@ impl Dock {
                 self.show(DockPanel::Outline, cx);
                 self.leave_search(fallback, window, cx);
             }
+            DockOp::ShowReferences => {
+                self.show(DockPanel::References, cx);
+                self.leave_search(fallback, window, cx);
+            }
             DockOp::Toggle => {
                 self.visible = !self.visible;
                 if !self.visible {
@@ -225,6 +246,7 @@ impl Dock {
     pub fn show(&mut self, panel: DockPanel, cx: &mut Context<Self>) {
         self.active = panel;
         self.visible = true;
+        self.references_shown |= panel == DockPanel::References;
         cx.notify();
     }
 
@@ -319,8 +341,8 @@ impl Render for Dock {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         #[cfg(test)]
         self.rail_icons.clear();
-        let buttons: Vec<_> = DockPanel::ALL
-            .into_iter()
+        let references = self.references_shown.then_some(DockPanel::References);
+        let buttons: Vec<_> = (DockPanel::ALL.into_iter().chain(references))
             .map(|panel| self.rail_button(panel, cx))
             .collect();
         let rail = ActivityRail::new("dock-rail", &self.ui).children(buttons);
@@ -331,6 +353,7 @@ impl Render for Dock {
                 DockPanel::Project => self.project.clone().into_any_element(),
                 DockPanel::Search => self.search.clone().into_any_element(),
                 DockPanel::Outline => self.outline.clone().into_any_element(),
+                DockPanel::References => self.references.clone().into_any_element(),
             };
             let title = div()
                 .flex_none()
@@ -367,6 +390,8 @@ pub(crate) enum DockOp {
     ShowProject,
     /// `outline.show`, which the outline panel's registry has.
     ShowOutline,
+    /// The References button: shows the last results, finding none.
+    ShowReferences,
     Toggle,
     ToggleRegex,
     ToggleCase,

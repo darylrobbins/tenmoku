@@ -18,7 +18,7 @@ use gpui::{
 
 use crate::{
     Dock, DockPanel, KEY_CONTEXT, OutlinePanel, Pane, PaneGroup, Picker, ProjectPanel, QuickOpen,
-    SearchPanel, StatusBar,
+    ReferencesPanel, SearchPanel, StatusBar,
     dock::{self, DockEvent, DockOp},
     language_picker::LanguagePicker,
     nav::{self, Nav},
@@ -193,9 +193,11 @@ impl Workbench {
             pane
         });
         let outline = cx.new(|_| OutlinePanel::new(ui));
+        let references = cx.weak_entity();
+        let references = cx.new(|cx| ReferencesPanel::new(references, ui, cx));
         let dock = cx.new(|cx| {
             let search = cx.new(|cx| SearchPanel::new(root.clone(), pane.downgrade(), ui, cx));
-            Dock::new(panel.clone(), search, outline.clone(), ui)
+            Dock::new(panel.clone(), search, outline.clone(), references, ui)
         });
         let quick_open = Self::new_quick_open(root, pane.downgrade(), ui, cx);
         // A rail click runs the op its panel's key would, or hides the dock.
@@ -389,6 +391,8 @@ impl Workbench {
             dock.search().clone()
         });
         search.update(cx, |search, cx| search.set_root(root.clone(), cx));
+        let references = self.dock.read(cx).references().clone();
+        references.update(cx, |references, cx| references.clear(cx));
         self.nav_state.set_root(root.clone(), cx);
         self.panel = panel;
         self.quick_open = quick_open;
@@ -1036,12 +1040,19 @@ impl Workbench {
         });
     }
 
-    /// Focuses the active editor if the project panel has focus but isn't
-    /// shown, the dock being hidden or showing another panel.
+    /// Focuses the active editor if the project panel or References has
+    /// focus but isn't shown, the dock being hidden or showing another
+    /// panel.
     fn leave_hidden_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let dock = self.dock.read(cx);
-        let shown = dock.is_visible() && dock.active() == DockPanel::Project;
-        if !shown && self.panel.focus_handle(cx).contains_focused(window, cx) {
+        let shown = |panel| dock.is_visible() && dock.active() == panel;
+        let hidden = [
+            (DockPanel::Project, self.panel.focus_handle(cx)),
+            (DockPanel::References, dock.references().focus_handle(cx)),
+        ]
+        .into_iter()
+        .any(|(panel, focus)| !shown(panel) && focus.contains_focused(window, cx));
+        if hidden {
             window.focus(&self.focus_handle(cx), cx);
         }
     }
@@ -1125,6 +1136,9 @@ impl Workbench {
             }
             if let Some(op) = nav::op(run, cx) {
                 return self.run_nav_op(op, window, cx);
+            }
+            if self.run_references_command(run, window, cx) {
+                return;
             }
             if let Some(op) = status_bar::op(run, cx) {
                 return self.run_status_op(op, window, cx);

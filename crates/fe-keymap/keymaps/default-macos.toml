@@ -297,6 +297,11 @@ command = "nav.workspace_symbols"
 context = "workbench"
 
 [[bindings]]
+keys = "shift-f12"
+command = "nav.find_references"
+context = "workbench"
+
+[[bindings]]
 keys = "ctrl--"
 command = "nav.back"
 context = "workbench"
@@ -480,6 +485,22 @@ context = "project_panel"
 keys = "enter"
 command = "project_panel.open"
 context = "project_panel"
+
+# Find references' results, when they have focus.
+[[bindings]]
+keys = "up"
+command = "references_panel.select_prev"
+context = "ReferencesPanel"
+
+[[bindings]]
+keys = "down"
+command = "references_panel.select_next"
+context = "ReferencesPanel"
+
+[[bindings]]
+keys = "enter"
+command = "references_panel.open"
+context = "ReferencesPanel"
 
 # Vim's layer, last so that it wins over the plain editor's bindings in the
 # same frame. In normal mode the arrows are vim's motions (`h l k j`), and the

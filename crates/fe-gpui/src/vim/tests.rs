@@ -433,6 +433,7 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
                         | "search_panel"
                         | "search_panel && text_input"
                         | "project_panel"
+                        | "ReferencesPanel"
                 )
             ),
             "{diagnostic:?}"

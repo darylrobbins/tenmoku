@@ -123,7 +123,7 @@ pub(crate) struct Requests {
 }
 
 impl Requests {
-    fn next(&mut self) -> (u64, Arc<AtomicBool>) {
+    pub(crate) fn next(&mut self) -> (u64, Arc<AtomicBool>) {
         self.cancel.store(true, Ordering::Relaxed);
         self.cancel = Arc::default();
         self.generation += 1;
@@ -538,7 +538,7 @@ impl Workbench {
 
     /// Where the active editor's caret is; while the active pane is still
     /// reading the file a jump went to, where it'll be.
-    fn caret_place(&self, cx: &App) -> Option<Place> {
+    pub(crate) fn caret_place(&self, cx: &App) -> Option<Place> {
         if let Some(editor) = self.active_editor(cx) {
             let model = editor.read(cx).model();
             return Some(Place {
@@ -582,6 +582,24 @@ impl Workbench {
         self.nav_state.goto.next();
         self.push_history(cx);
         self.open_location(location, window, cx);
+    }
+
+    /// Jumps to `location` from a list that stays open, as find references'
+    /// does, recording where the caret is if `record`, and unless it was the
+    /// last place recorded. The list says not to where one of its own jumps
+    /// left the caret: going through the list, then back, returns at once to
+    /// where the caret was before.
+    pub(crate) fn list_jump(
+        &mut self,
+        record: bool,
+        location: &Location,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.nav_state.goto.next();
+        let last = self.nav_state.history.back.last();
+        let here = (self.caret_place(cx)).filter(|here| record && last != Some(here));
+        self.jump_from(here, location, window, cx);
     }
 
     /// Jumps to `location`, recording `from` first.
