@@ -97,6 +97,7 @@ adoption = "auto"
 shared_append_only = [
   "docs/recovery.md", "docs/compat.md", "docs/recovery/**", "docs/compat/**",
   "Cargo.toml", "Cargo.lock", "crates/fastedit/Cargo.toml",
+  "PERF.md", "THIRD_PARTY.md",
 ]
 
 [caps]
