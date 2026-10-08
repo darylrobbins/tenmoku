@@ -645,25 +645,43 @@ fn files_are_never_read_through_a_directory_being_swapped() {
     let nav = search(&root, 1_000);
     let req = request(&root, "req.rs", req_text, "helper");
     let done = AtomicBool::new(false);
+    // The handshake with the swapper: `hold` asks it to stop between swaps,
+    // and it sets `parked` once it has, with `src/a` in place.
+    let (hold, parked) = (AtomicBool::new(false), AtomicBool::new(false));
     std::thread::scope(|scope| {
         let _stop = Stop(&done);
-        scope.spawn(|| {
+        let swapper = scope.spawn(|| {
             while !done.load(Ordering::Relaxed) {
+                if hold.load(Ordering::Acquire) {
+                    parked.store(true, Ordering::Release);
+                    std::thread::yield_now();
+                    continue;
+                }
+                parked.store(false, Ordering::Release);
                 fs::rename(&a, &aside).unwrap();
                 std::os::unix::fs::symlink(&outside, &a).unwrap();
                 fs::remove_file(&a).unwrap();
                 fs::rename(&aside, &a).unwrap();
             }
         });
-        let mut verified = 0;
+        // Safety: searches racing the swaps never read from outside.
         for _ in 0..60 {
-            let (batches, summary) = find(&nav, &req);
+            let (_, summary) = find(&nav, &req);
             assert_eq!(summary.dropped, 0, "read from outside");
-            verified += (all(&batches).into_iter())
-                .filter(|r| r.location.rel == Path::new("src/a/x.rs") && r.verified)
-                .count();
         }
-        assert!(verified > 0, "never caught the directory in place");
+        // Liveness: a search with the directory known to be in place.
+        hold.store(true, Ordering::Release);
+        while !parked.load(Ordering::Acquire) {
+            assert!(!swapper.is_finished(), "the swapper died");
+            std::thread::yield_now();
+        }
+        let (batches, summary) = find(&nav, &req);
+        assert_eq!(summary.dropped, 0, "read from outside");
+        let verified = (all(&batches).into_iter())
+            .filter(|r| r.location.rel == Path::new("src/a/x.rs") && r.verified)
+            .count();
+        assert_eq!(verified, 1, "{:?}", listed(&batches));
+        hold.store(false, Ordering::Release);
     });
 }
 
