@@ -255,9 +255,9 @@ impl EditorView {
         cx: &mut Context<Self>,
     ) {
         window.focus(&self.focus, cx);
-        if self.toggle_fold_at(event.position) {
+        if self.toggle_fold_at(event.position, cx) {
             self.drag = None;
-            cx.notify();
+            self.changed(cx);
             return;
         }
         let offset = self.offset_for_position(event.position);
@@ -284,7 +284,7 @@ impl EditorView {
         };
         // The word or row as selected now, which the split may have moved.
         let selected = |model: &EditorModel| model.primary_selection().range;
-        self.drag = Some(match self.split_session(click, cx) {
+        self.drag = Some(match self.split_session(fe_vim::Splits::Moves, click, cx) {
             Drag::Chars => Drag::Chars,
             Drag::Words(_) => Drag::Words(selected(&self.model)),
             Drag::Rows(_) => Drag::Rows(selected(&self.model)),
@@ -293,17 +293,18 @@ impl EditorView {
     }
 
     /// Runs `select` on the model: a mouse click or drag, which moves carets
-    /// without editing. In vim's insert mode, if it changes the selections,
-    /// it splits the session as an editor command does
+    /// without editing, or a fold click. In vim's insert mode it splits the
+    /// session as an editor command does, `splits` saying when
     /// ([`fe_vim::VimState::split_session`]).
     fn split_session<R>(
         &mut self,
+        splits: fe_vim::Splits,
         select: impl FnOnce(&mut EditorModel) -> R,
         cx: &mut Context<Self>,
     ) -> R {
         self.sync_vim(cx);
         match &mut self.vim {
-            Some(state) => state.split_session(&mut self.model, false, select),
+            Some(state) => state.split_session(&mut self.model, splits, select),
             None => select(&mut self.model),
         }
     }
@@ -312,7 +313,7 @@ impl EditorView {
     /// unfolds its row if it's folded or folds its candidate if not. Carets
     /// the fold hides move to its header, as with the keyboard. Returns
     /// whether there was one there.
-    fn toggle_fold_at(&mut self, position: Point<Pixels>) -> bool {
+    fn toggle_fold_at(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) -> bool {
         let Some(layout) = &self.layout else {
             return false;
         };
@@ -325,14 +326,27 @@ impl EditorView {
             return false;
         };
         let row = area.buffer_row;
-        if area.folded {
-            self.model.unfold_rows(row..=row);
-        } else if let Some(candidate) = synced_syntax(&self.syntax, &self.model)
-            .and_then(|syntax| fe_syntax::fold_range_at(syntax, row))
-            .filter(|candidate| *candidate.start() == row)
-        {
-            self.model.fold_rows(candidate);
-        }
+        let folded = area.folded;
+        let candidate = if folded {
+            None
+        } else {
+            synced_syntax(&self.syntax, &self.model)
+                .and_then(|syntax| fe_syntax::fold_range_at(syntax, row))
+                .filter(|candidate| *candidate.start() == row)
+        };
+        // Like the fold commands, it splits an insert session whatever it
+        // does to the carets.
+        self.split_session(
+            fe_vim::Splits::Other,
+            |model| {
+                if folded {
+                    model.unfold_rows(row..=row);
+                } else if let Some(candidate) = candidate {
+                    model.fold_rows(candidate);
+                }
+            },
+            cx,
+        );
         true
     }
 
@@ -346,6 +360,7 @@ impl EditorView {
         }
         let offset = self.offset_for_position(event.position);
         self.split_session(
+            fe_vim::Splits::Moves,
             |model| {
                 let (origin, under) = match drag {
                     Drag::Chars => {

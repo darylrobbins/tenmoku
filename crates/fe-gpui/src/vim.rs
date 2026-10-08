@@ -61,6 +61,12 @@ pub(crate) const TEXT_INPUT: [&str; 5] = [
     "editor.tab",
 ];
 
+/// The prefixes of the editor commands that move carets or change
+/// selections (`editor.move`, `editor.move_left`, `editor.select_all`,
+/// `editor.page_up`, ...): in insert mode they split the session only if
+/// they did, where any other non-text command always splits it.
+pub(crate) const MOTION_PREFIXES: [&str; 3] = ["editor.move", "editor.select", "editor.page"];
+
 /// The prefix of vim's keys in GPUI's key contexts, whose identifiers can't
 /// hold `.`: `vim_mode` is `vim.mode`.
 pub(crate) const GPUI_PREFIX: &str = "vim_";

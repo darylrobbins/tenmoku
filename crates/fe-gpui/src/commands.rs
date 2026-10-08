@@ -264,15 +264,29 @@ impl EditorView {
         let mut split = false;
         let result = match &mut self.vim {
             // In insert mode, `Enter` is a typed line break, and any other
-            // editor command but text input splits the session (§9.8).
+            // editor command but text input splits the session (§9.8). An
+            // invocation the registry would refuse does neither.
             Some(state) if state.mode() == fe_vim::Mode::Insert && meta.is_some() => {
-                match invocation.command.as_str() {
-                    vim::NEWLINE => vim::line_break(state, &mut self.model, &invocation),
-                    command if vim::TEXT_INPUT.contains(&command) => dispatch(&mut self.model),
-                    _ => {
-                        split = true;
-                        state.split_session(&mut self.model, mutates, dispatch)
-                    }
+                match registry.validate(&invocation) {
+                    Err(error) => Err(error),
+                    Ok(_) => match invocation.command.as_str() {
+                        vim::NEWLINE => vim::line_break(state, &mut self.model, &invocation),
+                        command if vim::TEXT_INPUT.contains(&command) => dispatch(&mut self.model),
+                        command => {
+                            split = true;
+                            let splits = if mutates {
+                                fe_vim::Splits::Edits
+                            } else if vim::MOTION_PREFIXES
+                                .iter()
+                                .any(|prefix| command.starts_with(prefix))
+                            {
+                                fe_vim::Splits::Moves
+                            } else {
+                                fe_vim::Splits::Other
+                            };
+                            state.split_session(&mut self.model, splits, dispatch)
+                        }
+                    },
                 }
             }
             _ => dispatch(&mut self.model),

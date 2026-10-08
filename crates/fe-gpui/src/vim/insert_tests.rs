@@ -3,6 +3,7 @@
 //! split by other editor commands and mouse clicks.
 
 use fe_buffer::{Buffer, Point};
+use fe_command::{Invocation, Value};
 use fe_editor::EditorModel;
 use fe_keymap::{DEFAULT_MACOS, KeySequence, KeymapStore};
 use gpui::{
@@ -366,4 +367,150 @@ fn escape_bindings(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("escape");
     assert_eq!(selections(cx), before);
     assert_eq!(mode(&view, cx), None);
+}
+
+/// Runs `invocation` as a key or a menu would, in the focused editor.
+fn run(view: &Entity<EditorView>, invocation: Invocation, cx: &mut VisualTestContext) {
+    cx.update(|window, cx| {
+        assert!(view.focus_handle(cx).is_focused(window));
+        window.dispatch_action(Box::new(crate::commands::RunCommand(invocation)), cx);
+    });
+    cx.run_until_parked();
+}
+
+/// Types `ab`, runs `split`, types `cd`, and ends the session: `u` then
+/// leaves the text before `cd` if `split` split the session.
+fn undo_after_split(
+    view: &Entity<EditorView>,
+    cx: &mut VisualTestContext,
+    split: impl FnOnce(&mut VisualTestContext),
+) -> String {
+    cx.simulate_keystrokes("i");
+    cx.simulate_input("ab");
+    split(cx);
+    assert_eq!(mode(view, cx), Some("insert"));
+    cx.simulate_input("cd");
+    cx.simulate_keystrokes("escape u");
+    state(view, cx).0
+}
+
+#[gpui::test]
+fn commands_that_leave_the_carets_split_the_session(cx: &mut TestAppContext) {
+    // Copy, save and the wrap toggle change no selection, but split it.
+    for keys in ["cmd-c", "cmd-s", "alt-z"] {
+        let (view, cx) = vim_editor(cx, "one two", 4);
+        let text = undo_after_split(&view, cx, |cx| cx.simulate_keystrokes(keys));
+        assert_eq!(text, "one abtwo", "{keys}");
+    }
+
+    // A fold that leaves the carets where they are does too.
+    let (view, cx) = fold_editor(cx, FOLDS.find("fn g").unwrap());
+    let text = undo_after_split(&view, cx, |cx| {
+        let fold_all = Invocation::of("editor.fold_all").unwrap();
+        run(&view, fold_all, cx);
+        assert_eq!(folds(&view, cx), [(0, 2)]);
+    });
+    assert_eq!(text, FOLDS.replacen("fn g", "abfn g", 1));
+}
+
+const FOLDS: &str = "fn f() {\n    one();\n    two();\n}\nfn g() {}\n";
+
+/// A focused Rust editor on [`FOLDS`] with vim on and the caret at `caret`,
+/// drawn once its tree is parsed.
+fn fold_editor(
+    cx: &mut TestAppContext,
+    caret: usize,
+) -> (Entity<EditorView>, &mut VisualTestContext) {
+    cx.update(init);
+    let (view, cx) = cx.add_window_view(move |_, cx| {
+        let mut model = EditorModel::new(Buffer::new(FOLDS), Some("main.rs".into()));
+        model.set_cursor(caret);
+        EditorView::new(model, EditorTheme::default_dark(cx), cx)
+    });
+    cx.update(|window, cx| window.focus(&view.focus_handle(cx), cx));
+    cx.update(|_, cx| set_vim_enabled(cx, true));
+    cx.run_until_parked();
+    let parsed = view.update(cx, |view, _| {
+        view.syntax().and_then(fe_syntax::Syntax::tree).is_some()
+    });
+    assert!(parsed);
+    (view, cx)
+}
+
+/// The folds as `(header, last)` rows.
+fn folds(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> Vec<(u32, u32)> {
+    view.update(cx, |view, _| {
+        let folds = view.model().display().folds();
+        folds.iter().map(|fold| (fold.start, fold.end)).collect()
+    })
+}
+
+#[gpui::test]
+fn clicking_a_chevron_splits_the_session(cx: &mut TestAppContext) {
+    // Typing in a foldable body, folding it by its chevron (which moves
+    // the caret to the header) and typing on, leaves two undo steps.
+    let (view, cx) = fold_editor(cx, FOLDS.find("two").unwrap());
+    cx.simulate_keystrokes("i");
+    cx.simulate_input("ab");
+    let chevron = view.update(cx, |view, _| {
+        let layout = view.layout.as_ref().expect("drawn");
+        layout.bounds(layout.frame.fold_toggles[0].rect).center()
+    });
+    cx.simulate_click(chevron, Modifiers::none());
+    assert_eq!(folds(&view, cx), [(0, 2)]);
+    assert_eq!(mode(&view, cx), Some("insert"));
+    assert_eq!(state(&view, cx).1, (0, 8));
+    cx.simulate_input("cd");
+    assert_eq!(
+        state(&view, cx).0,
+        FOLDS
+            .replacen("fn f() {", "fn f() {cd", 1)
+            .replacen("two", "abtwo", 1)
+    );
+    // Undo takes back the header's typing alone, still in insert mode.
+    cx.simulate_keystrokes("cmd-z");
+    assert_eq!(state(&view, cx).0, FOLDS.replacen("two", "abtwo", 1));
+    assert_eq!(mode(&view, cx), Some("insert"));
+}
+
+#[gpui::test]
+fn goal_columns_survive_the_indentation_a_split_drops(cx: &mut TestAppContext) {
+    // nvim 0.12.4: `o<Down><Down><Esc>` from (0, 4) lands on (3, 3).
+    let (view, cx) = vim_editor(cx, "    a\nb\nabcdef", 4);
+    cx.simulate_keystrokes("o down down escape");
+    assert_eq!(state(&view, cx), ("    a\n\nb\nabcdef".into(), (3, 3)));
+}
+
+#[gpui::test]
+fn refused_commands_change_nothing(cx: &mut TestAppContext) {
+    let (view, cx) = vim_editor(cx, "    a\nb", 4);
+    cx.simulate_keystrokes("o");
+    cx.simulate_input("ab");
+    cx.simulate_keystrokes("enter");
+    let before = (
+        state(&view, cx),
+        view.read_with(cx, |view, _| view.model().selections()),
+    );
+    for command in [
+        "editor.newline",
+        "editor.paste",
+        "editor.cut",
+        "editor.copy",
+    ] {
+        let bad = Invocation::of(command)
+            .unwrap()
+            .args(Value::from_iter([("unexpected", "x")]));
+        run(&view, bad, cx);
+        assert_eq!(mode(&view, cx), Some("insert"), "{command}");
+        let after = (
+            state(&view, cx),
+            view.read_with(cx, |view, _| view.model().selections()),
+        );
+        assert_eq!(after, before, "{command}");
+    }
+    // Still one session: the indentation the line break made is unused and
+    // one undo takes back everything typed.
+    cx.simulate_input("cd");
+    cx.simulate_keystrokes("escape u");
+    assert_eq!(state(&view, cx), ("    a\nb".into(), (0, 4)));
 }

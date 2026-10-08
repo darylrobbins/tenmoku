@@ -194,6 +194,7 @@ pub use args::{
 };
 pub use commands::{VimCommands, VimTarget, registry};
 pub use headless::{FeedError, HeadlessVim};
+pub use insert::Splits;
 pub use key::{KeyError, VimKey, parse_keys};
 pub use reducer::{Pending, PendingKind, Step, step};
 pub use register::{Register, RegisterError, Registers, Write};

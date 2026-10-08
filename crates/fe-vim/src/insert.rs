@@ -200,12 +200,25 @@ struct Region {
     end: Anchor,
 }
 
+/// What a command run inside an insert session may do to it
+/// ([`VimState::split_session`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Splits {
+    /// It may edit the buffer: the session ends before it.
+    Edits,
+    /// It moves carets or changes selections, as a cursor key or a mouse
+    /// click does: the session ends after it only if it did.
+    Moves,
+    /// Any other command that isn't text input, such as copy, save or a
+    /// fold: the session ends after it, whatever it did.
+    Other,
+}
+
 impl VimState {
     /// Runs `command`, which is neither typing nor `Esc`, splitting an open
     /// insert session around it, as the cursor keys split a session in Vim
     /// (`:help ins-special-special`): in the app, an editor command other
-    /// than text input, or a mouse click. `edits` says whether it may edit
-    /// the buffer. Outside insert mode it only runs `command`.
+    /// than text input, or a mouse click. `splits` says how it splits. Outside insert mode it only runs `command`.
     ///
     /// The session ends as `Esc` ends it, but for the count's copies (nvim
     /// drops the count) and the step back: the indentation it made that
@@ -216,22 +229,23 @@ impl VimState {
     /// undo step of its own, which `.` repeats as `i` would; if the new
     /// session changes nothing, `.` keeps the change before the split.
     ///
-    /// A command that `edits` runs once the session has ended, so its edits
-    /// are their own. Any other runs inside the session, which ends after it
-    /// only if it moved a caret or changed a selection, and keeps the
+    /// A command that [edits](Splits::Edits) runs once the session has
+    /// ended, so its edits are their own. Any other runs inside the session,
+    /// which ends after it if it [moved](Splits::Moves) a caret or changed
+    /// a selection (or is [another](Splits::Other) command), and keeps the
     /// indentation on the rows the carets are on then, as nvim keeps it
     /// while the cursor stays on its row (`o<Left>`) and drops it once it
     /// leaves (`o<Up>`).
     pub fn split_session<R>(
         &mut self,
         model: &mut EditorModel,
-        edits: bool,
+        splits: Splits,
         command: impl FnOnce(&mut EditorModel) -> R,
     ) -> R {
         let Some(origin) = self.session.as_ref().map(|session| session.origin.clone()) else {
             return command(model);
         };
-        if edits {
+        if splits == Splits::Edits {
             end(model, self, Ending::Split);
             let result = command(model);
             resume(model, self, origin);
@@ -243,7 +257,7 @@ impl VimState {
             .snapshot()
             .anchor_before(model.primary_selection().head());
         let result = command(model);
-        if model.selections() != before {
+        if splits == Splits::Other || model.selections() != before {
             end(model, self, Ending::Moved(primary));
             resume(model, self, origin);
         }
@@ -1561,10 +1575,20 @@ fn drop_unused_indent(model: &mut EditorModel, session: &Session, off_caret_rows
         .map(|&offset| snapshot.anchor_before(offset))
         .collect();
     let mapped = model.snapshot().resolve_many(&anchors);
-    model.set_selections(selections.iter().zip(mapped.chunks(2)).map(|(s, ends)| {
-        ResolvedSelection {
+    let target: Vec<ResolvedSelection> = selections
+        .iter()
+        .zip(mapped.chunks(2))
+        .map(|(s, ends)| ResolvedSelection {
             range: ends[0]..ends[1].max(ends[0]),
             reversed: s.reversed,
-        }
-    }));
+        })
+        .collect();
+    // The model's selections are anchored, so they follow the deletions
+    // themselves; setting them would clear the vertical goal columns
+    // (`o<Down><Down>` keeps its column), so they're set only where the
+    // anchors landed elsewhere.
+    sync(model);
+    if model.selections() != target {
+        model.set_selections(target);
+    }
 }
