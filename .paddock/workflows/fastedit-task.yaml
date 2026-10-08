@@ -1,17 +1,19 @@
 name: fastedit-task
-description: A board task to an approved design, parallel test-first items, CI, up to 3 Codex review rounds, then a PR. All in the run's own worktree.
+description: A board task to an approved design, parallel test-first items, CI, up to 3 Codex review rounds, then a squash landed on the local base (no PR, no push). All in worktrees.
 start: brainstorm
 inputs:
   baseRef: { type: string, default: main }
 defaults:
   tier: standard
   harness: claude
-  worktree: run
+  permissions: claude:auto
+  worktree: run   # no step may use `current` (the main checkout); scripts/paddock-check.sh refuses it too
   budget: { usd: 25 }
 nodes:
   brainstorm:
     type: agent
     profile: fastedit-readonly
+    permissions: ask   # claude:auto would approve edits the read-only profile denies
     agent: architect
     tier: deep
     prompt: |
@@ -36,6 +38,7 @@ nodes:
   revise-brief:
     type: agent
     profile: fastedit-readonly
+    permissions: ask
     agent: architect
     tier: deep
     prompt: |
@@ -62,6 +65,7 @@ nodes:
   plan:
     type: agent
     profile: fastedit-readonly
+    permissions: ask
     tier: deep
     session: fresh
     skills: [writing-plans]
@@ -96,6 +100,8 @@ nodes:
     worktree: item
     body: implement-item
 
+  # CI on the merged items. Retry budgets last the whole run, so CI after a
+  # review round is a separate check (recheck) with its own.
   ci:
     type: check
     join: any
@@ -113,30 +119,40 @@ nodes:
       your context. Fix the cause in the implementation, commit, and rerun it
       until it prints CI OK. Locked tests stay as they are.
     context:
-      include: [{ task: true }, { artifact: brief }, { check: ci, tail: 200 }]
+      include: [{ task: true }, { artifact: brief }, { check: ci, tail: 200 }, { check: recheck, tail: 200 }]
       budgetTokens: 16000
 
   blocked:
     type: human
+    join: any
     ask: CI still fails after the fix attempts. Give it another round, or stop the run?
-    show: [{ check: ci, tail: 80 }]
+    show: [{ check: ci, tail: 80 }, { check: recheck, tail: 80 }]
     options: [retry, stop]
     route: driver
 
+  # Codex's effort comes from the workspace setting models.codex.thinking (high);
+  # tiers map only Claude models.
   review:
     type: agent
     profile: fastedit-review
+    join: any
     prompt: |
       Review this branch's diff against {{ inputs.baseRef }} for the board task
       in your context, judged against its acceptance criteria and the approved
       brief. Look for correctness bugs, unmet criteria, missing tests, races and
       error handling. Don't edit files.
 
+      If your context has a responses artifact, it answers your last round:
+      what was fixed, findings the fixer disputes and why, and decisions a
+      person made. Don't raise again a finding a person accepted as a known
+      limit. Raise a disputed one again only if the reasoning is wrong, and
+      say why.
+
       Set verdict to "fail" if any finding is a blocker or major, else "pass".
       Put every finding in report as markdown, one per entry, each with an
       id (F1, F2, ...), severity, file:line, the issue, and the fix.
     context:
-      include: [{ task: true }, { artifact: brief }, { diff: { base: inputs.baseRef } }]
+      include: [{ task: true }, { artifact: brief }, { artifact: responses }, { diff: { base: inputs.baseRef } }]
       budgetTokens: 40000
     output:
       schema:
@@ -151,30 +167,88 @@ nodes:
     type: agent
     profile: fastedit-worker
     join: any
-    tier: fast   # entered through a tier: up retry: rounds run standard, deep, deep
+    tier: standard   # entered through a tier: up retry, so every round runs at deep
     skills: [rust-tdd]
-    prompt: |
+    prompt: &address |
       The review failed. Fix every blocker and major finding below, and the
       minor ones where the fix is cheap. Commit, then run
       `scripts/paddock-check.sh ci` until it prints CI OK. If you disagree with
-      a finding, don't change the code: say why in your final message, naming
-      the finding's id.
+      a finding, don't change the code.
+
+      End with one line per finding: its id, then "fixed" or "not changed" and
+      why. The reviewer reads that next round.
 
       {{ nodes.review.output.report }}
     context:
-      include: [{ task: true }, { artifact: brief }]
+      include: [{ task: true }, { artifact: brief }, { artifact: responses }, { check: recheck, tail: 200 }]
       budgetTokens: 24000
+    output:
+      artifact: { name: responses }
 
-  review-gate:
+  review_gate:   # underscore: a hyphenated id can't be read in a template
     type: human
-    ask: "Review still fails after 3 rounds: {{ nodes.review.output.summary }}. Ship as is, run another round, or stop?"
+    ask: |
+      Review still fails after 3 rounds: {{ nodes.review.output.summary }}
+      Ship lands it on {{ inputs.baseRef }} as it is; stop leaves the branch for you.
+      For another round, add a note with your
+      decisions (findings to accept as known limits, or how to fix them); the
+      fixer and Codex both see it.
+    show: [{ artifact: responses }]
     options: [ship, another-round, stop]
     route: driver
 
-  finish:
-    type: pr
+  decided-round:
+    type: agent
+    profile: fastedit-worker
+    tier: deep
+    skills: [rust-tdd]
+    prompt: |
+      A person read the failing review and decided: {{ nodes.review_gate.output.text }}
+
+      Follow their decisions. Where they accept a finding as a known limit,
+      don't change the code for it; document it where the code handles that
+      case instead.
+
+      Then, for the rest:
+
+      {{ nodes.review.output.report }}
+
+      End with the person's decisions as given, then one line per finding: its
+      id, then "fixed", "accepted as a known limit" or "not changed" and why.
+      The reviewer reads that next round.
+    context:
+      include: [{ task: true }, { artifact: brief }, { artifact: responses }]
+      budgetTokens: 24000
+    output:
+      artifact: { name: responses }
+
+  recheck:
+    type: check
     join: any
-    title: "{{ run.task }}"
+    run: BASE_REF={{ inputs.baseRef }} scripts/paddock-check.sh ci
+    expect: pass
+
+  # Lands on the local base like Regatta: a squash commit, fast-forwarded in its clean
+  # checkout, or update-ref when nothing has it checked out. Nothing is pushed.
+  land:
+    type: check
+    join: any
+    run: BASE_REF={{ inputs.baseRef }} scripts/paddock-check.sh land
+    expect: pass
+
+  land-failed:
+    type: human
+    ask: |
+      The branch didn't land on {{ inputs.baseRef }}: a conflict, a dirty checkout, the
+      base moving, or CI failing after bringing in the base's new commits. Retry once
+      it's clear, or leave the branch for you to merge?
+    show: [{ check: land, tail: 60 }]
+    options: [retry, leave]
+    route: driver
+
+  landed:
+    type: end
+    status: done
 
   stopped:
     type: end
@@ -198,13 +272,22 @@ edges:
   - blocked -> fix-ci              when: output.choice == "retry"     retry: { max: 3, tier: up }
   - blocked -> stopped             when: output.choice == "stop"
 
-  - review -> finish               when: output.verdict == "pass"
+  - review -> land                 when: output.verdict == "pass"
   - review -> address-review       when: output.verdict == "fail"   retry: { max: 3, tier: up }
-  - review -> review-gate          when: output.verdict == "fail"
-  - address-review -> ci
-  - review-gate -> finish          when: output.choice == "ship"
-  - review-gate -> address-review  when: output.choice == "another-round"   retry: { max: 3, tier: up }
-  - review-gate -> stopped         when: output.choice == "stop"
+  - review -> review_gate          when: output.verdict == "fail"
+  - address-review -> recheck
+  - review_gate -> land            when: output.choice == "ship"
+  - review_gate -> decided-round   when: output.choice == "another-round"   retry: { max: 3 }
+  - review_gate -> stopped         when: output.choice == "stop"
+  - decided-round -> recheck
+  - recheck -> review              when: result == "pass"
+  - recheck -> address-review      when: result == "fail"   retry: { max: 2 }
+  - recheck -> blocked             when: result == "fail"
+
+  - land -> landed                 when: result == "pass"
+  - land -> land-failed            when: result == "fail"
+  - land-failed -> land            when: output.choice == "retry"   retry: { max: 2 }
+  - land-failed -> stopped         when: output.choice == "leave"
 
 subgraphs:
   implement-item:
@@ -212,7 +295,7 @@ subgraphs:
       write-tests:
         type: agent
         profile: fastedit-worker
-        tier: standard
+        tier: deep   # locked tests can't be fixed later without a person
         skills: [rust-tdd]
         prompt: |
           Write the failing tests for this item, following the rust-tdd skill,
@@ -257,11 +340,12 @@ subgraphs:
       implement-deep:
         type: agent
         profile: fastedit-worker
+        join: any
         tier: deep
         skills: [rust-tdd]
         prompt: *implement
         context:
-          include: [{ check: red, tail: 120 }, { check: green-deep, tail: 150 }, { check: green, tail: 150 }]
+          include: [{ check: red, tail: 120 }, { check: relock, tail: 120 }, { check: green-deep, tail: 150 }, { check: green, tail: 150 }]
           index: [{ artifact: brief }, { task: true }]
 
       green-deep:
@@ -269,19 +353,70 @@ subgraphs:
         run: scripts/paddock-check.sh green {{ item.crates | join(" ") }}
         expect: pass
 
+      # Tests that won't lock, or that the implementation can't pass, go to a person.
+      item_gate:
+        type: human
+        join: any
+        ask: |
+          Item "{{ item.title }}" is stuck: its tests didn't lock (red), or 6
+          attempts couldn't make them pass. Rewrite the tests (your note goes to
+          the rewriter), give the implementation 3 more attempts, or stop the run?
+        show: [{ check: red, tail: 60 }, { check: green-deep, tail: 60 }]
+        options: [rewrite-tests, retry, stop]
+        route: driver
+
+      rewrite-tests:
+        type: agent
+        profile: fastedit-worker
+        tier: deep
+        skills: [rust-tdd]
+        prompt: |
+          A person decided this item's tests must change: {{ nodes.item_gate.output.text }}
+
+          Rewrite the tests as they ask, following the rust-tdd skill, and commit
+          them as a new `tdd-lock: {{ item.title }}` commit, the last commit of
+          this step. Some tests may pass already. Finish only once
+          `scripts/paddock-check.sh relock {{ item.crates | join(" ") }}` prints RELOCK OK.
+
+          Item: {{ item.title }}
+          Spec: {{ item.spec }}
+          Files you own: {{ item.paths | join(", ") }}
+        context:
+          include: [{ check: red, tail: 120 }, { check: green-deep, tail: 150 }, { check: relock, tail: 120 }]
+          index: [{ artifact: brief }, { task: true }]
+
+      relock:
+        type: check
+        run: scripts/paddock-check.sh relock {{ item.crates | join(" ") }}
+        expect: pass
+
       done:
         type: end
         status: done
         join: any
 
+      item-stopped:
+        type: end
+        status: failed   # a stopped item would count as finished and the run would go on
+
     edges:
       - write-tests -> red
       - red -> write-tests            when: result == "fail"   retry: { max: 2 }
+      - red -> item_gate              when: result == "fail"
       - red -> implement              when: result == "pass"
       - implement -> green
       - green -> implement            when: result == "fail"   retry: { max: 2 }
       - green -> implement-deep       when: result == "fail"
       - implement-deep -> green-deep
       - green-deep -> implement-deep  when: result == "fail"   retry: { max: 2 }
+      # Each later visit to the gate uses one of these retries; once they are spent the item fails.
+      - green-deep -> item_gate       when: result == "fail"   retry: { max: 3 }
+      - item_gate -> rewrite-tests    when: output.choice == "rewrite-tests"
+      - item_gate -> implement-deep   when: output.choice == "retry"   retry: { max: 3 }
+      - item_gate -> item-stopped     when: output.choice == "stop"
+      - rewrite-tests -> relock
+      - relock -> implement-deep      when: result == "pass"
+      - relock -> rewrite-tests       when: result == "fail"   retry: { max: 1 }
+      - relock -> item_gate           when: result == "fail"   retry: { max: 2 }
       - green -> done                 when: result == "pass"
       - green-deep -> done            when: result == "pass"

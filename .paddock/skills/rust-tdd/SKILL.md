@@ -43,7 +43,15 @@ your step, so run it yourself before you finish.
 - Run `scripts/paddock-check.sh green <crate>...` and finish only on
   `GREEN OK`.
 
-## Fixing CI or review findings (fix-ci, address-review steps)
+## Rewriting tests a person rejected (rewrite-tests step)
+
+- Only this step changes locked tests, and only as the person's note asks.
+- Commit the changed tests as a new `tdd-lock: <item title>` commit, the last
+  commit of the step. Tests may pass already, since the implementation exists.
+- Run `scripts/paddock-check.sh relock <crate>...` and finish only on
+  `RELOCK OK`. The implement step then makes whatever still fails pass.
+
+## Fixing CI or review findings (fix-ci, address-review, decided-round steps)
 
 - `scripts/paddock-check.sh ci` must print `CI OK`: fmt, clippy with
   `-D warnings`, the workspace nextest run, the no-GPUI and syntax-feature
