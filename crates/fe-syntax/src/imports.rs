@@ -13,7 +13,7 @@ use std::{
     sync::OnceLock,
 };
 
-use fe_buffer::Text;
+use fe_buffer::{Buffer, Text};
 use tree_sitter::{Parser, Query, QueryCursor, QueryCursorOptions, StreamingIterator as _, Tree};
 
 use crate::{
@@ -129,31 +129,27 @@ pub fn module_specifiers(
         stopped.get()
     };
     let mut found = Vec::new();
-    // The tree being read, and from where. A misread of the grammar that
-    // swallows the rest of the file starts a new tree after it (see
-    // [`swallowed_from`]), so the modules after it are still found.
-    let mut owned;
-    let mut tree = tree;
-    let mut from = 0;
-    // Each pass resumes strictly after the last, so this ends; `poll` stops it
-    // early.
-    loop {
-        let resume = swallowed_from(tree, from);
-        let to = resume.unwrap_or(text.len());
-        query_range(compiled, tree, text, from..to, &poll, &mut found);
-        if stopped.get() {
-            return Err(ImportsError::Cancelled);
-        }
-        let Some(resume) = resume else { break };
-        let Some(reparsed) = parse_after(language, text, resume, &poll) else {
-            if stopped.get() {
-                return Err(ImportsError::Cancelled);
+    // A misread of the grammar that swallows the rest of the file after
+    // `<Foo extends="/" />` (a JSX attribute named `extends` is read as a
+    // type parameter's constraint) is cured in the text, once: every such
+    // attribute is respelled, and the file parsed again whole. That is one
+    // extra parse however many attributes there are.
+    let corrected;
+    let (tree, text) = if tree.root_node().has_error() {
+        match parse_corrected(language, text, &poll) {
+            Ok(Some(reparsed)) => {
+                corrected = reparsed;
+                (&corrected.0, corrected.1.text())
             }
-            break;
-        };
-        owned = reparsed;
-        tree = &owned;
-        from = resume;
+            Ok(None) => (tree, text),
+            Err(error) => return Err(error),
+        }
+    } else {
+        (tree, text)
+    };
+    query_range(compiled, tree, text, 0..text.len(), &poll, &mut found);
+    if stopped.get() {
+        return Err(ImportsError::Cancelled);
     }
     found.sort_by_key(|range| range.start);
     found.dedup();
@@ -216,67 +212,46 @@ fn query_range(
     }
 }
 
-/// Where the grammar's misread of a TSX element swallows the rest of the
-/// file, at or after `from`: the `/>` that it reads as a regular expression
-/// after `<Foo extends="/" />` (a JSX attribute named `extends` is read as a
-/// type parameter's constraint). What follows is read again from there.
-fn swallowed_from(tree: &Tree, from: usize) -> Option<usize> {
-    let root = tree.root_node();
-    if !root.has_error() {
-        return None;
-    }
-    let mut cursor = root.walk();
-    loop {
-        let node = cursor.node();
-        let here = node.end_byte() > from && node.has_error();
-        if node.kind() == "regex" && node.start_byte() >= from {
-            let misread = node.prev_sibling().is_some_and(|prev| {
-                let mut children = prev.walk();
-                prev.kind() == "type_parameter"
-                    || prev.kind() == "ERROR"
-                        && prev
-                            .children(&mut children)
-                            .any(|c| c.kind() == "type_parameter")
-            });
-            if misread {
-                return Some(node.start_byte() + 1);
-            }
-        }
-        if here && cursor.goto_first_child() {
-            continue;
-        }
-        while !cursor.goto_next_sibling() {
-            if !cursor.goto_parent() {
-                return None;
-            }
-        }
-    }
-}
-
-/// The tree of the text from `start` on, or `None` if it stopped or
-/// couldn't be parsed.
-fn parse_after(
+/// The text with each `extends` that is followed by `=` respelled
+/// `extendz`, and its tree. Nothing but a JSX attribute is named that, so no
+/// other reading changes, and no offset does. `Ok(None)` if there is no such
+/// attribute or the parse failed.
+fn parse_corrected(
     language: &Language,
     text: &Text,
-    start: usize,
     poll: &dyn Fn() -> bool,
-) -> Option<Tree> {
-    let mut parser = Parser::new();
-    parser.set_language(&language.grammar).ok()?;
-    let point = |offset| {
-        let point = text.offset_to_point(offset);
-        tree_sitter::Point::new(point.row as usize, point.column as usize)
+) -> Result<Option<(Tree, Buffer)>, ImportsError> {
+    let mut bytes = text.slice_to_string(0..text.len()).into_bytes();
+    let mut at = 0;
+    let mut changed = false;
+    while let Some(found) = bytes[at..].windows(7).position(|word| word == b"extends") {
+        if poll() {
+            return Err(ImportsError::Cancelled);
+        }
+        let end = at + found + 7;
+        let next = bytes[end..].iter().find(|b| !b.is_ascii_whitespace());
+        if next == Some(&b'=') {
+            bytes[end - 1] = b'z';
+            changed = true;
+        }
+        at = end;
+    }
+    if !changed {
+        return Ok(None);
+    }
+    let Ok(corrected) = String::from_utf8(bytes) else {
+        return Ok(None);
     };
-    let end = text.len();
-    parser
-        .set_included_ranges(&[tree_sitter::Range {
-            start_byte: start,
-            end_byte: end,
-            start_point: point(start),
-            end_point: point(end),
-        }])
-        .ok()?;
-    parse_text(&mut parser, text, None, poll)
+    let buffer = Buffer::new(&corrected);
+    let mut parser = Parser::new();
+    if parser.set_language(&language.grammar).is_err() {
+        return Ok(None);
+    }
+    match parse_text(&mut parser, buffer.text(), None, poll) {
+        Some(tree) => Ok(Some((tree, buffer))),
+        None if poll() => Err(ImportsError::Cancelled),
+        None => Ok(None),
+    }
 }
 
 /// Whether a captured string is a module: not the text of a regex (see

@@ -183,3 +183,27 @@ fn many_jsx_attributes_named_extends_keep_the_last_import() {
     text.push_str("import a from './a';\n");
     assert_eq!(specifiers("tsx", &text), ["./a"]);
 }
+
+#[test]
+fn a_great_many_jsx_attributes_named_extends_are_read_in_linear_time() {
+    let n = 20_000;
+    let mut text = "const x = <A extends=\"/\" />;\n".repeat(n);
+    text.push_str("import a from './a';\n");
+    let started = std::time::Instant::now();
+    assert_eq!(specifiers("tsx", &text), ["./a"]);
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+}
+
+#[test]
+fn a_cancel_stops_the_recovery() {
+    let mut text = "const x = <A extends=\"/\" />;\n".repeat(2_000);
+    text.push_str("import a from './a';\n");
+    let syntax = syntax("tsx", &text);
+    assert_eq!(module_specifiers(&syntax, &mut || false).unwrap().len(), 1);
+    let mut polls = 0;
+    let result = module_specifiers(&syntax, &mut || {
+        polls += 1;
+        polls > 2
+    });
+    assert_eq!(result, Err(ImportsError::Cancelled));
+}
