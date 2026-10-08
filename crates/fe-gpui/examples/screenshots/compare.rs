@@ -88,6 +88,25 @@ pub(crate) fn compare(golden: &RgbaImage, actual: &RgbaImage) -> Result<(), Mism
     Err(Mismatch { kind, diff })
 }
 
+/// Names the variable that lets a capture at another display scale than its
+/// golden skip the pixel comparison instead of failing on size. CI sets it:
+/// GitHub's macos-15 runners have a 1× display and the goldens are 2×. The
+/// scene must still render and settle.
+pub(crate) const ALLOW_OTHER_SCALE: &str = "SCREENSHOTS_ALLOW_OTHER_SCALE";
+
+/// Whether `actual` should skip comparison with `golden`: it's another
+/// size with the same aspect ratio, as at another scale, and
+/// [`ALLOW_OTHER_SCALE`] is set.
+pub(crate) fn skip_other_scale(golden: &RgbaImage, actual: &RgbaImage) -> bool {
+    std::env::var_os(ALLOW_OTHER_SCALE).is_some() && other_scale(golden, actual)
+}
+
+fn other_scale(golden: &RgbaImage, actual: &RgbaImage) -> bool {
+    golden.dimensions() != actual.dimensions()
+        && u64::from(golden.width()) * u64::from(actual.height())
+            == u64::from(golden.height()) * u64::from(actual.width())
+}
+
 /// Writes `<name>.actual.png` and `<name>.diff.png` to `dir`, returning
 /// their paths.
 pub(crate) fn save_failure(
@@ -170,6 +189,13 @@ mod tests {
         assert_ne!(*diff.get_pixel(0, 0), MAGENTA);
         assert_eq!(*diff.get_pixel(39, 0), MAGENTA);
         assert_eq!(*diff.get_pixel(0, 30), MAGENTA);
+    }
+
+    #[test]
+    fn other_scale_is_same_aspect_another_size() {
+        assert!(other_scale(&image(80, 48), &image(40, 24)));
+        assert!(!other_scale(&image(40, 24), &image(40, 24)));
+        assert!(!other_scale(&image(80, 48), &image(40, 25)));
     }
 
     #[test]

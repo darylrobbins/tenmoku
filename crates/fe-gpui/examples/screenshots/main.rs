@@ -298,6 +298,16 @@ fn check_scenes(cx: &mut VisualTestAppContext, update: bool) -> Result<bool> {
         let golden = image::open(&golden_path)
             .map_err(|error| format!("reading {}: {error}", golden_path.display()))?
             .into_rgba8();
+        if compare::skip_other_scale(&golden, &image) {
+            println!(
+                "skipped {}: {:?} is the golden's {:?} at another scale ({})",
+                scene.name,
+                image.dimensions(),
+                golden.dimensions(),
+                compare::ALLOW_OTHER_SCALE
+            );
+            continue;
+        }
         match compare::compare(&golden, &image) {
             Ok(()) => println!("ok      {}", scene.name),
             Err(mismatch) => {

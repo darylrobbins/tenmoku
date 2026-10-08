@@ -34,6 +34,11 @@ jobs:
       - name: fe-syntax builds with no languages and with each alone
         run: scripts/check-syntax-features.sh
       - name: Screenshots match their goldens
+        # The runner's display is 1× and the goldens 2×, so every capture is
+        # half their size. Render every scene (they must still settle) but
+        # skip the pixel comparison there; see TESTING.md.
+        env:
+          SCREENSHOTS_ALLOW_OTHER_SCALE: 1
         run: |
           cargo run -p fe-gpui --example screenshots
           cargo run -p fe-workbench --example screenshots

@@ -113,6 +113,12 @@ prints the mismatch, writes `target/screenshots/<scene>.actual.png` and
 exits nonzero. A size mismatch fails outright and writes the same two files;
 its diff covers both images, with the area only one of them has in magenta.
 It usually means the display's scale factor differs from the goldens' 2×.
+GitHub's `macos-15` runners have a 1× display, so CI sets
+`SCREENSHOTS_ALLOW_OTHER_SCALE`: a capture that is a golden at another scale
+(another size, same aspect ratio) prints `skipped` instead of being compared.
+CI still renders every scene and fails one that doesn't settle or a cold
+scene whose highlights don't land late, but it compares pixels only with
+goldens at its own scale, which it has none of yet.
 
 After an intended rendering change, regenerate with `UPDATE_SCREENSHOTS=1`,
 look at every changed PNG, and commit them with the change. Rendering is
