@@ -1,0 +1,788 @@
+//! Go to definition (F12), workspace symbols (Cmd-T), back and forward:
+//! `fe-nav`'s [`Navigation`] behind the workbench's `nav.*` commands.
+//!
+//! The workbench owns one [`Navigation`]; a host adds providers to it
+//! ([`Workbench::navigation`]). Its search provider, [`SearchNavigation`],
+//! answers from a [`SymbolIndex`] built the first time a nav command runs
+//! with a root, so it costs startup nothing: [`fe_nav::build`] runs in the
+//! background, and until it's done go-to-definition answers by search, with
+//! a capped text search. The index is kept current with the project panel's
+//! watcher batches, held while it builds, then planned, extracted and
+//! updated in the background one batch at a time.
+//!
+//! Requests read the active editor: its file relative to the root, its
+//! language, its text and its primary selection's head (the one scrolling
+//! follows). They run on the background executor once the search provider
+//! is in. Each caller has its own [`Requests`]: a new request cancels its
+//! caller's last, whose answer is dropped if it lands.
+//!
+//! A jump first records where the caret was in [`NavHistory`], which back
+//! and forward walk.
+
+use std::{
+    mem,
+    ops::Range,
+    path::PathBuf,
+    rc::Rc,
+    sync::{
+        Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard,
+        atomic::{AtomicBool, Ordering},
+    },
+};
+
+use async_channel::{Receiver, Sender};
+use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry};
+use fe_gpui::commands::RunCommand;
+use fe_nav::{
+    Answer, BuildOptions, Definitions, Location, MAX_BATCH_FILES, NavError, NavRequest, Navigation,
+    Precision, SearchNavigation, SymbolIndex,
+};
+use fe_project::FsChange;
+use fe_ui::UiTheme;
+use gpui::{
+    App, AppContext as _, Context, Entity, Focusable as _, Global, Subscription, Task, Window,
+};
+
+use crate::{
+    Picker, StatusBar, StatusItem, StatusSide, Workbench,
+    nav_picker::{DefinitionsPicker, SymbolsPicker},
+    pane::Reveal,
+    pane_toolbar::NavButtons,
+    workbench::Palette,
+};
+
+/// The most places [`NavHistory`] holds, back and forward together.
+pub(crate) const HISTORY_LIMIT: usize = 100;
+
+/// The status bar item naming the provider of the last answer.
+pub(crate) const SOURCE_ITEM: &str = "nav_source";
+
+/// A place to go back or forward to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Place {
+    pub(crate) path: PathBuf,
+    /// A byte offset in the file's text.
+    pub(crate) offset: usize,
+}
+
+/// Where jumps came from, to go back to, and where going back left, to go
+/// forward to again. A jump clears the way forward.
+#[derive(Debug, Default)]
+pub(crate) struct NavHistory {
+    back: Vec<Place>,
+    forward: Vec<Place>,
+}
+
+impl NavHistory {
+    /// Records `place`, if there is one, before a jump, dropping the oldest
+    /// past the limit. Clears the way forward either way.
+    pub(crate) fn push(&mut self, place: Option<Place>) {
+        self.forward.clear();
+        let Some(place) = place else {
+            return;
+        };
+        if self.back.len() == HISTORY_LIMIT {
+            self.back.remove(0);
+        }
+        self.back.push(place);
+    }
+
+    /// The place to go back to from `here`, which forward then returns to.
+    pub(crate) fn back(&mut self, here: Option<Place>) -> Option<Place> {
+        let to = self.back.pop()?;
+        self.forward.extend(here);
+        Some(to)
+    }
+
+    /// The place to go forward to from `here`, which back then returns to.
+    pub(crate) fn forward(&mut self, here: Option<Place>) -> Option<Place> {
+        let to = self.forward.pop()?;
+        self.back.extend(here);
+        Some(to)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.back.len() + self.forward.len()
+    }
+
+    fn buttons(&self) -> NavButtons {
+        NavButtons {
+            back: !self.back.is_empty(),
+            forward: !self.forward.is_empty(),
+        }
+    }
+}
+
+/// One caller's requests: a new one cancels the last, and only the
+/// newest's answer lands.
+#[derive(Debug, Default)]
+pub(crate) struct Requests {
+    generation: u64,
+    cancel: Arc<AtomicBool>,
+}
+
+impl Requests {
+    fn next(&mut self) -> (u64, Arc<AtomicBool>) {
+        self.cancel.store(true, Ordering::Relaxed);
+        self.cancel = Arc::default();
+        self.generation += 1;
+        (self.generation, self.cancel.clone())
+    }
+}
+
+enum Build {
+    /// No nav command has run with this root yet. Dropping the sender
+    /// closes [`Nav::ready`].
+    NotStarted(Sender<()>),
+    Running {
+        _build: Task<()>,
+    },
+    Done,
+}
+
+/// The workbench's navigation state, for one root.
+pub(crate) struct Nav {
+    root: Option<PathBuf>,
+    navigation: Arc<Navigation>,
+    /// Closed once the search provider for `root` is in.
+    ready: Receiver<()>,
+    build: Build,
+    /// Set once the build has created it.
+    index: Option<Arc<RwLock<SymbolIndex>>>,
+    /// Stops the build and the reindexing when the root goes.
+    cancel: Arc<AtomicBool>,
+    /// Watcher batches to apply: held while the build runs, then applied
+    /// one batch at a time, in order.
+    held: Vec<FsChange>,
+    applying: Option<Task<()>>,
+    pub(crate) history: NavHistory,
+    /// Where the last jump, back or forward went, its file maybe still
+    /// being read.
+    opened: Option<Place>,
+    pub(crate) goto: Requests,
+    pub(crate) definitions: Entity<Picker<DefinitionsPicker>>,
+    pub(crate) symbols: Entity<Picker<SymbolsPicker>>,
+    _pickers: [Subscription; 4],
+    /// Builds started.
+    #[cfg(test)]
+    pub(crate) builds: usize,
+    /// Awaited before the next build walks.
+    #[cfg(test)]
+    pub(crate) build_gate: Option<Receiver<()>>,
+    /// Awaited before the next request's answer lands.
+    #[cfg(test)]
+    pub(crate) hold_answer: Option<Receiver<()>>,
+    /// Each request's cancel flag, oldest first.
+    #[cfg(test)]
+    pub(crate) cancels: Vec<Arc<AtomicBool>>,
+}
+
+impl Nav {
+    /// Navigation in `root`, built on the first nav command.
+    pub(crate) fn new(
+        root: Option<PathBuf>,
+        ui: UiTheme,
+        window: &mut Window,
+        cx: &mut Context<Workbench>,
+    ) -> Self {
+        let navigation = Arc::new(Navigation::new());
+        let workbench = cx.weak_entity();
+        let definitions = cx.new(|cx| {
+            let delegate = DefinitionsPicker::new(workbench.clone(), ui);
+            Picker::new(delegate, "Definitions", ui, cx)
+        });
+        let symbols = cx.new(|cx| {
+            let delegate = SymbolsPicker::new(workbench, navigation.clone(), ui);
+            Picker::new(delegate, "Go to symbol in workspace…", ui, cx)
+        });
+        let [a, b] = Workbench::follow_palette(&definitions, Palette::Definitions, window, cx);
+        let [c, d] = Workbench::follow_palette(&symbols, Palette::Symbols, window, cx);
+        let (ready_tx, ready) = async_channel::bounded(1);
+        Self {
+            root,
+            navigation,
+            ready,
+            build: Build::NotStarted(ready_tx),
+            index: None,
+            cancel: Arc::default(),
+            held: Vec::new(),
+            applying: None,
+            history: NavHistory::default(),
+            opened: None,
+            goto: Requests::default(),
+            definitions,
+            symbols,
+            _pickers: [a, b, c, d],
+            #[cfg(test)]
+            builds: 0,
+            #[cfg(test)]
+            build_gate: None,
+            #[cfg(test)]
+            hold_answer: None,
+            #[cfg(test)]
+            cancels: Vec::new(),
+        }
+    }
+
+    pub(crate) fn navigation(&self) -> &Arc<Navigation> {
+        &self.navigation
+    }
+
+    /// The index's files and whether it's complete, once it exists.
+    #[cfg(test)]
+    pub(crate) fn index_progress(&self) -> Option<(usize, bool)> {
+        self.index.as_ref().map(|index| read(index).progress())
+    }
+
+    /// Navigates in `root` from now on: the old root's build stops and its
+    /// search provider goes, a new one being built on the next nav command.
+    /// Requests in flight are cancelled; the history stays.
+    pub(crate) fn set_root(&mut self, root: PathBuf, cx: &mut Context<Workbench>) {
+        self.cancel.store(true, Ordering::Relaxed);
+        self.cancel = Arc::default();
+        self.navigation.remove(SearchNavigation::NAME);
+        let (ready_tx, ready) = async_channel::bounded(1);
+        self.ready = ready;
+        self.build = Build::NotStarted(ready_tx);
+        self.index = None;
+        self.held.clear();
+        self.applying = None;
+        self.goto.next();
+        self.root = Some(root);
+        self.symbols.update(cx, |picker, cx| {
+            picker.delegate.reset();
+            cx.notify();
+        });
+    }
+
+    /// Starts building the index the first time, and gives what closes once
+    /// its provider is in; `None` without a root.
+    pub(crate) fn start(&mut self, cx: &mut Context<Workbench>) -> Option<Receiver<()>> {
+        let root = self.root.clone()?;
+        if let Build::NotStarted(_) = self.build {
+            let Build::NotStarted(ready) = mem::replace(&mut self.build, Build::Done) else {
+                unreachable!("matched above")
+            };
+            self.build = Build::Running {
+                _build: self.spawn_build(root, ready, cx),
+            };
+            self.symbols
+                .update(cx, |picker, _| picker.delegate.indexing(Some(0)));
+        }
+        Some(self.ready.clone())
+    }
+
+    fn spawn_build(
+        &mut self,
+        root: PathBuf,
+        ready: Sender<()>,
+        cx: &mut Context<Workbench>,
+    ) -> Task<()> {
+        #[cfg(test)]
+        let gate = {
+            self.builds += 1;
+            self.build_gate.take()
+        };
+        let navigation = self.navigation.clone();
+        let cancel = self.cancel.clone();
+        cx.spawn(async move |workbench, cx| {
+            // `SymbolIndex::new` resolves the root on disk.
+            let index = cx
+                .background_spawn({
+                    let root = root.clone();
+                    async move { Arc::new(RwLock::new(SymbolIndex::new(root))) }
+                })
+                .await;
+            navigation.add(Arc::new(search_provider(&root, &index)), 0);
+            drop(ready);
+            let index_ = index.clone();
+            let stored = workbench.update(cx, |workbench, _| {
+                workbench.nav_state.index = Some(index_);
+            });
+            if stored.is_err() {
+                return;
+            }
+            #[cfg(test)]
+            if let Some(gate) = gate {
+                gate.recv().await.ok();
+            }
+            let (sender, batches) = async_channel::unbounded();
+            let build = cx.background_spawn(async move {
+                fe_nav::build(&root, &BuildOptions::default(), cancel.clone(), |batch| {
+                    let mut index = write(&index);
+                    index.extend(batch);
+                    sender.send_blocking(index.progress().0).ok();
+                });
+                let reindex = write(&index).finish();
+                reextract(&index, &reindex.extract, &cancel);
+            });
+            // The channel closes once the build is done.
+            while let Ok(indexed) = batches.recv().await {
+                let updated = workbench.update(cx, |workbench, cx| {
+                    let shows = workbench.palette == Some(Palette::Symbols);
+                    workbench.nav_state.progress(Some(indexed), shows, cx)
+                });
+                if updated.is_err() {
+                    return;
+                }
+            }
+            build.await;
+            workbench
+                .update(cx, |workbench, cx| {
+                    let shows = workbench.palette == Some(Palette::Symbols);
+                    let nav = &mut workbench.nav_state;
+                    nav.build = Build::Done;
+                    nav.apply_held(cx);
+                    nav.progress(None, shows, cx);
+                })
+                .ok();
+        })
+    }
+
+    /// Tells the symbols picker how many files are indexed, `None` once the
+    /// build is done, for it to match its query again if it `shows`.
+    fn progress(&mut self, indexed: Option<usize>, shows: bool, cx: &mut Context<Workbench>) {
+        self.symbols.update(cx, |picker, cx| {
+            picker.delegate.indexing(indexed);
+            if shows {
+                picker.delegate.requery(cx);
+            }
+        });
+    }
+
+    /// A watcher batch, as the project panel got it: held while the index
+    /// builds. Before the index exists it's dropped, since the build will
+    /// see the disk as it is.
+    pub(crate) fn fs_changed(&mut self, changes: &[FsChange], cx: &mut Context<Workbench>) {
+        if self.index.is_none() {
+            return;
+        }
+        self.held.extend_from_slice(changes);
+        if let Build::Done = self.build {
+            self.apply_held(cx);
+        }
+    }
+
+    /// Plans the held batches in the background, then extracts the files
+    /// the plan names without the lock and updates the index with them,
+    /// unless an apply is running: they wait for it, so they apply in order.
+    fn apply_held(&mut self, cx: &mut Context<Workbench>) {
+        if self.applying.is_some() || self.held.is_empty() {
+            return;
+        }
+        let Some(index) = self.index.clone() else {
+            return self.held.clear();
+        };
+        let changes = mem::take(&mut self.held);
+        let cancel = self.cancel.clone();
+        let apply = cx.background_spawn(async move {
+            let reindex = write(&index).plan(&changes);
+            reextract(&index, &reindex.extract, &cancel);
+        });
+        self.applying = Some(cx.spawn(async move |workbench, cx| {
+            apply.await;
+            workbench
+                .update(cx, |workbench, cx| {
+                    let shows = workbench.palette == Some(Palette::Symbols);
+                    let nav = &mut workbench.nav_state;
+                    nav.applying = None;
+                    nav.apply_held(cx);
+                    nav.progress(None, shows, cx);
+                })
+                .ok();
+        }));
+    }
+}
+
+impl Drop for Nav {
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
+        self.goto.cancel.store(true, Ordering::Relaxed);
+    }
+}
+
+/// The search provider for `root`, answering from `index`.
+fn search_provider(root: &std::path::Path, index: &Arc<RwLock<SymbolIndex>>) -> SearchNavigation {
+    let provider = SearchNavigation::new(root, index.clone());
+    // A loaded test machine would otherwise cut the fallback short.
+    #[cfg(test)]
+    let provider = provider.with_budget(std::time::Duration::from_secs(20));
+    provider
+}
+
+/// Extracts `paths` from the index's root, without its lock, and updates
+/// the index with them, a chunk at a time.
+fn reextract(index: &RwLock<SymbolIndex>, paths: &[PathBuf], cancel: &AtomicBool) {
+    if paths.is_empty() {
+        return;
+    }
+    let root = read(index).canonical_root().to_owned();
+    for chunk in paths.chunks(MAX_BATCH_FILES) {
+        let extracted = fe_nav::extract_all(&root, chunk, 0, cancel);
+        write(index).update(extracted);
+    }
+}
+
+fn read(index: &RwLock<SymbolIndex>) -> RwLockReadGuard<'_, SymbolIndex> {
+    index.read().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn write(index: &RwLock<SymbolIndex>) -> RwLockWriteGuard<'_, SymbolIndex> {
+    index.write().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Shows on the status bar which provider gave the last answer.
+pub(crate) fn show_source(status_bar: &Entity<StatusBar>, provider: &str, cx: &mut App) {
+    let item = StatusItem {
+        id: SOURCE_ITEM.into(),
+        side: StatusSide::Left,
+        priority: 100,
+        text: format!("by {provider}").into(),
+        command: None,
+    };
+    status_bar.update(cx, |bar, cx| bar.set_item(item, cx));
+}
+
+/// How a provider answered, for a status line: ` (by search)`, or nothing
+/// for an exact provider.
+pub(crate) fn by(provider: &str, precision: Precision) -> String {
+    match precision {
+        Precision::Exact => String::new(),
+        Precision::Search => format!(" (by {provider})"),
+    }
+}
+
+impl Workbench {
+    /// The workbench's navigation, for a host to add providers to (a
+    /// language server's, say). Its search provider is added on the first
+    /// nav command with a root, at precedence 0.
+    pub fn navigation(&self) -> &Arc<Navigation> {
+        self.nav_state.navigation()
+    }
+
+    /// A request for the active editor's caret, if its file is under the
+    /// root.
+    pub(crate) fn nav_request(&self, cx: &App) -> Option<NavRequest> {
+        let root = self.nav_state.root.as_ref()?;
+        let editor = self.active_editor(cx)?.read(cx);
+        let model = editor.model();
+        let rel = model.path()?.strip_prefix(root).ok()?.to_owned();
+        Some(NavRequest {
+            root: root.clone(),
+            rel,
+            language: editor.syntax().map(|syntax| syntax.language().name()),
+            text: model.text().clone(),
+            offset: model.primary_selection().head(),
+        })
+    }
+
+    /// Runs `work` on the background executor once the search provider is
+    /// in, as a new request of the caller whose [`Requests`] `requests`
+    /// picks, cancelling that caller's last. `landed` gets the answer unless
+    /// a newer request of the caller's started meanwhile. False without a
+    /// root.
+    pub(crate) fn run_nav<T: Send + 'static>(
+        &mut self,
+        requests: fn(&mut Nav) -> &mut Requests,
+        work: impl FnOnce(&Navigation, &AtomicBool) -> T + Send + 'static,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        landed: impl FnOnce(&mut Self, T, &mut Window, &mut Context<Self>) + 'static,
+    ) -> bool {
+        let Some(ready) = self.nav_state.start(cx) else {
+            return false;
+        };
+        let (generation, cancel) = requests(&mut self.nav_state).next();
+        #[cfg(test)]
+        let hold = {
+            self.nav_state.cancels.push(cancel.clone());
+            self.nav_state.hold_answer.take()
+        };
+        let navigation = self.nav_state.navigation.clone();
+        cx.spawn_in(window, async move |workbench, cx| {
+            ready.recv().await.ok();
+            if cancel.load(Ordering::Relaxed) {
+                return;
+            }
+            let answer = cx
+                .background_spawn(async move { work(&navigation, &cancel) })
+                .await;
+            #[cfg(test)]
+            if let Some(hold) = hold {
+                hold.recv().await.ok();
+            }
+            workbench
+                .update_in(cx, |workbench, window, cx| {
+                    if requests(&mut workbench.nav_state).generation == generation {
+                        landed(workbench, answer, window, cx);
+                    }
+                })
+                .ok();
+        })
+        .detach();
+        true
+    }
+
+    /// Records where the active editor's caret is, before a jump.
+    pub(crate) fn push_history(&mut self, cx: &mut Context<Self>) {
+        let place = self.caret_place(cx);
+        self.push_place(place, cx);
+    }
+
+    /// Records `place` before a jump.
+    fn push_place(&mut self, place: Option<Place>, cx: &mut Context<Self>) {
+        self.nav_state.history.push(place);
+        self.set_nav_buttons(self.nav_state.history.buttons(), cx);
+    }
+
+    /// Where the active editor's caret is; while the active pane is still
+    /// reading the file a jump went to, where it'll be.
+    fn caret_place(&self, cx: &App) -> Option<Place> {
+        if let Some(editor) = self.active_editor(cx) {
+            let model = editor.read(cx).model();
+            return Some(Place {
+                path: model.path()?.to_owned(),
+                offset: model.primary_selection().head(),
+            });
+        }
+        let opened = self.nav_state.opened.as_ref()?;
+        let pane = self.pane().read(cx);
+        pane.is_opening(&opened.path).then(|| opened.clone())
+    }
+
+    /// Opens `path` in the active pane, focused, with `range` (bytes in its
+    /// text) selected once its editor exists.
+    pub(crate) fn open_range(
+        &mut self,
+        path: PathBuf,
+        range: Range<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.nav_state.opened = Some(Place {
+            path: path.clone(),
+            offset: range.end,
+        });
+        let reveal = Some(Reveal::bytes(range));
+        self.pane()
+            .clone()
+            .update(cx, |pane, cx| pane.open_at(path, reveal, window, cx));
+    }
+
+    /// Jumps to `location`, recording where the caret is first. A
+    /// go-to-definition still running is cancelled: its answer would take
+    /// the user elsewhere.
+    pub(crate) fn nav_jump(
+        &mut self,
+        location: &Location,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.nav_state.goto.next();
+        self.push_history(cx);
+        self.open_location(location, window, cx);
+    }
+
+    /// Jumps to `location`, recording `from` first.
+    fn jump_from(
+        &mut self,
+        from: Option<Place>,
+        location: &Location,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.push_place(from, cx);
+        self.open_location(location, window, cx);
+    }
+
+    /// Opens `location`, relative to the root, in the active pane.
+    fn open_location(&mut self, location: &Location, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(root) = self.nav_state.root.clone() {
+            self.open_range(root.join(&location.rel), location.range.clone(), window, cx);
+        }
+    }
+
+    pub(crate) fn run_nav_op(&mut self, op: NavOp, window: &mut Window, cx: &mut Context<Self>) {
+        match op {
+            NavOp::GotoDefinition => self.goto_definition(window, cx),
+            NavOp::WorkspaceSymbols => self.toggle_symbols(window, cx),
+            NavOp::Back | NavOp::Forward => {
+                // A go-to-definition still running would jump from elsewhere.
+                self.nav_state.goto.next();
+                let here = self.caret_place(cx);
+                let history = &mut self.nav_state.history;
+                let to = match op {
+                    NavOp::Back => history.back(here),
+                    _ => history.forward(here),
+                };
+                if let Some(Place { path, offset }) = to {
+                    self.open_range(path, offset..offset, window, cx);
+                }
+                self.set_nav_buttons(self.nav_state.history.buttons(), cx);
+            }
+        }
+    }
+
+    fn goto_definition(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.nav_state.root.is_none() {
+            return self.show_definitions(Vec::new(), "No folder open".into(), window, cx);
+        }
+        let Some(request) = self.nav_request(cx) else {
+            return;
+        };
+        // Where the request was made, which a jump goes back to.
+        let editor = self.active_editor(cx).map(Entity::entity_id);
+        let from = self.caret_place(cx);
+        self.run_nav(
+            |nav| &mut nav.goto,
+            move |navigation, cancel| navigation.definitions(&request, cancel),
+            window,
+            cx,
+            move |workbench, answer, window, cx| {
+                // Another tab shows now: the answer is for one left.
+                if workbench.active_editor(cx).map(Entity::entity_id) == editor {
+                    workbench.definitions_landed(from, answer, window, cx);
+                }
+            },
+        );
+    }
+
+    /// Jumps to an unambiguous definition, recording `from`, or lists the
+    /// definitions, or says there are none.
+    fn definitions_landed(
+        &mut self,
+        from: Option<Place>,
+        answer: Result<Answer<Definitions>, NavError>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let answer = match answer {
+            Ok(answer) => answer,
+            Err(NavError::Cancelled) => return,
+            Err(error) => {
+                let status = format!("Go to definition failed: {error}");
+                return self.show_definitions(Vec::new(), status, window, cx);
+            }
+        };
+        show_source(&self.status_bar().clone(), &answer.provider, cx);
+        let by = by(&answer.provider, answer.precision);
+        let Definitions {
+            word,
+            items,
+            unambiguous,
+            ..
+        } = answer.value;
+        if unambiguous && let Some(first) = items.first() {
+            return self.jump_from(from, &first.location, window, cx);
+        }
+        let status = match (word, items.len()) {
+            (None, _) => format!("No symbol at the caret{by}"),
+            (Some(word), 0) => format!("No definition found for `{word}`{by}"),
+            (Some(word), count) => format!("{count} definitions of `{word}`{by}"),
+        };
+        self.show_definitions(items, status, window, cx);
+    }
+
+    /// Shows the definitions picker, focused, in place of any other palette.
+    fn show_definitions(
+        &mut self,
+        items: Vec<fe_nav::Definition>,
+        status: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.palette != Some(Palette::Definitions) {
+            self.dismiss_palette(window, cx);
+        }
+        let picker = self.nav_state.definitions.clone();
+        let input = picker.focus_handle(cx);
+        let previous = window.focused(cx).filter(|focused| *focused != input);
+        picker.update(cx, |picker, cx| {
+            picker.delegate.open(items, status, previous);
+            picker.show(window, cx);
+        });
+        self.palette = Some(Palette::Definitions);
+        cx.notify();
+    }
+
+    /// Shows the workspace symbols picker, focused, in place of any other
+    /// palette, or dismisses it.
+    fn toggle_symbols(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let picker = self.nav_state.symbols.clone();
+        if self.palette == Some(Palette::Symbols) {
+            return picker.update(cx, |picker, cx| picker.dismiss(window, cx));
+        }
+        self.dismiss_palette(window, cx);
+        let ready = self.nav_state.start(cx);
+        let previous = window.focused(cx);
+        picker.update(cx, |picker, cx| {
+            picker.delegate.opened(ready, previous);
+            picker.show(window, cx);
+        });
+        self.palette = Some(Palette::Symbols);
+        cx.notify();
+    }
+}
+
+/// What a nav command asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum NavOp {
+    GotoDefinition,
+    WorkspaceSymbols,
+    Back,
+    Forward,
+}
+
+/// The [`CommandTarget`] of nav commands: the op to do.
+pub(crate) struct NavCommands;
+
+impl CommandTarget for NavCommands {
+    type Tx = ();
+    type Target<'a> = Option<NavOp>;
+}
+
+struct Commands(Rc<Registry<NavCommands>>);
+
+impl Global for Commands {}
+
+/// Registers the nav commands.
+pub(crate) fn init(cx: &mut App) {
+    cx.set_global(Commands(Rc::new(registry())));
+}
+
+pub(crate) fn registry() -> Registry<NavCommands> {
+    use NavOp::*;
+    let commands = [
+        ("nav.goto_definition", "Go to Definition", GotoDefinition),
+        (
+            "nav.workspace_symbols",
+            "Go to Symbol in Workspace…",
+            WorkspaceSymbols,
+        ),
+        ("nav.back", "Go Back", Back),
+        ("nav.forward", "Go Forward", Forward),
+    ];
+    let mut registry = Registry::new();
+    for (id, title, op) in commands {
+        registry
+            .register(id, title, move |target: &mut Option<NavOp>, _: &Actor| {
+                *target = Some(op);
+                Ok(Dispatched::new(Effect::Notify))
+            })
+            .expect("nav command IDs are valid and distinct")
+            .context(ContextPredicate::identifier(crate::KEY_CONTEXT));
+    }
+    registry
+}
+
+/// The op of `run`, if it's a nav command that applies in its context.
+pub(crate) fn op(run: &RunCommand, cx: &App) -> Option<NavOp> {
+    let registry = cx.try_global::<Commands>()?.0.clone();
+    registry.get(&run.0.command)?;
+    let mut op = None;
+    if let Err(error) = registry.dispatch(&mut op, &run.0) {
+        log::warn!("{error}");
+    }
+    op
+}

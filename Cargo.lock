@@ -1916,6 +1916,7 @@ dependencies = [
  "fe-editor",
  "fe-gpui",
  "fe-keymap",
+ "fe-nav",
  "fe-project",
  "fe-syntax",
  "fe-ui",

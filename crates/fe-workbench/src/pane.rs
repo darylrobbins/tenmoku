@@ -657,6 +657,15 @@ pub(crate) struct Reveal {
 }
 
 impl Reveal {
+    /// `range`, in bytes of the whole text as the editor loads it, as
+    /// navigation gives one: row 0's columns run on past its end.
+    pub(crate) fn bytes(range: Range<usize>) -> Self {
+        Self {
+            row: 0,
+            columns: range,
+        }
+    }
+
     /// Selects the range, widened to char boundaries (a byte match can
     /// split a char), against the editor's text as it is now, and scrolls
     /// to it; `select_and_reveal` clamps a stale one.

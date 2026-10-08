@@ -5,6 +5,7 @@
 mod activity_rail;
 mod launch;
 mod m3_signoff;
+mod nav;
 mod open_folder;
 mod open_settings;
 mod outline_panel;

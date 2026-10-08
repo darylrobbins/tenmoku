@@ -287,6 +287,26 @@ command = "quick_open.toggle"
 context = "workbench"
 
 [[bindings]]
+keys = "f12"
+command = "nav.goto_definition"
+context = "workbench"
+
+[[bindings]]
+keys = "cmd-t"
+command = "nav.workspace_symbols"
+context = "workbench"
+
+[[bindings]]
+keys = "ctrl--"
+command = "nav.back"
+context = "workbench"
+
+[[bindings]]
+keys = "ctrl-shift--"
+command = "nav.forward"
+context = "workbench"
+
+[[bindings]]
 keys = "up"
 command = "picker.select_prev"
 context = "picker"

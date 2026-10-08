@@ -21,6 +21,7 @@ use crate::{
     SearchPanel, StatusBar,
     dock::{self, DockEvent, DockOp},
     language_picker::LanguagePicker,
+    nav::{self, Nav},
     open::{self, OpenOp},
     outline_panel,
     pane::{PaneEvent, Peers, TabId, file_name},
@@ -82,10 +83,12 @@ pub fn resolve_launch(arg: Option<PathBuf>) -> Launch {
 
 /// The palette shown over the window: one at a time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Palette {
+pub(crate) enum Palette {
     QuickOpen,
     Language,
     Toolbar,
+    Definitions,
+    Symbols,
 }
 
 /// The workbench was re-rooted at the folder it carries, by
@@ -113,7 +116,9 @@ pub struct Workbench {
     quick_open: Entity<Picker<QuickOpen>>,
     language_picker: Entity<Picker<LanguagePicker>>,
     /// The palette that shows, if one does.
-    palette: Option<Palette>,
+    pub(crate) palette: Option<Palette>,
+    /// Go to definition, workspace symbols, back and forward.
+    pub(crate) nav_state: Nav,
     status_bar: Entity<StatusBar>,
     status_bar_visible: bool,
     title_bar: bool,
@@ -213,6 +218,7 @@ impl Workbench {
         });
         let toolbar_subscriptions =
             Self::follow_palette(&toolbar_picker, Palette::Toolbar, window, cx);
+        let nav_state = Nav::new(launch_root.clone(), ui, window, cx);
         let mut workbench = Self {
             panel,
             dock,
@@ -225,6 +231,7 @@ impl Workbench {
             quick_open,
             language_picker,
             palette: None,
+            nav_state,
             status_bar: cx.new(|_| StatusBar::new(ui)),
             status_bar_visible: true,
             title_bar: false,
@@ -282,9 +289,12 @@ impl Workbench {
                 PanelEvent::OpenFile(path) => workbench
                     .active
                     .update(cx, |pane, cx| pane.open(path.clone(), window, cx)),
-                PanelEvent::FsChanged(changes) => workbench
-                    .quick_open
-                    .update(cx, |picker, cx| picker.delegate.fs_changed(changes, cx)),
+                PanelEvent::FsChanged(changes) => {
+                    workbench
+                        .quick_open
+                        .update(cx, |picker, cx| picker.delegate.fs_changed(changes, cx));
+                    workbench.nav_state.fs_changed(changes, cx);
+                }
             },
         );
         let [dismissed, left] = Self::follow_palette(quick_open, Palette::QuickOpen, window, cx);
@@ -293,7 +303,7 @@ impl Workbench {
 
     /// Hides `picker`, shown as `palette`, once it's picked from, dismissed
     /// or left. Its events once another palette shows instead are ignored.
-    fn follow_palette<D: crate::PickerDelegate>(
+    pub(crate) fn follow_palette<D: crate::PickerDelegate>(
         picker: &Entity<Picker<D>>,
         palette: Palette,
         window: &mut Window,
@@ -352,8 +362,11 @@ impl Workbench {
     /// `.fastedit/settings.toml`: a new root's project settings aren't
     /// loaded.
     pub fn set_root(&mut self, root: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        if self.palette == Some(Palette::Toolbar) {
-            // Its directories are listed relative to the old root.
+        if matches!(
+            self.palette,
+            Some(Palette::Toolbar | Palette::Definitions | Palette::Symbols)
+        ) {
+            // Their paths are relative to the old root.
             self.dismiss_palette(window, cx);
         }
         if self.palette == Some(Palette::QuickOpen) {
@@ -376,6 +389,7 @@ impl Workbench {
             dock.search().clone()
         });
         search.update(cx, |search, cx| search.set_root(root.clone(), cx));
+        self.nav_state.set_root(root.clone(), cx);
         self.panel = panel;
         self.quick_open = quick_open;
         if panel_focused {
@@ -807,7 +821,7 @@ impl Workbench {
     }
 
     /// Dismisses the palette that shows, as Escape would.
-    fn dismiss_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn dismiss_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match self.palette.take() {
             Some(Palette::QuickOpen) => self
                 .quick_open
@@ -818,6 +832,11 @@ impl Workbench {
             Some(Palette::Toolbar) => self
                 .toolbar_picker
                 .update(cx, |picker, cx| picker.dismiss(window, cx)),
+            Some(Palette::Definitions) => (self.nav_state.definitions.clone())
+                .update(cx, |picker, cx| picker.dismiss(window, cx)),
+            Some(Palette::Symbols) => {
+                (self.nav_state.symbols.clone()).update(cx, |picker, cx| picker.dismiss(window, cx))
+            }
             None => {}
         }
     }
@@ -865,9 +884,8 @@ impl Workbench {
         cx.notify();
     }
 
-    /// Enables back and forward in every pane, as a navigation history
-    /// will.
-    #[cfg(test)]
+    /// Enables back and forward in every pane, as the navigation history
+    /// allows.
     pub(crate) fn set_nav_buttons(&mut self, nav: NavButtons, cx: &mut Context<Self>) {
         self.nav = nav;
         for pane in self.panes.panes() {
@@ -1105,6 +1123,9 @@ impl Workbench {
             if picker::op(run, cx) == Some(PaletteOp::ToggleQuickOpen) {
                 return self.toggle_quick_open(window, cx);
             }
+            if let Some(op) = nav::op(run, cx) {
+                return self.run_nav_op(op, window, cx);
+            }
             if let Some(op) = status_bar::op(run, cx) {
                 return self.run_status_op(op, window, cx);
             }
@@ -1195,6 +1216,8 @@ impl Render for Workbench {
                 Some(Palette::QuickOpen) => root.child(self.quick_open.clone()),
                 Some(Palette::Language) => root.child(self.language_picker.clone()),
                 Some(Palette::Toolbar) => root.child(self.toolbar_picker.clone()),
+                Some(Palette::Definitions) => root.child(self.nav_state.definitions.clone()),
+                Some(Palette::Symbols) => root.child(self.nav_state.symbols.clone()),
                 None => root,
             })
     }

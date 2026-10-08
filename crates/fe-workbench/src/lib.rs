@@ -13,6 +13,8 @@
 mod dock;
 mod language_picker;
 pub mod loader;
+mod nav;
+mod nav_picker;
 mod open;
 mod outline_panel;
 mod pane;
@@ -72,6 +74,7 @@ pub fn init(cx: &mut App) {
     cx.set_global(Commands(Rc::new(new_registry())));
     picker::init(cx);
     dock::init(cx);
+    nav::init(cx);
     open::init(cx);
     outline_panel::init(cx);
     pane_group::init(cx);
@@ -120,6 +123,7 @@ pub fn command_catalog() -> Box<dyn CommandCatalog> {
         Box::new(new_registry()),
         Box::new(picker::registry()),
         Box::new(dock::registry()),
+        Box::new(nav::registry()),
         Box::new(open::registry()),
         Box::new(outline_panel::registry()),
         Box::new(pane_group::registry()),

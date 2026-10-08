@@ -15,6 +15,7 @@ fe-config.workspace = true
 fe-editor.workspace = true
 fe-gpui.workspace = true
 fe-keymap.workspace = true
+fe-nav.workspace = true
 fe-project.workspace = true
 fe-syntax.workspace = true
 fe-ui.workspace = true
