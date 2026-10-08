@@ -540,6 +540,30 @@ args = { motion = "down" }
 context = "editor && vim.mode == normal"
 
 [[bindings]]
+keys = "left"
+command = "vim.move"
+args = { motion = "left" }
+context = "editor && vim.visual"
+
+[[bindings]]
+keys = "right"
+command = "vim.move"
+args = { motion = "right" }
+context = "editor && vim.visual"
+
+[[bindings]]
+keys = "up"
+command = "vim.move"
+args = { motion = "up" }
+context = "editor && vim.visual"
+
+[[bindings]]
+keys = "down"
+command = "vim.move"
+args = { motion = "down" }
+context = "editor && vim.visual"
+
+[[bindings]]
 keys = "enter"
 command = "vim.key"
 context = "editor && vim.mode == normal"

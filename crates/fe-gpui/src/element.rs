@@ -556,8 +556,23 @@ impl Element for EditorElement {
             false => Vec::new(),
             true if block => {
                 let text = view.model.text();
-                let heads = view.model.selections().into_iter().map(|s| s.head());
-                block_carets(&mut layout, text, heads)
+                // In a visual mode the block is the vim cursor, which for a
+                // forward charwise selection is a grapheme before the head.
+                let visual = view
+                    .vim
+                    .as_ref()
+                    .filter(|vim| vim.mode_name().starts_with("visual"))
+                    .and_then(|vim| vim.visual_cursor(&view.model));
+                let heads: Vec<usize> = match visual {
+                    Some(cursor) => vec![cursor],
+                    None => view
+                        .model
+                        .selections()
+                        .into_iter()
+                        .map(|s| s.head())
+                        .collect(),
+                };
+                block_carets(&mut layout, text, heads.into_iter())
             }
             true => layout
                 .frame

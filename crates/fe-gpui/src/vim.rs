@@ -327,9 +327,9 @@ impl EditorView {
         self.vim_mode().is_none_or(|mode| mode == "insert")
     }
 
-    /// Whether carets paint as blocks: in normal and operator-pending mode.
+    /// Whether carets paint as blocks: in every vim mode but insert.
     pub(crate) fn block_cursor(&self) -> bool {
-        matches!(self.vim_mode(), Some("normal" | "operator_pending"))
+        self.vim_mode().is_some_and(|mode| mode != "insert")
     }
 
     /// A keystroke the keymap left for the editor, in normal or

@@ -18,6 +18,8 @@ use gpui::{
 
 use crate::*;
 
+mod vim_visual_keys;
+
 fn parse(marked: &str) -> (String, Vec<ResolvedSelection>) {
     let mut text = String::new();
     let mut selections = Vec::new();
