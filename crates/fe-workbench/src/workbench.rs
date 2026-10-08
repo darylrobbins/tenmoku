@@ -1213,6 +1213,9 @@ impl Render for Workbench {
         div()
             .key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::on_run_command))
+            // So a modifier pressed while a panel has focus reaches the
+            // editors, for their cmd-click hover.
+            .on_modifiers_changed(EditorView::modifiers_changed)
             .relative()
             .size_full()
             .flex()

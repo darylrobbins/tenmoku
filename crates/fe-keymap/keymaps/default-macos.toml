@@ -286,6 +286,13 @@ keys = "cmd-p"
 command = "quick_open.toggle"
 context = "workbench"
 
+# A click on a word with cmd held: the editor places the caret there, then
+# runs this. Above f12, so menus and tooltips show f12, the later entry.
+[[bindings]]
+keys = "cmd-click"
+command = "nav.goto_definition"
+context = "workbench"
+
 [[bindings]]
 keys = "f12"
 command = "nav.goto_definition"

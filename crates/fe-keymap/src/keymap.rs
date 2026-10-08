@@ -31,7 +31,7 @@ use fe_command::{
 use fe_config::{Diagnostic, Layer, Severity};
 use toml::de::{DeTable, DeValue};
 
-use crate::keystroke::KeySequence;
+use crate::keystroke::{Key, KeySequence, Keystroke};
 
 /// Where something is in a keymap file.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -181,6 +181,24 @@ impl Keymap {
     pub(crate) fn is_overridden(&self, ix: usize) -> bool {
         self.overrider(ix).is_some()
     }
+
+    /// What `keystroke` pressed alone runs in `stack`: the binding for
+    /// exactly that keystroke the [`crate::Matcher`] would dispatch, by its
+    /// precedence (the deepest context match, then the later layer, then the
+    /// later entry), or `None` if none applies. Longer bindings starting
+    /// with it are ignored and no chord is touched: for a click
+    /// ([`Key::Click`]), which never starts one. Like a matched key's, the
+    /// invocation's source is [`fe_command::Source::Keyboard`] and its
+    /// context `stack`; a host dispatching a click sets the source.
+    pub fn lookup(&self, keystroke: &Keystroke, stack: &ContextStack) -> Option<Invocation> {
+        self.bindings
+            .iter()
+            .enumerate()
+            .filter(|(_, binding)| binding.keys.keystrokes() == [*keystroke])
+            .filter_map(|(ix, binding)| Some(((binding.depth(stack)?, ix), binding)))
+            .max_by_key(|(rank, _)| *rank)
+            .map(|(_, binding)| binding.invocation(stack))
+    }
 }
 
 impl Binding {
@@ -255,7 +273,10 @@ impl KeymapLayer {
     /// type, a bad keystroke, a bad context predicate, a malformed command
     /// ID, and, with a `catalog`, args it rejects. A command the catalog
     /// doesn't know is a warning, and only that entry is dropped: it may come
-    /// from an extension that isn't loaded yet. Unknown keys are warnings.
+    /// from an extension that isn't loaded yet. So is a `click` anywhere but
+    /// in a single keystroke with a modifier, such as `cmd-click`: `click`
+    /// alone, `cmd-k click` and `click a` are dropped. Unknown keys are
+    /// warnings.
     pub fn parse(
         path: &Path,
         source: &str,
@@ -279,6 +300,17 @@ impl KeymapLayer {
             entries,
         });
         (parsed, diagnostics)
+    }
+}
+
+/// Whether `keys` either has no click or is one keystroke of a click with
+/// at least one modifier.
+fn click_is_bindable(keys: &KeySequence) -> bool {
+    match keys.keystrokes() {
+        [keystroke] if keystroke.key == Key::Click => keystroke.modifiers != Default::default(),
+        keystrokes => keystrokes
+            .iter()
+            .all(|keystroke| keystroke.key != Key::Click),
     }
 }
 
@@ -416,6 +448,23 @@ impl EntryParser<'_> {
             return None;
         }
         let (keys, command) = (keys?, command?);
+        if !click_is_bindable(&keys) {
+            let offset = fields
+                .table
+                .get("keys")
+                .map_or(fields.span.start, |value| value.span().start);
+            let message = format!(
+                "`{keys}`: a click binds only alone, with a modifier, as in `cmd-click`; \
+                 the binding is ignored"
+            );
+            self.push(
+                Severity::Warning,
+                Some(&format!("{key}.keys")),
+                offset,
+                message,
+            );
+            return None;
+        }
         let (args, args_span) = match args {
             Some((args, span)) => (args, Some(span)),
             None => (Value::Null, None),

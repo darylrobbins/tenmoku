@@ -170,11 +170,13 @@ pub(crate) fn init(keymap: Arc<Keymap>, cx: &mut App) {
 /// [`fe_keymap::KeymapStore`] builds it: each layer's last good version.
 /// Menus [`crate::menu::install`]ed are reinstalled, so their shortcuts
 /// follow; without any, it touches neither GPUI's menus nor its keymap.
+/// Windows redraw, so an editor's hover range follows too.
 pub fn set_user_keymap(cx: &mut App, keymap: impl Into<Arc<Keymap>>) {
     let input = cx.global_mut::<KeyInput>();
     input.matcher.set_keymap(keymap);
     input.pending = None;
     crate::menu::refresh(cx);
+    cx.refresh_windows();
 }
 
 /// The keymap keys are matched against: empty before [`crate::init`].
@@ -230,6 +232,11 @@ fn on_keystroke(event: &KeystrokeEvent, window: &mut Window, cx: &mut App) {
             let failed_chord = input.pending.take().map(|chord| chord.swallowed);
             input.matcher.flush();
             replay(failed_chord.unwrap_or_default(), window, cx);
+        } else {
+            // GPUI sends this, a modifier released alone, wherever focus
+            // is, unlike its modifier change: so no editor's hover range
+            // outlives cmd while a panel has focus.
+            crate::element::hover_with_modifiers(&window.modifiers(), window, cx);
         }
         return;
     };
@@ -352,15 +359,26 @@ fn is_modifier(keystroke: &gpui::Keystroke) -> bool {
 
 /// `keystroke` in `fe-keymap`'s terms, if it names the key.
 fn keystroke(keystroke: &gpui::Keystroke) -> Option<Keystroke> {
-    let held = &keystroke.modifiers;
-    let modifiers = Modifiers {
+    let modifiers = modifiers(&keystroke.modifiers);
+    Some(Keystroke::new(modifiers, Key::parse(&keystroke.key)?))
+}
+
+/// GPUI's modifiers in `fe-keymap`'s terms.
+pub(crate) fn modifiers(held: &gpui::Modifiers) -> Modifiers {
+    Modifiers {
         cmd: held.platform,
         ctrl: held.control,
         alt: held.alt,
         shift: held.shift,
         function: held.function,
-    };
-    Some(Keystroke::new(modifiers, Key::parse(&keystroke.key)?))
+    }
+}
+
+/// What `keystroke` alone runs in `stack` with the keymap keys are matched
+/// against ([`Keymap::lookup`]), leaving any pending chord be: for a click
+/// bound like a key, such as `cmd-click`.
+pub(crate) fn lookup(keystroke: &Keystroke, stack: &ContextStack, cx: &App) -> Option<Invocation> {
+    current(cx).lookup(keystroke, stack)
 }
 
 /// GPUI's key contexts, outermost first, as a context stack: each one's

@@ -1,18 +1,22 @@
 use std::{ops::Range, time::Duration};
 
-use fe_buffer::{Anchor, Bias, BufferSnapshot};
+use fe_buffer::{Anchor, Bias, BufferSnapshot, Version};
+use fe_command::{ContextFrame, ContextStack, Invocation, Source};
 use fe_display::layout::RowLayout;
 use fe_editor::EditorModel;
+use fe_keymap::{Key, Keystroke};
 use fe_syntax::{Language, ParseJob, Spawner, Syntax, SyntaxDriver};
 use gpui::{
     App, AppContext as _, Bounds, Context, CursorStyle, EntityInputHandler, FocusHandle, Focusable,
-    InteractiveElement as _, IntoElement, KeyContext, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, ParentElement as _, Pixels, Point, Render, ScrollWheelEvent, Styled as _, Task,
-    UTF16Selection, Window, div, px,
+    InteractiveElement as _, IntoElement, KeyContext, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _, Pixels, Point,
+    Render, ScrollWheelEvent, Styled as _, Subscription, Task, UTF16Selection, Window, div, px,
 };
 
 use crate::{
+    commands::RunCommand,
     element::{EditorElement, GlyphWidths},
+    keymap,
     timing::FrameTimings,
     *,
 };
@@ -60,6 +64,15 @@ pub struct EditorView {
     /// The pointer is over the fold column, so the chevrons of folds that
     /// are open show too.
     pub(crate) fold_column_hovered: bool,
+    /// The word under the pointer while the held modifiers' click is bound
+    /// to a command, such as `cmd-click`: underlined, with a pointing hand.
+    hover: Option<Hover>,
+    /// Clears the hover range when the view loses focus, even if it's no
+    /// longer painted then, as when navigating to another tab.
+    hover_blur: Option<Subscription>,
+    /// The frames around the view's own in its context stack, as last seen
+    /// while it was focused: see [`EditorView::context_stack`].
+    ancestors: Option<ContextStack>,
     /// The carets the last frame painted, in window coordinates.
     #[cfg(test)]
     pub(crate) painted_carets: Vec<Bounds<Pixels>>,
@@ -67,6 +80,20 @@ pub struct EditorView {
     /// window coordinates.
     #[cfg(test)]
     pub(crate) painted_chevrons: Vec<(u32, bool, Bounds<Pixels>)>,
+    /// The hover range's underlines the last frame painted, in window
+    /// coordinates, and whether it set the pointing hand.
+    #[cfg(test)]
+    pub(crate) painted_hover: (Vec<Bounds<Pixels>>, bool),
+}
+
+/// A word a bound click would run its command on: see [`EditorView::hover`].
+#[derive(Clone, Debug, PartialEq)]
+struct Hover {
+    range: Range<usize>,
+    /// The buffer version and scroll position it was found at: an edit or
+    /// a scroll makes it stale.
+    version: Version,
+    scroll: Point<Pixels>,
 }
 
 /// What a mouse drag extends: characters, or whole words or rows starting
@@ -100,10 +127,15 @@ impl EditorView {
             vim: None,
             vim_generation: 0,
             fold_column_hovered: false,
+            hover: None,
+            hover_blur: None,
+            ancestors: None,
             #[cfg(test)]
             painted_carets: Vec::new(),
             #[cfg(test)]
             painted_chevrons: Vec::new(),
+            #[cfg(test)]
+            painted_hover: (Vec::new(), false),
         };
         crate::vim::register(&view.focus, cx);
         view.sync_vim(cx);
@@ -262,6 +294,25 @@ impl EditorView {
         }
         let offset = self.offset_for_position(event.position);
         self.marked = None;
+        if event.click_count == 1
+            && let Some(invocation) = self.click_command(&event.modifiers, window, cx)
+        {
+            // A bound click places the caret, then runs its command there as
+            // its key would, from the view: it neither drags nor extends.
+            self.split_session(fe_vim::Splits::Moves, |model| model.set_cursor(offset), cx);
+            self.drag = None;
+            // The command may take the view away; a move finds it again.
+            self.set_hover(None, cx);
+            self.changed(cx);
+            let action = RunCommand(invocation.source(Source::Mouse));
+            let focus = self.focus.clone();
+            // Once this listener is done: the view, which handles it first,
+            // is out for it until then.
+            window.defer(cx, move |window, cx| {
+                focus.dispatch_action(&action, window, cx)
+            });
+            return;
+        }
         let click = |model: &mut EditorModel| match event.click_count {
             2 => {
                 let word = model.word_range_at(offset);
@@ -290,6 +341,160 @@ impl EditorView {
             Drag::Rows(_) => Drag::Rows(selected(&self.model)),
         });
         self.changed(cx);
+    }
+
+    /// What a click with `modifiers` held runs here: the command its
+    /// keystroke, such as `cmd-click`, is bound to in the view's context
+    /// ([`EditorView::context_stack`]).
+    fn click_command(
+        &mut self,
+        modifiers: &Modifiers,
+        window: &Window,
+        cx: &mut App,
+    ) -> Option<Invocation> {
+        // A click without a modifier can't be bound.
+        if !modifiers.modified() {
+            return None;
+        }
+        let keystroke = Keystroke::new(keymap::modifiers(modifiers), Key::Click);
+        let stack = self.context_stack(window, cx)?;
+        keymap::lookup(&keystroke, &stack, cx)
+    }
+
+    /// The view's context stack now, if known: the frames around it, then
+    /// its own frame stamped from its live vim state, as a key's is (see
+    /// [`crate::vim::live_stack`]). GPUI gives only the focused element's
+    /// stack, so the frames around it are those it had when last focused
+    /// and drawn; `None` for a view not focused since it was first drawn.
+    fn context_stack(&mut self, window: &Window, cx: &mut App) -> Option<ContextStack> {
+        self.note_ancestors(window);
+        self.sync_vim(cx);
+        let stack = (self.ancestors.clone()?).with(ContextFrame::new(KEY_CONTEXT));
+        Some(crate::vim::stamp(stack, self.vim.as_ref()))
+    }
+
+    /// While the view is focused and drawn, records the frames around its
+    /// own in GPUI's context stack.
+    pub(crate) fn note_ancestors(&mut self, window: &Window) {
+        if !self.focus.is_focused(window) {
+            return;
+        }
+        let stack = keymap::context_stack(&window.context_stack());
+        let frames = stack.frames();
+        // Not drawn yet, GPUI gives the root's stack.
+        let Some(own) = frames.iter().rposition(|frame| frame.name == KEY_CONTEXT) else {
+            return;
+        };
+        self.ancestors = Some(frames[..own].iter().cloned().collect());
+    }
+
+    /// Finds the hover range for the pointer at `position`, `None` if it's
+    /// off the text, with `modifiers` held: the word under it, if their
+    /// click is bound. Not while dragging.
+    pub(crate) fn hover_at(
+        &mut self,
+        position: Option<Point<Pixels>>,
+        modifiers: &Modifiers,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        let range = position
+            .filter(|_| self.drag.is_none())
+            .filter(|_| self.click_command(modifiers, window, cx).is_some())
+            .and_then(|position| self.word_under(position));
+        self.set_hover(range, cx);
+    }
+
+    /// [`EditorView::hover_at`] the pointer's position now, if it's over
+    /// the view's text in the rendered frame.
+    pub(crate) fn hover_at_pointer(
+        &mut self,
+        modifiers: &Modifiers,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        let position = self
+            .layout
+            .as_ref()
+            .and_then(|layout| crate::element::pointer_over_text(layout, window, cx));
+        self.hover_at(position, modifiers, window, cx);
+    }
+
+    /// Once a frame is drawn: drops a hover range an edit or a scroll made
+    /// stale, and finds one still standing again under the still pointer,
+    /// which a change of layout or keymap may have moved or unbound.
+    pub(crate) fn reconcile_hover(&mut self, window: &Window, cx: &mut Context<Self>) {
+        if self.hover.is_none() {
+            return;
+        }
+        if self.hover_range().is_none() {
+            self.set_hover(None, cx);
+            return;
+        }
+        self.hover_at_pointer(&window.modifiers(), window, cx);
+    }
+
+    /// The word around the glyph under a window position in the last frame,
+    /// unless its first char is whitespace or there's none, as past a row's
+    /// end. None either if the text changed since that frame, which GPUI
+    /// doesn't redraw before a mouse event: its offsets may be past the end.
+    fn word_under(&mut self, position: Point<Pixels>) -> Option<Range<usize>> {
+        let text = self.model.text();
+        let layout = self.layout.as_ref()?;
+        if layout.version != self.model.snapshot().version() {
+            return None;
+        }
+        let start = layout
+            .char_at(text, position)
+            .filter(|&start| start < text.len())?;
+        let end = text.clip_offset(start + 1, Bias::Right);
+        if text.slice_to_string(start..end).trim().is_empty() {
+            return None;
+        }
+        Some(self.model.word_range_at(start))
+    }
+
+    /// Sets the hover range, or clears it with `None`.
+    pub(crate) fn set_hover(&mut self, range: Option<Range<usize>>, cx: &mut Context<Self>) {
+        let hover = range.map(|range| Hover {
+            range,
+            version: self.model.snapshot().version(),
+            scroll: self.scroll,
+        });
+        if self.hover != hover {
+            self.hover = hover;
+            cx.notify();
+        }
+    }
+
+    /// The word a bound click under the pointer would run its command on,
+    /// unless an edit or a scroll has happened since it was found.
+    pub fn hover_range(&self) -> Option<Range<usize>> {
+        self.hover
+            .as_ref()
+            .filter(|hover| {
+                hover.version == self.model.snapshot().version() && hover.scroll == self.scroll
+            })
+            .map(|hover| hover.range.clone())
+    }
+
+    /// For a host's root element's `on_modifiers_changed`: GPUI tells a
+    /// modifier pressed or released only along the focused element's path,
+    /// and an editor's own listener hears it only while it has focus. On
+    /// the root, which is on every path, the editors in the window find
+    /// their hover ranges with the new modifiers whatever has focus, such
+    /// as a panel.
+    pub fn modifiers_changed(event: &ModifiersChangedEvent, window: &mut Window, cx: &mut App) {
+        crate::element::modifiers_changed(event, window, cx);
+    }
+
+    /// Clears a hover range made stale, or one that isn't `shown`, as in an
+    /// inactive window, so it doesn't come back with a scroll back or
+    /// reactivation. For paint, which redraws anyway.
+    pub(crate) fn drop_stale_hover(&mut self, shown: bool) {
+        if !shown || self.hover_range().is_none() {
+            self.hover = None;
+        }
     }
 
     /// Runs `select` on the model: a mouse click or drag, which moves carets
@@ -393,6 +598,7 @@ impl EditorView {
             .as_ref()
             .map_or(px(20.), |layout| px(layout.frame.line_height));
         let delta = event.delta.pixel_delta(line_height);
+        self.set_hover(None, cx);
         self.scroll.x = (self.scroll.x - delta.x).max(px(0.));
         self.scroll.y = (self.scroll.y - delta.y).max(px(0.));
         // The element clamps against the content size on the next frame.
@@ -551,6 +757,16 @@ impl Render for EditorView {
             cx.defer_in(window, |view, _, cx| view.sync_syntax(cx));
         }
         self.sync_vim(cx);
+        if self.hover_blur.is_none() {
+            // Blur listeners run at the end of a draw, which asks for no
+            // frame after it: the notify waits until it's over.
+            let blur = cx.on_blur(&self.focus, window, |view, window, cx| {
+                if view.hover.take().is_some() {
+                    cx.defer_in(window, |_, _, cx| cx.notify());
+                }
+            });
+            self.hover_blur = Some(blur);
+        }
         let mut key_context = KeyContext::default();
         key_context.add(KEY_CONTEXT);
         if let Some(state) = &self.vim {
@@ -567,6 +783,7 @@ impl Render for EditorView {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_scroll_wheel(cx.listener(Self::on_scroll))
+            .on_modifiers_changed(crate::element::modifiers_changed)
             .on_action(cx.listener(Self::on_run_command))
             .on_key_down(cx.listener(Self::on_vim_key))
             .child(EditorElement::new(cx.entity()))
@@ -700,3 +917,6 @@ mod reveal_tests;
 
 #[cfg(test)]
 mod fold_hover_tests;
+
+#[cfg(test)]
+mod mouse_binding_tests;

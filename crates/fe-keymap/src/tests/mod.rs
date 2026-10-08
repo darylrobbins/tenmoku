@@ -1,3 +1,4 @@
+mod click;
 mod keymap;
 mod keystroke;
 mod load;

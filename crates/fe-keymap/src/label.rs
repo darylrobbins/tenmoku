@@ -41,6 +41,7 @@ fn keystroke_label(keystroke: &Keystroke) -> String {
         Key::Delete => "⌦",
         Key::Tab => "⇥",
         Key::Space => "Space",
+        Key::Click => "Click",
         Key::PageUp => "⇞",
         Key::PageDown => "⇟",
         Key::Home => "↖",

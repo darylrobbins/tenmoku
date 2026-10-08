@@ -19,10 +19,10 @@ use fe_syntax::{Syntax, SyntaxDriver};
 use gpui::{
     App, Bounds, ContentMask, CursorStyle, DecorationRun, DispatchPhase, Element, ElementId,
     ElementInputHandler, Entity, Font, FontId, Global, GlobalElementId, Hitbox, HitboxBehavior,
-    Hsla, InspectorElementId, IntoElement, LayoutId, LineLayout, MouseDownEvent, MouseEvent,
-    MouseExitEvent, MouseMoveEvent, MouseUpEvent, PathBuilder, PinchEvent, Pixels, Point,
-    ScrollWheelEvent, Style, TextAlign, TextRun, TextSystem, WeakEntity, Window, WindowId,
-    WindowTextSystem, fill, point, px, relative, size,
+    Hsla, InspectorElementId, IntoElement, LayoutId, LineLayout, ModifiersChangedEvent,
+    MouseDownEvent, MouseEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, PathBuilder,
+    PinchEvent, Pixels, Point, ScrollWheelEvent, Style, TextAlign, TextRun, TextSystem, WeakEntity,
+    Window, WindowId, WindowTextSystem, fill, point, px, relative, size,
 };
 
 use crate::{EditorTheme, EditorView, FrameTiming};
@@ -39,11 +39,16 @@ pub(crate) struct FrameLayout {
     long_rows: LongRows,
     glyph_widths: GlyphWidths,
     tab_size: usize,
+    /// The buffer version laid out: positions in the frame are offsets in
+    /// that text, which a later edit may have shortened.
+    pub(crate) version: fe_buffer::Version,
     /// Over the fold column, whose hovering shows the chevrons of folds that
     /// are open.
     fold_column: Hitbox,
     /// Over the fold toggles and markers, which show a pointing hand.
     clickable: Vec<Hitbox>,
+    /// Over the text, right of the gutter, where a hover range is found.
+    text: Hitbox,
     /// When prepaint started and how long it took, for [`FrameTiming`].
     prepaint_started: Instant,
     prepaint_took: Duration,
@@ -66,6 +71,25 @@ impl FrameLayout {
         let position = self.to_frame(position);
         self.frame
             .offset_at(text, position, &mut self.long_rows, &mut self.glyph_widths)
+    }
+
+    /// The buffer offset where the grapheme or glyph under a window
+    /// position starts, on a row this frame shows: of `e` and a combining
+    /// accent, or of a ligature, its first char. `None` past the row's end.
+    pub(crate) fn char_at(&self, text: &Text, position: Point<Pixels>) -> Option<usize> {
+        let at = self.to_frame(position);
+        let frame = &self.frame;
+        let display_row = ((at.y + frame.scroll.y) / frame.line_height).floor();
+        let row = frame.row(u32::try_from(display_row as i64).ok()?)?;
+        let line_x = at.x - frame.line_origin(row).x;
+        if line_x < 0. {
+            return None;
+        }
+        // The glyph with the last start at or before x: a combining mark
+        // drawn over its base is such a glyph.
+        let index = row.line.layout.index_for_x(px(line_x))?;
+        let offset = row.shown().start + row.expanded.to_buffer(index, fe_buffer::Bias::Left);
+        Some(grapheme_start(text, offset, row.start))
     }
 
     /// The window bounds of a caret at `offset`, if its row is on screen.
@@ -97,7 +121,6 @@ pub(crate) struct Line {
 
 impl Line {
     /// The colour of the byte at `index` of the shaped text.
-    #[cfg(test)]
     pub(crate) fn color_at(&self, index: usize) -> Option<Hsla> {
         let mut end = 0;
         self.decorations.iter().find_map(|run| {
@@ -479,6 +502,7 @@ impl Element for EditorElement {
             .fold_click_areas()
             .map(|area| window.insert_hitbox(to_window(area.rect), HitboxBehavior::Normal))
             .collect();
+        let text = window.insert_hitbox(to_window(frame.text_bounds()), HitboxBehavior::Normal);
 
         let scroll = point(px(frame.scroll.x), px(frame.scroll.y));
         self.view.update(cx, |view, cx| {
@@ -486,14 +510,17 @@ impl Element for EditorElement {
             view.autoscroll = false;
             view.load_injected_languages(cx);
         });
+        let version = self.view.read(cx).model.snapshot().version();
         Some(FrameLayout {
             origin: bounds.origin,
             frame,
             long_rows,
             glyph_widths,
             tab_size,
+            version,
             fold_column,
             clickable,
+            text,
             prepaint_started: started,
             prepaint_took: started.elapsed(),
         })
@@ -517,7 +544,15 @@ impl Element for EditorElement {
         let column_hovered = view.fold_column_hovered;
         let mut layout = layout.take().expect("prepaint ran");
         let block = view.block_cursor();
-        let carets: Vec<_> = match focus.is_focused(window) {
+        let focused = focus.is_focused(window);
+        // Not in an inactive window: modifiers released in another app, as
+        // after cmd-tab, never reach it.
+        let hover_shown = window.is_window_active();
+        let hover = hover_shown.then(|| view.hover_range()).flatten();
+        let underlines = hover.as_ref().map_or_else(Vec::new, |range| {
+            underlines(&mut layout, range, theme.foreground)
+        });
+        let carets: Vec<_> = match focused {
             false => Vec::new(),
             true if block => {
                 let text = view.model.text();
@@ -581,6 +616,9 @@ impl Element for EditorElement {
                         });
                         marker.line.paint(origin, line_height, window, cx);
                     }
+                    for &(underline, color) in &underlines {
+                        window.paint_quad(fill(underline, color));
+                    }
                     if !block {
                         for &caret in &carets {
                             window.paint_quad(fill(caret, theme.cursor));
@@ -608,6 +646,9 @@ impl Element for EditorElement {
         for hitbox in &layout.clickable {
             window.set_cursor_style(CursorStyle::PointingHand, hitbox);
         }
+        if hover.is_some() {
+            window.set_cursor_style(CursorStyle::PointingHand, &layout.text);
+        }
         // Window-wide, so leaving the editor for another part of the window
         // clears the flag too. Every event that places the pointer counts,
         // not just moves: a window can move under a still pointer and then
@@ -626,14 +667,41 @@ impl Element for EditorElement {
                     let id = window.window_handle().window_id();
                     cx.default_global::<PointerOutside>().0.insert(id);
                     set_fold_column_hovered(&view, false, cx);
+                    view.update(cx, |view, cx| view.set_hover(None, cx)).ok();
                 }
             });
         }
+        // Window-wide too, so moving off the text anywhere clears the hover
+        // range. Only moves find it: a scroll clears it, and a click leaves
+        // it be.
+        {
+            let (view, text) = (view.clone(), layout.text.clone());
+            window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
+                if phase == DispatchPhase::Bubble {
+                    let over = text
+                        .is_hovered_at(event.position, window)
+                        .then_some(event.position);
+                    view.update(cx, |view, cx| {
+                        view.hover_at(over, &event.modifiers, window, cx)
+                    })
+                    .ok();
+                }
+            });
+        }
+        add_hover_editor(&view, window, cx);
         // Once this frame is the rendered one, check the column against the
         // still pointer, so a column moving under or away from it (a dock
-        // opening, the gutter widening) shows or hides the chevrons.
+        // opening, the gutter widening) shows or hides the chevrons; and the
+        // hover range, which may have moved from under it or come unbound.
         window.defer(cx, move |window, cx| {
             reconcile_fold_column(&view, &hitbox, window, cx);
+            // GPUI's context stack reads the rendered frame, empty before
+            // the first one.
+            view.update(cx, |view, cx| {
+                view.note_ancestors(window);
+                view.reconcile_hover(window, cx);
+            })
+            .ok();
         });
 
         let painted_at = Instant::now();
@@ -646,10 +714,13 @@ impl Element for EditorElement {
         self.view.update(cx, |view, _| {
             view.layout = Some(layout);
             view.frame_timings.record(timing);
+            view.drop_stale_hover(hover_shown);
             #[cfg(test)]
             {
                 view.painted_carets = painted;
                 view.painted_chevrons = painted_chevrons;
+                let underlines = underlines.iter().map(|&(bounds, _)| bounds).collect();
+                view.painted_hover = (underlines, hover.is_some());
             }
         });
     }
@@ -677,6 +748,114 @@ fn on_pointer_event<E: MouseEvent>(
             reconcile_fold_column(&view, &column, window, cx);
         }
     });
+}
+
+/// The editors drawn in each window, as weak handles, for
+/// [`modifiers_changed`].
+#[derive(Default)]
+struct HoverEditors(HashMap<WindowId, Vec<WeakEntity<EditorView>>>);
+
+impl Global for HoverEditors {}
+
+/// Adds `view` to the editors drawn in `window`, dropping those released.
+fn add_hover_editor(view: &WeakEntity<EditorView>, window: &Window, cx: &mut App) {
+    let id = window.window_handle().window_id();
+    let editors = cx.default_global::<HoverEditors>().0.entry(id).or_default();
+    editors.retain(|editor| editor.upgrade().is_some());
+    if !editors.iter().any(|editor| editor == view) {
+        editors.push(view.clone());
+    }
+}
+
+/// A modifier pressed or released, which GPUI tells only the focused
+/// element's path: the focused editor passes it on to every editor drawn in
+/// its window, as the pointer may be over another. While a control that
+/// isn't an editor has focus, such as a panel, the host's root element
+/// passes it on ([`EditorView::modifiers_changed`]); gpui-pre 0.3.7 has no
+/// window-wide modifier listener. A release alone is also a keystroke,
+/// which `crate::keymap` passes on from anywhere.
+pub(crate) fn modifiers_changed(event: &ModifiersChangedEvent, window: &mut Window, cx: &mut App) {
+    hover_with_modifiers(&event.modifiers, window, cx);
+}
+
+/// Finds every editor's hover range drawn in `window` again with
+/// `modifiers` held. One no longer drawn finds no pointer over its text, so
+/// it only clears its hover range.
+pub(crate) fn hover_with_modifiers(modifiers: &gpui::Modifiers, window: &Window, cx: &mut App) {
+    let id = window.window_handle().window_id();
+    let editors = cx
+        .try_global::<HoverEditors>()
+        .and_then(|editors| editors.0.get(&id).cloned())
+        .unwrap_or_default();
+    for editor in editors.iter().filter_map(WeakEntity::upgrade) {
+        editor.update(cx, |editor, cx| {
+            editor.hover_at_pointer(modifiers, window, cx)
+        });
+    }
+}
+
+/// The pointer's window position, if it's over the text of the rendered
+/// frame, uncovered, and hasn't left the window.
+pub(crate) fn pointer_over_text(
+    layout: &FrameLayout,
+    window: &Window,
+    cx: &App,
+) -> Option<Point<Pixels>> {
+    let id = window.window_handle().window_id();
+    let outside = cx
+        .try_global::<PointerOutside>()
+        .is_some_and(|outside| outside.0.contains(&id));
+    let position = window.mouse_position();
+    (!outside && layout.text.is_hovered_at(position, window)).then_some(position)
+}
+
+/// A 1 px underline under each piece of `range` on the frame's rows, just
+/// below the baseline, in the colour of the text it starts under, else
+/// `color`.
+fn underlines(
+    layout: &mut FrameLayout,
+    range: &Range<usize>,
+    color: Hsla,
+) -> Vec<(Bounds<Pixels>, Hsla)> {
+    let FrameLayout {
+        frame,
+        long_rows,
+        glyph_widths,
+        ..
+    } = layout;
+    let mut pieces = Vec::new();
+    for row in &frame.rows {
+        let (start, end) = (range.start.max(row.start), range.end.min(row.end));
+        if start >= end {
+            continue;
+        }
+        let left = frame.view_x(row.x_for_offset(start, long_rows, glyph_widths));
+        let right = frame.view_x(row.x_for_offset(end, long_rows, glyph_widths));
+        let line = &row.line.layout;
+        let (ascent, descent): (f32, f32) = (line.ascent.into(), line.descent.into());
+        let baseline =
+            frame.row_top(row.row) + (frame.line_height - ascent - descent) / 2. + ascent;
+        let shown = row.shown();
+        let color = (shown.start..shown.end)
+            .contains(&start)
+            .then(|| {
+                row.line
+                    .color_at(row.expanded.to_display(start - shown.start))
+            })
+            .flatten()
+            .unwrap_or(color);
+        let rect = Rect {
+            x: left,
+            y: baseline.round() + 1.,
+            width: right - left,
+            height: 1.,
+        };
+        pieces.push((rect, color));
+    }
+    pieces
+        .into_iter()
+        .map(|(rect, color)| (layout.bounds(rect), color))
+        .collect()
 }
 
 /// Sets whether the pointer is over `column` in the rendered frame. Unlike
@@ -768,6 +947,24 @@ fn block_carets(
         blocks.push(Rect { width, ..bar });
     }
     blocks.into_iter().map(|rect| layout.bounds(rect)).collect()
+}
+
+/// The start of the grapheme `offset` is in, no further back than
+/// `row_start` or [`MAX_CLUSTER_BYTES`].
+fn grapheme_start(text: &Text, offset: usize, row_start: usize) -> usize {
+    use unicode_segmentation::UnicodeSegmentation as _;
+    let from = text.clip_offset(
+        offset.saturating_sub(MAX_CLUSTER_BYTES).max(row_start),
+        fe_buffer::Bias::Left,
+    );
+    let to = text.clip_offset(offset + 1, fe_buffer::Bias::Right);
+    let slice = text.slice_to_string(from..to);
+    slice
+        .grapheme_indices(true)
+        .map(|(ix, _)| from + ix)
+        .take_while(|&start| start <= offset)
+        .last()
+        .unwrap_or(offset)
 }
 
 /// The grapheme boundary after `offset`, if it's before `line_end`. A

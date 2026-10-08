@@ -62,9 +62,13 @@ pub enum Key {
     Space,
     /// `f1` to `f20`.
     F(u8),
+    /// A primary (left) single click of the mouse, not a key: bindable only
+    /// alone and with a modifier, as in `cmd-click`. Keyboard input never
+    /// produces it.
+    Click,
 }
 
-const NAMED: [(&str, Key); 14] = [
+const NAMED: [(&str, Key); 15] = [
     ("left", Key::Left),
     ("right", Key::Right),
     ("up", Key::Up),
@@ -79,6 +83,7 @@ const NAMED: [(&str, Key); 14] = [
     ("tab", Key::Tab),
     ("escape", Key::Escape),
     ("space", Key::Space),
+    ("click", Key::Click),
 ];
 
 impl Key {
@@ -162,7 +167,8 @@ impl Keystroke {
     /// in any order) then a key: a printable character, including `-` as in
     /// `cmd--`; `left`, `right`, `up`, `down`, `home`, `end`, `pageup`,
     /// `pagedown`, `backspace`, `delete`, `enter`, `tab`, `escape` or
-    /// `space`; or `f1` to `f20`. Case doesn't matter.
+    /// `space`; `f1` to `f20`; or `click`, a mouse click ([`Key::Click`]).
+    /// Case doesn't matter.
     pub fn parse(source: &str) -> Result<Self, KeystrokeError> {
         let error = |offset, message: String| KeystrokeError { offset, message };
         // The key is after the last `-`, unless that `-` is the key.
