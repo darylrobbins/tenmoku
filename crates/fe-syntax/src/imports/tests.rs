@@ -4,6 +4,11 @@ use crate::{
     ImportsError, Syntax, language_by_name, module_specifiers, module_specifiers_supported,
 };
 
+thread_local! {
+    /// How many `arguments` nodes `is_module` has validated on this thread.
+    pub(super) static ARGUMENT_VALIDATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 fn syntax(language: &str, text: &str) -> Syntax {
     let buffer = Buffer::new(text);
     let mut syntax = Syntax::new(language_by_name(language).unwrap(), buffer.current());
@@ -148,11 +153,13 @@ fn a_jsx_attribute_named_extends_keeps_later_imports() {
 #[test]
 fn a_call_of_many_strings_is_read_once() {
     let text = format!("require({});\n", vec!["'m'"; 20_000].join(", "));
-    let started = std::time::Instant::now();
+    // Each `arguments` node is validated once, not once per string.
     for language in ["javascript", "typescript", "tsx"] {
+        let before = ARGUMENT_VALIDATIONS.with(|count| count.get());
         assert_eq!(specifiers(language, &text), Vec::<String>::new());
+        let validated = ARGUMENT_VALIDATIONS.with(|count| count.get()) - before;
+        assert_eq!(validated, 1, "{language}");
     }
-    assert!(started.elapsed() < std::time::Duration::from_secs(5));
 }
 
 #[test]

@@ -290,6 +290,8 @@ fn is_module(
     match arguments {
         Some(arguments) => {
             *lone.entry(arguments.id()).or_insert_with(|| {
+                #[cfg(test)]
+                tests::ARGUMENT_VALIDATIONS.with(|count| count.set(count.get() + 1));
                 let mut cursor = arguments.walk();
                 // (Counting stops at a second argument.)
                 let args = arguments
