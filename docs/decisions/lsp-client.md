@@ -581,8 +581,9 @@ include override commands for `cargo check` and build scripts. So:
   until workspace trust exists".
 - **Hot reload** applies the same filter, so editing the project file while
   open can't introduce a command either.
-- **Workspace trust.** A later "trust this workspace" decision (Q7) could
-  lift the filter per root. That is not in M4.
+- **Workspace trust.** Q7 was revised to (b) (§9, T177): language servers
+  start only in folders the user trusts. Lifting this filter per trusted root
+  is left to a later card; for now it applies even in trusted folders.
 
 Starting a configured server on a repository can still run that repository's
 code by the server's own design. For example, rust-analyzer runs build scripts
@@ -1759,6 +1760,38 @@ workspace-trust feature can come later and lift the project-layer filter per
 root.
 
 **Decided (user, 2026-10-06): (c).**
+
+**Revised (user, 2026-10-07): (b)**, without its unlocking of project-layer
+LSP settings (T177). A push security review of T141 found that `LspManager::open`
+starts a server for any document under a root, so opening a hostile repository
+would run its code once the workbench drives fe-lsp (T143).
+
+- **The gate.** `LspManager::set_trust(predicate)` says which roots may have
+  servers. A routed document under a root it rejects waits, as one with no
+  server for its language does. A root that becomes untrusted has its routed
+  servers shut down, and nothing (settings, specs, a crash restart,
+  `restart`) starts one there until it's trusted again. `start` and `open_on`
+  aren't gated: there the host names the server. The default trusts every
+  root, so embedding hosts keep (c); the workbench always installs a closed
+  gate and opens it per root.
+- **Asked on first open.** The first time a folder is opened as one (a folder
+  launch, or File > Open Folder…), the workbench asks "Do you trust the
+  authors of the files in this folder?" with Trust Folder and Don't Trust;
+  Escape is a remembered Don't Trust. A launch with a file (`fastedit
+  some/file`, or as `$EDITOR`) doesn't ask: its parent folder follows its
+  nearest decided ancestor, and is untrusted if none has a decision.
+- **Remembered per canonical folder** in user state,
+  `<state_dir>/trust.toml` (`$FASTEDIT_STATE_DIR`, else
+  `$XDG_STATE_HOME/fastedit`, else `~/.local/state/fastedit`), never in the
+  project. A folder's subfolders inherit its decision unless they have their
+  own: the nearest decision wins. A trust file fastedit can't read or parse
+  loads as empty (every folder untrusted, fail closed) and is never
+  overwritten. Writes go off the main thread, one at a time, and each applies
+  only the decisions not yet written to the file as it is then, so another
+  fastedit's decisions are kept; quitting waits for a write under way.
+- **Changed later** with File > Trust This Folder and Untrust This Folder
+  (`workbench.trust_folder`, `workbench.untrust_folder`).
+- **Project-layer LSP settings stay filtered** even in trusted folders (§3.3).
 
 ## 10. Unanswered
 

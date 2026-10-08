@@ -34,6 +34,7 @@ use crate::{
     status_bar::{self, StatusOp},
     title_bar,
     toolbar_picker::ToolbarPicker,
+    trust::{self, RootTrust, TrustChanged},
 };
 
 /// Shown in a tab when fastedit starts with nothing to open.
@@ -132,6 +133,8 @@ pub struct Workbench {
     /// Whether the open panel shows: it doesn't block the window, and
     /// another isn't shown until it's answered.
     prompting: bool,
+    /// The root's workspace trust.
+    pub(crate) trust: RootTrust,
     ui: UiTheme,
     /// To the project panel's and the palette's events: replaced with them
     /// on a new root.
@@ -163,6 +166,7 @@ pub struct Workbench {
 }
 
 impl EventEmitter<RootChanged> for Workbench {}
+impl EventEmitter<TrustChanged> for Workbench {}
 
 impl Workbench {
     /// Opens `launch`. `settings` configure the editors it opens (tab size,
@@ -180,6 +184,7 @@ impl Workbench {
         let welcome = launch.root.is_none() && launch.file.is_none();
         let root = launch.root.clone();
         let launch_root = launch.root.clone();
+        let as_folder = launch.file.is_none();
         let launch_read = match &launch.file {
             Some((path, None)) => Some(path.clone()),
             _ => None,
@@ -244,6 +249,7 @@ impl Workbench {
             revealed: None,
             launch_read: launch_read.map(|path| (path, pane.downgrade())),
             prompting: false,
+            trust: RootTrust::default(),
             ui,
             root_subscriptions,
             _rail: rail,
@@ -269,6 +275,8 @@ impl Workbench {
         };
         workbench.watch(&pane, window, cx);
         workbench.track_editors(cx);
+        workbench.follow_trust(window, cx);
+        workbench.resolve_trust(workbench.root.clone(), as_folder, window, cx);
         workbench
     }
 
@@ -413,6 +421,7 @@ impl Workbench {
                 pane.update_toolbar(|toolbar| toolbar.root = root, cx)
             });
         }
+        self.resolve_trust(Some(root.clone()), true, window, cx);
         cx.emit(RootChanged(root));
         cx.notify();
     }
@@ -1142,6 +1151,9 @@ impl Workbench {
         else {
             if let Some(op) = open::op(run, cx) {
                 return self.prompt_open(op, window, cx);
+            }
+            if let Some(trusted) = trust::op(run, cx) {
+                return self.set_root_trust(trusted, cx);
             }
             if picker::op(run, cx) == Some(PaletteOp::ToggleQuickOpen) {
                 return self.toggle_quick_open(window, cx);

@@ -50,6 +50,14 @@ title = "Open File…"
 command = "workbench.open_file"
 
 [[menus.items]]
+title = "Trust This Folder"
+command = "workbench.trust_folder"
+
+[[menus.items]]
+title = "Untrust This Folder"
+command = "workbench.untrust_folder"
+
+[[menus.items]]
 separator = true
 
 [[menus.items]]

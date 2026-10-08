@@ -10,6 +10,12 @@
 //! each (server, root)'s crash list and log ring across the instances it
 //! starts there, so a server that gave up stays stopped until
 //! [`LspManager::restart`] or a new spec, and its log outlives it.
+//!
+//! The host says which workspace roots may have servers
+//! ([`LspManager::set_trust`]), since a server can run the project's code.
+//! A document routed under a root it doesn't trust waits, as one with no
+//! server for its language does. [`LspManager::start`] and
+//! [`LspManager::open_on`] aren't gated: there the host names the server.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -71,7 +77,12 @@ pub struct LspManager {
     logs: HashMap<(String, PathBuf), SharedLog>,
     max_file_bytes: usize,
     next_id: u64,
+    /// Whether routed servers may start for a root: see
+    /// [`set_trust`](LspManager::set_trust).
+    trusted: Trusted,
 }
+
+type Trusted = Arc<dyn Fn(&Path) -> bool + Send + Sync>;
 
 struct Handle {
     name: String,
@@ -145,7 +156,31 @@ impl LspManager {
             logs: HashMap::new(),
             max_file_bytes: DEFAULT_MAX_FILE_BYTES,
             next_id: 0,
+            trusted: Arc::new(|_| true),
         }
+    }
+
+    /// Sets the host's answer to whether servers may start for a workspace
+    /// root, since a server can run the project's code (rust-analyzer runs
+    /// build scripts and proc macros). Every root is trusted until this is
+    /// called. Applies as [`update_settings`](Self::update_settings) does:
+    ///
+    /// - a document [`open`](Self::open) routes under a root `trusted`
+    ///   rejects waits, as one with no server for its language does;
+    /// - each routed server running for a root it now rejects is shut down,
+    ///   and its documents wait; nothing starts one there again (settings,
+    ///   specs, a crash restart, [`restart`](Self::restart)) until the root
+    ///   is trusted;
+    /// - documents waiting under a root it now trusts get their servers,
+    ///   which open them at the buffers' current text.
+    ///
+    /// [`start`](Self::start) and [`open_on`](Self::open_on) aren't gated:
+    /// there the host names the server. So an instance the host started
+    /// keeps running, with any routed document `open` placed on it while
+    /// its root was trusted.
+    pub fn set_trust(&mut self, trusted: impl Fn(&Path) -> bool + Send + Sync + 'static) {
+        self.trusted = Arc::new(trusted);
+        self.reconcile();
     }
 
     /// Applies the effective `[lsp]` settings (§3.3), whose project layer
@@ -235,7 +270,8 @@ impl LspManager {
     ///
     /// It starts even a server that stopped after too many crashes, but
     /// with the crashes counted so far: only [`restart`](Self::restart)
-    /// clears them.
+    /// clears them. It isn't gated by [`set_trust`](Self::set_trust): the
+    /// host names the server.
     pub fn start(&mut self, spec: ServerSpec, root: &Path) -> io::Result<ServerId> {
         self.start_server(spec, root, false)
     }
@@ -388,8 +424,10 @@ impl LspManager {
     /// with [`start`](Self::start) starts with the spec it last ran with,
     /// and documents opened on it go with the old instance, as with
     /// [`stop`](Self::stop). Returns the new instance, or `None` if
-    /// there's no such server to start. Errs only if its thread can't be
-    /// made.
+    /// there's no such server to start, or if it's one `open` routes to
+    /// and [`set_trust`](Self::set_trust) rejects `root`: its crashes are
+    /// still forgotten, so it starts once `root` is trusted. Errs only if
+    /// its thread can't be made.
     pub fn restart(&mut self, name: &str, root: &Path) -> io::Result<Option<ServerId>> {
         self.prune();
         let key = (name.to_owned(), root.to_owned());
@@ -423,6 +461,9 @@ impl LspManager {
                 (_, None) => return Ok(None),
             },
         };
+        if routed && !(self.trusted)(root) {
+            return Ok(None);
+        }
         let id = self.start_server(spec, root, routed)?;
         if routed {
             self.place_waiting(&specs, Some(&key));
@@ -568,7 +609,9 @@ impl LspManager {
     /// listing it, or `[lsp]` turning it off) is kept, without a server,
     /// until [`update_settings`](Self::update_settings) or
     /// [`register_spec`](Self::register_spec) give it one; its subscription
-    /// is drained at each [`changed`](Self::changed) meanwhile.
+    /// is drained at each [`changed`](Self::changed) meanwhile. So is one
+    /// under a root [`set_trust`](Self::set_trust) rejects, until it's
+    /// trusted.
     ///
     /// Errs if `path` isn't absolute.
     #[allow(clippy::too_many_arguments)] // Each is one thing the document needs.
@@ -659,13 +702,17 @@ impl LspManager {
 
     /// The server `buffer`'s route gives it under `specs`, started if it
     /// isn't running. `None` for a document without a route, with no
-    /// server for its language, or whose server's thread can't be made.
+    /// server for its language, under an untrusted root, or whose server's
+    /// thread can't be made.
     fn target(&mut self, buffer: BufferId, specs: &[ServerSpec]) -> Option<ServerId> {
         let Kind::Routed(route) = &self.documents.get(&buffer)?.kind else {
             return None;
         };
         let spec = server_for(specs, &route.language)?.clone();
         let root = route.root.clone();
+        if !(self.trusted)(&root) {
+            return None;
+        }
         if let Some(crashes) = self.crashes.get(&(spec.name.clone(), root.clone())) {
             let mut crashes = lock(crashes);
             match &crashes.given_up {
@@ -701,6 +748,11 @@ impl LspManager {
             let Some(handle) = self.servers.get_mut(&id) else {
                 continue;
             };
+            if !(self.trusted)(&handle.root) {
+                // Its documents wait: none starts under an untrusted root.
+                self.retire(id, &specs);
+                continue;
+            }
             match specs.iter().find(|spec| spec.name == handle.name) {
                 Some(spec) if !needs_restart(&handle.spec, spec) => {
                     if spec.settings != handle.spec.settings {
@@ -801,8 +853,9 @@ impl LspManager {
                     return None;
                 };
                 let spec = server_for(specs, &route.language)?;
-                only.is_none_or(|(name, root)| spec.name == *name && route.root == *root)
-                    .then_some(buffer)
+                (only.is_none_or(|(name, root)| spec.name == *name && route.root == *root)
+                    && (self.trusted)(&route.root))
+                .then_some(buffer)
             })
             .filter(|&buffer| self.place_of(buffer).is_none())
             .collect()
@@ -829,7 +882,8 @@ impl LspManager {
     ///
     /// A buffer already open is closed first. Errs if `path` isn't
     /// absolute, or `server` isn't running. The document stays on
-    /// `server`: settings changes don't move it.
+    /// `server`: settings changes don't move it. It isn't gated by
+    /// [`set_trust`](Self::set_trust): the host names the server.
     #[allow(clippy::too_many_arguments)] // Each is one thing the document needs.
     pub fn open_on(
         &mut self,
@@ -1016,6 +1070,10 @@ impl LspManager {
             .is_none_or(|handle| handle.thread.is_finished())
     }
 }
+
+#[cfg(test)]
+#[path = "trust_tests.rs"]
+mod trust_tests;
 
 impl Drop for LspManager {
     /// Asks every server to shut down, without waiting for them.

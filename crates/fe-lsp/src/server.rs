@@ -174,12 +174,16 @@ pub(crate) enum Place {
 impl Places {
     /// Sends each of `openings` still current where its place says: to its
     /// server, or, if that has gone (its place then says it waits) or it has
-    /// none, to the lot. One with no place is dropped.
+    /// none, to the lot. One with no place is dropped. Each is first brought
+    /// up to its buffer's latest edit, so a server's `didOpen` carries the
+    /// text as it is now, even for one handed on late (by a retired server,
+    /// say) after edits nothing drained.
     pub(crate) fn forward(&mut self, identities: &Identities, openings: Vec<Opening>) {
-        for opening in openings {
+        for mut opening in openings {
             if !identities.is_current(opening.buffer, opening.generation) {
                 continue;
             }
+            opening.catch_up();
             let opening = match self.places.get(&opening.buffer) {
                 None => continue,
                 Some(Place::Waiting) => opening,

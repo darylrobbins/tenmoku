@@ -320,10 +320,12 @@ fn hosts_extend_and_replace() {
     );
     // An item with a taken ID replaces it where it was.
     assert_eq!(
-        ids(&bar, "File")[..4],
+        ids(&bar, "File")[..6],
         [
             "workbench.open_folder",
             "workbench.open_file",
+            "workbench.trust_folder",
+            "workbench.untrust_folder",
             "-",
             "editor.save"
         ]

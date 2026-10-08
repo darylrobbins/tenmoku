@@ -244,6 +244,11 @@ fn main() {
         if let Some(path) = fe_config::user_settings_path() {
             fe_workbench::save_toggles_to(cx, path);
         }
+        // Language servers start only in folders the user trusts, which the
+        // workbench asks about on a folder's first open.
+        if let Some(path) = fe_config::paths::trust_path() {
+            fe_workbench::set_trust_file(cx, path);
+        }
         install_menus(cx);
         log_keymap_report(cx);
         cx.on_window_closed(|cx, _| {

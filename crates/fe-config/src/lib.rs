@@ -11,6 +11,7 @@ pub mod diagnostic;
 pub mod layers;
 pub mod paths;
 pub mod settings;
+pub mod trust;
 pub mod watch;
 pub mod write;
 

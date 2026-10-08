@@ -30,6 +30,7 @@ mod search_panel;
 mod status_bar;
 mod title_bar;
 mod toolbar_picker;
+mod trust;
 mod workbench;
 
 use std::rc::Rc;
@@ -50,6 +51,7 @@ pub use references_panel::ReferencesPanel;
 pub use search_panel::SearchPanel;
 pub use status_bar::{StatusBar, StatusItem, StatusSide};
 pub use title_bar::{TITLE_BAR_HEIGHT, TRAFFIC_LIGHT_INSET, TRAFFIC_LIGHTS, titlebar_options};
+pub use trust::{TrustChanged, set_trust_file};
 pub use workbench::{Launch, RootChanged, WELCOME, Workbench, resolve_launch};
 
 /// The key context the workbench's root element sets.
@@ -84,6 +86,7 @@ pub fn init(cx: &mut App) {
     project_panel::init(cx);
     references_panel::init(cx);
     status_bar::init(cx);
+    trust::init(cx);
 }
 
 fn registry(cx: &App) -> Option<Rc<Registry<WorkbenchCommands>>> {
@@ -134,6 +137,7 @@ pub fn command_catalog() -> Box<dyn CommandCatalog> {
         Box::new(project_panel::registry()),
         Box::new(references_panel::registry()),
         Box::new(status_bar::registry()),
+        Box::new(trust::registry()),
         fe_gpui::commands::command_catalog(),
     ]))
 }
