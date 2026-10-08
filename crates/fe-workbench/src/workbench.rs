@@ -154,6 +154,9 @@ pub struct Workbench {
     _outline: Subscription,
     #[cfg(test)]
     pub(crate) chains_computed: usize,
+    /// Times the nav buttons' state was pushed into the panes.
+    #[cfg(test)]
+    pub(crate) nav_pushes: usize,
     /// Every command the workbench was dispatched, oldest first.
     #[cfg(test)]
     pub(crate) commands_run: Vec<fe_command::Invocation>,
@@ -259,6 +262,8 @@ impl Workbench {
             }),
             #[cfg(test)]
             chains_computed: 0,
+            #[cfg(test)]
+            nav_pushes: 0,
             #[cfg(test)]
             commands_run: Vec::new(),
         };
@@ -860,8 +865,11 @@ impl Workbench {
         let input = self.toolbar_picker.focus_handle(cx);
         let previous = window.focused(cx).filter(|focused| *focused != input);
         let (pane, root) = (pane.downgrade(), self.root.clone());
+        let workbench = cx.entity().downgrade();
         self.toolbar_picker.update(cx, |picker, cx| {
-            picker.delegate.open(request, pane, root, previous, cx);
+            picker
+                .delegate
+                .open(request, pane, workbench, root, previous, cx);
             picker.show(window, cx);
         });
         self.palette = Some(Palette::Toolbar);
@@ -892,6 +900,10 @@ impl Workbench {
     /// allows.
     pub(crate) fn set_nav_buttons(&mut self, nav: NavButtons, cx: &mut Context<Self>) {
         self.nav = nav;
+        #[cfg(test)]
+        {
+            self.nav_pushes += 1;
+        }
         for pane in self.panes.panes() {
             pane.update(cx, |pane, cx| {
                 pane.update_toolbar(|toolbar| toolbar.nav = nav, cx)

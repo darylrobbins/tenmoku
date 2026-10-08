@@ -30,7 +30,7 @@ use gpui::{
 };
 
 use crate::{
-    OutlinePanel, Pane, PaneEvent,
+    OutlinePanel, Pane, PaneEvent, Workbench,
     pane_toolbar::{self, ToolbarRequest},
     picker::{Picker, PickerDelegate},
 };
@@ -79,6 +79,8 @@ enum List {
 
 pub(crate) struct ToolbarPicker {
     pane: WeakEntity<Pane>,
+    /// Records the caret before a pick jumps.
+    workbench: WeakEntity<Workbench>,
     outline: WeakEntity<OutlinePanel>,
     root: Option<PathBuf>,
     list: List,
@@ -103,6 +105,7 @@ impl ToolbarPicker {
     pub(crate) fn new(outline: WeakEntity<OutlinePanel>, ui: UiTheme) -> Self {
         Self {
             pane: WeakEntity::new_invalid(),
+            workbench: WeakEntity::new_invalid(),
             outline,
             root: None,
             list: List::Commands(Vec::new()),
@@ -124,11 +127,13 @@ impl ToolbarPicker {
         &mut self,
         request: ToolbarRequest,
         pane: WeakEntity<Pane>,
+        workbench: WeakEntity<Workbench>,
         root: Option<PathBuf>,
         previous_focus: Option<FocusHandle>,
         cx: &mut Context<Picker<Self>>,
     ) {
         self.pane = pane;
+        self.workbench = workbench;
         self.root = root;
         if previous_focus.is_some() {
             self.previous_focus = previous_focus;
@@ -337,6 +342,13 @@ impl ToolbarPicker {
         }
     }
 
+    /// A pick is a jump: back returns to the caret as it is now.
+    fn push_history(&self, cx: &mut Context<Picker<Self>>) {
+        if let Some(workbench) = self.workbench.upgrade() {
+            workbench.update(cx, |workbench, cx| workbench.push_history(cx));
+        }
+    }
+
     /// Opens a file in the pane, active and focused, or lists a directory.
     fn pick_entry(
         &mut self,
@@ -368,6 +380,7 @@ impl ToolbarPicker {
             return true;
         };
         self.previous_focus = None;
+        self.push_history(cx);
         pane.update(cx, |pane, cx| {
             pane.open(path, window, cx);
             cx.emit(PaneEvent::Activated);
@@ -412,6 +425,7 @@ impl ToolbarPicker {
             return false;
         }
         let start = symbols[row].2;
+        self.push_history(cx);
         editor.update(cx, |editor, cx| editor.select_and_reveal(start..start, cx));
         window.focus(&editor.focus_handle(cx), cx);
         self.previous_focus = None;

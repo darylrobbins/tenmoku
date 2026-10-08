@@ -27,6 +27,7 @@ mod splits_followups;
 mod status_bar;
 mod tabs;
 mod title_bar;
+mod toolbar_history;
 mod tree_keys;
 mod tree_style;
 
