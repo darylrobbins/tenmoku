@@ -184,6 +184,17 @@ command = "editor.unfold_all"
 separator = true
 
 [[menus.items]]
+title = "Restart Language Server"
+command = "lsp.restart"
+
+[[menus.items]]
+title = "Language Server Log"
+command = "lsp.show_log"
+
+[[menus.items]]
+separator = true
+
+[[menus.items]]
 title = "Toggle Full Screen"
 command = "window.toggle_fullscreen"
 

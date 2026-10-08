@@ -15,6 +15,7 @@ fe-config.workspace = true
 fe-editor.workspace = true
 fe-gpui.workspace = true
 fe-keymap.workspace = true
+fe-lsp.workspace = true
 fe-nav.workspace = true
 fe-project.workspace = true
 fe-syntax.workspace = true
@@ -24,6 +25,9 @@ log.workspace = true
 
 [dev-dependencies]
 futures.workspace = true
+# Card 1's fake server and its launcher, and the LSP types it speaks.
+fe-lsp = { workspace = true, features = ["test-support"] }
+lsp-types.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 # The screenshots example renders with the real Metal platform.
 gpui_platform = { workspace = true, features = ["test-support"] }

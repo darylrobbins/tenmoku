@@ -1916,6 +1916,7 @@ dependencies = [
  "fe-editor",
  "fe-gpui",
  "fe-keymap",
+ "fe-lsp",
  "fe-nav",
  "fe-project",
  "fe-syntax",
@@ -1925,6 +1926,7 @@ dependencies = [
  "gpui-pre-platform",
  "image",
  "log",
+ "lsp-types",
  "tempfile",
 ]
 

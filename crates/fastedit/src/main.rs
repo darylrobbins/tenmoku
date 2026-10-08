@@ -239,6 +239,7 @@ fn main() {
         fe_gpui::init_with_keymap(cx, keymap.keymap().clone());
         fe_workbench::init(cx);
         fe_gpui::set_vim_enabled(cx, settings.vim.enabled);
+        fe_workbench::set_lsp_settings(cx, settings.lsp.clone());
         // Toggle Vim Mode and Toggle Status Bar save to the user's file,
         // which the watcher then reloads.
         if let Some(path) = fe_config::user_settings_path() {

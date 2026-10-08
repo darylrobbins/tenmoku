@@ -21,6 +21,7 @@ use crate::{
     ReferencesPanel, SearchPanel, StatusBar,
     dock::{self, DockEvent, DockOp},
     language_picker::LanguagePicker,
+    lsp::{self, Lsp},
     nav::{self, Nav},
     open::{self, OpenOp},
     outline_panel,
@@ -124,7 +125,7 @@ pub struct Workbench {
     status_bar_visible: bool,
     title_bar: bool,
     /// The folder the workbench is rooted at, if any.
-    root: Option<PathBuf>,
+    pub(crate) root: Option<PathBuf>,
     /// The editor whose file the project panel last revealed.
     revealed: Option<EntityId>,
     /// The launch file the host is reading, and the pane it opens in, until
@@ -135,6 +136,8 @@ pub struct Workbench {
     prompting: bool,
     /// The root's workspace trust.
     pub(crate) trust: RootTrust,
+    /// The root's language servers.
+    pub(crate) lsp: Lsp,
     ui: UiTheme,
     /// To the project panel's and the palette's events: replaced with them
     /// on a new root.
@@ -250,6 +253,7 @@ impl Workbench {
             launch_read: launch_read.map(|path| (path, pane.downgrade())),
             prompting: false,
             trust: RootTrust::default(),
+            lsp: Lsp::new(),
             ui,
             root_subscriptions,
             _rail: rail,
@@ -277,6 +281,7 @@ impl Workbench {
         workbench.track_editors(cx);
         workbench.follow_trust(window, cx);
         workbench.resolve_trust(workbench.root.clone(), as_folder, window, cx);
+        workbench.start_lsp(window, cx);
         workbench
     }
 
@@ -743,7 +748,7 @@ impl Workbench {
         }
     }
 
-    fn open_editors(&self, cx: &App) -> Vec<Entity<EditorView>> {
+    pub(crate) fn open_editors(&self, cx: &App) -> Vec<Entity<EditorView>> {
         self.panes
             .panes()
             .into_iter()
@@ -1044,6 +1049,7 @@ impl Workbench {
                 workbench.reveal_active(cx);
             }
             workbench.leave_hidden_panel(window, cx);
+            workbench.sync_lsp(cx);
         });
         followed
     }
@@ -1138,6 +1144,7 @@ impl Workbench {
         for pane in self.panes.panes() {
             pane.update(cx, |pane, cx| pane.reload_settings(event, cx));
         }
+        self.reload_lsp_settings(&event.settings.lsp, cx);
     }
 
     /// Runs a `workbench.*` command on the active pane, a pane command, a
@@ -1166,6 +1173,9 @@ impl Workbench {
             }
             if let Some(op) = status_bar::op(run, cx) {
                 return self.run_status_op(op, window, cx);
+            }
+            if let Some(op) = lsp::op(run, cx) {
+                return self.run_lsp_op(op, window, cx);
             }
             if let Some(op) = pane_group::op(run, cx) {
                 return self.run_pane_op(op, window, cx);

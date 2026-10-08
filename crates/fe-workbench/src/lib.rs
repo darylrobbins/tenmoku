@@ -13,6 +13,7 @@
 mod dock;
 mod language_picker;
 pub mod loader;
+mod lsp;
 mod nav;
 mod nav_picker;
 mod open;
@@ -40,6 +41,7 @@ use fe_keymap::{CatalogError, CommandCatalog};
 use gpui::{App, Global, Window};
 
 pub use dock::{Dock, DockPanel};
+pub use lsp::{set_lsp_settings, set_server_launcher};
 pub use outline_panel::OutlinePanel;
 pub use pane::{Pane, PaneEvent, Tab};
 pub use pane_group::{Axis, Direction, Member, Members, PaneGroup};
@@ -78,6 +80,7 @@ pub fn init(cx: &mut App) {
     cx.set_global(Commands(Rc::new(new_registry())));
     picker::init(cx);
     dock::init(cx);
+    lsp::init(cx);
     nav::init(cx);
     open::init(cx);
     outline_panel::init(cx);
@@ -129,6 +132,7 @@ pub fn command_catalog() -> Box<dyn CommandCatalog> {
         Box::new(new_registry()),
         Box::new(picker::registry()),
         Box::new(dock::registry()),
+        Box::new(lsp::registry()),
         Box::new(nav::registry()),
         Box::new(open::registry()),
         Box::new(outline_panel::registry()),

@@ -4,6 +4,7 @@
 
 mod activity_rail;
 mod launch;
+pub(crate) mod lsp;
 mod m3_signoff;
 mod nav;
 mod nav_click;
