@@ -113,7 +113,7 @@ fn apply(
         state.carets.record(id, carets_before);
     }
     if acted {
-        state.last_change = Some(change.into());
+        state.set_last_change(change.into());
         state.goals = None;
     }
     let effect = match transaction.is_some() || model.selections() != before {

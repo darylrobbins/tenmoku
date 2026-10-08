@@ -1109,7 +1109,7 @@ fn operate_as_wide(
         marks.end = end.unwrap_or_else(|| marks.end.clone());
     }
     if args.operator != Operator::Yank {
-        target.state.last_change = Some(Change::Operate(args).into());
+        target.state.set_last_change(Change::Operate(args).into());
         if !target.state.replaying {
             target.state.visual_extent = Some(extent);
         }
@@ -1922,7 +1922,7 @@ fn operate_block(
         _ => operator::land(model, &snapshot, [at]),
     }
     if args.operator != Operator::Yank {
-        state.last_change = Some(Change::Operate(args).into());
+        state.set_last_change(Change::Operate(args).into());
         if !state.replaying {
             state.visual_extent = Some(extent);
         }
@@ -2186,7 +2186,7 @@ pub(crate) fn put(
             .map_err(|error| CommandError::new(error.to_string()))?;
     }
     // `.` deletes as much text again, as nvim's does.
-    state.last_change = Some(
+    state.set_last_change(
         Change::Operate(OperateArgs {
             operator: Operator::Delete,
             target: Target::Selection,

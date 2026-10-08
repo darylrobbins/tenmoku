@@ -775,6 +775,114 @@ fn a_retained_clone_adopts_its_session_before_any_newer_change() {
     }
 }
 
+/// Types `3ix` at (0, 1) of "ab\ncd" and ends it with `Esc`, while a clone of
+/// the state ends the session first inside the measuring callback and then
+/// runs `meanwhile` on the same model. Returns the model's editor and the
+/// clone, to go on with.
+fn closed_by_a_clone(meanwhile: impl Fn(&mut VimTarget<'_>) + 'static) -> (HeadlessVim, VimState) {
+    let mut vim = HeadlessVim::new("ab\ncd", (0, 1));
+    vim.feed("3ix").unwrap();
+    let clone = Rc::new(RefCell::new(vim.state().clone()));
+    let mut split = vim.model().split();
+    split.set_cursor(vim.model().primary_selection().head());
+    let ended = Rc::new(Cell::new(false));
+    let measuring = {
+        let (ended, clone) = (Rc::clone(&ended), Rc::clone(&clone));
+        Measuring::new(move |edited| {
+            if !edited || ended.replace(true) {
+                return;
+            }
+            let mut clone = clone.borrow_mut();
+            let normal_mode = Invocation::of("vim.normal_mode")
+                .unwrap()
+                .context(context(&clone));
+            let (mut host, mut registers) = (HeadlessHost::new(), Registers::new());
+            let mut target = VimTarget {
+                model: &mut split,
+                host: &mut host,
+                state: &mut clone,
+                registers: &mut registers,
+            };
+            registry().dispatch(&mut target, &normal_mode).unwrap();
+            meanwhile(&mut target);
+        })
+    };
+    vim.feed("<Esc>").unwrap();
+    drop(measuring);
+    (vim, Rc::try_unwrap(clone).ok().unwrap().into_inner())
+}
+
+fn run_on(model: &mut EditorModel, state: &mut VimState, invocation: Invocation) {
+    let (mut host, mut registers) = (HeadlessHost::new(), Registers::new());
+    let invocation = invocation.context(context(state));
+    let mut target = VimTarget {
+        model,
+        host: &mut host,
+        state,
+        registers: &mut registers,
+    };
+    registry().dispatch(&mut target, &invocation).unwrap();
+    target.model.sync_display();
+}
+
+fn text_of(model: &EditorModel) -> String {
+    model.text().slice_to_string(0..model.text().len())
+}
+
+#[test]
+fn a_change_made_while_a_clone_closes_its_session_keeps_dot() {
+    // An edit the clone makes inside the measuring callback, after it ended
+    // the session, is newer than the insert the outer ending publishes later:
+    // `.` repeats the edit.
+    let (mut vim, mut clone) = closed_by_a_clone(|target| {
+        run_on_target(target, commit("rZ"));
+    });
+    let model = vim.model_mut();
+    let after = text_of(model);
+    assert!(after.contains('Z'), "{after}");
+    model.set_cursor(0);
+    run_on(model, &mut clone, commit("."));
+    assert_eq!(text_of(model).matches('Z').count(), 2, "{}", text_of(model));
+    assert_eq!(text_of(model).matches('x').count(), 2, "{}", text_of(model));
+}
+
+fn run_on_target(target: &mut VimTarget<'_>, invocation: Invocation) {
+    let invocation = invocation.context(context(target.state));
+    registry().dispatch(target, &invocation).unwrap();
+}
+
+#[test]
+fn undo_restores_the_first_commands_carets_through_a_closing_clone() {
+    let history = |vim: &mut HeadlessVim, clone: &mut VimState| {
+        let model = vim.model_mut();
+        let mut seen = Vec::new();
+        for keys in ["u", "<C-r>"] {
+            model.set_cursor(0);
+            run_on(model, clone, commit(keys));
+            seen.push((text_of(model), model.primary_selection().head()));
+        }
+        seen
+    };
+
+    // A normal edit joining the still-open transaction.
+    let (mut vim, mut clone) = closed_by_a_clone(|target| {
+        run_on_target(target, commit("rZ"));
+    });
+    let seen = history(&mut vim, &mut clone);
+    assert_eq!(seen[0].1, 1, "{seen:?}");
+    assert_eq!(seen[1].1, 1, "{seen:?}");
+
+    // A second insert started while the first is ending.
+    let (mut vim, mut clone) = closed_by_a_clone(|target| {
+        run_on_target(target, commit("A"));
+        target.model.insert("y");
+        run_on_target(target, Invocation::of("vim.normal_mode").unwrap());
+    });
+    let seen = history(&mut vim, &mut clone);
+    assert_eq!(seen[0].1, 1, "{seen:?}");
+    assert_eq!(seen[1].1, 1, "{seen:?}");
+}
+
 #[test]
 fn a_caret_inside_a_grapheme_is_on_it() {
     // Another origin puts a combining mark at the caret, leaving it inside

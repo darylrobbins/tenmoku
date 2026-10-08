@@ -406,6 +406,8 @@ pub(crate) struct Closing {
     /// The session's own carets record, which a newer session mustn't
     /// overwrite or close before this one is adopted.
     carets: Option<history::Pending>,
+    /// `VimState::changes` when it was left: a newer change keeps `.`.
+    changes: u64,
 }
 
 /// Adopts the outcome of a session a clone ended, if it's published: the
@@ -425,12 +427,18 @@ pub(crate) fn adopt_closing(state: &mut VimState) {
         _ => return,
     };
     let Some(Closing {
-        replaying, carets, ..
+        replaying,
+        carets,
+        changes,
+        ..
     }) = state.closing.take()
     else {
         return;
     };
-    state.last_change = Some(closed.last_change);
+    // A change made while it was closing is newer than it.
+    if state.changes == changes {
+        state.set_last_change(closed.last_change);
+    }
     if !replaying {
         state.carets.settle(carets, closed.transaction);
     }
@@ -1551,7 +1559,7 @@ fn end(model: &mut EditorModel, state: &mut VimState, how: Ending) -> Option<Tra
         Err(closed) => {
             match closed {
                 Some(closed) => {
-                    state.last_change = Some(closed.last_change);
+                    state.set_last_change(closed.last_change);
                     if !replaying {
                         state.carets.close(closed.transaction);
                     }
@@ -1560,6 +1568,7 @@ fn end(model: &mut EditorModel, state: &mut VimState, how: Ending) -> Option<Tra
                     state.closing = Some(Closing {
                         ledger: Arc::clone(&session.ledger),
                         replaying,
+                        changes: state.changes,
                         carets: (!replaying).then(|| state.carets.take_pending()).flatten(),
                     })
                 }
@@ -1680,7 +1689,7 @@ fn end(model: &mut EditorModel, state: &mut VimState, how: Ending) -> Option<Tra
         last_change: last_change.clone(),
         transaction: ended,
     });
-    state.last_change = Some(last_change);
+    state.set_last_change(last_change);
     ended
 }
 

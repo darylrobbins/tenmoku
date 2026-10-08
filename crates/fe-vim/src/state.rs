@@ -55,6 +55,9 @@ pub struct VimState {
     /// is adopted once it's published (see `insert::adopt_closing`).
     pub(crate) closing: Option<Closing>,
     pub(crate) last_change: Option<LastChange>,
+    /// How many times `last_change` was set, to order it against a session
+    /// a clone is still closing (see `insert::Closing`).
+    pub(crate) changes: u64,
     pub(crate) carets: Carets,
     /// Set while `.` replays a change inside its own transaction.
     pub(crate) replaying: bool,
@@ -69,6 +72,12 @@ pub struct VimState {
 impl VimState {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Sets what `.` repeats.
+    pub(crate) fn set_last_change(&mut self, change: LastChange) {
+        self.last_change = Some(change);
+        self.changes += 1;
     }
 
     pub fn mode(&self) -> Mode {

@@ -439,10 +439,10 @@ fn keeping_last_change<R>(
     target: &mut VimTarget<'_>,
     f: impl FnOnce(&mut VimTarget<'_>) -> Result<R, CommandError>,
 ) -> Result<R, CommandError> {
-    let last = target.state.last_change.clone();
+    let last = (target.state.last_change.clone(), target.state.changes);
     let result = f(target);
     if result.is_err() {
-        target.state.last_change = last;
+        (target.state.last_change, target.state.changes) = last;
     }
     result
 }
@@ -593,7 +593,7 @@ fn operate_unless_failing(
             Operator::Delete | Operator::Indent | Operator::Outdent
         )
     {
-        state.last_change = Some(Change::Operate(args).into());
+        state.set_last_change(Change::Operate(args).into());
     }
     if args.operator == Operator::Change {
         if spans
@@ -893,7 +893,7 @@ fn put_unless_failing(
     let value = registers
         .read(args.register, &mut **host)
         .map_err(|error| CommandError::new(error.to_string()))?;
-    state.last_change = Some(Change::Put(args).into());
+    state.set_last_change(Change::Put(args).into());
     let Some(value) = value.filter(|value| !value.text.is_empty() || value.block_width.is_some())
     else {
         return Ok(Dispatched::new(Effect::Nothing));
