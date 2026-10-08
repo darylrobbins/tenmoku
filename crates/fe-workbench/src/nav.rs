@@ -157,9 +157,6 @@ pub(crate) struct Nav {
     held: Vec<FsChange>,
     applying: Option<Task<()>>,
     pub(crate) history: NavHistory,
-    /// Where the last jump, back or forward went, its file maybe still
-    /// being read.
-    opened: Option<Place>,
     pub(crate) goto: Requests,
     pub(crate) definitions: Entity<Picker<DefinitionsPicker>>,
     pub(crate) symbols: Entity<Picker<SymbolsPicker>>,
@@ -209,7 +206,6 @@ impl Nav {
             held: Vec::new(),
             applying: None,
             history: NavHistory::default(),
-            opened: None,
             goto: Requests::default(),
             definitions,
             symbols,
@@ -537,7 +533,7 @@ impl Workbench {
     }
 
     /// Where the active editor's caret is; while the active pane is still
-    /// reading the file a jump went to, where it'll be.
+    /// reading a file, where the caret will be in it.
     pub(crate) fn caret_place(&self, cx: &App) -> Option<Place> {
         if let Some(editor) = self.active_editor(cx) {
             let model = editor.read(cx).model();
@@ -546,9 +542,7 @@ impl Workbench {
                 offset: model.primary_selection().head(),
             });
         }
-        let opened = self.nav_state.opened.as_ref()?;
-        let pane = self.pane().read(cx);
-        pane.is_opening(&opened.path).then(|| opened.clone())
+        self.pane().read(cx).pending_place()
     }
 
     /// Opens `path` in the active pane, focused, with `range` (bytes in its
@@ -560,10 +554,6 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.nav_state.opened = Some(Place {
-            path: path.clone(),
-            offset: range.end,
-        });
         let reveal = Some(Reveal::bytes(range));
         self.pane()
             .clone()

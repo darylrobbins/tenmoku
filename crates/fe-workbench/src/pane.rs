@@ -25,6 +25,7 @@ use gpui::{
 
 use crate::{
     loader,
+    nav::Place,
     pane_drag::{self, DraggedTab, DropTarget, DropZone, TabDropped, TabGhost},
     pane_toolbar::{self, NavButtons, Toolbar, ToolbarRequest},
 };
@@ -192,6 +193,23 @@ impl Pane {
     /// Whether the pane is reading `path` to show it.
     pub(crate) fn is_opening(&self, path: &Path) -> bool {
         self.opening.as_deref() == Some(path)
+    }
+
+    /// Where the caret will be once the file being read lands: at the
+    /// revealed offset, else the start of a file opened plainly. `None` if
+    /// no file is being read, or the reveal is by row and column, which
+    /// can't be an offset before the text exists.
+    pub(crate) fn pending_place(&self) -> Option<Place> {
+        let path = self.opening.as_ref()?;
+        let offset = match self.reveal.as_ref().filter(|(at, _)| at == path) {
+            None => 0,
+            Some((_, reveal)) if reveal.row == 0 => reveal.columns.end,
+            Some(_) => return None,
+        };
+        Some(Place {
+            path: path.clone(),
+            offset,
+        })
     }
 
     /// The theme editors open with.
