@@ -8,6 +8,7 @@
 
 use std::{
     cell::{Cell, RefCell},
+    collections::HashMap,
     ops::{ControlFlow, Range},
     sync::OnceLock,
 };
@@ -42,6 +43,7 @@ struct Compiled {
     query: Query,
     module: u32,
     recovered: u32,
+    arguments: u32,
 }
 
 const JAVASCRIPT: &str = include_str!("../queries/imports/javascript.scm");
@@ -74,10 +76,14 @@ impl ImportsQuery {
             let recovered = query
                 .capture_index_for_name("recovered")
                 .unwrap_or_else(|| panic!("{} imports query: no @recovered", self.language));
+            let arguments = query
+                .capture_index_for_name("arguments")
+                .unwrap_or_else(|| panic!("{} imports query: no @arguments", self.language));
             Compiled {
                 query,
                 module,
                 recovered,
+                arguments,
             }
         })
     }
@@ -129,12 +135,10 @@ pub fn module_specifiers(
     let mut owned;
     let mut tree = tree;
     let mut from = 0;
-    for reparses in 0..=MAX_REPARSES {
-        let resume = if reparses < MAX_REPARSES {
-            swallowed_from(tree, from)
-        } else {
-            None
-        };
+    // Each pass resumes strictly after the last, so this ends; `poll` stops it
+    // early.
+    loop {
+        let resume = swallowed_from(tree, from);
         let to = resume.unwrap_or(text.len());
         query_range(compiled, tree, text, from..to, &poll, &mut found);
         if stopped.get() {
@@ -155,9 +159,6 @@ pub fn module_specifiers(
     found.dedup();
     Ok(found)
 }
-
-/// The most trees read after the first in one file.
-const MAX_REPARSES: usize = 16;
 
 /// Adds the modules of `tree` that start within `range` to `found`, stopping
 /// once `poll` says to.
@@ -180,19 +181,29 @@ fn query_range(
     let mut cursor = QueryCursor::new();
     cursor.set_byte_range(range.clone());
     let source = |node: tree_sitter::Node| chunks(text, node.byte_range());
+    // Whether each `arguments` node holds a lone argument, by node id: its
+    // children are walked once however many strings it has.
+    let mut lone: HashMap<usize, bool> = HashMap::new();
     let mut matches =
         cursor.matches_with_options(&compiled.query, tree.root_node(), source, options);
     while let Some(found_match) = matches.next() {
         if poll() {
             break;
         }
+        // (A string's own `parent()` walks its siblings, so a `require(…)`
+        // of many arguments gets its `arguments` node from the match.)
+        let arguments = found_match
+            .captures()
+            .iter()
+            .find(|capture| capture.index == compiled.arguments)
+            .map(|capture| capture.node);
         for capture in found_match.captures() {
             let node = capture.node;
             if !range.contains(&node.start_byte()) {
                 continue;
             }
             let is = if capture.index == compiled.module {
-                is_module(node)
+                is_module(node, arguments, &mut lone)
             } else if capture.index == compiled.recovered {
                 is_recovered(node, text)
             } else {
@@ -221,10 +232,11 @@ fn swallowed_from(tree: &Tree, from: usize) -> Option<usize> {
         if node.kind() == "regex" && node.start_byte() >= from {
             let misread = node.prev_sibling().is_some_and(|prev| {
                 let mut children = prev.walk();
-                prev.kind() == "ERROR"
-                    && prev
-                        .children(&mut children)
-                        .any(|c| c.kind() == "type_parameter")
+                prev.kind() == "type_parameter"
+                    || prev.kind() == "ERROR"
+                        && prev
+                            .children(&mut children)
+                            .any(|c| c.kind() == "type_parameter")
             });
             if misread {
                 return Some(node.start_byte() + 1);
@@ -270,18 +282,23 @@ fn parse_after(
 /// Whether a captured string is a module: not the text of a regex (see
 /// [`after_division`]), and, in a `require(…)`, the only argument, comments
 /// aside.
-fn is_module(string: tree_sitter::Node) -> bool {
-    match string.parent() {
-        Some(arguments) if arguments.kind() == "arguments" => {
-            let mut cursor = arguments.walk();
-            // (Counting stops at a second argument: a call of many strings is
-            // read once per string.)
-            let args = arguments
-                .named_children(&mut cursor)
-                .filter(|child| child.kind() != "comment")
-                .take(2)
-                .count();
-            args == 1
+fn is_module(
+    string: tree_sitter::Node,
+    arguments: Option<tree_sitter::Node>,
+    lone: &mut HashMap<usize, bool>,
+) -> bool {
+    match arguments {
+        Some(arguments) => {
+            *lone.entry(arguments.id()).or_insert_with(|| {
+                let mut cursor = arguments.walk();
+                // (Counting stops at a second argument.)
+                let args = arguments
+                    .named_children(&mut cursor)
+                    .filter(|child| child.kind() != "comment")
+                    .take(2)
+                    .count();
+                args == 1
+            })
         }
         _ => !after_division(string),
     }

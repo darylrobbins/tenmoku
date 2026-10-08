@@ -154,3 +154,25 @@ fn a_call_of_many_strings_is_read_once() {
     }
     assert!(started.elapsed() < std::time::Duration::from_secs(5));
 }
+
+#[test]
+fn a_call_of_many_comments_and_strings_is_read_once() {
+    let text = format!(
+        "require({}'m', {});\n",
+        "/* c */ ".repeat(40_000),
+        vec!["'m'"; 40_000].join(", ")
+    );
+    let started = std::time::Instant::now();
+    assert_eq!(specifiers("tsx", &text), Vec::<String>::new());
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+}
+
+#[test]
+fn many_jsx_attributes_named_extends_keep_the_last_import() {
+    let mut text = String::new();
+    for i in 0..40 {
+        text.push_str(&format!("const x{i} = <A extends=\"/\" />; "));
+    }
+    text.push_str("import a from './a';\n");
+    assert_eq!(specifiers("tsx", &text), ["./a"]);
+}
