@@ -9,7 +9,7 @@ use std::{
     rc::Rc,
 };
 
-use fe_buffer::{Bias, Buffer};
+use fe_buffer::{Bias, Buffer, ResolvedSelection};
 use fe_command::Source;
 use fe_editor::EditorModel;
 use fe_gpui::{EditorSettings, EditorTheme, EditorView, SettingsEvent};
@@ -76,6 +76,16 @@ pub struct Pane {
     error: Option<(PathBuf, String)>,
     /// What to select in the file opened last once its editor exists.
     reveal: Option<(PathBuf, Reveal)>,
+    /// Bumped by every [`Pane::open_at`], so the open last made can be told
+    /// from the ones it superseded.
+    open_serial: u64,
+    /// The editor shown in the active tab's place, as [`Pane::note_shown`]
+    /// last saw it, and how many times it has changed: see
+    /// [`Revealed::shown`].
+    shown: Option<EntityId>,
+    shown_serial: u64,
+    /// The last reveal applied to an editor, and the open it was for.
+    revealed: Option<Revealed>,
     theme: EditorTheme,
     /// For editors yet to open.
     settings: EditorSettings,
@@ -123,6 +133,10 @@ impl Pane {
             reads: HashMap::new(),
             error: None,
             reveal: None,
+            open_serial: 0,
+            shown: None,
+            shown_serial: 0,
+            revealed: None,
             theme,
             settings,
             ui,
@@ -273,6 +287,7 @@ impl Pane {
         self.push_tab(editor, cx);
         self.active = self.tabs.len() - 1;
         self.error = None;
+        self.note_shown();
         cx.notify();
     }
 
@@ -293,10 +308,11 @@ impl Pane {
         cx: &mut Context<Self>,
     ) {
         self.reveal = None;
+        self.open_serial += 1;
         if let Some(ix) = self.position(&path) {
             self.activate(ix, window, cx);
             if let Some(reveal) = reveal {
-                reveal.select(&self.tabs[ix].editor, cx);
+                self.apply(&reveal, ix, cx);
             }
             return;
         }
@@ -304,13 +320,14 @@ impl Pane {
             self.add(model, cx);
             self.activate(self.tabs.len() - 1, window, cx);
             if let Some(reveal) = reveal {
-                reveal.select(&self.tabs[self.active].editor, cx);
+                self.apply(&reveal, self.active, cx);
             }
             return;
         }
         self.reveal = reveal.map(|reveal| (path.clone(), reveal));
         self.opening = Some(path.clone());
         self.error = None;
+        self.note_shown();
         window.focus(&self.focus, cx);
         cx.notify();
         if self.reads.contains_key(&path) {
@@ -337,6 +354,7 @@ impl Pane {
     /// [`Pane::file_read`].
     pub fn opening(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.opening = Some(path);
+        self.note_shown();
         cx.notify();
     }
 
@@ -377,7 +395,7 @@ impl Pane {
                     cx.emit(PaneEvent::Activated);
                 }
                 if let Some((_, reveal)) = reveal {
-                    reveal.select(&self.tabs[ix].editor, cx);
+                    self.apply(&reveal, ix, cx);
                 }
             }
             Err(error) => {
@@ -390,7 +408,48 @@ impl Pane {
                 }
             }
         }
+        self.note_shown();
         cx.notify();
+    }
+
+    /// Selects `reveal` in tab `ix`'s editor, for the open last made.
+    fn apply(&mut self, reveal: &Reveal, ix: usize, cx: &mut App) {
+        let editor = &self.tabs[ix].editor;
+        reveal.select(editor, cx);
+        self.revealed = Some(Revealed {
+            serial: self.open_serial,
+            editor: editor.entity_id(),
+            selection: editor.read(cx).model().primary_selection(),
+            shown: self.shown_serial,
+        });
+    }
+
+    /// The serial of the open last made: see [`Pane::revealed`].
+    pub(crate) fn open_serial(&self) -> u64 {
+        self.open_serial
+    }
+
+    /// What [`Revealed::shown`] is compared with.
+    pub(crate) fn shown_serial(&self) -> u64 {
+        self.shown_serial
+    }
+
+    /// Counts a change to the editor shown in the active tab's place, by
+    /// identity: called after anything that may change it.
+    fn note_shown(&mut self) {
+        let shown = self.active_editor().map(Entity::entity_id);
+        if shown != self.shown {
+            self.shown = shown;
+            self.shown_serial += 1;
+        }
+    }
+
+    /// The last reveal applied to an editor. It's for the open last made if
+    /// its serial is [`Pane::open_serial`]: an open's reveal is applied at
+    /// most once, right away or when its file is read, and never once
+    /// another open supersedes it or a tab is shown in its read's place.
+    pub(crate) fn revealed(&self) -> Option<&Revealed> {
+        self.revealed.as_ref()
     }
 
     /// Shows tab `ix` and focuses its editor. A file still being read then
@@ -401,8 +460,11 @@ impl Pane {
         };
         self.active = ix;
         self.opening = None;
+        // A read this replaces opens without its reveal.
+        self.reveal = None;
         self.error = None;
         window.focus(&tab.editor.focus_handle(cx), cx);
+        self.note_shown();
     }
 
     /// Activates the next tab, or with `back` the previous one, wrapping. A
@@ -459,6 +521,7 @@ impl Pane {
         } else if ix < self.active {
             self.active -= 1;
         }
+        self.note_shown();
         Some(tab)
     }
 
@@ -666,6 +729,19 @@ impl Pane {
             .child(text)
             .into_any_element()
     }
+}
+
+/// A reveal applied to an editor: see [`Pane::revealed`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Revealed {
+    /// The [`Pane::open_serial`] of the open it was for.
+    pub serial: u64,
+    pub editor: EntityId,
+    /// The editor's primary selection right after, clamped to its text.
+    pub selection: ResolvedSelection,
+    /// [`Pane::shown_serial`] right after: while it's unchanged, the pane
+    /// has shown nothing else in the editor's place.
+    pub shown: u64,
 }
 
 /// A range to select in a file, by row, as a search match gives it: so it

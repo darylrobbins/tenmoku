@@ -18,6 +18,7 @@ mod pane_toolbar;
 mod project_panel;
 mod quick_open;
 mod quick_open_races;
+mod references_landing;
 mod references_panel;
 mod search_panel;
 mod search_panel_cancel;

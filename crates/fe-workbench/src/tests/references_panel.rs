@@ -28,7 +28,7 @@ use crate::{
 };
 
 /// A project of `files`, and its root, resolved as the watcher reports it.
-fn project(files: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf) {
+pub(super) fn project(files: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let root = fs::canonicalize(dir.path()).unwrap();
     for (rel, text) in files {
@@ -42,7 +42,7 @@ fn project(files: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf) {
 const MAIN: &str = "mod util;\n\nfn main() {\n    util::helper();\n    other();\n}\n";
 
 /// A workbench rooted at `root`, focused, showing `file`.
-fn opened<'a>(
+pub(super) fn opened<'a>(
     cx: &'a mut TestAppContext,
     root: &Path,
     file: &str,
@@ -58,18 +58,22 @@ fn opened<'a>(
     (workbench, cx)
 }
 
-fn settle(cx: &mut VisualTestContext) {
+pub(super) fn settle(cx: &mut VisualTestContext) {
     cx.run_until_parked();
     cx.update(|window, cx| window.draw(cx).clear(cx));
 }
 
-fn focus_editor(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) {
+pub(super) fn focus_editor(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) {
     cx.update(|window, cx| window.focus(&workbench.focus_handle(cx), cx));
 }
 
 /// Puts the caret inside the first `word` of the active editor, returning
 /// its offset.
-fn caret_on(workbench: &Entity<Workbench>, word: &str, cx: &mut VisualTestContext) -> usize {
+pub(super) fn caret_on(
+    workbench: &Entity<Workbench>,
+    word: &str,
+    cx: &mut VisualTestContext,
+) -> usize {
     let editor = workbench
         .read_with(cx, |workbench, cx| workbench.active_editor(cx).cloned())
         .expect("a file is shown");
@@ -82,7 +86,10 @@ fn caret_on(workbench: &Entity<Workbench>, word: &str, cx: &mut VisualTestContex
 }
 
 /// The active editor's file, its selection and whether it's focused.
-fn at(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> (PathBuf, Range<usize>, bool) {
+pub(super) fn at(
+    workbench: &Entity<Workbench>,
+    cx: &mut VisualTestContext,
+) -> (PathBuf, Range<usize>, bool) {
     let editor = workbench
         .read_with(cx, |workbench, cx| workbench.active_editor(cx).cloned())
         .expect("a file is shown");
@@ -97,7 +104,7 @@ fn at(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> (PathBuf, Ra
     })
 }
 
-fn references(
+pub(super) fn references(
     workbench: &Entity<Workbench>,
     cx: &mut VisualTestContext,
 ) -> Entity<ReferencesPanel> {
@@ -106,7 +113,7 @@ fn references(
     })
 }
 
-fn shown(panel: &Entity<ReferencesPanel>, cx: &mut VisualTestContext) -> Vec<ShownRow> {
+pub(super) fn shown(panel: &Entity<ReferencesPanel>, cx: &mut VisualTestContext) -> Vec<ShownRow> {
     panel.read_with(cx, |panel, _| panel.shown_rows())
 }
 
@@ -131,7 +138,7 @@ fn release(release: &async_channel::Sender<()>, cx: &mut VisualTestContext) {
 }
 
 /// Clicks row `ix` where the last frame laid it out.
-fn click(panel: &Entity<ReferencesPanel>, ix: usize, cx: &mut VisualTestContext) {
+pub(super) fn click(panel: &Entity<ReferencesPanel>, ix: usize, cx: &mut VisualTestContext) {
     let bounds = panel.read_with(cx, |panel, _| panel.row_bounds(ix).expect("drawn"));
     cx.simulate_click(bounds.center(), Modifiers::none());
     settle(cx);
@@ -139,7 +146,11 @@ fn click(panel: &Entity<ReferencesPanel>, ix: usize, cx: &mut VisualTestContext)
 
 /// Clicks at `position` without running anything else, so a file it opens
 /// is still read when the update ends.
-fn click_now(position: gpui::Point<gpui::Pixels>, window: &mut gpui::Window, cx: &mut gpui::App) {
+pub(super) fn click_now(
+    position: gpui::Point<gpui::Pixels>,
+    window: &mut gpui::Window,
+    cx: &mut gpui::App,
+) {
     let (modifiers, button) = (Modifiers::none(), gpui::MouseButton::Left);
     let down = gpui::MouseDownEvent {
         position,
@@ -979,9 +990,15 @@ fn back_and_forward_while_a_reference_is_read(cx: &mut TestAppContext) {
     settle(cx);
     assert_eq!(at(&workbench, cx).0, root.join("src/a.rs"));
 
-    // Where forward left the caret is a reference's: not recorded.
+    // Back dropped a.rs's reveal, so where forward left the caret, on its
+    // reference's end, isn't a panel landing (T196's decision): recorded.
+    let end = at(&workbench, cx).1.end;
     click(&panel, main_row, cx);
     focus_editor(&workbench, cx);
+    cx.simulate_keystrokes("ctrl--");
+    settle(cx);
+    let (path, selection, _) = at(&workbench, cx);
+    assert_eq!((path, selection), (root.join("src/a.rs"), end..end));
     cx.simulate_keystrokes("ctrl--");
     settle(cx);
     let (path, selection, _) = at(&workbench, cx);
