@@ -491,6 +491,7 @@ pub(crate) fn move_cursor(model: &mut EditorModel, state: &mut VimState, args: M
         // search from there starts at the next row.
         Motion::Left
         | Motion::Search(_)
+        | Motion::SearchWord(_)
         | Motion::FindForward(_)
         | Motion::FindBackward(_)
         | Motion::TillForward(_)

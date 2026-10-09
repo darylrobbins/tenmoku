@@ -4,6 +4,7 @@ use fe_buffer::Version;
 use fe_command::{ContextFrame, ContextStack};
 use fe_editor::{EditorModel, commands::CONTEXT};
 
+use crate::search::Pattern;
 use crate::{
     CommandLineKind, LastChange, Motion, Pending, Step, VimKey, VisualKind,
     cmdline::{self, CommandLine},
@@ -78,6 +79,8 @@ pub struct VimState {
     pub(crate) cmdline: Option<CommandLine>,
     /// The last error, for the host to show until the next key.
     pub(crate) message: Option<String>,
+    /// The last search's pattern, painted while 'hlsearch' is on.
+    pub(crate) highlight: Option<Pattern>,
 }
 
 impl VimState {
@@ -104,6 +107,13 @@ impl VimState {
     /// next command line, clears it.
     pub fn message(&self) -> Option<&str> {
         self.message.as_deref()
+    }
+
+    /// The pattern a host paints as matches ('hlsearch', on as in nvim): the
+    /// last search's, set by every search, `n`, `N`, `*` and `#` (even one
+    /// that finds no match), or `None` before the first.
+    pub fn highlight(&self) -> Option<&Pattern> {
+        self.highlight.as_ref()
     }
 
     /// The last `f t F T` motion run, for `;` and `,`.
