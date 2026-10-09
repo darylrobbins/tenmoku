@@ -177,6 +177,7 @@ fn reference(rel: &str, line: u64, preview: &str, word: &str) -> Reference {
             rel: rel.into(),
             range: start..start + word.len(),
             row: line as u32 - 1,
+            snapshot: None,
         },
         line_number: line,
         preview: preview.into(),
@@ -863,6 +864,7 @@ fn a_clamped_reference_counts_as_where_the_caret_landed(cx: &mut TestAppContext)
             rel: "src/a.rs".into(),
             range: start..start + 6,
             row: line as u32 - 1,
+            snapshot: None,
         },
         ..reference("src/a.rs", line, "helper();", "helper")
     };

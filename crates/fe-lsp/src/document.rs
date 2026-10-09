@@ -328,6 +328,18 @@ pub struct Admitted {
     pub others: Vec<SentDocument>,
 }
 
+/// What a request on no document went out with (a workspace symbol
+/// search, say): the documents the server had open, to decode its reply
+/// against.
+#[derive(Clone, Debug)]
+#[non_exhaustive]
+pub struct Opened {
+    /// The session's position encoding.
+    pub encoding: PositionEncoding,
+    /// Every document the server has open, at its current version.
+    pub documents: Vec<SentDocument>,
+}
+
 /// What a document needs from its server's actor to sync.
 pub(crate) struct Link {
     pub(crate) policy: SyncPolicy,

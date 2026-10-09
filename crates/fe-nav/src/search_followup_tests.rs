@@ -137,6 +137,7 @@ fn a_cancel_while_reading_imports_or_ranking_is_answered() {
         language: Some("typescript"),
         text: Text::new("import { other } from './other'\nother();\n"),
         offset: "import { other } from './other'\n".len(),
+        buffer: None,
     };
     for at in [Phase::Imports, Phase::Rank] {
         let (nav, cancel) = cancelling_at(at, dir.path());

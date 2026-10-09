@@ -9,6 +9,7 @@ mod kill;
 mod launcher;
 mod launcher_path_safety;
 mod lifecycle;
+mod navigation;
 mod readiness;
 mod registration;
 mod registry;

@@ -74,7 +74,7 @@ use lsp_types::{
 };
 
 use crate::clock::Clock;
-use crate::document::{Admitted, Document, Link, Note, Opening, SyncPolicy};
+use crate::document::{Admitted, Document, Link, Note, Opened, Opening, SyncPolicy};
 use crate::encoding::PositionEncoding;
 use crate::event::{LspError, LspEvent, NOT_OPEN, ServerId, ServerStatus, SharedLog};
 use crate::identity::{EndSession, Identities, SessionId};
@@ -110,10 +110,14 @@ type Timer = Pin<Box<dyn Future<Output = ()> + Send>>;
 /// The manager's event sink, shared by every server thread.
 pub(crate) type Sink = Arc<Mutex<dyn FnMut(LspEvent) + Send>>;
 
-/// Admits a request on a document, given what it's admitted with: on
-/// success, the [`Issue`] that sends it; on failure, it answers the caller
-/// with the error and returns `None`.
-pub(crate) type Admit = Box<dyn FnOnce(Result<Admitted, LspError>) -> Option<Issue> + Send>;
+/// Admits requests on a document, given what they're admitted with: on
+/// success, the [`Issue`]s that send them, in order; on failure, it answers
+/// the callers with the error and returns none.
+pub(crate) type Admit = Box<dyn FnOnce(Result<Admitted, LspError>) -> Vec<Issue> + Send>;
+
+/// As [`Admit`], for a request on no document: given the documents the
+/// server has open as it's sent.
+pub(crate) type WithDocuments = Box<dyn FnOnce(Result<Opened, LspError>) -> Option<Issue> + Send>;
 
 /// What waits in the actor's outbox for room in async-lsp's queue.
 pub(crate) enum Outgoing {
@@ -141,6 +145,9 @@ pub(crate) enum Command {
         version: Version,
         admit: Admit,
     },
+    /// A request on no document in particular, sent with the documents
+    /// the server has open then, brought up to date first.
+    WithDocuments(WithDocuments),
     /// New `settings` for the spec: they answer `workspace/configuration`
     /// from now on, and `workspace/didChangeConfiguration` carries them.
     Configure(serde_json::Value),
@@ -297,6 +304,22 @@ pub(crate) struct Server {
     pub(crate) epoch: u64,
     /// Where its stderr and `window/logMessage` go.
     pub(crate) log: SharedLog,
+    /// The latest status of the servers with this name and root.
+    pub(crate) latest: LatestStatus,
+}
+
+/// The latest status the servers started at one (name, root) reported, and
+/// which reported it: the newest instance's, since an instance a restart
+/// replaced may report its end after its successor has started.
+pub(crate) type LatestStatus = Arc<Mutex<Option<(ServerId, ServerStatus)>>>;
+
+/// Records `status` as `server`'s in `latest`, unless a newer instance
+/// there has reported already.
+pub(crate) fn latest(latest: &LatestStatus, server: ServerId, status: &ServerStatus) {
+    let mut latest = lock(latest);
+    if latest.as_ref().is_none_or(|(newest, _)| *newest <= server) {
+        *latest = Some((server, status.clone()));
+    }
 }
 
 impl Server {
@@ -312,6 +335,7 @@ impl Server {
             id: self.id,
             name: self.spec.name.clone(),
             sink: self.sink.clone(),
+            latest: self.latest.clone(),
         };
         if catch_unwind(AssertUnwindSafe(|| self.serve())).is_err() {
             status.send(ServerStatus::Stopped(Some(
@@ -325,6 +349,7 @@ impl Server {
             id: self.id,
             name: self.spec.name.clone(),
             sink: self.sink.clone(),
+            latest: self.latest.clone(),
         };
         // Hands the queued documents on however the thread ends, a panic
         // included, unless a session's actor has them.
@@ -647,10 +672,13 @@ struct StatusSink {
     id: ServerId,
     name: String,
     sink: Sink,
+    latest: LatestStatus,
 }
 
 impl StatusSink {
     fn send(&self, status: ServerStatus) {
+        // Set first, so whoever hears of it reads it here too.
+        latest(&self.latest, self.id, &status);
         let mut sink = self.sink.lock().unwrap_or_else(PoisonError::into_inner);
         sink(LspEvent::Status {
             server: self.id,
@@ -960,7 +988,22 @@ impl Actor {
                 version,
                 admit,
             } => {
-                if let Some(issue) = admit(self.admit(buffer, version)) {
+                for issue in admit(self.admit(buffer, version)) {
+                    self.link.outbox.push_back(Outgoing::Request(issue));
+                }
+            }
+            Command::WithDocuments(admit) => {
+                let ids: Vec<BufferId> = self.documents.keys().copied().collect();
+                for id in ids {
+                    self.drain(id);
+                }
+                let opened = Opened {
+                    encoding: self.link.encoding,
+                    documents: (self.documents.values())
+                        .filter_map(Document::current)
+                        .collect(),
+                };
+                if let Some(issue) = admit(Ok(opened)) {
                     self.link.outbox.push_back(Outgoing::Request(issue));
                 }
             }

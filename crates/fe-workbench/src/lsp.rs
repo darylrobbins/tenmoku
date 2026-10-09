@@ -27,6 +27,12 @@
 //! - **Commands.** `lsp.restart` and `lsp.show_log`, in the workbench's
 //!   context, act on the active editor's server. Their handlers only name
 //!   the op: the workbench does it.
+//! - **Navigation.** Each manager comes with an [`LspNavigation`] in
+//!   [`Workbench::navigation`] at [`PRECEDENCE`], over search's 0: go to
+//!   definition, find references and workspace symbols come from a
+//!   language's server once it's ready, and by search until then. It holds
+//!   the manager weakly, sharing its lock, so a replaced or closed one's
+//!   answers nothing.
 //! - **Shutdown.** Closing the window shuts its servers down (§3.4) on
 //!   their threads. Quitting shuts every workbench's down, and blocks until
 //!   each closed window's and each workbench's server has stopped, for as
@@ -58,8 +64,8 @@ use fe_config::settings::LspSettings;
 use fe_editor::EditorModel;
 use fe_gpui::commands::RunCommand;
 use fe_lsp::{
-    KillSwitch, LOGIN_SHELL_TIMEOUT, LocalLauncher, LspEvent, LspManager, ServerId, ServerLauncher,
-    ServerStatus,
+    KillSwitch, LOGIN_SHELL_TIMEOUT, LocalLauncher, LspEvent, LspManager, LspNavigation, ServerId,
+    ServerLauncher, ServerStatus,
 };
 use gpui::{
     App, AppContext as _, Context, Global, SharedString, Subscription, Task, WeakEntity, Window,
@@ -69,6 +75,9 @@ use crate::{RootChanged, StatusItem, StatusSide, TrustChanged, Workbench};
 
 /// The status bar item's id.
 pub(crate) const ITEM: &str = "lsp";
+
+/// [`LspNavigation`]'s precedence in the workbench's navigation (§5).
+pub(crate) const PRECEDENCE: i32 = 100;
 
 /// How many crash restarts fe-lsp allows within its window (§3.5).
 const RESTARTS: u32 = 5;
@@ -237,8 +246,9 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 /// A workbench's language servers.
 pub(crate) struct Lsp {
-    /// `None` with no root, and once the window has closed.
-    manager: Option<LspManager>,
+    /// `None` with no root, and once the window has closed. Shared with
+    /// its [`LspNavigation`], on navigation's background threads.
+    manager: Option<Arc<Mutex<LspManager>>>,
     watch: Option<Watch>,
     /// The root the manager serves.
     root: Option<PathBuf>,
@@ -410,7 +420,7 @@ impl Workbench {
     /// Makes the manager for `root`, resolved.
     fn start_lsp_manager(&mut self, root: PathBuf, cx: &mut Context<Self>) {
         let lsp = &mut self.lsp;
-        lsp.root = Some(root);
+        lsp.root = Some(root.clone());
         let host = cx.try_global::<Launcher>().map(|host| host.0.clone());
         #[cfg(test)]
         {
@@ -448,7 +458,11 @@ impl Workbench {
             stopped,
             switch: manager.kill_switch(),
         });
+        let manager = Arc::new(Mutex::new(manager));
+        let navigation = LspNavigation::new(Arc::downgrade(&manager), &root);
         lsp.manager = Some(manager);
+        // Replaces the last manager's.
+        self.navigation().add(Arc::new(navigation), PRECEDENCE);
         if self.root_trusted() {
             self.apply_trust(true);
         }
@@ -457,8 +471,8 @@ impl Workbench {
     /// Lets servers start for the root, or stops them, as it's trusted.
     fn apply_trust(&mut self, trusted: bool) {
         let root = self.lsp.root.clone();
-        if let Some(manager) = &mut self.lsp.manager {
-            manager.set_trust(move |path| trusted && Some(path) == root.as_deref());
+        if let Some(manager) = &self.lsp.manager {
+            lock(manager).set_trust(move |path| trusted && Some(path) == root.as_deref());
         }
     }
 
@@ -468,8 +482,8 @@ impl Workbench {
     pub(crate) fn reload_lsp_settings(&mut self, settings: &LspSettings, cx: &mut App) {
         set_lsp_settings(cx, settings.clone());
         self.lsp.settings = settings.clone();
-        if let Some(manager) = &mut self.lsp.manager {
-            manager.update_settings(settings);
+        if let Some(manager) = &self.lsp.manager {
+            lock(manager).update_settings(settings);
         }
     }
 
@@ -479,9 +493,10 @@ impl Workbench {
     pub(crate) fn sync_lsp(&mut self, cx: &mut Context<Self>) {
         let editors = self.open_editors(cx);
         let lsp = &mut self.lsp;
-        let (Some(manager), Some(root)) = (&mut lsp.manager, &lsp.root) else {
+        let (Some(manager), Some(root)) = (lsp.manager.clone(), &lsp.root) else {
             return;
         };
+        let mut manager = lock(&manager);
         let documents = &mut lsp.documents;
         let watch = &lsp.watch;
         let mut shown = HashSet::new();
@@ -659,9 +674,10 @@ impl Workbench {
             return;
         };
         let name = name.to_owned();
-        let Some(manager) = &mut lsp.manager else {
+        let Some(manager) = lsp.manager.clone() else {
             return;
         };
+        let mut manager = lock(&manager);
         match op {
             LspOp::Restart => match manager.restart(&name, &root) {
                 Ok(Some(restarted)) => {
@@ -792,7 +808,7 @@ impl Workbench {
     /// What the server `name` for the root has logged.
     pub(crate) fn lsp_log(&self, name: &str) -> String {
         match (&self.lsp.manager, &self.lsp.root) {
-            (Some(manager), Some(root)) => manager.log(name, root),
+            (Some(manager), Some(root)) => lock(manager).log(name, root),
             _ => String::new(),
         }
     }

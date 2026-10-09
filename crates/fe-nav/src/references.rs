@@ -330,6 +330,7 @@ impl Finder<'_> {
                     rel: req.rel.clone(),
                     range,
                     row,
+                    snapshot: None,
                 },
                 line_number: u64::from(row) + 1,
                 preview,
@@ -562,6 +563,7 @@ impl Finder<'_> {
                         rel: rel.to_path_buf(),
                         range,
                         row,
+                        snapshot: None,
                     },
                     line_number: line.line_number,
                     preview: line.preview.clone(),
@@ -784,7 +786,11 @@ fn utf16_bom(bytes: &[u8]) -> bool {
 /// [`PREVIEW_BYTES`] on char boundaries around the hit; and the hit in it,
 /// if the window holds it whole. No more than [`PREVIEW_BYTES`] either side
 /// of the hit is looked at, however long the line.
-fn preview(source: &str, line_start: usize, hit: Range<usize>) -> (String, Option<Range<usize>>) {
+pub(crate) fn preview(
+    source: &str,
+    line_start: usize,
+    hit: Range<usize>,
+) -> (String, Option<Range<usize>>) {
     let from = source.floor_char_boundary(line_start.max(hit.start.saturating_sub(PREVIEW_BYTES)));
     let limit = source.floor_char_boundary((hit.end + PREVIEW_BYTES).min(source.len()));
     let line_end = source[hit.end..limit]
@@ -889,6 +895,7 @@ mod tests {
             language: Some("tsx"),
             text: Text::new(text),
             offset: 0,
+            buffer: None,
         };
         let started = Instant::now();
         let mut refs = Vec::new();
@@ -995,6 +1002,7 @@ mod tests {
                 language: Some("rust"),
                 text: Text::new(&text),
                 offset: 0,
+                buffer: None,
             };
             CANCEL_CHECKS.set(0);
             let (found, hits) = finder(&cancel).own_file(&req);
@@ -1046,6 +1054,7 @@ mod tests {
                     language: None,
                     text: Text::new(text),
                     offset: 0,
+                    buffer: None,
                 };
                 CANCEL_CHECKS.set(0);
                 CANCEL_AT.set(at);

@@ -302,7 +302,9 @@ impl ReferencesPanel {
     }
 
     /// Opens reference row `ix`, if it's still `generation`'s, in the active
-    /// pane with its word selected, recording where the caret is unless the
+    /// pane with its word selected (where it is now, if a language server
+    /// found it in an open buffer's earlier version: see
+    /// [`Workbench::target_of`]), recording where the caret is unless the
     /// panel's last open in the pane took it there and it hasn't moved since:
     /// so going back after going through the list returns to where the caret
     /// was before.
@@ -321,11 +323,12 @@ impl ReferencesPanel {
         let pane = workbench.read(cx).pane().clone();
         let record = !(self.landings).holds_caret(&pane, workbench.read(cx), cx);
         let before = pane.read(cx).open_serial();
+        // The file the jump opens, as the pane will have it.
+        let target = workbench.read(cx).target_of(&location, cx);
         workbench.update(cx, |workbench, cx| {
             workbench.list_jump(record, &location, window, cx)
         });
-        if let Some(root) = &self.root {
-            let path = root.join(&location.rel);
+        if let Some((path, _)) = target {
             self.landings.opened(&pane, before, path, cx);
         }
     }

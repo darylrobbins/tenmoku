@@ -183,6 +183,7 @@ fn request(root: &Path, ix: usize, at: &str) -> NavRequest {
         language: Some("rust"),
         text: Text::new(&text),
         offset,
+        buffer: None,
     }
 }
 

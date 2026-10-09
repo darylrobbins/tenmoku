@@ -207,6 +207,9 @@ impl Carry {
                 // It answers the caller itself, so issues nothing.
                 let _ = admit(Err(LspError::ServerDown));
             }
+            Command::WithDocuments(admit) => {
+                let _ = admit(Err(LspError::ServerDown));
+            }
             Command::Open(opening) => {
                 if self
                     .identities

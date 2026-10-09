@@ -23,8 +23,10 @@ use std::{
     },
 };
 
-use fe_buffer::Text;
+use fe_buffer::{BufferId, Text, Version};
 use fe_syntax::OutlineKind;
+
+use crate::{FileSymbols, Symbol, SymbolIndex};
 
 /// How a provider knows what it answers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -59,19 +61,37 @@ pub struct NavRequest {
     pub text: Text,
     /// The caret, as a byte offset into `text`.
     pub offset: usize,
+    /// The buffer `text` is a snapshot of, and its version: what a
+    /// provider syncing buffers (a language server's) checks the request
+    /// against. `None` for a request about no open buffer.
+    pub buffer: Option<(BufferId, Version)>,
+}
+
+impl NavRequest {
+    /// The word at the caret, as search finds it: the longest run of
+    /// identifier chars touching it, so a caret just after a word counts.
+    pub fn word(&self) -> Option<String> {
+        crate::search::word_at(&self.text, self.offset, self.language).map(|(_, word)| word)
+    }
 }
 
 /// A place in a project file.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Location {
-    /// Relative to the project root.
+    /// Relative to the project root. A language server may answer with a
+    /// file outside it (a library's source): that one is absolute, so
+    /// joining it to the root gives it as is.
     pub rel: PathBuf,
     /// Bytes in the file's text as the editor loads it (see
-    /// [`crate::Symbol`]). For the request's own file, bytes in
-    /// [`NavRequest::text`].
+    /// [`crate::Symbol`]), or, with a `snapshot`, in that buffer version's
+    /// text. For the request's own file, bytes in [`NavRequest::text`].
     pub range: Range<usize>,
     /// The 0-based row where `range` starts.
     pub row: u32,
+    /// The open buffer, and its version, whose text `range` is in; `None`
+    /// for the file's text as loaded from disk. The buffer may have been
+    /// edited since: map `range` from that version before selecting it.
+    pub snapshot: Option<(BufferId, Version)>,
 }
 
 /// How close a definition is to the request, best first.
@@ -91,7 +111,9 @@ pub struct Definition {
     /// Where its name is.
     pub location: Location,
     pub name: String,
-    pub kind: OutlineKind,
+    /// What it defines; `None` when the provider doesn't say (a language
+    /// server's locations carry no kind).
+    pub kind: Option<OutlineKind>,
     /// The name of the item it's nested in, if any.
     pub container: Option<String>,
     pub tier: Tier,
@@ -124,6 +146,56 @@ pub struct WorkspaceSymbol {
     pub indices: Vec<usize>,
 }
 
+impl WorkspaceSymbol {
+    /// The best `limit` of `symbols` for `query`, best first, each with
+    /// `indices` set: ranked and highlighted by the fuzzy matcher
+    /// [`SymbolIndex::fuzzy`] matches with, so another provider's symbols
+    /// (a language server's) rank and highlight as search's do. Equal
+    /// scores keep their order in `symbols`; names it doesn't match come
+    /// last, unhighlighted, in their order.
+    pub fn rank(query: &str, symbols: Vec<WorkspaceSymbol>, limit: usize) -> Vec<WorkspaceSymbol> {
+        let mut distinct: Vec<&str> = symbols.iter().map(|symbol| symbol.name.as_str()).collect();
+        distinct.sort_unstable();
+        distinct.dedup();
+        // An index of the names alone, rooted nowhere: nothing is read.
+        let mut index = SymbolIndex::new(PathBuf::new());
+        let names = (distinct.iter())
+            .map(|&name| Symbol {
+                name: name.to_owned(),
+                kind: OutlineKind::Variable,
+                name_range: 0..0,
+                range: 0..0,
+                row: 0,
+                container: None,
+            })
+            .collect();
+        index.extend(vec![FileSymbols {
+            rel: PathBuf::new(),
+            language: "",
+            len: 0,
+            modified: None,
+            symbols: names,
+            truncated: false,
+        }]);
+        let matched: std::collections::HashMap<String, (u16, Vec<usize>)> =
+            (index.fuzzy(query, distinct.len()).into_iter())
+                .map(|found| (found.symbol.name.to_owned(), (found.score, found.indices)))
+                .collect();
+        let mut ranked: Vec<(Option<u16>, WorkspaceSymbol)> = (symbols.into_iter())
+            .map(|mut symbol| {
+                let found = matched.get(&symbol.name);
+                symbol.indices = found
+                    .map(|(_, indices)| indices.clone())
+                    .unwrap_or_default();
+                (found.map(|(score, _)| *score), symbol)
+            })
+            .collect();
+        ranked.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
+        ranked.truncate(limit);
+        ranked.into_iter().map(|(_, symbol)| symbol).collect()
+    }
+}
+
 /// One use of a word, as [`NavigationProvider::references`] reports it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Reference {
@@ -149,6 +221,17 @@ pub struct Reference {
     /// It's the name of a definition in its file, by [`fe_syntax::symbols`];
     /// only a verified reference can be.
     pub is_definition: bool,
+}
+
+impl Reference {
+    /// The preview of a use at `hit`, bytes in `line`, a line of a file
+    /// or a window of one around the use: `line`, or a window of it cut
+    /// as search cuts its previews, and the use's bytes in it, if it shows
+    /// it whole. For a provider with references of its own.
+    pub fn preview(line: &str, hit: Range<usize>) -> (String, Vec<Range<usize>>) {
+        let (preview, range) = crate::references::preview(line, 0, hit);
+        (preview, range.into_iter().collect())
+    }
 }
 
 /// One file's references, in line order.

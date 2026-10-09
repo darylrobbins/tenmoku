@@ -42,6 +42,7 @@ fn request(root: &Path, rel: &str, text: &str, at: &str) -> NavRequest {
         language: Some("rust"),
         text: Text::new(text),
         offset: text.find(at).expect("caret text"),
+        buffer: None,
     }
 }
 
@@ -618,6 +619,7 @@ fn overlapping_candidates_as_the_search_has_them() {
         language: Some("javascript"),
         text: Text::new(text),
         offset: 0,
+        buffer: None,
     };
     let (batches, _) = find(&search(root, 1_000), &req);
     let starts = |rel: &str| -> Vec<usize> {

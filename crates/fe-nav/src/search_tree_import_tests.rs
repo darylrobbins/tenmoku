@@ -37,6 +37,7 @@ fn request(root: &Path, text: &str) -> NavRequest {
         rel: PathBuf::from("main.ts"),
         language: Some("typescript"),
         offset: text.rfind("helper").unwrap(),
+        buffer: None,
         text: Text::new(text),
     }
 }

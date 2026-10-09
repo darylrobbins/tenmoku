@@ -39,6 +39,7 @@ fn request(root: &Path, rel: &str, language: Option<&'static str>, text: &str) -
         language,
         text: Text::new(text),
         offset: 0,
+        buffer: None,
     }
 }
 
@@ -208,6 +209,7 @@ fn no_preview_is_read_through_a_directory_being_swapped() {
     let (a, aside) = (root.join("src/a"), root.join("src/a.aside"));
     let req = NavRequest {
         offset: req_text.find("helper").unwrap(),
+        buffer: None,
         ..request(&root, "req.rs", Some("rust"), req_text)
     };
     let done = AtomicBool::new(false);

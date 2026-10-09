@@ -457,9 +457,10 @@ impl Fallback {
                                 rel: rel.to_path_buf(),
                                 range: symbol.name_range,
                                 row: symbol.row,
+                                snapshot: None,
                             },
                             name: symbol.name,
-                            kind: symbol.kind,
+                            kind: Some(symbol.kind),
                             container: symbol.container,
                             tier: Tier::Project,
                         })
@@ -557,9 +558,10 @@ impl NavigationProvider for SearchNavigation {
                             rel: req.rel.clone(),
                             range: item.name_range.clone(),
                             row: item.row,
+                            snapshot: None,
                         },
                         name: item.name.clone(),
-                        kind: item.kind,
+                        kind: Some(item.kind),
                         container: item
                             .parent
                             .map(|parent| items[parent as usize].name.clone()),
@@ -594,9 +596,10 @@ impl NavigationProvider for SearchNavigation {
                         rel: symbol.rel.to_path_buf(),
                         range: symbol.name_range,
                         row: symbol.row,
+                        snapshot: None,
                     },
                     name: symbol.name.to_owned(),
-                    kind: symbol.kind,
+                    kind: Some(symbol.kind),
                     container: symbol.container.map(str::to_owned),
                     tier: Tier::Project,
                 });
@@ -697,6 +700,7 @@ impl NavigationProvider for SearchNavigation {
                     rel: found.symbol.rel.to_path_buf(),
                     range: found.symbol.name_range,
                     row: found.symbol.row,
+                    snapshot: None,
                 },
                 name: found.symbol.name.to_owned(),
                 kind: found.symbol.kind,
@@ -816,7 +820,7 @@ fn rank(found: &mut [Definition], request: &Path, hint: Option<KindHint>) {
             .count();
         (
             def.tier,
-            !hint.is_some_and(|hint| hint.matches(def.kind)),
+            !hint.is_some_and(|hint| def.kind.is_some_and(|kind| hint.matches(kind))),
             parent != dir,
             std::cmp::Reverse(shared),
             rel.clone(),
@@ -1181,6 +1185,7 @@ mod tests {
             language: Some("rust"),
             text: Text::new(text),
             offset: 0,
+            buffer: None,
         }
     }
 
@@ -1350,6 +1355,7 @@ mod tests {
         let text = "fn helper() {}\nfn main() { helper(); }\n";
         let req = || NavRequest {
             offset: text.rfind("helper").unwrap(),
+            buffer: None,
             ..request(dir.path(), text)
         };
         let found = unbuilt(dir.path())
@@ -1396,6 +1402,7 @@ mod tests {
         }
         let req = NavRequest {
             offset: text.rfind("helper").unwrap(),
+            buffer: None,
             ..request(dir.path(), &text)
         };
         let nav = unbuilt(dir.path()).with_budget(Duration::from_secs(60));

@@ -53,6 +53,7 @@ fn goto(
         language: Some(language),
         text: Text::new(text),
         offset,
+        buffer: None,
     };
     nav.definitions(&req, &AtomicBool::new(false)).unwrap()
 }
@@ -65,7 +66,7 @@ fn listed(defs: &Definitions) -> Vec<String> {
                 "{} {:?} {:?}",
                 def.location.rel.display(),
                 def.tier,
-                def.kind
+                def.kind.expect("search says what each definition is")
             )
         })
         .collect()

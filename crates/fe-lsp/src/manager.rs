@@ -28,23 +28,32 @@ use fe_buffer::{BufferId, Subscription, Version};
 use fe_config::settings::LspSettings;
 use fe_text::Text;
 use futures::channel::{mpsc, oneshot};
-use futures::future::FutureExt;
+use futures::future::{BoxFuture, FutureExt};
 use lsp_types::request::Request;
 use lsp_types::{ServerCapabilities, Url};
 
 use crate::clock::{Clock, SystemClock};
-use crate::document::{Admitted, Attached, Opening, Subscribed, language_id};
+use crate::document::{Admitted, Attached, Opened, Opening, Subscribed, language_id};
 use crate::encoding::PositionEncoding;
-use crate::event::{LspError, LspEvent, NOT_OPEN, ServerId, SharedLog};
+use crate::event::{LspError, LspEvent, NOT_OPEN, ServerId, ServerStatus, SharedLog};
 use crate::identity::{Identities, IncarnationId, SessionId};
 use crate::launcher::{Flag, LaunchCancel, ServerLauncher, ServerSpec};
 use crate::registry::{Registry, needs_restart, server_for};
 use crate::requests::{Reply, call, timeout, within};
 use crate::restart::SharedCrashes;
-use crate::server::{Admit, Command, Done, Place, Routes, Server, Session, Sink};
+use crate::server::{
+    Admit, Command, Done, LatestStatus, Place, Routes, Server, Session, Sink, WithDocuments,
+};
 
 /// A reply, with the id the actor mirrored for its request.
 pub(crate) type WithId<T> = (i32, Result<Reply<T>, LspError>);
+
+/// A request's answer, to await anywhere.
+pub(crate) type Answer<T> = BoxFuture<'static, Result<T, LspError>>;
+
+/// The answers of two requests admitted together: the first's with what
+/// they were admitted with.
+pub(crate) type Paired<A, B> = (Answer<(Reply<A>, Admitted)>, Answer<Reply<B>>);
 
 /// The default [`LspManager::max_file_bytes`]: 50 MB, the size past which
 /// fastedit highlights only the viewport.
@@ -75,6 +84,8 @@ pub struct LspManager {
     crashes: HashMap<(String, PathBuf), SharedCrashes>,
     /// The log ring of the servers started at each (name, root).
     logs: HashMap<(String, PathBuf), SharedLog>,
+    /// The latest status of the servers started at each (name, root).
+    statuses: HashMap<(String, PathBuf), LatestStatus>,
     max_file_bytes: usize,
     next_id: u64,
     /// Whether routed servers may start for a root: see
@@ -190,6 +201,7 @@ impl LspManager {
             identities: Identities::default(),
             crashes: HashMap::new(),
             logs: HashMap::new(),
+            statuses: HashMap::new(),
             max_file_bytes: DEFAULT_MAX_FILE_BYTES,
             next_id: 0,
             trusted: Arc::new(|_| true),
@@ -399,6 +411,12 @@ impl LspManager {
         };
         let log = self.logs.entry(key.clone()).or_default().clone();
         let cancel = LaunchCancel::linked(self.switch.clone());
+        let latest = self.statuses.entry(key.clone()).or_default().clone();
+        // As its thread will report first: an earlier instance's status
+        // no longer stands for the server there, unless no thread is made.
+        let before = lock(&latest).clone();
+        crate::server::latest(&latest, id, &ServerStatus::Starting);
+        let unmade = latest.clone();
         let thread = Server {
             id,
             spec: spec.clone(),
@@ -419,8 +437,10 @@ impl LspManager {
             crashes,
             epoch,
             log,
+            latest,
         }
-        .spawn()?;
+        .spawn()
+        .inspect_err(|_| *lock(&unmade) = before)?;
         self.retiring.remove(&key);
         self.servers.insert(
             id,
@@ -618,14 +638,77 @@ impl LspManager {
                 Ok(admitted) => admitted,
                 Err(err) => {
                     let _ = answer.send(Err(err));
-                    return None;
+                    return Vec::new();
                 }
             };
             let params = params(&admitted);
-            Some(call::<R, _>(answer, params, move |_, reply| {
+            vec![call::<R, _>(answer, params, move |_, reply| {
                 reply.map(|reply| (reply, admitted))
-            }))
+            })]
         });
+        self.admit(buffer, version, admit);
+        let answered = answered.map(|answer| answer.unwrap_or(Err(LspError::ServerDown)));
+        within(
+            answered,
+            self.timeout::<R>(),
+            &*self.clock,
+            Err(LspError::Timeout),
+        )
+    }
+
+    /// As [`document_request`](Self::document_request), for two requests
+    /// admitted together: both go out at the same version, `A` first, or
+    /// neither does. `B` answers with its reply alone.
+    pub(crate) fn document_request_pair<A: Request, B: Request>(
+        &self,
+        buffer: BufferId,
+        version: Version,
+        a: impl FnOnce(&Admitted) -> A::Params + Send + 'static,
+        b: impl FnOnce(&Admitted) -> B::Params + Send + 'static,
+    ) -> Paired<A::Result, B::Result> {
+        let (answer_a, answered_a) = oneshot::channel();
+        let (answer_b, answered_b) = oneshot::channel();
+        let admit: Admit = Box::new(move |admission| {
+            let admitted = match admission {
+                Ok(admitted) => admitted,
+                Err(err) => {
+                    let _ = answer_a.send(Err(err.clone()));
+                    let _ = answer_b.send(Err(err));
+                    return Vec::new();
+                }
+            };
+            let (params_a, params_b) = (a(&admitted), b(&admitted));
+            vec![
+                call::<A, _>(answer_a, params_a, move |_, reply| {
+                    reply.map(|reply| (reply, admitted))
+                }),
+                call::<B, _>(answer_b, params_b, |_, reply| reply),
+            ]
+        });
+        self.admit(buffer, version, admit);
+        let answered_a = answered_a.map(|answer| answer.unwrap_or(Err(LspError::ServerDown)));
+        let answered_b = answered_b.map(|answer| answer.unwrap_or(Err(LspError::ServerDown)));
+        (
+            within(
+                answered_a,
+                self.timeout::<A>(),
+                &*self.clock,
+                Err(LspError::Timeout),
+            )
+            .boxed(),
+            within(
+                answered_b,
+                self.timeout::<B>(),
+                &*self.clock,
+                Err(LspError::Timeout),
+            )
+            .boxed(),
+        )
+    }
+
+    /// Hands `admit` to the server `buffer` is synced to, or answers it
+    /// `Unavailable` if there's none.
+    fn admit(&self, buffer: BufferId, version: Version, admit: Admit) {
         match self.server_of(buffer) {
             Some(server) => self.send(
                 server,
@@ -639,6 +722,32 @@ impl LspManager {
                 admit(Err(LspError::Unavailable(NOT_OPEN.into())));
             }
         }
+    }
+
+    /// Sends `R` to `server`, as [`request`](Self::request) does, with
+    /// the documents the server has open as it's sent ([`Opened`]),
+    /// brought up to date first: to decode a reply naming open documents
+    /// (workspace symbols, say) against the text the server had.
+    pub fn request_with_documents<R: Request>(
+        &self,
+        server: ServerId,
+        params: R::Params,
+    ) -> impl Future<Output = Result<(Reply<R::Result>, Opened), LspError>> + Send + 'static {
+        let (answer, answered) = oneshot::channel();
+        let admit: WithDocuments = Box::new(move |opened| {
+            let opened = match opened {
+                Ok(opened) => opened,
+                Err(err) => {
+                    let _ = answer.send(Err(err));
+                    return None;
+                }
+            };
+            Some(call::<R, _>(answer, params, move |_, reply| {
+                reply.map(|reply| (reply, opened))
+            }))
+        });
+        // A server that has gone drops the command, and `answer` with it.
+        self.send(server, Command::WithDocuments(admit));
         let answered = answered.map(|answer| answer.unwrap_or(Err(LspError::ServerDown)));
         within(
             answered,
@@ -646,6 +755,40 @@ impl LspManager {
             &*self.clock,
             Err(LspError::Timeout),
         )
+    }
+
+    /// The server documents of fe-syntax's `language` under `root` go to
+    /// now, by name, with the latest status of one started there (`None`
+    /// if none has been); `None` if they'd go to none: no server lists the
+    /// language, `[lsp]` turns it off, or `root` isn't trusted.
+    pub(crate) fn language_server(
+        &self,
+        root: &Path,
+        language: &str,
+    ) -> Option<(String, Option<ServerStatus>)> {
+        if !(self.trusted)(root) {
+            return None;
+        }
+        let specs = self.registry.specs();
+        let name = server_for(&specs, language)?.name.clone();
+        let status = (self.statuses.get(&(name.clone(), root.to_owned())))
+            .and_then(|latest| lock(latest).as_ref().map(|(_, status)| status.clone()));
+        Some((name, status))
+    }
+
+    /// The servers running for `root`, oldest first, each with its latest
+    /// status.
+    pub(crate) fn servers_at(&self, root: &Path) -> Vec<(ServerId, ServerStatus)> {
+        let mut servers: Vec<(ServerId, ServerStatus)> = (self.servers.iter())
+            .filter(|(_, handle)| handle.root == root)
+            .filter_map(|(&id, handle)| {
+                let key = (handle.name.clone(), handle.root.clone());
+                let latest = lock(self.statuses.get(&key)?).clone();
+                latest.filter(|(newest, _)| *newest == id)
+            })
+            .collect();
+        servers.sort_by_key(|(id, _)| *id);
+        servers
     }
 
     /// Starts syncing buffer `buffer`, at `path`, to the server for

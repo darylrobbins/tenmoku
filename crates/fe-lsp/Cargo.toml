@@ -27,6 +27,8 @@ thiserror.workspace = true
 # entry doesn't change under them.
 fe-buffer.workspace = true
 fe-config.workspace = true
+# Navigation answers, through its `NavigationProvider` seam.
+fe-nav.workspace = true
 fe-text.workspace = true
 
 [dev-dependencies]

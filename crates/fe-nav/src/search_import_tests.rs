@@ -790,6 +790,7 @@ fn request_for(root: &Path, imports: &str) -> NavRequest {
         rel: PathBuf::from("main.ts"),
         language: Some("typescript"),
         offset: text.len() - "();\n".len() - 1,
+        buffer: None,
         text: Text::new(&text),
     }
 }

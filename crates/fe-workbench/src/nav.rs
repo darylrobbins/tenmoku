@@ -12,17 +12,20 @@
 //!
 //! Requests read the active editor: its file relative to the root, its
 //! language, its text and its primary selection's head (the one scrolling
-//! follows). They run on the background executor once the search provider
-//! is in. Each caller has its own [`Requests`]: a new request cancels its
-//! caller's last, whose answer is dropped if it lands.
+//! follows), and the buffer and version the text is, which a language
+//! server's provider checks against. They run on the background executor
+//! once the search provider is in. Each caller has its own [`Requests`]: a
+//! new request cancels its caller's last, whose answer is dropped if it
+//! lands.
 //!
 //! A jump first records where the caret was in [`NavHistory`], which back
-//! and forward walk.
+//! and forward walk. A location in an open buffer's version goes to that
+//! buffer, mapped onto it as it is ([`Workbench::target_of`]).
 
 use std::{
     mem,
     ops::Range,
-    path::PathBuf,
+    path::{Path, PathBuf},
     rc::Rc,
     sync::{
         Arc, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard,
@@ -31,6 +34,7 @@ use std::{
 };
 
 use async_channel::{Receiver, Sender};
+use fe_buffer::Bias;
 use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry};
 use fe_gpui::commands::RunCommand;
 use fe_nav::{
@@ -464,12 +468,15 @@ impl Workbench {
         let editor = self.active_editor(cx)?.read(cx);
         let model = editor.model();
         let rel = model.path()?.strip_prefix(root).ok()?.to_owned();
+        // The text and its version come from the same snapshot.
+        let snapshot = model.snapshot();
         Some(NavRequest {
             root: root.clone(),
             rel,
             language: editor.syntax().map(|syntax| syntax.language().name()),
-            text: model.text().clone(),
+            text: snapshot.text().clone(),
             offset: model.primary_selection().head(),
+            buffer: Some((snapshot.id(), snapshot.version())),
         })
     }
 
@@ -604,11 +611,55 @@ impl Workbench {
         self.open_location(location, window, cx);
     }
 
-    /// Opens `location`, relative to the root, in the active pane.
+    /// Opens `location` in the active pane, where it is now
+    /// ([`Workbench::target_of`]).
     fn open_location(&mut self, location: &Location, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(root) = self.nav_state.root.clone() {
-            self.open_range(root.join(&location.rel), location.range.clone(), window, cx);
+        let Some((path, reveal)) = self.target_of(location, cx) else {
+            return;
+        };
+        self.pane()
+            .clone()
+            .update(cx, |pane, cx| pane.open_at(path, Some(reveal), window, cx));
+    }
+
+    /// The file to open for `location`, and what to select in it.
+    ///
+    /// A range in an open buffer's version (a language server's answer,
+    /// [`Location::snapshot`]) is that buffer's: it opens by the path the
+    /// buffer was opened with (which may reach the file through a link the
+    /// server's path doesn't), and its range is mapped onto the buffer as
+    /// it is now, so text typed since doesn't move it off its name. If that
+    /// version is below the buffer's edit log, the location's row is
+    /// selected instead, as it is if the buffer has closed since: its text
+    /// may not have been saved. Any other location is the file's, relative
+    /// to the root, as loaded from disk. `None` without a root.
+    pub(crate) fn target_of(&self, location: &Location, cx: &App) -> Option<(PathBuf, Reveal)> {
+        let path = self.nav_state.root.as_ref()?.join(&location.rel);
+        let Some((buffer, version)) = location.snapshot else {
+            return Some((path, Reveal::bytes(location.range.clone())));
+        };
+        let row = Reveal {
+            row: location.row,
+            columns: 0..0,
+        };
+        let open = self.open_editors(cx).into_iter().find_map(|editor| {
+            let model = editor.read(cx).model();
+            let shared = model.buffer();
+            (shared.id() == buffer).then(|| (model.path().map(Path::to_owned), shared.snapshot()))
+        });
+        let Some((opened, snapshot)) = open else {
+            return Some((path, row));
+        };
+        let path = opened.unwrap_or(path);
+        if version < snapshot.oldest_version() {
+            return Some((path, row));
         }
+        let range = &location.range;
+        // Text typed at the name's start goes before it, and at its end
+        // after it.
+        let start = snapshot.map_offset(range.start, Bias::Right, version);
+        let end = (snapshot.map_offset(range.end, Bias::Left, version)).max(start);
+        Some((path, Reveal::bytes(start..end)))
     }
 
     pub(crate) fn run_nav_op(&mut self, op: NavOp, window: &mut Window, cx: &mut Context<Self>) {

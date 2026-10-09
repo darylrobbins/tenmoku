@@ -163,6 +163,7 @@ fn request(root: &Path, rel: &str, language: &'static str) -> NavRequest {
         language: Some(language),
         text: Text::new(text),
         offset: 2,
+        buffer: None,
     }
 }
 
@@ -174,9 +175,10 @@ fn exact_answer() -> Definitions {
                 rel: PathBuf::from("src/util.rs"),
                 range: 7..13,
                 row: 0,
+                snapshot: None,
             },
             name: "helper".to_owned(),
-            kind: OutlineKind::Function,
+            kind: Some(OutlineKind::Function),
             container: None,
             tier: Tier::Project,
         }],

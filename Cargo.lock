@@ -1816,6 +1816,7 @@ dependencies = [
  "async-process",
  "fe-buffer",
  "fe-config",
+ "fe-nav",
  "fe-text",
  "futures",
  "log",

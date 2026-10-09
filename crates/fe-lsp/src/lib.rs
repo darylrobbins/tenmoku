@@ -25,6 +25,8 @@
 //!   budget; its status events say where it is, from `Starting` through
 //!   `Ready` to `Restarting(n)` or `Stopped`. Every reply says whether an
 //!   empty result is final ([`Reply`]).
+//! - [`LspNavigation`] answers fe-nav's go-to-definition, references and
+//!   workspace symbols from a manager's servers, once each is ready.
 //!
 //! Two facts for a host embedding fe-lsp:
 //!
@@ -47,6 +49,7 @@ mod event;
 mod identity;
 mod launcher;
 mod manager;
+mod navigation;
 mod readiness;
 mod registration;
 mod registry;
@@ -65,7 +68,7 @@ mod tests;
 #[cfg(any(test, feature = "test-support"))]
 pub use clock::ManualClock;
 pub use clock::{Clock, SystemClock};
-pub use document::{Admitted, SentDocument, SentVersion};
+pub use document::{Admitted, Opened, SentDocument, SentVersion};
 pub use encoding::{PositionEncoding, from_lsp, to_lsp};
 pub use event::{LspError, LspEvent, ServerId, ServerStatus};
 pub use identity::{IncarnationId, SessionId};
@@ -74,4 +77,5 @@ pub use launcher::{
     ServerLauncher, ServerProcess, ServerSpec, UnversionedDiagnostics,
 };
 pub use manager::{DEFAULT_MAX_FILE_BYTES, KillSwitch, LspManager};
+pub use navigation::LspNavigation;
 pub use requests::{ORPHANS_MAX, Reply};
