@@ -151,7 +151,12 @@ pub(crate) fn put(
     let Some(ends) = ends(model, state) else {
         return effect(false);
     };
-    let count = args.count.unwrap_or(1).max(1) as usize;
+    // An unset register puts nothing, however many times: the count bounds
+    // and repeats nothing, and the put leaves what the uncounted one does.
+    let count = match unset {
+        true => 1,
+        false => args.count.unwrap_or(1).max(1) as usize,
+    };
     let mut payload = value.text.replace("\r\n", "\n").replace('\r', "\n");
     if value.linewise && !payload.ends_with('\n') {
         payload.push('\n');

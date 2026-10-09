@@ -16,6 +16,7 @@ mod state;
 mod undo;
 mod visual;
 mod visual_block;
+mod visual_put_unset;
 
 /// Steps `keys` through the reducer from nothing pending. Every key but the
 /// last must wait; returns what the last did.
