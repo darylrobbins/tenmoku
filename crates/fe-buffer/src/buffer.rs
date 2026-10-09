@@ -7,7 +7,7 @@ use std::{
     },
 };
 
-use fe_text::{Bias, LineEnding, Text};
+use fe_text::{Bias, EncodeError, FileEncoding, LineEnding, Text};
 
 use crate::{
     BufferId, BufferSnapshot, Edit, Version,
@@ -98,6 +98,11 @@ impl Subscription {
 pub struct Buffer {
     snapshot: BufferSnapshot,
     line_ending: LineEnding,
+    /// The encoding the file was read in, and is written back in.
+    encoding: FileEncoding,
+    /// Whether reading decoded malformed bytes to U+FFFD; see
+    /// [`Buffer::write_to`].
+    replaced_on_read: bool,
     history: Vec<HistoryEntry>,
     open: Option<OpenTransaction>,
     next_transaction: u64,
@@ -173,6 +178,16 @@ impl Buffer {
         Ok(Self::with_text(text, line_ending))
     }
 
+    /// Like [`Buffer::from_reader`], but detects the file's encoding (see
+    /// [`Text::from_reader_detecting`]) and saves back in it.
+    pub fn from_reader_detecting(reader: impl std::io::Read) -> std::io::Result<Self> {
+        let decoded = Text::from_reader_detecting(reader)?;
+        let mut buffer = Self::with_text(decoded.text, decoded.line_ending);
+        buffer.encoding = decoded.encoding;
+        buffer.replaced_on_read = decoded.replaced;
+        Ok(buffer)
+    }
+
     fn with_text(text: Text, line_ending: LineEnding) -> Self {
         Self {
             snapshot: BufferSnapshot {
@@ -181,6 +196,8 @@ impl Buffer {
                 log: EditLog::new(),
             },
             line_ending,
+            encoding: FileEncoding::UTF8,
+            replaced_on_read: false,
             history: Vec::new(),
             open: None,
             next_transaction: 0,
@@ -235,10 +252,55 @@ impl Buffer {
         self.version() != self.saved_version
     }
 
-    /// Writes the text with the buffer's line endings. Call
+    /// The encoding [`Buffer::write_to`] writes in: the one the file was read
+    /// in, or UTF-8 without a BOM.
+    pub fn encoding(&self) -> FileEncoding {
+        self.encoding
+    }
+
+    /// Writes the text with the buffer's line endings in its encoding. Call
     /// [`Buffer::did_save`] once it's safely on disk.
+    ///
+    /// Refuses with [`std::io::ErrorKind::InvalidData`] rather than lose data:
+    /// before writing anything if the file had bytes that were invalid in its
+    /// encoding and some of the U+FFFD they became are still in the text, and
+    /// part-way through on a char the encoding can't represent. Output may
+    /// have been written by then, so write to a temporary file and keep it
+    /// only on success, as `EditorModel::save` does.
     pub fn write_to(&self, out: impl std::io::Write) -> std::io::Result<()> {
-        self.snapshot.text.write_to(self.line_ending, out)
+        let text = &self.snapshot.text;
+        if self.replaced_on_read
+            && text
+                .chunks()
+                .any(|chunk| chunk.contains(char::REPLACEMENT_CHARACTER))
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "the file had bytes that aren't valid {}, shown as U+FFFD; \
+                     saving would replace them",
+                    self.encoding.label()
+                ),
+            ));
+        }
+        text.write_encoded(self.line_ending, self.encoding, out)
+            .map_err(|error| match error {
+                EncodeError::Unmappable { ch, offset } => {
+                    let point = text.offset_to_point(offset);
+                    let row_start = text.row_start(point.row);
+                    let column = text.offset_to_char(offset) - text.offset_to_char(row_start) + 1;
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!(
+                            "{ch:?} (U+{:04X}) on line {}, column {column} can't be saved in {}",
+                            u32::from(ch),
+                            point.row + 1,
+                            self.encoding.label()
+                        ),
+                    )
+                }
+                EncodeError::Io(error) => error,
+            })
     }
 
     pub fn did_save(&mut self) {

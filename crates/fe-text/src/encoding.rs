@@ -37,6 +37,27 @@ impl FileEncoding {
     pub fn name(self) -> &'static str {
         self.encoding.name()
     }
+
+    /// For the status bar: `"UTF-8 with BOM"` for UTF-8 with a BOM, otherwise
+    /// [`FileEncoding::name`].
+    pub fn label(self) -> String {
+        if self.encoding == UTF_8 && self.bom {
+            "UTF-8 with BOM".to_owned()
+        } else {
+            self.name().to_owned()
+        }
+    }
+}
+
+/// What [`Text::from_reader_detecting`] read.
+#[derive(Clone, Debug)]
+pub struct DecodedFile {
+    pub text: Text,
+    pub line_ending: LineEnding,
+    pub encoding: FileEncoding,
+    /// Whether any input was malformed in `encoding` and decoded to U+FFFD.
+    /// A U+FFFD the file legitimately contains doesn't count.
+    pub replaced: bool,
 }
 
 impl Default for FileEncoding {
@@ -95,9 +116,8 @@ impl Text {
     /// 3. otherwise `chardetng` guesses from those 64 KiB.
     ///
     /// Only those first 64 KiB (and a byte) are held besides the text being built.
-    pub fn from_reader_detecting(
-        mut reader: impl Read,
-    ) -> io::Result<(Self, LineEnding, FileEncoding)> {
+    /// [`DecodedFile::replaced`] reports whether any input was malformed.
+    pub fn from_reader_detecting(mut reader: impl Read) -> io::Result<DecodedFile> {
         // One byte past the window tells a sequence cut at 64 KiB from one
         // cut by the end of the file.
         let mut head = Vec::with_capacity(SNIFF_LEN + 1);
@@ -124,8 +144,11 @@ impl Text {
             }
         };
 
+        let mut replaced = false;
         let (text, line_ending) = if file_encoding.encoding == UTF_8 {
-            Self::decode_stream(head, reader, decode_lossy)?
+            Self::decode_stream(head, reader, |bytes, eof, out| {
+                decode_lossy(bytes, eof, out, &mut replaced)
+            })?
         } else {
             // The BOM, if any, is already gone.
             let mut decoder = file_encoding.encoding.new_decoder_without_bom_handling();
@@ -134,12 +157,18 @@ impl Text {
                     .max_utf8_buffer_length(bytes.len())
                     .expect("a read buffer's worth of UTF-8 fits in usize");
                 out.reserve(needed);
-                let (result, read, _replaced) = decoder.decode_to_string(bytes, out, eof);
+                let (result, read, replaced_here) = decoder.decode_to_string(bytes, out, eof);
                 debug_assert_eq!(result, encoding_rs::CoderResult::InputEmpty);
+                replaced |= replaced_here;
                 read
             })?
         };
-        Ok((text, line_ending, file_encoding))
+        Ok(DecodedFile {
+            text,
+            line_ending,
+            encoding: file_encoding,
+            replaced,
+        })
     }
 
     /// Writes the text in `encoding`, with `line_ending` for each line break as

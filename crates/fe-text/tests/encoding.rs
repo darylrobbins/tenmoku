@@ -5,7 +5,7 @@ use std::io::Read;
 use encoding_rs::{
     EUC_JP, Encoding, ISO_2022_JP, SHIFT_JIS, UTF_8, UTF_16BE, UTF_16LE, WINDOWS_1252,
 };
-use fe_text::{EncodeError, FileEncoding, LineEnding, Text};
+use fe_text::{DecodedFile, EncodeError, FileEncoding, LineEnding, Text};
 
 /// Hands out at most `step` bytes per read, so sequences split across reads.
 struct Trickle<'a> {
@@ -23,7 +23,8 @@ impl Read for Trickle<'_> {
 }
 
 fn detect(bytes: &[u8]) -> (Text, LineEnding, FileEncoding) {
-    Text::from_reader_detecting(bytes).unwrap()
+    let decoded = Text::from_reader_detecting(bytes).unwrap();
+    (decoded.text, decoded.line_ending, decoded.encoding)
 }
 
 fn utf16(text: &str, big_endian: bool) -> Vec<u8> {
@@ -171,7 +172,12 @@ fn round_trip_is_byte_identical() {
                 bytes: &bytes,
                 step,
             };
-            let (text, line_ending, file_encoding) = Text::from_reader_detecting(reader).unwrap();
+            let DecodedFile {
+                text,
+                line_ending,
+                encoding: file_encoding,
+                ..
+            } = Text::from_reader_detecting(reader).unwrap();
             assert!(
                 !text.to_string().contains('\u{FFFD}'),
                 "{name}, step {step}"
@@ -211,7 +217,11 @@ fn truncated_sequences_at_eof_become_replacement_chars() {
                 bytes: &bytes,
                 step,
             };
-            let (text, _, file_encoding) = Text::from_reader_detecting(reader).unwrap();
+            let DecodedFile {
+                text,
+                encoding: file_encoding,
+                ..
+            } = Text::from_reader_detecting(reader).unwrap();
             assert_eq!(file_encoding.encoding, encoding);
             assert!(
                 text.to_string() == format!("{expected}\u{FFFD}"),

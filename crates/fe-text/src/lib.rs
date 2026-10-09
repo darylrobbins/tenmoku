@@ -14,7 +14,7 @@ use ropey::LineType;
 
 mod encoding;
 
-pub use encoding::{EncodeError, FileEncoding};
+pub use encoding::{DecodedFile, EncodeError, FileEncoding};
 pub use encoding_rs::Encoding;
 
 const LF: LineType = LineType::LF;
@@ -113,7 +113,10 @@ impl Text {
     /// Line endings are normalised like [`Text::from_file_contents`]; invalid
     /// UTF-8 becomes U+FFFD, as with [`String::from_utf8_lossy`].
     pub fn from_reader(reader: impl std::io::Read) -> std::io::Result<(Self, LineEnding)> {
-        Self::decode_stream(Vec::new(), reader, decode_lossy)
+        let mut replaced = false;
+        Self::decode_stream(Vec::new(), reader, |bytes, eof, out| {
+            decode_lossy(bytes, eof, out, &mut replaced)
+        })
     }
 
     /// Decodes `head` and then the rest of `reader` with `decode`, normalising
@@ -370,8 +373,9 @@ impl std::fmt::Debug for Text {
 
 /// Appends the valid UTF-8 prefix of `bytes` to `out`, replacing invalid
 /// sequences with U+FFFD. Returns how many bytes were consumed; an incomplete
-/// sequence at the end is left for the next call unless `eof`.
-fn decode_lossy(bytes: &[u8], eof: bool, out: &mut String) -> usize {
+/// sequence at the end is left for the next call unless `eof`. Sets
+/// `replaced` when it pushes a U+FFFD.
+fn decode_lossy(bytes: &[u8], eof: bool, out: &mut String, replaced: &mut bool) -> usize {
     let mut consumed = 0;
     loop {
         let rest = &bytes[consumed..];
@@ -386,10 +390,12 @@ fn decode_lossy(bytes: &[u8], eof: bool, out: &mut String) -> usize {
                 match error.error_len() {
                     Some(invalid) => {
                         out.push(char::REPLACEMENT_CHARACTER);
+                        *replaced = true;
                         consumed += valid + invalid;
                     }
                     None if eof => {
                         out.push(char::REPLACEMENT_CHARACTER);
+                        *replaced = true;
                         return bytes.len();
                     }
                     None => return consumed + valid,
