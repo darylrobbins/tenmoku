@@ -81,11 +81,32 @@ pub(crate) fn select_object(
             len => at.ix == len,
         }
     };
-    let (anchor, cursor) = if ends.anchor == ends.cursor && inner && at_end {
+    // A row's end after blanks: `iw` selects that run of blanks, growing forward.
+    let after_blanks = at_end && {
+        let at = cursor_at(&text, ends.cursor);
+        at.ix > 0 && at.class_on_row(at.ix - 1, big) == Some(Class::Blank)
+    };
+    let (anchor, cursor) = if ends.anchor == ends.cursor && inner && after_blanks {
+        let mut start = cursor_at(&text, ends.cursor);
+        start.ix -= 1;
+        let class = start.class_on_row(start.ix, big);
+        while start.ix > 0 && start.class_on_row(start.ix - 1, big) == class {
+            start.ix -= 1;
+        }
+        let end = inner_words(&text, ends.cursor, count, big, false);
+        if end.is_none() {
+            kind = ends.kind;
+        }
         (
-            ends.anchor,
-            back_inner_words(&text, ends.cursor, count, big, true),
+            start.offset(),
+            end.unwrap_or_else(|| position(&text, text.len())),
         )
+    } else if ends.anchor == ends.cursor && inner && at_end {
+        let (back, done) = back_inner_words(&text, ends.cursor, count, big, true);
+        if !done {
+            kind = ends.kind;
+        }
+        (ends.anchor, back)
     } else if ends.anchor == ends.cursor {
         match object(ends.cursor, 1) {
             // More `iw` than one go on as the selection grows.
@@ -105,10 +126,16 @@ pub(crate) fn select_object(
     } else if !forward && matches!(args.text_object, AWord | ABigWord) {
         (ends.anchor, back_a_words(&text, ends.cursor, count, big))
     } else if !forward && inner {
-        // At the start of the text there's nothing to grow onto.
+        // At the start of the text there's nothing to grow onto; running out
+        // of it part way keeps the kind.
         match back_inner_words(&text, ends.cursor, count, big, false) {
-            back if back == ends.cursor => return effect(false),
-            back => (ends.anchor, back),
+            (back, _) if back == ends.cursor => return effect(false),
+            (back, done) => {
+                if !done {
+                    kind = ends.kind;
+                }
+                (ends.anchor, back)
+            }
         }
     } else if forward && inner {
         match inner_words(&text, ends.cursor, count, big, true) {
@@ -195,21 +222,30 @@ fn inner_words(text: &Text, offset: usize, count: u32, big: bool, grows: bool) -
 /// `iw` (`iW` if `big`) `count` times back from the cursor at `offset`, as
 /// a visual selection grows the way it faces: each item one position back,
 /// then to the start of its run on the row. From a row's `end` (or a last row
-/// that's empty) the first item is only the position before it.
-fn back_inner_words(text: &Text, offset: usize, count: u32, big: bool, end: bool) -> usize {
+/// that's empty) the first item is only the position before it. Returns where
+/// the cursor goes, and whether every item was done: one that lands on the
+/// text's first position has nothing before it to select, and fails there.
+/// A run of blanks reaching the text's start stops one position on from it.
+fn back_inner_words(text: &Text, offset: usize, count: u32, big: bool, end: bool) -> (usize, bool) {
     let mut cursor = cursor_at(text, offset);
     for item in 0..count {
         if !cursor.backward() {
-            break;
+            return (cursor.offset(), false);
         }
         if item > 0 || !end {
+            if cursor.offset() == 0 {
+                return (0, false);
+            }
             let class = cursor.class_on_row(cursor.ix, big);
             while cursor.ix > 0 && cursor.class_on_row(cursor.ix - 1, big) == class {
                 cursor.ix -= 1;
             }
+            if class == Some(Class::Blank) && cursor.offset() == 0 && cursor.line.len() > 1 {
+                cursor.ix = 1;
+            }
         }
     }
-    cursor.offset()
+    (cursor.offset(), true)
 }
 
 /// `aw` (`aW` if `big`) `count` times back from the cursor at `offset`, as a

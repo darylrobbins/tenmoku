@@ -1,0 +1,2225 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "iw_row_end_after_spaces_d",
+      "buffer": "abc   \ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v$o$iwd",
+      "expect": {
+        "buffer": "abc\ndef",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "   ",
+            "linewise": false
+          },
+          "-": {
+            "text": "   ",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            0,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "iw_row_end_after_spaces_y",
+      "buffer": "abc   \ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v$o$iwy",
+      "expect": {
+        "buffer": "abc   \ndef",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "   ",
+            "linewise": false
+          },
+          "0": {
+            "text": "   ",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            0,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "iw_row_end_after_tabs_d",
+      "buffer": "abc\t\t\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v$o$iwd",
+      "expect": {
+        "buffer": "abc\ndef",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\t\t",
+            "linewise": false
+          },
+          "-": {
+            "text": "\t\t",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            0,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "iw_row_end_after_spaces_count2_d",
+      "buffer": "abc   \ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v$o$2iwd",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "   \ndef",
+            "linewise": false
+          },
+          "1": {
+            "text": "   \ndef",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            0,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "iw_row_end_after_spaces_count3_d",
+      "buffer": "abc   \ndef ghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v$o$3iwd",
+      "expect": {
+        "buffer": "abcghi",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "   \ndef ",
+            "linewise": false
+          },
+          "1": {
+            "text": "   \ndef ",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            0,
+            6
+          ]
+        }
+      }
+    },
+    {
+      "name": "iw_row_end_after_tabs_count2_d",
+      "buffer": "abc\t\t\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v$o$2iwd",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\t\t\ndef",
+            "linewise": false
+          },
+          "1": {
+            "text": "\t\t\ndef",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            0,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "iw_row_end_after_mixed_blanks_d",
+      "buffer": "abc \t \ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v$o$iwd",
+      "expect": {
+        "buffer": "abc\ndef",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " \t ",
+            "linewise": false
+          },
+          "-": {
+            "text": " \t ",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            0,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "iw_row_end_after_text_d",
+      "buffer": "abc def\nxyz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v$o$iwd",
+      "expect": {
+        "buffer": "abc dexyz",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "f\n",
+            "linewise": false
+          },
+          "1": {
+            "text": "f\n",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            6
+          ],
+          ">": [
+            0,
+            7
+          ]
+        }
+      }
+    },
+    {
+      "name": "iw_V_back_count2_y",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "Vh2iwy",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "abc\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "iw_V_back_moved_y",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "Vh2iwy",
+      "expect": {
+        "buffer": "abc def",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc de",
+            "linewise": false
+          },
+          "0": {
+            "text": "abc de",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "iw_V_back_one_y",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "Vhiwy",
+      "expect": {
+        "buffer": "abc def",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " de",
+            "linewise": false
+          },
+          "0": {
+            "text": " de",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            0,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "iw_V_row_end_count3_y",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "V$o$3iwy",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "abc\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "iw_V_row_end_count3_d",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "V$o$3iwd",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " def",
+            "linewise": false
+          },
+          "-": {
+            "text": " def",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            0,
+            7
+          ]
+        }
+      }
+    },
+    {
+      "name": "iw_V_row_end_count1_y",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "V$o$iwy",
+      "expect": {
+        "buffer": "abc def",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "f",
+            "linewise": false
+          },
+          "0": {
+            "text": "f",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            6
+          ],
+          ">": [
+            0,
+            7
+          ]
+        }
+      }
+    },
+    {
+      "name": "iw_back_onto_blank_row_d",
+      "buffer": "   \nabc",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "vhiwd",
+      "expect": {
+        "buffer": " c",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "  \nab",
+            "linewise": false
+          },
+          "1": {
+            "text": "  \nab",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "iw_back_onto_blank_row_y",
+      "buffer": "   \nabc",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "vhiwy",
+      "expect": {
+        "buffer": "   \nabc",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "  \nab",
+            "linewise": false
+          },
+          "0": {
+            "text": "  \nab",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "iw_back_onto_blank_row_count2_d",
+      "buffer": "   \nabc",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "vh2iwd",
+      "expect": {
+        "buffer": "c",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "   \nab",
+            "linewise": false
+          },
+          "1": {
+            "text": "   \nab",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "iw_back_onto_blank_row_count3_d",
+      "buffer": "   \nabc",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "vh3iwd",
+      "expect": {
+        "buffer": "c",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "   \nab",
+            "linewise": false
+          },
+          "1": {
+            "text": "   \nab",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "iw_back_onto_tab_row_d",
+      "buffer": "\t\t\nabc",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "vhiwd",
+      "expect": {
+        "buffer": "\tc",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\t\nab",
+            "linewise": false
+          },
+          "1": {
+            "text": "\t\nab",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "iw_back_onto_blank_row_after_text_d",
+      "buffer": "x\n   \nabc",
+      "cursor": [
+        2,
+        1
+      ],
+      "keys": "vhiwd",
+      "expect": {
+        "buffer": "x\nc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "   \nab",
+            "linewise": false
+          },
+          "1": {
+            "text": "   \nab",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "iw_back_onto_blank_row_V_d",
+      "buffer": "   \nabc",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "Vhiwd",
+      "expect": {
+        "buffer": " c",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "  \nab",
+            "linewise": false
+          },
+          "1": {
+            "text": "  \nab",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "iW_row_end_after_spaces_d",
+      "buffer": "abc   \ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v$o$iWd",
+      "expect": {
+        "buffer": "abc\ndef",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "   ",
+            "linewise": false
+          },
+          "-": {
+            "text": "   ",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            0,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "iW_row_end_after_spaces_y",
+      "buffer": "abc   \ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v$o$iWy",
+      "expect": {
+        "buffer": "abc   \ndef",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "   ",
+            "linewise": false
+          },
+          "0": {
+            "text": "   ",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            0,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "iW_row_end_after_tabs_d",
+      "buffer": "abc\t\t\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v$o$iWd",
+      "expect": {
+        "buffer": "abc\ndef",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\t\t",
+            "linewise": false
+          },
+          "-": {
+            "text": "\t\t",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            0,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "iW_row_end_after_spaces_count2_d",
+      "buffer": "abc   \ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v$o$2iWd",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "   \ndef",
+            "linewise": false
+          },
+          "1": {
+            "text": "   \ndef",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            0,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "iW_row_end_after_spaces_count3_d",
+      "buffer": "abc   \ndef ghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v$o$3iWd",
+      "expect": {
+        "buffer": "abcghi",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "   \ndef ",
+            "linewise": false
+          },
+          "1": {
+            "text": "   \ndef ",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            0,
+            6
+          ]
+        }
+      }
+    },
+    {
+      "name": "iW_row_end_after_tabs_count2_d",
+      "buffer": "abc\t\t\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v$o$2iWd",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\t\t\ndef",
+            "linewise": false
+          },
+          "1": {
+            "text": "\t\t\ndef",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            0,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "iW_row_end_after_mixed_blanks_d",
+      "buffer": "abc \t \ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v$o$iWd",
+      "expect": {
+        "buffer": "abc\ndef",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " \t ",
+            "linewise": false
+          },
+          "-": {
+            "text": " \t ",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            0,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "iW_row_end_after_text_d",
+      "buffer": "abc def\nxyz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v$o$iWd",
+      "expect": {
+        "buffer": "abc dexyz",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "f\n",
+            "linewise": false
+          },
+          "1": {
+            "text": "f\n",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            6
+          ],
+          ">": [
+            0,
+            7
+          ]
+        }
+      }
+    },
+    {
+      "name": "iW_V_back_count2_y",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "Vh2iWy",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "abc\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "iW_V_back_moved_y",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "Vh2iWy",
+      "expect": {
+        "buffer": "abc def",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc de",
+            "linewise": false
+          },
+          "0": {
+            "text": "abc de",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "iW_V_back_one_y",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "VhiWy",
+      "expect": {
+        "buffer": "abc def",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " de",
+            "linewise": false
+          },
+          "0": {
+            "text": " de",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            0,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "iW_V_row_end_count3_y",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "V$o$3iWy",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "abc\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "iW_V_row_end_count3_d",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "V$o$3iWd",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " def",
+            "linewise": false
+          },
+          "-": {
+            "text": " def",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            0,
+            7
+          ]
+        }
+      }
+    },
+    {
+      "name": "iW_V_row_end_count1_y",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "V$o$iWy",
+      "expect": {
+        "buffer": "abc def",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "f",
+            "linewise": false
+          },
+          "0": {
+            "text": "f",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            6
+          ],
+          ">": [
+            0,
+            7
+          ]
+        }
+      }
+    },
+    {
+      "name": "iW_back_onto_blank_row_d",
+      "buffer": "   \nabc",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "vhiWd",
+      "expect": {
+        "buffer": " c",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "  \nab",
+            "linewise": false
+          },
+          "1": {
+            "text": "  \nab",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "iW_back_onto_blank_row_y",
+      "buffer": "   \nabc",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "vhiWy",
+      "expect": {
+        "buffer": "   \nabc",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "  \nab",
+            "linewise": false
+          },
+          "0": {
+            "text": "  \nab",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "iW_back_onto_blank_row_count2_d",
+      "buffer": "   \nabc",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "vh2iWd",
+      "expect": {
+        "buffer": "c",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "   \nab",
+            "linewise": false
+          },
+          "1": {
+            "text": "   \nab",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "iW_back_onto_blank_row_count3_d",
+      "buffer": "   \nabc",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "vh3iWd",
+      "expect": {
+        "buffer": "c",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "   \nab",
+            "linewise": false
+          },
+          "1": {
+            "text": "   \nab",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "iW_back_onto_tab_row_d",
+      "buffer": "\t\t\nabc",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "vhiWd",
+      "expect": {
+        "buffer": "\tc",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\t\nab",
+            "linewise": false
+          },
+          "1": {
+            "text": "\t\nab",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "iW_back_onto_blank_row_after_text_d",
+      "buffer": "x\n   \nabc",
+      "cursor": [
+        2,
+        1
+      ],
+      "keys": "vhiWd",
+      "expect": {
+        "buffer": "x\nc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "   \nab",
+            "linewise": false
+          },
+          "1": {
+            "text": "   \nab",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "iW_back_onto_blank_row_V_d",
+      "buffer": "   \nabc",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "VhiWd",
+      "expect": {
+        "buffer": " c",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "  \nab",
+            "linewise": false
+          },
+          "1": {
+            "text": "  \nab",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "iw_back_into_leading_blanks_d",
+      "buffer": "  abc def",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "vhiwd",
+      "expect": {
+        "buffer": "   def",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc",
+            "linewise": false
+          },
+          "-": {
+            "text": "abc",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            0,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "iw_back_into_leading_blanks_V_y",
+      "buffer": "  abc def",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "Vhiwy",
+      "expect": {
+        "buffer": "  abc def",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc",
+            "linewise": false
+          },
+          "0": {
+            "text": "abc",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            0,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "iw_back_onto_one_blank_row_d",
+      "buffer": " \nabc",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "vhiwd",
+      "expect": {
+        "buffer": "c",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " \nab",
+            "linewise": false
+          },
+          "1": {
+            "text": " \nab",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "iw_back_onto_blank_row_V_count2_y",
+      "buffer": "   \nabc",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "Vh2iwy",
+      "expect": {
+        "buffer": "   \nabc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "   \nabc\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "   \nabc\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "iw_back_onto_blank_row_V_count3_y",
+      "buffer": "   \nabc",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "Vh3iwy",
+      "expect": {
+        "buffer": "   \nabc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "   \nabc\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "   \nabc\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "iw_row_end_after_blanks_V_y",
+      "buffer": "abc   \ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "V$o$iwy",
+      "expect": {
+        "buffer": "abc   \ndef",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "   ",
+            "linewise": false
+          },
+          "0": {
+            "text": "   ",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            0,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "iw_row_end_after_blanks_last_row_count3_d",
+      "buffer": "abc   ",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v$o$3iwd",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "   ",
+            "linewise": false
+          },
+          "-": {
+            "text": "   ",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            0,
+            6
+          ]
+        }
+      }
+    },
+    {
+      "name": "iw_row_end_after_blanks_V_count3_last_row_y",
+      "buffer": "abc   ",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "V$o$3iwy",
+      "expect": {
+        "buffer": "abc   ",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc   \n",
+            "linewise": true
+          },
+          "0": {
+            "text": "abc   \n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "iw_row_end_only_blanks_d",
+      "buffer": "   \ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v$o$iwd",
+      "expect": {
+        "buffer": "\ndef",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "   ",
+            "linewise": false
+          },
+          "-": {
+            "text": "   ",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "iW_back_into_leading_blanks_d",
+      "buffer": "  abc def",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "vhiWd",
+      "expect": {
+        "buffer": "   def",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc",
+            "linewise": false
+          },
+          "-": {
+            "text": "abc",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            0,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "iW_back_into_leading_blanks_V_y",
+      "buffer": "  abc def",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "VhiWy",
+      "expect": {
+        "buffer": "  abc def",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc",
+            "linewise": false
+          },
+          "0": {
+            "text": "abc",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            0,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "iW_back_onto_one_blank_row_d",
+      "buffer": " \nabc",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "vhiWd",
+      "expect": {
+        "buffer": "c",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " \nab",
+            "linewise": false
+          },
+          "1": {
+            "text": " \nab",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "iW_back_onto_blank_row_V_count2_y",
+      "buffer": "   \nabc",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "Vh2iWy",
+      "expect": {
+        "buffer": "   \nabc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "   \nabc\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "   \nabc\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "iW_back_onto_blank_row_V_count3_y",
+      "buffer": "   \nabc",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "Vh3iWy",
+      "expect": {
+        "buffer": "   \nabc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "   \nabc\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "   \nabc\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "iW_row_end_after_blanks_V_y",
+      "buffer": "abc   \ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "V$o$iWy",
+      "expect": {
+        "buffer": "abc   \ndef",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "   ",
+            "linewise": false
+          },
+          "0": {
+            "text": "   ",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            0,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "iW_row_end_after_blanks_last_row_count3_d",
+      "buffer": "abc   ",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v$o$3iWd",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "   ",
+            "linewise": false
+          },
+          "-": {
+            "text": "   ",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            0,
+            6
+          ]
+        }
+      }
+    },
+    {
+      "name": "iW_row_end_after_blanks_V_count3_last_row_y",
+      "buffer": "abc   ",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "V$o$3iWy",
+      "expect": {
+        "buffer": "abc   ",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc   \n",
+            "linewise": true
+          },
+          "0": {
+            "text": "abc   \n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "iW_row_end_only_blanks_d",
+      "buffer": "   \ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v$o$iWd",
+      "expect": {
+        "buffer": "\ndef",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "   ",
+            "linewise": false
+          },
+          "-": {
+            "text": "   ",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            2
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,364 @@
+# iw and iW growing in visual mode at a row's end after blanks, backwards
+# with the visual kind kept, and backwards onto an initial blank-only row
+# (T182, from the review of T173). Recorded in visual_words.expected.json by
+# the ignored `record_corpus_with_neovim` test.
+
+[[case]]
+name = "iw_row_end_after_spaces_d"
+buffer = "abc   \ndef"
+cursor = [0, 0]
+keys = "v$o$iwd"
+
+[[case]]
+name = "iw_row_end_after_spaces_y"
+buffer = "abc   \ndef"
+cursor = [0, 0]
+keys = "v$o$iwy"
+
+[[case]]
+name = "iw_row_end_after_tabs_d"
+buffer = "abc\t\t\ndef"
+cursor = [0, 0]
+keys = "v$o$iwd"
+
+[[case]]
+name = "iw_row_end_after_spaces_count2_d"
+buffer = "abc   \ndef"
+cursor = [0, 0]
+keys = "v$o$2iwd"
+
+[[case]]
+name = "iw_row_end_after_spaces_count3_d"
+buffer = "abc   \ndef ghi"
+cursor = [0, 0]
+keys = "v$o$3iwd"
+
+[[case]]
+name = "iw_row_end_after_tabs_count2_d"
+buffer = "abc\t\t\ndef"
+cursor = [0, 0]
+keys = "v$o$2iwd"
+
+[[case]]
+name = "iw_row_end_after_mixed_blanks_d"
+buffer = "abc \t \ndef"
+cursor = [0, 0]
+keys = "v$o$iwd"
+
+[[case]]
+name = "iw_row_end_after_text_d"
+buffer = "abc def\nxyz"
+cursor = [0, 0]
+keys = "v$o$iwd"
+
+[[case]]
+name = "iw_V_back_count2_y"
+buffer = "abc"
+cursor = [0, 2]
+keys = "Vh2iwy"
+
+[[case]]
+name = "iw_V_back_moved_y"
+buffer = "abc def"
+cursor = [0, 5]
+keys = "Vh2iwy"
+
+[[case]]
+name = "iw_V_back_one_y"
+buffer = "abc def"
+cursor = [0, 5]
+keys = "Vhiwy"
+
+[[case]]
+name = "iw_V_row_end_count3_y"
+buffer = "abc"
+cursor = [0, 0]
+keys = "V$o$3iwy"
+
+[[case]]
+name = "iw_V_row_end_count3_d"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "V$o$3iwd"
+
+[[case]]
+name = "iw_V_row_end_count1_y"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "V$o$iwy"
+
+[[case]]
+name = "iw_back_onto_blank_row_d"
+buffer = "   \nabc"
+cursor = [1, 1]
+keys = "vhiwd"
+
+[[case]]
+name = "iw_back_onto_blank_row_y"
+buffer = "   \nabc"
+cursor = [1, 1]
+keys = "vhiwy"
+
+[[case]]
+name = "iw_back_onto_blank_row_count2_d"
+buffer = "   \nabc"
+cursor = [1, 1]
+keys = "vh2iwd"
+
+[[case]]
+name = "iw_back_onto_blank_row_count3_d"
+buffer = "   \nabc"
+cursor = [1, 1]
+keys = "vh3iwd"
+
+[[case]]
+name = "iw_back_onto_tab_row_d"
+buffer = "\t\t\nabc"
+cursor = [1, 1]
+keys = "vhiwd"
+
+[[case]]
+name = "iw_back_onto_blank_row_after_text_d"
+buffer = "x\n   \nabc"
+cursor = [2, 1]
+keys = "vhiwd"
+
+[[case]]
+name = "iw_back_onto_blank_row_V_d"
+buffer = "   \nabc"
+cursor = [1, 1]
+keys = "Vhiwd"
+
+[[case]]
+name = "iW_row_end_after_spaces_d"
+buffer = "abc   \ndef"
+cursor = [0, 0]
+keys = "v$o$iWd"
+
+[[case]]
+name = "iW_row_end_after_spaces_y"
+buffer = "abc   \ndef"
+cursor = [0, 0]
+keys = "v$o$iWy"
+
+[[case]]
+name = "iW_row_end_after_tabs_d"
+buffer = "abc\t\t\ndef"
+cursor = [0, 0]
+keys = "v$o$iWd"
+
+[[case]]
+name = "iW_row_end_after_spaces_count2_d"
+buffer = "abc   \ndef"
+cursor = [0, 0]
+keys = "v$o$2iWd"
+
+[[case]]
+name = "iW_row_end_after_spaces_count3_d"
+buffer = "abc   \ndef ghi"
+cursor = [0, 0]
+keys = "v$o$3iWd"
+
+[[case]]
+name = "iW_row_end_after_tabs_count2_d"
+buffer = "abc\t\t\ndef"
+cursor = [0, 0]
+keys = "v$o$2iWd"
+
+[[case]]
+name = "iW_row_end_after_mixed_blanks_d"
+buffer = "abc \t \ndef"
+cursor = [0, 0]
+keys = "v$o$iWd"
+
+[[case]]
+name = "iW_row_end_after_text_d"
+buffer = "abc def\nxyz"
+cursor = [0, 0]
+keys = "v$o$iWd"
+
+[[case]]
+name = "iW_V_back_count2_y"
+buffer = "abc"
+cursor = [0, 2]
+keys = "Vh2iWy"
+
+[[case]]
+name = "iW_V_back_moved_y"
+buffer = "abc def"
+cursor = [0, 5]
+keys = "Vh2iWy"
+
+[[case]]
+name = "iW_V_back_one_y"
+buffer = "abc def"
+cursor = [0, 5]
+keys = "VhiWy"
+
+[[case]]
+name = "iW_V_row_end_count3_y"
+buffer = "abc"
+cursor = [0, 0]
+keys = "V$o$3iWy"
+
+[[case]]
+name = "iW_V_row_end_count3_d"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "V$o$3iWd"
+
+[[case]]
+name = "iW_V_row_end_count1_y"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "V$o$iWy"
+
+[[case]]
+name = "iW_back_onto_blank_row_d"
+buffer = "   \nabc"
+cursor = [1, 1]
+keys = "vhiWd"
+
+[[case]]
+name = "iW_back_onto_blank_row_y"
+buffer = "   \nabc"
+cursor = [1, 1]
+keys = "vhiWy"
+
+[[case]]
+name = "iW_back_onto_blank_row_count2_d"
+buffer = "   \nabc"
+cursor = [1, 1]
+keys = "vh2iWd"
+
+[[case]]
+name = "iW_back_onto_blank_row_count3_d"
+buffer = "   \nabc"
+cursor = [1, 1]
+keys = "vh3iWd"
+
+[[case]]
+name = "iW_back_onto_tab_row_d"
+buffer = "\t\t\nabc"
+cursor = [1, 1]
+keys = "vhiWd"
+
+[[case]]
+name = "iW_back_onto_blank_row_after_text_d"
+buffer = "x\n   \nabc"
+cursor = [2, 1]
+keys = "vhiWd"
+
+[[case]]
+name = "iW_back_onto_blank_row_V_d"
+buffer = "   \nabc"
+cursor = [1, 1]
+keys = "VhiWd"
+
+[[case]]
+name = "iw_back_into_leading_blanks_d"
+buffer = "  abc def"
+cursor = [0, 4]
+keys = "vhiwd"
+
+[[case]]
+name = "iw_back_into_leading_blanks_V_y"
+buffer = "  abc def"
+cursor = [0, 4]
+keys = "Vhiwy"
+
+[[case]]
+name = "iw_back_onto_one_blank_row_d"
+buffer = " \nabc"
+cursor = [1, 1]
+keys = "vhiwd"
+
+[[case]]
+name = "iw_back_onto_blank_row_V_count2_y"
+buffer = "   \nabc"
+cursor = [1, 1]
+keys = "Vh2iwy"
+
+[[case]]
+name = "iw_back_onto_blank_row_V_count3_y"
+buffer = "   \nabc"
+cursor = [1, 1]
+keys = "Vh3iwy"
+
+[[case]]
+name = "iw_row_end_after_blanks_V_y"
+buffer = "abc   \ndef"
+cursor = [0, 0]
+keys = "V$o$iwy"
+
+[[case]]
+name = "iw_row_end_after_blanks_last_row_count3_d"
+buffer = "abc   "
+cursor = [0, 0]
+keys = "v$o$3iwd"
+
+[[case]]
+name = "iw_row_end_after_blanks_V_count3_last_row_y"
+buffer = "abc   "
+cursor = [0, 0]
+keys = "V$o$3iwy"
+
+[[case]]
+name = "iw_row_end_only_blanks_d"
+buffer = "   \ndef"
+cursor = [0, 0]
+keys = "v$o$iwd"
+
+[[case]]
+name = "iW_back_into_leading_blanks_d"
+buffer = "  abc def"
+cursor = [0, 4]
+keys = "vhiWd"
+
+[[case]]
+name = "iW_back_into_leading_blanks_V_y"
+buffer = "  abc def"
+cursor = [0, 4]
+keys = "VhiWy"
+
+[[case]]
+name = "iW_back_onto_one_blank_row_d"
+buffer = " \nabc"
+cursor = [1, 1]
+keys = "vhiWd"
+
+[[case]]
+name = "iW_back_onto_blank_row_V_count2_y"
+buffer = "   \nabc"
+cursor = [1, 1]
+keys = "Vh2iWy"
+
+[[case]]
+name = "iW_back_onto_blank_row_V_count3_y"
+buffer = "   \nabc"
+cursor = [1, 1]
+keys = "Vh3iWy"
+
+[[case]]
+name = "iW_row_end_after_blanks_V_y"
+buffer = "abc   \ndef"
+cursor = [0, 0]
+keys = "V$o$iWy"
+
+[[case]]
+name = "iW_row_end_after_blanks_last_row_count3_d"
+buffer = "abc   "
+cursor = [0, 0]
+keys = "v$o$3iWd"
+
+[[case]]
+name = "iW_row_end_after_blanks_V_count3_last_row_y"
+buffer = "abc   "
+cursor = [0, 0]
+keys = "V$o$3iWy"
+
+[[case]]
+name = "iW_row_end_only_blanks_d"
+buffer = "   \ndef"
+cursor = [0, 0]
+keys = "v$o$iWd"
