@@ -6,9 +6,20 @@
 # A snapshot is built once and thrown away, so it skips incremental data and keeps only
 # line tables (panics still get file:line). It also refuses to start with less than
 # FASTEDIT_MIN_FREE_GIB (default 10) free, rather than fail halfway with ENOSPC (exit 75).
-# Lanes (everything else) are left alone.
+#
+# When sccache is on PATH and RUSTC_WRAPPER is unset, scripts/sccache-wrap.sh (sccache minus
+# CARGO_TARGET_DIR, which would otherwise defeat sharing) becomes the rustc wrapper, so every
+# lane and snapshot (each with its own target dir) compiles a registry or git dependency once.
+# SCCACHE_DIR defaults under ~/Library/Caches (Time Machine skips it) and SCCACHE_CACHE_SIZE to
+# 8G; both can be set by the caller. RUSTC_WRAPPER= (empty) turns it off.
 PATH="$HOME/.cargo/bin:$PATH"
 export PATH
+if [ -z "${RUSTC_WRAPPER+x}" ] && command -v sccache >/dev/null 2>&1; then
+	RUSTC_WRAPPER=$(cd "$(dirname "$0")" && pwd)/sccache-wrap.sh
+	export RUSTC_WRAPPER
+	export SCCACHE_DIR="${SCCACHE_DIR:-$HOME/Library/Caches/fastedit-sccache}"
+	export SCCACHE_CACHE_SIZE="${SCCACHE_CACHE_SIZE:-8G}"
+fi
 case "$PWD" in
 */.worktrees/.verify/*)
 	export CARGO_TARGET_DIR="$PWD/target"

@@ -59,6 +59,21 @@ free. Lanes are never checked. A cold snapshot build (`cargo build --workspace
 --all-targets` plus `nextest run --profile ci --no-run`) took 144 s and left a 4.1 GiB
 `target/`, down from about 6 GiB.
 
+### Compiler cache
+
+Every lane and snapshot has its own target dir, so each would compile GPUI and the rest of
+the dependency tree itself. `scripts/ci-env.sh` therefore sets `RUSTC_WRAPPER=sccache` when
+`sccache` is on `PATH` and `RUSTC_WRAPPER` is unset (`brew bundle` installs it), and all
+lanes and gates share one compiler cache. The wrapper is `scripts/sccache-wrap.sh`: sccache
+keys on every `CARGO_*` variable, and each lane and gate has its own `CARGO_TARGET_DIR`,
+so it is unset for the compile. It lives in `~/Library/Caches/fastedit-sccache`
+(`SCCACHE_DIR`; Time Machine skips `~/Library/Caches`) and is capped at 8G
+(`SCCACHE_CACHE_SIZE`); set either in the environment to override. Turn it off with
+`RUSTC_WRAPPER=` (empty). `sccache --show-stats` shows hits. The sccache server fixes its
+directory when it starts, so after changing `SCCACHE_DIR` or the size run
+`sccache --stop-server`. Lanes build incrementally, which sccache skips, so it
+only serves their dependencies; snapshots (`CARGO_INCREMENTAL=0`) get their own entries.
+
 `scripts/prune-build-cache.sh [--dry-run] [--older-than MIN] [--if-below GIB]` deletes
 incremental session dirs older than `--older-than` minutes (default 180) from the shared
 cache's `debug/incremental`, always keeping each crate's newest, and prints the GiB
