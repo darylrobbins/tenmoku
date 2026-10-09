@@ -7,7 +7,7 @@ fn overrun_retries_from_scratch_then_gives_up() {
     // Big enough that tree-sitter asks the stop check at all.
     let mut buffer = Buffer::new(&"fn f() {}\n".repeat(20_000));
     let mut syntax = Syntax::new(language_by_name("rust").unwrap(), buffer.current());
-    syntax.finish(syntax.parse_job().run());
+    syntax.finish(syntax.parse_job().run_until(|_| || false));
     buffer.edit([(0..0, "fn g() {")], Origin::User);
     syntax.edit(buffer.current());
 

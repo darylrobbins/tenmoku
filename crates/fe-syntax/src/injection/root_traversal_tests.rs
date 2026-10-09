@@ -20,7 +20,7 @@ fn find(text: &str, deadline: Option<Instant>) -> (usize, bool, usize) {
     language_by_name("html");
     let buffer = Buffer::new(text);
     let mut syntax = Syntax::new(language_by_name("javascript").unwrap(), buffer.current());
-    syntax.finish(syntax.parse_job().run());
+    syntax.finish(syntax.parse_job().run_until(|_| || false));
     let mut layers = Layers::default();
     let mut painter = Painter {
         text: buffer.text(),
