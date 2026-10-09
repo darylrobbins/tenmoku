@@ -30,6 +30,8 @@
 //!   [`LspEvent::Diagnostics`] in byte ranges, with
 //!   [`LspEvent::DiagnosticsCleared`] when the document closes or the
 //!   session ends.
+//! - [`LspManager::hover`] asks for a [`Hover`] at an offset of an open
+//!   buffer: its text, and its range in that buffer's version.
 //! - [`LspNavigation`] answers fe-nav's go-to-definition, references and
 //!   workspace symbols from a manager's servers, once each is ready.
 //!
@@ -52,6 +54,7 @@ mod diagnostics;
 mod document;
 mod encoding;
 mod event;
+mod hover;
 mod identity;
 mod launcher;
 mod manager;
@@ -78,6 +81,7 @@ pub use diagnostics::{Diagnostic, DiagnosticTag, Severity};
 pub use document::{Admitted, Opened, SentDocument, SentVersion};
 pub use encoding::{PositionEncoding, from_lsp, to_lsp};
 pub use event::{LspError, LspEvent, ServerId, ServerStatus};
+pub use hover::Hover;
 pub use identity::{IncarnationId, SessionId};
 pub use launcher::{
     ExitInfo, LOGIN_SHELL_TIMEOUT, LaunchCancel, LocalLauncher, LoginPath, ReadinessMode, ServerIo,

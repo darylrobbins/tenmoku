@@ -8,7 +8,8 @@
 //! [`fe_display::layout`], shaping them with GPUI and colouring them by
 //! `fe-syntax`, then paints the result, with the buffer's diagnostics as
 //! squiggles and gutter marks, and their messages in a popover on hover
-//! (`hover`). Vim mode, one app-wide switch
+//! (`hover`), with what the host's [`HoverProvider`] says about the word
+//! there, or at the caret on `editor.show_hover`. Vim mode, one app-wide switch
 //! ([`set_vim_enabled`]), routes an editor's keys through `fe-vim`.
 
 pub mod commands;
@@ -25,6 +26,7 @@ use fe_editor::diagnostics::Severity;
 pub use fe_keymap;
 use fe_syntax::Highlight;
 use gpui::{App, Hsla, Pixels, SharedString, font, px, rgb, rgba};
+pub use hover::{HoverContent, HoverFuture, HoverProvider};
 
 pub use keymap::{default_keymap, keymap_report, set_user_keymap};
 pub use timing::{FrameTiming, FrameTimings};

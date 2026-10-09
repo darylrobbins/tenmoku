@@ -47,7 +47,26 @@ impl Global for Commands {}
 
 thread_local! {
     /// Built once: GPUI runs on one thread, and handlers aren't `Sync`.
-    static EDITOR_COMMANDS: Rc<Registry<Editor>> = Rc::new(fe_editor::commands::registry());
+    static EDITOR_COMMANDS: Rc<Registry<Editor>> = Rc::new(editor_registry());
+}
+
+/// Shows the hover popover at the caret ([`crate::hover`]).
+pub const SHOW_HOVER: &str = "editor.show_hover";
+
+/// fe-editor's commands, and the view's own, in the editor's context. The
+/// view's do nothing to the model: once one has dispatched, the view does
+/// its work ([`EditorView::run_command`]).
+fn editor_registry() -> Registry<Editor> {
+    let mut registry = fe_editor::commands::registry();
+    registry
+        .register(
+            SHOW_HOVER,
+            "Show Hover",
+            |_: &mut EditorTarget<'_>, _: &Actor| Ok(Dispatched::new(Effect::Nothing)),
+        )
+        .expect("view command IDs are valid and distinct")
+        .context(ContextPredicate::identifier(fe_editor::commands::CONTEXT));
+    registry
 }
 
 type AppCommand = fn(&mut App);
@@ -271,6 +290,8 @@ impl EditorView {
                     Err(error) => Err(error),
                     Ok(_) => match invocation.command.as_str() {
                         vim::NEWLINE => vim::line_break(state, &mut self.model, &invocation),
+                        // Edits nothing, so the session goes on.
+                        SHOW_HOVER => dispatch(&mut self.model),
                         command if vim::TEXT_INPUT.contains(&command) => dispatch(&mut self.model),
                         command => {
                             split = true;
@@ -297,6 +318,7 @@ impl EditorView {
             self.changed(cx);
         }
         match self.dispatched(result, &invocation, mutates, cx) {
+            Ok(()) if invocation.command.as_str() == SHOW_HOVER => self.show_hover(cx),
             Ok(()) => {}
             Err(DispatchError::UnknownCommand(_)) => {
                 cx.default_global::<Commands>().propagated = Some(invocation);

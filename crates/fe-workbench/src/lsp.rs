@@ -41,6 +41,10 @@
 //!   language's server once it's ready, and by search until then. It holds
 //!   the manager weakly, sharing its lock, so a replaced or closed one's
 //!   answers nothing.
+//! - **Hover.** Every editor's [`fe_gpui::HoverProvider`] asks the current
+//!   manager ([`LspManager::hover`]), which sends it to the server its
+//!   buffer is open on. Anything but an answer, such as no server, a
+//!   timeout or an error, shows nothing.
 //! - **Shutdown.** Closing the window shuts its servers down (§3.4) on
 //!   their threads. Quitting shuts every workbench's down, and blocks until
 //!   each closed window's and each workbench's server has stopped, for as
@@ -56,15 +60,16 @@
 //!   can't be preempted, and its server may outlive fastedit.
 
 use std::{
+    cell::RefCell,
     collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     rc::Rc,
-    sync::{Arc, Mutex, PoisonError, mpsc},
+    sync::{Arc, Mutex, PoisonError, Weak, mpsc},
     time::{Duration, Instant},
 };
 
-use fe_buffer::{Buffer, BufferId};
+use fe_buffer::{Buffer, BufferId, Version};
 use fe_command::{
     Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Invocation, Registry,
 };
@@ -289,6 +294,8 @@ pub(crate) struct Lsp {
     delivered: Vec<(u64, LspEvent, Option<bool>)>,
     /// Each shown buffer's file, resolved, or `None` if it can't be.
     resolved: HashMap<BufferId, Option<PathBuf>>,
+    /// Every editor's hover provider, following the manager.
+    hover: Rc<LspHover>,
     /// The buffers whose files are being resolved.
     resolving: HashSet<BufferId>,
     /// Resolves the root for the next manager.
@@ -329,6 +336,7 @@ impl Lsp {
             #[cfg(test)]
             delivered: Vec::new(),
             resolved: HashMap::new(),
+            hover: Rc::default(),
             resolving: HashSet::new(),
             _root: None,
             _tasks: Vec::new(),
@@ -496,6 +504,7 @@ impl Workbench {
         });
         let manager = Arc::new(Mutex::new(manager));
         let navigation = LspNavigation::new(Arc::downgrade(&manager), &root);
+        *lsp.hover.manager.borrow_mut() = Arc::downgrade(&manager);
         lsp.manager = Some(manager);
         // Replaces the last manager's.
         self.navigation().add(Arc::new(navigation), PRECEDENCE);
@@ -528,6 +537,13 @@ impl Workbench {
     /// the status item.
     pub(crate) fn sync_lsp(&mut self, cx: &mut Context<Self>) {
         let editors = self.open_editors(cx);
+        let hover: Rc<dyn fe_gpui::HoverProvider> = self.lsp.hover.clone();
+        for editor in &editors {
+            let set = editor.read(cx).hover_provider();
+            if !set.is_some_and(|set| Rc::ptr_eq(set, &hover)) {
+                editor.update(cx, |view, _| view.set_hover_provider(Some(hover.clone())));
+            }
+        }
         let lsp = &mut self.lsp;
         let (Some(manager), Some(root)) = (lsp.manager.clone(), &lsp.root) else {
             return;
@@ -815,6 +831,36 @@ impl Workbench {
             retiring.retain(|watch| !watch.is_done());
             retiring.push(watch);
         }
+    }
+}
+
+/// Hover text for an editor, from the server its buffer is open on, through
+/// whichever manager the workbench has now: none (no root, or a closed
+/// window) answers nothing.
+#[derive(Default)]
+struct LspHover {
+    manager: RefCell<Weak<Mutex<LspManager>>>,
+}
+
+impl fe_gpui::HoverProvider for LspHover {
+    fn hover(&self, buffer: BufferId, version: Version, offset: usize) -> fe_gpui::HoverFuture {
+        let Some(manager) = self.manager.borrow().upgrade() else {
+            return Box::pin(async { None });
+        };
+        // Sent under the lock; awaited without it.
+        let reply = lock(&manager).hover(buffer, version, offset);
+        Box::pin(async move {
+            match reply.await {
+                Ok(hover) => hover.map(|hover| fe_gpui::HoverContent {
+                    text: hover.text,
+                    range: hover.range,
+                }),
+                Err(error) => {
+                    log::debug!("no hover: {error}");
+                    None
+                }
+            }
+        })
     }
 }
 

@@ -207,8 +207,9 @@ const CASES: &[Case] = &[
     case("cmd-shift-z", "ab|c", "a|c").keys("backspace cmd-z cmd-shift-z"),
 ];
 
-/// Bindings exercised by their own tests rather than the table.
-const DEDICATED: &[&str] = &["cmd-s", "cmd-alt-]", "alt-z"];
+/// Bindings exercised by their own tests rather than the table. `cmd-k
+/// cmd-i` (`editor.show_hover`) is `view::hover_tests::show_hover_command`'s.
+const DEDICATED: &[&str] = &["cmd-s", "cmd-alt-]", "alt-z", "cmd-k cmd-i"];
 
 fn run_case(case: &Case) {
     let mut cx = TestAppContext::single();

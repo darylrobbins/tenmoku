@@ -5,6 +5,7 @@ mod admission;
 mod cancel;
 mod diagnostics;
 mod encoding;
+mod hover;
 mod identity;
 mod kill;
 mod launcher;

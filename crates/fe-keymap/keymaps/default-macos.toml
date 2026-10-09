@@ -196,6 +196,12 @@ keys = "cmd-k cmd-j"
 command = "editor.unfold_all"
 context = "editor"
 
+# VS Code's chord: the hover popover for what's at the caret.
+[[bindings]]
+keys = "cmd-k cmd-i"
+command = "editor.show_hover"
+context = "editor"
+
 [[bindings]]
 keys = "alt-z"
 command = "editor.toggle_soft_wrap"

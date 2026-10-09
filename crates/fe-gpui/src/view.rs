@@ -73,6 +73,8 @@ pub struct EditorView {
     hover_blur: Option<Subscription>,
     /// The popover for what's under the pointer ([`crate::hover`]).
     pub(crate) popover: crate::hover::HoverPopover,
+    /// Where the popover's hover text comes from, if anywhere.
+    pub(crate) hover_provider: Option<std::rc::Rc<dyn crate::HoverProvider>>,
     /// The frames around the view's own in its context stack, as last seen
     /// while it was focused: see [`EditorView::context_stack`].
     ancestors: Option<ContextStack>,
@@ -100,6 +102,9 @@ pub struct EditorView {
     /// The hover popover's text, as the last render showed it.
     #[cfg(test)]
     pub(crate) painted_popover: Option<String>,
+    /// Its parts, and the font each was set in.
+    #[cfg(test)]
+    pub(crate) painted_popover_blocks: Vec<(crate::hover::Block, gpui::SharedString)>,
 }
 
 /// A word a bound click would run its command on: see [`EditorView::hover`].
@@ -146,6 +151,7 @@ impl EditorView {
             hover: None,
             hover_blur: None,
             popover: Default::default(),
+            hover_provider: None,
             ancestors: None,
             #[cfg(test)]
             painted_carets: Vec::new(),
@@ -161,8 +167,11 @@ impl EditorView {
             painted_marks: Vec::new(),
             #[cfg(test)]
             painted_popover: None,
+            #[cfg(test)]
+            painted_popover_blocks: Vec::new(),
         };
         crate::vim::register(&view.focus, cx);
+        crate::hover::hide_on_escape(&mut view, cx);
         view.sync_vim(cx);
         let text = view.model.text();
         let start = text.slice_to_string(0..text.clip_offset(DETECT_BYTES, Bias::Left));
@@ -1077,3 +1086,6 @@ mod mouse_binding_tests;
 
 #[cfg(test)]
 mod diagnostics_tests;
+
+#[cfg(test)]
+mod hover_tests;
