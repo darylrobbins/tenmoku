@@ -19,7 +19,7 @@ use fe_command::{ContextFrame, ContextStack, Invocation};
 use fe_config::{Settings, SettingsEvent};
 use fe_gpui::{EditorView, commands::RunCommand};
 use fe_lsp::{
-    ManualClock, ServerIo, ServerLauncher, ServerSpec,
+    LaunchCancel, ManualClock, ServerIo, ServerLauncher, ServerSpec,
     fake::{FakeLauncher, FakeServer, OnExit, Record, Script},
 };
 use gpui::{Entity, Focusable as _, Modifiers, TestAppContext, VisualTestContext};
@@ -77,14 +77,19 @@ struct Switch {
 }
 
 impl ServerLauncher for Switch {
-    fn launch(&self, spec: &ServerSpec, root: &Path) -> io::Result<ServerIo> {
+    fn launch(
+        &self,
+        spec: &ServerSpec,
+        root: &Path,
+        cancel: &LaunchCancel,
+    ) -> io::Result<ServerIo> {
         self.hold.pass();
         if self.missing.load(Ordering::SeqCst) {
             return Err(io::Error::new(io::ErrorKind::NotFound, "no such file"));
         }
         match spec.name.as_str() {
-            "pyright" => self.python.launch(spec, root),
-            _ => self.fake.launch(spec, root),
+            "pyright" => self.python.launch(spec, root, cancel),
+            _ => self.fake.launch(spec, root, cancel),
         }
     }
 }

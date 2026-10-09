@@ -70,8 +70,8 @@ pub use encoding::{PositionEncoding, from_lsp, to_lsp};
 pub use event::{LspError, LspEvent, ServerId, ServerStatus};
 pub use identity::{IncarnationId, SessionId};
 pub use launcher::{
-    ExitInfo, LOGIN_SHELL_TIMEOUT, LocalLauncher, LoginPath, ReadinessMode, ServerIo,
+    ExitInfo, LOGIN_SHELL_TIMEOUT, LaunchCancel, LocalLauncher, LoginPath, ReadinessMode, ServerIo,
     ServerLauncher, ServerProcess, ServerSpec, UnversionedDiagnostics,
 };
-pub use manager::{DEFAULT_MAX_FILE_BYTES, LspManager};
+pub use manager::{DEFAULT_MAX_FILE_BYTES, KillSwitch, LspManager};
 pub use requests::{ORPHANS_MAX, Reply};

@@ -27,8 +27,8 @@ use crate::fake::{Echo, FakeServer, Record, Script};
 use crate::registry::{self, Registry, server_for};
 use crate::server::BACKSTOP;
 use crate::{
-    Clock, LocalLauncher, LoginPath, LspEvent, LspManager, ManualClock, ReadinessMode, ServerId,
-    ServerIo, ServerLauncher, ServerSpec, ServerStatus,
+    Clock, LaunchCancel, LocalLauncher, LoginPath, LspEvent, LspManager, ManualClock,
+    ReadinessMode, ServerId, ServerIo, ServerLauncher, ServerSpec, ServerStatus,
 };
 
 mod routed_save;
@@ -771,7 +771,12 @@ fn a_restart_waits_for_a_killed_server_to_exit() {
 struct MissingOrFake(Arc<crate::fake::FakeLauncher>);
 
 impl ServerLauncher for MissingOrFake {
-    fn launch(&self, spec: &ServerSpec, root: &Path) -> std::io::Result<ServerIo> {
+    fn launch(
+        &self,
+        spec: &ServerSpec,
+        root: &Path,
+        cancel: &LaunchCancel,
+    ) -> std::io::Result<ServerIo> {
         assert_ne!(spec.command, Path::new("panic"), "the launcher panicked");
         if spec.command == Path::new("missing") {
             return Err(std::io::Error::new(
@@ -779,7 +784,7 @@ impl ServerLauncher for MissingOrFake {
                 "missing not found",
             ));
         }
-        self.0.launch(spec, root)
+        self.0.launch(spec, root, cancel)
     }
 }
 
@@ -1132,12 +1137,17 @@ struct HeldLaunch {
 }
 
 impl ServerLauncher for HeldLaunch {
-    fn launch(&self, spec: &ServerSpec, root: &Path) -> std::io::Result<ServerIo> {
+    fn launch(
+        &self,
+        spec: &ServerSpec,
+        root: &Path,
+        cancel: &LaunchCancel,
+    ) -> std::io::Result<ServerIo> {
         if let Some(entered) = self.entered.lock().unwrap().take() {
             let _ = entered.send(());
             let _ = self.release.lock().unwrap().recv_timeout(WAIT);
         }
-        self.fake.launch(spec, root)
+        self.fake.launch(spec, root, cancel)
     }
 }
 
@@ -1185,11 +1195,16 @@ fn an_instance_stopped_while_it_launches_is_killed_before_initialize() {
 struct FailsFirst(Arc<crate::fake::FakeLauncher>, AtomicBool);
 
 impl ServerLauncher for FailsFirst {
-    fn launch(&self, spec: &ServerSpec, root: &Path) -> std::io::Result<ServerIo> {
+    fn launch(
+        &self,
+        spec: &ServerSpec,
+        root: &Path,
+        cancel: &LaunchCancel,
+    ) -> std::io::Result<ServerIo> {
         if !self.1.swap(true, Ordering::SeqCst) {
             return Err(std::io::Error::other("the first launch fails"));
         }
-        self.0.launch(spec, root)
+        self.0.launch(spec, root, cancel)
     }
 }
 
@@ -1304,7 +1319,7 @@ fn bare_commands_use_the_login_shell_path() {
     let launcher = LocalLauncher::with_login_path(login.clone());
     let spec = ServerSpec::new("test", "fe-test-server");
     for _ in 0..3 {
-        ping(launcher.launch(&spec, &dir).unwrap());
+        ping(launcher.launch(&spec, &dir, &LaunchCancel::new()).unwrap());
     }
     let runs = std::fs::read_to_string(dir.join("runs")).unwrap();
     assert_eq!(runs.lines().count(), 1, "{runs}");
@@ -1334,7 +1349,7 @@ fn bare_commands_use_the_login_shell_path() {
     );
     // Not found anywhere: a launch error, not a lookup on some other PATH.
     let missing = ServerSpec::new("missing", "fe-no-such-server");
-    match launcher.launch(&missing, &dir) {
+    match launcher.launch(&missing, &dir, &LaunchCancel::new()) {
         Err(err) => {
             assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
             assert_eq!(err.to_string(), "fe-no-such-server not found");
@@ -1350,7 +1365,11 @@ fn bare_commands_use_the_login_shell_path() {
         Some(absolute.command.clone())
     );
     std::fs::remove_file(dir.join("server-path.txt")).unwrap();
-    ping(launcher.launch(&absolute, &dir).unwrap());
+    ping(
+        launcher
+            .launch(&absolute, &dir, &LaunchCancel::new())
+            .unwrap(),
+    );
     assert_eq!(
         std::fs::read_to_string(dir.join("server-path.txt")).unwrap(),
         login_path
@@ -1379,7 +1398,7 @@ fn bare_commands_use_the_login_shell_path() {
     spec_at_home.env = vec![("PATH".into(), "/bin:/usr/bin".into())];
     ping(
         LocalLauncher::with_login_path(homed.clone())
-            .launch(&spec_at_home, &dir)
+            .launch(&spec_at_home, &dir, &LaunchCancel::new())
             .unwrap(),
     );
     // With no home, they're nowhere.
@@ -1431,8 +1450,12 @@ fn bare_commands_use_the_login_shell_path() {
         // `cat` is found on this process's PATH, which servers get.
         let launcher = LocalLauncher::with_login_path(login.clone());
         let cat = ServerSpec::new("cat", "cat");
-        ping(launcher.launch(&cat, &dir).unwrap());
-        ping(launcher.launch(&absolute, &dir).unwrap());
+        ping(launcher.launch(&cat, &dir, &LaunchCancel::new()).unwrap());
+        ping(
+            launcher
+                .launch(&absolute, &dir, &LaunchCancel::new())
+                .unwrap(),
+        );
         assert_eq!(
             std::fs::read_to_string(dir.join("server-path.txt")).unwrap(),
             std::env::var("PATH").unwrap()
@@ -1470,7 +1493,11 @@ fn bare_commands_use_the_login_shell_path() {
     );
     assert_eq!(login.resolve(Path::new("local-server"), None, &dir), None);
     let launcher = LocalLauncher::with_login_path(login);
-    match launcher.launch(&ServerSpec::new("local", "local-server"), &dir) {
+    match launcher.launch(
+        &ServerSpec::new("local", "local-server"),
+        &dir,
+        &LaunchCancel::new(),
+    ) {
         Err(err) => assert_eq!(err.to_string(), "local-server not found"),
         Ok(_) => panic!("local-server was found through an empty entry"),
     }
@@ -1491,11 +1518,15 @@ fn bare_commands_use_the_login_shell_path() {
     assert_eq!(login.resolve(Path::new("fe-test-server"), None, &dir), None);
     assert_eq!(login.resolve(Path::new("local-server"), None, &dir), None);
     let launcher = LocalLauncher::with_login_path(login);
-    match launcher.launch(&ServerSpec::new("local", "local-server"), &dir) {
+    match launcher.launch(
+        &ServerSpec::new("local", "local-server"),
+        &dir,
+        &LaunchCancel::new(),
+    ) {
         Err(err) => assert_eq!(err.to_string(), "local-server not found"),
         Ok(_) => panic!("local-server was found through an empty PATH"),
     }
-    match launcher.launch(&ServerSpec::new("cat", "cat"), &dir) {
+    match launcher.launch(&ServerSpec::new("cat", "cat"), &dir, &LaunchCancel::new()) {
         Err(err) => assert_eq!(err.to_string(), "cat not found"),
         Ok(_) => panic!("cat was looked up on this process's PATH"),
     }
@@ -1537,7 +1568,7 @@ fn bare_commands_use_the_login_shell_path() {
         );
         ping(
             LocalLauncher::with_login_path(login)
-                .launch(&spec, &dir)
+                .launch(&spec, &dir, &LaunchCancel::new())
                 .unwrap(),
         );
     }

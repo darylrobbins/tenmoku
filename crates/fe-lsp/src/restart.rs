@@ -17,18 +17,22 @@
 //! every document again at its current text, from LSP version 0.
 
 use std::collections::VecDeque;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 use fe_buffer::BufferId;
 use futures::channel::{mpsc, oneshot};
+use futures::future::{BoxFuture, Fuse, FusedFuture};
 use futures::{FutureExt, StreamExt, select_biased};
 
 use crate::clock::Clock;
 use crate::document::Opening;
 use crate::event::LspError;
 use crate::identity::Identities;
-use crate::launcher::ServerSpec;
+use crate::launcher::{Flag, ServerSpec};
 use crate::server::{Command, Routes, hand_over};
 
 /// How long a crash counts against its server.
@@ -108,6 +112,8 @@ impl Crashes {
 pub(crate) struct Carry {
     pub(crate) commands: mpsc::UnboundedReceiver<Command>,
     pub(crate) stop: oneshot::Receiver<()>,
+    /// The manager's kill switch.
+    pub(crate) kill: Kill,
     /// Documents to open in the next session.
     pub(crate) openings: Vec<Opening>,
     /// The spec's settings as they are now.
@@ -119,12 +125,58 @@ pub(crate) struct Carry {
 /// How waiting out a backoff ended.
 pub(crate) enum Waited {
     Elapsed,
-    /// Asked to stop, or every sender has gone: the documents have been
-    /// handed on.
+    /// Asked to stop, killed, or every sender has gone: the documents have
+    /// been handed on.
     Stopped,
 }
 
+/// Resolves once the manager's kill switch is thrown
+/// ([`KillSwitch`](crate::KillSwitch)): the server thread then kills its
+/// process at once, and launches and restarts nothing more.
+pub(crate) struct Kill {
+    switch: Arc<Flag>,
+    wait: Fuse<BoxFuture<'static, ()>>,
+}
+
+impl Kill {
+    pub(crate) fn new(switch: Arc<Flag>) -> Self {
+        let wait = Flag::wait(&switch).boxed().fuse();
+        Self { switch, wait }
+    }
+
+    /// Whether the switch has been thrown, whether or not this has been
+    /// polled since.
+    pub(crate) fn thrown(&self) -> bool {
+        self.switch.fired()
+    }
+
+    /// Another wait on the same switch.
+    pub(crate) fn again(&self) -> Self {
+        Self::new(self.switch.clone())
+    }
+}
+
+impl Future for Kill {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        self.wait.poll_unpin(cx)
+    }
+}
+
+impl FusedFuture for Kill {
+    fn is_terminated(&self) -> bool {
+        self.wait.is_terminated()
+    }
+}
+
 impl Carry {
+    /// Whether the manager has asked for a stop (or gone), or thrown its
+    /// kill switch.
+    pub(crate) fn stopping(&mut self) -> bool {
+        !matches!(self.stop.try_recv(), Ok(None)) || self.kill.thrown()
+    }
+
     /// Waits `after` on `clock`, taking commands meanwhile ([`hold`]).
     ///
     /// [`hold`]: Self::hold
@@ -132,6 +184,7 @@ impl Carry {
         let mut timer = clock.sleep(after).fuse();
         loop {
             select_biased! {
+                () = &mut self.kill => break,
                 _ = &mut self.stop => break,
                 () = timer => return Waited::Elapsed,
                 command = self.commands.next() => match command {

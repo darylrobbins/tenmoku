@@ -10,12 +10,15 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 use std::path::{Component, Path, PathBuf};
-use std::pin::Pin;
+use std::pin::{Pin, pin};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
-use std::sync::{Arc, LazyLock, OnceLock};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
+use futures::channel::oneshot;
+use futures::future::{FutureExt, Shared};
 use futures::{AsyncRead, AsyncWrite};
 
 /// What to start: from settings or supplied by the host.
@@ -112,7 +115,128 @@ pub trait ServerProcess: Send {
 pub trait ServerLauncher: Send + Sync {
     /// Called on the server's own thread; may block (e.g. start a
     /// container).
-    fn launch(&self, spec: &ServerSpec, root: &Path) -> io::Result<ServerIo>;
+    ///
+    /// `cancel` fires when the server is stopped, or its manager's
+    /// [`KillSwitch`](crate::KillSwitch) is thrown, while it launches. A
+    /// launch should then return promptly: with
+    /// [`ErrorKind::Interrupted`](io::ErrorKind::Interrupted), or with what
+    /// it has started, which fe-lsp kills before sending it anything.
+    /// Either way the server is `Stopped(None)`, not failed. fe-lsp can't
+    /// preempt a launch that ignores `cancel`, so a launcher that doesn't
+    /// watch it must bound its own launch time.
+    fn launch(&self, spec: &ServerSpec, root: &Path, cancel: &LaunchCancel)
+    -> io::Result<ServerIo>;
+}
+
+/// Asks a [`ServerLauncher::launch`] in progress to give up. fe-lsp makes
+/// one per server instance and fires it on a stop or a kill; a host's tests
+/// can make and fire their own. Clones share it, and once fired it stays
+/// fired.
+#[derive(Clone)]
+pub struct LaunchCancel {
+    own: Arc<Flag>,
+    /// The manager's kill switch, which cancels it too.
+    switch: Option<Arc<Flag>>,
+}
+
+impl LaunchCancel {
+    pub fn new() -> Self {
+        Self {
+            own: Arc::default(),
+            switch: None,
+        }
+    }
+
+    /// One that `switch` fires too.
+    pub(crate) fn linked(switch: Arc<Flag>) -> Self {
+        Self {
+            own: Arc::default(),
+            switch: Some(switch),
+        }
+    }
+
+    pub fn cancel(&self) {
+        self.own.fire();
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.own.fired() || self.switch.as_ref().is_some_and(|switch| switch.fired())
+    }
+
+    /// Resolves once it's cancelled, at once if it is already. A blocking
+    /// launcher can wait on it beside its own work, with
+    /// `async_io::block_on(futures::future::select(..))`.
+    pub fn cancelled(&self) -> impl Future<Output = ()> + Send + 'static {
+        let own = Flag::wait(&self.own);
+        let switch = self.switch.as_ref().map(Flag::wait);
+        async move {
+            match switch {
+                None => own.await,
+                Some(switch) => {
+                    futures::future::select(pin!(own), pin!(switch)).await;
+                }
+            }
+        }
+    }
+}
+
+impl Default for LaunchCancel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl std::fmt::Debug for LaunchCancel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LaunchCancel")
+            .field("cancelled", &self.is_cancelled())
+            .finish()
+    }
+}
+
+/// A one-way flag that can be waited on: [`LaunchCancel`]'s, and the
+/// manager's kill switch.
+pub(crate) struct Flag {
+    fired: AtomicBool,
+    /// Taken (dropped) when it fires, which resolves `receiver`.
+    sender: Mutex<Option<oneshot::Sender<()>>>,
+    receiver: Shared<oneshot::Receiver<()>>,
+}
+
+impl Default for Flag {
+    fn default() -> Self {
+        let (sender, receiver) = oneshot::channel();
+        Self {
+            fired: AtomicBool::new(false),
+            sender: Mutex::new(Some(sender)),
+            receiver: receiver.shared(),
+        }
+    }
+}
+
+impl Flag {
+    pub(crate) fn fire(&self) {
+        self.fired.store(true, Ordering::SeqCst);
+        drop(
+            self.sender
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take(),
+        );
+    }
+
+    pub(crate) fn fired(&self) -> bool {
+        self.fired.load(Ordering::SeqCst)
+    }
+
+    /// Resolves once it has fired. It keeps the signal, so its sender can
+    /// only go by firing.
+    pub(crate) fn wait(this: &Arc<Self>) -> impl Future<Output = ()> + Send + 'static {
+        let this = this.clone();
+        async move {
+            let _ = this.receiver.clone().await;
+        }
+    }
 }
 
 /// The default launcher: a local process in its own process group, with
@@ -139,20 +263,38 @@ impl LocalLauncher {
 }
 
 impl ServerLauncher for LocalLauncher {
-    fn launch(&self, spec: &ServerSpec, root: &Path) -> io::Result<ServerIo> {
-        launch_local(spec, root, LoginPath::system())
+    fn launch(
+        &self,
+        spec: &ServerSpec,
+        root: &Path,
+        cancel: &LaunchCancel,
+    ) -> io::Result<ServerIo> {
+        launch_local(spec, root, LoginPath::system(), cancel)
     }
 }
 
 struct WithPath(Arc<LoginPath>);
 
 impl ServerLauncher for WithPath {
-    fn launch(&self, spec: &ServerSpec, root: &Path) -> io::Result<ServerIo> {
-        launch_local(spec, root, &self.0)
+    fn launch(
+        &self,
+        spec: &ServerSpec,
+        root: &Path,
+        cancel: &LaunchCancel,
+    ) -> io::Result<ServerIo> {
+        launch_local(spec, root, &self.0, cancel)
     }
 }
 
-fn launch_local(spec: &ServerSpec, root: &Path, login: &LoginPath) -> io::Result<ServerIo> {
+/// Resolves the command (which may run the login shell, within
+/// [`LOGIN_SHELL_TIMEOUT`]), then spawns it, unless `cancel` fired
+/// meanwhile.
+fn launch_local(
+    spec: &ServerSpec,
+    root: &Path,
+    login: &LoginPath,
+    cancel: &LaunchCancel,
+) -> io::Result<ServerIo> {
     let spec_path = spec
         .env
         .iter()
@@ -186,6 +328,12 @@ fn launch_local(spec: &ServerSpec, root: &Path, login: &LoginPath) -> io::Result
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    if cancel.is_cancelled() {
+        return Err(io::Error::new(
+            io::ErrorKind::Interrupted,
+            format!("{}'s launch was cancelled", spec.name),
+        ));
+    }
     let mut child = command.spawn()?;
     let (Some(input), Some(output), stderr) =
         (child.stdin.take(), child.stdout.take(), child.stderr.take())

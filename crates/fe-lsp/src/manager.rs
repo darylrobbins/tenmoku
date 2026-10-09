@@ -37,7 +37,7 @@ use crate::document::{Admitted, Attached, Opening, Subscribed, language_id};
 use crate::encoding::PositionEncoding;
 use crate::event::{LspError, LspEvent, NOT_OPEN, ServerId, SharedLog};
 use crate::identity::{Identities, IncarnationId, SessionId};
-use crate::launcher::{ServerLauncher, ServerSpec};
+use crate::launcher::{Flag, LaunchCancel, ServerLauncher, ServerSpec};
 use crate::registry::{Registry, needs_restart, server_for};
 use crate::requests::{Reply, call, timeout, within};
 use crate::restart::SharedCrashes;
@@ -80,6 +80,39 @@ pub struct LspManager {
     /// Whether routed servers may start for a root: see
     /// [`set_trust`](LspManager::set_trust).
     trusted: Trusted,
+    /// Thrown by [`KillSwitch::kill`]; shared with every server thread.
+    switch: Arc<Flag>,
+}
+
+/// Force-stops every server an [`LspManager`] started, from
+/// [`LspManager::kill_switch`]. Clones share it, and it outlives the
+/// manager, so a host can throw it after dropping the manager (whose drop
+/// only asks its servers to shut down) once it has waited long enough.
+#[derive(Clone)]
+pub struct KillSwitch(Arc<Flag>);
+
+impl KillSwitch {
+    /// For every server the manager started whose thread hasn't ended
+    /// (running, launching, waiting to restart, or still shutting down
+    /// after a stop or the manager's drop): cancels its launch
+    /// ([`LaunchCancel`]) and kills its process at once, without
+    /// `shutdown` or `exit`. Each then launches and restarts nothing more,
+    /// hands its documents on as a stop does, and reports
+    /// `Stopped(None)`. Returns at once, without waiting for any of that.
+    ///
+    /// Once thrown it stays thrown: a server the manager starts afterwards
+    /// launches nothing, and reports `Stopped(None)`.
+    pub fn kill(&self) {
+        self.0.fire();
+    }
+}
+
+impl std::fmt::Debug for KillSwitch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KillSwitch")
+            .field("thrown", &self.0.fired())
+            .finish()
+    }
 }
 
 type Trusted = Arc<dyn Fn(&Path) -> bool + Send + Sync>;
@@ -93,6 +126,8 @@ struct Handle {
     routed: bool,
     commands: mpsc::UnboundedSender<Command>,
     stop: oneshot::Sender<()>,
+    /// Passed to its launches: fired with the stop.
+    cancel: LaunchCancel,
     /// Resolves when its thread has ended.
     done: Done,
     session: Arc<Mutex<Session>>,
@@ -100,10 +135,11 @@ struct Handle {
 }
 
 impl Handle {
-    /// Asks it to stop; the next instance of the same name and root waits
-    /// for its thread to end.
+    /// Asks it to stop, cutting a launch in progress short; the next
+    /// instance of the same name and root waits for its thread to end.
     fn stop(self, retiring: &mut HashMap<(String, PathBuf), Done>) {
         let _ = self.stop.send(());
+        self.cancel.cancel();
         retiring.insert((self.name, self.root), self.done);
     }
 }
@@ -157,7 +193,14 @@ impl LspManager {
             max_file_bytes: DEFAULT_MAX_FILE_BYTES,
             next_id: 0,
             trusted: Arc::new(|_| true),
+            switch: Arc::default(),
         }
+    }
+
+    /// The switch that force-stops every server this manager starts, for a
+    /// host that can't wait for them to shut down (a quit's deadline, say).
+    pub fn kill_switch(&self) -> KillSwitch {
+        KillSwitch(self.switch.clone())
     }
 
     /// Sets the host's answer to whether servers may start for a workspace
@@ -355,6 +398,7 @@ impl LspManager {
             crashes.epoch
         };
         let log = self.logs.entry(key.clone()).or_default().clone();
+        let cancel = LaunchCancel::linked(self.switch.clone());
         let thread = Server {
             id,
             spec: spec.clone(),
@@ -367,6 +411,8 @@ impl LspManager {
             identities: self.identities.clone(),
             commands: receiver,
             stop: stop_requested,
+            cancel: cancel.clone(),
+            switch: self.switch.clone(),
             routes: self.routes.clone(),
             after,
             done: Some(done_sender),
@@ -385,6 +431,7 @@ impl LspManager {
                 routed,
                 commands,
                 stop,
+                cancel,
                 done: done.shared(),
                 session,
                 thread,
@@ -393,8 +440,10 @@ impl LspManager {
         Ok(id)
     }
 
-    /// Shuts `server` down (§3.4) on its own thread, or ends its wait to
-    /// restart; the sink hears `Stopped(None)` when it has gone. Requests still waiting get
+    /// Shuts `server` down (§3.4) on its own thread, kills it if it hasn't
+    /// answered `initialize`, cancels its launch in progress
+    /// ([`LaunchCancel`]), or ends its wait to restart; the sink hears
+    /// `Stopped(None)` when it has gone. Requests still waiting get
     /// [`LspError::ServerDown`]. Its documents go with it, routed ones too:
     /// they're no longer tracked, as if closed, and a host wanting them
     /// synced again opens them again. (One that a crash or a settings
@@ -803,6 +852,7 @@ impl LspManager {
             self.set_place(buffer, place);
         }
         let _ = handle.stop.send(());
+        handle.cancel.cancel();
     }
 
     /// Opens each waiting document whose route now gives it a server
@@ -1076,7 +1126,8 @@ impl LspManager {
 mod trust_tests;
 
 impl Drop for LspManager {
-    /// Asks every server to shut down, without waiting for them.
+    /// Asks every server to shut down, without waiting for them; a
+    /// [`KillSwitch`] taken beforehand can still force them.
     fn drop(&mut self) {
         for (_, handle) in self.servers.drain() {
             handle.stop(&mut self.retiring);

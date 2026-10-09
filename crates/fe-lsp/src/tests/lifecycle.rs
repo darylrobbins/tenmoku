@@ -21,8 +21,8 @@ use crate::fake::{
 };
 use crate::server::{QUEUED_MAX, STDERR_GRACE, STEPS_PER_YIELD};
 use crate::{
-    ExitInfo, LspError, LspManager, ManualClock, PositionEncoding, ServerId, ServerIo,
-    ServerLauncher, ServerProcess, ServerSpec, ServerStatus,
+    ExitInfo, LaunchCancel, LspError, LspManager, ManualClock, PositionEncoding, ServerId,
+    ServerIo, ServerLauncher, ServerProcess, ServerSpec, ServerStatus,
 };
 
 fn start(
@@ -382,7 +382,7 @@ struct Flood {
 }
 
 impl ServerLauncher for Flood {
-    fn launch(&self, _: &ServerSpec, _: &Path) -> io::Result<ServerIo> {
+    fn launch(&self, _: &ServerSpec, _: &Path, _: &LaunchCancel) -> io::Result<ServerIo> {
         let wrote = Arc::new(AtomicBool::new(false));
         let (killed, exited) = oneshot::channel();
         Ok(ServerIo {
@@ -566,7 +566,7 @@ fn floods_do_not_hold_up_stop_or_deadlines() {
 }
 
 #[test]
-fn a_stop_while_starting_shuts_down_ahead_of_queued_requests() {
+fn a_stop_while_starting_kills_it_ahead_of_queued_requests() {
     let root = tempfile::tempdir().unwrap();
     let clock = Arc::new(ManualClock::new());
     let fake = FakeServer::with_clock(
@@ -588,21 +588,14 @@ fn a_stop_while_starting_shuts_down_ahead_of_queued_requests() {
         .collect();
     manager.stop(id);
 
-    // The stop waits for the answer, then goes straight to `shutdown`
-    // (its 2 s on the clock) without sending the backlog.
-    clock.wait_for_sleep(Duration::from_secs(5));
-    clock.advance(Duration::from_secs(5));
-    clock.wait_for_sleep(Duration::from_secs(2));
-    clock.advance(Duration::from_secs(2));
+    // Nothing may be sent before the answer, `shutdown` included, so the
+    // stop kills it at once, with no time passing on the clock, and sends
+    // none of the backlog.
     assert_eq!(events.status(id), ServerStatus::Stopped(None));
     let records = fake.records();
-    let shutdown = records.iter().find_map(|r| match r {
-        Record::Request { id, method, .. } if method == "shutdown" => Some(id.clone()),
-        _ => None,
-    });
-    assert_eq!(shutdown, Some(lsp_types::NumberOrString::Number(1)));
+    assert!(!records.iter().any(|r| r.method() == "shutdown"));
     assert!(!records.iter().any(|r| r.method() == "fake/echo"));
-    assert_eq!(fake.kills(), 0);
+    assert_eq!(fake.kills(), 1);
     for reply in queued {
         assert_eq!(async_io::block_on(reply), Err(LspError::ServerDown));
     }

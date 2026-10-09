@@ -13,14 +13,15 @@ use super::{Clocked, ROOT, manager, wait_until};
 use crate::fake::Script;
 use crate::router::{ServerStatusNotification, ServerStatusParams};
 use crate::{
-    LspEvent, ManualClock, ReadinessMode, ServerIo, ServerLauncher, ServerSpec, ServerStatus,
+    LaunchCancel, LspEvent, ManualClock, ReadinessMode, ServerIo, ServerLauncher, ServerSpec,
+    ServerStatus,
 };
 
 /// A launcher with nothing to run.
 struct Missing;
 
 impl ServerLauncher for Missing {
-    fn launch(&self, _: &ServerSpec, _: &Path) -> io::Result<ServerIo> {
+    fn launch(&self, _: &ServerSpec, _: &Path, _: &LaunchCancel) -> io::Result<ServerIo> {
         Err(io::Error::new(io::ErrorKind::NotFound, "no such file"))
     }
 }

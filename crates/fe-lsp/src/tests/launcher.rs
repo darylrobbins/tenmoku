@@ -8,7 +8,9 @@ use std::time::{Duration, Instant};
 use futures::{AsyncReadExt, AsyncWriteExt};
 
 use super::{manager, wait_until};
-use crate::{LocalLauncher, LspError, ServerIo, ServerLauncher, ServerSpec, ServerStatus};
+use crate::{
+    LaunchCancel, LocalLauncher, LspError, ServerIo, ServerLauncher, ServerSpec, ServerStatus,
+};
 
 #[test]
 fn local_launcher_kills_the_process_group() {
@@ -26,7 +28,9 @@ fn local_launcher_kills_the_process_group() {
         mut output,
         mut process,
         ..
-    } = LocalLauncher.launch(&spec, &root).unwrap();
+    } = LocalLauncher
+        .launch(&spec, &root, &LaunchCancel::new())
+        .unwrap();
 
     async_io::block_on(async {
         input.write_all(b"ping\n").await.unwrap();
@@ -55,7 +59,7 @@ fn local_launcher_kills_the_process_group() {
     }
 
     let missing = ServerSpec::new("missing", "/nonexistent/fe-lsp-test-server");
-    match LocalLauncher.launch(&missing, &root) {
+    match LocalLauncher.launch(&missing, &root, &LaunchCancel::new()) {
         Err(err) => assert_eq!(err.kind(), io::ErrorKind::NotFound),
         Ok(_) => panic!("launched a command that doesn't exist"),
     }
@@ -68,7 +72,7 @@ struct Refuse {
 }
 
 impl ServerLauncher for Refuse {
-    fn launch(&self, spec: &ServerSpec, _root: &Path) -> io::Result<ServerIo> {
+    fn launch(&self, spec: &ServerSpec, _root: &Path, _: &LaunchCancel) -> io::Result<ServerIo> {
         self.threads
             .lock()
             .unwrap()

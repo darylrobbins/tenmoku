@@ -5,6 +5,7 @@ mod admission;
 mod cancel;
 mod encoding;
 mod identity;
+mod kill;
 mod launcher;
 mod launcher_path_safety;
 mod lifecycle;

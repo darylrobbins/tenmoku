@@ -28,6 +28,11 @@
 //!   manager routed to it ([`Routes`]), open or still queued, go on to
 //!   wherever the manager now places them: another server (a restart's new
 //!   instance), or its lot to wait. The rest are dropped.
+//! - A stop cancels a launch in progress (the instance's
+//!   [`LaunchCancel`], passed to every launch it makes), and kills a server
+//!   that hasn't answered `initialize`. The manager's kill switch also
+//!   cuts `shutdown`, `exit` and a restart's backoff short: the process is
+//!   killed at once, and nothing more is launched.
 //! - The actor watches the process too: an exit while not shutting down
 //!   ends the session as a crash, even if the server's output stays open
 //!   (a descendant holding it, say).
@@ -73,11 +78,13 @@ use crate::document::{Admitted, Document, Link, Note, Opening, SyncPolicy};
 use crate::encoding::PositionEncoding;
 use crate::event::{LspError, LspEvent, NOT_OPEN, ServerId, ServerStatus, SharedLog};
 use crate::identity::{EndSession, Identities, SessionId};
-use crate::launcher::{ExitInfo, ServerIo, ServerLauncher, ServerProcess, ServerSpec};
+use crate::launcher::{
+    ExitInfo, Flag, LaunchCancel, ServerIo, ServerLauncher, ServerProcess, ServerSpec,
+};
 use crate::readiness::Readiness;
 use crate::registration::Registrations;
 use crate::requests::{Issue, Orphans, Out, Settled};
-use crate::restart::{Carry, SharedCrashes, Verdict, Waited};
+use crate::restart::{Carry, Kill, SharedCrashes, Verdict, Waited};
 use crate::router::{ClientState, Signal, client_router};
 
 /// How long `initialize` may take before the start counts as failed.
@@ -273,6 +280,10 @@ pub(crate) struct Server {
     /// Resolves (either way) when the manager wants the server stopped.
     /// Apart from the commands, so a stream of requests can't delay it.
     pub(crate) stop: oneshot::Receiver<()>,
+    /// Passed to every launch; the manager fires it with the stop.
+    pub(crate) cancel: LaunchCancel,
+    /// The manager's kill switch, which `cancel` is linked to.
+    pub(crate) switch: Arc<Flag>,
     pub(crate) routes: Routes,
     /// Resolves when the thread of the instance this one replaces (same
     /// name and root) has ended, its process gone: nothing is launched
@@ -321,16 +332,24 @@ impl Server {
         let mut carry = Carry {
             commands: std::mem::replace(&mut self.commands, mpsc::unbounded().1),
             stop: std::mem::replace(&mut self.stop, spent),
+            kill: Kill::new(self.switch.clone()),
             openings: Vec::new(),
             settings: self.spec.settings.clone(),
             routes: self.routes.clone(),
             identities: self.identities.clone(),
         };
         status.send(ServerStatus::Starting);
-        if let Some(after) = self.after.take() {
-            // A stop first: one that came while waiting wins over the end.
-            let waited = async_io::block_on(futures::future::select(&mut carry.stop, after));
-            if let Either::Left((_, after)) = waited {
+        if let Some(mut after) = self.after.take() {
+            // A stop or a kill first: one that came while waiting wins over
+            // the end.
+            let stopped = async_io::block_on(async {
+                select_biased! {
+                    () = &mut carry.kill => true,
+                    _ = &mut carry.stop => true,
+                    _ = &mut after => false,
+                }
+            });
+            if stopped {
                 // Stopped before it launched. Whatever replaces it must still
                 // wait for the one before, so this thread ends after that.
                 carry.hand_over();
@@ -347,14 +366,38 @@ impl Server {
             }
         };
         let mut session_id = self.session_id;
+        // The last session's process, kept until this thread ends or launches
+        // again, so a kill thrown meanwhile (during a backoff, or from a
+        // status callback) still reaches what's left of it ([`Watched`]).
+        let mut last: Option<Watched>;
         loop {
-            // A stop that came after the wait, or with none to wait for, wins
-            // too: nothing is launched for a spec already replaced.
-            if !matches!(carry.stop.try_recv(), Ok(None)) {
+            // A stop or kill that came after the wait, or with none to wait
+            // for, wins too: nothing is launched for a spec already replaced,
+            // nor once the manager's servers are being killed.
+            if carry.stopping() {
                 carry.hand_over();
                 return status.send(ServerStatus::Stopped(None));
             }
-            let io = match self.launcher.launch(&self.spec, &self.root) {
+            // The last session's process goes before its replacement is
+            // launched: it has exited, and once its group has gone too, its
+            // id may be reused, so a later kill mustn't signal it.
+            last = None;
+            let launched = self.launcher.launch(&self.spec, &self.root, &self.cancel);
+            // A stop or kill that came while it launched (which may block: a
+            // login shell, a container), which `cancel` asked it to cut
+            // short. Nothing has been sent to what it started, so that's
+            // killed rather than initialized, and its successor needn't wait
+            // for an `initialize` answer first. A launch that gave up is a
+            // stop, not a failure.
+            if self.cancel.is_cancelled() || carry.stopping() {
+                if let Ok(io) = launched {
+                    let mut process = io.process;
+                    async_io::block_on(kill(&mut *process));
+                }
+                carry.hand_over();
+                return status.send(ServerStatus::Stopped(None));
+            }
+            let io = match launched {
                 Ok(io) => io,
                 // Not a crash (§3.5), even on a restart: nothing ran, and
                 // trying again is for the user (`lsp.restart`).
@@ -364,24 +407,17 @@ impl Server {
                         .send(ServerStatus::Stopped(Some(launch_error(&self.spec, &err))));
                 }
             };
-            // A stop that came while it launched (which may block: a login
-            // shell, a container): nothing has been sent to it yet, so it's
-            // killed rather than initialized, and its successor needn't wait
-            // for an `initialize` answer first.
-            if !matches!(carry.stop.try_recv(), Ok(None)) {
-                let mut process = io.process;
-                async_io::block_on(kill(&mut *process));
-                carry.hand_over();
-                return status.send(ServerStatus::Stopped(None));
-            }
-            let (why, at, kept) = match self.session(io, session_id, &folder, &status, carry) {
-                Ended::Stopped => return,
+            let (ended, process) = self.session(io, session_id, &folder, &status, carry);
+            let process = last.insert(process);
+            let (why, at, kept) = match ended {
+                Ended::Stopped => return process.reap(),
                 Ended::Crashed { why, at, carry } => (why, at, carry),
             };
             carry = kept;
-            // A stop that came while it crashed (during a recycle's
+            // A stop or kill that came while it crashed (during a recycle's
             // shutdown, say) is a stop, not a crash.
-            if !matches!(carry.stop.try_recv(), Ok(None)) {
+            if carry.stopping() {
+                process.reap();
                 carry.hand_over();
                 return status.send(ServerStatus::Stopped(None));
             }
@@ -408,6 +444,7 @@ impl Server {
             log::warn!("{why}; restarting in {} s", after.as_secs());
             status.send(ServerStatus::Restarting(n));
             if let Waited::Stopped = async_io::block_on(carry.wait_out(&*self.clock, after)) {
+                process.reap();
                 return status.send(ServerStatus::Stopped(None));
             }
             session_id = self.identities.new_session();
@@ -415,7 +452,8 @@ impl Server {
         }
     }
 
-    /// Runs one session on `io`, until it stops or crashes.
+    /// Runs one session on `io`, until it stops or crashes, and hands its
+    /// process back.
     fn session(
         &self,
         io: ServerIo,
@@ -423,13 +461,18 @@ impl Server {
         folder: &WorkspaceFolder,
         status: &StatusSink,
         mut carry: Carry,
-    ) -> Ended {
+    ) -> (Ended, Watched) {
         let ServerIo {
             input,
             output,
             stderr,
             process,
         } = io;
+        let mut process = Watched {
+            process,
+            killed: false,
+            switch: self.switch.clone(),
+        };
         *lock(&self.session) = Session::default();
         let queue = Rc::new(Queue::default());
         let settings = Rc::new(RefCell::new(carry.settings.clone()));
@@ -487,6 +530,7 @@ impl Server {
             self.log.clone(),
             self.clock.clone(),
             over,
+            self.switch.clone(),
         );
         let backlog = carry.reopen();
         let actor = Actor {
@@ -522,15 +566,50 @@ impl Server {
             signal,
             due: None,
             shown: ServerStatus::Starting,
-            stopping: false,
             carry,
         };
         let (_, ended, ()) = async_io::block_on(futures::future::join3(
             main_loop,
-            actor.run(process, loop_done, session_over),
+            actor.run(&mut process, loop_done, session_over),
             stderr,
         ));
-        ended
+        (ended, process)
+    }
+}
+
+/// A session's process, and whether it has been killed. Dropped, or
+/// [`reap`](Self::reap)ed, once the kill switch is thrown, it kills what's
+/// left of the process if nothing has yet: the server exited, but its group
+/// may still have members.
+struct Watched {
+    process: Box<dyn ServerProcess>,
+    killed: bool,
+    switch: Arc<Flag>,
+}
+
+impl Watched {
+    fn reap(&mut self) {
+        if self.switch.fired() && !self.killed {
+            async_io::block_on(kill(self));
+        }
+    }
+}
+
+/// However the thread ends: a terminal status's sink may throw the switch.
+impl Drop for Watched {
+    fn drop(&mut self) {
+        self.reap();
+    }
+}
+
+impl ServerProcess for Watched {
+    fn exited(&mut self) -> Pin<Box<dyn Future<Output = ExitInfo> + Send + '_>> {
+        self.process.exited()
+    }
+
+    fn kill(&mut self) {
+        self.killed = true;
+        self.process.kill();
     }
 }
 
@@ -630,8 +709,6 @@ struct Actor {
     due: Option<(Instant, Timer)>,
     /// The status last reported.
     shown: ServerStatus,
-    /// The manager asked for a stop.
-    stopping: bool,
     /// The manager's commands and stop, kept across sessions.
     carry: Carry,
 }
@@ -646,15 +723,18 @@ impl Drop for Actor {
 
 enum Started {
     Running,
-    /// Asked to stop, and the server never got as far as answering
-    /// `initialize`.
+    /// Asked to stop (or killed) before the server answered `initialize`.
     Stopped,
     Crashed(String),
 }
 
-/// Why a running session ends.
+/// Why a session ends.
 enum End {
+    /// Asked to stop: shut it down, unless the kill switch is thrown.
     Stop,
+    /// Asked to stop before it initialized: kill it, as the protocol
+    /// allows nothing to be sent to it, `shutdown` included.
+    Kill,
     Crash(String),
     /// Too many orphans: shut it down, then restart it as after a crash.
     Recycle(String),
@@ -676,21 +756,15 @@ enum Step {
 impl Actor {
     async fn run(
         mut self,
-        mut process: Box<dyn ServerProcess>,
+        process: &mut dyn ServerProcess,
         mut loop_done: LoopDone,
         _session_over: oneshot::Sender<()>,
     ) -> Ended {
         let end = {
             let mut exited = process.exited().fuse();
             match self.initialize(&mut loop_done, &mut exited).await {
-                Started::Running if self.stopping => End::Stop,
                 Started::Running => self.serve(&mut loop_done, &mut exited).await,
-                Started::Stopped => {
-                    drop(exited);
-                    kill(&mut *process).await;
-                    self.stopped(None);
-                    return Ended::Stopped;
-                }
+                Started::Stopped => End::Kill,
                 Started::Crashed(why) => End::Crash(why),
             }
         };
@@ -699,19 +773,23 @@ impl Actor {
         let at = self.clock.now();
         match end {
             End::Stop => {
-                self.shutdown(&mut *process).await;
+                self.shutdown(process, false).await;
+                Ended::Stopped
+            }
+            End::Kill => {
+                self.shutdown(process, true).await;
                 Ended::Stopped
             }
             End::Crash(why) => {
                 // Callers waiting get `ServerDown` now.
                 self.pending = FuturesUnordered::new();
-                kill(&mut *process).await;
+                kill(process).await;
                 self.crashed(why, at)
             }
             End::Recycle(why) => {
                 self.pending = FuturesUnordered::new();
                 log::warn!("{why}; recycling the session");
-                self.shut_down(&mut *process).await;
+                self.shut_down(process).await;
                 self.crashed(why, at)
             }
         }
@@ -723,6 +801,8 @@ impl Actor {
         loop {
             self.move_for_drain();
             let step = select_biased! {
+                // `shutdown` sees it thrown, and kills the process.
+                () = &mut self.carry.kill => Step::Stop,
                 _ = &mut self.carry.stop => Step::Stop,
                 ended = &mut *loop_done => Step::LoopEnded(ended),
                 exit = &mut *exited => Step::Exited(exit),
@@ -996,6 +1076,7 @@ impl Actor {
         let spent = Carry {
             commands: mpsc::unbounded().1,
             stop,
+            kill: self.carry.kill.again(),
             openings: Vec::new(),
             settings: serde_json::Value::Null,
             routes: self.routes.clone(),
@@ -1078,39 +1159,31 @@ impl Actor {
         let reply = send_request::<Initialize>(&self.socket, params).fuse();
         let timeout = self.clock.sleep(INITIALIZE_TIMEOUT).fuse();
         pin_mut!(reply, timeout);
-        // A stop while starting waits for the answer: the protocol allows
-        // nothing to be sent before it, and `shutdown` after it.
+        // A stop while starting ends it at once: the protocol allows nothing
+        // to be sent before the answer, `shutdown` included, so it's killed
+        // rather than waited for (up to the timeout).
         let mut budget = Budget::default();
-        let failed = |stopping: bool, why: String| {
-            if stopping {
-                Started::Stopped
-            } else {
-                Started::Crashed(why)
-            }
-        };
         let result = loop {
             select_biased! {
                 result = reply => break result,
-                _ = &mut self.carry.stop => {
-                    self.stopping = true;
-                    self.hand_over();
-                }
+                () = &mut self.carry.kill => return Started::Stopped,
+                _ = &mut self.carry.stop => return Started::Stopped,
                 ended = &mut *loop_done => {
-                    return failed(self.stopping, format!(
+                    return Started::Crashed(format!(
                         "{} stopped before answering initialize: {}",
                         self.spec.name,
                         loop_end(ended),
                     ));
                 }
                 exit = &mut *exited => {
-                    return failed(self.stopping, format!(
+                    return Started::Crashed(format!(
                         "{} {} before answering initialize",
                         self.spec.name,
                         describe(exit),
                     ));
                 }
                 () = timeout => {
-                    return failed(self.stopping, format!(
+                    return Started::Crashed(format!(
                         "{} didn't answer initialize within {} s",
                         self.spec.name,
                         INITIALIZE_TIMEOUT.as_secs(),
@@ -1124,10 +1197,7 @@ impl Actor {
                         self.backlog.push_back(Command::Configure(settings));
                     }
                     Some(command) => self.backlog.push_back(command),
-                    None => {
-                        self.stopping = true;
-                        self.hand_over();
-                    }
+                    None => return Started::Stopped,
                 },
             }
             budget.spend().await;
@@ -1137,18 +1207,14 @@ impl Actor {
             // The loop has gone, taking the reply's channel with it: report
             // why it went.
             Err(async_lsp::Error::ServiceStopped) => {
-                return failed(
-                    self.stopping,
-                    format!(
-                        "{} stopped before answering initialize: {}",
-                        self.spec.name,
-                        loop_end(loop_done.await),
-                    ),
-                );
+                return Started::Crashed(format!(
+                    "{} stopped before answering initialize: {}",
+                    self.spec.name,
+                    loop_end(loop_done.await),
+                ));
             }
             Err(err) => {
-                let why = format!("{}: initialize failed: {err}", self.spec.name);
-                return failed(self.stopping, why);
+                return Started::Crashed(format!("{}: initialize failed: {err}", self.spec.name));
             }
         };
         self.record(result);
@@ -1157,17 +1223,11 @@ impl Actor {
             .notify::<Initialized>(InitializedParams {})
             .is_err()
         {
-            return failed(
-                self.stopping,
-                format!(
-                    "{} stopped after answering initialize: {}",
-                    self.spec.name,
-                    loop_end(loop_done.await),
-                ),
-            );
-        }
-        if self.stopping {
-            return Started::Running;
+            return Started::Crashed(format!(
+                "{} stopped after answering initialize: {}",
+                self.spec.name,
+                loop_end(loop_done.await),
+            ));
         }
         lock(&self.readiness).initialized(self.clock.now());
         self.readiness_changed();
@@ -1198,8 +1258,8 @@ impl Actor {
 
     /// Stops the session at the manager's request: its documents go on,
     /// its identities are retired and its callers answered, then
-    /// [`shut_down`](Self::shut_down).
-    async fn shutdown(&mut self, process: &mut dyn ServerProcess) {
+    /// [`shut_down`](Self::shut_down), or, if `force`, [`kill`].
+    async fn shutdown(&mut self, process: &mut dyn ServerProcess, force: bool) {
         // However it came to stop, its documents go on first.
         self.hand_over();
         self.link.identities.end_session(self.link.session);
@@ -1211,19 +1271,28 @@ impl Actor {
         self.documents.clear();
         self.tick = None;
         self.drain_queued = false;
-        self.shut_down(process).await;
+        if force {
+            kill(process).await;
+        } else {
+            self.shut_down(process).await;
+        }
         self.stopped(None);
     }
 
     /// `shutdown` (up to 2 s), `exit`, up to 1 s for the process to go,
     /// then `kill`. Whatever the server does after `exit` (a non-zero code,
-    /// closing its output) is a normal stop.
+    /// closing its output) is a normal stop. Once the kill switch is
+    /// thrown, it's killed at once, waiting for nothing more.
     async fn shut_down(&mut self, process: &mut dyn ServerProcess) {
+        if self.carry.kill.thrown() {
+            return kill(process).await;
+        }
         self.take_id();
         let reply = send_request::<Shutdown>(&self.socket, ()).fuse();
         let timeout = self.clock.sleep(SHUTDOWN_TIMEOUT).fuse();
         pin_mut!(reply, timeout);
         select_biased! {
+            () = &mut self.carry.kill => return kill(process).await,
             result = reply => if let Err(err) = result {
                 log::info!("{}: shutdown: {err}", self.spec.name);
             },
@@ -1240,20 +1309,28 @@ impl Actor {
             let exited = process.exited().fuse();
             let timeout = self.clock.sleep(EXIT_TIMEOUT).fuse();
             pin_mut!(exited, timeout);
+            // The kill first: an exit seen as it's thrown may be only the
+            // group's leader.
             select_biased! {
+                () = &mut self.carry.kill => {
+                    log::info!("{}: killed before it exited", self.spec.name);
+                    false
+                }
                 exit = exited => {
                     log::info!("{} exited: {exit:?}", self.spec.name);
                     true
                 }
-                () = timeout => false,
+                () = timeout => {
+                    log::info!(
+                        "{} still running {} s after exit; killing it",
+                        self.spec.name,
+                        EXIT_TIMEOUT.as_secs(),
+                    );
+                    false
+                }
             }
         };
         if !exited {
-            log::info!(
-                "{} still running {} s after exit; killing it",
-                self.spec.name,
-                EXIT_TIMEOUT.as_secs(),
-            );
             kill(process).await;
         }
     }
@@ -1356,13 +1433,15 @@ fn loop_end(ended: Result<async_lsp::Result<()>, oneshot::Canceled>) -> String {
 /// server's last words are kept, the ring holding the newest. It stops at
 /// the end of the stream, when nothing more is ready, or, for a stream
 /// that never stops being ready (something else keeps writing it),
-/// [`STDERR_GRACE`] on the clock after the session ended.
+/// [`STDERR_GRACE`] on the clock after the session ended, or once the
+/// kill `switch` is thrown.
 async fn drain_stderr(
     name: String,
     stderr: Option<Pin<Box<dyn AsyncRead + Send>>>,
     ring: SharedLog,
     clock: Arc<dyn Clock>,
     over: futures::future::Shared<oneshot::Receiver<()>>,
+    switch: Arc<Flag>,
 ) {
     let Some(mut stderr) = stderr else { return };
     let mut buf = vec![0; 4096];
@@ -1391,7 +1470,8 @@ async fn drain_stderr(
     }
     let mut grace = clock.sleep(STDERR_GRACE);
     let mut budget = Budget::default();
-    while grace.as_mut().now_or_never().is_none()
+    while !switch.fired()
+        && grace.as_mut().now_or_never().is_none()
         && let Some(Ok(n @ 1..)) = stderr.read(&mut buf).now_or_never()
     {
         keep(&buf[..n]);

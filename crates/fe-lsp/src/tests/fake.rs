@@ -46,7 +46,9 @@ use lsp_types::{
 use serde_json::{Value, json};
 
 use crate::clock::{Clock, SystemClock};
-use crate::launcher::{ExitInfo, ServerIo, ServerLauncher, ServerProcess, ServerSpec};
+use crate::launcher::{
+    ExitInfo, LaunchCancel, ServerIo, ServerLauncher, ServerProcess, ServerSpec,
+};
 
 /// How the fake behaves.
 #[derive(Clone, Debug)]
@@ -909,7 +911,7 @@ pub struct FakeLauncher {
 }
 
 impl ServerLauncher for FakeLauncher {
-    fn launch(&self, spec: &ServerSpec, root: &Path) -> io::Result<ServerIo> {
+    fn launch(&self, spec: &ServerSpec, root: &Path, _: &LaunchCancel) -> io::Result<ServerIo> {
         let (client_reads, server_writes) = pipe();
         let (server_reads, client_writes) = pipe();
         let (stderr_reads, stderr_writes) = pipe();

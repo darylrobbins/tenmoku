@@ -470,7 +470,33 @@ pub trait ServerProcess: Send {
 
 pub trait ServerLauncher: Send + Sync {
     /// Called on the server's own thread; may block (e.g. start a container).
-    fn launch(&self, spec: &ServerSpec, root: &Path) -> io::Result<ServerIo>;
+    /// Should return promptly once `cancel` fires (below).
+    fn launch(
+        &self,
+        spec: &ServerSpec,
+        root: &Path,
+        cancel: &LaunchCancel,
+    ) -> io::Result<ServerIo>;
+}
+
+/// Fired when the server is stopped, or its manager's kill switch thrown,
+/// while it launches. Clone + Send + Sync; once fired, stays fired.
+pub struct LaunchCancel { /* … */ }
+impl LaunchCancel {
+    pub fn new() -> Self;   // fe-lsp makes one per instance; public for tests
+    pub fn cancel(&self);
+    pub fn is_cancelled(&self) -> bool;
+    /// Resolves once cancelled (at once if already).
+    pub fn cancelled(&self) -> impl Future<Output = ()> + Send + 'static;
+}
+
+/// From `LspManager::kill_switch(&self)`. Clone + Send + Sync, and it
+/// outlives the manager.
+pub struct KillSwitch { /* … */ }
+impl KillSwitch {
+    /// Force-stops every server the manager started whose thread hasn't
+    /// ended; returns at once. Once thrown, stays thrown.
+    pub fn kill(&self);
 }
 
 /// The default: `async_process::Command` with piped stdio, cwd = root and
@@ -489,6 +515,41 @@ moves bytes. A message-level transport would duplicate async-lsp's codec.
 fastedit's own binary passes `LocalLauncher`. The host can still decline a
 launch: an `Err` marks the server `Stopped` with that error, shown as in §3.5.
 Whether the host *must* supply the launcher is Q1.
+
+**Cancelling a launch (T209).** Each server instance has one `LaunchCancel`,
+passed to every launch it makes, restarts included. A stop (`LspManager::stop`,
+a restart's stop of the old instance, a settings change, the manager's drop)
+fires it as it asks the thread to stop, and so does the manager's kill switch.
+
+- **The host contract.** Once `cancel` fires, a launch should return promptly:
+  with `ErrorKind::Interrupted`, or with what it has started. A blocking
+  launcher waits on `cancel.cancelled()` beside its own work, with
+  `async_io::block_on(futures::future::select(..))`. fe-lsp can't preempt a
+  launch that ignores `cancel`, so a launcher that doesn't watch it must bound
+  its own launch time.
+- A launch that returns after its cancel fired is a stop, not a failure: an
+  `Ok`'s process is killed before anything is sent to it, an `Err` is dropped,
+  and either way the server reports `Stopped(None)`.
+- `LocalLauncher` checks `is_cancelled()` after resolving the command and before
+  spawning, and returns `Interrupted` without spawning. The login-shell `PATH`
+  capture (§3.3) is bounded by its own 2 s and isn't interrupted.
+
+**The kill switch.** `LspManager::kill_switch()` returns a `KillSwitch` shared
+with every server thread the manager starts, for a host that can't wait out the
+graceful shutdown (§3.4), such as a quit with a deadline. It outlives the
+manager, since dropping the manager only asks its servers to shut down.
+`KillSwitch::kill` fires the `LaunchCancel` of every instance whose thread
+hasn't ended (running, launching, waiting to restart, or still shutting down)
+and returns at once. Each thread then kills its process at once, without
+`shutdown` or `exit`, launches and restarts nothing more, hands its documents
+on as a stop does, and reports `Stopped(None)`. A server the manager starts
+after the switch is thrown launches nothing and reports `Stopped(None)`. The
+thread keeps its last session's process until the thread ends or launches its
+replacement (whose process-group id the old one's may share once reused), so a switch
+thrown after the server exited gracefully (a stop, or a recycle) while the
+thread still reads its stderr's last words, waits to restart or reports its
+end kills what's left of its process group; reading stderr after the
+session also stops once the switch is thrown.
 
 **Relationship to `fe-syntax`'s `Spawner`.** These are **two traits**, and the
 plan's `fe-lsp` "`Spawner`" gets the new name `ServerLauncher`:
@@ -738,6 +799,10 @@ Why not "after the first progress `end`": rust-analyzer's first `end`
   2. Send the `exit` notification.
   3. Wait up to 1 s for `ServerProcess::exited`.
   4. Then `kill`.
+- **Before `initialize` answers**, the protocol allows nothing to be sent,
+  `shutdown` included, so a stop kills the server at once rather than waiting
+  for the answer (up to the 30 s startup timeout). Since T209.
+- **The kill switch** (§3.1) cuts any of these waits short with `kill`.
 - **Measured** in the probe, as the `shutdown` reply and then the exit after
   `exit`:
 
