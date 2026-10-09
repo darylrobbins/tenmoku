@@ -4,6 +4,8 @@
 //! rust-analyzer (a host spec of that name, so it gets Rust files), over a
 //! real project folder, so search can answer and unopened files be read.
 
+mod encoding;
+
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};

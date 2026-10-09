@@ -700,7 +700,8 @@ impl<'a> Decoder<'a> {
     }
 }
 
-/// The text of the file at `path` as the editor's loader reads it, if it's
+/// The text of the file at `path`, decoded as the editor's loader
+/// (`loader::read`) does (a BOM dropped, a legacy encoding detected), if it's
 /// a regular file no larger than `max_bytes`. Opened without blocking, so a
 /// FIFO in its place can't hang the request.
 fn load(path: &Path, max_bytes: usize) -> Option<Text> {
@@ -719,5 +720,7 @@ fn load(path: &Path, max_bytes: usize) -> Option<Text> {
     if raw.len() > max_bytes {
         return None;
     }
-    Text::from_reader(raw.as_slice()).ok().map(|(text, _)| text)
+    Text::from_reader_detecting(raw.as_slice())
+        .ok()
+        .map(|decoded| decoded.text)
 }
