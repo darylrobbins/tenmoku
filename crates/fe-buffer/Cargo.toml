@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 fe-text.workspace = true
+imara-diff.workspace = true
 sum-tree.workspace = true
 thiserror.workspace = true
 

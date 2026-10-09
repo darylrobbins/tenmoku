@@ -7,12 +7,17 @@
 //!   [`Buffer::edit_from`] applies edits computed against an older snapshot,
 //!   which is how AI proposals land while the user keeps typing.
 //! - [`BufferSnapshot`] is an O(1), thread-safe copy for background work.
+//! - [`ProposedChange`] holds edits made against a snapshot, such as an AI's,
+//!   as anchored hunks the user accepts (each as a transaction under the
+//!   proposal's origin) or rejects one by one; a hunk goes stale once the
+//!   user edits the text under it.
 //!
 //! This crate must never depend on GPUI.
 
 mod buffer;
 mod edit;
 mod log;
+mod proposed;
 mod selection;
 mod snapshot;
 
@@ -21,6 +26,7 @@ pub use buffer::{
 };
 pub use edit::Edit;
 pub use fe_text::{Bias, LineEnding, Point, PointUtf16, Text};
+pub use proposed::{HunkId, HunkStatus, HunkView, ProposalError, ProposedChange};
 pub use selection::{ResolvedSelection, Selection, SelectionSet};
 pub use snapshot::{Anchor, BufferId, BufferSnapshot, Version};
 

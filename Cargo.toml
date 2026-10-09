@@ -126,6 +126,8 @@ tree-sitter-xml = "0.7"
 tree-sitter-yaml = "0.7"
 
 ropey = { version = "=2.0.0-beta.1", features = ["metric_chars", "metric_lines_lf", "metric_utf16"] }
+# Line diffs for proposed changes (Apache-2.0).
+imara-diff = { version = "0.2", default-features = false }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
