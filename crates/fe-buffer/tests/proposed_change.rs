@@ -281,3 +281,64 @@ fn an_insertion_lands_after_text_typed_at_its_point() {
         Err(ProposalError::NotPending)
     );
 }
+
+/// `THREE_FNS` with a caller transaction of `open` origin already open and one
+/// edit in it, and a proposal rewriting `one` and `three`.
+fn with_open_transaction(open: Origin) -> (Buffer, ProposedChange, fe_buffer::TransactionId) {
+    let mut buffer = Buffer::new(THREE_FNS);
+    let base = buffer.snapshot();
+    let proposal = ProposedChange::from_text(&base, 0..base.len(), &rewritten(), ai());
+    let outer = buffer.start_transaction(open.clone());
+    buffer.edit([(0..0, "// top\n")], open);
+    (buffer, proposal, outer)
+}
+
+fn open_origins() -> [Origin; 2] {
+    [Origin::User, ai()]
+}
+
+#[test]
+fn accept_is_independent_of_an_open_transaction() {
+    for open in open_origins() {
+        let (mut buffer, mut proposal, outer) = with_open_transaction(open.clone());
+        let id = proposal.hunks(buffer.current())[0].id;
+
+        let accepted = proposal.accept(&mut buffer, id).unwrap();
+        assert_ne!(accepted, outer, "{open:?}");
+        assert!(buffer.text().to_string().contains("let x = 1;"));
+
+        // The caller's transaction is still open: more edits join it.
+        buffer.edit([(0..0, "// more\n")], open.clone());
+        assert_eq!(buffer.end_transaction(), Some(outer), "{open:?}");
+
+        // Undo reverts the accepted hunk alone, then the caller's edits.
+        assert_eq!(buffer.undo(|o| *o == ai()).unwrap(), Some(accepted));
+        let text = buffer.text().to_string();
+        assert!(!text.contains("let x = 1;"), "{open:?}");
+        assert!(text.starts_with("// more\n// top\n"), "{open:?}");
+    }
+}
+
+#[test]
+fn accept_all_is_independent_of_an_open_transaction() {
+    for open in open_origins() {
+        let (mut buffer, mut proposal, outer) = with_open_transaction(open.clone());
+
+        let (accepted, stale) = proposal.accept_all(&mut buffer);
+        let accepted = accepted.unwrap();
+        assert!(stale.is_empty());
+        assert_ne!(accepted, outer, "{open:?}");
+
+        buffer.edit([(0..0, "// more\n")], open.clone());
+        assert_eq!(buffer.end_transaction(), Some(outer), "{open:?}");
+
+        // One undo reverts the whole batch, and none of the caller's edits.
+        assert_eq!(buffer.undo(|o| *o == ai()).unwrap(), Some(accepted));
+        let text = buffer.text().to_string();
+        assert!(
+            !text.contains("let x = 1;") && !text.contains("    30\n"),
+            "{open:?}"
+        );
+        assert!(text.starts_with("// more\n// top\n"), "{open:?}");
+    }
+}

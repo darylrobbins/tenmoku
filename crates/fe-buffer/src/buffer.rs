@@ -468,6 +468,21 @@ impl Buffer {
         id
     }
 
+    /// Runs `f` with any open transaction set aside, so its edits start
+    /// transactions of their own even under the open one's origin, then
+    /// restores it. The open transaction is left as the caller had it, unless
+    /// `f` pushed its history over the limit and trimmed it away.
+    pub(crate) fn with_transaction_aside<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let aside = self.open.take();
+        let result = f(self);
+        if let Some(open) = aside
+            && self.history.iter().any(|entry| entry.id == open.id)
+        {
+            self.open = Some(open);
+        }
+        result
+    }
+
     /// Closes the innermost open transaction. Returns its id once the
     /// outermost one closes, if it changed anything.
     pub fn end_transaction(&mut self) -> Option<TransactionId> {

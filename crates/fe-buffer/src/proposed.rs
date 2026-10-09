@@ -241,7 +241,8 @@ impl ProposedChange {
     }
 
     /// Applies one pending hunk at its current range, as one transaction
-    /// under the proposal's origin.
+    /// under the proposal's origin, separate from any transaction the caller
+    /// has open.
     ///
     /// # Errors
     /// [`ProposalError::Stale`] if its old text is no longer in place (the
@@ -270,9 +271,10 @@ impl ProposedChange {
             return Err(ProposalError::Stale);
         }
         let new_text = hunk.new_text.clone();
-        let transaction = buffer
-            .edit([(range.clone(), new_text.clone())], self.origin.clone())
-            .expect("a hunk always changes the text");
+        let transaction = buffer.with_transaction_aside(|buffer| {
+            buffer.edit([(range.clone(), new_text.clone())], self.origin.clone())
+        });
+        let transaction = transaction.expect("a hunk always changes the text");
         let landed = range.start..range.start + new_text.len();
         self.landed(buffer.current(), id, landed);
         Ok(transaction)
@@ -284,8 +286,7 @@ impl ProposedChange {
     /// (found stale now or earlier), in text order.
     ///
     /// # Panics
-    /// As [`ProposedChange::accept`]. Also, in debug builds, as
-    /// [`Buffer::start_transaction`] if another origin's transaction is open.
+    /// As [`ProposedChange::accept`].
     pub fn accept_all(&mut self, buffer: &mut Buffer) -> (Option<TransactionId>, Vec<HunkId>) {
         self.check_buffer(buffer.current());
         let ranges = self.locate(buffer.current());
@@ -305,13 +306,10 @@ impl ProposedChange {
         if edits.is_empty() {
             return (None, stale);
         }
-        // `start_transaction` would hand back an outer transaction's id
-        // instead, if one is open.
-        buffer.start_transaction(self.origin.clone());
+        // Aside, so a caller's open transaction neither joins nor is closed.
         let transaction = buffer
-            .edit(edits, self.origin.clone())
+            .with_transaction_aside(|buffer| buffer.edit(edits, self.origin.clone()))
             .expect("a hunk always changes the text");
-        buffer.end_transaction();
         // Where each landed: hunks are in text order and don't overlap, so
         // this is how `Buffer::edit` placed them.
         let mut delta = 0isize;
