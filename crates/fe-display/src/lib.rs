@@ -1,16 +1,18 @@
 //! Maps buffer text to what's displayed: tabs expand within a row, long rows
-//! soft wrap and folds hide rows ([`DisplayMap`]); inlays and blocks come
-//! later. [`layout`] lays out a frame of an editor from that. Must never
-//! depend on GPUI.
+//! soft wrap and folds hide rows ([`DisplayMap`]), and blocks of rows go
+//! between display rows ([`BlockMap`]); inlays come later. [`layout`] lays
+//! out a frame of an editor from that. Must never depend on GPUI.
 //!
 //! Columns are byte offsets within a row, in buffer or display coordinates.
 
+mod block_map;
 mod display_map;
 mod fold_map;
 pub mod layout;
 mod long_row;
 mod wrap_map;
 
+pub use block_map::{Block, BlockMap, ScreenRow};
 pub use display_map::{DisplayMap, DisplayRow, WRAP_SLICE_BYTES};
 pub use fe_text::Bias;
 pub use fold_map::Fold;

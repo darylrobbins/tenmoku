@@ -1,19 +1,23 @@
 //! Lays out one frame of an editor: scrolling, the visible display rows and
-//! their style runs, selection and cursor rectangles, line numbers, fold
-//! toggles and fold markers.
+//! their style runs, the blocks between them, selection and cursor
+//! rectangles, line numbers, fold toggles and fold markers.
 //!
 //! This is plain arithmetic over a [`TextMeasure`], so it runs without a
 //! window. The UI implements the trait with its text shaper, then paints what
 //! [`layout_frame`] returns; tests use a fake monospace measurer.
 //!
-//! Positions are in pixels from the editor's top-left corner.
+//! Positions are in pixels from the editor's top-left corner. Rows are placed
+//! by screen row: display rows and the block rows between them.
 
 use std::ops::Range;
 
 use fe_buffer::ResolvedSelection;
 use fe_text::{Bias, Text};
 
-use crate::{CharWidth, DisplayMap, DisplayRow, ExpandedRow, LongRows, RowIndex, RowSlice};
+use crate::{
+    BlockMap, CharWidth, DisplayMap, DisplayRow, ExpandedRow, LongRows, RowIndex, RowSlice,
+    ScreenRow,
+};
 
 /// Longest row that is shaped whole. Of a longer row (minified files, data
 /// dumps), only a slice around the view is shaped, rather than stalling a
@@ -155,8 +159,18 @@ pub struct Frame<L> {
     pub text_left: f32,
     /// Display rows in the document.
     pub row_count: u32,
+    /// Display rows and block rows in the document.
+    pub screen_rows: u32,
+    /// The blocks the frame was laid out with.
+    pub block_map: BlockMap,
+    /// The first display row in the frame.
     pub first_row: u32,
     pub rows: Vec<RowLayout<L>>,
+    /// The blocks at least partly in view, in order.
+    pub blocks: Vec<BlockLayout>,
+    /// The screen rows of each of `blocks`, and the buffer offset a click
+    /// on it goes to.
+    block_offsets: Vec<(Range<u32>, usize)>,
     /// Full-width bands behind rows that have a caret.
     pub active_lines: Vec<Rect>,
     pub selections: Vec<Rect>,
@@ -190,6 +204,14 @@ pub struct FoldMarker<L> {
     pub rect: Rect,
     pub buffer_row: u32,
     pub line: L,
+}
+
+/// Where a block's rows go: across the text area, between display rows.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct BlockLayout {
+    pub id: u64,
+    pub rows: u32,
+    pub rect: Rect,
 }
 
 /// A display row: all of a buffer row or, soft wrapped, part of it.
@@ -314,8 +336,19 @@ impl<L: MeasuredLine> Frame<L> {
         (self.height / self.line_height).floor() as u32
     }
 
+    /// The top of a display row, below the blocks above it.
     pub fn row_top(&self, row: u32) -> f32 {
-        self.line_height * row as f32 - self.scroll.y
+        self.line_height * self.block_map.screen_row(row) as f32 - self.scroll.y
+    }
+
+    /// What's shown at `y`: a display row or a block row, in this frame or
+    /// past its edges.
+    pub fn screen_row_at(&self, y: f32) -> ScreenRow {
+        self.block_map.at_screen_row(self.screen_row_index(y))
+    }
+
+    fn screen_row_index(&self, y: f32) -> u32 {
+        ((y + self.scroll.y) / self.line_height).floor().max(0.) as u32
     }
 
     /// The x in the frame of `x` from column 0. Far along a long row, x is
@@ -384,8 +417,10 @@ impl<L: MeasuredLine> Frame<L> {
 
     /// The buffer offset under `position`. Rows outside this frame (dragging
     /// past an edge) clamp to its first or last row, and positions past the
-    /// end of a soft-wrapped row stay on it. `long_rows` and `widths` are
-    /// what the frame was laid out with.
+    /// end of a soft-wrapped row stay on it. A block in this frame gives the
+    /// end of the display row above it, or the start of the first row;
+    /// outside it, a block row clamps like the display row below it.
+    /// `long_rows` and `widths` are what the frame was laid out with.
     pub fn offset_at(
         &self,
         text: &Text,
@@ -393,9 +428,15 @@ impl<L: MeasuredLine> Frame<L> {
         long_rows: &mut LongRows,
         widths: &mut dyn CharWidth,
     ) -> usize {
-        let row = ((position.y + self.scroll.y) / self.line_height)
-            .floor()
-            .max(0.) as u32;
+        let screen_row = self.screen_row_index(position.y);
+        if let Some((_, offset)) = self
+            .block_offsets
+            .iter()
+            .find(|(rows, _)| rows.contains(&screen_row))
+        {
+            return *offset;
+        }
+        let row = self.block_map.display_row_from(screen_row);
         if row >= self.row_count {
             return text.len();
         }
@@ -449,7 +490,29 @@ pub fn wrap_width(width: f32, buffer_rows: u32, em: f32) -> f32 {
     (available / em).floor().max(1.) * em
 }
 
-/// Lays out the rows visible in `input`, shaping them with `measure`.
+/// Lays out the rows visible in `input`, with no blocks: see
+/// [`layout_frame_with_blocks`].
+pub fn layout_frame<M: TextMeasure>(
+    input: &FrameInput<M::Style>,
+    measure: &mut M,
+    long_rows: &mut LongRows,
+    widths: &mut dyn CharWidth,
+    highlights: impl FnMut(Range<usize>) -> Vec<StyledSpan<M::Style>>,
+    fold_candidates: impl FnOnce(Range<u32>) -> Vec<u32>,
+) -> Frame<M::Line> {
+    layout_frame_with_blocks(
+        input,
+        &BlockMap::default(),
+        measure,
+        long_rows,
+        widths,
+        highlights,
+        fold_candidates,
+    )
+}
+
+/// Lays out the rows visible in `input`, shaping them with `measure`, and
+/// places `blocks` between them.
 /// `highlights` returns the styled spans within a buffer range, sorted; it's
 /// called once per run of consecutive visible rows, and once per slice of a
 /// long row, again each time the slice is widened. `fold_candidates` returns
@@ -457,8 +520,9 @@ pub fn wrap_width(width: f32, buffer_rows: u32, em: f32) -> f32 {
 /// once, with the visible buffer rows.
 /// `long_rows` holds the indexes of long rows, measured with `widths`, from
 /// frame to frame.
-pub fn layout_frame<M: TextMeasure>(
+pub fn layout_frame_with_blocks<M: TextMeasure>(
     input: &FrameInput<M::Style>,
+    blocks: &BlockMap,
     measure: &mut M,
     long_rows: &mut LongRows,
     widths: &mut dyn CharWidth,
@@ -483,6 +547,7 @@ pub fn layout_frame<M: TextMeasure>(
     long_rows.start_frame();
 
     let row_count = display.row_count();
+    let screen_rows = row_count + blocks.block_rows();
     let text_left = gutter_width(text.row_count(), em);
     let fold_column_width = em * FOLD_COLUMN_EMS;
     let text_width = width - text_left;
@@ -490,7 +555,8 @@ pub fn layout_frame<M: TextMeasure>(
     // Keep the primary cursor a few rows from the top and bottom edges.
     if autoscroll {
         let margin = (line_height * 3.).min(height / 3.);
-        let head_top = line_height * display.row_for_offset(primary_head) as f32;
+        let head_row = blocks.screen_row(display.row_for_offset(primary_head));
+        let head_top = line_height * head_row as f32;
         if head_top < scroll.y + margin {
             scroll.y = head_top - margin;
         }
@@ -498,13 +564,15 @@ pub fn layout_frame<M: TextMeasure>(
             scroll.y = head_top + line_height - height + margin;
         }
     }
-    // Allow scrolling until the last row reaches the top.
-    let max_scroll_y = line_height * row_count.saturating_sub(1) as f32;
+    // Allow scrolling until the last row, or block row, reaches the top.
+    let max_scroll_y = line_height * screen_rows.saturating_sub(1) as f32;
     scroll.y = scroll.y.clamp(0., max_scroll_y);
 
-    let first_row = (scroll.y / line_height).floor() as u32;
-    let end_row = (((scroll.y + height) / line_height).ceil() as u32).min(row_count);
-    let row_top = |row: u32| line_height * row as f32 - scroll.y;
+    let first_screen_row = (scroll.y / line_height).floor() as u32;
+    let end_screen_row = ((scroll.y + height) / line_height).ceil() as u32;
+    let first_row = blocks.display_row_from(first_screen_row).min(row_count);
+    let end_row = blocks.display_row_from(end_screen_row).min(row_count);
+    let row_top = |row: u32| line_height * blocks.screen_row(row) as f32 - scroll.y;
 
     // Long rows are sliced once the horizontal scroll is known; the others
     // are shaped first, since it depends on them. With soft wrap on, a row
@@ -809,6 +877,35 @@ pub fn layout_frame<M: TextMeasure>(
         })
         .collect();
 
+    // A click on a block goes to the end of the row above it.
+    let row_end = |row: u32| {
+        let row = display.row(row);
+        if row.last {
+            row.range.end
+        } else {
+            text.clip_offset(row.range.end - 1, Bias::Left)
+                .max(row.range.start)
+        }
+    };
+    let (block_layouts, block_offsets) = blocks
+        .blocks_in(first_screen_row..end_screen_row)
+        .map(|(start, block)| {
+            let layout = BlockLayout {
+                id: block.id,
+                rows: block.rows,
+                rect: Rect {
+                    x: text_left,
+                    y: line_height * start as f32 - scroll.y,
+                    width: text_width,
+                    height: line_height * block.rows as f32,
+                },
+            };
+            let above = block.above.min(row_count);
+            let offset = above.checked_sub(1).map_or(0, row_end);
+            (layout, (start..start + block.rows, offset))
+        })
+        .unzip();
+
     Frame {
         width,
         height,
@@ -816,8 +913,12 @@ pub fn layout_frame<M: TextMeasure>(
         scroll,
         text_left,
         row_count,
+        screen_rows,
+        block_map: blocks.clone(),
         first_row,
         rows,
+        blocks: block_layouts,
+        block_offsets,
         active_lines,
         selections: selection_rects,
         cursors,
