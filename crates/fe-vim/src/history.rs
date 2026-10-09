@@ -74,24 +74,24 @@ impl Carets {
         self.pending.take()
     }
 
-    /// A [`Carets::take_pending`] record's transaction closed as `kept`. It
-    /// holds the carets before the transaction's first command, so it
-    /// replaces what commands that joined the still-open transaction noted
-    /// meanwhile, and a session that did so becomes its holder; `None`
-    /// means the transaction changed nothing, or is still open.
+    /// A [`Carets::take_pending`] record's transaction was published as
+    /// `kept`. It holds the carets before the transaction's first command,
+    /// so it replaces what commands that joined the transaction noted
+    /// meanwhile, wherever that is: `kept` is `None` when the transaction
+    /// changed nothing, but also when a newer session or edit held it open
+    /// across the publication, and that one may have closed or noted since.
     pub(crate) fn settle(&mut self, pending: Option<Pending>, kept: Option<TransactionId>) {
         let Some((id, carets)) = pending else {
             return;
         };
-        if kept == Some(id) {
-            match self.entries.iter_mut().rev().find(|(at, _)| *at == id) {
-                Some(entry) => entry.1 = carets,
-                None => self.record(id, carets),
-            }
+        if let Some(entry) = self.entries.iter_mut().rev().find(|(at, _)| *at == id) {
+            entry.1 = carets;
         } else if let Some((at, noted)) = &mut self.pending
             && *at == id
         {
             *noted = carets;
+        } else if kept == Some(id) {
+            self.record(id, carets);
         }
     }
 

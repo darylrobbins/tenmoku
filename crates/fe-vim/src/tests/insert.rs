@@ -884,6 +884,36 @@ fn undo_restores_the_first_commands_carets_through_a_closing_clone() {
 }
 
 #[test]
+fn undo_restores_the_first_carets_when_a_second_insert_outlives_publication() {
+    // The second insert is still open when the first's outcome is published
+    // (the transaction stays open, so it publishes none), and closes before
+    // it's adopted; with or without a normal edit joining in between.
+    for edit in [false, true] {
+        let (mut vim, mut clone) = closed_by_a_clone(move |target| {
+            if edit {
+                run_on_target(target, commit("rZ"));
+            }
+            run_on_target(target, commit("A"));
+            target.model.insert("y");
+        });
+        let model = vim.model_mut();
+        run_on(
+            model,
+            &mut clone,
+            Invocation::of("vim.normal_mode").unwrap(),
+        );
+        let after = text_of(model);
+        assert!(after.contains('y'), "{after}");
+        for (keys, has_y) in [("u", false), ("<C-r>", true)] {
+            model.set_cursor(0);
+            run_on(model, &mut clone, commit(keys));
+            assert_eq!(text_of(model).contains('y'), has_y, "{keys} {edit}");
+            assert_eq!(model.primary_selection().head(), 1, "{keys} {edit}");
+        }
+    }
+}
+
+#[test]
 fn a_caret_inside_a_grapheme_is_on_it() {
     // Another origin puts a combining mark at the caret, leaving it inside
     // `é`: a command takes the caret to be on that grapheme, as nvim does
