@@ -1,11 +1,12 @@
-use gpui::{Hsla, Pixels, px, rgb, rgba};
+use gpui::{App, Global, Hsla, Pixels, px, rgb, rgba};
 
 /// Every list row's height: the project tree's, the outline's, the quick-open
 /// picker's and the search results', so uniform lists lay them out alike.
 pub const ROW_HEIGHT: Pixels = px(24.);
 
-/// Colours for the workbench chrome: panels, rows and tabs. Hard-coded
-/// until themes land (M5).
+/// Colours for the workbench chrome: panels, rows and tabs. The host picks
+/// them and hands them over with [`set_ui_theme`]; [`ui_theme`] reads them,
+/// [`UiTheme::default_dark`] until then.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct UiTheme {
     /// Behind the editor and the empty pane, as the editor's own background.
@@ -76,4 +77,26 @@ impl Default for UiTheme {
     fn default() -> Self {
         Self::default_dark()
     }
+}
+
+/// The chrome colours in use, as a GPUI global. The host sets it with
+/// [`set_ui_theme`]; components read it with [`ui_theme`] and follow
+/// changes with `cx.observe_global::<ActiveUiTheme>`. fe-ui never reads
+/// settings or theme files itself.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ActiveUiTheme(pub UiTheme);
+
+impl Global for ActiveUiTheme {}
+
+/// Makes `theme` the active chrome colours, notifying observers of
+/// [`ActiveUiTheme`].
+pub fn set_ui_theme(cx: &mut App, theme: UiTheme) {
+    cx.set_global(ActiveUiTheme(theme));
+}
+
+/// The active chrome colours: the last [`set_ui_theme`]'s, or
+/// [`UiTheme::default_dark`] if none has been set.
+pub fn ui_theme(cx: &App) -> UiTheme {
+    cx.try_global::<ActiveUiTheme>()
+        .map_or_else(UiTheme::default_dark, |active| active.0)
 }

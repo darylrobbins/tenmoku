@@ -6,13 +6,15 @@
 //! [`SettingsStore`] holds the effective [`Settings`]; [`ConfigWatcher`]
 //! says which files changed, for [`SettingsStore::reload`]; [`write_setting`]
 //! changes one setting in a file, keeping its comments. [`load_themes`]
-//! reads the colour themes.
+//! reads the colour themes, and [`ThemeStore`] holds the selected one
+//! across reloads.
 
 pub mod diagnostic;
 pub mod layers;
 pub mod paths;
 pub mod settings;
 pub mod theme;
+pub mod theme_store;
 pub mod trust;
 pub mod watch;
 pub mod write;
@@ -25,6 +27,7 @@ pub use paths::{
 };
 pub use settings::{EditorSettings, Settings, SettingsEvent, SettingsStore, settings_schema};
 pub use theme::{Appearance, Color, EditorColors, Theme, ThemeSet, UiColors, load_themes};
+pub use theme_store::{ThemeEvent, ThemeStore};
 pub use watch::ConfigWatcher;
 pub use write::write_setting;
 

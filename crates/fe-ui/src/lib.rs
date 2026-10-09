@@ -1,6 +1,7 @@
 //! fastedit's UI primitives: stateless GPUI elements styled by a
-//! [`UiTheme`]. Views that own state (the project panel, the tab pane) live
-//! in `fe-workbench` and build their rows and tabs from these.
+//! [`UiTheme`], which a host makes active with [`set_ui_theme`]. Views that
+//! own state (the project panel, the tab pane) live in `fe-workbench` and
+//! build their rows and tabs from these.
 //!
 //! Depends on GPUI alone, never on a workspace crate. Written for fastedit:
 //! nothing here is copied from gpui-kit or elsewhere.
@@ -30,7 +31,7 @@ pub use palette::{PALETTE_WIDTH, PaletteFrame};
 pub use status_bar::{StatusBarFrame, StatusEntry};
 pub use tab_bar::{TAB_HEIGHT, Tab, TabBar};
 pub use text_input::{TextInput, TextInputEvent};
-pub use theme::{ROW_HEIGHT, UiTheme};
+pub use theme::{ActiveUiTheme, ROW_HEIGHT, UiTheme, set_ui_theme, ui_theme};
 pub use toggle_button::ToggleButton;
 pub use tooltip::Tooltip;
 pub use tree_row::{CHEVRON_WIDTH, ICON_SIZE, TREE_INDENT, TreeRow};
