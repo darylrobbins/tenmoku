@@ -53,7 +53,9 @@ pub enum Write {
 pub struct RegisterError(pub char);
 
 /// `" 0 1-9 - a-z`, plus `_` (which discards) and `+ *` (one slot: the host's
-/// clipboard). `A-Z` append to `a-z`.
+/// clipboard). `A-Z` append to `a-z`. The read-only `/` holds the last
+/// search pattern, which with its direction is the host's last search, as
+/// every editor shares it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Registers {
     numbered: [Option<Register>; 10],
@@ -61,6 +63,10 @@ pub struct Registers {
     named: [Option<Register>; 26],
     /// The register `"` reads: the last one written, `+` for the clipboard.
     unnamed: Option<char>,
+    /// `/`: the last search pattern, as characters.
+    search: Option<Register>,
+    /// Whether the last search went forward (`/`, not `?`).
+    search_forward: bool,
 }
 
 /// The clipboard's name in [`Registers::unnamed`].
@@ -71,7 +77,9 @@ impl Registers {
         Self::default()
     }
 
-    /// Whether `name` is a register: `" 0-9 - a-z A-Z _ + *`.
+    /// Whether `name` is a register a command may write: `" 0-9 - a-z A-Z _
+    /// + *`. Not `/`, which only [`Registers::read`] and
+    /// [`Registers::get`] reach.
     pub fn check(name: char) -> Result<(), RegisterError> {
         match name {
             '"' | '-' | '_' | '+' | '*' => Ok(()),
@@ -81,10 +89,12 @@ impl Registers {
     }
 
     /// A register's content, `"` following the last write and `A-Z` reading
-    /// `a-z`. `None` if it's empty, or for `_ + *` (and `"` pointing at the
-    /// clipboard), which only [`Registers::read`] reaches.
+    /// `a-z`, `/` the last search pattern. `None` if it's empty, or for `_ +
+    /// *` (and `"` pointing at the clipboard), which only
+    /// [`Registers::read`] reaches.
     pub fn get(&self, name: char) -> Option<&Register> {
         match name {
+            '/' => self.search.as_ref(),
             '"' => self.get(self.unnamed.filter(|&name| name != CLIPBOARD)?),
             '-' => self.small.as_ref(),
             '0'..='9' => self.numbered[name as usize - '0' as usize].as_ref(),
@@ -99,13 +109,17 @@ impl Registers {
     /// What a put of register `name` (`"` if `None`) inserts. The clipboard
     /// holds lines when its text ends in a line break, and never a block; its
     /// `\r\n` and `\r` read as `\n`. A block written to it is its rows
-    /// joined by `\n`.
+    /// joined by `\n`. `/` is the last search pattern, an error until a
+    /// search sets it (nvim's E35).
     pub fn read(
         &self,
         name: Option<char>,
         host: &mut dyn EditorHost,
     ) -> Result<Option<Register>, RegisterError> {
         let name = name.unwrap_or('"');
+        if name == '/' {
+            return self.search.clone().map(Some).ok_or(RegisterError(name));
+        }
         Self::check(name)?;
         let clipboard = match name {
             '+' | '*' => true,
@@ -168,6 +182,19 @@ impl Registers {
             }
         };
         Ok(())
+    }
+
+    /// The last search: its pattern (the `/` register) and whether it went
+    /// forward.
+    pub fn last_search(&self) -> Option<(&str, bool)> {
+        let search = self.search.as_ref()?;
+        Some((search.text.as_str(), self.search_forward))
+    }
+
+    /// Makes `pattern` the last search, as `/` (`forward`) or `?` does.
+    pub(crate) fn set_search(&mut self, pattern: &str, forward: bool) {
+        self.search = Some(Register::new(pattern, false));
+        self.search_forward = forward;
     }
 
     /// Writes register `name` itself, `A-Z` appending; returns the name

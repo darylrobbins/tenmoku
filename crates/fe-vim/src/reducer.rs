@@ -6,8 +6,9 @@ use serde::Serialize;
 use crate::{
     VimKey,
     args::{
-        CountArgs, InsertArgs, InsertAt, Motion, MoveArgs, OperateArgs, Operator, PutArgs,
-        ReplaceCharArgs, SelectArgs, SwapArgs, Target, TextObject, VisualArgs, VisualKind,
+        CommandLineArgs, CommandLineKind, CountArgs, InsertArgs, InsertAt, Motion, MoveArgs,
+        OperateArgs, Operator, PutArgs, ReplaceCharArgs, SelectArgs, SwapArgs, Target, TextObject,
+        VisualArgs, VisualKind,
     },
 };
 
@@ -188,6 +189,31 @@ impl Pending {
             ),
             (None, _) => Step::Cancel,
         }
+    }
+
+    /// `/` or `?` with no prefix waiting for a key: `vim.command_line`,
+    /// carrying the count, register and operator. Anything else comes back
+    /// as it was. [`step`] doesn't read them: only a
+    /// [`VimState`](crate::VimState) has a command line to open.
+    pub(crate) fn command_line(mut self, key: VimKey) -> Result<Step, Self> {
+        let kind = match key {
+            VimKey::Char('/') => CommandLineKind::SearchForward,
+            VimKey::Char('?') => CommandLineKind::SearchBackward,
+            _ => return Err(self),
+        };
+        if self.prefix.is_some() {
+            return Err(self);
+        }
+        self.end_count();
+        Ok(invocation(
+            "vim.command_line",
+            CommandLineArgs {
+                kind,
+                count: self.count,
+                register: self.register,
+                operator: self.operator,
+            },
+        ))
     }
 
     /// The key after a prefix.
@@ -439,8 +465,9 @@ fn invocation(command: &str, args: impl Serialize) -> Step {
     Step::Commit(Invocation::new(command).args(args).source(Source::Keyboard))
 }
 
+/// A register's name: `/` too, which a put reads and writes refuse.
 fn is_register(ch: char) -> bool {
-    ch.is_ascii_alphanumeric() || matches!(ch, '"' | '-' | '_' | '+' | '*')
+    ch.is_ascii_alphanumeric() || matches!(ch, '"' | '-' | '_' | '+' | '*' | '/')
 }
 
 fn operator(ch: char) -> Option<Operator> {

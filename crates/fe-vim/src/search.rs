@@ -1,13 +1,16 @@
 //! Search patterns: Vim's pattern language, translated to a [`regex::Regex`]
 //! and matched one row at a time. The crate docs list what translates.
 
-use std::collections::BTreeMap;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 use std::sync::OnceLock;
 
 use fe_text::{Bias, Text};
 use regex::{Regex, RegexBuilder};
 use unicode_segmentation::UnicodeSegmentation;
+
+use crate::args::SearchPattern;
 
 /// How deep groups may nest, short of `regex`'s own nesting limit.
 const MAX_DEPTH: usize = 60;
@@ -134,6 +137,35 @@ impl Pattern {
         wrapped
     }
 
+    /// Where `count` searches from `from` land, each from the match the
+    /// last found (`3/foo`): the start of the last match, or `None` if
+    /// there is none. Past the last match the searches go round the text
+    /// again, so once a match comes back the rest is counted round, not
+    /// searched. After the first search, each row's matches are listed
+    /// once and stepped through, so the work is bounded by the text's
+    /// matches and rows, not the count.
+    pub fn nth(&self, text: &Text, from: usize, forward: bool, count: usize) -> Option<usize> {
+        let first = self.find(text, from, forward)?.start;
+        let mut rows = Rows {
+            pattern: self,
+            text,
+            listed: HashMap::new(),
+        };
+        let mut seen = HashMap::from([(first, 0)]);
+        let mut found = vec![first];
+        for step in 1..count {
+            let at = *found.last().expect("one match was found");
+            let next = rows.step(at, forward);
+            if let Some(&first) = seen.get(&next) {
+                let cycle = &found[first..];
+                return Some(cycle[(count - 1 - first) % cycle.len()]);
+            }
+            seen.insert(next, step);
+            found.push(next);
+        }
+        found.last().copied()
+    }
+
     /// The matches in one row, as Vim finds them: from its start, each
     /// search resuming at the end of the last match, or one whole character
     /// (an extended grapheme cluster) on from an empty one, and not at the
@@ -145,6 +177,166 @@ impl Pattern {
             at: Some(0),
         }
     }
+}
+
+/// The rows [`Pattern::nth`] has searched: each row's matches, listed
+/// once, as starts and where a search from each start resumes.
+struct Rows<'a> {
+    pattern: &'a Pattern,
+    text: &'a Text,
+    listed: HashMap<u32, Listed>,
+}
+
+/// A row's end and its matches' starts, each with where a forward search
+/// from it begins: a whole character on.
+struct Listed {
+    end: usize,
+    starts: Vec<(usize, usize)>,
+}
+
+impl Rows<'_> {
+    fn row(&mut self, row: u32) -> &Listed {
+        let (pattern, text) = (self.pattern, self.text);
+        self.listed.entry(row).or_insert_with(|| {
+            let mut buf = String::new();
+            let (start, hay) = row_text(text, row, &mut buf);
+            let starts = pattern
+                .matches(hay)
+                .map(|found| {
+                    let past = found.start + unit(&hay[found.start..]).unwrap_or(0);
+                    (start + found.start, start + past)
+                })
+                .collect();
+            Listed {
+                end: start + hay.len(),
+                starts,
+            }
+        })
+    }
+
+    /// Where [`Pattern::find`] goes from the match starting at `at`, by
+    /// the same rules, from the rows' lists.
+    fn step(&mut self, at: usize, forward: bool) -> usize {
+        let from_row = self.text.offset_to_point(at).row;
+        let rows = self.text.row_count();
+        let here = self.row(from_row);
+        let ix = here.starts.partition_point(|&(start, _)| start < at);
+        if forward {
+            let past = here.starts.get(ix).map_or(at, |&(_, past)| past);
+            if past < here.end
+                && let Some(&(next, _)) = here.starts[ix..].iter().find(|&&(s, _)| s >= past)
+            {
+                return next;
+            }
+            for row in (from_row + 1..rows).chain(0..=from_row) {
+                if let Some(&(next, _)) = self.row(row).starts.first() {
+                    return next;
+                }
+            }
+        } else {
+            if ix > 0 {
+                return here.starts[ix - 1].0;
+            }
+            for row in (0..from_row).rev().chain((from_row..rows).rev()) {
+                if let Some(&(next, _)) = self.row(row).starts.last() {
+                    return next;
+                }
+            }
+        }
+        at
+    }
+}
+
+/// `pattern` translated, the last one kept on each thread: a search motion
+/// asks once for each caret.
+pub(crate) fn parsed(pattern: SearchPattern) -> Result<Pattern, PatternError> {
+    thread_local! {
+        static LAST: RefCell<Option<(SearchPattern, Result<Pattern, PatternError>)>> =
+            const { RefCell::new(None) };
+    }
+    LAST.with_borrow_mut(|last| match last {
+        Some((kept, parsed)) if *kept == pattern => parsed.clone(),
+        _ => last
+            .insert((pattern, Pattern::parse(pattern.as_str())))
+            .1
+            .clone(),
+    })
+}
+
+/// Splits a search's line, what's typed after `/` or `?` (the
+/// `delimiter`), into its pattern and, if a delimiter ends the pattern,
+/// what follows that (a search offset, `/foo/e`). As Vim reads the line, a
+/// delimiter escaped with a backslash or inside a collection doesn't end
+/// it: `[` starts one, but after `\V` (very nomagic, until `\v`, `\m` or
+/// `\M`) `\[` does, as in nvim (nomagic's `[` too), and it runs to its
+/// `]`, or to the line's end if none closes it. After `?`, `\?` is a `?`.
+pub fn split_search(line: &str, delimiter: char) -> (String, Option<&str>) {
+    let mut pattern = String::new();
+    let mut very_nomagic = false;
+    let mut at = 0;
+    while let Some(ch) = line[at..].chars().next() {
+        at += ch.len_utf8();
+        if ch == delimiter {
+            return (pattern, Some(&line[at..]));
+        }
+        let collection = match ch {
+            '\\' => {
+                let Some(next) = line[at..].chars().next() else {
+                    pattern.push(ch);
+                    break;
+                };
+                at += next.len_utf8();
+                match next {
+                    'v' | 'm' | 'M' => very_nomagic = false,
+                    'V' => very_nomagic = true,
+                    _ => {}
+                }
+                if next == '?' && delimiter == '?' {
+                    pattern.push('?');
+                    continue;
+                }
+                pattern.push(ch);
+                pattern.push(next);
+                next == '[' && very_nomagic
+            }
+            _ => {
+                pattern.push(ch);
+                ch == '[' && !very_nomagic
+            }
+        };
+        if collection {
+            let end = at + collection_len(&line[at..]);
+            pattern.push_str(&line[at..end]);
+            at = end;
+        }
+    }
+    (pattern, None)
+}
+
+/// How much of `rest`, what follows a collection's `[`, the collection
+/// takes, its `]` included: `^` and then `]` or `-` first are members, a
+/// backslash takes the next character, `[:name:]` is one member. All of it
+/// if no `]` closes it.
+fn collection_len(rest: &str) -> usize {
+    let mut at = usize::from(rest.starts_with('^'));
+    if rest[at..].starts_with([']', '-']) {
+        at += 1;
+    }
+    while let Some(ch) = rest[at..].chars().next() {
+        if rest[at..].starts_with("[:")
+            && let Some(end) = rest[at + 2..].find(":]")
+        {
+            at += 2 + end + 2;
+            continue;
+        }
+        at += ch.len_utf8();
+        match ch {
+            ']' => return at,
+            '\\' => at += rest[at..].chars().next().map_or(0, char::len_utf8),
+            _ => {}
+        }
+    }
+    rest.len()
 }
 
 /// Every match on `rows` (clamped to the text), in order, at most `cap`

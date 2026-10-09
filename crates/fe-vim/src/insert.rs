@@ -1433,7 +1433,7 @@ pub(crate) fn change(
     }
     if let Some(value) = write {
         let small = !value.linewise && !value.text.contains('\n');
-        let percent = args.target == Target::Motion(Motion::MatchPair);
+        let percent = args.target.writes_numbered();
         let write = Write::Delete {
             small,
             numbered: !small || percent,

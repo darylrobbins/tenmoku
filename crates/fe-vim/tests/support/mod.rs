@@ -92,7 +92,7 @@ pub(crate) struct Outcome {
     pub(crate) cursor: (u32, usize),
     /// `nvim_get_mode().mode`: `n` is normal.
     pub(crate) mode: String,
-    /// Each non-empty register of `" 0-9 - a-z`.
+    /// Each non-empty register of `" 0-9 - a-z /`.
     pub(crate) registers: BTreeMap<String, Register>,
     /// The visual anchor (`getpos('v')`), if the keys end in a visual mode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -262,8 +262,9 @@ fn mode_name(nvim: &str) -> &str {
     }
 }
 
-/// The registers the oracle records, `" 0-9 - a-z`.
-const REGISTERS: &str = "\"0123456789-abcdefghijklmnopqrstuvwxyz";
+/// The registers the oracle records, `" 0-9 - a-z` and `/`, the last
+/// search pattern.
+const REGISTERS: &str = "\"0123456789-abcdefghijklmnopqrstuvwxyz/";
 
 /// `vim`'s non-empty registers among [`REGISTERS`], as the oracle records
 /// them.

@@ -1,0 +1,538 @@
+# Search cases for fe-vim's oracle: / and ? on the command line, as motions,
+# operator targets and in visual modes, the last pattern and the / register.
+# Hand-written: name, buffer (rows joined with \n, no trailing newline),
+# cursor = [row, byte column] and keys in vim notation. What nvim does with
+# each is recorded in search.expected.json by the ignored
+# `record_corpus_with_neovim` test; edit a case, then re-record.
+
+# / and ? as motions, counts and wrapping.
+[[case]]
+name = "forward"
+buffer = "one foo two foo"
+cursor = [0, 0]
+keys = "/foo<CR>"
+
+[[case]]
+name = "forward_next_row"
+buffer = "abc\nxx foo\nfoo"
+cursor = [0, 1]
+keys = "/foo<CR>"
+
+[[case]]
+name = "backward"
+buffer = "foo one foo two"
+cursor = [0, 14]
+keys = "?foo<CR>"
+
+[[case]]
+name = "backward_previous_row"
+buffer = "foo\nab foo cd\nxyz"
+cursor = [2, 1]
+keys = "?foo<CR>"
+
+[[case]]
+name = "forward_count"
+buffer = "a foo b foo c foo"
+cursor = [0, 0]
+keys = "2/foo<CR>"
+
+[[case]]
+name = "backward_count"
+buffer = "a foo b foo c foo"
+cursor = [0, 16]
+keys = "2?foo<CR>"
+
+[[case]]
+name = "forward_wraps_past_the_end"
+buffer = "foo one\ntwo foo"
+cursor = [1, 5]
+keys = "/foo<CR>"
+
+[[case]]
+name = "backward_wraps_past_the_start"
+buffer = "one foo\nfoo two"
+cursor = [0, 1]
+keys = "?foo<CR>"
+
+[[case]]
+name = "count_goes_round"
+buffer = "a foo b foo c foo"
+cursor = [0, 0]
+keys = "5/foo<CR>"
+
+[[case]]
+name = "backward_count_goes_round"
+buffer = "a foo\nb foo"
+cursor = [1, 0]
+keys = "4?foo<CR>"
+
+[[case]]
+name = "match_at_cursor_is_skipped"
+buffer = "foo x foo"
+cursor = [0, 0]
+keys = "/foo<CR>"
+
+[[case]]
+name = "only_match_at_cursor_wraps_to_it"
+buffer = "x foo y"
+cursor = [0, 2]
+keys = "/foo<CR>"
+
+[[case]]
+name = "backward_match_at_cursor_is_skipped"
+buffer = "foo x foo"
+cursor = [0, 6]
+keys = "?foo<CR>"
+
+[[case]]
+name = "from_last_char_starts_on_next_row"
+buffer = "abx\nx"
+cursor = [0, 2]
+keys = "/x<CR>"
+
+[[case]]
+name = "goal_column_resets"
+buffer = "abc foo\nfoo"
+cursor = [0, 0]
+keys = "/o<CR>j"
+
+[[case]]
+name = "row_end_match_is_the_last_char"
+buffer = "abc\nfoo bar"
+cursor = [0, 1]
+keys = "/$<CR>"
+
+[[case]]
+name = "empty_row"
+buffer = "abc\n\nfoo"
+cursor = [0, 1]
+keys = "/^$<CR>"
+
+[[case]]
+name = "empty_match_at_row_start"
+buffer = "abc\nfoo"
+cursor = [0, 1]
+keys = "/^<CR>"
+
+# The last pattern: an empty line reuses it, in the new direction.
+[[case]]
+name = "empty_pattern_reuses_last"
+buffer = "foo a foo b foo"
+cursor = [0, 0]
+keys = "/foo<CR>/<CR>"
+
+[[case]]
+name = "empty_backward_reuses_last"
+buffer = "foo a foo b foo"
+cursor = [0, 0]
+keys = "/foo<CR>?<CR>"
+
+[[case]]
+name = "empty_pattern_counted"
+buffer = "foo a foo b foo c foo"
+cursor = [0, 0]
+keys = "/foo<CR>2/<CR>"
+
+[[case]]
+name = "trailing_delimiter"
+buffer = "one foo"
+cursor = [0, 0]
+keys = "/foo/<CR>"
+
+[[case]]
+name = "backward_trailing_delimiter"
+buffer = "foo one foo"
+cursor = [0, 10]
+keys = "?foo?<CR>"
+
+[[case]]
+name = "delimiter_in_a_collection"
+buffer = "x a/b ab"
+cursor = [0, 0]
+keys = "/a[/]b<CR>"
+
+[[case]]
+name = "escaped_delimiter"
+buffer = "x a/b ab"
+cursor = [0, 0]
+keys = "/a\\/b<CR>"
+
+[[case]]
+name = "slash_in_backward_search"
+buffer = "a/b x"
+cursor = [0, 4]
+keys = "?a/b<CR>"
+
+[[case]]
+name = "escaped_question_mark_backward"
+buffer = "a?b ab b"
+cursor = [0, 7]
+keys = "?a\\?b<CR>"
+
+# Magic atoms.
+[[case]]
+name = "word_boundaries"
+buffer = "foobar barfoo foo"
+cursor = [0, 0]
+keys = "/\\<foo\\><CR>"
+
+[[case]]
+name = "word_start"
+buffer = "barfoo foobar"
+cursor = [0, 0]
+keys = "/\\<foo<CR>"
+
+[[case]]
+name = "bounded_multi"
+buffer = "a aa aaaa"
+cursor = [0, 0]
+keys = "/a\\{3,4}<CR>"
+
+[[case]]
+name = "group_alternation"
+buffer = "x dog cat"
+cursor = [0, 0]
+keys = "/\\(cat\\|dog\\)<CR>"
+
+[[case]]
+name = "very_magic"
+buffer = "x cats dogs"
+cursor = [0, 0]
+keys = "/\\v(dog|cat)s<CR>"
+
+[[case]]
+name = "very_nomagic"
+buffer = "axb a.b"
+cursor = [0, 0]
+keys = "/\\Va.b<CR>"
+
+[[case]]
+name = "ignore_case"
+buffer = "x Foo FOO"
+cursor = [0, 0]
+keys = "/\\cfoo<CR>"
+
+[[case]]
+name = "digit_class"
+buffer = "abc 42 x7"
+cursor = [0, 0]
+keys = "/\\d\\+<CR>"
+
+[[case]]
+name = "collection"
+buffer = "abc x9z"
+cursor = [0, 0]
+keys = "/[0-9]<CR>"
+
+[[case]]
+name = "negated_collection"
+buffer = "aaa ab"
+cursor = [0, 0]
+keys = "/[^a ]<CR>"
+
+# Failed searches end their case: nvim flushes what follows an error.
+[[case]]
+name = "not_found"
+buffer = "abc foo"
+cursor = [0, 1]
+keys = "/zzz<CR>"
+
+[[case]]
+name = "not_found_after_found"
+buffer = "abc foo bar"
+cursor = [0, 0]
+keys = "/foo<CR>/zzz<CR>"
+
+[[case]]
+name = "not_found_backward"
+buffer = "abc foo"
+cursor = [0, 5]
+keys = "?zzz<CR>"
+
+[[case]]
+name = "not_found_with_operator"
+buffer = "abc foo"
+cursor = [0, 0]
+keys = "d/zzz<CR>"
+
+[[case]]
+name = "not_found_in_visual"
+buffer = "abc foo"
+cursor = [0, 0]
+keys = "vl/zzz<CR>"
+
+[[case]]
+name = "invalid_pattern"
+buffer = "abc foo"
+cursor = [0, 0]
+keys = "/a\\(<CR>"
+
+# Operators: an exclusive charwise target, by :help exclusive.
+[[case]]
+name = "delete_to_match"
+buffer = "one two foo three"
+cursor = [0, 0]
+keys = "d/foo<CR>"
+
+[[case]]
+name = "delete_backward_to_match"
+buffer = "one foo two three"
+cursor = [0, 12]
+keys = "d?foo<CR>"
+
+[[case]]
+name = "delete_count"
+buffer = "a foo b foo c foo"
+cursor = [0, 0]
+keys = "d2/foo<CR>"
+
+[[case]]
+name = "count_before_operator"
+buffer = "a foo b foo c foo"
+cursor = [0, 0]
+keys = "2d/foo<CR>"
+
+[[case]]
+name = "delete_to_row_start_is_inclusive"
+buffer = "abc\nbar x"
+cursor = [0, 1]
+keys = "d/^bar<CR>"
+
+[[case]]
+name = "delete_to_row_start_linewise"
+buffer = "  abc\nbar x"
+cursor = [0, 0]
+keys = "d/^bar<CR>"
+
+[[case]]
+name = "delete_to_empty_row"
+buffer = "abc\n\nfoo"
+cursor = [0, 1]
+keys = "d/^$<CR>"
+
+[[case]]
+name = "delete_to_row_end"
+buffer = "abc\nfoo bar"
+cursor = [0, 1]
+keys = "d/$<CR>"
+
+[[case]]
+name = "delete_named_register"
+buffer = "one two foo"
+cursor = [0, 0]
+keys = "\"ad/foo<CR>"
+
+[[case]]
+name = "delete_across_rows"
+buffer = "one\ntwo foo"
+cursor = [0, 1]
+keys = "d/foo<CR>"
+
+[[case]]
+name = "change_to_match"
+buffer = "one two foo"
+cursor = [0, 0]
+keys = "c/foo<CR>XY<Esc>"
+
+[[case]]
+name = "yank_backward"
+buffer = "axb cd"
+cursor = [0, 5]
+keys = "y?x<CR>"
+
+[[case]]
+name = "yank_forward_puts"
+buffer = "ab cd x"
+cursor = [0, 0]
+keys = "y/x<CR>P"
+
+[[case]]
+name = "repeat_delete_to_match"
+buffer = "a; b; c; d"
+cursor = [0, 0]
+keys = "d/;<CR>."
+
+[[case]]
+name = "indent_to_match"
+buffer = "a\nb\nc foo"
+cursor = [0, 0]
+keys = ">/foo<CR>"
+
+[[case]]
+name = "cancelled_operator"
+buffer = "abc foo"
+cursor = [0, 0]
+keys = "d/foo<Esc>"
+
+[[case]]
+name = "backspace_cancels_empty_line"
+buffer = "abc foo"
+cursor = [0, 0]
+keys = "d/f<BS><BS>x"
+
+# Visual modes: the search moves the visual cursor, keeping the anchor.
+[[case]]
+name = "visual_forward"
+buffer = "abc foo bar"
+cursor = [0, 1]
+keys = "v/foo<CR>"
+
+[[case]]
+name = "visual_backward"
+buffer = "abc foo bar"
+cursor = [0, 9]
+keys = "v?foo<CR>"
+
+[[case]]
+name = "visual_delete"
+buffer = "abc foo bar"
+cursor = [0, 1]
+keys = "v/foo<CR>d"
+
+[[case]]
+name = "visual_line_yank"
+buffer = "a\nb\nfoo\nc"
+cursor = [0, 0]
+keys = "V/foo<CR>y"
+
+[[case]]
+name = "visual_block"
+buffer = "abcd\nabcd\nxxfo"
+cursor = [0, 1]
+keys = "<C-v>/fo<CR>d"
+
+[[case]]
+name = "visual_cancel_keeps_selection"
+buffer = "abc foo bar"
+cursor = [0, 0]
+keys = "vl/fo<Esc>"
+
+[[case]]
+name = "visual_count"
+buffer = "x foo y foo z"
+cursor = [0, 0]
+keys = "v2/foo<CR>"
+
+# Multibyte text.
+[[case]]
+name = "multibyte_forward"
+buffer = "héllo wörld wörld"
+cursor = [0, 0]
+keys = "/wörld<CR>"
+
+[[case]]
+name = "multibyte_backward"
+buffer = "日本 語 日本"
+cursor = [0, 10]
+keys = "?日本<CR>"
+
+[[case]]
+name = "multibyte_delete"
+buffer = "été très été"
+cursor = [0, 0]
+keys = "d/tr<CR>"
+
+[[case]]
+name = "emoji"
+buffer = "a 😀 b 😀"
+cursor = [0, 0]
+keys = "2/😀<CR>"
+
+# The / register.
+[[case]]
+name = "slash_register_put"
+buffer = "abc foo"
+cursor = [0, 0]
+keys = "/foo<CR>\"/p"
+
+[[case]]
+name = "slash_register_put_before_counted"
+buffer = "abc foo"
+cursor = [0, 0]
+keys = "/oo<CR>\"/2P"
+
+[[case]]
+name = "slash_register_visual_put"
+buffer = "abc foo"
+cursor = [0, 0]
+keys = "/foo<CR>V\"/p"
+
+[[case]]
+name = "slash_register_after_empty_line"
+buffer = "foo x foo"
+cursor = [0, 0]
+keys = "/foo<CR>/<CR>\"/P"
+
+# Visual searches from a row's end, after $.
+[[case]]
+name = "visual_backward_from_row_end"
+buffer = "c\nabc"
+cursor = [1, 0]
+keys = "v$?c<CR>"
+
+[[case]]
+name = "visual_line_backward_from_row_end"
+buffer = "c\nabc"
+cursor = [1, 0]
+keys = "V$?c<CR>"
+
+[[case]]
+name = "visual_block_backward_from_row_end"
+buffer = "c\nabc"
+cursor = [1, 0]
+keys = "<C-v>$?c<CR>"
+
+[[case]]
+name = "visual_forward_from_row_end"
+buffer = "abc\nc"
+cursor = [0, 0]
+keys = "v$/c<CR>"
+
+[[case]]
+name = "visual_backward_from_row_end_then_delete"
+buffer = "xc\nabc d"
+cursor = [1, 0]
+keys = "v$?c<CR>d"
+
+# Delimiters by magic: [ is a collection but after \V, \[ after \V.
+[[case]]
+name = "nomagic_escaped_bracket_ends_at_delimiter"
+buffer = "x [foo f]oo"
+cursor = [0, 0]
+keys = "/\\M\\[foo/<CR>"
+
+[[case]]
+name = "nomagic_collection_keeps_delimiter"
+buffer = "x [f/]oo f/oo"
+cursor = [0, 0]
+keys = "/\\M[f/]oo<CR>"
+
+[[case]]
+name = "very_nomagic_bracket_ends_at_delimiter"
+buffer = "x [f/]oo f/oo"
+cursor = [0, 0]
+keys = "/\\V[f/<CR>"
+
+[[case]]
+name = "very_nomagic_escaped_bracket_keeps_delimiter"
+buffer = "x [f/]oo f/oo"
+cursor = [0, 0]
+keys = "/\\V\\[f/]oo<CR>"
+
+[[case]]
+name = "very_magic_collection_keeps_delimiter"
+buffer = "x f/oo"
+cursor = [0, 0]
+keys = "/\\v[f/]oo<CR>"
+
+[[case]]
+name = "nomagic_backward_escaped_bracket"
+buffer = "x [foo"
+cursor = [0, 0]
+keys = "?\\M\\[foo?<CR>"
+
+[[case]]
+name = "backward_collection_keeps_delimiter"
+buffer = "x f?oo"
+cursor = [0, 0]
+keys = "?[f?]oo<CR>"

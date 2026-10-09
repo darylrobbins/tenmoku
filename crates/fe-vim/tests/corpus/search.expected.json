@@ -1,0 +1,2296 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "forward",
+      "buffer": "one foo two foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>",
+      "expect": {
+        "buffer": "one foo two foo",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "forward_next_row",
+      "buffer": "abc\nxx foo\nfoo",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "/foo<CR>",
+      "expect": {
+        "buffer": "abc\nxx foo\nfoo",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "backward",
+      "buffer": "foo one foo two",
+      "cursor": [
+        0,
+        14
+      ],
+      "keys": "?foo<CR>",
+      "expect": {
+        "buffer": "foo one foo two",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "backward_previous_row",
+      "buffer": "foo\nab foo cd\nxyz",
+      "cursor": [
+        2,
+        1
+      ],
+      "keys": "?foo<CR>",
+      "expect": {
+        "buffer": "foo\nab foo cd\nxyz",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "forward_count",
+      "buffer": "a foo b foo c foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2/foo<CR>",
+      "expect": {
+        "buffer": "a foo b foo c foo",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "backward_count",
+      "buffer": "a foo b foo c foo",
+      "cursor": [
+        0,
+        16
+      ],
+      "keys": "2?foo<CR>",
+      "expect": {
+        "buffer": "a foo b foo c foo",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "forward_wraps_past_the_end",
+      "buffer": "foo one\ntwo foo",
+      "cursor": [
+        1,
+        5
+      ],
+      "keys": "/foo<CR>",
+      "expect": {
+        "buffer": "foo one\ntwo foo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "backward_wraps_past_the_start",
+      "buffer": "one foo\nfoo two",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "?foo<CR>",
+      "expect": {
+        "buffer": "one foo\nfoo two",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "count_goes_round",
+      "buffer": "a foo b foo c foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "5/foo<CR>",
+      "expect": {
+        "buffer": "a foo b foo c foo",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "backward_count_goes_round",
+      "buffer": "a foo\nb foo",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "4?foo<CR>",
+      "expect": {
+        "buffer": "a foo\nb foo",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "match_at_cursor_is_skipped",
+      "buffer": "foo x foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>",
+      "expect": {
+        "buffer": "foo x foo",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "only_match_at_cursor_wraps_to_it",
+      "buffer": "x foo y",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "/foo<CR>",
+      "expect": {
+        "buffer": "x foo y",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "backward_match_at_cursor_is_skipped",
+      "buffer": "foo x foo",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "?foo<CR>",
+      "expect": {
+        "buffer": "foo x foo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "from_last_char_starts_on_next_row",
+      "buffer": "abx\nx",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "/x<CR>",
+      "expect": {
+        "buffer": "abx\nx",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "goal_column_resets",
+      "buffer": "abc foo\nfoo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/o<CR>j",
+      "expect": {
+        "buffer": "abc foo\nfoo",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "o",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "row_end_match_is_the_last_char",
+      "buffer": "abc\nfoo bar",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "/$<CR>",
+      "expect": {
+        "buffer": "abc\nfoo bar",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "$",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "empty_row",
+      "buffer": "abc\n\nfoo",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "/^$<CR>",
+      "expect": {
+        "buffer": "abc\n\nfoo",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "^$",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "empty_match_at_row_start",
+      "buffer": "abc\nfoo",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "/^<CR>",
+      "expect": {
+        "buffer": "abc\nfoo",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "^",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "empty_pattern_reuses_last",
+      "buffer": "foo a foo b foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>/<CR>",
+      "expect": {
+        "buffer": "foo a foo b foo",
+        "cursor": [
+          0,
+          12
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "empty_backward_reuses_last",
+      "buffer": "foo a foo b foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>?<CR>",
+      "expect": {
+        "buffer": "foo a foo b foo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "empty_pattern_counted",
+      "buffer": "foo a foo b foo c foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>2/<CR>",
+      "expect": {
+        "buffer": "foo a foo b foo c foo",
+        "cursor": [
+          0,
+          18
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "trailing_delimiter",
+      "buffer": "one foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo/<CR>",
+      "expect": {
+        "buffer": "one foo",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "backward_trailing_delimiter",
+      "buffer": "foo one foo",
+      "cursor": [
+        0,
+        10
+      ],
+      "keys": "?foo?<CR>",
+      "expect": {
+        "buffer": "foo one foo",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "delimiter_in_a_collection",
+      "buffer": "x a/b ab",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/a[/]b<CR>",
+      "expect": {
+        "buffer": "x a/b ab",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a[/]b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "escaped_delimiter",
+      "buffer": "x a/b ab",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/a\\/b<CR>",
+      "expect": {
+        "buffer": "x a/b ab",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a\\/b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "slash_in_backward_search",
+      "buffer": "a/b x",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "?a/b<CR>",
+      "expect": {
+        "buffer": "a/b x",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a/b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "escaped_question_mark_backward",
+      "buffer": "a?b ab b",
+      "cursor": [
+        0,
+        7
+      ],
+      "keys": "?a\\?b<CR>",
+      "expect": {
+        "buffer": "a?b ab b",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a?b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "word_boundaries",
+      "buffer": "foobar barfoo foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/\\<foo\\><CR>",
+      "expect": {
+        "buffer": "foobar barfoo foo",
+        "cursor": [
+          0,
+          14
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<foo\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "word_start",
+      "buffer": "barfoo foobar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/\\<foo<CR>",
+      "expect": {
+        "buffer": "barfoo foobar",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "bounded_multi",
+      "buffer": "a aa aaaa",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/a\\{3,4}<CR>",
+      "expect": {
+        "buffer": "a aa aaaa",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a\\{3,4}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "group_alternation",
+      "buffer": "x dog cat",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/\\(cat\\|dog\\)<CR>",
+      "expect": {
+        "buffer": "x dog cat",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(cat\\|dog\\)",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "very_magic",
+      "buffer": "x cats dogs",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/\\v(dog|cat)s<CR>",
+      "expect": {
+        "buffer": "x cats dogs",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\v(dog|cat)s",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "very_nomagic",
+      "buffer": "axb a.b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/\\Va.b<CR>",
+      "expect": {
+        "buffer": "axb a.b",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\Va.b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ignore_case",
+      "buffer": "x Foo FOO",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/\\cfoo<CR>",
+      "expect": {
+        "buffer": "x Foo FOO",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\cfoo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "digit_class",
+      "buffer": "abc 42 x7",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/\\d\\+<CR>",
+      "expect": {
+        "buffer": "abc 42 x7",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\d\\+",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "collection",
+      "buffer": "abc x9z",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/[0-9]<CR>",
+      "expect": {
+        "buffer": "abc x9z",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "[0-9]",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "negated_collection",
+      "buffer": "aaa ab",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/[^a ]<CR>",
+      "expect": {
+        "buffer": "aaa ab",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "[^a ]",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "not_found",
+      "buffer": "abc foo",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "/zzz<CR>",
+      "expect": {
+        "buffer": "abc foo",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "zzz",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "not_found_after_found",
+      "buffer": "abc foo bar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>/zzz<CR>",
+      "expect": {
+        "buffer": "abc foo bar",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "zzz",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "not_found_backward",
+      "buffer": "abc foo",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "?zzz<CR>",
+      "expect": {
+        "buffer": "abc foo",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "zzz",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "not_found_with_operator",
+      "buffer": "abc foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d/zzz<CR>",
+      "expect": {
+        "buffer": "abc foo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "zzz",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "not_found_in_visual",
+      "buffer": "abc foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vl/zzz<CR>",
+      "expect": {
+        "buffer": "abc foo",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "v",
+        "registers": {
+          "/": {
+            "text": "zzz",
+            "linewise": false
+          }
+        },
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "invalid_pattern",
+      "buffer": "abc foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/a\\(<CR>",
+      "expect": {
+        "buffer": "abc foo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a\\(",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "delete_to_match",
+      "buffer": "one two foo three",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d/foo<CR>",
+      "expect": {
+        "buffer": "foo three",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one two ",
+            "linewise": false
+          },
+          "-": {
+            "text": "one two ",
+            "linewise": false
+          },
+          "/": {
+            "text": "foo",
+            "linewise": false
+          },
+          "1": {
+            "text": "one two ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "delete_backward_to_match",
+      "buffer": "one foo two three",
+      "cursor": [
+        0,
+        12
+      ],
+      "keys": "d?foo<CR>",
+      "expect": {
+        "buffer": "one three",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo two ",
+            "linewise": false
+          },
+          "-": {
+            "text": "foo two ",
+            "linewise": false
+          },
+          "/": {
+            "text": "foo",
+            "linewise": false
+          },
+          "1": {
+            "text": "foo two ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "delete_count",
+      "buffer": "a foo b foo c foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d2/foo<CR>",
+      "expect": {
+        "buffer": "foo c foo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a foo b ",
+            "linewise": false
+          },
+          "-": {
+            "text": "a foo b ",
+            "linewise": false
+          },
+          "/": {
+            "text": "foo",
+            "linewise": false
+          },
+          "1": {
+            "text": "a foo b ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "count_before_operator",
+      "buffer": "a foo b foo c foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2d/foo<CR>",
+      "expect": {
+        "buffer": "foo c foo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a foo b ",
+            "linewise": false
+          },
+          "-": {
+            "text": "a foo b ",
+            "linewise": false
+          },
+          "/": {
+            "text": "foo",
+            "linewise": false
+          },
+          "1": {
+            "text": "a foo b ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "delete_to_row_start_is_inclusive",
+      "buffer": "abc\nbar x",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "d/^bar<CR>",
+      "expect": {
+        "buffer": "a\nbar x",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bc",
+            "linewise": false
+          },
+          "-": {
+            "text": "bc",
+            "linewise": false
+          },
+          "/": {
+            "text": "^bar",
+            "linewise": false
+          },
+          "1": {
+            "text": "bc",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "delete_to_row_start_linewise",
+      "buffer": "  abc\nbar x",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d/^bar<CR>",
+      "expect": {
+        "buffer": "bar x",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "  abc\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "^bar",
+            "linewise": false
+          },
+          "1": {
+            "text": "  abc\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "delete_to_empty_row",
+      "buffer": "abc\n\nfoo",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "d/^$<CR>",
+      "expect": {
+        "buffer": "a\n\nfoo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bc",
+            "linewise": false
+          },
+          "-": {
+            "text": "bc",
+            "linewise": false
+          },
+          "/": {
+            "text": "^$",
+            "linewise": false
+          },
+          "1": {
+            "text": "bc",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "delete_to_row_end",
+      "buffer": "abc\nfoo bar",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "d/$<CR>",
+      "expect": {
+        "buffer": "ac\nfoo bar",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b",
+            "linewise": false
+          },
+          "-": {
+            "text": "b",
+            "linewise": false
+          },
+          "/": {
+            "text": "$",
+            "linewise": false
+          },
+          "1": {
+            "text": "b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "delete_named_register",
+      "buffer": "one two foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\"ad/foo<CR>",
+      "expect": {
+        "buffer": "foo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one two ",
+            "linewise": false
+          },
+          "/": {
+            "text": "foo",
+            "linewise": false
+          },
+          "1": {
+            "text": "one two ",
+            "linewise": false
+          },
+          "a": {
+            "text": "one two ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "delete_across_rows",
+      "buffer": "one\ntwo foo",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "d/foo<CR>",
+      "expect": {
+        "buffer": "ofoo",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ne\ntwo ",
+            "linewise": false
+          },
+          "/": {
+            "text": "foo",
+            "linewise": false
+          },
+          "1": {
+            "text": "ne\ntwo ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "change_to_match",
+      "buffer": "one two foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "c/foo<CR>XY<Esc>",
+      "expect": {
+        "buffer": "XYfoo",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one two ",
+            "linewise": false
+          },
+          "-": {
+            "text": "one two ",
+            "linewise": false
+          },
+          "/": {
+            "text": "foo",
+            "linewise": false
+          },
+          "1": {
+            "text": "one two ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "yank_backward",
+      "buffer": "axb cd",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "y?x<CR>",
+      "expect": {
+        "buffer": "axb cd",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "xb c",
+            "linewise": false
+          },
+          "/": {
+            "text": "x",
+            "linewise": false
+          },
+          "0": {
+            "text": "xb c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "yank_forward_puts",
+      "buffer": "ab cd x",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "y/x<CR>P",
+      "expect": {
+        "buffer": "ab cd ab cd x",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab cd ",
+            "linewise": false
+          },
+          "/": {
+            "text": "x",
+            "linewise": false
+          },
+          "0": {
+            "text": "ab cd ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "repeat_delete_to_match",
+      "buffer": "a; b; c; d",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d/;<CR>.",
+      "expect": {
+        "buffer": "; c; d",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "; b",
+            "linewise": false
+          },
+          "-": {
+            "text": "; b",
+            "linewise": false
+          },
+          "/": {
+            "text": ";",
+            "linewise": false
+          },
+          "1": {
+            "text": "; b",
+            "linewise": false
+          },
+          "2": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "indent_to_match",
+      "buffer": "a\nb\nc foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ">/foo<CR>",
+      "expect": {
+        "buffer": "    a\n    b\n    c foo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "cancelled_operator",
+      "buffer": "abc foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d/foo<Esc>",
+      "expect": {
+        "buffer": "abc foo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "backspace_cancels_empty_line",
+      "buffer": "abc foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d/f<BS><BS>x",
+      "expect": {
+        "buffer": "bc foo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "visual_forward",
+      "buffer": "abc foo bar",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "v/foo<CR>",
+      "expect": {
+        "buffer": "abc foo bar",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "v",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        },
+        "visual": [
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "name": "visual_backward",
+      "buffer": "abc foo bar",
+      "cursor": [
+        0,
+        9
+      ],
+      "keys": "v?foo<CR>",
+      "expect": {
+        "buffer": "abc foo bar",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "v",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        },
+        "visual": [
+          0,
+          9
+        ]
+      }
+    },
+    {
+      "name": "visual_delete",
+      "buffer": "abc foo bar",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "v/foo<CR>d",
+      "expect": {
+        "buffer": "aoo bar",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bc f",
+            "linewise": false
+          },
+          "-": {
+            "text": "bc f",
+            "linewise": false
+          },
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            0,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "visual_line_yank",
+      "buffer": "a\nb\nfoo\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "V/foo<CR>y",
+      "expect": {
+        "buffer": "a\nb\nfoo\nc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\nb\nfoo\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "foo",
+            "linewise": false
+          },
+          "0": {
+            "text": "a\nb\nfoo\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            2,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "visual_block",
+      "buffer": "abcd\nabcd\nxxfo",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>/fo<CR>d",
+      "expect": {
+        "buffer": "ad\nad\nxo",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bc\nbc\nxf",
+            "linewise": false,
+            "block_width": 2
+          },
+          "/": {
+            "text": "fo",
+            "linewise": false
+          },
+          "1": {
+            "text": "bc\nbc\nxf",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            2,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "visual_cancel_keeps_selection",
+      "buffer": "abc foo bar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vl/fo<Esc>",
+      "expect": {
+        "buffer": "abc foo bar",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "visual_count",
+      "buffer": "x foo y foo z",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v2/foo<CR>",
+      "expect": {
+        "buffer": "x foo y foo z",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "v",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        },
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "multibyte_forward",
+      "buffer": "héllo wörld wörld",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/wörld<CR>",
+      "expect": {
+        "buffer": "héllo wörld wörld",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "wörld",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "multibyte_backward",
+      "buffer": "日本 語 日本",
+      "cursor": [
+        0,
+        10
+      ],
+      "keys": "?日本<CR>",
+      "expect": {
+        "buffer": "日本 語 日本",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "日本",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "multibyte_delete",
+      "buffer": "été très été",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d/tr<CR>",
+      "expect": {
+        "buffer": "très été",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "été ",
+            "linewise": false
+          },
+          "-": {
+            "text": "été ",
+            "linewise": false
+          },
+          "/": {
+            "text": "tr",
+            "linewise": false
+          },
+          "1": {
+            "text": "été ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "emoji",
+      "buffer": "a 😀 b 😀",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2/😀<CR>",
+      "expect": {
+        "buffer": "a 😀 b 😀",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "😀",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "slash_register_put",
+      "buffer": "abc foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>\"/p",
+      "expect": {
+        "buffer": "abc ffoooo",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "slash_register_put_before_counted",
+      "buffer": "abc foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/oo<CR>\"/2P",
+      "expect": {
+        "buffer": "abc foooooo",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "oo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "slash_register_visual_put",
+      "buffer": "abc foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>V\"/p",
+      "expect": {
+        "buffer": "foo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc foo\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "foo",
+            "linewise": false
+          },
+          "1": {
+            "text": "abc foo\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "slash_register_after_empty_line",
+      "buffer": "foo x foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>/<CR>\"/P",
+      "expect": {
+        "buffer": "foofoo x foo",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "visual_backward_from_row_end",
+      "buffer": "c\nabc",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "v$?c<CR>",
+      "expect": {
+        "buffer": "c\nabc",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "v",
+        "registers": {
+          "/": {
+            "text": "c",
+            "linewise": false
+          }
+        },
+        "visual": [
+          1,
+          0
+        ]
+      }
+    },
+    {
+      "name": "visual_line_backward_from_row_end",
+      "buffer": "c\nabc",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "V$?c<CR>",
+      "expect": {
+        "buffer": "c\nabc",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "V",
+        "registers": {
+          "/": {
+            "text": "c",
+            "linewise": false
+          }
+        },
+        "visual": [
+          1,
+          0
+        ]
+      }
+    },
+    {
+      "name": "visual_block_backward_from_row_end",
+      "buffer": "c\nabc",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "<C-v>$?c<CR>",
+      "expect": {
+        "buffer": "c\nabc",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "\u0016",
+        "registers": {
+          "/": {
+            "text": "c",
+            "linewise": false
+          }
+        },
+        "visual": [
+          1,
+          0
+        ]
+      }
+    },
+    {
+      "name": "visual_forward_from_row_end",
+      "buffer": "abc\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v$/c<CR>",
+      "expect": {
+        "buffer": "abc\nc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "v",
+        "registers": {
+          "/": {
+            "text": "c",
+            "linewise": false
+          }
+        },
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "visual_backward_from_row_end_then_delete",
+      "buffer": "xc\nabc d",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "v$?c<CR>d",
+      "expect": {
+        "buffer": "xc\n d",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc",
+            "linewise": false
+          },
+          "-": {
+            "text": "abc",
+            "linewise": false
+          },
+          "/": {
+            "text": "c",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "nomagic_escaped_bracket_ends_at_delimiter",
+      "buffer": "x [foo f]oo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/\\M\\[foo/<CR>",
+      "expect": {
+        "buffer": "x [foo f]oo",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\M\\[foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "nomagic_collection_keeps_delimiter",
+      "buffer": "x [f/]oo f/oo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/\\M[f/]oo<CR>",
+      "expect": {
+        "buffer": "x [f/]oo f/oo",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\M[f/]oo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "very_nomagic_bracket_ends_at_delimiter",
+      "buffer": "x [f/]oo f/oo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/\\V[f/<CR>",
+      "expect": {
+        "buffer": "x [f/]oo f/oo",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\V[f",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "very_nomagic_escaped_bracket_keeps_delimiter",
+      "buffer": "x [f/]oo f/oo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/\\V\\[f/]oo<CR>",
+      "expect": {
+        "buffer": "x [f/]oo f/oo",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\V\\[f/]oo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "very_magic_collection_keeps_delimiter",
+      "buffer": "x f/oo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/\\v[f/]oo<CR>",
+      "expect": {
+        "buffer": "x f/oo",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\v[f/]oo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "nomagic_backward_escaped_bracket",
+      "buffer": "x [foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "?\\M\\[foo?<CR>",
+      "expect": {
+        "buffer": "x [foo",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\M\\[foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "backward_collection_keeps_delimiter",
+      "buffer": "x f?oo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "?[f?]oo<CR>",
+      "expect": {
+        "buffer": "x f?oo",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "[f?]oo",
+            "linewise": false
+          }
+        }
+      }
+    }
+  ]
+}

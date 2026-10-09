@@ -18,7 +18,7 @@ use fe_text::Text;
 
 use crate::{
     Change, Motion, MoveArgs, OperateArgs, Operator, PutArgs, RangeClass, Register, Registers,
-    Target, VimState, VimTarget, Write, history, insert,
+    Target, VimState, VimTarget, Write, cmdline, history, insert,
     motion::{self, Cursor},
     text_object, visual,
 };
@@ -453,8 +453,34 @@ fn keeping_last_change<R>(
 pub(crate) fn operate(
     target: &mut VimTarget<'_>,
     actor: &Actor,
-    args: OperateArgs,
+    mut args: OperateArgs,
 ) -> Result<Dispatched<TransactionId>, CommandError> {
+    // A search target is checked as `/` checks it.
+    if let Target::Motion(Motion::Search(search)) = args.target
+        && let Err(message) = cmdline::check_search(target, search)
+    {
+        return cmdline::failed(target.state, message);
+    }
+    // `/` is read-only: an operator that writes a register into it does
+    // nothing (leaving a visual mode), as in nvim; the others ignore it.
+    if args.register == Some('/') {
+        if !matches!(
+            args.operator,
+            Operator::Delete | Operator::Yank | Operator::Change
+        ) {
+            args.register = None;
+        } else {
+            let exited = match args.target.is_selection() {
+                true => visual::exit(target)?.effect,
+                false => Effect::Nothing,
+            };
+            target.state.message = Some("register / is read-only".to_string());
+            return Ok(Dispatched::new(match exited {
+                Effect::Nothing => Effect::Notify,
+                exited => exited,
+            }));
+        }
+    }
     if args.target.is_selection() {
         return keeping_last_change(target, |target| visual::operate(target, actor, args));
     }
@@ -719,7 +745,7 @@ fn operate_unless_failing(
         Operator::Yank => Some((Write::Yank, value)),
         Operator::Delete => {
             let small = !value.linewise && !value.text.contains('\n');
-            let percent = args.target == Target::Motion(Motion::MatchPair);
+            let percent = args.target.writes_numbered();
             Some((
                 Write::Delete {
                     small,
@@ -890,6 +916,10 @@ fn put_unless_failing(
         state,
         registers,
     } = target;
+    if args.register == Some('/') && registers.last_search().is_none() {
+        state.message = Some("E35: No previous regular expression".to_string());
+        return Ok(Dispatched::new(Effect::Notify));
+    }
     let value = registers
         .read(args.register, &mut **host)
         .map_err(|error| CommandError::new(error.to_string()))?;

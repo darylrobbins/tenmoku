@@ -3,14 +3,13 @@
 //! `EditorTarget` doesn't carry.
 
 use fe_buffer::TransactionId;
-use fe_command::{
-    Actor, CommandError, CommandTarget, ContextPredicate, Dispatched, Effect, Registry,
-};
+use fe_command::{Actor, CommandError, CommandTarget, ContextPredicate, Registry};
 use fe_editor::{EditorModel, commands::EditorHost};
 
 use crate::{
-    CountArgs, InsertArgs, MoveArgs, OperateArgs, PutArgs, Registers, ReplaceCharArgs, SelectArgs,
-    SwapArgs, VimState, VisualArgs, edit, history, insert, motion, operator, repeat, visual,
+    CommandLineArgs, CountArgs, InsertArgs, MoveArgs, OperateArgs, PutArgs, Registers,
+    ReplaceCharArgs, SelectArgs, SubmitArgs, SwapArgs, VimState, VisualArgs, cmdline, edit,
+    history, insert, motion, operator, repeat, visual,
 };
 
 /// What vim's commands run against: an editor's model, its host, its vim
@@ -35,7 +34,8 @@ impl CommandTarget for VimCommands {
 /// `vim.normal_mode`, `vim.join`, `vim.replace_char`, `vim.toggle_case`,
 /// `vim.undo`, `vim.redo`, `vim.repeat`, and for the visual modes
 /// `vim.visual`, `vim.visual_exit`, `vim.visual_swap`, `vim.visual_put`,
-/// `vim.reselect` and `vim.select`.
+/// `vim.reselect` and `vim.select`, and for the command line
+/// `vim.command_line`, `vim.command_line_submit` and `vim.command_line_cancel`.
 pub fn registry() -> Registry<VimCommands> {
     let normal = ContextPredicate::parse("editor && vim.mode == normal")
         .expect("vim's context predicate parses");
@@ -45,22 +45,20 @@ pub fn registry() -> Registry<VimCommands> {
         .expect("vim's context predicate parses");
     let insert_mode = ContextPredicate::parse("editor && vim.mode == insert")
         .expect("vim's context predicate parses");
+    let cmdline_mode = ContextPredicate::parse("editor && vim.mode == cmdline")
+        .expect("vim's context predicate parses");
     let mut registry = Registry::new();
     registry
         .register_with_args(
             "vim.move",
             "Vim Move",
             |target: &mut VimTarget<'_>, _: &Actor, args: MoveArgs| {
-                let moved = motion::apply(target.model, target.state, args);
-                Ok::<_, CommandError>(Dispatched::new(match moved {
-                    true => Effect::Changed,
-                    false => Effect::Nothing,
-                }))
+                Ok::<_, CommandError>(motion::move_command(target, args))
             },
         )
         .expect("vim command IDs are valid and distinct")
         .description(
-            "Moves every caret by a vim motion, `count` times or to row `count`; the count is bounded by the text. In a visual mode it moves the vim cursor, keeping the anchor.",
+            "Moves every caret by a vim motion, `count` times or to row `count`; the count is bounded by the text. In a visual mode it moves the vim cursor, keeping the anchor. A search motion's pattern becomes the last search; one that fails moves nothing and leaves a message.",
         )
         .context(normal_or_visual.clone())
         .mutates_buffer(false);
@@ -281,7 +279,7 @@ pub fn registry() -> Registry<VimCommands> {
         .description(
             "Selects the last visual extent again, in its kind; in visual mode the current extent becomes the last.",
         )
-        .context(normal_or_visual)
+        .context(normal_or_visual.clone())
         .mutates_buffer(false);
     registry
         .register_with_args(
@@ -296,6 +294,46 @@ pub fn registry() -> Registry<VimCommands> {
             "Selects a text object in visual mode, or extends the selection by `count` more of it.",
         )
         .context(visual_mode)
+        .mutates_buffer(false);
+    registry
+        .register_with_args(
+            "vim.command_line",
+            "Vim Command Line",
+            |target: &mut VimTarget<'_>, _: &Actor, args: CommandLineArgs| {
+                cmdline::open(target.state, args)
+            },
+        )
+        .expect("vim command IDs are valid and distinct")
+        .description(
+            "Opens a command line of `kind` (`search_forward` for `/`, `search_backward` for `?`): `vim.mode` becomes `cmdline` until the host submits or cancels the line it owns. It carries the pending count, register and operator to the submit.",
+        )
+        .context(normal_or_visual)
+        .mutates_buffer(false);
+    registry
+        .register_with_args(
+            "vim.command_line_submit",
+            "Vim Submit Command Line",
+            |target: &mut VimTarget<'_>, actor: &Actor, args: SubmitArgs| {
+                cmdline::submit(target, actor, args)
+            },
+        )
+        .expect("vim command IDs are valid and distinct")
+        .description(
+            "Ends the command line with its `text`, back in the mode it came from, and runs it: a search moves to the `count`th match of the pattern (an empty one is the last search's), or applies the pending operator up to it. A search that fails leaves a message and changes nothing else.",
+        )
+        .context(cmdline_mode.clone())
+        .mutates_buffer(true);
+    registry
+        .register(
+            "vim.command_line_cancel",
+            "Vim Cancel Command Line",
+            |target: &mut VimTarget<'_>, _: &Actor| cmdline::cancel(target.state),
+        )
+        .expect("vim command IDs are valid and distinct")
+        .description(
+            "Ends the command line without running it, back in the mode it came from (a visual selection as it was), dropping a pending operator.",
+        )
+        .context(cmdline_mode)
         .mutates_buffer(false);
     registry
 }

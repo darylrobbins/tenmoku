@@ -487,8 +487,10 @@ pub(crate) fn move_cursor(model: &mut EditorModel, state: &mut VimState, args: M
                 Ok(None)
             }
         },
-        // Back from a row's end, the whole row is before the cursor.
+        // Back from a row's end, the whole row is before the cursor; a
+        // search from there starts at the next row.
         Motion::Left
+        | Motion::Search(_)
         | Motion::FindForward(_)
         | Motion::FindBackward(_)
         | Motion::TillForward(_)

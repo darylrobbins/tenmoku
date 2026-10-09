@@ -8,12 +8,32 @@
 
 use std::sync::OnceLock;
 
-use fe_buffer::{ResolvedSelection, Version};
+use fe_buffer::{ResolvedSelection, TransactionId, Version};
+use fe_command::{Dispatched, Effect};
 use fe_editor::EditorModel;
 use fe_text::Text;
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::{Mode, Motion, MoveArgs, VimState, state::Goals, visual};
+use crate::{Mode, Motion, MoveArgs, VimState, VimTarget, cmdline, search, state::Goals, visual};
+
+/// `vim.move`: [`apply`], once a search motion passes
+/// [`cmdline::check_search`] (if it doesn't, nothing moves and the error is
+/// the [`VimState::message`]).
+pub(crate) fn move_command(
+    target: &mut VimTarget<'_>,
+    args: MoveArgs,
+) -> Dispatched<TransactionId> {
+    if let Motion::Search(search) = args.motion
+        && let Err(message) = cmdline::check_search(target, search)
+    {
+        target.state.message = Some(message);
+        return Dispatched::new(Effect::Notify);
+    }
+    Dispatched::new(match apply(target.model, target.state, args) {
+        true => Effect::Changed,
+        false => Effect::Nothing,
+    })
+}
 
 /// Moves every caret by `args` (in a visual mode, the vim cursor); returns
 /// whether any selection changed.
@@ -189,6 +209,17 @@ pub(crate) fn motion(
         Motion::BigWordForward => cursor.words(Motion::WordForward, count, true),
         Motion::BigWordBackward => cursor.words(Motion::WordBackward, count, true),
         Motion::BigWordEnd => cursor.words(Motion::WordEnd, count, true),
+        // At a row's end, past its last character, the match is that
+        // character, as in nvim.
+        Motion::Search(search) => {
+            let found = search::parsed(search.pattern)
+                .ok()
+                .and_then(|pattern| pattern.nth(cursor.text, cursor.offset(), search.forward, n));
+            match found {
+                Some(offset) => cursor.goto(offset),
+                None => return Err(goal),
+            }
+        }
         // `dd`'s target. As a move it is Vim's `_`: the first non-blank
         // `count - 1` rows down.
         Motion::Line => {

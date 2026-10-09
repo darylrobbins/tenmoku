@@ -5,20 +5,23 @@ use fe_command::{DispatchError, Dispatched, Invocation, Registry, Source};
 use fe_editor::{EditorModel, commands::HeadlessHost};
 
 use crate::{
-    KeyError, Mode, Registers, Splits, Step, VimCommands, VimKey, VimState, VimTarget, context,
-    parse_keys, registry,
+    KeyError, Mode, Registers, Splits, Step, SubmitArgs, VimCommands, VimKey, VimState, VimTarget,
+    context, parse_keys, registry,
 };
 
 /// An [`EditorModel`] with a [`HeadlessHost`], a [`VimState`], registers
 /// and vim's registry, fed keys the way the GPUI host routes them: through
-/// [`crate::step`] in normal mode, and in insert mode as the editor's text
-/// input and the keymap would take them.
+/// [`crate::step`] in normal mode, in insert mode as the editor's text
+/// input and the keymap would take them, and in `cmdline` mode to a line of
+/// its own, as the host's command line.
 pub struct HeadlessVim {
     model: EditorModel,
     host: HeadlessHost,
     state: VimState,
     registers: Registers,
     registry: Registry<VimCommands>,
+    /// The command line's text, in `cmdline` mode.
+    line: String,
 }
 
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
@@ -46,6 +49,7 @@ impl HeadlessVim {
             state: VimState::new(),
             registers: Registers::new(),
             registry: registry(),
+            line: String::new(),
         }
     }
 
@@ -59,13 +63,23 @@ impl HeadlessVim {
     /// [`EditorModel::insert`], `<CR>` to [`EditorModel::newline`] (through
     /// [`VimState::line_break`], as the host's `Enter` does), `<BS>` to
     /// [`EditorModel::backspace`], and `<Esc>` dispatches `vim.normal_mode`;
-    /// any other key is forwarded.
+    /// any other key is forwarded. Nor in `cmdline` mode: a character goes
+    /// on the line, `<BS>` deletes its last (or on an empty line dispatches
+    /// `vim.command_line_cancel`, as `<Esc>` does), `<CR>` dispatches
+    /// `vim.command_line_submit` with the line; any other key is forwarded.
     pub fn feed(&mut self, keys: &str) -> Result<(), FeedError> {
         for key in parse_keys(keys)? {
             self.sync_visual();
-            if self.state.mode() == Mode::Insert {
-                self.type_key(key)?;
-                continue;
+            match self.state.mode() {
+                Mode::Insert => {
+                    self.type_key(key)?;
+                    continue;
+                }
+                Mode::CmdLine(_) => {
+                    self.line_key(key)?;
+                    continue;
+                }
+                _ => {}
             }
             match self.state.feed(key) {
                 Step::Wait(_) | Step::Cancel => {}
@@ -99,6 +113,30 @@ impl HeadlessVim {
         Ok(())
     }
 
+    /// One key in `cmdline` mode, as the host's line takes it.
+    fn line_key(&mut self, key: VimKey) -> Result<(), FeedError> {
+        let invocation = match key {
+            VimKey::Char(ch) => {
+                self.line.push(ch);
+                return Ok(());
+            }
+            VimKey::Backspace if self.line.pop().is_some() => return Ok(()),
+            VimKey::Backspace | VimKey::Esc => Invocation::of("vim.command_line_cancel"),
+            VimKey::Enter => Invocation::of("vim.command_line_submit").map(|invocation| {
+                let text = std::mem::take(&mut self.line);
+                let args = serde_json::to_value(SubmitArgs { text }).expect("vim args serialize");
+                invocation.args(args)
+            }),
+            _ => return Err(FeedError::Forwarded(key)),
+        };
+        let invocation = invocation
+            .expect("vim command IDs are valid")
+            .source(Source::Keyboard)
+            .context(context(&self.state));
+        self.dispatch(&invocation)?;
+        Ok(())
+    }
+
     /// Runs `command` as the host runs an editor command in insert mode,
     /// splitting the session around it ([`VimState::split_session`]).
     pub fn split_session<R>(
@@ -116,18 +154,25 @@ impl HeadlessVim {
         self.state.sync_visual(&mut self.model);
     }
 
-    /// Runs one invocation as given, context included.
+    /// Runs one invocation as given, context included. One that opens or
+    /// ends a command line empties the line `feed` types on.
     pub fn dispatch(
         &mut self,
         invocation: &Invocation,
     ) -> Result<Dispatched<TransactionId>, DispatchError> {
+        let was_open = matches!(self.state.mode(), Mode::CmdLine(_));
         let mut target = VimTarget {
             model: &mut self.model,
             host: &mut self.host,
             state: &mut self.state,
             registers: &mut self.registers,
         };
-        self.registry.dispatch(&mut target, invocation)
+        let dispatched = self.registry.dispatch(&mut target, invocation);
+        // The line starts empty, whichever way the last one ended.
+        if !was_open || !matches!(self.state.mode(), Mode::CmdLine(_)) {
+            self.line.clear();
+        }
+        dispatched
     }
 
     pub fn text(&self) -> String {

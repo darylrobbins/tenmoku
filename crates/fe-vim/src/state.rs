@@ -5,7 +5,8 @@ use fe_command::{ContextFrame, ContextStack};
 use fe_editor::{EditorModel, commands::CONTEXT};
 
 use crate::{
-    LastChange, Motion, Pending, Step, VimKey, VisualKind,
+    CommandLineKind, LastChange, Motion, Pending, Step, VimKey, VisualKind,
+    cmdline::{self, CommandLine},
     history::Carets,
     insert::{Closing, Session},
     step,
@@ -20,6 +21,8 @@ const PENDING: &str = "vim.pending";
 const PENDING_KIND: &str = "vim.pending_kind";
 /// The flag set in every visual mode, so a binding can name them all.
 const VISUAL: &str = "vim.visual";
+/// The command line's kind, in `cmdline` mode: [`CommandLineKind::name`].
+const CMDLINE_KIND: &str = "vim.cmdline_kind";
 
 /// The editing mode.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
@@ -32,6 +35,9 @@ pub enum Mode {
     /// `v`, `V` or `<C-v>`: keys go to [`step`], which reads operators as
     /// acting on the selection.
     Visual(VisualKind),
+    /// A command line is open (`/`, `?`): the host's line takes the keys
+    /// until it submits or cancels it.
+    CmdLine(CommandLineKind),
 }
 
 /// Each caret's head and its goal column.
@@ -67,6 +73,11 @@ pub struct VimState {
     pub(crate) last_visual: Option<LastVisual>,
     /// How much text the last change over a selection took, for `.`.
     pub(crate) visual_extent: Option<Extent>,
+    /// Set in `cmdline` mode: what the line is for and the mode it came
+    /// from.
+    pub(crate) cmdline: Option<CommandLine>,
+    /// The last error, for the host to show until the next key.
+    pub(crate) message: Option<String>,
 }
 
 impl VimState {
@@ -86,6 +97,13 @@ impl VimState {
 
     pub fn pending(&self) -> &Pending {
         &self.pending
+    }
+
+    /// The last error, such as a search's `E486: Pattern not found: foo`,
+    /// for the host to show; the next key [`VimState::feed`] reads, or the
+    /// next command line, clears it.
+    pub fn message(&self) -> Option<&str> {
+        self.message.as_deref()
     }
 
     /// The last `f t F T` motion run, for `;` and `,`.
@@ -140,7 +158,7 @@ impl VimState {
     }
 
     /// `vim.mode`: `normal`, `insert`, `visual`, `visual_line`,
-    /// `visual_block`, or
+    /// `visual_block`, `cmdline`, or
     /// `operator_pending` while an operator waits for its target.
     pub fn mode_name(&self) -> &'static str {
         match self.mode {
@@ -150,18 +168,32 @@ impl VimState {
             Mode::Visual(VisualKind::Char) => "visual",
             Mode::Visual(VisualKind::Line) => "visual_line",
             Mode::Visual(VisualKind::Block) => "visual_block",
+            Mode::CmdLine(_) => "cmdline",
         }
     }
 
     /// Runs [`step`] on the pending input, read in the mode it's in, and
-    /// keeps what it leaves pending: nothing, unless it waits.
+    /// keeps what it leaves pending: nothing, unless it waits. It clears
+    /// the [`VimState::message`].
+    ///
+    /// `/` and `?` (not as a prefix's key: `f/` is a find) open the command
+    /// line, which [`step`] can't (it forwards them): they commit
+    /// `vim.command_line`, carrying what was pending. In `cmdline` mode the
+    /// host's line takes the keys, not this: `<Esc>` commits
+    /// `vim.command_line_cancel`, for a host with no line, and every other
+    /// key is forwarded.
     pub fn feed(&mut self, key: VimKey) -> Step {
+        self.message = None;
         let kind = match self.mode {
             Mode::Visual(kind) => Some(kind),
+            Mode::CmdLine(_) => return cmdline::fallback(key),
             _ => None,
         };
         let pending = std::mem::take(&mut self.pending).in_visual(kind);
-        let result = step(pending, key);
+        let result = match pending.command_line(key) {
+            Ok(opened) => opened,
+            Err(pending) => step(pending, key),
+        };
         if let Step::Wait(pending) = &result {
             self.pending = pending.clone();
         }
@@ -169,7 +201,8 @@ impl VimState {
     }
 
     /// Publishes the mode on `frame`, the editor's own: `vim.mode`, the flag
-    /// `vim.visual` in a visual mode, plus the flag `vim.pending` and
+    /// `vim.visual` in a visual mode, `vim.cmdline_kind` in `cmdline` mode,
+    /// plus the flag `vim.pending` and
     /// `vim.pending_kind` while anything is pending, a bare count or a
     /// completed `"a` included.
     ///
@@ -185,6 +218,12 @@ impl VimState {
             Mode::Visual(_) => frame = frame.flag(VISUAL),
             _ => {
                 frame.flags.remove(VISUAL);
+            }
+        }
+        match self.mode {
+            Mode::CmdLine(kind) => frame = frame.set(CMDLINE_KIND, kind.name()),
+            _ => {
+                frame.values.remove(CMDLINE_KIND);
             }
         }
         match self.pending.kind() {

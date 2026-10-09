@@ -2,6 +2,8 @@
 -- Run by the ignored `record_corpus_with_neovim` test:
 --   nvim --clean --headless -l oracle.lua <cases.json> <results.json>
 -- Each case is {name, buffer, cursor = {row, byte_col}, keys}, rows from 0.
+-- Keys after a failed command record nonsense: nvim flushes the keys queued
+-- after an error (a failed search's E486 among them), so end a case there.
 -- A result also holds `visual = {row, byte_col}`, the visual anchor
 -- (getpos('v')), only when the case ends in a visual mode (blockwise too), and
 -- `marks = {"<": {row, byte_col}, ">": ...}` for the marks that are set.
@@ -40,8 +42,9 @@ local cleared = {}
 for reg in ('"0123456789-abcdefghijklmnopqrstuvwxyz/'):gmatch(".") do
   table.insert(cleared, reg)
 end
+-- `/` is the last search pattern.
 local recorded = {}
-for reg in ('"0123456789-abcdefghijklmnopqrstuvwxyz'):gmatch(".") do
+for reg in ('"0123456789-abcdefghijklmnopqrstuvwxyz/'):gmatch(".") do
   table.insert(recorded, reg)
 end
 

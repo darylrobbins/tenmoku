@@ -7,7 +7,9 @@
 //! vim's commands (`vim.move`, `vim.operate`, `vim.put`, `vim.insert`,
 //! `vim.join`, `vim.replace_char`, `vim.toggle_case`, `vim.undo`, `vim.redo`,
 //! `vim.repeat`, `vim.visual`, `vim.visual_exit`, `vim.visual_swap`,
-//! `vim.visual_put`, `vim.reselect` and `vim.select`), dispatched through
+//! `vim.visual_put`, `vim.reselect`, `vim.select` and the command line's
+//! `vim.command_line`, `vim.command_line_submit` and
+//! `vim.command_line_cancel`), dispatched through
 //! [`registry`] against
 //! a [`VimTarget`], which carries the host's shared [`Registers`].
 //! [`VimState`] holds the mode, the pending value, the goal columns, the
@@ -76,6 +78,56 @@
 //! every visual mode `p` and `P` (`vim.visual_put`) replace the selection
 //! with a register in one edit, `p` leaving what it replaced in the
 //! registers as a delete would.
+//!
+//! # The command line
+//!
+//! `/` and `?` open a command line, through [`VimState::feed`] ([`step`]
+//! alone forwards them, having no line to open): they commit
+//! `vim.command_line` with `{"kind": "search_forward"}` (or
+//! `search_backward`), carrying the pending count, register and operator
+//! (`d2/`, `"ay?`). `vim.mode` is then `cmdline`, with `vim.cmdline_kind`
+//! the line's kind, until the line ends; the mode it came from (normal, an
+//! operator pending in it, or a visual mode with its selection) is kept.
+//!
+//! The host owns the line: it shows it, takes the keys typed into it (they
+//! don't go to [`step`]) and edits its text, then ends it with
+//! `vim.command_line_submit {"text": "…"}` (`Enter`) or
+//! `vim.command_line_cancel` (`Esc`, or a backspace on an empty line), both
+//! bound in the context `editor && vim.mode == cmdline`. fe-vim owns what
+//! ending it means: either one goes back to the mode the line came from,
+//! and cancelling drops what it carried. `HeadlessVim` stands in for the
+//! host, as it does in insert mode. A host with no line yet still leaves
+//! it: [`VimState::feed`] in `cmdline` mode reads `<Esc>` as a cancel and
+//! forwards the rest.
+//!
+//! Submitting a search runs `vim.move` with the motion `{"search":
+//! {"pattern": "…", "forward": true}}` ([`Motion::Search`]), or with an
+//! operator pending `vim.operate` with that target, with the carried count:
+//! the `count`th match after the caret (before it, for `?`), wrapping round
+//! the text, as [`search::Pattern::find`] finds them. In a visual mode it
+//! moves the vim cursor, keeping the anchor. As a target it's exclusive and
+//! charwise, with `:help exclusive`'s rules (`d/^foo` from a row's first
+//! non-blank takes whole rows), and a delete writes register `1` even within
+//! a row, as after `%`. A match at a row's end, on a row with text, is its
+//! last character, as in nvim. The line's pattern ends at an unescaped `/`
+//! (`?` for `?`, where `\?` is a `?`) outside a collection (which `[`
+//! starts, or `\[` after `\V`); an empty one is the last search's. A
+//! search motion is checked however it comes (`/`, `vim.move` or
+//! `vim.operate` dispatched directly, `.`): like nvim, its pattern becomes
+//! the last search, with its direction, even when nothing matches or Vim
+//! rejects it; one fe-vim can't search (a translation error) isn't kept. A
+//! search that fails (E35 with no last pattern, E486 with no match, a
+//! pattern error, or a search offset) changes nothing else and leaves the
+//! error in [`VimState::message`] for the host to show, until the next key.
+//! A count past the last match goes round, its work bounded by the text's
+//! matches, not the count.
+//!
+//! The last search is the host's, in its [`Registers`], which every editor
+//! shares: the read-only `/` register holds the pattern ([`Registers::get`]
+//! and [`Registers::last_search`]). `"/p` puts it (E35 until a search sets
+//! it); an operator that writes registers (`d y c`) refuses `"/`, doing
+//! nothing (and leaving a visual mode), as nvim does, and the others ignore
+//! it.
 //!
 //! # Search patterns
 //!
@@ -214,8 +266,9 @@
 //! visual change. Its second card added blockwise visual mode (`<C-v>`),
 //! block insert and append, blockwise registers, and `p` and `P` in every
 //! visual mode. Its third card started search with the pattern language
-//! and a row-by-row matcher ([`search`]). Later cards add the `/` and `?`
-//! command line, `n N * #` and the highlight; ex commands (`:'<,'>` among them);
+//! and a row-by-row matcher ([`search`]); its fourth, the `/` and `?`
+//! command line, search as a motion and an operator's target, and the `/`
+//! register. Later cards add `n N * #` and the highlight; ex commands (`:'<,'>` among them);
 //! the command line; the clipboard; marks and macros; replace mode,
 //! increment and folds; scrolling; and the GPUI wiring of the visual modes
 //! (their key bindings, painting the selection and the block cursor, mouse
@@ -223,6 +276,11 @@
 //!
 //! # Known limits
 //!
+//! - A search motion's pattern is interned, so that the args holding it
+//!   stay `Copy`: each distinct pattern searched for (or deserialized) stays
+//!   in memory for the life of the process.
+//! - Search offsets (`/foo/e`), search history and 'incsearch' aren't
+//!   supported: a line with an offset fails, changing nothing.
 //! - `'<` and `'>` keep a byte column on a row anchored at its start, as
 //!   nvim's marks do: rows put in or taken out above move them, edits
 //!   within their row don't. nvim also moves marks on rows that a change
@@ -343,6 +401,7 @@
 //!   `<C-r>`.
 
 mod args;
+mod cmdline;
 mod commands;
 mod edit;
 mod headless;
@@ -360,8 +419,9 @@ mod text_object;
 mod visual;
 
 pub use args::{
-    CountArgs, InsertArgs, InsertAt, Motion, MoveArgs, OperateArgs, Operator, PutArgs, RangeClass,
-    ReplaceCharArgs, SelectArgs, SwapArgs, Target, TextObject, VisualArgs, VisualKind,
+    CommandLineArgs, CommandLineKind, CountArgs, InsertArgs, InsertAt, Motion, MoveArgs,
+    OperateArgs, Operator, PutArgs, RangeClass, ReplaceCharArgs, Search, SearchPattern, SelectArgs,
+    SubmitArgs, SwapArgs, Target, TextObject, VisualArgs, VisualKind,
 };
 pub use commands::{VimCommands, VimTarget, registry};
 pub use headless::{FeedError, HeadlessVim};
