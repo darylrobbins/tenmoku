@@ -9,7 +9,7 @@
 //! `vim.repeat`, `vim.visual`, `vim.visual_exit`, `vim.visual_swap`,
 //! `vim.visual_put`, `vim.reselect`, `vim.select` and the command line's
 //! `vim.command_line`, `vim.command_line_submit` and
-//! `vim.command_line_cancel`), dispatched through
+//! `vim.command_line_cancel`, for searches and ex commands), dispatched through
 //! [`registry`] against
 //! a [`VimTarget`], which carries the host's shared [`Registers`].
 //! [`VimState`] holds the mode, the pending value, the goal columns, the
@@ -122,6 +122,16 @@
 //! A count past the last match goes round, its work bounded by the text's
 //! matches, not the count.
 //!
+//! `:` opens an ex command line: [`step`] commits `vim.command_line` with
+//! `{"kind": "ex"}` (`vim.cmdline_kind` is `ex`), dropping a register, and
+//! an operator pending before it cancels. It goes back to normal mode
+//! however it ends. After a count the line starts with `.,.+{count-1}`
+//! (`.` for 1); from a visual mode, which it leaves (setting `'<` and `'>`
+//! and putting the caret where nvim does: a charwise extent's start, a
+//! block's top-left corner, and for a linewise one the cursor if it's
+//! before the anchor, else the first row's start), with `'<,'>`. That text is
+//! [`VimState::command_line_prefill`], for the host to put on its line.
+//!
 //! The last search is the host's, in its [`Registers`], which every editor
 //! shares: the read-only `/` register holds the pattern ([`Registers::get`]
 //! and [`Registers::last_search`]). `"/p` puts it (E35 until a search sets
@@ -140,6 +150,66 @@
 //! search's pattern for the host to paint ('hlsearch'). In a visual mode
 //! nvim's own mappings make `*` and `#` search the selection; fe-vim's
 //! search for the keyword at the cursor.
+//!
+//! # Ex commands
+//!
+//! Submitting an ex line parses it ([`Ex::parse`], pure) and runs it. A
+//! line is `[range] command [args]`, leading `:`s and blanks skipped. As
+//! in nvim the range is read first, its searches and `;` taking effect
+//! even when the command then turns out wrong. The range
+//! (`:help cmdline-ranges`) is line specifiers separated by `,` or `;`,
+//! where `;` moves the cursor to the line (or the nearest there is) before
+//! the next is read, and leaves it there even if the line then fails. Of
+//! several, the last two count; of one, it's both ends; a separator with
+//! nothing on a side stands for `.`. A specifier is a base, `N`, `.`, `$`,
+//! `%` (`1,$`), `'<` or `'>`, then any `/pat/` and `?pat?` (the closing
+//! delimiter optional at the line's end), each searching from the line
+//! before it, then `+N` and `-N` offsets (a bare `+` or `-` is 1, a bare
+//! `N` is `+N`, and blanks may come before them: `.2` and `2 2` are `.+2`
+//! and `4`). With no base, `.` is meant: `+2` is `.+2` and `/pat/`
+//! searches from the cursor's line. Searches and offsets after `%` are
+//! ignored, and with no command after them the line is E492, as in nvim.
+//! Line numbers are nvim's 32 bits: a number past `2^31 - 1` wraps (and
+//! past 64 bits is 0), an offset taking a line past them is E1247, and
+//! `:2147483647` alone doesn't move. A pattern search
+//! goes to the next line that matches (the previous, for `?`), wrapping
+//! round the text, the line it started from last; its pattern, in the
+//! syntax below, becomes the last search with its direction and is
+//! highlighted, even if no line matches (E486). An empty pattern, `\/` and
+//! `\?` are the last search's (E35 with none); `\&` is the last substitute
+//! pattern, which nothing sets yet (E33). Line 0 is before the first.
+//!
+//! - `:{range}` alone goes to the range's last line as `{N}G` does, keeping
+//!   the goal column; past the last line it stops there. With no range
+//!   (`:` alone) nothing happens.
+//! - `:d[elete] [x] [count]` (and the abbreviations `:help :d` lists, `:dl`
+//!   and `:dp` among them) deletes the range's lines (by default the
+//!   cursor's) into register `x` as `dd` does, writing `"` and `1`; with a
+//!   count, that many lines from the range's last, stopping at the end. As
+//!   in nvim, `:d "` names no register and `:d #` writes `"` as `""dd`
+//!   does. It
+//!   is one transaction, and one `u` undoes it, but unlike `dd` it isn't
+//!   what `.` repeats. The caret goes to the first non-blank of the line
+//!   that took the range's place.
+//! - `:noh[lsearch]` clears [`VimState::highlight`] until the next search.
+//!
+//! What can't run changes nothing (but where a `;` moved the cursor) and
+//! leaves nvim's error in [`VimState::message`]: E492 for any other command
+//! (`:frobnicate`), E1247 for an offset past 32 bits, E16 for a line
+//! before the first or (but for `:{range}`
+//! alone) past the last, E493 for a range given backwards (nvim asks
+//! whether to swap it, and headless nvim answers no), E20 for a mark not
+//! set, E477 for a `!`, E481 for a range on `:noh`, E488 for trailing
+//! characters and E939 for a count of 0.
+//!
+//! Not yet: the host's commands (`:w`, `:q` and the like), `:s`, `:&` and
+//! `&`, the GPUI line. Not planned for M7's first ex cards: `:g`, `:v`,
+//! `:normal`, `:m`, `:t`, `:co`, `:j`, `:y`, `:>`, `:<`, `:pu`, `:r`,
+//! `:sort`, `:set`, `:marks`, `:reg`, `:undo`, `:!`, `|` between commands,
+//! the line's history and completion, marks other than `'<` and `'>`
+//! (`'a` is E20 until marks come), `*` for `'<,'>`, and a count before
+//! `:` in a visual mode (nvim drops it too). These are E492, or, for a
+//! `|` after `:d`, E488.
 //!
 //! # Search patterns
 //!
@@ -280,8 +350,9 @@
 //! visual mode. Its third card started search with the pattern language
 //! and a row-by-row matcher ([`search`]); its fourth, the `/` and `?`
 //! command line, search as a motion and an operator's target, and the `/`
-//! register; its fifth, `n N * #` and [`VimState::highlight`]. Later cards
-//! add ex commands (`:'<,'>` among them); the clipboard; marks and macros; replace mode,
+//! register; its fifth, `n N * #` and [`VimState::highlight`]; its sixth,
+//! the `:` line with ranges, `:{range}`, `:d` and `:noh`. Later cards add
+//! the host's ex commands and `:s`; the clipboard; marks and macros; replace mode,
 //! increment and folds; scrolling; and the GPUI wiring of the visual modes
 //! (their key bindings, painting the selection and the block cursor, mouse
 //! drags and the status bar).
@@ -416,6 +487,7 @@ mod args;
 mod cmdline;
 mod commands;
 mod edit;
+mod ex;
 mod headless;
 mod history;
 mod insert;
@@ -436,6 +508,7 @@ pub use args::{
     SubmitArgs, SwapArgs, Target, TextObject, VisualArgs, VisualKind,
 };
 pub use commands::{VimCommands, VimTarget, registry};
+pub use ex::{Address, Base, Ex, ExCommand, ExError, LineSearch};
 pub use headless::{FeedError, HeadlessVim};
 pub use insert::Splits;
 pub use key::{KeyError, VimKey, parse_keys};

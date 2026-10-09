@@ -154,8 +154,9 @@ impl HeadlessVim {
         self.state.sync_visual(&mut self.model);
     }
 
-    /// Runs one invocation as given, context included. One that opens or
-    /// ends a command line empties the line `feed` types on.
+    /// Runs one invocation as given, context included. One that opens a
+    /// command line starts the line `feed` types on from
+    /// [`VimState::command_line_prefill`]; one that ends it empties it.
     pub fn dispatch(
         &mut self,
         invocation: &Invocation,
@@ -168,9 +169,11 @@ impl HeadlessVim {
             registers: &mut self.registers,
         };
         let dispatched = self.registry.dispatch(&mut target, invocation);
-        // The line starts empty, whichever way the last one ended.
+        // The line starts from its prefill, whichever way the last one
+        // ended.
         if !was_open || !matches!(self.state.mode(), Mode::CmdLine(_)) {
             self.line.clear();
+            self.line.push_str(self.state.command_line_prefill());
         }
         dispatched
     }

@@ -186,9 +186,11 @@ pub(crate) fn parse_corpus(source: &str) -> Result<Vec<Case>, String> {
 /// keys that also hold a key that can take a register name or run a command
 /// (`"`, `@`, `q`, `<C-r>`, `:`, `=`). It over-rejects (`f"+` is out too):
 /// telling a register name from a find's target or inserted text needs the
-/// whole grammar, insert mode and macro recording included. The recorder
-/// can't reach the real clipboard either way: `oracle.lua` turns off nvim's
-/// clipboard provider.
+/// whole grammar, insert mode and macro recording included. From a `:` to
+/// the `<CR>` (or `<Esc>`) ending its line, `+` and `*` are allowed where
+/// they can't name a register (`:.,+2d`, `:s/a*/b/`; see
+/// [`line_names_clipboard`]). The recorder can't reach the real clipboard
+/// either way: `oracle.lua` turns off nvim's clipboard provider.
 fn names_clipboard(keys: &[VimKey]) -> bool {
     let clipboard = |key: &VimKey| matches!(key, VimKey::Char('+' | '*'));
     let takes_register = |key: &VimKey| {
@@ -197,7 +199,86 @@ fn names_clipboard(keys: &[VimKey]) -> bool {
             VimKey::Char('"' | '@' | 'q' | ':' | '=') | VimKey::Ctrl('r')
         )
     };
-    keys.iter().any(clipboard) && keys.iter().any(takes_register)
+    let mut outside = Vec::new();
+    let mut lines = Vec::new();
+    let mut keys_left = keys.iter();
+    while let Some(key) = keys_left.next() {
+        if *key != VimKey::Char(':') {
+            outside.push(*key);
+            continue;
+        }
+        let line: Vec<VimKey> = keys_left
+            .by_ref()
+            .take_while(|key| !matches!(key, VimKey::Enter | VimKey::Esc))
+            .copied()
+            .collect();
+        lines.push(line);
+    }
+    (outside.iter().any(clipboard) && keys.iter().any(takes_register))
+        || lines.iter().any(|line| line_names_clipboard(line))
+}
+
+/// Whether a `+` or `*` on a `:` line's keys may name a register. Only two
+/// places are safe: the range (`:.,+2d`, `:/a*/`), and the pattern and
+/// replacement of a substitute (`:s/a*/b/`, `:&`, `:~`) on a line with no
+/// `"`, `@`, `=`, `|` or `\\` (no register, expression or second command),
+/// no `<C-r>` and no other special key. Anywhere else (`:d +`, `:pu +`,
+/// `:sil d *`, `:g/a/y +`, `:call setreg('+', 'x')`) it may.
+fn line_names_clipboard(line: &[VimKey]) -> bool {
+    let mut text = String::new();
+    for key in line {
+        match key {
+            VimKey::Char(ch) => text.push(*ch),
+            _ => text.push('\0'),
+        }
+    }
+    if !text.contains(['+', '*']) {
+        return false;
+    }
+    if text.contains('\0') {
+        return true;
+    }
+    let after = &text[skip_range(&text)..];
+    if !after.contains(['+', '*']) {
+        return false;
+    }
+    let name = after
+        .find(|ch: char| !ch.is_ascii_alphabetic())
+        .map_or(after, |end| &after[..end]);
+    let substitute = (!name.is_empty() && "substitute".starts_with(name))
+        || (name.is_empty() && after.starts_with(['&', '~']));
+    !substitute || after.contains(['"', '@', '=', '|', '\\'])
+}
+
+/// Where a `:` line's command starts: past its blanks and line
+/// specifiers, patterns included.
+fn skip_range(line: &str) -> usize {
+    let mut chars = line.char_indices().peekable();
+    while let Some(&(at, ch)) = chars.peek() {
+        match ch {
+            ' ' | '\t' | ':' | '.' | '$' | '%' | ',' | ';' | '+' | '-' | '0'..='9' => {
+                chars.next();
+            }
+            '\'' | '\\' => {
+                chars.next();
+                chars.next();
+            }
+            '/' | '?' => {
+                chars.next();
+                while let Some((_, next)) = chars.next() {
+                    match next {
+                        '\\' => {
+                            chars.next();
+                        }
+                        _ if next == ch => break,
+                        _ => {}
+                    }
+                }
+            }
+            _ => return at,
+        }
+    }
+    line.len()
 }
 
 /// Reads an expected file and pairs it with `cases`: it must hold exactly

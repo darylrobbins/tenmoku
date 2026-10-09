@@ -1,0 +1,801 @@
+# Ex command-line cases for fe-vim's oracle: `:{range}` alone, `:d` and
+# `:noh`, with ranges of numbers, `.`, `$`, `%`, `'<` and `'>`, patterns and
+# offsets, separated by `,` or `;`; a count or a visual mode before `:`; and
+# the errors (a case ends at one: nvim flushes the keys after it, and asks
+# before swapping a backwards range, which headless nvim declines).
+# Hand-written: name, buffer (rows joined with \n, no trailing newline),
+# cursor = [row, byte column] and keys in vim notation. What nvim does with
+# each is recorded in ex.expected.json by the ignored
+# `record_corpus_with_neovim` test; edit a case, then re-record.
+
+[[case]]
+name = "goto_line"
+buffer = "a\n  b\nc\nd\n    e\nf"
+cursor = [0, 0]
+keys = ":5<CR>"
+
+[[case]]
+name = "goto_last"
+buffer = "a\n  b\nc\nd\n    e\nf"
+cursor = [1, 2]
+keys = ":$<CR>"
+
+[[case]]
+name = "goto_plus_2"
+buffer = "aaaa\nbbbb\ncccc\ndddd"
+cursor = [0, 3]
+keys = ":+2<CR>"
+
+[[case]]
+name = "goto_minus_1"
+buffer = "aaaa\nbbbb\ncccc\ndddd"
+cursor = [2, 3]
+keys = ":-1<CR>"
+
+[[case]]
+name = "goto_keeps_goal_column"
+buffer = "abcdef\nab\nabcdefgh\nabcdefghij"
+cursor = [0, 4]
+keys = ":2<CR>:4<CR>"
+
+[[case]]
+name = "goto_after_dollar"
+buffer = "abcdef\nab\nabcdefgh\nabcdefghij"
+cursor = [0, 1]
+keys = "$:4<CR>"
+
+[[case]]
+name = "goto_past_end_stops_at_last"
+buffer = "a\nb\nc"
+cursor = [0, 0]
+keys = ":9<CR>"
+
+[[case]]
+name = "goto_huge_line"
+buffer = "a\nb\nc"
+cursor = [0, 0]
+keys = ":99999999999999<CR>"
+
+[[case]]
+name = "goto_zero"
+buffer = "a\nb\nc\nd"
+cursor = [2, 0]
+keys = ":0<CR>"
+
+[[case]]
+name = "goto_dot_plus_3"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":.+3<CR>"
+
+[[case]]
+name = "goto_number_offset_blank"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":2 +2<CR>"
+
+[[case]]
+name = "goto_bare_plus_twice"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":++<CR>"
+
+[[case]]
+name = "goto_plus_then_minus"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":+3-<CR>"
+
+[[case]]
+name = "goto_last_minus_1"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":$-1<CR>"
+
+[[case]]
+name = "goto_backwards_range"
+buffer = "a\nb\nc\nd"
+cursor = [0, 0]
+keys = ":3,2<CR>"
+
+[[case]]
+name = "visual_range_goto"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = "vj:<CR>"
+
+[[case]]
+name = "visual_range_delete"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = "vj:d<CR>"
+
+[[case]]
+name = "visual_line_range_delete"
+buffer = "abc\nbcd\nc\nd\ne"
+cursor = [0, 1]
+keys = "Vj:d<CR>"
+
+[[case]]
+name = "visual_upwards_cancel"
+buffer = "abc\nbcd\nc\nd\ne"
+cursor = [1, 2]
+keys = "vkh:<Esc>"
+
+[[case]]
+name = "visual_cancel_leaves_caret_on_start"
+buffer = "abc\nbcd\nc\nd\ne"
+cursor = [0, 1]
+keys = "vjl:<Esc>"
+
+[[case]]
+name = "visual_count_ignored"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = "vj3:<CR>"
+
+[[case]]
+name = "marks_range_after_esc"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = "vj<Esc>G:'<,'>d<CR>"
+
+[[case]]
+name = "mark_with_offset"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = "vj<Esc>G:'<+1<CR>"
+
+[[case]]
+name = "percent_delete"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":%d<CR>"
+
+[[case]]
+name = "percent_goto"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":%<CR>"
+
+[[case]]
+name = "pattern_forward"
+buffer = "a\nx\nb\nx\nc\nx"
+cursor = [0, 0]
+keys = ":/x/<CR>"
+
+[[case]]
+name = "pattern_backward"
+buffer = "a\nx\nb\nx\nc\nx"
+cursor = [3, 0]
+keys = ":?x?<CR>"
+
+[[case]]
+name = "pattern_skips_cursor_line"
+buffer = "a\nx\nb\nx\nc\nx"
+cursor = [1, 0]
+keys = ":/x/<CR>"
+
+[[case]]
+name = "pattern_wraps"
+buffer = "x\na\nb\nx\nc"
+cursor = [3, 0]
+keys = ":/x/<CR>"
+
+[[case]]
+name = "pattern_wraps_to_cursor_line"
+buffer = "x\na\nb"
+cursor = [0, 0]
+keys = ":/x/<CR>"
+
+[[case]]
+name = "pattern_offset"
+buffer = "a\nb\nc\nbb"
+cursor = [0, 0]
+keys = ":/b/+1<CR>"
+
+[[case]]
+name = "pattern_unclosed"
+buffer = "a\nb\nc\nbb"
+cursor = [0, 0]
+keys = ":/b<CR>"
+
+[[case]]
+name = "pattern_after_pattern"
+buffer = "a\nb\nc\nb"
+cursor = [0, 0]
+keys = ":/b//b/<CR>"
+
+[[case]]
+name = "pattern_escaped_delimiter"
+buffer = "a/b\nc\na/b"
+cursor = [0, 0]
+keys = ":/a\\/b/<CR>"
+
+[[case]]
+name = "pattern_backward_then_n"
+buffer = "a\nx\nb\nx\nc\nx"
+cursor = [3, 0]
+keys = ":?x?<CR>n"
+
+[[case]]
+name = "pattern_delete"
+buffer = "a\nx\nb\nx\nc"
+cursor = [0, 0]
+keys = ":/x/,/c/d<CR>"
+
+[[case]]
+name = "last_search_forward"
+buffer = "a\nb\nc\nb"
+cursor = [0, 0]
+keys = "/b<CR>gg:\\/<CR>"
+
+[[case]]
+name = "last_search_backward"
+buffer = "a\nb\nc\nb"
+cursor = [2, 0]
+keys = "/b<CR>G:\\?<CR>"
+
+[[case]]
+name = "pattern_not_found"
+buffer = "a\nb\nc"
+cursor = [0, 0]
+keys = ":/zz/<CR>"
+
+[[case]]
+name = "delete_dot_plus_2"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":.,+2d<CR>"
+
+[[case]]
+name = "delete_into_register"
+buffer = "aaaa\n  bbbb\ncccc\n  dddd"
+cursor = [0, 3]
+keys = ":3,4d a<CR>"
+
+[[case]]
+name = "delete_count"
+buffer = "a\nb\nc\nd\ne\nf"
+cursor = [0, 0]
+keys = ":d 3<CR>"
+
+[[case]]
+name = "delete_register_and_count"
+buffer = "a\nb\nc\nd\ne\nf"
+cursor = [0, 0]
+keys = ":d a 3<CR>"
+
+[[case]]
+name = "delete_register_count_unspaced"
+buffer = "a\nb\nc\nd\ne\nf"
+cursor = [0, 0]
+keys = ":d a3<CR>"
+
+[[case]]
+name = "delete_count_from_range_end"
+buffer = "a\nb\nc\nd\ne\nf"
+cursor = [0, 0]
+keys = ":2,3d 2<CR>"
+
+[[case]]
+name = "delete_count_past_end"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":d 99<CR>"
+
+[[case]]
+name = "delete_to_first_non_blank"
+buffer = "aaaa\n  bbbb\ncccc"
+cursor = [0, 3]
+keys = ":d<CR>"
+
+[[case]]
+name = "delete_last_line"
+buffer = "a\n  b\n  c"
+cursor = [2, 0]
+keys = ":d<CR>"
+
+[[case]]
+name = "delete_only_line"
+buffer = "abc"
+cursor = [0, 1]
+keys = ":d<CR>"
+
+[[case]]
+name = "delete_append_register"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":d a<CR>:d A<CR>\"ap"
+
+[[case]]
+name = "delete_black_hole"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":d _<CR>"
+
+[[case]]
+name = "delete_line_zero"
+buffer = "a\nb\nc\nd"
+cursor = [2, 0]
+keys = ":0d<CR>"
+
+[[case]]
+name = "delete_abbreviated"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":dele<CR>"
+
+[[case]]
+name = "delete_list_form"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":dl<CR>"
+
+[[case]]
+name = "delete_full_name"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":delete<CR>"
+
+[[case]]
+name = "delete_leading_colons"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = "::  2d<CR>"
+
+[[case]]
+name = "delete_three_addresses"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":1,2,3d<CR>"
+
+[[case]]
+name = "delete_then_undo"
+buffer = "a\nb\nc\nd\ne"
+cursor = [4, 0]
+keys = ":2,3d<CR>u"
+
+[[case]]
+name = "dot_skips_ex_delete"
+buffer = "abc\nb\nc\nd"
+cursor = [0, 0]
+keys = "x:2d<CR>."
+
+[[case]]
+name = "count_prefill_delete"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = "3:d<CR>"
+
+[[case]]
+name = "count_prefill_goto"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = "3:<CR>"
+
+[[case]]
+name = "count_one_prefill"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = "1:d<CR>"
+
+[[case]]
+name = "semicolon_pattern"
+buffer = "a\nx\nb\nx\nc\nx"
+cursor = [0, 0]
+keys = ":4;/x/d<CR>"
+
+[[case]]
+name = "semicolon_offset"
+buffer = "a\nb\nc\nd\ne"
+cursor = [3, 0]
+keys = ":2;+1d<CR>"
+
+[[case]]
+name = "comma_offset"
+buffer = "a\nb\nc\nd\ne"
+cursor = [3, 0]
+keys = ":2,+1d<CR>"
+
+[[case]]
+name = "semicolon_chain"
+buffer = "a\nb\nc\nd\ne\nf\ng"
+cursor = [1, 0]
+keys = ":+1;+1;+1d<CR>"
+
+[[case]]
+name = "semicolon_moves_cursor"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":3;<CR>"
+
+[[case]]
+name = "zero_semicolon_pattern"
+buffer = "x\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":0;/x/<CR>"
+
+[[case]]
+name = "empty_line"
+buffer = "a\nb\nc\nd"
+cursor = [1, 0]
+keys = ":<CR>"
+
+[[case]]
+name = "empty_range"
+buffer = "a\nb\nc\nd"
+cursor = [1, 0]
+keys = ":,<CR>"
+
+[[case]]
+name = "noh_keeps_cursor_and_text"
+buffer = "a\nb\nc\nd"
+cursor = [0, 0]
+keys = "/c<CR>:noh<CR>"
+
+[[case]]
+name = "noh_full_name_then_n"
+buffer = "a\nc\nb\nc"
+cursor = [0, 0]
+keys = "/c<CR>:nohlsearch<CR>n"
+
+[[case]]
+name = "past_end"
+buffer = "a\nb\nc"
+cursor = [0, 0]
+keys = ":2,5d<CR>"
+
+[[case]]
+name = "past_end_alone"
+buffer = "a\nb\nc"
+cursor = [0, 0]
+keys = ":5d<CR>"
+
+[[case]]
+name = "before_start"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":-5<CR>"
+
+[[case]]
+name = "backwards_range"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":3,2d<CR>"
+
+[[case]]
+name = "backwards_after_pattern"
+buffer = "a\nx\nb\nx\nc\nx"
+cursor = [0, 0]
+keys = ":4,/x/d<CR>"
+
+[[case]]
+name = "backwards_semicolon"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":4;-2d<CR>"
+
+[[case]]
+name = "unknown_command"
+buffer = "a\nb\nc\nd"
+cursor = [1, 0]
+keys = ":frobnicate<CR>"
+
+[[case]]
+name = "unknown_with_range"
+buffer = "a\nb\nc\nd"
+cursor = [1, 0]
+keys = ":2,3frob<CR>"
+
+[[case]]
+name = "unknown_d_word"
+buffer = "a\nb\nc\nd"
+cursor = [1, 0]
+keys = ":da<CR>"
+
+[[case]]
+name = "delete_bang"
+buffer = "a\nb\nc\nd"
+cursor = [1, 0]
+keys = ":d!<CR>"
+
+[[case]]
+name = "delete_trailing"
+buffer = "a\nb\nc\nd"
+cursor = [1, 0]
+keys = ":d 2x<CR>"
+
+[[case]]
+name = "delete_zero_count"
+buffer = "a\nb\nc\nd"
+cursor = [1, 0]
+keys = ":d 0<CR>"
+
+[[case]]
+name = "noh_with_range"
+buffer = "a\nb\nc\nd"
+cursor = [1, 0]
+keys = ":2noh<CR>"
+
+[[case]]
+name = "mark_not_set"
+buffer = "a\nb\nc\nd"
+cursor = [1, 0]
+keys = ":'<<CR>"
+
+[[case]]
+name = "no_previous_search"
+buffer = "a\nb\nc\nd"
+cursor = [1, 0]
+keys = ":\\/<CR>"
+
+[[case]]
+name = "no_previous_substitute"
+buffer = "a\nb\nc\nd"
+cursor = [1, 0]
+keys = ":\\&<CR>"
+
+[[case]]
+name = "visual_block_cancel_top_left"
+buffer = "abcd\nabcd\nabcd"
+cursor = [0, 3]
+keys = "<C-v>jhh:<Esc>"
+
+[[case]]
+name = "visual_block_upwards_cancel"
+buffer = "abcd\nabcd\nabcd"
+cursor = [2, 1]
+keys = "<C-v>kll:<Esc>"
+
+[[case]]
+name = "visual_block_range_goto"
+buffer = "abcd\nabcd\nabcd\nx"
+cursor = [0, 3]
+keys = "<C-v>jhh:<CR>"
+
+[[case]]
+name = "visual_block_range_delete"
+buffer = "abcd\nabcd\nabcd\nx"
+cursor = [0, 3]
+keys = "<C-v>jhh:d<CR>"
+
+[[case]]
+name = "visual_line_upwards_cancel"
+buffer = "abcd\nabcd\nabcd"
+cursor = [2, 2]
+keys = "Vk:<Esc>"
+
+[[case]]
+name = "visual_line_upwards_goto"
+buffer = "abcd\nabcd\nabcd"
+cursor = [2, 2]
+keys = "Vk:<CR>"
+
+[[case]]
+name = "visual_line_one_row_cancel"
+buffer = "abcd\nabcd\nabcd"
+cursor = [1, 2]
+keys = "V:<Esc>"
+
+[[case]]
+name = "visual_char_backwards_cancel"
+buffer = "abcd\nabcd\nabcd"
+cursor = [1, 2]
+keys = "vh:<Esc>"
+
+[[case]]
+name = "number_after_dot"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":.2<CR>"
+
+[[case]]
+name = "number_after_number"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":2 2<CR>"
+
+[[case]]
+name = "number_after_plus"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":+ 2<CR>"
+
+[[case]]
+name = "number_after_last"
+buffer = "a\nb\nc\nd\ne\nf\ng"
+cursor = [0, 0]
+keys = ":$-3 2<CR>"
+
+[[case]]
+name = "number_after_pattern"
+buffer = "a\nx\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":/x/2<CR>"
+
+[[case]]
+name = "number_after_mark"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = "vj<Esc>:'<2<CR>"
+
+[[case]]
+name = "numbers_in_range"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":2,3 1d<CR>"
+
+[[case]]
+name = "semicolon_then_unknown"
+buffer = "a\nx\nb\nc"
+cursor = [0, 0]
+keys = ":3;frob<CR>"
+
+[[case]]
+name = "semicolon_then_trailing"
+buffer = "a\nx\nb\nc"
+cursor = [0, 0]
+keys = ":3;d 2x<CR>"
+
+[[case]]
+name = "semicolon_then_noh"
+buffer = "a\nx\nb\nc"
+cursor = [0, 0]
+keys = ":3;noh<CR>"
+
+[[case]]
+name = "pattern_then_unknown"
+buffer = "a\nx\nb\nc"
+cursor = [0, 0]
+keys = ":/x/frob<CR>"
+
+[[case]]
+name = "pattern_then_bang"
+buffer = "a\nx\nb\nc"
+cursor = [0, 0]
+keys = ":/x/d!<CR>"
+
+[[case]]
+name = "missing_pattern_then_unknown"
+buffer = "a\nx\nb\nc"
+cursor = [0, 0]
+keys = ":/zz/frob<CR>"
+
+[[case]]
+name = "missing_mark_then_unknown"
+buffer = "a\nx\nb\nc"
+cursor = [0, 0]
+keys = ":'<frob<CR>"
+
+[[case]]
+name = "semicolon_past_end"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":9;<CR>"
+
+[[case]]
+name = "semicolon_past_end_offset"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":9;-1<CR>"
+
+[[case]]
+name = "semicolon_past_end_delete"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":9;d<CR>"
+
+[[case]]
+name = "semicolon_before_start"
+buffer = "a\nb\nc\nd\ne"
+cursor = [2, 0]
+keys = ":-5;<CR>"
+
+[[case]]
+name = "percent_offset_alone"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":%+1<CR>"
+
+[[case]]
+name = "percent_number_alone"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":%2<CR>"
+
+[[case]]
+name = "percent_offset_delete"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":%-1d<CR>"
+
+[[case]]
+name = "percent_pattern_delete"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":%/c/d<CR>"
+
+[[case]]
+name = "percent_semicolon_delete"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":%;d<CR>"
+
+[[case]]
+name = "percent_after_number"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":2,%d<CR>"
+
+[[case]]
+name = "line_zero_count"
+buffer = "a\nb\nc\nd"
+cursor = [2, 0]
+keys = ":0d 2<CR>"
+
+[[case]]
+name = "line_zero_range_count"
+buffer = "a\nb\nc\nd"
+cursor = [2, 0]
+keys = ":0,0d 3<CR>"
+
+[[case]]
+name = "delete_unnamed_register"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":d \"<CR>"
+
+[[case]]
+name = "delete_hash_register"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":d #<CR>"
+
+[[case]]
+name = "delete_small_register_name"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":d-<CR>"
+
+[[case]]
+name = "line_wraps_past_32_bits"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":4294967297<CR>"
+
+[[case]]
+name = "line_past_64_bits"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":99999999999999999999999<CR>"
+
+[[case]]
+name = "largest_line_number"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":2147483647<CR>"
+
+[[case]]
+name = "line_past_31_bits"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":2147483648<CR>"
+
+[[case]]
+name = "offset_out_of_range"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":+2147483645<CR>"
+
+[[case]]
+name = "offset_past_32_bits"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":$+4294967296<CR>"
+
+[[case]]
+name = "offset_past_64_bits"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":-99999999999999999999<CR>"

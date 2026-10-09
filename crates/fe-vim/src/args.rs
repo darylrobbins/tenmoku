@@ -362,13 +362,15 @@ pub struct ReplaceCharArgs {
     pub count: Option<u32>,
 }
 
-/// What a command line is for: `/` or `?`. Its `vim.cmdline_kind` value is
-/// `search_forward` or `search_backward`.
+/// What a command line is for: `/`, `?` or `:`. Its `vim.cmdline_kind`
+/// value is `search_forward`, `search_backward` or `ex`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CommandLineKind {
     SearchForward,
     SearchBackward,
+    /// An ex command line ([`crate::Ex`]).
+    Ex,
 }
 
 impl CommandLineKind {
@@ -377,12 +379,15 @@ impl CommandLineKind {
         match self {
             Self::SearchForward => "search_forward",
             Self::SearchBackward => "search_backward",
+            Self::Ex => "ex",
         }
     }
 }
 
 /// `vim.command_line`'s args: the kind of line, and what was pending when
-/// it opened (`d2/`, `"a?`), which submitting it applies.
+/// it opened (`d2/`, `"a?`), which submitting it applies. An ex line takes
+/// no register or operator; its count (`3:`) becomes the range it starts
+/// with ([`crate::VimState::command_line_prefill`]).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CommandLineArgs {
     pub kind: CommandLineKind,

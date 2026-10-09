@@ -216,6 +216,23 @@ impl Pending {
         ))
     }
 
+    /// `:` with no operator pending: `vim.command_line` for an ex line,
+    /// carrying the count in normal mode (`3:` starts it at `.,.+2`). A
+    /// register is dropped, as is a count in a visual mode, whose line
+    /// starts at `'<,'>`.
+    fn ex_line(mut self) -> Step {
+        self.end_count();
+        invocation(
+            "vim.command_line",
+            CommandLineArgs {
+                kind: CommandLineKind::Ex,
+                count: self.count.filter(|_| !self.visual),
+                register: None,
+                operator: None,
+            },
+        )
+    }
+
     /// The key after a prefix.
     fn complete(mut self, prefix: Prefix, key: VimKey) -> Step {
         let ch = match key {
@@ -277,6 +294,9 @@ impl Pending {
 /// The named arrows are `h l k j` after a count or an operator, and in a
 /// visual mode; with nothing pending in normal mode they're forwarded, to
 /// the editor's own cursor keys.
+///
+/// `:` opens an ex command line (`vim.command_line` with `{"kind": "ex"}`)
+/// unless an operator is pending, which it cancels.
 pub fn step(mut pending: Pending, key: VimKey) -> Step {
     if let Some(prefix) = pending.prefix.take() {
         return pending.complete(prefix, key);
@@ -331,6 +351,7 @@ pub fn step(mut pending: Pending, key: VimKey) -> Step {
             Prefix::Object { inner: ch == 'i' }
         }
         'r' if pending.operator.is_none() => Prefix::Replace,
+        ':' if pending.operator.is_none() => return pending.ex_line(),
         _ if pending.visual => return pending.visual_key(ch),
         'v' | 'V' if pending.is_empty() => return visual(ch),
         _ => {

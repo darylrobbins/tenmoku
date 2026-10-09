@@ -7,6 +7,7 @@ mod block_insert_excursion;
 mod cmdline;
 mod commands;
 mod edits;
+mod ex;
 mod insert;
 mod motions;
 mod operators;

@@ -165,7 +165,7 @@ fn prefixes_targets_cancel_and_forward() {
     ] {
         assert_eq!(run(keys), Step::Cancel, "{keys}");
     }
-    for keys in ["q", ":", "/", "K", "Z", "<C-x>", "<CR>"] {
+    for keys in ["q", "U", "/", "K", "Z", "<C-x>", "<CR>"] {
         assert_eq!(run(keys), Step::Forward, "{keys}");
     }
     assert_eq!(run("<Esc>"), Step::Cancel);

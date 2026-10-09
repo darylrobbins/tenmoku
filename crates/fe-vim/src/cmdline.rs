@@ -1,6 +1,6 @@
-//! The command line as a mode: `/` and `?` open it, the host owns and edits
-//! its text, and submitting it runs what it's for (a search, as a motion or
-//! an operator's target).
+//! The command line as a mode: `/`, `?` and `:` open it, the host owns and
+//! edits its text, and submitting it runs what it's for (a search, as a
+//! motion or an operator's target, or an ex command line, [`crate::Ex`]).
 
 use fe_buffer::TransactionId;
 use fe_command::{CommandError, Dispatched, Effect, Invocation, Source};
@@ -9,27 +9,51 @@ use crate::{
     CommandLineArgs, CommandLineKind, Mode, Motion, MoveArgs, OperateArgs, Step, SubmitArgs,
     Target, VimKey, VimState, VimTarget,
     args::{Search, SearchPattern},
-    insert, motion, operator,
+    ex, insert, motion, operator,
     search::{self, Pattern, PatternError},
+    visual,
 };
 
-/// An open command line: what it's for and carries, and the mode it came
-/// from, which submitting or cancelling it returns to.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+/// An open command line: what it's for and carries, the mode it came from,
+/// which submitting or cancelling it returns to, and the text it starts
+/// with.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CommandLine {
     pub(crate) args: CommandLineArgs,
     pub(crate) from: Mode,
+    pub(crate) prefill: String,
 }
 
 type Handled = Result<Dispatched<TransactionId>, CommandError>;
 
-/// `vim.command_line`: enters `cmdline` mode from normal or a visual mode,
-/// which (and its selection) it keeps to return to.
-pub(crate) fn open(state: &mut VimState, args: CommandLineArgs) -> Handled {
+/// `vim.command_line`: enters `cmdline` mode from normal or a visual mode.
+/// A search line keeps the mode (and its selection) to return to. An ex
+/// line returns to normal mode: from a visual mode it leaves it first,
+/// setting `'<` and `'>` and putting the caret on `'<`, and starts with
+/// `'<,'>`; after a count it starts with `.,.+{count-1}` (`.` for 1).
+pub(crate) fn open(target: &mut VimTarget<'_>, args: CommandLineArgs) -> Handled {
+    let mut prefill = String::new();
+    if args.kind == CommandLineKind::Ex {
+        if args.operator.is_some() || args.register.is_some() {
+            return Err(CommandError::new(
+                "an ex command line takes no operator or register",
+            ));
+        }
+        if visual::leave_for_ex(target) {
+            prefill.push_str("'<,'>");
+        } else if let Some(count) = args.count.filter(|&count| count > 0) {
+            prefill.push('.');
+            if count > 1 {
+                prefill.push_str(&format!(",.+{}", count - 1));
+            }
+        }
+    }
+    let state = &mut *target.state;
     state.message = None;
     state.cmdline = Some(CommandLine {
         args,
         from: state.mode,
+        prefill,
     });
     state.mode = Mode::CmdLine(args.kind);
     Ok(Dispatched::new(Effect::Changed))
@@ -64,6 +88,7 @@ pub(crate) fn submit(
         CommandLineKind::SearchForward | CommandLineKind::SearchBackward => {
             search(target, actor, line.args, &args.text)
         }
+        CommandLineKind::Ex => ex::run(target, actor, &args.text),
     }
 }
 

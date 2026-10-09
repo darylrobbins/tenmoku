@@ -34,8 +34,9 @@ impl CommandTarget for VimCommands {
 /// `vim.normal_mode`, `vim.join`, `vim.replace_char`, `vim.toggle_case`,
 /// `vim.undo`, `vim.redo`, `vim.repeat`, and for the visual modes
 /// `vim.visual`, `vim.visual_exit`, `vim.visual_swap`, `vim.visual_put`,
-/// `vim.reselect` and `vim.select`, and for the command line
-/// `vim.command_line`, `vim.command_line_submit` and `vim.command_line_cancel`.
+/// `vim.reselect` and `vim.select`, and for the command line (searches and
+/// ex commands) `vim.command_line`, `vim.command_line_submit` and
+/// `vim.command_line_cancel`.
 pub fn registry() -> Registry<VimCommands> {
     let normal = ContextPredicate::parse("editor && vim.mode == normal")
         .expect("vim's context predicate parses");
@@ -300,12 +301,12 @@ pub fn registry() -> Registry<VimCommands> {
             "vim.command_line",
             "Vim Command Line",
             |target: &mut VimTarget<'_>, _: &Actor, args: CommandLineArgs| {
-                cmdline::open(target.state, args)
+                cmdline::open(target, args)
             },
         )
         .expect("vim command IDs are valid and distinct")
         .description(
-            "Opens a command line of `kind` (`search_forward` for `/`, `search_backward` for `?`): `vim.mode` becomes `cmdline` until the host submits or cancels the line it owns. It carries the pending count, register and operator to the submit.",
+            "Opens a command line of `kind` (`search_forward` for `/`, `search_backward` for `?`, `ex` for `:`): `vim.mode` becomes `cmdline` until the host submits or cancels the line it owns. A search line carries the pending count, register and operator to the submit. An ex line leaves a visual mode (setting `'<` and `'>`) and starts with `'<,'>` from one, or `.,.+{count-1}` after a count: `VimState::command_line_prefill`.",
         )
         .context(normal_or_visual)
         .mutates_buffer(false);
@@ -319,7 +320,7 @@ pub fn registry() -> Registry<VimCommands> {
         )
         .expect("vim command IDs are valid and distinct")
         .description(
-            "Ends the command line with its `text`, back in the mode it came from, and runs it: a search moves to the `count`th match of the pattern (an empty one is the last search's), or applies the pending operator up to it. A search that fails leaves a message and changes nothing else.",
+            "Ends the command line with its `text`, back in the mode it came from, and runs it: a search moves to the `count`th match of the pattern (an empty one is the last search's), or applies the pending operator up to it; an ex line runs its command over its range (`:{range}`, `:d`, `:noh`). A line that fails leaves a message and changes nothing else.",
         )
         .context(cmdline_mode.clone())
         .mutates_buffer(true);

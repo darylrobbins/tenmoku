@@ -36,8 +36,8 @@ pub enum Mode {
     /// `v`, `V` or `<C-v>`: keys go to [`step`], which reads operators as
     /// acting on the selection.
     Visual(VisualKind),
-    /// A command line is open (`/`, `?`): the host's line takes the keys
-    /// until it submits or cancels it.
+    /// A command line is open (`/`, `?`, `:`): the host's line takes the
+    /// keys until it submits or cancels it.
     CmdLine(CommandLineKind),
 }
 
@@ -111,9 +111,20 @@ impl VimState {
 
     /// The pattern a host paints as matches ('hlsearch', on as in nvim): the
     /// last search's, set by every search, `n`, `N`, `*` and `#` (even one
-    /// that finds no match), or `None` before the first.
+    /// that finds no match) and a pattern in an ex line's range, or `None`
+    /// before the first and after `:noh` until the next.
     pub fn highlight(&self) -> Option<&Pattern> {
         self.highlight.as_ref()
+    }
+
+    /// The text an open command line starts with, for the host to put on
+    /// it: `'<,'>` on an ex line from a visual mode, `.,.+{count-1}` on one
+    /// after a count (`.` for 1), and otherwise (or with no line open)
+    /// nothing.
+    pub fn command_line_prefill(&self) -> &str {
+        self.cmdline
+            .as_ref()
+            .map_or("", |line| line.prefill.as_str())
     }
 
     /// The last `f t F T` motion run, for `;` and `,`.
@@ -188,7 +199,8 @@ impl VimState {
     ///
     /// `/` and `?` (not as a prefix's key: `f/` is a find) open the command
     /// line, which [`step`] can't (it forwards them): they commit
-    /// `vim.command_line`, carrying what was pending. In `cmdline` mode the
+    /// `vim.command_line`, carrying what was pending (`:` is [`step`]'s).
+    /// In `cmdline` mode the
     /// host's line takes the keys, not this: `<Esc>` commits
     /// `vim.command_line_cancel`, for a host with no line, and every other
     /// key is forwarded.

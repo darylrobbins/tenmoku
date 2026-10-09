@@ -365,6 +365,38 @@ pub(crate) fn exit(target: &mut VimTarget<'_>) -> Result<Dispatched<TransactionI
     effect(true)
 }
 
+/// `:` in a visual mode: back to normal mode, keeping the extent for `'<`
+/// and `'>`, with the caret where nvim leaves it for the ex line: at the
+/// start of a charwise extent, at a block's top-left corner, and for a
+/// linewise one on the cursor if it's before the anchor, else at the start
+/// of the first row. Returns whether a visual mode was on.
+pub(crate) fn leave_for_ex(target: &mut VimTarget<'_>) -> bool {
+    let VimTarget { model, state, .. } = target;
+    model.sync_display();
+    let Some(ends) = ends(model, state) else {
+        return false;
+    };
+    leave(model, state, ends);
+    let text = model.text();
+    let cursor = match ends.kind {
+        VisualKind::Char => ends.lo(),
+        VisualKind::Line if ends.cursor < ends.anchor => ends.cursor,
+        VisualKind::Line => text.row_start(ends.rows(text).0),
+        VisualKind::Block => {
+            let tab = model.tab_size().max(1);
+            let left = column_of(text, ends.anchor, tab).min(column_of(text, ends.cursor, tab));
+            at_column(text, ends.rows(text).0, left, tab)
+        }
+    };
+    let ends = Ends {
+        cursor,
+        goal: None,
+        ..ends
+    };
+    to_normal(model, state, ends);
+    true
+}
+
 /// `vim.visual_swap`: the cursor goes to the other end; in a block with
 /// `same_row` (`O`), to the other corner on its row, the anchor taking the
 /// cursor's column.
