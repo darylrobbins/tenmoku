@@ -18,15 +18,16 @@ use std::{
 
 use fe_buffer::Buffer;
 
-/// Reads `path` into a buffer the way `EditorModel::open` does. A missing
-/// file is `Ok(None)`: a new file, which saving creates.
+/// Reads `path` into a buffer, detecting its encoding (`EditorModel::open`
+/// doesn't), so saving writes it back the same way. A missing file is
+/// `Ok(None)`: a new file, which saves as UTF-8.
 pub fn read(path: PathBuf) -> io::Result<Option<Buffer>> {
     let file = match File::open(&path) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
-    Buffer::from_reader(BufReader::with_capacity(256 * 1024, file)).map(Some)
+    Buffer::from_reader_detecting(BufReader::with_capacity(256 * 1024, file)).map(Some)
 }
 
 /// A read running on its own thread.
@@ -75,6 +76,10 @@ impl Reading {
         self.done.recv().expect("the reader thread panicked")
     }
 }
+
+#[cfg(test)]
+#[path = "loader_encoding_tests.rs"]
+mod encoding_tests;
 
 #[cfg(test)]
 mod tests {

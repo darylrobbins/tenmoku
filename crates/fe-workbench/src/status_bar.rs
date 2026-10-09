@@ -63,7 +63,8 @@ impl StatusItem {
     pub const CURSOR: &str = "cursor";
     /// `Spaces: 4`: priority 200.
     pub const INDENT: &str = "indent";
-    /// `UTF-8` or `UTF-8 with BOM`: priority 300.
+    /// The file's encoding, such as `UTF-8`, `UTF-8 with BOM` or `windows-1252`:
+    /// priority 300.
     pub const ENCODING: &str = "encoding";
     /// `LF` or `CRLF`: priority 400.
     pub const LINE_ENDING: &str = "line_ending";
@@ -229,11 +230,7 @@ fn built_in_items(editor: &EditorView) -> Vec<StatusItem> {
             text.offset_to_char(primary.range.end) - text.offset_to_char(primary.range.start);
         cursor += &format!(" ({chars} selected)");
     }
-    let encoding = if text.char_at(0) == Some('\u{feff}') {
-        "UTF-8 with BOM"
-    } else {
-        "UTF-8"
-    };
+    let encoding = model.buffer().encoding().label();
     let line_ending = match model.buffer().line_ending() {
         fe_buffer::LineEnding::Lf => "LF",
         fe_buffer::LineEnding::CrLf => "CRLF",

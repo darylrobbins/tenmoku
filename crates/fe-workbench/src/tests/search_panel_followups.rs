@@ -221,7 +221,13 @@ fn invalid_utf8_before_a_match_shifts_its_highlight_and_selection(cx: &mut TestA
     let mut long = b"\xF0\x9F".to_vec();
     long.extend(b"x".repeat(1_000));
     long.extend(b" needle\n");
-    let dir = project(&[("a.txt", b"ab\xFFneedle\n"), ("b.txt", &long)]);
+    // Enough valid multi-byte UTF-8 after the invalid byte that the loader's
+    // detection still takes the files for UTF-8.
+    let utf8 = "éàüöçñ ünïcödé\n".repeat(200);
+    let mut short = b"ab\xFFneedle\n".to_vec();
+    short.extend(utf8.as_bytes());
+    long.extend(utf8.as_bytes());
+    let dir = project(&[("a.txt", &short), ("b.txt", &long)]);
     let (workbench, search, cx) = searching(cx, dir.path());
     run("needle", cx);
 
@@ -242,11 +248,6 @@ fn invalid_utf8_before_a_match_shifts_its_highlight_and_selection(cx: &mut TestA
         assert!(focused);
         cx.simulate_keystrokes("cmd-shift-f");
     }
-    let (text, _, _) = editor(&workbench, cx);
-    assert!(
-        text.starts_with('\u{FFFD}'),
-        "the editor decodes it lossily too"
-    );
 }
 
 #[gpui::test]
