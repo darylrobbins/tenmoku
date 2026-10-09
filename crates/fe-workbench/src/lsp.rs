@@ -33,13 +33,13 @@
 //!   long as a local server's launch and fe-lsp's sequence take at most:
 //!   the login shell (2 s), `shutdown` (2 s), `exit` (1 s), then its forced
 //!   stop, `kill`. GPUI waits only 200 ms for a quit hook's future, so the
-//!   wait is in the hook itself. Two limits, accepted by the user on
-//!   2026-10-08, until fe-lsp can cancel and force-stop (T209, T210): a
-//!   server still awaiting its `initialize` reply at quit isn't stopped in
-//!   time, since fe-lsp waits for that reply (up to 30 s) before shutting
-//!   it down; nor is a host launch still blocked at the deadline, since a
-//!   host's launcher must bound its own launch time
-//!   ([`set_server_launcher`]). Either server may outlive quit.
+//!   wait is in the hook itself. Stopping a manager's servers, as quitting
+//!   does, cancels a launch in progress through its [`fe_lsp::LaunchCancel`], and
+//!   quitting force-stops ([`KillSwitch`]) what outlasts the wait, such as
+//!   a server still awaiting its `initialize` reply, and waits a little
+//!   longer for that. A host's launcher must honour the cancel or bound
+//!   its own launch time ([`set_server_launcher`]); one that does neither
+//!   can't be preempted, and its server may outlive fastedit.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -58,7 +58,7 @@ use fe_config::settings::LspSettings;
 use fe_editor::EditorModel;
 use fe_gpui::commands::RunCommand;
 use fe_lsp::{
-    LOGIN_SHELL_TIMEOUT, LocalLauncher, LspEvent, LspManager, ServerId, ServerLauncher,
+    KillSwitch, LOGIN_SHELL_TIMEOUT, LocalLauncher, LspEvent, LspManager, ServerId, ServerLauncher,
     ServerStatus,
 };
 use gpui::{
@@ -87,14 +87,12 @@ impl Global for Settings {}
 /// `launcher`, to sandbox, proxy or refuse them, rather than spawning them
 /// with fe-lsp's [`LocalLauncher`]. Call it before the workbench opens.
 ///
-/// The launcher must bound its own launch time: fe-lsp can't cancel a
-/// launch, and sees a stop only once it returns. Quitting waits at most
-/// [`LOGIN_SHELL_TIMEOUT`] plus 4 s for every server to stop; a launch
-/// still blocked then (a container starting, say) isn't stopped, and its
-/// server may outlive fastedit. So may a server, however launched, still
-/// awaiting its `initialize` reply, which fe-lsp waits for (up to 30 s)
-/// before shutting it down. The user accepted both limits on 2026-10-08;
-/// T209 and T210 add cancellation and a force-stop to fe-lsp.
+/// The launcher must honour its [`fe_lsp::LaunchCancel`] or bound its own launch
+/// time. Stopping a server, or quitting, fires the cancel of a launch in
+/// progress, and the launch should then return promptly; quitting also
+/// force-stops servers that outlast [`SHUT_DOWN_WITHIN`]. A launcher that
+/// does neither can't be preempted: quitting gives up on it after
+/// [`KILL_WITHIN`] more, and its server may outlive fastedit.
 pub fn set_server_launcher(cx: &mut App, launcher: Arc<dyn ServerLauncher>) {
     cx.set_global(Launcher(launcher));
 }
@@ -113,8 +111,22 @@ pub fn set_lsp_settings(cx: &mut App, settings: LspSettings) {
 /// 2 s for the `shutdown` answer, 1 s for the process to go after `exit`,
 /// then a `kill`, with 1 s of margin for the kill and the thread's last
 /// status. So a local server that has finished initializing is always
-/// stopped or killed by then (see [`set_server_launcher`] for the limits).
+/// stopped or killed by then. Whatever outlasts it is force-stopped.
 const SHUT_DOWN_WITHIN: Duration = Duration::from_secs(LOGIN_SHELL_TIMEOUT.as_secs() + 2 + 1 + 1);
+
+/// How much longer quitting waits for the servers it force-stopped.
+const KILL_WITHIN: Duration = Duration::from_secs(1);
+
+/// What quitting did to the servers that outlasted the graceful wait.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Quit {
+    /// Servers still running when the graceful wait ran out, which were
+    /// force-stopped.
+    pub(crate) forced: usize,
+    /// Servers still running after the force-stop's wait too: a launcher
+    /// that ignored its cancel.
+    pub(crate) left: usize,
+}
 
 /// The language servers of every window: the managers dropped before the
 /// app quits (a closed window's, a replaced root's), which quitting waits
@@ -141,6 +153,8 @@ struct Watch {
     running: Arc<Mutex<Running>>,
     /// Gets a message each time one of them stops.
     stopped: mpsc::Receiver<()>,
+    /// Force-stops them, and outlives their manager.
+    switch: KillSwitch,
 }
 
 impl Watch {
@@ -157,6 +171,10 @@ impl Watch {
         lock(&self.running).running.is_empty()
     }
 
+    fn count(&self) -> usize {
+        lock(&self.running).running.len()
+    }
+
     /// Blocks until every server it watches has stopped, or `deadline`.
     fn wait(&self, deadline: Instant) {
         while !self.is_done() {
@@ -165,19 +183,30 @@ impl Watch {
                 Ok(()) => {}
                 // Their threads have all ended.
                 Err(mpsc::RecvTimeoutError::Disconnected) => return,
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    log::warn!("quitting with language servers still shutting down");
-                    return;
-                }
+                Err(mpsc::RecvTimeoutError::Timeout) => return,
             }
         }
     }
 }
 
 /// Shuts every workbench's language servers down, and blocks until they
-/// and those shut down before have stopped, within [`SHUT_DOWN_WITHIN`]:
-/// what quitting does.
+/// and those shut down before have stopped, within [`SHUT_DOWN_WITHIN`],
+/// then force-stops what's left, within [`KILL_WITHIN`]: what quitting
+/// does.
 pub(crate) fn shut_down_all(cx: &mut App) {
+    let quit = shut_down_all_within(cx, SHUT_DOWN_WITHIN, KILL_WITHIN);
+    if quit.left > 0 {
+        log::warn!(
+            "quitting with {} language server(s) still running: a launcher \
+             ignored its cancel, and its server may outlive fastedit",
+            quit.left
+        );
+    }
+}
+
+/// [`shut_down_all`] with `grace` for the servers to stop and `force` more
+/// once they've been killed.
+pub(crate) fn shut_down_all_within(cx: &mut App, grace: Duration, force: Duration) -> Quit {
     let workbenches = std::mem::take(&mut cx.default_global::<Shutdowns>().workbenches);
     for workbench in workbenches {
         workbench
@@ -185,10 +214,21 @@ pub(crate) fn shut_down_all(cx: &mut App) {
             .ok();
     }
     let retiring = std::mem::take(&mut cx.default_global::<Shutdowns>().retiring);
-    let deadline = Instant::now() + SHUT_DOWN_WITHIN;
-    for watch in retiring {
+    let deadline = Instant::now() + grace;
+    for watch in &retiring {
         watch.wait(deadline);
     }
+    let pending: Vec<&Watch> = retiring.iter().filter(|watch| !watch.is_done()).collect();
+    let forced = pending.iter().map(|watch| watch.count()).sum();
+    for watch in &pending {
+        watch.switch.kill();
+    }
+    let deadline = Instant::now() + force;
+    for watch in &pending {
+        watch.wait(deadline);
+    }
+    let left = pending.iter().map(|watch| watch.count()).sum();
+    Quit { forced, left }
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -380,10 +420,7 @@ impl Workbench {
         let (sender, generation) = (lsp.sender.clone(), lsp.generation);
         let running = Arc::new(Mutex::new(Running::default()));
         let (stop, stopped) = mpsc::channel();
-        lsp.watch = Some(Watch {
-            running: running.clone(),
-            stopped,
-        });
+        let watched = running.clone();
         let sink = move |event: LspEvent| {
             if let LspEvent::Status { server, status, .. } = &event {
                 let mut running = lock(&running);
@@ -406,6 +443,11 @@ impl Workbench {
         };
         manager.update_settings(&lsp.settings);
         manager.set_trust(|_| false);
+        lsp.watch = Some(Watch {
+            running: watched,
+            stopped,
+            switch: manager.kill_switch(),
+        });
         lsp.manager = Some(manager);
         if self.root_trusted() {
             self.apply_trust(true);
