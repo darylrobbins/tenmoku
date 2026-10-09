@@ -671,19 +671,25 @@ fn configuration_answers_and_changes() {
 }
 
 /// Asserts each launch's `initialize` came after the launch before had
-/// been sent `exit`.
+/// been sent `exit`. A launch superseded before it handshook records no
+/// `initialize` (and its predecessor may have none either), so only a
+/// launch that did initialize is held to the order, and only against a
+/// predecessor that did too.
 fn assert_launches_follow_exits(fake: &FakeServer) {
     let timeline = fake.timeline();
+    let at = |launch: usize, method: &str| {
+        timeline
+            .iter()
+            .position(|(from, r)| *from == launch && r.method() == method)
+    };
     for launch in 2..=fake.launches() {
-        let at = |launch: usize, method: &str| {
-            timeline
-                .iter()
-                .position(|(from, r)| *from == launch && r.method() == method)
+        let (Some(initialize), Some(_)) = (at(launch, "initialize"), at(launch - 1, "initialize"))
+        else {
+            continue;
         };
         let exit = at(launch - 1, "exit");
-        let initialize = at(launch, "initialize");
         assert!(
-            exit.is_some() && initialize.is_some() && exit < initialize,
+            exit.is_some_and(|exit| exit < initialize),
             "launch {launch}: exit {exit:?}, initialize {initialize:?}"
         );
     }
