@@ -765,3 +765,20 @@ This is the baseline before the keymap engine (card 4b): re-run the bench
 after it lands and compare. The numbers leave out OS event delivery, waiting
 for vsync, the compositor, scan-out and the GPU's own time, which need a real
 screen, and typing while a background parse runs.
+
+## Large-file view (`cargo run --release -p fe-fileview --example first_screen`)
+
+The target, from `docs/decisions/mmap-read-only.md`, is the first screen of
+a very large file without loading it into a rope: open plus the first 60
+rows under 100 ms, with RSS growth under 100 MB. The example writes a 1 GiB
+file of 52-byte lines (ASCII plus `…`, `é` and `😀`) to `$TMPDIR`, so the
+page cache is warm, then times `FileView::open` plus `rows_from(0, 60)`,
+which reads one 256 KiB chunk with `pread`. RSS growth is the change in
+`getrusage` peak RSS (3.1 MB before). The decision's acceptance size is
+4 GB; 1 GiB leaves disk headroom (T158), and nothing in the path scales with
+the file's length. Three runs at `b225c97` on 2026-10-09, on the 14-core
+M3 Max with a load average of about 12 from other lanes.
+
+| File | Open + first 60 rows | RSS growth | Target |
+|---|---|---|---|
+| 1 GiB, warm | 0.18 to 0.32 ms | 0.02 to 0.31 MB | 100 ms, 100 MB |

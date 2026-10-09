@@ -1763,6 +1763,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fe-fileview"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "rand 0.9.5",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "fe-gpui"
 version = "0.1.0"
 dependencies = [

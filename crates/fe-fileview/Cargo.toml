@@ -1,0 +1,21 @@
+[package]
+name = "fe-fileview"
+description = "Read-only, pread-backed view of very large files. Must not depend on GPUI or memmap2."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+
+[dev-dependencies]
+rand.workspace = true
+tempfile.workspace = true
+
+[target.'cfg(unix)'.dev-dependencies]
+libc.workspace = true
+
+[lints]
+workspace = true

@@ -29,6 +29,7 @@ fe-workbench = { path = "crates/fe-workbench" }
 fe-nav = { path = "crates/fe-nav" }
 fe-vim = { path = "crates/fe-vim" }
 fe-lsp = { path = "crates/fe-lsp" }
+fe-fileview = { path = "crates/fe-fileview" }
 
 # GPUI comes from the `gpui-pre-*` crates.io snapshots of Zed (Apache-2.0).
 # 0.3.7 is zed@1a28cff. Every snapshot crate must be bumped together; to move to
