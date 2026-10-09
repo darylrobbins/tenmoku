@@ -10,7 +10,8 @@
 //! - [`ProposedChange`] holds edits made against a snapshot, such as an AI's,
 //!   as anchored hunks the user accepts (each as a transaction under the
 //!   proposal's origin) or rejects one by one; a hunk goes stale once the
-//!   user edits the text under it.
+//!   user edits the text under it. [`ProposedChange::dry_run`] reports, without
+//!   changing anything, which hunks would apply and why the rest can't.
 //!
 //! This crate must never depend on GPUI.
 
@@ -26,7 +27,10 @@ pub use buffer::{
 };
 pub use edit::Edit;
 pub use fe_text::{Bias, LineEnding, Point, PointUtf16, Text};
-pub use proposed::{HunkId, HunkStatus, HunkView, ProposalError, ProposedChange};
+pub use proposed::{
+    Conflict, DryRun, HunkId, HunkOutcome, HunkStatus, HunkView, Outcome, ProposalError,
+    ProposedChange,
+};
 pub use selection::{ResolvedSelection, Selection, SelectionSet};
 pub use snapshot::{Anchor, BufferId, BufferSnapshot, Version};
 

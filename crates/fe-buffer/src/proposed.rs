@@ -12,6 +12,9 @@ use std::{
 
 use imara_diff::{Algorithm, Diff, InternedInput};
 
+mod dry_run;
+pub use dry_run::{Conflict, DryRun, HunkOutcome, Outcome};
+
 use crate::{Anchor, Buffer, BufferId, BufferSnapshot, Origin, TransactionId, Version};
 
 /// Identifies a hunk and the [`ProposedChange`] it belongs to.
@@ -215,6 +218,11 @@ impl ProposedChange {
 
     pub fn origin(&self) -> &Origin {
         &self.origin
+    }
+
+    /// The buffer the proposal was made against.
+    pub fn buffer(&self) -> BufferId {
+        self.buffer
     }
 
     /// Every hunk as it stands in `snapshot`, in text order. A pending hunk
@@ -441,9 +449,15 @@ impl Hunk {
     /// The hunk's status, given its current `range`: a pending hunk whose
     /// old text is gone becomes stale.
     fn check(&self, snapshot: &BufferSnapshot, range: Range<usize>) -> HunkStatus {
+        let status = self.verdict(snapshot, range);
+        self.status.set(status);
+        status
+    }
+
+    /// What [`Hunk::check`] would make the status, without recording it.
+    fn verdict(&self, snapshot: &BufferSnapshot, range: Range<usize>) -> HunkStatus {
         let status = self.status.get();
         if status == HunkStatus::Pending && !snapshot.text().range_eq(range, &self.old_text) {
-            self.status.set(HunkStatus::Stale);
             return HunkStatus::Stale;
         }
         status
