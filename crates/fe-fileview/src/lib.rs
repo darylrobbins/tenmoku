@@ -13,6 +13,9 @@
 //! [`String::from_utf8_lossy`] does, because large logs are often not valid
 //! UTF-8.
 //!
+//! A [`LineIndex`] maps rows to offsets and back, built on a background
+//! thread while the first screen is already showing.
+//!
 //! It must never depend on GPUI.
 
 use std::fs::File;
@@ -21,8 +24,10 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+pub use index::{IndexState, LineIndex, Progress, STRIDE, Step};
 use stamp::Stamp;
 
+mod index;
 mod stamp;
 
 /// The size of a cached chunk, and the alignment of every chunk's start.
@@ -220,6 +225,14 @@ impl FileView {
             at += (to - from) as u64;
         }
         Ok(bytes)
+    }
+
+    /// Fills `buf` with the bytes from `offset` straight from the file,
+    /// bypassing the chunk cache, so a scan of the whole file doesn't evict
+    /// what the screen is reading. The bytes lie within the recorded length.
+    pub(crate) fn read_uncached(&self, buf: &mut [u8], offset: u64) -> Result<(), ReadError> {
+        debug_assert!(offset + buf.len() as u64 <= self.len());
+        fill(buf, |buf| read_at(&self.file, buf, offset))
     }
 
     /// Chunk `index`, from the cache or read from disk. The lock is not held

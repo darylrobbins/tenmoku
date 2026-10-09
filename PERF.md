@@ -766,7 +766,7 @@ after it lands and compare. The numbers leave out OS event delivery, waiting
 for vsync, the compositor, scan-out and the GPU's own time, which need a real
 screen, and typing while a background parse runs.
 
-## Large-file view (`cargo run --release -p fe-fileview --example first_screen`)
+## Large-file view (`cargo run --release -p fe-fileview --example first_screen` and `--example line_index`)
 
 The target, from `docs/decisions/mmap-read-only.md`, is the first screen of
 a very large file without loading it into a rope: open plus the first 60
@@ -779,6 +779,17 @@ which reads one 256 KiB chunk with `pread`. RSS growth is the change in
 the file's length. Three runs at `b225c97` on 2026-10-09, on the 14-core
 M3 Max with a load average of about 12 from other lanes.
 
-| File | Open + first 60 rows | RSS growth | Target |
-|---|---|---|---|
-| 1 GiB, warm | 0.18 to 0.32 ms | 0.02 to 0.31 MB | 100 ms, 100 MB |
+The line index (`--example line_index`, T269) is timed on the same
+generated file: `LineIndex::build` until its state is `Complete`, polled
+every 200 µs. The thread reads the file 256 KiB at a time with `pread`,
+bypassing the chunk cache (0 KiB cached after), and keeps the start of every
+64th row: 322,639 checkpoints for 20,648,882 rows, 2.6 MB. RSS growth is the
+change in peak RSS across the build, so it counts the scan buffer, the
+checkpoints and the thread's stack. For comparison, the decision's eager
+scan through a mapping took 7.8 s and 4.3 GB resident on 4 GB. Three runs at `496b691` (plus the example) on
+2026-10-09, same machine, load average about 24.
+
+| File | Measured | Time | RSS growth | Target |
+|---|---|---|---|---|
+| 1 GiB, warm | open + first 60 rows | 0.18 to 0.32 ms | 0.02 to 0.31 MB | 100 ms, 100 MB |
+| 1 GiB, warm | full line index | 0.24 to 0.27 s | 3.3 to 4.3 MB | 2 s, 50 MB |
