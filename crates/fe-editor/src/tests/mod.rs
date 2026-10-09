@@ -2,6 +2,7 @@ use super::*;
 
 mod batch_structure;
 mod commands;
+mod diagnostics;
 mod fold_candidates;
 mod laws;
 mod pending_wrap;

@@ -1,11 +1,21 @@
 //! What fe-lsp reports: events through the manager's sink, and request
 //! errors.
 
+use fe_buffer::{BufferId, Version};
+
+use crate::diagnostics::Diagnostic;
+use crate::identity::{IncarnationId, SessionId};
+
 /// Identifies one server instance started by an [`LspManager`](crate::LspManager).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ServerId(pub(crate) u64);
 
 /// Sent to the manager's sink, on the server's thread.
+///
+/// A host showing diagnostics applies a `Diagnostics` only while its
+/// `(session, incarnation)` is [`LspManager::active_identity`](crate::LspManager::active_identity)
+/// for its buffer and server, and not one a `DiagnosticsCleared` it has
+/// seen named (docs/decisions/lsp-client.md §4.1).
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum LspEvent {
@@ -21,6 +31,26 @@ pub enum LspEvent {
         name: String,
         typ: lsp_types::MessageType,
         message: String,
+    },
+    /// A server's diagnostics for an open buffer: all of them, replacing
+    /// those it sent before. Their ranges are bytes of the buffer at
+    /// `version`, which the buffer may have moved on from.
+    Diagnostics {
+        buffer: BufferId,
+        session: SessionId,
+        incarnation: IncarnationId,
+        version: Version,
+        server: ServerId,
+        items: Vec<Diagnostic>,
+    },
+    /// The incarnation `(session, incarnation)` of `buffer` on `server` has
+    /// ended (its `didClose`, or its session's end), and was retired from
+    /// the active identities first: its diagnostics no longer stand.
+    DiagnosticsCleared {
+        buffer: BufferId,
+        session: SessionId,
+        incarnation: IncarnationId,
+        server: ServerId,
     },
 }
 

@@ -25,6 +25,11 @@
 //!   budget; its status events say where it is, from `Starting` through
 //!   `Ready` to `Restarting(n)` or `Stopped`. Every reply says whether an
 //!   empty result is final ([`Reply`]).
+//! - A server's `textDocument/publishDiagnostics` are decoded on its
+//!   thread against the text it was published for, and reach the sink as
+//!   [`LspEvent::Diagnostics`] in byte ranges, with
+//!   [`LspEvent::DiagnosticsCleared`] when the document closes or the
+//!   session ends.
 //! - [`LspNavigation`] answers fe-nav's go-to-definition, references and
 //!   workspace symbols from a manager's servers, once each is ready.
 //!
@@ -43,6 +48,7 @@
 //! This crate must never depend on GPUI.
 
 mod clock;
+mod diagnostics;
 mod document;
 mod encoding;
 mod event;
@@ -68,6 +74,7 @@ mod tests;
 #[cfg(any(test, feature = "test-support"))]
 pub use clock::ManualClock;
 pub use clock::{Clock, SystemClock};
+pub use diagnostics::{Diagnostic, DiagnosticTag, Severity};
 pub use document::{Admitted, Opened, SentDocument, SentVersion};
 pub use encoding::{PositionEncoding, from_lsp, to_lsp};
 pub use event::{LspError, LspEvent, ServerId, ServerStatus};

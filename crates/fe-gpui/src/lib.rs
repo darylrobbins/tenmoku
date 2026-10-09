@@ -6,11 +6,14 @@
 //! ([`menu`]) its shortcuts;
 //! [`element::EditorElement`] lays out the visible rows with
 //! [`fe_display::layout`], shaping them with GPUI and colouring them by
-//! `fe-syntax`, then paints the result. Vim mode, one app-wide switch
+//! `fe-syntax`, then paints the result, with the buffer's diagnostics as
+//! squiggles and gutter marks, and their messages in a popover on hover
+//! (`hover`). Vim mode, one app-wide switch
 //! ([`set_vim_enabled`]), routes an editor's keys through `fe-vim`.
 
 pub mod commands;
 mod element;
+mod hover;
 pub mod keymap;
 pub mod menu;
 mod timing;
@@ -18,6 +21,7 @@ mod view;
 mod vim;
 
 pub use fe_config::{EditorSettings, SettingsEvent};
+use fe_editor::diagnostics::Severity;
 pub use fe_keymap;
 use fe_syntax::Highlight;
 use gpui::{App, Hsla, Pixels, SharedString, font, px, rgb, rgba};
@@ -68,6 +72,14 @@ pub struct EditorTheme {
     pub active_line: Hsla,
     pub selection: Hsla,
     pub cursor: Hsla,
+    /// Each diagnostic severity's squiggle and gutter mark.
+    pub error: Hsla,
+    pub warning: Hsla,
+    pub information: Hsla,
+    pub hint: Hsla,
+    /// The hover popover's.
+    pub popover_background: Hsla,
+    pub popover_border: Hsla,
     /// Text colour for each [`Highlight`], by [`Highlight::index`]; `None`
     /// uses `foreground`. Build it with [`fe_syntax::resolve_theme`].
     pub syntax: Vec<Option<Hsla>>,
@@ -93,6 +105,12 @@ impl EditorTheme {
             active_line: rgba(0xffffff08).into(),
             selection: rgba(0x4f7cc855).into(),
             cursor: rgb(0x7aa2f7).into(),
+            error: rgb(0xe06c75).into(),
+            warning: rgb(0xe5c07b).into(),
+            information: rgb(0x61afef).into(),
+            hint: rgb(0x7f848e).into(),
+            popover_background: rgb(0x21252b).into(),
+            popover_border: rgb(0x3e4452).into(),
             syntax: fe_syntax::resolve_theme(&[
                 ("attribute", rgb(0xd19a66).into()),
                 ("comment", rgb(0x5c6370).into()),
@@ -134,6 +152,16 @@ impl EditorTheme {
 
     pub fn syntax_color(&self, highlight: Highlight) -> Option<Hsla> {
         self.syntax.get(highlight.index()).copied().flatten()
+    }
+
+    /// The colour diagnostics of `severity` are marked in.
+    pub fn diagnostic_color(&self, severity: Severity) -> Hsla {
+        match severity {
+            Severity::Error => self.error,
+            Severity::Warning => self.warning,
+            Severity::Information => self.information,
+            Severity::Hint => self.hint,
+        }
     }
 }
 

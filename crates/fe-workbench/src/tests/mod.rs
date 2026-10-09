@@ -5,6 +5,7 @@
 mod activity_rail;
 mod launch;
 pub(crate) mod lsp;
+mod lsp_diagnostics;
 mod lsp_nav;
 mod lsp_quit;
 mod m3_signoff;

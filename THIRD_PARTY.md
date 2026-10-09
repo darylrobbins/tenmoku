@@ -7,6 +7,7 @@
 | `crates/fe-display/src/wrap_map.rs` | [gpui-kit](https://github.com/longbridge/gpui-kit) `crates/base/src/input/editor/display_map/text_wrapper.rs`, `wrap_map.rs` | `2c5162f8c5b0c7fcec066ed53125d304c632bfe2` | Apache-2.0 |
 | `crates/fe-display/src/fold_map.rs` | gpui-kit `…/display_map/fold_map.rs`, `folding.rs` | `2c5162f8c5b0c7fcec066ed53125d304c632bfe2` | Apache-2.0 |
 | `crates/fe-display/src/display_map.rs` | gpui-kit `…/display_map/display_map.rs` | `2c5162f8c5b0c7fcec066ed53125d304c632bfe2` | Apache-2.0 |
+| `crates/fe-editor/src/diagnostics.rs` | gpui-kit `crates/base/src/input/editor/diagnostics.rs` | `2c5162f8c5b0c7fcec066ed53125d304c632bfe2` | Apache-2.0 |
 | `crates/fe-syntax/queries/toml.scm` | [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter) `runtime/queries/toml/highlights.scm` | `e289100ff98969e118c702199d88b764ce9e7fdf` | Apache-2.0 |
 | `crates/fe-syntax/queries/kotlin.scm` | nvim-treesitter `runtime/queries/kotlin/highlights.scm` | `3e1f54c1ce0a86959313f1cb7f60262ea57aaa23` | Apache-2.0 |
 | `crates/fe-syntax/queries/outline/ruby.scm` | tree-sitter-ruby crate `queries/tags.scm` | version 0.23.1 | MIT |

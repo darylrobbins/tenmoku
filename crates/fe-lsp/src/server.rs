@@ -21,7 +21,10 @@
 //!   that queued, only if the server has the version it was computed on.
 //! - Every open it performs activates its identity first (identity.rs),
 //!   and when the session ends, however it ends, its identities are
-//!   retired before anything else is reported.
+//!   retired before anything else is reported; then each open document's
+//!   diagnostics are reported cleared.
+//! - It decodes the diagnostics the server publishes (diagnostics.rs)
+//!   against its documents' rings, as the router reads them.
 //! - A session ending in a crash (restart.rs) keeps its documents and the
 //!   manager's commands for the next session on the same thread, after a
 //!   backoff. Otherwise, however the session ends, the documents the
@@ -68,18 +71,20 @@ use lsp_types::{
     DidChangeConfigurationParams, DynamicRegistrationClientCapabilities, GeneralClientCapabilities,
     GotoCapability, HoverClientCapabilities, InitializeParams, InitializeResult, InitializedParams,
     MarkupKind, NumberOrString, PositionEncodingKind, PublishDiagnosticsClientCapabilities,
-    ServerCapabilities, TagSupport, TextDocumentClientCapabilities,
+    PublishDiagnosticsParams, ServerCapabilities, TagSupport, TextDocumentClientCapabilities,
     TextDocumentSyncClientCapabilities, Url, WindowClientCapabilities, WorkspaceClientCapabilities,
     WorkspaceFolder, WorkspaceSymbolClientCapabilities,
 };
 
 use crate::clock::Clock;
+use crate::diagnostics::Inbox;
 use crate::document::{Admitted, Document, Link, Note, Opened, Opening, SyncPolicy};
 use crate::encoding::PositionEncoding;
 use crate::event::{LspError, LspEvent, NOT_OPEN, ServerId, ServerStatus, SharedLog};
 use crate::identity::{EndSession, Identities, SessionId};
 use crate::launcher::{
     ExitInfo, Flag, LaunchCancel, ServerIo, ServerLauncher, ServerProcess, ServerSpec,
+    UnversionedDiagnostics,
 };
 use crate::readiness::Readiness;
 use crate::registration::Registrations;
@@ -503,6 +508,7 @@ impl Server {
         let settings = Rc::new(RefCell::new(carry.settings.clone()));
         let readiness = Arc::new(Mutex::new(Readiness::new(&self.spec)));
         let signal = Rc::new(Signal::default());
+        let diagnostics = Rc::new(Inbox::default());
         let (main_loop, socket) = MainLoop::new_client(|socket| {
             client_router(ClientState {
                 name: self.spec.name.clone(),
@@ -515,6 +521,7 @@ impl Server {
                 readiness: readiness.clone(),
                 signal: signal.clone(),
                 log: self.log.clone(),
+                diagnostics: diagnostics.clone(),
                 session: self.session.clone(),
                 _socket: socket,
             })
@@ -583,7 +590,9 @@ impl Server {
                 session: session_id,
                 versions: HashMap::new(),
                 outbox: VecDeque::new(),
+                sink: self.sink.clone(),
             },
+            diagnostics,
             tick: None,
             drain_queued: false,
             moving: None,
@@ -733,6 +742,8 @@ struct Actor {
     readiness: Arc<Mutex<Readiness>>,
     /// Raised by the router when `readiness` changed.
     signal: Rc<Signal>,
+    /// Publications the router read, to decode.
+    diagnostics: Rc<Inbox>,
     /// When readiness next has something to do on its own, and the timer.
     due: Option<(Instant, Timer)>,
     /// The status last reported.
@@ -742,9 +753,12 @@ struct Actor {
 }
 
 /// However the actor ends, a panic included, its documents go on, unless
-/// they're carried into the next session.
+/// they're carried into the next session, and their diagnostics are
+/// reported cleared once their identities are retired. Ended any other way,
+/// it has done so already, and its documents have none left to report.
 impl Drop for Actor {
     fn drop(&mut self) {
+        self.end_session();
         self.hand_over();
     }
 }
@@ -775,6 +789,8 @@ enum Step {
     Settled(Settled),
     Orphaned,
     Readiness,
+    /// The router read diagnostics.
+    Published(Vec<PublishDiagnosticsParams>),
     /// Readiness's timer came due.
     Due,
     LoopEnded(Result<async_lsp::Result<()>, oneshot::Canceled>),
@@ -839,6 +855,9 @@ impl Actor {
                 () = futures::future::poll_fn(|cx| self.signal.poll_raised(cx)).fuse() => {
                     Step::Readiness
                 }
+                published = futures::future::poll_fn(|cx| self.diagnostics.poll_take(cx)).fuse() => {
+                    Step::Published(published)
+                }
                 () = wait_due(&mut self.due).fuse() => Step::Due,
                 () = wait_tick(&mut self.tick).fuse() => Step::Tick,
                 next = next_command(
@@ -877,6 +896,11 @@ impl Actor {
                     }
                 }
                 Step::Readiness => self.readiness_changed(),
+                Step::Published(published) => {
+                    for params in published {
+                        self.published(params);
+                    }
+                }
                 Step::Due => {
                     self.due = None;
                     self.readiness_changed();
@@ -927,9 +951,12 @@ impl Actor {
         #[cfg(test)]
         self.handed(note.describe());
         // If the loop has gone, `loop_done` says so.
-        let _ = note.send(&self.socket);
+        let ended = note.send(&self.socket);
         let _ = self.socket.emit(Taken);
         self.sent += 1;
+        if let Some(ended) = ended {
+            self.link.cleared(ended);
+        }
     }
 
     /// Records what was handed to async-lsp, if the test asked.
@@ -1098,7 +1125,7 @@ impl Actor {
     /// The session crashed: its identities are retired, and its documents
     /// and commands go to the next session ([`Carry`]).
     fn crashed(mut self, why: String, at: Instant) -> Ended {
-        self.link.identities.end_session(self.link.session);
+        self.end_session();
         {
             let mut session = lock(&self.session);
             session.capabilities = None;
@@ -1127,6 +1154,54 @@ impl Actor {
         };
         let carry = std::mem::replace(&mut self.carry, spent);
         Ended::Crashed { why, at, carry }
+    }
+
+    /// Retires the session's identities, then reports the diagnostics of
+    /// each document the server had open cleared, and of each whose
+    /// `didClose` is still in the outbox, which is never sent now.
+    fn end_session(&mut self) {
+        let mut ended: Vec<_> = (self.documents.iter_mut())
+            .filter_map(|(&buffer, document)| Some((buffer, document.end_session()?)))
+            .collect();
+        ended.extend(self.link.outbox.iter().filter_map(|out| match out {
+            Outgoing::Note(note) => note.ends(),
+            Outgoing::Request(_) => None,
+        }));
+        self.link.outbox.clear();
+        self.link.identities.end_session(self.link.session);
+        for ended in ended {
+            self.link.cleared(ended);
+        }
+    }
+
+    /// Decodes a publication for the URI's current incarnation, or drops it
+    /// (diagnostics.rs).
+    fn published(&mut self, params: PublishDiagnosticsParams) {
+        let mut current = (self.documents.values_mut())
+            .filter(|document| document.is_synced() && *document.uri() == params.uri);
+        let (Some(document), None) = (current.next(), current.next()) else {
+            log::debug!(
+                "{}: dropped diagnostics for {}, with no current incarnation or several",
+                self.spec.name,
+                params.uri,
+            );
+            return;
+        };
+        let Some(version) = params.version else {
+            match self.spec.unversioned_diagnostics {
+                UnversionedDiagnostics::Drop => {
+                    log::debug!(
+                        "{}: dropped unversioned diagnostics for {}",
+                        self.spec.name,
+                        params.uri,
+                    );
+                    return;
+                }
+            }
+        };
+        if let Some(event) = document.publish(version, params.diagnostics, &self.link) {
+            self.link.report(event);
+        }
     }
 
     fn drain(&mut self, buffer: BufferId) {
@@ -1303,9 +1378,10 @@ impl Actor {
     /// its identities are retired and its callers answered, then
     /// [`shut_down`](Self::shut_down), or, if `force`, [`kill`].
     async fn shutdown(&mut self, process: &mut dyn ServerProcess, force: bool) {
-        // However it came to stop, its documents go on first.
+        // However it came to stop, its documents go on first, their
+        // identities retired.
+        self.end_session();
         self.hand_over();
-        self.link.identities.end_session(self.link.session);
         // Callers of requests in flight or kept back get `ServerDown` now,
         // and those of requests still unread once the session is over.
         self.pending = FuturesUnordered::new();
@@ -1383,8 +1459,8 @@ impl Actor {
     fn stopped(&mut self, why: Option<String>) {
         // A session ending on its own (a failed start) hands its documents
         // back too.
+        self.end_session();
         self.hand_over();
-        self.link.identities.end_session(self.link.session);
         self.status.send(ServerStatus::Stopped(why));
     }
 }

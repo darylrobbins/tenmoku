@@ -3,6 +3,7 @@
 
 mod admission;
 mod cancel;
+mod diagnostics;
 mod encoding;
 mod identity;
 mod kill;

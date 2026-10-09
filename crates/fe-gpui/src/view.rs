@@ -71,6 +71,8 @@ pub struct EditorView {
     /// Clears the hover range when the view loses focus, even if it's no
     /// longer painted then, as when navigating to another tab.
     hover_blur: Option<Subscription>,
+    /// The popover for what's under the pointer ([`crate::hover`]).
+    pub(crate) popover: crate::hover::HoverPopover,
     /// The frames around the view's own in its context stack, as last seen
     /// while it was focused: see [`EditorView::context_stack`].
     ancestors: Option<ContextStack>,
@@ -88,6 +90,16 @@ pub struct EditorView {
     /// coordinates, and whether it set the pointing hand.
     #[cfg(test)]
     pub(crate) painted_hover: (Vec<Bounds<Pixels>>, bool),
+    /// The diagnostics' squiggles the last frame painted, in window
+    /// coordinates, and their colours.
+    #[cfg(test)]
+    pub(crate) painted_squiggles: Vec<(Bounds<Pixels>, gpui::UnderlineStyle)>,
+    /// The gutter marks the last frame painted: buffer row and colour.
+    #[cfg(test)]
+    pub(crate) painted_marks: Vec<(u32, gpui::Hsla)>,
+    /// The hover popover's text, as the last render showed it.
+    #[cfg(test)]
+    pub(crate) painted_popover: Option<String>,
 }
 
 /// A word a bound click would run its command on: see [`EditorView::hover`].
@@ -133,6 +145,7 @@ impl EditorView {
             fold_column_hovered: false,
             hover: None,
             hover_blur: None,
+            popover: Default::default(),
             ancestors: None,
             #[cfg(test)]
             painted_carets: Vec::new(),
@@ -142,6 +155,12 @@ impl EditorView {
             painted_chevrons: Vec::new(),
             #[cfg(test)]
             painted_hover: (Vec::new(), false),
+            #[cfg(test)]
+            painted_squiggles: Vec::new(),
+            #[cfg(test)]
+            painted_marks: Vec::new(),
+            #[cfg(test)]
+            painted_popover: None,
         };
         crate::vim::register(&view.focus, cx);
         view.sync_vim(cx);
@@ -726,6 +745,7 @@ impl EditorView {
             .map_or(px(20.), |layout| px(layout.frame.line_height));
         let delta = event.delta.pixel_delta(line_height);
         self.set_hover(None, cx);
+        self.hide_popover(cx);
         self.scroll.x = (self.scroll.x - delta.x).max(px(0.));
         self.scroll.y = (self.scroll.y - delta.y).max(px(0.));
         // The element clamps against the content size on the next frame.
@@ -920,6 +940,7 @@ impl Render for EditorView {
             .on_action(cx.listener(Self::on_run_command))
             .on_key_down(cx.listener(Self::on_vim_key))
             .child(EditorElement::new(cx.entity()))
+            .child(crate::hover::popover_layer(cx))
     }
 }
 
@@ -1053,3 +1074,6 @@ mod fold_hover_tests;
 
 #[cfg(test)]
 mod mouse_binding_tests;
+
+#[cfg(test)]
+mod diagnostics_tests;

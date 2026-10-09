@@ -3,7 +3,9 @@
 //!
 //! Handled notifications: `$/progress` and `experimental/serverStatus`
 //! (readiness.rs), `window/logMessage` (into the log ring) and
-//! `window/showMessage` ([`LspEvent::ShowMessage`]). Each is parsed here,
+//! `window/showMessage` ([`LspEvent::ShowMessage`]), and
+//! `textDocument/publishDiagnostics`, which goes to the actor to decode
+//! (diagnostics.rs). Each is parsed here,
 //! so one the client can't read is logged and ignored rather than ending
 //! the main loop, as async-lsp's typed handlers would. Everything else is
 //! logged and ignored too.
@@ -17,7 +19,9 @@ use std::task::{Context, Poll, Waker};
 
 use async_lsp::router::Router;
 use async_lsp::{AnyNotification, ServerSocket};
-use lsp_types::notification::{LogMessage, Notification, Progress, ShowMessage};
+use lsp_types::notification::{
+    LogMessage, Notification, Progress, PublishDiagnostics, ShowMessage,
+};
 use lsp_types::request::{
     ApplyWorkspaceEdit, CodeLensRefresh, InlayHintRefreshRequest, RegisterCapability,
     SemanticTokensRefresh, ShowDocument, ShowMessageRequest, UnregisterCapability,
@@ -32,6 +36,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::clock::Clock;
+use crate::diagnostics::Inbox;
 use crate::event::{LspEvent, ServerId, SharedLog};
 use crate::readiness::Readiness;
 use crate::server::{Queue, Session, Sink, Taken};
@@ -43,6 +48,17 @@ pub(crate) enum ServerStatusNotification {}
 impl Notification for ServerStatusNotification {
     type Params = ServerStatusParams;
     const METHOD: &'static str = "experimental/serverStatus";
+}
+
+/// Makes the session panic as the router reads it: for tests of what a
+/// panicking actor leaves behind.
+#[cfg(test)]
+pub(crate) enum Panic {}
+
+#[cfg(test)]
+impl Notification for Panic {
+    type Params = ();
+    const METHOD: &'static str = "fe-lsp/test/panic";
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -98,6 +114,8 @@ pub(crate) struct ClientState {
     /// Raised when `readiness` changes.
     pub(crate) signal: Rc<Signal>,
     pub(crate) log: SharedLog,
+    /// Where publications wait for the actor to decode them.
+    pub(crate) diagnostics: Rc<Inbox>,
     /// Holds the session's registrations.
     pub(crate) session: Arc<Mutex<Session>>,
     /// Keeps the main loop's event channel open for as long as the loop
@@ -194,6 +212,11 @@ impl ClientState {
                     message: params.message,
                 });
             }),
+            PublishDiagnostics::METHOD => {
+                parse(notif.params).map(|params| self.diagnostics.push(params))
+            }
+            #[cfg(test)]
+            Panic::METHOD => panic!("{}: a test asked the session to panic", self.name),
             _ => {
                 log::info!("{}: ignored notification {method}", self.name);
                 Ok(())

@@ -28,7 +28,10 @@
 //! events for a server that will never drain them.
 //!
 //! Each incarnation (identity.rs) keeps a ring of the last [`RING`]
-//! versions sent, to admit requests and decode replies against. Its LSP
+//! versions sent, to admit requests and decode replies and published
+//! diagnostics (diagnostics.rs) against. Its `didClose`, once handed to
+//! async-lsp, is followed by [`LspEvent::DiagnosticsCleared`], its identity
+//! retired by then. Its LSP
 //! versions go on across reopens within a session: a reopen's `didOpen`
 //! uses the URI's last version plus 1. A document whose text is over its
 //! size limit isn't open on the server: it's closed when an edit takes it
@@ -50,10 +53,11 @@ use lsp_types::{
     TextDocumentSyncSaveOptions, Url, VersionedTextDocumentIdentifier,
 };
 
+use crate::diagnostics::decode;
 use crate::encoding::{PositionEncoding, to_lsp};
-use crate::event::{BUFFER_CHANGED, LspError, NOT_OPEN, ServerId, TOO_LARGE};
+use crate::event::{BUFFER_CHANGED, LspError, LspEvent, NOT_OPEN, ServerId, TOO_LARGE};
 use crate::identity::{Generation, Identities, IncarnationId, Point, SessionId};
-use crate::server::Outgoing;
+use crate::server::{Outgoing, Sink};
 
 /// The most edits one `didChange` sends as ranges; more go as the whole
 /// text.
@@ -206,8 +210,13 @@ pub(crate) enum Note {
     Open(DidOpenTextDocumentParams),
     Change(DidChangeTextDocumentParams),
     Save(DidSaveTextDocumentParams),
-    Close(DidCloseTextDocumentParams),
+    /// With the incarnation it ends, whose diagnostics are reported
+    /// cleared once it's handed to async-lsp.
+    Close(DidCloseTextDocumentParams, Ended),
 }
+
+/// An incarnation of a buffer that ended: its identity has been retired.
+pub(crate) type Ended = (BufferId, (SessionId, IncarnationId));
 
 impl Note {
     /// The method and document, as `didClose file:///a`.
@@ -217,17 +226,31 @@ impl Note {
             Self::Open(p) => ("didOpen", &p.text_document.uri),
             Self::Change(p) => ("didChange", &p.text_document.uri),
             Self::Save(p) => ("didSave", &p.text_document.uri),
-            Self::Close(p) => ("didClose", &p.text_document.uri),
+            Self::Close(p, _) => ("didClose", &p.text_document.uri),
         };
         format!("{method} {uri}")
     }
 
-    pub(crate) fn send(self, socket: &async_lsp::ServerSocket) -> async_lsp::Result<()> {
-        match self {
+    /// Hands it to async-lsp. Returns the incarnation a `didClose` ends.
+    pub(crate) fn send(self, socket: &async_lsp::ServerSocket) -> Option<Ended> {
+        // If the loop has gone, the actor hears so from it.
+        let _ = match self {
             Self::Open(params) => socket.notify::<DidOpenTextDocument>(params),
             Self::Change(params) => socket.notify::<DidChangeTextDocument>(params),
             Self::Save(params) => socket.notify::<DidSaveTextDocument>(params),
-            Self::Close(params) => socket.notify::<DidCloseTextDocument>(params),
+            Self::Close(params, ended) => {
+                let _ = socket.notify::<DidCloseTextDocument>(params);
+                return Some(ended);
+            }
+        };
+        None
+    }
+
+    /// The incarnation a `didClose` ends.
+    pub(crate) fn ends(&self) -> Option<Ended> {
+        match self {
+            Self::Close(_, ended) => Some(*ended),
+            _ => None,
         }
     }
 }
@@ -353,11 +376,29 @@ pub(crate) struct Link {
     /// Document notifications and admitted requests waiting for room in
     /// async-lsp's queue, sent ahead of anything else.
     pub(crate) outbox: VecDeque<Outgoing>,
+    /// The manager's event sink.
+    pub(crate) sink: Sink,
 }
 
 impl Link {
     fn send(&mut self, note: Note) {
         self.outbox.push_back(Outgoing::Note(note));
+    }
+
+    /// Reports `event` to the manager's sink.
+    pub(crate) fn report(&self, event: LspEvent) {
+        let mut sink = self.sink.lock().unwrap_or_else(PoisonError::into_inner);
+        sink(event);
+    }
+
+    /// Reports that an incarnation, retired already, has ended.
+    pub(crate) fn cleared(&self, (buffer, (session, incarnation)): Ended) {
+        self.report(LspEvent::DiagnosticsCleared {
+            buffer,
+            session,
+            incarnation,
+            server: self.server,
+        });
     }
 }
 
@@ -383,6 +424,8 @@ struct Synced {
     /// The last [`RING`] versions sent, oldest first. Never empty: the
     /// newest is what the server has.
     ring: VecDeque<SentVersion>,
+    /// The newest LSP version diagnostics were decoded for.
+    published: Option<i32>,
 }
 
 impl Synced {
@@ -521,6 +564,7 @@ impl Document {
                 text: self.text.clone(),
                 edits: Vec::new(),
             }]),
+            published: None,
         });
         true
     }
@@ -534,7 +578,9 @@ impl Document {
     }
 
     /// Queues `didClose`, if the server has the document, and keeps its
-    /// last version for a reopen.
+    /// last version for a reopen. Its identity has been retired, by the
+    /// manager or [`close_oversized`](Self::close_oversized): the
+    /// `didClose` carries it, to report its diagnostics cleared.
     fn deactivate(&mut self, link: &mut Link) {
         let Some(synced) = self.synced.take() else {
             return;
@@ -545,11 +591,68 @@ impl Document {
             .entry(self.uri.clone())
             .and_modify(|version| *version = last.max(*version))
             .or_insert(last);
-        link.send(Note::Close(DidCloseTextDocumentParams {
-            text_document: TextDocumentIdentifier {
-                uri: self.uri.clone(),
+        link.send(Note::Close(
+            DidCloseTextDocumentParams {
+                text_document: TextDocumentIdentifier {
+                    uri: self.uri.clone(),
+                },
             },
-        }));
+            (self.buffer, synced.identity),
+        ));
+    }
+
+    /// The session is ending: the incarnation the server has, if any,
+    /// whose identity the caller retires and reports cleared. The
+    /// document, handed on as an opening, has none from now.
+    pub(crate) fn end_session(&mut self) -> Option<(SessionId, IncarnationId)> {
+        self.synced.take().map(|synced| synced.identity)
+    }
+
+    pub(crate) fn uri(&self) -> &Url {
+        &self.uri
+    }
+
+    /// Whether the server has the document.
+    pub(crate) fn is_synced(&self) -> bool {
+        self.synced.is_some()
+    }
+
+    /// Decodes a publication of `diagnostics` for LSP version `version`
+    /// against the ring (diagnostics.rs): `None` if it's dropped.
+    pub(crate) fn publish(
+        &mut self,
+        version: i32,
+        diagnostics: Vec<lsp_types::Diagnostic>,
+        link: &Link,
+    ) -> Option<LspEvent> {
+        let synced = self.synced.as_mut()?;
+        if synced.published.is_some_and(|newest| version < newest) {
+            log::debug!(
+                "{}: dropped diagnostics for version {version}, older than {:?}",
+                self.uri,
+                synced.published,
+            );
+            return None;
+        }
+        let Some(sent) = synced.ring.iter().find(|sent| sent.lsp_version == version) else {
+            log::debug!(
+                "{}: dropped diagnostics for version {version}, not in the ring",
+                self.uri
+            );
+            return None;
+        };
+        let items = decode(&sent.text, link.encoding, diagnostics);
+        let buffer_version = sent.version;
+        synced.published = Some(version);
+        let (session, incarnation) = synced.identity;
+        Some(LspEvent::Diagnostics {
+            buffer: self.buffer,
+            session,
+            incarnation,
+            version: buffer_version,
+            server: link.server,
+            items,
+        })
     }
 
     /// Closes a document that grew past its size limit: retires its own

@@ -23,7 +23,15 @@
 //!   `async_channel::Sender::send_blocking`, from the servers' threads,
 //!   into one `cx.spawn` loop per workbench, as `ProjectPanel` consumes
 //!   `ProjectWatcher`. Status and `window/showMessage` drive a status bar
-//!   item for the active editor's server; diagnostics aren't this card's.
+//!   item for the active editor's server.
+//! - **Diagnostics** (§4.1, "Delivery to the UI"). A `Diagnostics` event goes
+//!   to the [`fe_editor::diagnostics::DiagnosticSet`] of each open editor of
+//!   its buffer, keyed by server, applied only if its `(session,
+//!   incarnation)` is [`LspManager::active_identity`] as it's delivered and
+//!   not one cleared there, and rebased from its buffer version. A
+//!   `DiagnosticsCleared` empties the server's diagnostics there if they
+//!   came from its identity, and has the set reject that identity from then
+//!   on. A new manager's ids start over, so its editors' sets are emptied.
 //! - **Commands.** `lsp.restart` and `lsp.show_log`, in the workbench's
 //!   context, act on the active editor's server. Their handlers only name
 //!   the op: the workbench does it.
@@ -61,7 +69,10 @@ use fe_command::{
     Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Invocation, Registry,
 };
 use fe_config::settings::LspSettings;
-use fe_editor::EditorModel;
+use fe_editor::{
+    EditorModel,
+    diagnostics::{Diagnostic, DiagnosticTag, Severity},
+};
 use fe_gpui::commands::RunCommand;
 use fe_lsp::{
     KillSwitch, LOGIN_SHELL_TIMEOUT, LocalLauncher, LspEvent, LspManager, LspNavigation, ServerId,
@@ -269,6 +280,13 @@ pub(crate) struct Lsp {
     /// The manager was made with fe-lsp's own launcher.
     #[cfg(test)]
     local: bool,
+    /// How many `Diagnostics` events the sinks have sent.
+    #[cfg(test)]
+    diagnostics_sent: Arc<std::sync::atomic::AtomicUsize>,
+    /// Every event delivered, in order, with its manager's generation and,
+    /// for `Diagnostics`, whether an editor applied it.
+    #[cfg(test)]
+    delivered: Vec<(u64, LspEvent, Option<bool>)>,
     /// Each shown buffer's file, resolved, or `None` if it can't be.
     resolved: HashMap<BufferId, Option<PathBuf>>,
     /// The buffers whose files are being resolved.
@@ -306,6 +324,10 @@ impl Lsp {
             shown: None,
             #[cfg(test)]
             local: false,
+            #[cfg(test)]
+            diagnostics_sent: Arc::default(),
+            #[cfg(test)]
+            delivered: Vec::new(),
             resolved: HashMap::new(),
             resolving: HashSet::new(),
             _root: None,
@@ -334,7 +356,7 @@ impl Workbench {
                 }
                 let applied = workbench.update(cx, |workbench, cx| {
                     for (generation, event) in batch {
-                        workbench.lsp_event(generation, event);
+                        workbench.lsp_event(generation, event, cx);
                     }
                     workbench.show_lsp_status(cx);
                 });
@@ -382,6 +404,14 @@ impl Workbench {
     /// the next frame.
     fn new_lsp_manager(&mut self, cx: &mut Context<Self>) {
         self.retire_lsp(cx);
+        // The old manager's servers and identities aren't comparable with
+        // the new one's.
+        for editor in self.open_editors(cx) {
+            editor.update(cx, |view, cx| {
+                view.model_mut().reset_diagnostics();
+                cx.notify();
+            });
+        }
         let lsp = &mut self.lsp;
         lsp.documents.clear();
         lsp.servers.clear();
@@ -431,7 +461,13 @@ impl Workbench {
         let running = Arc::new(Mutex::new(Running::default()));
         let (stop, stopped) = mpsc::channel();
         let watched = running.clone();
+        #[cfg(test)]
+        let sent = lsp.diagnostics_sent.clone();
         let sink = move |event: LspEvent| {
+            #[cfg(test)]
+            if matches!(event, LspEvent::Diagnostics { .. }) {
+                sent.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
             if let LspEvent::Status { server, status, .. } = &event {
                 let mut running = lock(&running);
                 if matches!(status, ServerStatus::Stopped(_)) {
@@ -596,8 +632,10 @@ impl Workbench {
         self.show_lsp_status(cx);
     }
 
-    fn lsp_event(&mut self, generation: u64, event: LspEvent) {
+    fn lsp_event(&mut self, generation: u64, event: LspEvent, cx: &mut Context<Self>) {
         let lsp = &mut self.lsp;
+        #[cfg(test)]
+        lsp.delivered.push((generation, event.clone(), None));
         if generation != lsp.generation {
             return;
         }
@@ -619,9 +657,70 @@ impl Workbench {
                 log::info!("{name} says ({typ:?}): {message}");
                 lsp.messages.insert(server, message);
             }
-            // Diagnostics are card 7's.
+            LspEvent::Diagnostics {
+                buffer,
+                session,
+                incarnation,
+                version,
+                server,
+                items,
+            } => {
+                // Read as it's delivered: whatever's still queued behind a
+                // close and reopen, or a restart, is no longer active.
+                let active = (lsp.manager.as_ref())
+                    .and_then(|manager| lock(manager).active_identity(buffer, server));
+                let items: Vec<_> = items.into_iter().map(diagnostic).collect();
+                let mut applied = false;
+                for editor in self.editors_of(buffer, cx) {
+                    applied |= editor.update(cx, |view, cx| {
+                        let identity = (session, incarnation);
+                        let model = view.model_mut();
+                        let applied = model.apply_diagnostics(
+                            server,
+                            identity,
+                            version,
+                            items.clone(),
+                            active,
+                        );
+                        if applied {
+                            cx.notify();
+                        }
+                        applied
+                    });
+                }
+                #[cfg(test)]
+                if let Some(delivered) = self.lsp.delivered.last_mut() {
+                    delivered.2 = Some(applied);
+                }
+                #[cfg(not(test))]
+                let _ = applied;
+            }
+            LspEvent::DiagnosticsCleared {
+                buffer,
+                session,
+                incarnation,
+                server,
+            } => {
+                for editor in self.editors_of(buffer, cx) {
+                    editor.update(cx, |view, cx| {
+                        if view
+                            .model_mut()
+                            .clear_diagnostics(server, (session, incarnation))
+                        {
+                            cx.notify();
+                        }
+                    });
+                }
+            }
             _ => {}
         }
+    }
+
+    /// The open editors showing `buffer`.
+    fn editors_of(&self, buffer: BufferId, cx: &App) -> Vec<gpui::Entity<fe_gpui::EditorView>> {
+        let mut editors = self.open_editors(cx);
+        editors.retain(|editor| editor.read(cx).model().buffer().id() == buffer);
+        editors
     }
 
     /// Sets the status item for the active editor's server, or removes it.
@@ -719,6 +818,31 @@ impl Workbench {
     }
 }
 
+/// fe-lsp's diagnostic as fe-editor keeps it: one with no severity is an
+/// error, as VS Code reads it.
+fn diagnostic(item: fe_lsp::Diagnostic) -> (std::ops::Range<usize>, Diagnostic) {
+    let severity = match item.severity {
+        None | Some(fe_lsp::Severity::Error) => Severity::Error,
+        Some(fe_lsp::Severity::Warning) => Severity::Warning,
+        Some(fe_lsp::Severity::Information) => Severity::Information,
+        Some(fe_lsp::Severity::Hint) => Severity::Hint,
+    };
+    let tags = (item.tags.into_iter())
+        .map(|tag| match tag {
+            fe_lsp::DiagnosticTag::Unnecessary => DiagnosticTag::Unnecessary,
+            fe_lsp::DiagnosticTag::Deprecated => DiagnosticTag::Deprecated,
+        })
+        .collect();
+    let diagnostic = Diagnostic {
+        severity,
+        message: item.message,
+        source: item.source,
+        code: item.code,
+        tags,
+    };
+    (item.range, diagnostic)
+}
+
 /// `path` with its folder resolved, so through no `..` or symlinked
 /// folder; `None` if its folder can't be, or it names no file.
 fn resolve(path: &Path) -> Option<PathBuf> {
@@ -803,6 +927,27 @@ impl Workbench {
             .documents
             .get(&buffer)
             .map(|document| document.server)
+    }
+
+    /// How many `Diagnostics` events the managers' sinks have sent.
+    pub(crate) fn lsp_diagnostics_sent(&self) -> usize {
+        (self.lsp.diagnostics_sent).load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// How many events wait in the channel for the workbench to take.
+    pub(crate) fn lsp_queued(&self) -> usize {
+        self.lsp.events.len()
+    }
+
+    /// Every event delivered so far, with its manager's generation and,
+    /// for `Diagnostics`, whether an editor applied it.
+    pub(crate) fn lsp_delivered(&self) -> Vec<(u64, LspEvent, Option<bool>)> {
+        self.lsp.delivered.clone()
+    }
+
+    /// Delivers `event` as if it came through the channel.
+    pub(crate) fn lsp_deliver(&mut self, generation: u64, event: LspEvent, cx: &mut Context<Self>) {
+        self.lsp_event(generation, event, cx);
     }
 
     /// What the server `name` for the root has logged.

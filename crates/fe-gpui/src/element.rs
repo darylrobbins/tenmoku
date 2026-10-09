@@ -21,8 +21,9 @@ use gpui::{
     ElementInputHandler, Entity, Font, FontId, Global, GlobalElementId, Hitbox, HitboxBehavior,
     Hsla, InspectorElementId, IntoElement, LayoutId, LineLayout, ModifiersChangedEvent,
     MouseDownEvent, MouseEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, PathBuilder,
-    PinchEvent, Pixels, Point, ScrollWheelEvent, Style, TextAlign, TextRun, TextSystem, WeakEntity,
-    Window, WindowId, WindowTextSystem, fill, point, px, relative, size,
+    PinchEvent, Pixels, Point, ScrollWheelEvent, Style, TextAlign, TextRun, TextSystem,
+    UnderlineStyle, WeakEntity, Window, WindowId, WindowTextSystem, fill, point, px, relative,
+    size,
 };
 
 use crate::{EditorTheme, EditorView, FrameTiming};
@@ -90,6 +91,28 @@ impl FrameLayout {
         let index = row.line.layout.index_for_x(px(line_x))?;
         let offset = row.shown().start + row.expanded.to_buffer(index, fe_buffer::Bias::Left);
         Some(grapheme_start(text, offset, row.start))
+    }
+
+    /// The offset a buffer row ends at, if a window position is just past
+    /// that end on a row this frame shows, within the width of a space:
+    /// where an empty diagnostic at the end is underlined
+    /// ([`diagnostic_marks`]).
+    pub(crate) fn row_end_at(&mut self, position: Point<Pixels>) -> Option<usize> {
+        let at = self.to_frame(position);
+        let Self {
+            frame,
+            long_rows,
+            glyph_widths,
+            ..
+        } = self;
+        let display_row = ((at.y + frame.scroll.y) / frame.line_height).floor();
+        let row = frame.row(u32::try_from(display_row as i64).ok()?)?;
+        if !row.last {
+            return None;
+        }
+        let end = frame.view_x(row.x_for_offset(row.end, long_rows, glyph_widths));
+        let space = glyph_widths.char_width(' ');
+        (end <= at.x && at.x < end + space).then_some(row.end)
     }
 
     /// The window bounds of a caret at `offset`, if its row is on screen.
@@ -507,6 +530,12 @@ impl Element for EditorElement {
 
         let scroll = point(px(frame.scroll.x), px(frame.scroll.y));
         self.view.update(cx, |view, cx| {
+            // Scrolled to reveal the caret, say: what the popover was found
+            // under has moved, and it isn't drawn from this frame on
+            // ([`crate::hover::popover_layer`]).
+            if view.scroll != scroll {
+                view.hide_popover(cx);
+            }
             view.scroll = scroll;
             view.autoscroll = false;
             view.load_injected_languages(cx);
@@ -583,6 +612,10 @@ impl Element for EditorElement {
                 .collect(),
         };
         let selections = selection_rects(&mut layout, view);
+        let (squiggles, marks) = {
+            let diagnostics = view.model.diagnostics();
+            diagnostic_marks(&mut layout, view.model.text(), &diagnostics, &theme)
+        };
         let frame = &layout.frame;
         let line_height = px(frame.line_height);
         #[cfg(test)]
@@ -638,6 +671,9 @@ impl Element for EditorElement {
                         });
                         marker.line.paint(origin, line_height, window, cx);
                     }
+                    for (squiggle, style) in &squiggles {
+                        window.paint_underline(squiggle.origin, squiggle.size.width, style);
+                    }
                     for &(underline, color) in &underlines {
                         window.paint_quad(fill(underline, color));
                     }
@@ -652,6 +688,9 @@ impl Element for EditorElement {
             );
             for (origin, number) in &frame.line_numbers {
                 number.paint(layout.to_window(*origin), line_height, window, cx);
+            }
+            for &(_, mark, color) in &marks {
+                window.paint_quad(fill(mark, color).corner_radii(mark.size.width / 2.));
             }
             // Folded rows' chevrons always show; the rest only while the
             // pointer is over the fold column.
@@ -689,13 +728,17 @@ impl Element for EditorElement {
                     let id = window.window_handle().window_id();
                     cx.default_global::<PointerOutside>().0.insert(id);
                     set_fold_column_hovered(&view, false, cx);
-                    view.update(cx, |view, cx| view.set_hover(None, cx)).ok();
+                    view.update(cx, |view, cx| {
+                        view.set_hover(None, cx);
+                        view.hide_popover(cx);
+                    })
+                    .ok();
                 }
             });
         }
         // Window-wide too, so moving off the text anywhere clears the hover
-        // range. Only moves find it: a scroll clears it, and a click leaves
-        // it be.
+        // range and the popover. Only moves find them: a scroll clears
+        // them, and a click leaves them be.
         {
             let (view, text) = (view.clone(), layout.text.clone());
             window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
@@ -704,7 +747,8 @@ impl Element for EditorElement {
                         .is_hovered_at(event.position, window)
                         .then_some(event.position);
                     view.update(cx, |view, cx| {
-                        view.hover_at(over, &event.modifiers, window, cx)
+                        view.hover_at(over, &event.modifiers, window, cx);
+                        view.hover_diagnostics(over, cx);
                     })
                     .ok();
                 }
@@ -744,6 +788,8 @@ impl Element for EditorElement {
                 view.painted_chevrons = painted_chevrons;
                 let underlines = underlines.iter().map(|&(bounds, _)| bounds).collect();
                 view.painted_hover = (underlines, hover.is_some());
+                view.painted_squiggles = squiggles;
+                view.painted_marks = marks.iter().map(|&(row, _, color)| (row, color)).collect();
             }
         });
     }
@@ -879,6 +925,123 @@ fn underlines(
         .into_iter()
         .map(|(rect, color)| (layout.bounds(rect), color))
         .collect()
+}
+
+/// How thick a diagnostic's wavy underline is; its wave is three times
+/// as tall.
+const SQUIGGLE: f32 = 1.;
+
+/// A squiggle: where it starts and how wide it is, in window coordinates,
+/// its height the stroke's thickness, and its style.
+type Squiggle = (Bounds<Pixels>, UnderlineStyle);
+
+/// A gutter mark: the buffer row, its box in window coordinates, and its
+/// colour.
+type Mark = (u32, Bounds<Pixels>, Hsla);
+
+/// For `diagnostics`, in the frame's text: a wavy underline under each
+/// piece of each one on the frame's rows, in its severity's colour, the most
+/// severe last, so on top; and, at the gutter's left, a dot on the first
+/// display row of each buffer row one covers, in the colour of the most
+/// severe covering it. An empty range is underlined under the char after
+/// it, or a space's width at a row's end.
+fn diagnostic_marks(
+    layout: &mut FrameLayout,
+    text: &Text,
+    diagnostics: &[fe_editor::diagnostics::DiagnosticEntry<'_>],
+    theme: &EditorTheme,
+) -> (Vec<Squiggle>, Vec<Mark>) {
+    let FrameLayout {
+        frame,
+        long_rows,
+        glyph_widths,
+        ..
+    } = layout;
+    let (Some(first), Some(last)) = (frame.rows.first(), frame.rows.last()) else {
+        return (Vec::new(), Vec::new());
+    };
+    let shown = first.start..last.end;
+    let mut pieces = Vec::new();
+    let mut rows: HashMap<u32, fe_editor::diagnostics::Severity> = HashMap::new();
+    for entry in diagnostics {
+        let range = entry.range.clone();
+        if range.start > shown.end || range.end < shown.start {
+            continue;
+        }
+        // Every shown buffer row it covers: through the row its end is
+        // on, unless that end is the row's start.
+        let first_row = text.offset_to_point(range.start).row;
+        let mut last_row = text.offset_to_point(range.end).row;
+        if last_row > first_row && range.end == text.row_start(last_row) {
+            last_row -= 1;
+        }
+        let covered = first_row.max(first.buffer_row)..=last_row.min(last.buffer_row);
+        for row in covered {
+            let worst = rows.entry(row).or_insert(entry.severity);
+            *worst = (*worst).max(entry.severity);
+        }
+        let end = match range.is_empty() {
+            true => text.clip_offset(range.end + 1, fe_buffer::Bias::Right),
+            false => range.end,
+        };
+        for row in &frame.rows {
+            let (start, end) = (range.start.max(row.start), end.min(row.end));
+            // An empty one only on the row its caret would be on, not
+            // also at the start of the next.
+            let on_row = match range.is_empty() {
+                true => row.contains(range.start),
+                false => start < end && row.contains(start),
+            };
+            if !on_row {
+                continue;
+            }
+            let left = frame.view_x(row.x_for_offset(start, long_rows, glyph_widths));
+            let right = match start < end {
+                true => frame.view_x(row.x_for_offset(end, long_rows, glyph_widths)),
+                false => left + glyph_widths.char_width(' '),
+            };
+            let line = &row.line.layout;
+            let (ascent, descent): (f32, f32) = (line.ascent.into(), line.descent.into());
+            let baseline =
+                frame.row_top(row.row) + (frame.line_height - ascent - descent) / 2. + ascent;
+            let rect = Rect {
+                x: left,
+                y: baseline.round() + 1.,
+                width: right - left,
+                height: SQUIGGLE,
+            };
+            pieces.push((entry.severity, rect));
+        }
+    }
+    pieces.sort_by_key(|(severity, _)| *severity);
+    let side = (frame.line_height * 0.35).round();
+    let marks: Vec<(u32, Rect, Hsla)> = (frame.rows.iter())
+        .filter(|row| row.start == text.row_start(row.buffer_row))
+        .filter_map(|row| {
+            let severity = rows.get(&row.buffer_row)?;
+            let rect = Rect {
+                x: side / 2.,
+                y: frame.row_top(row.row) + (frame.line_height - side) / 2.,
+                width: side,
+                height: side,
+            };
+            Some((row.buffer_row, rect, theme.diagnostic_color(*severity)))
+        })
+        .collect();
+    let squiggles = (pieces.into_iter())
+        .map(|(severity, rect)| {
+            let style = UnderlineStyle {
+                thickness: px(rect.height),
+                color: Some(theme.diagnostic_color(severity)),
+                wavy: true,
+            };
+            (layout.bounds(rect), style)
+        })
+        .collect();
+    let marks = (marks.into_iter())
+        .map(|(row, rect, color)| (row, layout.bounds(rect), color))
+        .collect();
+    (squiggles, marks)
 }
 
 /// Sets whether the pointer is over `column` in the rendered frame. Unlike

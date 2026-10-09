@@ -20,6 +20,9 @@ use fe_display::{CharWidth, DisplayMap, ExpandedRow, Monospace, WRAP_SLICE_BYTES
 use unicode_segmentation::UnicodeSegmentation;
 
 pub mod commands;
+pub mod diagnostics;
+
+use diagnostics::{AnyDiagnosticSet, Diagnostic, DiagnosticEntry, DiagnosticSet};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Movement {
@@ -101,6 +104,10 @@ pub struct EditorModel {
     origin: Origin,
     /// The transactions the running command produced; `None` outside one.
     transactions: Option<Vec<TransactionId>>,
+    /// The buffer's diagnostics, as this model shows them: a
+    /// [`DiagnosticSet`] keyed by the host's types, once it has applied
+    /// one.
+    diagnostics: Option<Box<dyn AnyDiagnosticSet>>,
 }
 
 impl EditorModel {
@@ -127,6 +134,7 @@ impl EditorModel {
             wrap_width: 80.,
             origin: Origin::User,
             transactions: None,
+            diagnostics: None,
         }
     }
 
@@ -138,7 +146,8 @@ impl EditorModel {
     }
 
     /// A second model over the same buffer, for a split: same path, tab size,
-    /// wrap and selections, but its own display rows with nothing folded.
+    /// wrap, selections and diagnostics, but its own display rows with
+    /// nothing folded.
     /// Its char widths are [`Monospace`] until set.
     pub fn split(&self) -> EditorModel {
         let (events, snapshot) = {
@@ -166,6 +175,7 @@ impl EditorModel {
             wrap_width: self.wrap_width,
             origin: Origin::User,
             transactions: None,
+            diagnostics: self.diagnostics.as_ref().map(|set| set.boxed_clone()),
         };
         model.apply_wrap();
         model
@@ -276,9 +286,58 @@ impl EditorModel {
     /// Wrapping rows still pending is [`EditorModel::wrap_pending`]'s job.
     pub fn sync_display(&mut self) {
         self.refresh();
+        if let Some(set) = &mut self.diagnostics {
+            set.refresh(&self.snapshot);
+        }
         // Nothing reads events outside undo and redo, which drain them
         // first; this keeps them from piling up while others edit.
         self.events.drain();
+    }
+
+    /// The buffer's diagnostics in the text as of the last catch-up (see
+    /// [`EditorModel`]), by start.
+    pub fn diagnostics(&self) -> Vec<DiagnosticEntry<'_>> {
+        self.diagnostics
+            .as_ref()
+            .map_or_else(Vec::new, |set| set.entries(&self.snapshot))
+    }
+
+    /// The diagnostics as the host applied them, if it keyed them by `S`
+    /// and `I`.
+    pub fn diagnostic_set<S: Copy + Eq + 'static, I: Copy + Eq + 'static>(
+        &self,
+    ) -> Option<&DiagnosticSet<S, I>> {
+        self.diagnostics.as_ref()?.as_any().downcast_ref()
+    }
+
+    /// Catches up, then [`DiagnosticSet::apply`]s `items` to the buffer's
+    /// diagnostics. A set keyed by other types is replaced.
+    pub fn apply_diagnostics<S: Copy + Eq + 'static, I: Copy + Eq + 'static>(
+        &mut self,
+        server: S,
+        identity: I,
+        version: Version,
+        items: Vec<(Range<usize>, Diagnostic)>,
+        active: Option<I>,
+    ) -> bool {
+        self.sync_display();
+        let set = diagnostic_set_mut::<S, I>(&mut self.diagnostics);
+        set.apply(&self.snapshot, server, identity, version, items, active)
+    }
+
+    /// [`DiagnosticSet::clear`]s `server`'s diagnostics from `identity`.
+    pub fn clear_diagnostics<S: Copy + Eq + 'static, I: Copy + Eq + 'static>(
+        &mut self,
+        server: S,
+        identity: I,
+    ) -> bool {
+        diagnostic_set_mut::<S, I>(&mut self.diagnostics).clear(server, identity)
+    }
+
+    /// Forgets every diagnostic, and the identities seen cleared: for a
+    /// host whose servers' keys start over.
+    pub fn reset_diagnostics(&mut self) {
+        self.diagnostics = None;
     }
 
     /// Takes a new snapshot and syncs the display rows to it, if the buffer
@@ -1097,6 +1156,22 @@ impl Drop for BufferMut<'_> {
         );
         self.events.drain();
     }
+}
+
+/// The [`DiagnosticSet`] in `slot`, made afresh if there's none or it's
+/// keyed by other types.
+fn diagnostic_set_mut<S: Copy + Eq + 'static, I: Copy + Eq + 'static>(
+    slot: &mut Option<Box<dyn AnyDiagnosticSet>>,
+) -> &mut DiagnosticSet<S, I> {
+    let keyed = slot
+        .as_ref()
+        .is_some_and(|set| set.as_any().is::<DiagnosticSet<S, I>>());
+    if !keyed {
+        *slot = Some(Box::new(DiagnosticSet::<S, I>::new()));
+    }
+    slot.as_mut()
+        .and_then(|set| set.as_any_mut().downcast_mut())
+        .expect("just made")
 }
 
 /// Brings `snapshot` and the `display` rows synced to it up to date with
