@@ -72,6 +72,9 @@ pub enum ProposalError {
 /// insertion, it can end up inside text the user deleted and restored by
 /// undo after other edits, since anchors can't tell which side it was on.
 ///
+/// An editor accepting on the user's behalf uses the `_as` accepts with
+/// `Origin::User`, so the user's undo reverts the hunk.
+///
 /// The anchors keep the buffer's edit log alive from [`ProposedChange::version`]
 /// on: [`ProposedChange::refresh`] them now and then, and keep
 /// [`Buffer::compact_log`]'s floor at or below that version.
@@ -216,6 +219,8 @@ impl ProposedChange {
         }
     }
 
+    /// Who proposed the change. Accepting under another origin
+    /// ([`ProposedChange::accept_as`]) doesn't change it.
     pub fn origin(&self) -> &Origin {
         &self.origin
     }
@@ -249,8 +254,10 @@ impl ProposedChange {
     }
 
     /// Applies one pending hunk at its current range, as one transaction
-    /// under the proposal's origin, separate from any transaction the caller
-    /// has open.
+    /// under the proposal's own origin, separate from any transaction the
+    /// caller has open. For a host that applies an agent's edits itself and
+    /// wants them on the agent's undo history; an editor accepting on the
+    /// user's behalf uses [`ProposedChange::accept_as`] with `Origin::User`.
     ///
     /// # Errors
     /// [`ProposalError::Stale`] if its old text is no longer in place (the
@@ -264,6 +271,24 @@ impl ProposedChange {
         &mut self,
         buffer: &mut Buffer,
         id: HunkId,
+    ) -> Result<TransactionId, ProposalError> {
+        self.accept_as(buffer, id, self.origin.clone())
+    }
+
+    /// As [`ProposedChange::accept`], but the transaction is under `origin`,
+    /// so that origin's undo reverts the hunk. The proposal's own origin is
+    /// unchanged, and the hunk stays accepted after an undo.
+    ///
+    /// # Errors
+    /// As [`ProposedChange::accept`].
+    ///
+    /// # Panics
+    /// As [`ProposedChange::accept`].
+    pub fn accept_as(
+        &mut self,
+        buffer: &mut Buffer,
+        id: HunkId,
+        origin: Origin,
     ) -> Result<TransactionId, ProposalError> {
         self.check_buffer(buffer.current());
         let hunk = self.find(id).ok_or(ProposalError::NotPending)?;
@@ -280,7 +305,7 @@ impl ProposedChange {
         }
         let new_text = hunk.new_text.clone();
         let transaction = buffer.with_transaction_aside(|buffer| {
-            buffer.edit([(range.clone(), new_text.clone())], self.origin.clone())
+            buffer.edit([(range.clone(), new_text.clone())], origin)
         });
         let transaction = transaction.expect("a hunk always changes the text");
         let landed = range.start..range.start + new_text.len();
@@ -289,13 +314,27 @@ impl ProposedChange {
     }
 
     /// Applies every pending hunk whose old text is still in place, as one
-    /// batch in one transaction under the proposal's origin. Returns that
+    /// batch in one transaction under the proposal's own origin (see
+    /// [`ProposedChange::accept`]). Returns that
     /// transaction, if anything was applied, and the hunks skipped as stale
     /// (found stale now or earlier), in text order.
     ///
     /// # Panics
     /// As [`ProposedChange::accept`].
     pub fn accept_all(&mut self, buffer: &mut Buffer) -> (Option<TransactionId>, Vec<HunkId>) {
+        self.accept_all_as(buffer, self.origin.clone())
+    }
+
+    /// As [`ProposedChange::accept_all`], but the transaction is under
+    /// `origin`, as in [`ProposedChange::accept_as`].
+    ///
+    /// # Panics
+    /// As [`ProposedChange::accept`].
+    pub fn accept_all_as(
+        &mut self,
+        buffer: &mut Buffer,
+        origin: Origin,
+    ) -> (Option<TransactionId>, Vec<HunkId>) {
         self.check_buffer(buffer.current());
         let ranges = self.locate(buffer.current());
         let mut edits = Vec::new();
@@ -316,7 +355,7 @@ impl ProposedChange {
         }
         // Aside, so a caller's open transaction neither joins nor is closed.
         let transaction = buffer
-            .with_transaction_aside(|buffer| buffer.edit(edits, self.origin.clone()))
+            .with_transaction_aside(|buffer| buffer.edit(edits, origin))
             .expect("a hunk always changes the text");
         // Where each landed: hunks are in text order and don't overlap, so
         // this is how `Buffer::edit` placed them.

@@ -265,6 +265,13 @@ one command set. An agent shouldn't need a parallel "propose an edit" API.
   clipboard half of `cut` and `paste`). A dry run of these is refused, or only
   the buffer part of `cut` and `paste` is proposed.
 
+- **Accepting.** Accepting a hunk in the editor is the user's edit: it lands
+  under `Origin::User` on the user's undo stack, so cmd-z undoes it and
+  cmd-shift-z redoes it, as in VS Code and Cursor (user decision, 2026-10-09,
+  replacing T240's "accepted as the AI's transaction"). The proposal's origin
+  still records who proposed it. Undoing an accepted hunk reverts its text;
+  the hunk stays accepted and its diff block doesn't return.
+
 What exists now is the `mutates_buffer` flag on `CommandMeta`. It says which
 commands a dry run would propose and which can run on a read-only buffer.
 

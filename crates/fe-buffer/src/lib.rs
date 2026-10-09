@@ -8,9 +8,13 @@
 //!   which is how AI proposals land while the user keeps typing.
 //! - [`BufferSnapshot`] is an O(1), thread-safe copy for background work.
 //! - [`ProposedChange`] holds edits made against a snapshot, such as an AI's,
-//!   as anchored hunks the user accepts (each as a transaction under the
-//!   proposal's origin) or rejects one by one; a hunk goes stale once the
-//!   user edits the text under it. [`ProposedChange::dry_run`] reports, without
+//!   as anchored hunks the user accepts or rejects one by one; a hunk goes
+//!   stale once the user edits the text under it. Each accepted hunk is a
+//!   transaction under the accepting origin (`Origin::User` from the editor,
+//!   so cmd-z undoes it, as in VS Code and Cursor; decided 2026-10-09,
+//!   replacing T240's AI-transaction accept) or the proposal's own. The
+//!   proposal's origin records who proposed it, and undo reverts the text but
+//!   leaves the hunk accepted. [`ProposedChange::dry_run`] reports, without
 //!   changing anything, which hunks would apply and why the rest can't.
 //!
 //! This crate must never depend on GPUI.
