@@ -13,9 +13,11 @@ use std::ops::Range;
 use ropey::LineType;
 
 mod encoding;
+mod source;
 
 pub use encoding::{DecodedFile, EncodeError, FileEncoding};
 pub use encoding_rs::Encoding;
+pub use source::TextSource;
 
 const LF: LineType = LineType::LF;
 
