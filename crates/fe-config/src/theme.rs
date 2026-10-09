@@ -301,6 +301,11 @@ fn build(layer: &Layer, mut theme: Theme, diagnostics: &mut Vec<Diagnostic>) -> 
     }
     // The table is sorted by key; file order is by where the key is.
     syntax.sort_by_key(|(offset, _, _)| *offset);
+    // Captures the file doesn't mention stay as fallbacks; the file's own
+    // entries follow in file order, replacements of bundled captures included.
+    theme
+        .syntax
+        .retain(|(capture, _)| !syntax.iter().any(|(_, name, _)| name == capture));
     for (_, name, color) in syntax {
         match theme
             .syntax

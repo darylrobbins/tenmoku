@@ -141,11 +141,11 @@ background = "#000000"
     let mut expected = dark.clone();
     expected.name = "user".into();
     expected.editor.background = color("#000");
-    for (name, color) in &mut expected.syntax {
-        if name == "keyword" {
-            *color = "#f00".parse().unwrap();
-        }
-    }
+    // The file's own captures come after the fallbacks, replacements too.
+    expected.syntax.retain(|(name, _)| name != "keyword");
+    expected
+        .syntax
+        .push(("keyword".into(), "#f00".parse().unwrap()));
     assert_eq!(theme, expected);
     assert_eq!(theme.ui, dark.ui);
     assert_eq!(theme.appearance, Appearance::Dark);
@@ -177,6 +177,31 @@ aa = "#333"
             ("aa", "#333333".to_owned()),
         ]
     );
+
+    // Replaced bundled captures and new ones are in file order, after the
+    // fallbacks for the bundled captures the file doesn't mention.
+    let (theme, diagnostics) = load_one(
+        r##"
+[syntax]
+keyword = "#111"
+new_capture = "#222"
+comment = "#333"
+"##,
+    );
+    assert_eq!(diagnostics, []);
+    let theme = theme.unwrap();
+    let names: Vec<_> = theme.syntax.iter().map(|(name, _)| name.as_str()).collect();
+    let fallbacks: Vec<_> = SYNTAX
+        .iter()
+        .map(|(name, _)| *name)
+        .filter(|name| !["keyword", "comment"].contains(name))
+        .collect();
+    assert_eq!(names[..fallbacks.len()], fallbacks);
+    assert_eq!(
+        names[fallbacks.len()..],
+        ["keyword", "new_capture", "comment"]
+    );
+    assert_eq!(theme.syntax_color("comment"), Some(color("#333")));
 }
 
 #[test]
