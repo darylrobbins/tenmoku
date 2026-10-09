@@ -14,7 +14,8 @@
 //! UTF-8.
 //!
 //! A [`LineIndex`] maps rows to offsets and back, built on a background
-//! thread while the first screen is already showing.
+//! thread while the first screen is already showing. A [`FileText`] joins the
+//! two into a `fe_text::TextSource`.
 //!
 //! It must never depend on GPUI.
 
@@ -25,9 +26,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 pub use index::{IndexState, LineIndex, Progress, STRIDE, Step};
+pub use source::FileText;
 use stamp::Stamp;
 
 mod index;
+mod source;
 mod stamp;
 
 /// The size of a cached chunk, and the alignment of every chunk's start.
@@ -50,6 +53,22 @@ pub enum ReadError {
     /// Any other I/O failure.
     #[error(transparent)]
     Io(#[from] io::Error),
+}
+
+impl ReadError {
+    pub fn kind(&self) -> ReadErrorKind {
+        match self {
+            ReadError::Changed => ReadErrorKind::Changed,
+            ReadError::Io(_) => ReadErrorKind::Io,
+        }
+    }
+}
+
+/// A [`ReadError`] without its `io::Error`, so it can be copied and compared.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ReadErrorKind {
+    Changed,
+    Io,
 }
 
 /// Whether the file on disk still looks like the one that was opened. See

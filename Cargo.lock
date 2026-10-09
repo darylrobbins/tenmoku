@@ -1766,6 +1766,7 @@ dependencies = [
 name = "fe-fileview"
 version = "0.1.0"
 dependencies = [
+ "fe-text",
  "libc",
  "rand 0.9.5",
  "tempfile",
