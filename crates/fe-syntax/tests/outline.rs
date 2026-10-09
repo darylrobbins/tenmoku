@@ -66,8 +66,7 @@ fn samples() -> Vec<(PathBuf, &'static str, String)> {
 fn outline_of(language: &str, text: &str) -> Outline {
     let buffer = Buffer::new(text);
     let mut syntax = Syntax::new(language_by_name(language).unwrap(), buffer.current());
-    // No deadline: a loaded machine can't make the parse give up.
-    assert!(syntax.parse_until(Duration::MAX, || false));
+    syntax.finish(syntax.parse_job().run());
     assert!(
         !syntax.tree().unwrap().root_node().has_error(),
         "the {language} sample parses without errors"
@@ -564,12 +563,12 @@ fn no_outline_without_a_full_tree() {
     let mut buffer = Buffer::new("fn f() {}\n");
     let mut syntax = Syntax::new(rust, buffer.current());
     assert_eq!(outline(&syntax).err(), Some(NoOutline::NotParsed));
-    assert!(syntax.parse_until(Duration::MAX, || false));
+    assert!(syntax.parse_within(Duration::from_secs(10)));
     assert_eq!(outline(&syntax).unwrap().items.len(), 1);
     buffer.edit([(0..0, "fn g() {}\n")], Origin::User);
     syntax.edit(buffer.current());
     assert_eq!(outline(&syntax).err(), Some(NoOutline::NotParsed));
-    assert!(syntax.parse_until(Duration::MAX, || false));
+    assert!(syntax.parse_within(Duration::from_secs(10)));
     let outline = outline(&syntax).unwrap();
     assert_eq!(outline.version, syntax.version());
     let names: Vec<_> = outline

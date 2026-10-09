@@ -35,11 +35,10 @@ impl ManualSpawner {
         self.jobs.len()
     }
 
-    /// Runs the oldest pending job, with no deadline, so a loaded machine can't
-    /// make it overrun.
+    /// Runs the oldest pending job.
     pub(super) fn run(&mut self) -> Parsed {
         assert!(self.pending() > 0, "no job to run");
-        self.jobs.remove(0).0.run_until(|_| || false)
+        self.jobs.remove(0).0.run()
     }
 }
 

@@ -17,7 +17,7 @@ use crate::{
 
 fn parsed(name: &str, buffer: &Buffer) -> Syntax {
     let mut syntax = Syntax::new(language_by_name(name).unwrap(), buffer.current());
-    syntax.finish(syntax.parse_job().run_until(|_| || false));
+    syntax.finish(syntax.parse_job().run());
     syntax
 }
 
@@ -875,7 +875,7 @@ fn painting_stops_at_the_deadline() {
     let at = text.len() - "</b>`;\n".len();
     buffer.edit([(at..at, "i")], Origin::User);
     syntax.edit(buffer.current());
-    syntax.finish(syntax.parse_job().run_until(|_| || false));
+    syntax.finish(syntax.parse_job().run());
     let edited = syntax.kept_layers();
     let mut ranges = ranges;
     ranges.last_mut().unwrap().end += 1;

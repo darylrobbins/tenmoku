@@ -8,9 +8,7 @@ use std::time::Duration;
 use fe_buffer::{Buffer, Origin};
 use fe_syntax::{Syntax, language_by_name};
 
-/// A hang guard: the parse is cut off by its own cap, so this only fires on a
-/// hang.
-const LIMIT: Duration = Duration::from_secs(60);
+const LIMIT: Duration = Duration::from_secs(10);
 
 /// Replays one edit batch the way the fuzz harness does, with `run` standing
 /// in for `ParseJob::run` on a helper thread, and checks that it returns and

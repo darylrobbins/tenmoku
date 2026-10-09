@@ -19,7 +19,7 @@ use crate::{
 /// A fully parsed tree for `buffer`.
 fn parsed(language: &'static Language, buffer: &Buffer) -> Syntax {
     let mut syntax = Syntax::new(language, buffer.current());
-    syntax.finish(syntax.parse_job().run_until(|_| || false));
+    syntax.finish(syntax.parse_job().run());
     syntax
 }
 
@@ -305,7 +305,7 @@ fn each_language_highlights_a_snippet() {
         covered.push(language.name());
         let buffer = Buffer::new(text);
         let mut syntax = Syntax::new(language, buffer.current());
-        assert!(syntax.parse_until(Duration::MAX, || false));
+        assert!(syntax.parse_within(Duration::from_secs(10)));
         let found = spans(&syntax, text, 0..text.len());
         for &(token, highlight) in expected {
             if !found.contains(&(token.to_string(), highlight)) {
@@ -581,7 +581,7 @@ fn a_panicking_parse_leaves_plain_text() {
             syntax.finish(parsed.join().expect("the panic is caught"));
         } else {
             FAULT.set(Some("read"));
-            assert!(syntax.parse_until(Duration::MAX, || false));
+            assert!(syntax.parse_within(Duration::from_secs(10)));
         }
         assert!(syntax.failed() && !syntax.needs_parse());
         assert_eq!(syntax.highlights(0..10), []);
@@ -589,7 +589,7 @@ fn a_panicking_parse_leaves_plain_text() {
         buffer.edit([(0..0, "// ")], Origin::User);
         syntax.edit(buffer.current());
         assert!(syntax.tree().is_none() && !syntax.needs_parse());
-        assert!(syntax.parse_until(Duration::MAX, || false));
+        assert!(syntax.parse_within(Duration::from_secs(10)));
         assert_eq!(syntax.highlights(0..13), []);
     }
 }
