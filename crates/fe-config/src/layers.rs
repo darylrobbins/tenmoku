@@ -48,16 +48,27 @@ pub fn load_layer(path: &Path) -> Layer {
         ..Layer::default()
     };
     match read(path) {
-        Ok(Some(source)) => layer.source = source,
-        Ok(None) => return layer,
+        Ok(Some(source)) => parse_layer(path, source),
+        Ok(None) => layer,
         Err(error) => {
             let message = format!("cannot read the file: {error}");
             layer
                 .diagnostics
                 .push(layer.diagnostic_at(Severity::Error, None, 0, message));
-            return layer;
+            layer
         }
     }
+}
+
+/// Parses `source` as the TOML file at `path`, as [`load_layer`] does once
+/// it has read the file: a syntax error is an empty layer with an error
+/// diagnostic.
+pub fn parse_layer(path: &Path, source: String) -> Layer {
+    let mut layer = Layer {
+        path: path.to_owned(),
+        source,
+        ..Layer::default()
+    };
     let document = match DeTable::parse(&layer.source) {
         Ok(document) => document,
         Err(error) => {
@@ -157,6 +168,34 @@ impl Layer {
         }
     }
 
+    /// A diagnostic on the key at `path`, such as `["editor", "font_size"]`,
+    /// pointing at the key itself.
+    pub fn key_diagnostic(
+        &self,
+        severity: Severity,
+        path: &[String],
+        message: String,
+    ) -> Diagnostic {
+        let offset = self.spans.get(path).map_or(0, |spans| spans.key.start);
+        self.diagnostic_at(severity, Some(path.join(".")), offset, message)
+    }
+
+    /// A diagnostic on the key at `path`, pointing at its value.
+    pub fn value_diagnostic(
+        &self,
+        severity: Severity,
+        path: &[String],
+        message: String,
+    ) -> Diagnostic {
+        let offset = self.spans.get(path).map_or(0, |spans| spans.value.start);
+        self.diagnostic_at(severity, Some(path.join(".")), offset, message)
+    }
+
+    /// The byte offset of the key at `path` in the source, if it's there.
+    pub fn key_offset(&self, path: &[String]) -> Option<usize> {
+        self.spans.get(path).map(|spans| spans.key.start)
+    }
+
     /// A diagnostic for an error a deserializer reported in this layer's
     /// source, naming the innermost key whose value holds the error.
     pub fn diagnostic_for(&self, severity: Severity, error: &toml::de::Error) -> Diagnostic {
@@ -200,7 +239,6 @@ impl Layer {
         };
         for (key, value) in table {
             path.push(key.clone());
-            let spans = self.spans.get(path.as_slice());
             match properties.get(key) {
                 Some(property) => {
                     let property = resolve(property, root);
@@ -211,21 +249,13 @@ impl Layer {
                         self.check_table(table, property, root, path, diagnostics);
                     } else if let Some(message) = problem.or_else(|| out_of_range(value, property))
                     {
-                        let offset = spans.map_or(0, |spans| spans.value.start);
-                        diagnostics.push(self.diagnostic_at(
-                            Severity::Error,
-                            Some(path.join(".")),
-                            offset,
-                            message,
-                        ));
+                        diagnostics.push(self.value_diagnostic(Severity::Error, path, message));
                     }
                 }
                 None => {
-                    let offset = spans.map_or(0, |spans| spans.key.start);
-                    diagnostics.push(self.diagnostic_at(
+                    diagnostics.push(self.key_diagnostic(
                         Severity::Warning,
-                        Some(path.join(".")),
-                        offset,
+                        path,
                         "unknown key, ignored".into(),
                     ));
                 }

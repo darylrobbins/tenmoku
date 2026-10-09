@@ -8,6 +8,9 @@ use std::{
 /// The settings file's name, in the user and project config directories.
 pub const SETTINGS_FILE: &str = "settings.toml";
 
+/// The themes directory's name, in the user config directory.
+pub const THEMES_DIR: &str = "themes";
+
 /// The workspace trust file's name, in the state directory.
 pub const TRUST_FILE: &str = "trust.toml";
 
@@ -43,6 +46,18 @@ pub fn config_dir_from(env: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf
 /// `<config_dir>/settings.toml`.
 pub fn user_settings_path() -> Option<PathBuf> {
     config_dir().map(|dir| dir.join(SETTINGS_FILE))
+}
+
+/// `<config_dir>/themes`, from the process environment: see
+/// [`crate::theme::load_themes`].
+pub fn themes_dir() -> Option<PathBuf> {
+    themes_dir_from(|name| std::env::var_os(name))
+}
+
+/// `<config_dir>/themes`, reading variables through `env` as
+/// [`config_dir_from`] does.
+pub fn themes_dir_from(env: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    config_dir_from(env).map(|dir| dir.join(THEMES_DIR))
 }
 
 /// `<root>/.fastedit/settings.toml`.
