@@ -284,10 +284,11 @@ fn watcher_follows_links_changed_while_registering() {
 /// batches may name the unchanged user file too. Each is reloaded, and the
 /// loop ends once the project's edit is loaded. With `await_user`, it also
 /// waits for a later batch naming the user file. The caller's `extra` may
-/// cause one, but a single write can go unreported: each `watch` replaces the
-/// OS stream, and one created under load may not be attached when the write
-/// lands, so no event comes. The test then rewrites the user's target every
-/// [`RETRY`] until a batch names it, so it never depends on one write.
+/// cause one, but under heavy load a single write has gone unreported, and
+/// the cause is unknown (see the T211 spec's notes). As an empirical
+/// mitigation the test rewrites the user's target every [`RETRY`] until a
+/// batch names it, so it never depends on one write. The whole wait, batches
+/// of any kind included, is bounded by [`TIMEOUT`].
 pub(super) fn project_edit_seen_while_registering(
     await_user: bool,
     extra: impl Fn(&Path, &Path) + Send + 'static,
@@ -331,15 +332,23 @@ pub(super) fn project_edit_seen_while_registering(
     let deadline = Instant::now() + TIMEOUT;
     let mut seen_user = false;
     loop {
-        let wait = if await_user && !seen_user {
-            RETRY
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(
+            !remaining.is_zero(),
+            "the project's edit (and the user's batch, if awaited) within {TIMEOUT:?}",
+        );
+        let retrying = await_user && !seen_user;
+        let wait = if retrying {
+            RETRY.min(remaining)
         } else {
-            TIMEOUT
+            remaining
         };
         let batch = match batches.recv_timeout(wait) {
             Ok(batch) => batch,
-            Err(mpsc::RecvTimeoutError::Timeout) if Instant::now() < deadline => {
-                settings_in(&a, "");
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if retrying {
+                    settings_in(&a, "");
+                }
                 continue;
             }
             Err(error) => panic!("a batch in time: {error}"),
