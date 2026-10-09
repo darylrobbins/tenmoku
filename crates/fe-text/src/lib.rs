@@ -12,6 +12,11 @@ use std::ops::Range;
 
 use ropey::LineType;
 
+mod encoding;
+
+pub use encoding::{EncodeError, FileEncoding};
+pub use encoding_rs::Encoding;
+
 const LF: LineType = LineType::LF;
 
 /// Which side of an offset a position sticks to when text is inserted exactly there.
@@ -107,13 +112,29 @@ impl Text {
     /// Streams text from `reader` without holding a second copy of it.
     /// Line endings are normalised like [`Text::from_file_contents`]; invalid
     /// UTF-8 becomes U+FFFD, as with [`String::from_utf8_lossy`].
-    pub fn from_reader(mut reader: impl std::io::Read) -> std::io::Result<(Self, LineEnding)> {
+    pub fn from_reader(reader: impl std::io::Read) -> std::io::Result<(Self, LineEnding)> {
+        Self::decode_stream(Vec::new(), reader, decode_lossy)
+    }
+
+    /// Decodes `head` and then the rest of `reader` with `decode`, normalising
+    /// line endings as it goes. `decode(bytes, eof, out)` appends what it can
+    /// decode to `out` and returns how many bytes it consumed; the rest are
+    /// passed again with the next read.
+    fn decode_stream(
+        head: Vec<u8>,
+        mut reader: impl std::io::Read,
+        mut decode: impl FnMut(&[u8], bool, &mut String) -> usize,
+    ) -> std::io::Result<(Self, LineEnding)> {
         let mut builder = ropey::RopeBuilder::new();
         let mut normalizer = Normalizer::default();
         let mut read_buf = vec![0u8; 64 * 1024];
-        let mut pending = Vec::new();
+        let mut pending = head;
         let mut decoded = String::new();
         loop {
+            let consumed = decode(&pending, false, &mut decoded);
+            pending.drain(..consumed);
+            normalizer.push(&decoded, &mut builder);
+            decoded.clear();
             let read = match reader.read(&mut read_buf) {
                 Ok(0) => break,
                 Ok(read) => read,
@@ -121,12 +142,8 @@ impl Text {
                 Err(error) => return Err(error),
             };
             pending.extend_from_slice(&read_buf[..read]);
-            let consumed = decode_lossy(&pending, false, &mut decoded);
-            pending.drain(..consumed);
-            normalizer.push(&decoded, &mut builder);
-            decoded.clear();
         }
-        decode_lossy(&pending, true, &mut decoded);
+        decode(&pending, true, &mut decoded);
         normalizer.push(&decoded, &mut builder);
         let text = Self {
             rope: builder.finish(),

@@ -68,6 +68,11 @@ async-io = "2"
 async-process = "2"
 futures = "0.3"
 rustix = { version = "1", default-features = false, features = ["std", "process"] }
+# File encodings: decode and encode legacy encodings, and guess
+# unmarked ones (fe-text). chardetng is Apache-2.0 OR MIT; encoding_rs stays at
+# 0.8.35 in Cargo.lock, as noted above.
+encoding_rs = "0.8"
+chardetng = "0.1"
 
 # PNG decode/encode for the fe-gpui screenshot goldens (already in the lock through gpui).
 image = { version = "0.25", default-features = false, features = ["png"] }
