@@ -14,7 +14,6 @@ mod reducer;
 mod registers;
 mod repeat;
 mod search;
-mod search_next;
 mod search_pattern;
 mod state;
 mod undo;

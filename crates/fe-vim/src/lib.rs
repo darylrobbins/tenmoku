@@ -129,18 +129,6 @@
 //! nothing (and leaving a visual mode), as nvim does, and the others ignore
 //! it.
 //!
-//! `n` and `N` (`search_next`, `search_previous`) search for the last
-//! search's pattern in its direction or against it, `*` and `#`
-//! (`search_word_forward`, `search_word_backward`) for the keyword under or
-//! after the caret as `\<word\>` (with none on the rest of the row, the
-//! non-blank text there) from its start, and make that the last search.
-//! They resolve to a search motion, so everything above holds: exclusive
-//! after an operator, the visual cursor in a visual mode, E35, E348 and
-//! E486 in [`VimState::message`]. [`VimState::highlight`] is the last
-//! search's pattern for the host to paint ('hlsearch'). In a visual mode
-//! nvim's own mappings make `*` and `#` search the selection; fe-vim's
-//! search for the keyword at the cursor.
-//!
 //! # Search patterns
 //!
 //! [`search::Pattern::parse`] translates a subset of Vim's pattern language
@@ -280,8 +268,8 @@
 //! visual mode. Its third card started search with the pattern language
 //! and a row-by-row matcher ([`search`]); its fourth, the `/` and `?`
 //! command line, search as a motion and an operator's target, and the `/`
-//! register; its fifth, `n N * #` and [`VimState::highlight`]. Later cards
-//! add ex commands (`:'<,'>` among them); the clipboard; marks and macros; replace mode,
+//! register. Later cards add `n N * #` and the highlight; ex commands (`:'<,'>` among them);
+//! the command line; the clipboard; marks and macros; replace mode,
 //! increment and folds; scrolling; and the GPUI wiring of the visual modes
 //! (their key bindings, painting the selection and the block cursor, mouse
 //! drags and the status bar).

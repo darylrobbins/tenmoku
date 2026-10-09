@@ -11,7 +11,6 @@ use regex::{Regex, RegexBuilder};
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::args::SearchPattern;
-use crate::motion::{self, Class, Line};
 
 /// How deep groups may nest, short of `regex`'s own nesting limit.
 const MAX_DEPTH: usize = 60;
@@ -23,10 +22,6 @@ const MAX_GROUPS: usize = 9;
 #[derive(Clone, Debug)]
 pub struct Pattern {
     regex: Regex,
-    /// Whether the pattern begins with `\<` and ends with `\>` (and has no
-    /// other), which are checked on each match by character class, as
-    /// Vim does, not left to `regex`'s word boundaries.
-    word: (bool, bool),
 }
 
 /// Why [`Pattern::parse`] refused a pattern.
@@ -50,8 +45,7 @@ impl Pattern {
         if pattern.is_empty() {
             return Err(PatternError::Invalid("empty pattern"));
         }
-        let (mut tokens, ignore_case) = Lexer::new(pattern).run()?;
-        let word = word_bounds(&mut tokens);
+        let (tokens, ignore_case) = Lexer::new(pattern).run()?;
         let mut translator = Translator {
             tokens: &tokens,
             next: 0,
@@ -77,7 +71,7 @@ impl Pattern {
                         .to_string(),
                 ),
             })?;
-        Ok(Self { regex, word })
+        Ok(Self { regex })
     }
 
     /// The match `/` (`forward`) or `?` would go to from `from`: the first
@@ -179,7 +173,6 @@ impl Pattern {
     fn matches<'a>(&'a self, hay: &'a str) -> RowMatches<'a> {
         RowMatches {
             regex: &self.regex,
-            word: self.word,
             hay,
             at: Some(0),
         }
@@ -346,50 +339,6 @@ fn collection_len(rest: &str) -> usize {
     rest.len()
 }
 
-/// What `*` (`forward`) or `#` searches for at byte `at`, and where from:
-/// the keyword under or after `at` on its row, as `\<word\>` and from its
-/// start, or with none, the non-blank text there, from its start. The
-/// pattern has the characters magic gives a meaning escaped, and `\<` and
-/// `\>` only where a keyword begins or ends it. `None` if the rest of the
-/// row is blank.
-pub(crate) fn word_at(text: &Text, at: usize, forward: bool) -> Option<(usize, String)> {
-    let at = text.offset_to_point(text.clip_offset(at.min(text.len()), Bias::Left));
-    let line = Line::new(text, at.row);
-    let n = line.len();
-    let ix = line
-        .starts
-        .partition_point(|&start| start <= at.column as usize);
-    let ix = ix.saturating_sub(1);
-    let kind = |ix: usize| motion::class(line.grapheme(ix), false);
-    let keyword = |ix: usize| matches!(kind(ix), Class::Of(c) if c >= 2);
-    // The keyword at or after `ix`, or failing that the non-blank text: a
-    // run of one class either way, as nvim takes it.
-    let mut start = (ix..n)
-        .find(|&ix| keyword(ix))
-        .or_else(|| (ix..n).find(|&ix| kind(ix) != Class::Blank))?;
-    let this = kind(start);
-    while start > 0 && kind(start - 1) == this {
-        start -= 1;
-    }
-    let end = (start..n).find(|&ix| kind(ix) != this).unwrap_or(n);
-    let first = line.starts[start];
-    let last = line.starts.get(end).copied().unwrap_or(line.text.len());
-    let mut pattern = String::new();
-    if keyword(start) {
-        pattern.push_str("\\<");
-    }
-    for ch in line.text[first..last].chars() {
-        if "\\.*$^~[]".contains(ch) || ch == if forward { '/' } else { '?' } {
-            pattern.push('\\');
-        }
-        pattern.push(ch);
-    }
-    if keyword(end - 1) {
-        pattern.push_str("\\>");
-    }
-    Some((line.start + first, pattern))
-}
-
 /// Every match on `rows` (clamped to the text), in order, at most `cap`
 /// of them, for a host to paint. A zero-width match is an empty range.
 pub fn matches_in(
@@ -466,7 +415,6 @@ fn unit(text: &str) -> Option<usize> {
 /// See [`Pattern::matches`].
 struct RowMatches<'a> {
     regex: &'a Regex,
-    word: (bool, bool),
     hay: &'a str,
     at: Option<usize>,
 }
@@ -475,90 +423,15 @@ impl Iterator for RowMatches<'_> {
     type Item = Range<usize>;
 
     fn next(&mut self) -> Option<Range<usize>> {
-        loop {
-            let found = self.regex.find_at(self.hay, self.at.take()?)?;
-            let next = if found.is_empty() {
-                unit(&self.hay[found.start()..]).map_or(usize::MAX, |unit| found.start() + unit)
-            } else {
-                found.end()
-            };
-            let (start, end) = (self.word.0, self.word.1);
-            if (start && !word_starts(self.hay, found.start()))
-                || (end && !word_ends(self.hay, found.end()))
-            {
-                // Not a whole word: the next search starts a character on.
-                let step = unit(&self.hay[found.start()..]).unwrap_or(1);
-                let on = found.start() + step;
-                self.at = (on < self.hay.len()).then_some(on);
-                continue;
-            }
-            self.at = (next < self.hay.len()).then_some(next);
-            return Some(found.range());
-        }
+        let found = self.regex.find_at(self.hay, self.at.take()?)?;
+        let next = if found.is_empty() {
+            unit(&self.hay[found.start()..]).map_or(usize::MAX, |unit| found.start() + unit)
+        } else {
+            found.end()
+        };
+        self.at = (next < self.hay.len()).then_some(next);
+        Some(found.range())
     }
-}
-
-/// Takes a leading `\<` and a trailing `\>` off `tokens` if they are the
-/// only ones and nothing branches, for [`word_starts`] and [`word_ends`] to
-/// check; else leaves them to `regex`'s word boundaries.
-fn word_bounds(tokens: &mut Vec<Token>) -> (bool, bool) {
-    let marks = |token: &Token| matches!(token, Token::WordStart | Token::WordEnd);
-    let real: Vec<usize> = (0..tokens.len())
-        .filter(|&ix| !matches!(tokens[ix], Token::Flag))
-        .collect();
-    let one_branch = !tokens.iter().any(|token| matches!(token, Token::Alt));
-    let start = real
-        .first()
-        .is_some_and(|&ix| tokens[ix] == Token::WordStart);
-    let end = real.last().is_some_and(|&ix| tokens[ix] == Token::WordEnd) && real.len() > 1;
-    let inner = real
-        .len()
-        .saturating_sub(usize::from(start) + usize::from(end));
-    let others = real
-        .iter()
-        .enumerate()
-        .filter(|&(at, &ix)| {
-            marks(&tokens[ix]) && !(at == 0 && start || at + 1 == real.len() && end)
-        })
-        .count();
-    if !one_branch || others > 0 || inner == 0 || !(start || end) {
-        return (false, false);
-    }
-    if end {
-        tokens.remove(real[real.len() - 1]);
-    }
-    if start {
-        tokens.remove(real[0]);
-    }
-    (start, end)
-}
-
-/// Whether a word starts at `at` in `hay`: a keyword character, after a
-/// character of another class.
-fn word_starts(hay: &str, at: usize) -> bool {
-    let Some(next) = hay[at..].graphemes(true).next() else {
-        return false;
-    };
-    let class = motion::class(next, false);
-    matches!(class, Class::Of(c) if c >= 2)
-        && hay[..at]
-            .graphemes(true)
-            .next_back()
-            .is_none_or(|prev| motion::class(prev, false) != class)
-}
-
-/// Whether a word ends at `at` in `hay`: after a keyword character, before
-/// one of another class.
-fn word_ends(hay: &str, at: usize) -> bool {
-    let Some(prev) = hay[..at].graphemes(true).next_back() else {
-        return false;
-    };
-    let class = motion::class(prev, false);
-    matches!(class, Class::Of(c) if c >= 2)
-        && hay[at..]
-            .graphemes(true)
-            .next()
-            .is_none_or(|next| motion::class(next, false) != class)
 }
 
 /// Vim's 'magic' levels: which characters are special without a backslash.

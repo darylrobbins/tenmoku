@@ -453,46 +453,13 @@ fn keeping_last_change<R>(
 pub(crate) fn operate(
     target: &mut VimTarget<'_>,
     actor: &Actor,
-    args: OperateArgs,
-) -> Result<Dispatched<TransactionId>, CommandError> {
-    let searching = matches!(
-        args.target,
-        Target::Motion(
-            Motion::Search(_)
-                | Motion::SearchWord(_)
-                | Motion::SearchNext
-                | Motion::SearchPrevious
-                | Motion::SearchWordForward
-                | Motion::SearchWordBackward
-        )
-    );
-    let mut dispatched = operate_over(target, actor, args)?;
-    // A search that changed nothing still set the last search and the
-    // highlight.
-    if searching && dispatched.effect == Effect::Nothing {
-        dispatched.effect = Effect::Notify;
-    }
-    Ok(dispatched)
-}
-
-fn operate_over(
-    target: &mut VimTarget<'_>,
-    actor: &Actor,
     mut args: OperateArgs,
 ) -> Result<Dispatched<TransactionId>, CommandError> {
-    // `n N * #` are the search they run, which `.` finds again when it
-    // repeats the operator: the args keep them. A search target is checked
-    // as `/` checks it.
-    if let Target::Motion(motion) = args.target {
-        let checked = cmdline::resolve(target, motion).and_then(|(motion, keep)| match motion {
-            Motion::Search(search) | Motion::SearchWord(search) => {
-                cmdline::check_search(target, search, keep)
-            }
-            _ => Ok(()),
-        });
-        if let Err(message) = checked {
-            return cmdline::failed(target.state, message);
-        }
+    // A search target is checked as `/` checks it.
+    if let Target::Motion(Motion::Search(search)) = args.target
+        && let Err(message) = cmdline::check_search(target, search)
+    {
+        return cmdline::failed(target.state, message);
     }
     // `/` is read-only: an operator that writes a register into it does
     // nothing (leaving a visual mode), as in nvim; the others ignore it.
@@ -553,13 +520,6 @@ fn operate_unless_failing(
     if let Some(name) = args.register {
         Registers::check(name).map_err(|error| CommandError::new(error.to_string()))?;
     }
-    // The target as it's measured: `n N * #` as the search they are.
-    let measured = match args.target {
-        Target::Motion(motion) => Target::Motion(
-            cmdline::resolve(target, motion).map_or(motion, |(resolved, _)| resolved),
-        ),
-        other => other,
-    };
     let VimTarget {
         model,
         host,
@@ -594,7 +554,7 @@ fn operate_unless_failing(
             // Another origin's edit may have left the caret inside a
             // grapheme: it's on that grapheme.
             let head = Cursor::at(&text, selection.head()).offset();
-            let span = match measured {
+            let span = match args.target {
                 // `cw` on a non-blank is `ce` (`:help cw`).
                 Target::Motion(motion @ (Motion::WordForward | Motion::BigWordForward))
                     if args.operator == Operator::Change =>

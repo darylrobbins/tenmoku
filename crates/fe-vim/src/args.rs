@@ -44,11 +44,7 @@ pub enum Operator {
 /// the row `count` percent down the text). `line` is the target of a doubled
 /// operator such as `dd`: `count` lines from the caret's, like Vim's `_`.
 /// `search` is what submitting `/` or `?` runs: `{"search": {"pattern":
-/// "foo", "forward": true}}`. `search_next` and `search_previous` are `n`
-/// and `N` over the last search and its direction, and `search_word_forward`
-/// and `search_word_backward` are `*` and `#`: they resolve to a `search`
-/// before they run, so `vim.move` and `vim.operate` take them but nothing
-/// else sees them.
+/// "foo", "forward": true}}`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Motion {
@@ -76,13 +72,6 @@ pub enum Motion {
     MatchPair,
     Line,
     Search(Search),
-    /// `*` and `#` once resolved: `search` from the start of the keyword
-    /// under or after the caret.
-    SearchWord(Search),
-    SearchNext,
-    SearchPrevious,
-    SearchWordForward,
-    SearchWordBackward,
 }
 
 /// `/` and `?` as a motion: the `count`th match of `pattern` (Vim's syntax,
@@ -165,12 +154,7 @@ impl Motion {
             | Self::FirstNonBlank
             | Self::FindBackward(_)
             | Self::TillBackward(_)
-            | Self::Search(_)
-            | Self::SearchWord(_)
-            | Self::SearchNext
-            | Self::SearchPrevious
-            | Self::SearchWordForward
-            | Self::SearchWordBackward => RangeClass::Exclusive,
+            | Self::Search(_) => RangeClass::Exclusive,
             Self::WordEnd
             | Self::BigWordEnd
             | Self::LineEnd
@@ -225,18 +209,7 @@ impl Target {
     /// Whether a delete over it writes register `1` even within a row
     /// (`:help quote_number`): `%`, `/` and `?`.
     pub fn writes_numbered(self) -> bool {
-        matches!(
-            self,
-            Self::Motion(
-                Motion::MatchPair
-                    | Motion::Search(_)
-                    | Motion::SearchWord(_)
-                    | Motion::SearchNext
-                    | Motion::SearchPrevious
-                    | Motion::SearchWordForward
-                    | Motion::SearchWordBackward
-            )
-        )
+        matches!(self, Self::Motion(Motion::MatchPair | Motion::Search(_)))
     }
 
     /// Whether it's the visual selection's.
