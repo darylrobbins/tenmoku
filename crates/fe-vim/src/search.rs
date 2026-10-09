@@ -1,0 +1,1064 @@
+//! Search patterns: Vim's pattern language, translated to a [`regex::Regex`]
+//! and matched one row at a time. The crate docs list what translates.
+
+use std::collections::BTreeMap;
+use std::ops::Range;
+use std::sync::OnceLock;
+
+use fe_text::{Bias, Text};
+use regex::{Regex, RegexBuilder};
+use unicode_segmentation::UnicodeSegmentation;
+
+/// How deep groups may nest, short of `regex`'s own nesting limit.
+const MAX_DEPTH: usize = 60;
+/// How many `\(` a pattern may hold, as in Vim.
+const MAX_GROUPS: usize = 9;
+
+/// A search pattern in Vim's syntax, translated to a [`Regex`] that matches
+/// within one row.
+#[derive(Clone, Debug)]
+pub struct Pattern {
+    regex: Regex,
+}
+
+/// Why [`Pattern::parse`] refused a pattern.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum PatternError {
+    /// An atom of Vim's that fe-vim doesn't translate, as written.
+    #[error("pattern not supported: {0}")]
+    Unsupported(String),
+    /// A pattern Vim rejects too.
+    #[error("invalid pattern: {0}")]
+    Invalid(&'static str),
+    /// Past `regex`'s size limit, or nested too deeply.
+    #[error("pattern too large: {0}")]
+    TooLarge(String),
+}
+
+impl Pattern {
+    /// Translates `pattern`, in Vim's default 'magic' syntax, matching case
+    /// exactly unless it holds `\c`.
+    pub fn parse(pattern: &str) -> Result<Self, PatternError> {
+        if pattern.is_empty() {
+            return Err(PatternError::Invalid("empty pattern"));
+        }
+        let (tokens, ignore_case) = Lexer::new(pattern).run()?;
+        let mut translator = Translator {
+            tokens: &tokens,
+            next: 0,
+            depth: 0,
+            groups: 0,
+            ignore_case,
+        };
+        let source = translator.alternation(Opened::Pattern)?;
+        let regex = RegexBuilder::new(&source)
+            .build()
+            .map_err(|error| match error {
+                regex::Error::CompiledTooBig(limit) => {
+                    PatternError::TooLarge(format!("over {limit} bytes compiled"))
+                }
+                // Past the nesting limit: its message's last line says so.
+                other => PatternError::TooLarge(
+                    other
+                        .to_string()
+                        .lines()
+                        .last()
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string(),
+                ),
+            })?;
+        Ok(Self { regex })
+    }
+
+    /// The match `/` (`forward`) or `?` would go to from `from`: the first
+    /// match after it, or the last before it, on its row and then row by
+    /// row towards the end (the start, going back), wrapping once past it
+    /// to come back round to `from`'s row. Going forward, the search starts
+    /// a whole character on from `from`, as in Vim, so a match starting
+    /// before that (at `from` itself, say) is taken only after wrapping, and
+    /// so is any on `from`'s row from its last character, where the search
+    /// starts at the next row. Each row is searched once.
+    pub fn find(&self, text: &Text, from: usize, forward: bool) -> Option<Range<usize>> {
+        let at = text.offset_to_point(text.clip_offset(from.min(text.len()), Bias::Left));
+        let column = at.column as usize;
+        let rows = text.row_count();
+        let mut buf = String::new();
+        let (start, hay) = row_text(text, at.row, &mut buf);
+        let shift = |range: Range<usize>, start: usize| start + range.start..start + range.end;
+        // What `from`'s row offers once the search wraps back to it.
+        let wrapped;
+        if forward {
+            // As in Vim, the search starts a whole character on from
+            // `from` (from wherever in a character it is), and from the
+            // row's last character that's the next row.
+            let past = column + unit(&hay[column..]).unwrap_or(0);
+            let on_last = past >= hay.len();
+            let mut first = None;
+            for found in self.matches(hay) {
+                if found.start >= past && !on_last {
+                    return Some(shift(found, start));
+                }
+                first.get_or_insert(found);
+                if on_last {
+                    break;
+                }
+            }
+            wrapped = first.map(|found| shift(found, start));
+            for row in (at.row + 1..rows).chain(0..at.row) {
+                let (start, hay) = row_text(text, row, &mut buf);
+                if let Some(found) = self.matches(hay).next() {
+                    return Some(shift(found, start));
+                }
+            }
+        } else {
+            let mut before = None;
+            let mut last = None;
+            for found in self.matches(hay) {
+                if found.start < column {
+                    before = Some(found.clone());
+                }
+                last = Some(found);
+            }
+            if let Some(found) = before {
+                return Some(shift(found, start));
+            }
+            wrapped = last.map(|found| shift(found, start));
+            for row in (0..at.row).rev().chain((at.row + 1..rows).rev()) {
+                let (start, hay) = row_text(text, row, &mut buf);
+                if let Some(found) = self.matches(hay).last() {
+                    return Some(shift(found, start));
+                }
+            }
+        }
+        wrapped
+    }
+
+    /// The matches in one row, as Vim finds them: from its start, each
+    /// search resuming at the end of the last match, or one whole character
+    /// (an extended grapheme cluster) on from an empty one, and not at the
+    /// row's end once past its start.
+    fn matches<'a>(&'a self, hay: &'a str) -> RowMatches<'a> {
+        RowMatches {
+            regex: &self.regex,
+            hay,
+            at: Some(0),
+        }
+    }
+}
+
+/// Every match on `rows` (clamped to the text), in order, at most `cap`
+/// of them, for a host to paint. A zero-width match is an empty range.
+pub fn matches_in(
+    text: &Text,
+    rows: Range<u32>,
+    pattern: &Pattern,
+    cap: usize,
+) -> Vec<Range<usize>> {
+    let mut found = Vec::new();
+    let mut buf = String::new();
+    for row in rows.start..rows.end.min(text.row_count()) {
+        let room = cap - found.len();
+        if room == 0 {
+            break;
+        }
+        let (start, hay) = row_text(text, row, &mut buf);
+        found.extend(
+            pattern
+                .matches(hay)
+                .take(room)
+                .map(|range| start + range.start..start + range.end),
+        );
+    }
+    found
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many rows [`Pattern::find`] and [`matches_in`] have searched on
+    /// this thread.
+    pub(crate) static ROWS_SEARCHED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// `row`'s offset and text, without its line break: borrowed from `text`
+/// when it lies in one chunk, else gathered into `buf`.
+fn row_text<'a>(text: &'a Text, row: u32, buf: &'a mut String) -> (usize, &'a str) {
+    #[cfg(test)]
+    ROWS_SEARCHED.with(|rows| rows.set(rows.get() + 1));
+    let start = text.row_start(row);
+    let end = if row + 1 < text.row_count() {
+        text.row_start(row + 1) - 1
+    } else {
+        text.len()
+    };
+    let mut chunks = text.chunks_in_range(start..end);
+    match (chunks.next(), chunks.next()) {
+        (None, _) => (start, ""),
+        (Some(only), None) => (start, only),
+        (Some(first), Some(second)) => {
+            buf.clear();
+            buf.push_str(first);
+            buf.push_str(second);
+            buf.extend(chunks);
+            (start, buf.as_str())
+        }
+    }
+}
+
+/// The length of the character `text` starts with, a whole one as Vim
+/// counts them: an extended grapheme cluster, except that Vim also joins
+/// nonspacing and enclosing marks (and what follows them as it would follow
+/// a letter) to a control character.
+fn unit(text: &str) -> Option<usize> {
+    static CONTROL_MARK: OnceLock<Regex> = OnceLock::new();
+    let first = text.graphemes(true).next()?.len();
+    let control_mark = CONTROL_MARK
+        .get_or_init(|| Regex::new(r"^\p{gcb=Control}[\p{Mn}\p{Me}]").expect("a valid regex"));
+    if !control_mark.is_match(text) {
+        return Some(first);
+    }
+    Some(first + text[first..].graphemes(true).next().map_or(0, str::len))
+}
+
+/// See [`Pattern::matches`].
+struct RowMatches<'a> {
+    regex: &'a Regex,
+    hay: &'a str,
+    at: Option<usize>,
+}
+
+impl Iterator for RowMatches<'_> {
+    type Item = Range<usize>;
+
+    fn next(&mut self) -> Option<Range<usize>> {
+        let found = self.regex.find_at(self.hay, self.at.take()?)?;
+        let next = if found.is_empty() {
+            unit(&self.hay[found.start()..]).map_or(usize::MAX, |unit| found.start() + unit)
+        } else {
+            found.end()
+        };
+        self.at = (next < self.hay.len()).then_some(next);
+        Some(found.range())
+    }
+}
+
+/// Vim's 'magic' levels: which characters are special without a backslash.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Magic {
+    /// `\v`: every ASCII character but letters, digits and `_`.
+    Very,
+    /// The default (`\m`): `^ $ . * [ ~`.
+    On,
+    /// `\M`: `^ $`.
+    Off,
+    /// `\V`: none.
+    VeryOff,
+}
+
+impl Magic {
+    /// Whether `op`, one of [`OPERATORS`], is special without a backslash.
+    fn bare(self, op: char) -> bool {
+        match self {
+            Self::Very => true,
+            Self::On => matches!(op, '^' | '$' | '.' | '*' | '[' | '~'),
+            Self::Off => matches!(op, '^' | '$'),
+            Self::VeryOff => false,
+        }
+    }
+}
+
+/// The characters that are special at some 'magic' level, with or without a
+/// backslash; any other punctuation is itself either way.
+const OPERATORS: &str = "^$.*[~+=?{()|<>%@&";
+
+/// A multi: how many of the atom before it to match.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Multi {
+    Star,
+    Plus,
+    Optional,
+    Brace {
+        min: u32,
+        max: Option<u32>,
+        lazy: bool,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Token {
+    /// A character matched as itself.
+    Char(char),
+    /// `.`.
+    Any,
+    /// A backslash class, as `regex` syntax.
+    Class(&'static str),
+    Set(Collection),
+    WordStart,
+    WordEnd,
+    /// A special `^`: start-of-line anywhere (`\v`, `\V`), or only at the
+    /// start of a branch and else itself.
+    Caret {
+        anywhere: bool,
+    },
+    /// A special `$`: end-of-line anywhere (`\v`, `\V`), or only at the end
+    /// of a branch and else itself.
+    Dollar {
+        anywhere: bool,
+    },
+    /// `bare` when written without a backslash: only a bare `*` is itself
+    /// where nothing comes before it.
+    Multi {
+        multi: Multi,
+        bare: bool,
+    },
+    /// `\c \C \v \m \M \V`, which match nothing; a multi can't follow one.
+    Flag,
+    Open {
+        capture: bool,
+    },
+    Close,
+    Alt,
+}
+
+struct Lexer<'a> {
+    pattern: &'a str,
+    /// Byte offset of the next character.
+    at: usize,
+    magic: Magic,
+    ignore_case: bool,
+    tokens: Vec<Token>,
+}
+
+impl<'a> Lexer<'a> {
+    fn new(pattern: &'a str) -> Self {
+        Self {
+            pattern,
+            at: 0,
+            magic: Magic::On,
+            ignore_case: false,
+            tokens: Vec::new(),
+        }
+    }
+
+    fn peek(&self) -> Option<char> {
+        self.pattern[self.at..].chars().next()
+    }
+
+    fn bump(&mut self) -> Option<char> {
+        let ch = self.peek()?;
+        self.at += ch.len_utf8();
+        Some(ch)
+    }
+
+    /// The pattern's tokens, and whether it holds `\c` (which wins over
+    /// `\C`, wherever either is).
+    fn run(mut self) -> Result<(Vec<Token>, bool), PatternError> {
+        while let Some(ch) = self.bump() {
+            let start = self.at - ch.len_utf8();
+            let (escaped, ch) = match ch {
+                // A trailing backslash is itself, as in Vim.
+                '\\' => match self.bump() {
+                    Some(next) => (true, next),
+                    None => (false, '\\'),
+                },
+                ch => (false, ch),
+            };
+            if OPERATORS.contains(ch) {
+                if escaped != self.magic.bare(ch) {
+                    self.operator(ch, start, !escaped)?;
+                } else {
+                    self.tokens.push(Token::Char(ch));
+                }
+            } else if escaped && (ch.is_ascii_alphanumeric() || ch == '_') {
+                self.escape(ch, start)?;
+            } else if escaped && !ch.is_ascii() {
+                return Err(self.unsupported(start));
+            } else {
+                self.tokens.push(Token::Char(ch));
+            }
+        }
+        Ok((self.tokens, self.ignore_case))
+    }
+
+    /// A special `op` from [`OPERATORS`], which began at `start`, `bare` if
+    /// written without a backslash.
+    fn operator(&mut self, op: char, start: usize, bare: bool) -> Result<(), PatternError> {
+        let very = matches!(self.magic, Magic::Very | Magic::VeryOff);
+        let multi = |multi| Token::Multi { multi, bare };
+        let token = match op {
+            '.' => Token::Any,
+            '*' => multi(Multi::Star),
+            '+' => multi(Multi::Plus),
+            '=' | '?' => multi(Multi::Optional),
+            '{' => multi(self.brace()?),
+            '(' => Token::Open { capture: true },
+            ')' => Token::Close,
+            '|' => Token::Alt,
+            '<' => Token::WordStart,
+            '>' => Token::WordEnd,
+            '^' => Token::Caret { anywhere: very },
+            '$' => Token::Dollar { anywhere: very },
+            // `~` is the last substitute string, and there is none yet.
+            '~' => Token::Char('~'),
+            '[' => match collection(self.pattern, self.at)? {
+                Some((set, end)) => {
+                    self.at = end;
+                    Token::Set(set)
+                }
+                // With no `]` to end it, `[` is itself.
+                None => Token::Char('['),
+            },
+            '%' if self.peek() == Some('(') => {
+                self.bump();
+                Token::Open { capture: false }
+            }
+            '%' => {
+                self.skip_while(12, |ch| ch.is_ascii_digit() || "<>.'".contains(ch));
+                self.bump();
+                return Err(self.unsupported(start));
+            }
+            '@' => {
+                self.skip_while(12, |ch| ch.is_ascii_digit() || ch == '<');
+                self.bump();
+                return Err(self.unsupported(start));
+            }
+            _ => return Err(self.unsupported(start)),
+        };
+        self.tokens.push(token);
+        Ok(())
+    }
+
+    /// A backslash and a letter, digit or `_`, which began at `start`.
+    fn escape(&mut self, ch: char, start: usize) -> Result<(), PatternError> {
+        let token = match ch {
+            'e' => Token::Char('\u{1b}'),
+            't' => Token::Char('\t'),
+            'r' => Token::Char('\r'),
+            'b' => Token::Char('\u{8}'),
+            'c' => {
+                self.ignore_case = true;
+                Token::Flag
+            }
+            // Match case: the default here, and `\c` wins over it.
+            'C' => Token::Flag,
+            'v' | 'm' | 'M' | 'V' => {
+                self.magic = match ch {
+                    'v' => Magic::Very,
+                    'm' => Magic::On,
+                    'M' => Magic::Off,
+                    _ => Magic::VeryOff,
+                };
+                Token::Flag
+            }
+            // `\_x` and `\zx` name their atom with the character after.
+            '_' | 'z' => {
+                self.bump();
+                return Err(self.unsupported(start));
+            }
+            ch => match class(ch) {
+                Some(class) => Token::Class(class),
+                None => return Err(self.unsupported(start)),
+            },
+        };
+        self.tokens.push(token);
+        Ok(())
+    }
+
+    /// The rest of a `\{…}` multi, after the `{`: `-` for as few as
+    /// possible, then `n,m`, `n`, `n,`, `,m` or nothing, then `}` or `\}`.
+    fn brace(&mut self) -> Result<Multi, PatternError> {
+        let lazy = self.peek() == Some('-');
+        if lazy {
+            self.bump();
+        }
+        let min = self.count()?;
+        let comma = self.peek() == Some(',');
+        let max = if comma {
+            self.bump();
+            self.count()?
+        } else {
+            min
+        };
+        if self.peek() == Some('\\') {
+            self.bump();
+        }
+        if self.bump() != Some('}') {
+            return Err(PatternError::Invalid("syntax error in \\{...}"));
+        }
+        let min_count = min.unwrap_or(0);
+        Ok(Multi::Brace {
+            // Vim swaps bounds given the wrong way round.
+            min: max.map_or(min_count, |max| min_count.min(max)),
+            max: max.map(|max| min_count.max(max)),
+            lazy,
+        })
+    }
+
+    /// The digits of a count, if any.
+    fn count(&mut self) -> Result<Option<u32>, PatternError> {
+        let start = self.at;
+        self.skip_while(usize::MAX, |ch| ch.is_ascii_digit());
+        let digits = &self.pattern[start..self.at];
+        if digits.is_empty() {
+            return Ok(None);
+        }
+        digits
+            .parse()
+            .map(Some)
+            .map_err(|_| PatternError::TooLarge(format!("count {digits}")))
+    }
+
+    fn skip_while(&mut self, most: usize, keep: impl Fn(char) -> bool) {
+        for _ in 0..most {
+            match self.peek() {
+                Some(ch) if keep(ch) => {
+                    self.bump();
+                }
+                _ => break,
+            }
+        }
+    }
+
+    /// The error naming the atom from `start` to here.
+    fn unsupported(&self, start: usize) -> PatternError {
+        PatternError::Unsupported(self.pattern[start..self.at].to_string())
+    }
+}
+
+/// The class a backslash and `letter` name (`\s`, `\d`, …), as a `regex`
+/// class. `\c` doesn't apply to these, as in Vim.
+fn class(letter: char) -> Option<&'static str> {
+    Some(match letter {
+        's' => r"[\t ]",
+        'S' => r"[^\t ]",
+        'd' => "[0-9]",
+        'D' => "[^0-9]",
+        'w' => "[0-9A-Za-z_]",
+        'W' => "[^0-9A-Za-z_]",
+        'a' => "[A-Za-z]",
+        'A' => "[^A-Za-z]",
+        'l' => "[a-z]",
+        'L' => "[^a-z]",
+        'u' => "[A-Z]",
+        'U' => "[^A-Z]",
+        'x' => "[0-9A-Fa-f]",
+        'X' => "[^0-9A-Fa-f]",
+        'o' => "[0-7]",
+        'O' => "[^0-7]",
+        'h' => "[A-Za-z_]",
+        'H' => "[^A-Za-z_]",
+        _ => return None,
+    })
+}
+
+/// The ranges `[:name:]` stands for in a collection: the ASCII ones only.
+fn named_class(name: &str) -> Option<&'static [(char, char)]> {
+    Some(match name {
+        "alnum" => &[('0', '9'), ('A', 'Z'), ('a', 'z')],
+        "alpha" => &[('A', 'Z'), ('a', 'z')],
+        "blank" => &[('\t', '\t'), (' ', ' ')],
+        "cntrl" => &[('\0', '\u{1f}'), ('\u{7f}', '\u{7f}')],
+        "digit" => &[('0', '9')],
+        "graph" => &[('!', '~')],
+        "punct" => &[('!', '/'), (':', '@'), ('[', '`'), ('{', '~')],
+        "space" => &[('\t', '\r'), (' ', ' ')],
+        "xdigit" => &[('0', '9'), ('A', 'F'), ('a', 'f')],
+        "return" => &[('\r', '\r')],
+        "tab" => &[('\t', '\t')],
+        "escape" => &[('\u{1b}', '\u{1b}')],
+        "backspace" => &[('\u{8}', '\u{8}')],
+        _ => return None,
+    })
+}
+
+/// The collection from byte `at` (just after its `[`) to its `]`, as a
+/// `regex` class, and the offset after the `]`; `None` if no `]` ends it,
+/// when Vim takes the `[` as itself. Errors inside count only once a `]`
+/// makes it a collection.
+fn collection(pattern: &str, at: usize) -> Result<Option<(Collection, usize)>, PatternError> {
+    let mut rest = &pattern[at..];
+    let negated = rest.starts_with('^');
+    if negated {
+        rest = &rest[1..];
+    }
+    let mut set = Collection {
+        negated,
+        ascii: Vec::new(),
+        folded: Vec::new(),
+    };
+    // Which of `a-z A-Z 0-9 _` the members are, or `None` once one isn't.
+    let mut shape = Some(0u8);
+    let mut error = None;
+    // A `]` first is itself (and may start a range).
+    let mut first = true;
+    loop {
+        let Some(ch) = rest.chars().next() else {
+            return Ok(None);
+        };
+        let leading = std::mem::take(&mut first);
+        if ch == ']' && !leading {
+            rest = &rest[1..];
+            break;
+        }
+        let item_start = rest;
+        if let Some(name) = rest.strip_prefix("[:") {
+            match name.split_once(":]") {
+                // A class can't start a range.
+                Some((name, after)) if after.starts_with('-') && !after.starts_with("-]") => {
+                    return Err(PatternError::Unsupported(format!("[:{name}:]-")));
+                }
+                Some((name, after)) if named_class(name).is_some() => {
+                    shape = None;
+                    set.ascii
+                        .extend_from_slice(named_class(name).unwrap_or_default());
+                    rest = after;
+                }
+                Some((name, after)) => {
+                    error.get_or_insert(PatternError::Unsupported(format!("[:{name}:]")));
+                    rest = after;
+                }
+                None => {
+                    error.get_or_insert(PatternError::Unsupported("[:".into()));
+                    rest = name;
+                }
+            }
+            continue;
+        }
+        if rest.starts_with("[=") || rest.starts_with("[.") {
+            error.get_or_insert(PatternError::Unsupported(rest[..2].to_string()));
+            rest = &rest[2..];
+            continue;
+        }
+        let low = match member(&mut rest) {
+            Ok(low) => low,
+            Err(err) => {
+                error.get_or_insert(err);
+                continue;
+            }
+        };
+        // A `-` between two members makes a range; first or last, it's itself.
+        let high = match rest.strip_prefix('-') {
+            // Vim reads these range ends its own way: a backslash before
+            // `\ ] ^ -` doesn't escape, so `]` may end the collection, a
+            // second `-` may be itself, and a class can't end a range.
+            // Refused at once, as `]` may end it.
+            Some(after)
+                if ["\\\\", "\\]", "\\^", "\\-", "-", "[:", "[=", "[."]
+                    .iter()
+                    .any(|end| after.starts_with(end)) =>
+            {
+                let end = if after.starts_with('-') { 1 } else { 2 };
+                return Err(PatternError::Unsupported(format!(
+                    "{low}-{}",
+                    &after[..end]
+                )));
+            }
+            Some(after) if !after.is_empty() && !after.starts_with(']') => {
+                rest = after;
+                match member(&mut rest) {
+                    Ok(high) => high,
+                    Err(err) => {
+                        error.get_or_insert(err);
+                        continue;
+                    }
+                }
+            }
+            _ => low,
+        };
+        if low > high {
+            error.get_or_insert(PatternError::Invalid("reverse range in a collection"));
+        } else {
+            set.folded.push((low, high));
+            let written = &item_start[..item_start.len() - rest.len()];
+            shape = shape.filter(|_| !written.contains('\\')).and_then(|shape| {
+                let part = match (low, high) {
+                    ('a', 'z') => 1,
+                    ('A', 'Z') => 2,
+                    ('0', '9') => 4,
+                    ('_', '_') => 8,
+                    _ => return None,
+                };
+                Some(shape | part)
+            });
+        }
+        debug_assert!(rest.len() < item_start.len());
+    }
+    if let Some(error) = error {
+        return Err(error);
+    }
+    // Members spelling out `\l`, `\u`, `\a`, `\h` or `\w` (`[a-z]`,
+    // `[A-Z]`, `[a-zA-Z]`, `[a-zA-Z_]`, `[0-9A-Za-z_]`, in any order, as
+    // plain characters, with no `[:name:]` class) fold only within ASCII, as
+    // the class would: `\c[a-z]` doesn't take the Kelvin sign, where
+    // `\c[a-y]`, `\c[\x61-z]` and `\c[a-z[:digit:]]` do.
+    if matches!(shape, Some(1 | 2 | 3 | 11 | 15)) {
+        set.ascii.append(&mut set.folded);
+    }
+    Ok(Some((set, pattern.len() - rest.len())))
+}
+
+/// A collection's members, kept apart until the whole pattern says
+/// whether `\c` folds them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Collection {
+    negated: bool,
+    /// `[:name:]` classes and the members that spell out a class, which
+    /// `\c` folds only within ASCII.
+    ascii: Vec<(char, char)>,
+    /// Other members, which `\c` folds as it folds literals.
+    folded: Vec<(char, char)>,
+}
+
+impl Collection {
+    /// As a `regex` class.
+    fn syntax(&self, ignore_case: bool) -> String {
+        let mut ranges: Vec<(char, char)> =
+            self.ascii.iter().chain(&self.folded).copied().collect();
+        if ignore_case {
+            for &(low, high) in &self.ascii {
+                for ch in (low..=high).take_while(char::is_ascii) {
+                    let other = if ch.is_ascii_lowercase() {
+                        ch.to_ascii_uppercase()
+                    } else {
+                        ch.to_ascii_lowercase()
+                    };
+                    ranges.push((other, other));
+                }
+            }
+            let folds = folds();
+            let mut seen = vec![false; folds.groups.len()];
+            for &(low, high) in &self.folded {
+                for (_, &group) in folds.group_of.range(low..=high) {
+                    if !std::mem::replace(&mut seen[group], true) {
+                        ranges.extend(folds.groups[group].iter().map(|&ch| (ch, ch)));
+                    }
+                }
+            }
+        }
+        // Merged, so a wide range under `\c` stays one range.
+        ranges.sort_unstable();
+        let mut merged: Vec<(char, char)> = Vec::with_capacity(ranges.len());
+        for (low, high) in ranges {
+            match merged.last_mut() {
+                Some(last) if u32::from(low) <= u32::from(last.1).saturating_add(1) => {
+                    last.1 = last.1.max(high);
+                }
+                _ => merged.push((low, high)),
+            }
+        }
+        let mut class = String::from(if self.negated { "[^" } else { "[" });
+        for (low, high) in merged {
+            class.push_str(&format!("\\x{{{:x}}}", low as u32));
+            if high != low {
+                class.push_str(&format!("-\\x{{{:x}}}", high as u32));
+            }
+        }
+        class.push(']');
+        class
+    }
+}
+
+/// Characters `\c` takes for one another, in groups of two or more: those
+/// whose uppercase is one character with the same lowercase, as nvim folds
+/// case (`k`, `K` and the Kelvin sign; `s`, `S` and long s), but for the few
+/// nvim leaves alone ([`UNFOLDED`]).
+struct Folds {
+    groups: Vec<Vec<char>>,
+    /// Each grouped character's group.
+    group_of: BTreeMap<char, usize>,
+}
+
+/// Characters nvim's `\c` matches only with themselves, though their
+/// uppercase's lowercase is another character's: dotless `ı` and capital
+/// sharp s `ẞ`.
+const UNFOLDED: &[char] = &['\u{131}', '\u{1e9e}'];
+
+/// The one character `chars` holds, if one.
+fn single(mut chars: impl Iterator<Item = char>) -> Option<char> {
+    match (chars.next(), chars.next()) {
+        (Some(ch), None) => Some(ch),
+        _ => None,
+    }
+}
+
+/// Past this, no character has another case.
+const LAST_CASED: u32 = 0x1_efff;
+
+fn folds() -> &'static Folds {
+    static FOLDS: OnceLock<Folds> = OnceLock::new();
+    FOLDS.get_or_init(|| {
+        let mut by_key: BTreeMap<char, Vec<char>> = BTreeMap::new();
+        for ch in (0..=LAST_CASED).filter_map(char::from_u32) {
+            if UNFOLDED.contains(&ch) {
+                continue;
+            }
+            // One whose uppercase is several characters (`ß`, `ᾀ`) folds
+            // to nothing else.
+            let key = single(ch.to_uppercase())
+                .map_or(ch, |upper| single(upper.to_lowercase()).unwrap_or(upper));
+            by_key.entry(key).or_default().push(ch);
+        }
+        let mut folds = Folds {
+            groups: Vec::new(),
+            group_of: BTreeMap::new(),
+        };
+        for group in by_key.into_values().filter(|group| group.len() > 1) {
+            for &ch in &group {
+                folds.group_of.insert(ch, folds.groups.len());
+            }
+            folds.groups.push(group);
+        }
+        folds
+    })
+}
+
+/// One character of a collection, taking it off `rest`: itself, or a
+/// backslash code (`\e \t \r \b`, `\d123 \o40 \x20 € \U1234abcd`,
+/// `\\ \] \^ \-`). A backslash before anything else is itself.
+fn member(rest: &mut &str) -> Result<char, PatternError> {
+    let mut chars = rest.chars();
+    let ch = chars.next().unwrap_or_default();
+    let after = chars.as_str();
+    if ch != '\\' {
+        *rest = after;
+        return Ok(ch);
+    }
+    let Some(code) = after.chars().next() else {
+        *rest = after;
+        return Ok('\\');
+    };
+    let digits = &after[code.len_utf8()..];
+    let simple = match code {
+        'e' => Some('\u{1b}'),
+        't' => Some('\t'),
+        'r' => Some('\r'),
+        'b' => Some('\u{8}'),
+        '\\' | ']' | '^' | '-' => Some(code),
+        'n' => {
+            *rest = &after[1..];
+            return Err(PatternError::Unsupported("\\n".into()));
+        }
+        _ => None,
+    };
+    if let Some(simple) = simple {
+        *rest = &after[1..];
+        return Ok(simple);
+    }
+    let (radix, most) = match code {
+        'd' => (10, usize::MAX),
+        'o' => (8, 3),
+        'x' => (16, 2),
+        'u' => (16, 4),
+        'U' => (16, 8),
+        _ => {
+            *rest = after;
+            return Ok('\\');
+        }
+    };
+    let mut value: u64 = 0;
+    let mut taken = 0;
+    for digit in digits.chars().take(most) {
+        let Some(digit) = digit.to_digit(radix) else {
+            break;
+        };
+        let next = value * u64::from(radix) + u64::from(digit);
+        // `\o` stops before going past 0o377.
+        if (code == 'o' && next > 0o377) || next > u64::from(u32::MAX) {
+            if code == 'o' {
+                break;
+            }
+            *rest = &digits[taken + 1..];
+            return Err(PatternError::Unsupported(format!(
+                "\\{code}{}",
+                &digits[..=taken]
+            )));
+        }
+        value = next;
+        taken += 1;
+    }
+    if taken == 0 {
+        // No digits: the backslash is itself, and the letter comes next.
+        *rest = after;
+        return Ok('\\');
+    }
+    *rest = &digits[taken..];
+    char::from_u32(value as u32)
+        .ok_or_else(|| PatternError::Unsupported(format!("\\{code}{}", &digits[..taken])))
+}
+
+/// What comes before a branch, which decides what a `*` starting it means.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Opened {
+    Pattern,
+    Capture,
+    Group,
+    Alt,
+}
+
+/// Turns tokens into `regex` syntax.
+struct Translator<'a> {
+    tokens: &'a [Token],
+    next: usize,
+    depth: usize,
+    groups: usize,
+    /// Whether the pattern holds `\c`.
+    ignore_case: bool,
+}
+
+impl Translator<'_> {
+    fn peek(&self) -> Option<&Token> {
+        self.tokens.get(self.next)
+    }
+
+    /// Branches separated by `\|`, up to the `\)` closing `opened` (left
+    /// for the caller) or the end of the pattern.
+    fn alternation(&mut self, opened: Opened) -> Result<String, PatternError> {
+        let mut out = self.branch(opened)?;
+        loop {
+            match self.peek() {
+                Some(Token::Alt) => {
+                    self.next += 1;
+                    out.push('|');
+                    out.push_str(&self.branch(Opened::Alt)?);
+                }
+                Some(Token::Close) if opened != Opened::Pattern => return Ok(out),
+                Some(Token::Close) => return Err(PatternError::Invalid("unmatched \\)")),
+                None => {
+                    return match opened {
+                        Opened::Capture => Err(PatternError::Invalid("unmatched \\(")),
+                        Opened::Group => Err(PatternError::Invalid("unmatched \\%(")),
+                        Opened::Pattern | Opened::Alt => Ok(out),
+                    };
+                }
+                Some(_) => unreachable!("a branch ends at `\\|`, `\\)` or the end"),
+            }
+        }
+    }
+
+    /// Pieces (an atom and maybe a multi) up to `\|`, `\)` or the end.
+    fn branch(&mut self, opened: Opened) -> Result<String, PatternError> {
+        let mut out = String::new();
+        // Nothing but flags yet.
+        let mut first = true;
+        // A bare `*` right after `^` is itself.
+        let mut star_is_char = false;
+        while let Some(token) = self.peek().cloned() {
+            let star_here = std::mem::replace(&mut star_is_char, false);
+            self.next += 1;
+            let mut start_of_line = false;
+            let atom = match token {
+                Token::Alt | Token::Close => {
+                    self.next -= 1;
+                    break;
+                }
+                Token::Flag => continue,
+                Token::Multi {
+                    multi: Multi::Star,
+                    bare: true,
+                } if first && opened == Opened::Group => {
+                    return Err(PatternError::Unsupported("* after \\%(".into()));
+                }
+                Token::Multi {
+                    multi: Multi::Star,
+                    bare: true,
+                } if first || star_here => regex::escape("*"),
+                Token::Multi { .. } => return Err(PatternError::Invalid("misplaced multi")),
+                Token::Char(ch) => match self.ignore_case.then(|| folds().group_of.get(&ch)) {
+                    Some(Some(&group)) => {
+                        let group = &folds().groups[group];
+                        let members = group.iter().map(|ch| format!("\\x{{{:x}}}", *ch as u32));
+                        format!("[{}]", members.collect::<String>())
+                    }
+                    _ => regex::escape(ch.encode_utf8(&mut [0; 4])),
+                },
+                Token::Any => ".".into(),
+                Token::Class(class) => class.into(),
+                Token::Set(set) => set.syntax(self.ignore_case),
+                Token::WordStart => r"\b{start}".into(),
+                Token::WordEnd => r"\b{end}".into(),
+                Token::Caret { anywhere } if anywhere || first => {
+                    start_of_line = true;
+                    "^".into()
+                }
+                Token::Caret { .. } => regex::escape("^"),
+                Token::Dollar { anywhere } => {
+                    let mut rest = self.tokens[self.next..].iter();
+                    let last = match rest.find(|token| **token != Token::Flag) {
+                        None | Some(Token::Alt | Token::Close) => true,
+                        Some(_) => false,
+                    };
+                    if anywhere || last {
+                        "$".into()
+                    } else {
+                        regex::escape("$")
+                    }
+                }
+                Token::Open { capture } => self.group(capture)?,
+            };
+            first = false;
+            let multi = match self.peek() {
+                Some(&Token::Multi { multi, bare })
+                    if !(start_of_line && bare && multi == Multi::Star) =>
+                {
+                    multi
+                }
+                // After `^`, a bare `*` is itself; any other multi repeats
+                // the start-of-line.
+                Some(Token::Multi { .. }) => {
+                    star_is_char = true;
+                    out.push_str(&atom);
+                    continue;
+                }
+                _ => {
+                    out.push_str(&atom);
+                    continue;
+                }
+            };
+            self.next += 1;
+            if matches!(self.peek(), Some(Token::Multi { .. })) {
+                return Err(PatternError::Invalid("a multi can't follow a multi"));
+            }
+            out.push_str(&format!("(?:{atom}){}", multi_syntax(multi)));
+        }
+        Ok(out)
+    }
+
+    /// A group's contents after its `\(` or `\%(`, through its `\)`.
+    fn group(&mut self, capture: bool) -> Result<String, PatternError> {
+        if capture {
+            self.groups += 1;
+            if self.groups > MAX_GROUPS {
+                return Err(PatternError::Invalid("too many \\("));
+            }
+        }
+        self.depth += 1;
+        if self.depth > MAX_DEPTH {
+            return Err(PatternError::TooLarge("groups nested too deeply".into()));
+        }
+        let inner = self.alternation(if capture {
+            Opened::Capture
+        } else {
+            Opened::Group
+        })?;
+        // `alternation` returned at the closing `\)`.
+        self.next += 1;
+        self.depth -= 1;
+        Ok(format!("(?:{inner})"))
+    }
+}
+
+fn multi_syntax(multi: Multi) -> String {
+    match multi {
+        Multi::Star => "*".into(),
+        Multi::Plus => "+".into(),
+        Multi::Optional => "?".into(),
+        Multi::Brace { min, max, lazy } => {
+            let lazy = if lazy { "?" } else { "" };
+            match max {
+                Some(max) if max == min => format!("{{{min}}}"),
+                Some(max) => format!("{{{min},{max}}}{lazy}"),
+                None => format!("{{{min},}}{lazy}"),
+            }
+        }
+    }
+}

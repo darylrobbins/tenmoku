@@ -11,6 +11,7 @@ mod operators;
 mod reducer;
 mod registers;
 mod repeat;
+mod search_pattern;
 mod state;
 mod undo;
 mod visual;

@@ -77,6 +77,104 @@
 //! with a register in one edit, `p` leaving what it replaced in the
 //! registers as a delete would.
 //!
+//! # Search patterns
+//!
+//! [`search::Pattern::parse`] translates a subset of Vim's pattern language
+//! (`:help pattern`) to a `regex::Regex`. Supported, in the default 'magic'
+//! syntax:
+//!
+//! - Literal text. A backslash before punctuation makes it itself (`\.`
+//!   `\*` `\[` `\~` `\^` `\$` `\/` `\\`), and a trailing backslash is
+//!   itself.
+//! - `.`, any character but a line break.
+//! - Collections `[…]`: `^` first negates; `a-z` ranges; `]` first is
+//!   itself (and may start a range), as is `-` first or last; the codes `\e \t \r \b \d123 \o40
+//!   \x20 \u20AC \U1234abcd` and `\\ \] \^ \-`; and the ASCII classes
+//!   `[:alnum:]` `[:alpha:]` `[:blank:]` `[:cntrl:]` `[:digit:]` `[:graph:]`
+//!   `[:punct:]` `[:space:]` `[:xdigit:]` `[:return:]` `[:tab:]`
+//!   `[:escape:]` `[:backspace:]`. A `[` with no `]` to end it is itself.
+//! - The multis `*` `\+` `\=` `\?` `\{n,m}` `\{n}` `\{n,}` `\{,m}` `\{}`
+//!   and their as-few-as-possible forms `\{-n,m}` `\{-n}` `\{-n,}` `\{-,m}`
+//!   `\{-}` (bounds given the wrong way round are swapped). A `*` with
+//!   nothing before it, at the start of a branch or right after `^`, is
+//!   itself (not `\*` after `\M` or `\V`, which is misplaced there).
+//! - Groups `\(…\)` (at most nine) and `\%(…\)`, and `\|` between
+//!   branches.
+//! - `^` at the start of a branch and `$` at its end, matching a row's start
+//!   and end; elsewhere they're themselves. `\<` and `\>`, a word's start
+//!   and end.
+//! - The classes `\s \S \d \D \w \W \a \A \l \L \u \U \x \X \o
+//!   \O \h \H`, all ASCII, which `\c` doesn't make caseless, as in Vim;
+//!   and `\e \t \r \b`.
+//! - `\c` and `\C` anywhere (`\c` wins); without either, case matches
+//!   exactly ('ignorecase' off). `\c` folds case as nvim does: two characters
+//!   match when each one's uppercase is a single character and those have
+//!   the same lowercase, so `k` takes `K` and the Kelvin sign, `s` takes
+//!   long s and `σ` takes `ς`, while `ß` and `ẞ` (and dotless `ı`) match
+//!   only themselves. A collection's members fold the same way, but
+//!   for `[:name:]` classes, which fold within ASCII, and for members
+//!   spelling out `\l`, `\u`, `\a`, `\h` or `\w` (`[a-z]`, `[A-Z]`,
+//!   `[a-zA-Z]`, `[a-zA-Z_]`, `[0-9A-Za-z_]`, in any order) as plain
+//!   characters in a collection with no `[:name:]` class, which also fold
+//!   within ASCII: `\c[a-z]` doesn't take the Kelvin sign, but `\c[a-y]`,
+//!   `\c[\x61-z]` and `\c[a-z[:digit:]]` do. `\v`, `\m`, `\M` and `\V` switch to very
+//!   magic, magic, nomagic and very nomagic for what follows.
+//! - `~`, as itself: Vim's last substitute string doesn't exist yet.
+//!
+//! Anything else is an error naming the atom, "pattern not supported: \zs",
+//! never a different match: `\n`, `\_x`, `\zs` and the other `\z` atoms,
+//! `\%V` and the other `\%` atoms but `\%(`, `\@`, `\&`, back-references
+//! `\1`…`\9`, the option-driven classes `\i \k \f \p` and their
+//! capitals, `\Z`, a backslash before any other letter or before a
+//! non-ASCII character, `[:lower:]` `[:upper:]` `[:print:]` `[:ident:]`
+//! `[:keyword:]` `[:fname:]` and any
+//! malformed `[:`, `[[=x=]]`, `[[.x.]]` and `\n` in a collection, a range in
+//! one that ends at `\\` `\]` `\^` `\-`, at another `-` or at a class, or
+//! that starts at a class (Vim reads those its own way), and a `*` right
+//! after `\%(`. So is a pattern Vim rejects (an unmatched `\(` or
+//! `\)`, a misplaced or nested multi, a malformed `\{…}`, a reverse range,
+//! a tenth `\(`), an empty one, and one past `regex`'s size limit or
+//! nested over sixty groups deep.
+//!
+//! Matching is row by row: a match never spans a line break, which is why
+//! `\n` and `\_x` aren't translated. [`search::Pattern::find`] goes where
+//! `/` and `?` would ('wrapscan' on), visiting each row once, and
+//! [`search::matches_in`] lists the matches on some rows, at most a cap of
+//! them, for a host to paint. Within a row matches come as Vim's search
+//! finds them: each search resumes where the last match ended, or one
+//! character on after an empty one, so overlapping matches aren't found,
+//! and an empty match at the row's end is found only by a search that
+//! starts before it. A character there is a whole one as Vim counts them:
+//! an extended grapheme cluster (a letter and its composing characters, an
+//! emoji sequence), or a control character with the nonspacing marks after
+//! it. `/` starts a whole character on from the cursor, wherever in one it
+//! is, so from a row's last character it goes on at the next row. Finding a match on a row walks the matches before it
+//! on that row, as Vim does, so the cost grows with them: a 64 MiB row of
+//! `a` takes seconds for `a`, and a pattern that scans to the row's end for
+//! each match (`.*b\|a` over a long row of `a`) is quadratic in the row's
+//! length, as in Vim. Nothing interrupts a search yet.
+//!
+//! Where the translation differs from Vim:
+//!
+//! - Where alternatives match at the same place, the first that matches
+//!   wins, as with Vim's backtracking engine (`\%#=1`). Its default NFA
+//!   engine sometimes takes a later, longer one: `\>\|.\=` at a word's
+//!   end matches the next character there, where fe-vim's match is empty.
+//! - `\<` and `\>` go by Unicode's word characters (letters, marks, digits,
+//!   connector punctuation), which are Vim's default 'iskeyword' on ASCII
+//!   text. Elsewhere Vim also starts a word where the character class
+//!   changes (CJK after Latin, say), and counts `×` and `÷` as word
+//!   characters and `ª` `µ` `º` as not.
+//! - Composing characters under literals, `.`, character classes and
+//!   collections: there a composing character (or the rest of an emoji
+//!   sequence) is a character of its own, where Vim matches a character
+//!   and its composing characters as one: `e` matches in `e` followed by
+//!   U+0301, `.` and `\s` take the base alone, `[\u0300-\u036f]` matches
+//!   the mark, and the next search on the row resumes inside the character.
+//! - nvim 0.12.4 misses two folds when the pattern starts with the literal
+//!   (`\cã` doesn't match `Ã`, nor `\c` and U+0345 an `ι`), though it folds
+//!   them anywhere else (`\cxã`, `\c[ã]`); fe-vim folds them everywhere.
+//!
 //! # Clean room
 //!
 //! This crate is written from Vim's documented behaviour, never from
@@ -115,7 +213,9 @@
 //! operators over the selection, `o`, `gv`, `'<` and `'>`, and `.` after a
 //! visual change. Its second card added blockwise visual mode (`<C-v>`),
 //! block insert and append, blockwise registers, and `p` and `P` in every
-//! visual mode. Later cards add search; ex commands (`:'<,'>` among them);
+//! visual mode. Its third card started search with the pattern language
+//! and a row-by-row matcher ([`search`]). Later cards add the `/` and `?`
+//! command line, `n N * #` and the highlight; ex commands (`:'<,'>` among them);
 //! the command line; the clipboard; marks and macros; replace mode,
 //! increment and folds; scrolling; and the GPUI wiring of the visual modes
 //! (their key bindings, painting the selection and the block cursor, mouse
@@ -256,6 +356,7 @@ mod operator;
 mod reducer;
 mod register;
 mod repeat;
+pub mod search;
 mod state;
 mod text_object;
 mod visual;
