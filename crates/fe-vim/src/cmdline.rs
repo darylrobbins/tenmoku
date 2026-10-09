@@ -130,28 +130,79 @@ fn search(
 /// can't translate. `Err` holds the error for [`VimState::message`]: the
 /// pattern's, or E486 if nothing matches from the primary caret (the vim
 /// cursor in a visual mode).
-pub(crate) fn check_search(target: &mut VimTarget<'_>, search: Search) -> Result<(), String> {
+pub(crate) fn check_search(
+    target: &mut VimTarget<'_>,
+    search: Search,
+    keep_direction: bool,
+) -> Result<(), String> {
+    // `n` and `N` keep the direction `/` or `?` gave the search.
+    let forward = match (keep_direction, target.registers.last_search()) {
+        (true, Some((_, forward))) => forward,
+        _ => search.forward,
+    };
     let pattern = search.pattern.as_str();
     let parsed = match Pattern::parse(pattern) {
         Ok(parsed) => parsed,
         Err(error) => {
             if let PatternError::Invalid(_) = error {
-                target.registers.set_search(pattern, search.forward);
+                target.registers.set_search(pattern, forward);
+                target.state.highlight = None;
             }
             return Err(error.to_string());
         }
     };
-    target.registers.set_search(pattern, search.forward);
-    target.model.sync_display();
-    let from = target
-        .state
-        .visual_cursor(target.model)
-        .unwrap_or_else(|| target.model.primary_selection().head());
+    target.registers.set_search(pattern, forward);
+    target.state.highlight = Some(parsed.clone());
+    let from = caret(target);
     // Past one match, a count goes round: any match will do.
     match parsed.find(target.model.text(), from, search.forward) {
         Some(_) => Ok(()),
         None => Err(format!("E486: Pattern not found: {pattern}")),
     }
+}
+
+/// The primary caret, or the vim cursor in a visual mode, with the model
+/// caught up.
+fn caret(target: &mut VimTarget<'_>) -> usize {
+    target.model.sync_display();
+    target
+        .state
+        .visual_cursor(target.model)
+        .unwrap_or_else(|| target.model.primary_selection().head())
+}
+
+/// `motion` as the search it runs: `n` and `N` are the last search, in its
+/// direction or against it, and `*` and `#` search for the keyword under or
+/// after the caret (or, with none on the rest of the row, the non-blank
+/// text there) as the last search. `Err` holds the message of one that
+/// can't run (E35, E348). Any other motion comes back as it was. The flag
+/// is whether the search keeps the last search's direction (`n` and `N`).
+pub(crate) fn resolve(
+    target: &mut VimTarget<'_>,
+    motion: Motion,
+) -> Result<(Motion, bool), String> {
+    let forward = match motion {
+        Motion::SearchNext | Motion::SearchPrevious => {
+            let Some((last, was_forward)) = target.registers.last_search() else {
+                return Err("E35: No previous regular expression".to_string());
+            };
+            let forward = was_forward == (motion == Motion::SearchNext);
+            let pattern = SearchPattern::new(last);
+            return Ok((Motion::Search(Search { pattern, forward }), true));
+        }
+        Motion::SearchWordForward => true,
+        Motion::SearchWordBackward => false,
+        _ => return Ok((motion, false)),
+    };
+    let at = caret(target);
+    let Some((_, pattern)) = search::word_at(target.model.text(), at, forward) else {
+        return Err("E348: No string under cursor".to_string());
+    };
+    let search = Search {
+        pattern: SearchPattern::new(&pattern),
+        forward,
+    };
+    Ok((Motion::SearchWord(search), false))
 }
 
 /// Leaves `message` for the host: what changed is only that.

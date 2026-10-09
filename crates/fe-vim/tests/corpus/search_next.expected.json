@@ -1,0 +1,2161 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "n_after_slash",
+      "buffer": "a foo b foo c foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>n",
+      "expect": {
+        "buffer": "a foo b foo c foo",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "n_count_after_slash",
+      "buffer": "a foo b foo c foo d foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>2n",
+      "expect": {
+        "buffer": "a foo b foo c foo d foo",
+        "cursor": [
+          0,
+          14
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "n_wraps",
+      "buffer": "foo b foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>n",
+      "expect": {
+        "buffer": "foo b foo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "n_next_row",
+      "buffer": "a foo\nb foo\nfoo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>n",
+      "expect": {
+        "buffer": "a foo\nb foo\nfoo",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "N_after_slash",
+      "buffer": "a foo b foo c foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>nN",
+      "expect": {
+        "buffer": "a foo b foo c foo",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "N_wraps_back",
+      "buffer": "a foo b foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>N",
+      "expect": {
+        "buffer": "a foo b foo",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "N_count_after_slash",
+      "buffer": "a foo b foo c foo d foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>nn2N",
+      "expect": {
+        "buffer": "a foo b foo c foo d foo",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "n_after_question",
+      "buffer": "foo a foo b foo",
+      "cursor": [
+        0,
+        14
+      ],
+      "keys": "?foo<CR>n",
+      "expect": {
+        "buffer": "foo a foo b foo",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "N_after_question",
+      "buffer": "foo a foo b foo",
+      "cursor": [
+        0,
+        14
+      ],
+      "keys": "?foo<CR>nN",
+      "expect": {
+        "buffer": "foo a foo b foo",
+        "cursor": [
+          0,
+          12
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "n_count_after_question",
+      "buffer": "foo a foo b foo c foo",
+      "cursor": [
+        0,
+        20
+      ],
+      "keys": "?foo<CR>2n",
+      "expect": {
+        "buffer": "foo a foo b foo c foo",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "n_wraps_after_question",
+      "buffer": "foo a foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "?foo<CR>n",
+      "expect": {
+        "buffer": "foo a foo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "n_no_last_search",
+      "buffer": "foo foo",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "n",
+      "expect": {
+        "buffer": "foo foo",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "N_no_last_search",
+      "buffer": "foo foo",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "N",
+      "expect": {
+        "buffer": "foo foo",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "n_not_found_keeps_pattern",
+      "buffer": "foo foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/zzz<CR>n",
+      "expect": {
+        "buffer": "foo foo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "zzz",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "star_on_word",
+      "buffer": "foo foobar foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "*",
+      "expect": {
+        "buffer": "foo foobar foo",
+        "cursor": [
+          0,
+          11
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<foo\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "star_mid_word",
+      "buffer": "a foo b foo",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "*",
+      "expect": {
+        "buffer": "a foo b foo",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<foo\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "star_count",
+      "buffer": "foo x foo y foo z foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2*",
+      "expect": {
+        "buffer": "foo x foo y foo z foo",
+        "cursor": [
+          0,
+          12
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<foo\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "star_wraps",
+      "buffer": "foo x foo",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "*",
+      "expect": {
+        "buffer": "foo x foo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<foo\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "star_only_occurrence",
+      "buffer": "foo bar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "*",
+      "expect": {
+        "buffer": "foo bar",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<foo\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "star_then_n",
+      "buffer": "foo a foo b foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "*n",
+      "expect": {
+        "buffer": "foo a foo b foo",
+        "cursor": [
+          0,
+          12
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<foo\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "star_then_N",
+      "buffer": "foo a foo b foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "*N",
+      "expect": {
+        "buffer": "foo a foo b foo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<foo\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "hash_on_word",
+      "buffer": "foo x foo y foo",
+      "cursor": [
+        0,
+        14
+      ],
+      "keys": "#",
+      "expect": {
+        "buffer": "foo x foo y foo",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<foo\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "hash_mid_word",
+      "buffer": "foo bar foo",
+      "cursor": [
+        0,
+        9
+      ],
+      "keys": "#",
+      "expect": {
+        "buffer": "foo bar foo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<foo\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "hash_wraps",
+      "buffer": "foo x foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "#",
+      "expect": {
+        "buffer": "foo x foo",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<foo\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "hash_then_n",
+      "buffer": "foo a foo b foo",
+      "cursor": [
+        0,
+        14
+      ],
+      "keys": "#n",
+      "expect": {
+        "buffer": "foo a foo b foo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<foo\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "hash_then_N",
+      "buffer": "foo a foo b foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "#N",
+      "expect": {
+        "buffer": "foo a foo b foo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<foo\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "star_between_words",
+      "buffer": "a  foo  b foo",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "*",
+      "expect": {
+        "buffer": "a  foo  b foo",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<foo\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "star_on_blank_before_word",
+      "buffer": "x    foo foo",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "*",
+      "expect": {
+        "buffer": "x    foo foo",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<foo\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "star_on_punctuation",
+      "buffer": "a ++ b a b",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "*",
+      "expect": {
+        "buffer": "a ++ b a b",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<b\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "star_on_punctuation_last",
+      "buffer": "x ++ ++",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "*",
+      "expect": {
+        "buffer": "x ++ ++",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "++",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "hash_on_punctuation_string",
+      "buffer": "(( x ((",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "#",
+      "expect": {
+        "buffer": "(( x ((",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "((",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "star_special_chars",
+      "buffer": "a.b a.b axb",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "*",
+      "expect": {
+        "buffer": "a.b a.b axb",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<b\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "star_no_keyword_blanks",
+      "buffer": "foo   \nfoo",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "*",
+      "expect": {
+        "buffer": "foo   \nfoo",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "hash_no_keyword_blanks",
+      "buffer": "foo   \nfoo",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "#",
+      "expect": {
+        "buffer": "foo   \nfoo",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "star_empty_row",
+      "buffer": "\nfoo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "*",
+      "expect": {
+        "buffer": "\nfoo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "star_unicode_word",
+      "buffer": "héllo x héllo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "*",
+      "expect": {
+        "buffer": "héllo x héllo",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<héllo\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dn",
+      "buffer": "a foo b foo c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>0dn",
+      "expect": {
+        "buffer": "foo b foo c",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a ",
+            "linewise": false
+          },
+          "-": {
+            "text": "a ",
+            "linewise": false
+          },
+          "/": {
+            "text": "foo",
+            "linewise": false
+          },
+          "1": {
+            "text": "a ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dn_register",
+      "buffer": "a foo b foo c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>0dn\"1p",
+      "expect": {
+        "buffer": "fa oo b foo c",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a ",
+            "linewise": false
+          },
+          "-": {
+            "text": "a ",
+            "linewise": false
+          },
+          "/": {
+            "text": "foo",
+            "linewise": false
+          },
+          "1": {
+            "text": "a ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dN",
+      "buffer": "a foo b foo c",
+      "cursor": [
+        0,
+        12
+      ],
+      "keys": "/foo<CR>$dN",
+      "expect": {
+        "buffer": "a foo b c",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo ",
+            "linewise": false
+          },
+          "-": {
+            "text": "foo ",
+            "linewise": false
+          },
+          "/": {
+            "text": "foo",
+            "linewise": false
+          },
+          "1": {
+            "text": "foo ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d_star",
+      "buffer": "foo b foo c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d*",
+      "expect": {
+        "buffer": "foo c",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo b ",
+            "linewise": false
+          },
+          "-": {
+            "text": "foo b ",
+            "linewise": false
+          },
+          "/": {
+            "text": "\\<foo\\>",
+            "linewise": false
+          },
+          "1": {
+            "text": "foo b ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d_star_mid_word",
+      "buffer": "foo b foo c",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "d*",
+      "expect": {
+        "buffer": "ffoo c",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "oo b ",
+            "linewise": false
+          },
+          "-": {
+            "text": "oo b ",
+            "linewise": false
+          },
+          "/": {
+            "text": "\\<foo\\>",
+            "linewise": false
+          },
+          "1": {
+            "text": "oo b ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d_hash",
+      "buffer": "a foo b foo c",
+      "cursor": [
+        0,
+        10
+      ],
+      "keys": "d#",
+      "expect": {
+        "buffer": "a o c",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo b fo",
+            "linewise": false
+          },
+          "-": {
+            "text": "foo b fo",
+            "linewise": false
+          },
+          "/": {
+            "text": "\\<foo\\>",
+            "linewise": false
+          },
+          "1": {
+            "text": "foo b fo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d_hash_mid_word",
+      "buffer": "a foo b foo c",
+      "cursor": [
+        0,
+        9
+      ],
+      "keys": "d#",
+      "expect": {
+        "buffer": "a oo c",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo b f",
+            "linewise": false
+          },
+          "-": {
+            "text": "foo b f",
+            "linewise": false
+          },
+          "/": {
+            "text": "\\<foo\\>",
+            "linewise": false
+          },
+          "1": {
+            "text": "foo b f",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dn_count",
+      "buffer": "a foo b foo c foo d",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>0d2n",
+      "expect": {
+        "buffer": "foo c foo d",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a foo b ",
+            "linewise": false
+          },
+          "-": {
+            "text": "a foo b ",
+            "linewise": false
+          },
+          "/": {
+            "text": "foo",
+            "linewise": false
+          },
+          "1": {
+            "text": "a foo b ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "cn",
+      "buffer": "a foo b foo c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>0cnX<Esc>",
+      "expect": {
+        "buffer": "Xfoo b foo c",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a ",
+            "linewise": false
+          },
+          "-": {
+            "text": "a ",
+            "linewise": false
+          },
+          "/": {
+            "text": "foo",
+            "linewise": false
+          },
+          "1": {
+            "text": "a ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "yn",
+      "buffer": "a foo b foo c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>0ynP",
+      "expect": {
+        "buffer": "a a foo b foo c",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a ",
+            "linewise": false
+          },
+          "/": {
+            "text": "foo",
+            "linewise": false
+          },
+          "0": {
+            "text": "a ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dn_dot",
+      "buffer": "a foo b foo c foo d",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>0dn.",
+      "expect": {
+        "buffer": "foo c foo d",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo b ",
+            "linewise": false
+          },
+          "-": {
+            "text": "foo b ",
+            "linewise": false
+          },
+          "/": {
+            "text": "foo",
+            "linewise": false
+          },
+          "1": {
+            "text": "foo b ",
+            "linewise": false
+          },
+          "2": {
+            "text": "a ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dn_undo",
+      "buffer": "a foo b foo c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>0dnu",
+      "expect": {
+        "buffer": "a foo b foo c",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a ",
+            "linewise": false
+          },
+          "-": {
+            "text": "a ",
+            "linewise": false
+          },
+          "/": {
+            "text": "foo",
+            "linewise": false
+          },
+          "1": {
+            "text": "a ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dn_no_last_search",
+      "buffer": "a foo b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dn",
+      "expect": {
+        "buffer": "a foo b",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "n_visual",
+      "buffer": "a foo b foo c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>0vn",
+      "expect": {
+        "buffer": "a foo b foo c",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "v",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        },
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "n_visual_count",
+      "buffer": "a foo b foo c foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>0v2n",
+      "expect": {
+        "buffer": "a foo b foo c foo",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "v",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        },
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "N_visual",
+      "buffer": "a foo b foo c",
+      "cursor": [
+        0,
+        12
+      ],
+      "keys": "/foo<CR>$vN",
+      "expect": {
+        "buffer": "a foo b foo c",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "v",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        },
+        "visual": [
+          0,
+          12
+        ]
+      }
+    },
+    {
+      "name": "n_visual_line",
+      "buffer": "a foo\nb foo\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>0Vn",
+      "expect": {
+        "buffer": "a foo\nb foo\nc",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "V",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        },
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "n_visual_block",
+      "buffer": "a foo\nb foo\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>0<C-v>n",
+      "expect": {
+        "buffer": "a foo\nb foo\nc",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "\u0016",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        },
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "dn_visual_operator",
+      "buffer": "a foo b foo c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>0vnd",
+      "expect": {
+        "buffer": "oo b foo c",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a f",
+            "linewise": false
+          },
+          "-": {
+            "text": "a f",
+            "linewise": false
+          },
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "star_sets_slash_register",
+      "buffer": "foo a foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/a<CR>0\"/p#0\"/p",
+      "expect": {
+        "buffer": "f\\<faoo\\>aoo a foo",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<faoo\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "spot_row_22",
+      "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "/foo<CR>n",
+      "expect": {
+        "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "spot_row_23",
+      "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "*",
+      "expect": {
+        "buffer": "fn foo(a, b) {\n    let x = foo(a);\n    x + b\n}\nfoo end",
+        "cursor": [
+          1,
+          12
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<foo\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "NN_after_slash",
+      "buffer": "a foo b foo c foo d foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>NN",
+      "expect": {
+        "buffer": "a foo b foo c foo d foo",
+        "cursor": [
+          0,
+          14
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "Nn_after_slash",
+      "buffer": "a foo b foo c foo d foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>Nn",
+      "expect": {
+        "buffer": "a foo b foo c foo d foo",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "NN_after_question",
+      "buffer": "a foo b foo c foo d foo",
+      "cursor": [
+        0,
+        22
+      ],
+      "keys": "?foo<CR>NN",
+      "expect": {
+        "buffer": "a foo b foo c foo d foo",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "Nn_after_question",
+      "buffer": "a foo b foo c foo d foo",
+      "cursor": [
+        0,
+        22
+      ],
+      "keys": "?foo<CR>Nn",
+      "expect": {
+        "buffer": "a foo b foo c foo d foo",
+        "cursor": [
+          0,
+          20
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "N_count_after_question",
+      "buffer": "a foo b foo c foo d foo",
+      "cursor": [
+        0,
+        22
+      ],
+      "keys": "?foo<CR>3N",
+      "expect": {
+        "buffer": "a foo b foo c foo d foo",
+        "cursor": [
+          0,
+          14
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "N_wraps_after_question",
+      "buffer": "foo a foo b foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "?foo<CR>NN",
+      "expect": {
+        "buffer": "foo a foo b foo",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "N_wraps_count_after_question",
+      "buffer": "foo a foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "?foo<CR>5N",
+      "expect": {
+        "buffer": "foo a foo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dNN_after_slash",
+      "buffer": "a foo b foo c foo d",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>$dNN",
+      "expect": {
+        "buffer": "a foo b foo c d",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo ",
+            "linewise": false
+          },
+          "-": {
+            "text": "foo ",
+            "linewise": false
+          },
+          "/": {
+            "text": "foo",
+            "linewise": false
+          },
+          "1": {
+            "text": "foo ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "visual_NN",
+      "buffer": "a foo b foo c foo d",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>0vNN",
+      "expect": {
+        "buffer": "a foo b foo c foo d",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "v",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        },
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "visual_Nn",
+      "buffer": "a foo b foo c foo d",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>0vNn",
+      "expect": {
+        "buffer": "a foo b foo c foo d",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "v",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        },
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "hash_between_words",
+      "buffer": "foo a  b foo",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "#",
+      "expect": {
+        "buffer": "foo a  b foo",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<b\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "hash_between_words_count",
+      "buffer": "foo a foo  b foo",
+      "cursor": [
+        0,
+        10
+      ],
+      "keys": "2#",
+      "expect": {
+        "buffer": "foo a foo  b foo",
+        "cursor": [
+          0,
+          11
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<b\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "star_then_dot_d_star",
+      "buffer": "foo x foo bar x bar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d*w.",
+      "expect": {
+        "buffer": "foo bar",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bar x ",
+            "linewise": false
+          },
+          "-": {
+            "text": "bar x ",
+            "linewise": false
+          },
+          "/": {
+            "text": "\\<bar\\>",
+            "linewise": false
+          },
+          "1": {
+            "text": "bar x ",
+            "linewise": false
+          },
+          "2": {
+            "text": "foo x ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dn_dot_new_search",
+      "buffer": "a foo b foo c x d x",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>0dn/x<CR>0.",
+      "expect": {
+        "buffer": "x d x",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo b foo c ",
+            "linewise": false
+          },
+          "-": {
+            "text": "foo b foo c ",
+            "linewise": false
+          },
+          "/": {
+            "text": "x",
+            "linewise": false
+          },
+          "1": {
+            "text": "foo b foo c ",
+            "linewise": false
+          },
+          "2": {
+            "text": "a ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "cn_dot",
+      "buffer": "a foo b foo c foo d",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>0cnX<Esc>.",
+      "expect": {
+        "buffer": "Xfoo b foo c foo d",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "X",
+            "linewise": false
+          },
+          "-": {
+            "text": "X",
+            "linewise": false
+          },
+          "/": {
+            "text": "foo",
+            "linewise": false
+          },
+          "1": {
+            "text": "X",
+            "linewise": false
+          },
+          "2": {
+            "text": "a ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "star_punctuation_after_word",
+      "buffer": "foo++ ++",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "*",
+      "expect": {
+        "buffer": "foo++ ++",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "++",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "hash_punctuation_after_word",
+      "buffer": "foo++ ++",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "#",
+      "expect": {
+        "buffer": "foo++ ++",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "++",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "star_latin_then_cjk",
+      "buffer": "abc漢字 abc漢字",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "*",
+      "expect": {
+        "buffer": "abc漢字 abc漢字",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<abc\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "hash_latin_then_cjk",
+      "buffer": "abc漢字 abc漢字",
+      "cursor": [
+        0,
+        12
+      ],
+      "keys": "#",
+      "expect": {
+        "buffer": "abc漢字 abc漢字",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<abc\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "star_cjk_then_latin",
+      "buffer": "漢字abc 漢字abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "*",
+      "expect": {
+        "buffer": "漢字abc 漢字abc",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<漢字\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "hash_cjk_then_latin",
+      "buffer": "漢字abc 漢字abc",
+      "cursor": [
+        0,
+        12
+      ],
+      "keys": "#",
+      "expect": {
+        "buffer": "漢字abc 漢字abc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<漢字\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "slash_invalid_then_NN",
+      "buffer": "foo bar foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/a\\(<CR>NN",
+      "expect": {
+        "buffer": "foo bar foo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a\\(",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "question_invalid_then_NN",
+      "buffer": "foo bar foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "?a\\(<CR>NN",
+      "expect": {
+        "buffer": "foo bar foo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a\\(",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "slash_invalid_then_N_visual",
+      "buffer": "foo bar foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/a\\(<CR>vNN",
+      "expect": {
+        "buffer": "foo bar foo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "v",
+        "registers": {
+          "/": {
+            "text": "a\\(",
+            "linewise": false
+          }
+        },
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "question_invalid_then_dN",
+      "buffer": "foo bar foo",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "?a\\(<CR>dN",
+      "expect": {
+        "buffer": "foo bar foo",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a\\(",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "y_star_stays",
+      "buffer": "foo x",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "y*",
+      "expect": {
+        "buffer": "foo x",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<foo\\>",
+            "linewise": false
+          }
+        }
+      }
+    }
+  ]
+}

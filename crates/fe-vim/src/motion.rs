@@ -23,15 +23,29 @@ pub(crate) fn move_command(
     target: &mut VimTarget<'_>,
     args: MoveArgs,
 ) -> Dispatched<TransactionId> {
-    if let Motion::Search(search) = args.motion
-        && let Err(message) = cmdline::check_search(target, search)
+    let mut args = args;
+    let keep = match cmdline::resolve(target, args.motion) {
+        Ok((motion, keep)) => {
+            args.motion = motion;
+            keep
+        }
+        Err(message) => {
+            target.state.message = Some(message);
+            return Dispatched::new(Effect::Notify);
+        }
+    };
+    let searching = matches!(args.motion, Motion::Search(_) | Motion::SearchWord(_));
+    if let Motion::Search(search) | Motion::SearchWord(search) = args.motion
+        && let Err(message) = cmdline::check_search(target, search, keep)
     {
         target.state.message = Some(message);
         return Dispatched::new(Effect::Notify);
     }
-    Dispatched::new(match apply(target.model, target.state, args) {
-        true => Effect::Changed,
-        false => Effect::Nothing,
+    // A search that stays put still set the last search and the highlight.
+    Dispatched::new(match (apply(target.model, target.state, args), searching) {
+        (true, _) => Effect::Changed,
+        (false, true) => Effect::Notify,
+        (false, false) => Effect::Nothing,
     })
 }
 
@@ -211,15 +225,27 @@ pub(crate) fn motion(
         Motion::BigWordEnd => cursor.words(Motion::WordEnd, count, true),
         // At a row's end, past its last character, the match is that
         // character, as in nvim.
-        Motion::Search(search) => {
+        Motion::Search(search) | Motion::SearchWord(search) => {
+            let from = match args.motion {
+                Motion::SearchWord(_) => {
+                    search::word_at(cursor.text, cursor.offset(), search.forward)
+                        .map_or(cursor.offset(), |(start, _)| start)
+                }
+                _ => cursor.offset(),
+            };
             let found = search::parsed(search.pattern)
                 .ok()
-                .and_then(|pattern| pattern.nth(cursor.text, cursor.offset(), search.forward, n));
+                .and_then(|pattern| pattern.nth(cursor.text, from, search.forward, n));
             match found {
                 Some(offset) => cursor.goto(offset),
                 None => return Err(goal),
             }
         }
+        // Resolved to a `Search` before they run.
+        Motion::SearchNext
+        | Motion::SearchPrevious
+        | Motion::SearchWordForward
+        | Motion::SearchWordBackward => return Err(goal),
         // `dd`'s target. As a move it is Vim's `_`: the first non-blank
         // `count - 1` rows down.
         Motion::Line => {
