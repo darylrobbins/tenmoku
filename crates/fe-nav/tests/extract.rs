@@ -111,15 +111,24 @@ fn skips_what_it_cannot_index() {
         Skipped::Unreadable(ErrorKind::NotFound)
     );
 
-    // Two invalid bytes become two U+FFFDs, of 3 bytes each, so the loaded
-    // text's offsets are 4 bytes past the file's.
-    fs::write(root.join("lossy.rs"), b"// \xff\xfe\nfn after_lossy() {}\n").unwrap();
+    // More than the 64 KiB the loader's detection looks at, so it takes the
+    // file for UTF-8 and decodes it lossily. Two invalid bytes after it become
+    // two U+FFFDs, of 3 bytes each, so the loaded text's offsets are 4 bytes
+    // past the file's.
+    let filler = "plain ascii filler\n".repeat(6_000);
+    assert!(filler.len() > 64 * 1024);
+    let mut lossy = filler.clone().into_bytes();
+    lossy.extend(b"// \xff\xfe\nfn after_lossy() {}\n");
+    let detected = Buffer::from_reader_detecting(lossy.as_slice()).unwrap();
+    assert_eq!(detected.encoding().label(), "UTF-8");
+    fs::write(root.join("lossy.rs"), lossy).unwrap();
     let file = extract(root, Path::new("lossy.rs")).unwrap();
     let [symbol] = &file.symbols[..] else {
         panic!("one symbol in {file:?}");
     };
     assert_eq!(symbol.name, "after_lossy");
-    assert_eq!(symbol.name_range, 13..24);
+    assert_eq!(symbol.name_range, filler.len() + 13..filler.len() + 24);
+    assert_eq!(symbol.row, 6_001);
     assert_eq!(checked(root, "lossy.rs").len(), 1);
 }
 

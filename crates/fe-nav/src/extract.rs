@@ -39,9 +39,10 @@ pub struct FileSymbols {
 /// One definition.
 ///
 /// Offsets are bytes into the text as the editor loads it, by
-/// [`Buffer::from_reader`]: line endings normalised to `\n` and invalid
-/// UTF-8 replaced with U+FFFD. So they index what an open editor shows,
-/// not the bytes on disk.
+/// [`Buffer::from_reader_detecting`]: a BOM dropped, a legacy encoding
+/// decoded, line endings normalised to `\n` and invalid UTF-8 replaced
+/// with U+FFFD. So they index what an open editor shows, not the bytes on
+/// disk.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Symbol {
     pub name: String,
@@ -183,7 +184,7 @@ fn read(mut file: fs::File, limit: usize) -> Result<Buffer, Skipped> {
         inner: io::Cursor::new(head).chain(file.take(rest)),
         read: 0,
     };
-    let buffer = Buffer::from_reader(&mut reader).map_err(unreadable)?;
+    let buffer = Buffer::from_reader_detecting(&mut reader).map_err(unreadable)?;
     if reader.read > limit {
         return Err(Skipped::TooLarge);
     }
