@@ -90,7 +90,7 @@ fn all(batches: &[Vec<FileReferences>]) -> Vec<&Reference> {
 /// The file's text as the editor loads it.
 fn loaded(root: &Path, rel: &Path) -> Text {
     let file = fs::File::open(root.join(rel)).unwrap();
-    Buffer::from_reader(file).unwrap().text().clone()
+    Buffer::from_reader_detecting(file).unwrap().text().clone()
 }
 
 #[test]
@@ -516,9 +516,10 @@ fn verified_only_when_parsed_as_loaded() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     // Under Rust's parse limit on disk, over it once each invalid byte is a
-    // 3-byte U+FFFD: its comment hit can't be checked, so it's kept.
+    // 3-byte `\u{20AC}` (windows-1252's 0x80): its comment hit can't be
+    // checked, so it's kept.
     let mut bytes = b"// helper\n".to_vec();
-    bytes.extend(std::iter::repeat_n(0xff, 2_700_000));
+    bytes.extend(std::iter::repeat_n(0x80, 2_700_000));
     write_bytes(root, "big.rs", &bytes);
     let req_text = "fn helper() {}\n";
     write(root, "req.rs", req_text);
@@ -585,10 +586,9 @@ fn dropped_hits_count_towards_the_cap() {
 }
 
 #[test]
-fn utf16_hits_are_unverified() {
+fn utf16_hits_are_located() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    // The search reads it transcoded, so its offsets aren't the file's.
     let mut bytes = vec![0xFF, 0xFE];
     bytes.extend("x x x\n".encode_utf16().flat_map(u16::to_le_bytes));
     write_bytes(root, "wide.rs", &bytes);
@@ -602,7 +602,11 @@ fn utf16_hits_are_unverified() {
         .filter(|r| r.location.rel == Path::new("wide.rs"))
         .collect();
     assert_eq!(wide.len(), 3);
-    assert!(wide.iter().all(|r| !r.verified), "{wide:?}");
+    let text = Buffer::from_reader_detecting(bytes.as_slice()).unwrap();
+    for r in &wide {
+        let range = r.location.range.clone();
+        assert_eq!(text.text().slice_to_string(range), "x", "{r:?}");
+    }
 }
 
 #[test]

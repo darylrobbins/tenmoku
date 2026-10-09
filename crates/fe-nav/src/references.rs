@@ -522,13 +522,13 @@ impl Finder<'_> {
                 }
                 let start = line.line_offset as usize;
                 let raw = start + hit.start..start + hit.end;
-                let located = (loaded.as_ref()).and_then(|file| file.locate(&raw, &self.word));
+                let located =
+                    (loaded.as_ref()).and_then(|file| file.locate(start, hit, &self.word));
                 // The preview is decoded as the file is, so where a hit was
                 // found in the text, it's moved as much in the preview.
                 let in_preview = match (&loaded, &located) {
-                    (Some(file), Some((range, _))) => {
-                        let window = file.decoded.map(start + line.preview_start);
-                        range.start.checked_sub(window).map(|at| at..at + hit.len())
+                    (Some(file), Some(_)) => {
+                        file.decoded.in_preview(start, line.preview_start, hit)
                     }
                     _ => hit
                         .start
@@ -697,21 +697,20 @@ struct Filter {
 struct Loaded {
     buffer: Buffer,
     decoded: Decoded,
-    /// It starts with a UTF-16 byte order mark: the search read it
-    /// transcoded, so its offsets aren't the file's.
-    utf16: bool,
 }
 
 impl Loaded {
-    /// Where the hit at `raw`, bytes in the file, is in the text, and the
-    /// row it's on: if the text has `word` there (it doesn't if the file
-    /// changed since the search, or the search read it as UTF-16).
-    fn locate(&self, raw: &Range<usize>, word: &str) -> Option<(Range<usize>, u32)> {
-        if self.utf16 {
-            return None;
-        }
+    /// Where the hit at `hit`, bytes in the line at `line_offset` of the
+    /// file, is in the text, and the row it's on: if the text has `word`
+    /// there (it doesn't if the file changed since the search).
+    fn locate(
+        &self,
+        line_offset: usize,
+        hit: &Range<usize>,
+        word: &str,
+    ) -> Option<(Range<usize>, u32)> {
         let text = self.buffer.text();
-        let range = self.decoded.map(raw.start)..self.decoded.map(raw.end);
+        let range = self.decoded.place(line_offset, hit)?;
         let fits = range.len() == word.len()
             && range.end <= text.len()
             && text.is_char_boundary(range.start)
@@ -724,21 +723,93 @@ impl Loaded {
 }
 
 /// How offsets in a file's bytes move once the loader has decoded it
-/// ([`fe_buffer::Text::from_reader`]): each `\r\n` loses its `\r`, and each invalid
-/// UTF-8 sequence becomes a 3-byte U+FFFD. A lone `\r` becomes a `\n`, the
-/// same length.
+/// ([`fe_buffer::Text::from_reader_detecting`]): a byte order mark is
+/// dropped, each `\r\n` loses its `\r`, and in UTF-8 each invalid sequence
+/// becomes a 3-byte U+FFFD. A lone `\r` becomes a `\n`, the same length.
 struct Decoded {
-    /// From each offset on, by how much offsets move: ascending.
-    shifts: Vec<(usize, isize)>,
+    /// UTF-8's byte order mark, dropped: 3 bytes, or 0.
+    bom: usize,
+    kind: Kind,
 }
 
+enum Kind {
+    Utf8 {
+        /// From each offset on, by how much offsets move: ascending.
+        shifts: Vec<(usize, isize)>,
+    },
+    /// Any other encoding: where each of the file's lines starts.
+    Lines {
+        /// The length in the text of bytes of a line, decoded.
+        text_len: TextLen,
+        /// UTF-16: the search's ranges in a line are in UTF-8.
+        wide: bool,
+        raw: Vec<u8>,
+        /// Each line's start in the file and in the text: ascending.
+        starts: Vec<(usize, usize)>,
+    },
+}
+
+/// See [`Kind::Lines`]; a closure as `fe_text::Encoding` isn't nameable here.
+type TextLen = Box<dyn Fn(&[u8]) -> usize + Send + Sync>;
+
 impl Decoded {
-    fn new(raw: &[u8]) -> Decoded {
+    /// For the file of `raw` bytes that `buffer` was loaded from.
+    fn new(raw: Vec<u8>, buffer: &Buffer) -> Decoded {
+        let file_encoding = buffer.encoding();
+        let encoding = file_encoding.encoding;
+        if file_encoding.name() == "UTF-8" {
+            return Decoded {
+                bom: if file_encoding.bom { 3 } else { 0 },
+                kind: Kind::Utf8 {
+                    shifts: Self::utf8_shifts(&raw),
+                },
+            };
+        }
+        let little = file_encoding.name() == "UTF-16LE";
+        let wide = little || file_encoding.name() == "UTF-16BE";
+        let text_len: TextLen = Box::new(move |bytes| {
+            // Each `\r\n` is one byte in the text.
+            let (text, _) = encoding.decode_without_bom_handling(bytes);
+            text.len() - text.matches("\r\n").count()
+        });
+        let bom = if wide && file_encoding.bom { 2 } else { 0 };
+        let mut starts = Vec::new();
+        let (mut file_at, mut text_at) = (0, 0);
+        while file_at < raw.len() {
+            // The search puts a UTF-16 file's first line after its byte order mark.
+            let from = if file_at == 0 { bom } else { file_at };
+            starts.push((from, text_at));
+            // The line ends after its `\n`: byte 0A, or the unit 000A.
+            let end = if wide {
+                let newline: [u8; 2] = if little { [0x0A, 0] } else { [0, 0x0A] };
+                (raw[file_at..].as_chunks::<2>().0.iter())
+                    .position(|unit| *unit == newline)
+                    .map_or(raw.len(), |ix| file_at + ix * 2 + 2)
+            } else {
+                (raw[file_at..].iter())
+                    .position(|&b| b == b'\n')
+                    .map_or(raw.len(), |ix| file_at + ix + 1)
+            };
+            text_at += text_len(&raw[from.min(end)..end]);
+            file_at = end;
+        }
+        Decoded {
+            bom: 0,
+            kind: Kind::Lines {
+                text_len,
+                wide,
+                raw,
+                starts,
+            },
+        }
+    }
+
+    /// As `String::from_utf8_lossy` splits it, which is how the loader
+    /// replaces invalid sequences.
+    fn utf8_shifts(raw: &[u8]) -> Vec<(usize, isize)> {
         let mut shifts = Vec::new();
         let mut delta = 0isize;
         let mut at = 0;
-        // As `String::from_utf8_lossy` splits it, which is how the loader
-        // replaces invalid sequences.
         for chunk in raw.utf8_chunks() {
             let valid = chunk.valid().as_bytes();
             if valid.contains(&b'\r') {
@@ -757,14 +828,82 @@ impl Decoded {
                 shifts.push((at, delta));
             }
         }
-        Decoded { shifts }
+        shifts
     }
 
-    /// Where offset `raw` of the file is in its decoded text.
+    /// Where offset `raw` of a UTF-8 file is in its decoded text, but for a
+    /// byte order mark.
     fn map(&self, raw: usize) -> usize {
-        let ix = self.shifts.partition_point(|&(from, _)| from <= raw);
-        let delta = ix.checked_sub(1).map_or(0, |ix| self.shifts[ix].1);
+        let Kind::Utf8 { shifts } = &self.kind else {
+            return raw;
+        };
+        let ix = shifts.partition_point(|&(from, _)| from <= raw);
+        let delta = ix.checked_sub(1).map_or(0, |ix| shifts[ix].1);
         raw.saturating_add_signed(delta)
+    }
+
+    /// Where the hit at `hit`, a range in the line at `line_offset` of the
+    /// file, is in the text.
+    fn place(&self, line_offset: usize, hit: &Range<usize>) -> Option<Range<usize>> {
+        match &self.kind {
+            Kind::Utf8 { .. } => {
+                let (start, end) = (line_offset + hit.start, line_offset + hit.end);
+                Some(self.map(start).checked_sub(self.bom)?..self.map(end).checked_sub(self.bom)?)
+            }
+            Kind::Lines {
+                text_len,
+                wide,
+                raw,
+                starts,
+            } => {
+                let ix = starts
+                    .binary_search_by_key(&line_offset, |&(file, _)| file)
+                    .ok()?;
+                let text_at = starts[ix].1;
+                if *wide {
+                    // The search's ranges are in the line as UTF-8.
+                    return Some(text_at + hit.start..text_at + hit.end);
+                }
+                let line = raw.get(line_offset..)?;
+                let prefix = |to: usize| Some(text_len(line.get(..to)?));
+                Some(text_at + prefix(hit.start)?..text_at + prefix(hit.end)?)
+            }
+        }
+    }
+
+    /// Where the hit at `hit` in the line at `line_offset` of the file is in
+    /// the line's preview, which starts at `preview_start` in the line, and
+    /// is lossy UTF-8 of the line as the search read it.
+    fn in_preview(
+        &self,
+        line_offset: usize,
+        preview_start: usize,
+        hit: &Range<usize>,
+    ) -> Option<Range<usize>> {
+        let (start, end) = match &self.kind {
+            Kind::Utf8 { .. } => {
+                let window = self.map(line_offset + preview_start);
+                (
+                    self.map(line_offset + hit.start).checked_sub(window)?,
+                    self.map(line_offset + hit.end).checked_sub(window)?,
+                )
+            }
+            // Transcoded to UTF-8 as the preview is.
+            Kind::Lines { wide: true, .. } => (
+                hit.start.checked_sub(preview_start)?,
+                hit.end.checked_sub(preview_start)?,
+            ),
+            Kind::Lines { raw, .. } => {
+                let line = raw.get(line_offset..)?;
+                let lossy = |to: usize| Some(String::from_utf8_lossy(line.get(..to)?).len());
+                let window = lossy(preview_start)?;
+                (
+                    lossy(hit.start)?.checked_sub(window)?,
+                    lossy(hit.end)?.checked_sub(window)?,
+                )
+            }
+        };
+        Some(start..end)
     }
 }
 
@@ -773,12 +912,6 @@ impl Decoded {
 fn is_whole_word(text: &str, at: usize, len: usize) -> bool {
     !text[..at].chars().next_back().is_some_and(is_word_char)
         && !text[at + len..].chars().next().is_some_and(is_word_char)
-}
-
-/// Whether `bytes` start with a UTF-16 byte order mark, as the search
-/// detects one.
-fn utf16_bom(bytes: &[u8]) -> bool {
-    matches!(bytes, [0xFF, 0xFE, ..] | [0xFE, 0xFF, ..])
 }
 
 /// The preview of the line starting at `line_start` in `source` for the hit
@@ -822,7 +955,7 @@ fn open_under(root: &Path, rel: &Path) -> io::Result<(File, u64)> {
     Ok((file, metadata.len()))
 }
 
-/// Reads `file` as the loader does ([`Buffer::from_reader`]), unless it has
+/// Reads `file` as the loader does ([`Buffer::from_reader_detecting`]), unless it has
 /// grown past `limit` bytes or `cancel` is set meanwhile.
 fn load(file: File, limit: usize, cancel: &AtomicBool) -> Option<Loaded> {
     let mut reader = file.take(limit as u64 + 1);
@@ -842,12 +975,9 @@ fn load(file: File, limit: usize, cancel: &AtomicBool) -> Option<Loaded> {
     if raw.len() > limit {
         return None;
     }
-    let buffer = Buffer::from_reader(raw.as_slice()).ok()?;
-    Some(Loaded {
-        decoded: Decoded::new(&raw),
-        utf16: utf16_bom(&raw),
-        buffer,
-    })
+    let buffer = Buffer::from_reader_detecting(raw.as_slice()).ok()?;
+    let decoded = Decoded::new(raw, &buffer);
+    Some(Loaded { buffer, decoded })
 }
 
 #[cfg(test)]
@@ -1068,7 +1198,10 @@ mod tests {
 
     #[test]
     fn decoded_offsets() {
-        let decoded = Decoded::new(b"a\r\nb\xffc\rd\xe2\x82");
+        let decoded = Decoded::new(
+            b"a\r\nb\xffc\rd\xe2\x82".to_vec(),
+            &Buffer::from_reader(b"".as_slice()).unwrap(),
+        );
         let text = "a\nb\u{fffd}c\nd\u{fffd}";
         // a, b, c, d and the end.
         for (raw, expected) in [(0, 0), (3, 2), (5, 6), (7, 8), (10, text.len())] {
