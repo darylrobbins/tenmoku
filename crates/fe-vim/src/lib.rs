@@ -260,10 +260,8 @@
 //!   with characters put them at the block's left column; and the goal
 //!   column after an operator over a block whose corner is a tab is the
 //!   tab's.
-//! - After the cursor keys split a session over a block, `Esc` types
-//!   nothing on another of its rows the session typed on meanwhile (nvim
-//!   types there too, at the block's column), and what it types on the
-//!   others is undone with the text typed since the last split, where nvim
+//! - After the cursor keys split a session over a block, what `Esc` types
+//!   on the others is undone with the text typed since the last split, where nvim
 //!   undoes `c`'s with the change itself: `fe_buffer` can't add to a closed
 //!   undo step. With nothing typed since, undo puts the caret where typing
 //!   resumed, not where `Esc` left it. After the session's own edit joins

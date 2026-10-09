@@ -43,6 +43,9 @@ use crate::{
     visual,
 };
 
+mod block_rows;
+use block_rows::{Fate, Watch};
+
 /// An open insert session.
 #[derive(Clone, Debug)]
 pub(crate) struct Session {
@@ -109,6 +112,8 @@ struct Block {
     rows: BlockRows,
     /// Shared by clones of the state, and the sessions splits resume.
     first: Arc<Mutex<FirstRow>>,
+    /// Its other rows, followed by who edited them.
+    watch: Arc<Mutex<Watch>>,
 }
 
 /// A block's first row, followed through every edit from the opening of
@@ -226,6 +231,10 @@ impl BlockRow {
 impl Block {
     fn first(&self) -> MutexGuard<'_, FirstRow> {
         self.first.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn watch(&self) -> MutexGuard<'_, Watch> {
+        self.watch.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// What `Esc` types on the other rows, with the primary caret at `head`
@@ -645,6 +654,7 @@ impl Session {
         self.ledger().follow(&self.origin);
         if let Some(block) = &self.block {
             block.first().follow(&self.origin);
+            block.watch().follow(&self.origin);
         }
     }
 
@@ -1258,10 +1268,16 @@ pub(crate) fn block(
     rows: impl FnOnce(&BufferSnapshot) -> BlockRows,
 ) {
     let id = model.buffer_mut().start_transaction(origin.clone());
-    let (snapshot, events, followed) = {
+    let (snapshot, events, followed, watched) = {
         let mut buffer = model.buffer_mut();
         buffer.edit(edits, origin.clone());
-        (buffer.snapshot(), buffer.subscribe(), buffer.subscribe())
+        let subscriptions = (buffer.subscribe(), buffer.subscribe(), buffer.subscribe());
+        (
+            buffer.snapshot(),
+            subscriptions.0,
+            subscriptions.1,
+            subscriptions.2,
+        )
     };
     let text = snapshot.text();
     let begin = history::pair(text, at);
@@ -1286,9 +1302,13 @@ pub(crate) fn block(
         change,
         opens: false,
         resumed: false,
-        block: Some(Block {
-            rows: rows(&snapshot),
-            first: Arc::new(Mutex::new(first)),
+        block: Some({
+            let rows = rows(&snapshot);
+            Block {
+                watch: Arc::new(Mutex::new(Watch::new(watched, &rows))),
+                rows,
+                first: Arc::new(Mutex::new(first)),
+            }
         }),
     };
     enter(model, state, opening, vec![(at, None)], (snapshot, events));
@@ -1740,19 +1760,31 @@ fn type_on_rows(
     let anchors: Vec<Anchor> = rows.rows.iter().flat_map(BlockRow::anchors).collect();
     let mut anchors = snapshot.resolve_many(&anchors).into_iter();
     let mut places = Vec::new();
-    for row in &rows.rows {
-        let Some(start) = row.found((text, &rows.text), &mut anchors) else {
-            continue;
-        };
-        let Some((place, spaces)) = rows.place(row, typed.column) else {
-            continue;
-        };
-        let range = start + place.start..start + place.end;
-        if range.start <= last {
-            continue;
+    {
+        // Released before the model catches up below.
+        let mut watch = block.watch();
+        watch.follow(origin);
+        for (ix, row) in rows.rows.iter().enumerate() {
+            let found = row.found((text, &rows.text), &mut anchors);
+            let (start, placed) = match (watch.fate(ix), found) {
+                (Fate::Same | Fate::Lost, Some(start)) => (start, rows.place(row, typed.column)),
+                (Fate::Typed, _) => {
+                    let start = watch.start(ix);
+                    let placed = block_rows::retyped(rows, row, (text, start), typed.column);
+                    (start, placed)
+                }
+                _ => continue,
+            };
+            let Some((place, spaces)) = placed else {
+                continue;
+            };
+            let range = start + place.start..start + place.end;
+            if range.start <= last {
+                continue;
+            }
+            last = range.end;
+            places.push((range, spaces));
         }
-        last = range.end;
-        places.push((range, spaces));
     }
     let copies = count.max(1) as usize;
     let each = typed
