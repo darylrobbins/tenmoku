@@ -31,7 +31,7 @@ cargo nextest run --workspace     # what CI runs on every push; each test in its
 scripts/soak.sh                   # 50k cases per property, release (a few minutes);
                                   # run after changing undo/redo or anchor code
 scripts/check-syntax-features.sh  # fe-syntax with no languages, then each alone (CI runs it)
-scripts/prune-build-cache.sh --dry-run   # stale regatta incremental dirs; see Disk
+scripts/prune-build-cache.sh --dry-run   # stale incremental dirs of this lane; see Disk
 scripts/test-prune-build-cache.sh        # fixture test for the prune script
 cargo mutants -p fe-buffer -j 4   # by hand, before milestones
 cargo llvm-cov -p fe-buffer --summary-only
@@ -50,8 +50,9 @@ CI's `soak` workflow runs `scripts/soak.sh` on demand.
 
 ## Disk
 
-Regatta lanes share one build cache (`~/Library/Caches/fastedit-regatta/target`);
-each gate snapshot (`.worktrees/.verify/<id>`) builds cold in its own `target/`.
+Each regatta lane builds in its own `target/`, and so does each gate snapshot
+(`.worktrees/.verify/<id>`), cold. `scripts/ci-env.sh` also defaults `CARGO_BUILD_JOBS` to 6
+(a caller's value wins) so concurrent lanes and gates don't oversubscribe the cores.
 `scripts/ci-env.sh` makes snapshots light: `CARGO_INCREMENTAL=0` and
 `CARGO_PROFILE_DEV_DEBUG=line-tables-only` (panics keep file:line), and it exits 75
 with a one-line message when the volume has under `FASTEDIT_MIN_FREE_GIB` (default 10)
@@ -75,8 +76,8 @@ directory when it starts, so after changing `SCCACHE_DIR` or the size run
 only serves their dependencies; snapshots (`CARGO_INCREMENTAL=0`) get their own entries.
 
 `scripts/prune-build-cache.sh [--dry-run] [--older-than MIN] [--if-below GIB]` deletes
-incremental session dirs older than `--older-than` minutes (default 180) from the shared
-cache's `debug/incremental`, always keeping each crate's newest, and prints the GiB
+incremental session dirs older than `--older-than` minutes (default 180) from the
+lane's own `target/debug/incremental` (`$CARGO_TARGET_DIR` if set), always keeping each crate's newest, and prints the GiB
 freed. `--if-below` does nothing while that much is free.
 
 ## Screenshots

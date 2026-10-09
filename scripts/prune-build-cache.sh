@@ -1,12 +1,12 @@
 #!/bin/sh
-# Frees disk in the shared regatta build cache by deleting stale incremental session
+# Frees disk in a lane's own build dir by deleting stale incremental session
 # directories (<cache>/debug/incremental/<crate>-<hash>/<session>). Each crate's newest
 # session is always kept. Nothing outside debug/incremental is touched.
 #
 #   scripts/prune-build-cache.sh [--dry-run] [--older-than MINUTES] [--if-below GIB]
 #
 # --older-than defaults to 180. --if-below makes this a no-op while the volume has at
-# least GIB free. The cache is the target-dir in .worktrees/.cargo/config.toml.
+# least GIB free. Run it from the lane to prune; it only looks at that lane's target.
 set -eu
 
 older=180
@@ -24,27 +24,9 @@ done
 case "$older" in '' | *[!0-9]*) echo "prune-build-cache: --older-than must be a whole number of minutes" >&2; exit 2 ;; esac
 case "$below" in *[!0-9]*) echo "prune-build-cache: --if-below must be a whole number of GiB" >&2; exit 2 ;; esac
 
-# The cache is the target-dir in .worktrees/.cargo/config.toml, found by walking up from
-# here (FASTEDIT_PRUNE_TARGET overrides it, for the test).
-target=${FASTEDIT_PRUNE_TARGET:-}
-if [ -z "$target" ]; then
-	dir=$(cd "$(dirname "$0")" && pwd)
-	config=
-	while [ "$dir" != "/" ]; do
-		if [ -f "$dir/.worktrees/.cargo/config.toml" ]; then config="$dir/.worktrees/.cargo/config.toml"; break; fi
-		if [ -f "$dir/.cargo/config.toml" ] && [ "$(basename "$dir")" = ".worktrees" ]; then config="$dir/.cargo/config.toml"; break; fi
-		dir=$(dirname "$dir")
-	done
-	if [ -z "$config" ]; then
-		echo "prune-build-cache: can't find .worktrees/.cargo/config.toml above $0" >&2
-		exit 1
-	fi
-	target=$(sed -n 's/^[[:space:]]*target-dir[[:space:]]*=[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$config" | head -n 1)
-	if [ -z "$target" ]; then
-		echo "prune-build-cache: no target-dir in $config" >&2
-		exit 1
-	fi
-fi
+# The target is $CARGO_TARGET_DIR if set (rgt sets it per lane), else the target/ of the
+# checkout this script lives in. FASTEDIT_PRUNE_TARGET overrides both, for the test.
+target=${FASTEDIT_PRUNE_TARGET:-${CARGO_TARGET_DIR:-$(cd "$(dirname "$0")/.." && pwd)/target}}
 inc="$target/debug/incremental"
 if [ ! -d "$inc" ]; then
 	echo "prune-build-cache: $inc doesn't exist; nothing to prune"

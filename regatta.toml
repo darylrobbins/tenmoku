@@ -1,12 +1,10 @@
 # Regatta configuration for fastedit. See ~/code/regatta/docs/guide/configuration.md.
 #
-# Lanes live under .worktrees/. A local .worktrees/.cargo/config.toml (not tracked)
-# points them at one shared target directory, so GPUI is built once rather than per lane.
-# Verification snapshots (.worktrees/.verify/<id>) build in their own target/ instead:
-# a workspace crate has the same artifact name in every worktree and cargo trusts mtimes,
-# so concurrent snapshots sharing a target used each other's builds. scripts/ci-env.sh
-# sets that up; every command below runs through it. It also puts cargo (rustup, in
-# ~/.cargo/bin) on PATH.
+# Lanes live under .worktrees/ and each builds in its own target/ (rgt sets CARGO_TARGET_DIR
+# per lane); sccache shares compiled dependencies between them. Verification snapshots
+# (.worktrees/.verify/<id>) also build in their own target/. scripts/ci-env.sh sets that up
+# and caps cargo at CARGO_BUILD_JOBS=6; every command below runs through it. It also puts
+# cargo (rustup, in ~/.cargo/bin) on PATH.
 version = 2
 base_branch = "main"
 worktree_root = ".worktrees"
@@ -42,7 +40,7 @@ deny = 'scripts/ci-env.sh cargo deny check licenses bans sources'
 gate = ["fmt", "vet", "build", "test", "no_gpui", "syntax_features", "deny"]
 fast = ["fmt", "vet", "test"]
 post_merge = ["build", "test"]
-# Cargo serialises on the shared target directory anyway.
+# Each lane has its own target/; ci-env.sh caps cargo at 6 jobs apiece, so 2 stages keep the load bounded.
 max_parallel = 2
 
 [[pipeline.stages]]
@@ -102,7 +100,8 @@ shared_append_only = [
 ]
 
 [caps]
-# Lanes share one target dir (see top), so each costs little disk; builds queue on its lock.
+# Each lane has its own target/ (see top), so every lane costs a full build dir of disk (several GiB);
+# sccache shares the compiled dependencies, and ci-env.sh caps cargo at 6 jobs per build.
 # 4 since 2026-10-07 (user-approved), with disk headroom guarded by scripts/ci-env.sh (T158).
 lanes_max = 4
 
