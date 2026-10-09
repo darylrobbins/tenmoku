@@ -10,7 +10,7 @@ use std::{
     os::unix::fs::symlink,
     path::{Path, PathBuf},
     sync::mpsc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use notify::{
@@ -22,6 +22,10 @@ use crate::{ConfigWatcher, SettingsStore, watch::Tracker};
 
 /// An upper bound only, sized for a loaded CI host: FSEvents may take a while.
 const TIMEOUT: Duration = Duration::from_secs(60);
+
+/// How long [`project_edit_seen_while_registering`] waits for a batch before
+/// rewriting the user's target again.
+const RETRY: Duration = Duration::from_secs(1);
 
 /// Loads `path`, starts a fresh watcher over it, takes its first batch, then
 /// makes `change` and reloads each batch naming `path` until `done` holds.
@@ -280,9 +284,10 @@ fn watcher_follows_links_changed_while_registering() {
 /// batches may name the unchanged user file too. Each is reloaded, and the
 /// loop ends once the project's edit is loaded. With `await_user`, it also
 /// waits for a later batch naming the user file. The caller's `extra` may
-/// cause one, but its write can land before the OS stream for `a` runs, and
-/// is then lost, so after the first batch the test rewrites the user's target
-/// itself, which the watcher certainly sees, so the tolerant loop takes one.
+/// cause one, but a single write can go unreported: each `watch` replaces the
+/// OS stream, and one created under load may not be attached when the write
+/// lands, so no event comes. The test then rewrites the user's target every
+/// [`RETRY`] until a batch names it, so it never depends on one write.
 pub(super) fn project_edit_seen_while_registering(
     await_user: bool,
     extra: impl Fn(&Path, &Path) + Send + 'static,
@@ -320,15 +325,25 @@ pub(super) fn project_edit_seen_while_registering(
         },
     )
     .unwrap();
-    let batch = || batches.recv_timeout(TIMEOUT).expect("a batch in time");
-    assert_eq!(batch(), [user.clone(), project.clone()]);
-    if await_user {
-        settings_in(&a, "");
-    }
+    let first = batches.recv_timeout(TIMEOUT).expect("a first batch");
+    assert_eq!(first, [user.clone(), project.clone()]);
     fs::write(&to_c, "editor.font_size = 18\n").unwrap();
+    let deadline = Instant::now() + TIMEOUT;
     let mut seen_user = false;
     loop {
-        let batch = batch();
+        let wait = if await_user && !seen_user {
+            RETRY
+        } else {
+            TIMEOUT
+        };
+        let batch = match batches.recv_timeout(wait) {
+            Ok(batch) => batch,
+            Err(mpsc::RecvTimeoutError::Timeout) if Instant::now() < deadline => {
+                settings_in(&a, "");
+                continue;
+            }
+            Err(error) => panic!("a batch in time: {error}"),
+        };
         let mut files = [&user, &project].into_iter();
         assert!(
             !batch.is_empty() && batch.iter().all(|f| files.any(|expected| expected == f)),
