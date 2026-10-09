@@ -216,34 +216,51 @@ fn a_rerun_between_press_and_release_opens_no_other_match(cx: &mut TestAppContex
 
 #[gpui::test]
 fn invalid_utf8_before_a_match_shifts_its_highlight_and_selection(cx: &mut TestAppContext) {
+    // More than the 64 KiB the loader's detection looks at, so it takes both
+    // files for UTF-8 and the editor decodes them lossily. The malformed bytes
+    // and the matches come after it.
+    let filler = "plain ascii filler\n".repeat(6_000);
+    assert!(filler.len() > 64 * 1024);
+    // a.txt: an invalid byte just before the match.
+    let mut short = filler.clone().into_bytes();
+    short.extend(b"ab\xFFneedle\n");
     // b.txt: a 2-byte invalid sequence before a match past the preview's
     // reach, so the preview starts mid-line.
-    let mut long = b"\xF0\x9F".to_vec();
+    let mut long = filler.into_bytes();
+    long.extend(b"\xF0\x9F");
     long.extend(b"x".repeat(1_000));
     long.extend(b" needle\n");
-    // Enough valid multi-byte UTF-8 after the invalid byte that the loader's
-    // detection still takes the files for UTF-8.
-    let utf8 = "éàüöçñ ünïcödé\n".repeat(200);
-    let mut short = b"ab\xFFneedle\n".to_vec();
-    short.extend(utf8.as_bytes());
-    long.extend(utf8.as_bytes());
+    for bytes in [&short, &long] {
+        let buffer = fe_buffer::Buffer::from_reader_detecting(bytes.as_slice()).unwrap();
+        assert_eq!(buffer.encoding().label(), "UTF-8");
+    }
     let dir = project(&[("a.txt", &short), ("b.txt", &long)]);
     let (workbench, search, cx) = searching(cx, dir.path());
     run("needle", cx);
 
     let rows = shown(&search, cx);
     assert_eq!(rows.len(), 4, "{rows:?}");
-    assert_eq!(rows[1], line_row(1, "ab\u{FFFD}needle", &[(5, 11)]));
+    assert_eq!(rows[1], line_row(6_001, "ab\u{FFFD}needle", &[(5, 11)]));
     let ShownRow::Line(_, preview, highlights) = &rows[3] else {
         panic!("{rows:?}");
     };
     assert_eq!(highlights, &[find(preview, "needle")]);
 
-    for ix in [1, 3] {
+    let tails = [
+        (1, "ab\u{FFFD}needle\n".to_string()),
+        (3, format!("\u{FFFD}{} needle\n", "x".repeat(1_000))),
+    ];
+    for (ix, tail) in tails {
         let row = result_center(&search, ix, cx);
         cx.simulate_click(row, Modifiers::none());
         let (text, selection, focused) = editor(&workbench, cx);
-        assert_eq!(selection, find(&text, "needle"), "row {ix}");
+        // The invalid bytes decoded to U+FFFD, and the selection is past them.
+        assert!(text.ends_with(&tail), "row {ix}");
+        assert_eq!(
+            selection,
+            text.len() - "needle\n".len()..text.len() - 1,
+            "row {ix}"
+        );
         assert_eq!(&text[selection], "needle");
         assert!(focused);
         cx.simulate_keystrokes("cmd-shift-f");

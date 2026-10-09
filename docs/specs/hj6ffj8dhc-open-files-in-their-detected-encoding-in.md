@@ -58,5 +58,5 @@ literals written to a tempdir. `src/tests/status_bar.rs` `file_facts` must keep 
 
 ## Implementation notes
 
-- `tests::search_panel_followups::invalid_utf8_before_a_match_…` assumed the editor decodes invalid bytes lossily. Detection now opens such files in the detected legacy encoding, so the test's `a.txt` carries valid multi-byte UTF-8 after the bad byte to stay on the lossy UTF-8 path, and the final "decodes lossily" assertion (`b.txt` starts with an invalid sequence, so it's no longer UTF-8) is dropped.
-- Follow-up: the search panel maps byte offsets assuming a lossy UTF-8 decode, so for files opened in another encoding its selection can be off. Not addressed here.
+- `tests::search_panel_followups::invalid_utf8_before_a_match_…` assumed the editor decodes invalid bytes lossily. Detection opens files with malformed bytes in the first 64 KiB in a legacy encoding, so the test's fixtures keep their malformed bytes past the 64 KiB detection window (after more than 64 KiB of valid ASCII lines). Detection takes them for UTF-8, which the test asserts, and the editor's decoded text is asserted again.
+- Follow-up: the search panel maps byte offsets assuming a lossy UTF-8 decode, so for files opened in another encoding (or BOM-prefixed) its selection can be off. Not addressed here; the search-panel encoding card covers it.
