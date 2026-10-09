@@ -202,8 +202,34 @@ command = "window.toggle_fullscreen"
 name = "Go"
 
 [[menus.items]]
+title = "Back"
+command = "nav.back"
+
+[[menus.items]]
+title = "Forward"
+command = "nav.forward"
+
+[[menus.items]]
+separator = true
+
+[[menus.items]]
 title = "Go to File…"
 command = "quick_open.toggle"
+
+[[menus.items]]
+title = "Go to Symbol in Workspace…"
+command = "nav.workspace_symbols"
+
+[[menus.items]]
+separator = true
+
+[[menus.items]]
+title = "Go to Definition"
+command = "nav.goto_definition"
+
+[[menus.items]]
+title = "Find All References"
+command = "nav.find_references"
 
 [[menus.items]]
 separator = true
