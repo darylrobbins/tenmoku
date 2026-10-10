@@ -56,7 +56,7 @@ case "$cmd" in
     # Settings, keymap and trust decisions go to $RUN_DIR, not the user's.
     tmux new-window -t "$SESSION" -n app \
       "cd '$REPO' && DISPLAY=$DISPLAY_NUM XDG_CONFIG_HOME='$RUN_DIR/config' \
-       XDG_STATE_HOME='$RUN_DIR/state' RUST_LOG=info,zbus=warn \
+       XDG_STATE_HOME='$RUN_DIR/state' RUST_LOG=info \
        '$BIN' '$target' 2>&1 | tee '$LOG'"
     # Ready once the window has drawn: the blank screen is one colour.
     for _ in $(seq 60); do
@@ -78,9 +78,20 @@ case "$cmd" in
     ;;
   key)
     [[ $# -ge 1 ]] || die "usage: key <keys>..."
+    # F1-F12 go as key codes: by name, xdotool picks a level of Xvfb's
+    # CTRL+ALT key type and sends them with Alt held (F10 arrives alt-f10).
+    keys=()
+    for k in "$@"; do
+      mods="${k%F*}"; n="${k##*F}"
+      if [[ "$k" =~ (^|\+)F([1-9]|1[0-2])$ ]]; then
+        if (( n <= 10 )); then code=$((66 + n)); else code=$((84 + n)); fi
+        k="${mods}${code}"
+      fi
+      keys+=("$k")
+    done
     # The pointer must be over the window for keys to reach it: nothing
     # gives it focus otherwise, with no window manager.
-    DISPLAY=$DISPLAY_NUM xdotool mousemove 640 400 key --delay 80 "$@"
+    DISPLAY=$DISPLAY_NUM xdotool mousemove 640 400 key --delay 80 "${keys[@]}"
     sleep 0.3
     ;;
   type)

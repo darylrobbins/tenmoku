@@ -44,7 +44,8 @@ $D key Return                        # Trust Folder
 $D key ctrl+p && $D type main && $D key Return   # quick open src/main.rs
 $D key ctrl+End && $D type '// edited'
 $D ss /tmp/fastedit-run/02-edited.png
-$D click 1021 76                     # a row of the project tree, in screen pixels
+$D click 1021 105                    # a row of the project tree, in screen pixels
+$D key F10 Right Down Return         # the in-window menu bar: Edit > Redo
 $D log 20
 $D stop
 ```
@@ -57,14 +58,15 @@ Then **read the PNG** to see the result.
 | `start [path]` | launch on a folder or file (default: the repo) and wait for a frame |
 | `ss <out.png>` | screenshot the 1280×800 screen; prints the colour count (1 = blank) |
 | `click <x> <y>` | left click at screen pixels |
-| `key <keys>...` | xdotool key names: `ctrl+p`, `Return`, `Escape`, `ctrl+shift+bracketleft` |
+| `key <keys>...` | xdotool key names: `ctrl+p`, `Return`, `Escape`, `ctrl+shift+bracketleft`, `F10` |
 | `type <text>` | type text into what has focus |
 | `log [n]` | tail of the app's log (`/tmp/fastedit-run/app.log`) |
 | `stop` | kill the app and Xvfb; unsaved edits are dropped |
 
-The window is 1200×800 centred on the screen: x 40–1240. The project
-tree's rows start at about (1020, 76), 24 px apart; the editor's first line
-is at y 64. Settings, keymap and trust decisions go to
+The window is 1200×800 centred on the screen: x 40–1240. The menu bar is
+the top 28 px (File at x 64, Edit 103, View 147, Go 187, Window 236); the
+project tree's rows start at about (1020, 105), 24 px apart, and the
+editor's first line is at y 93. Settings, keymap and trust decisions go to
 `/tmp/fastedit-run/{config,state}`, never the user's `~/.config` and
 `~/.local/state`. Environment variables `FE_DISPLAY` (default `:99`),
 `FE_RUN_DIR` and `FE_SESSION` move it.
@@ -104,8 +106,18 @@ and then times out after 10 s; it passes alone. Install nextest with
   answered (Enter trusts, Escape doesn't). A file launch roots the tree at
   its folder and doesn't ask. `stop` and `start` again: the trust decision
   persists in `/tmp/fastedit-run/state` and the prompt doesn't come back.
-- **There's no menu bar on Linux**, so menu-only commands (Open File…,
-  Untrust This Folder) can't be reached; open files with ctrl+p or the tree.
+- **F1–F12 by name arrive with Alt held**: xdotool picks a level of Xvfb's
+  `CTRL+ALT` key type for them, so `xdotool key F10` reaches the app as
+  `alt-f10`. `driver.sh key` sends them as key codes instead; use it, not
+  raw xdotool, for function keys.
+- **`RUST_LOG` takes one level** (`debug`, `info`), not `env_logger`
+  filters: `info,zbus=warn` doesn't parse and falls back to info.
+- **The menu bar is drawn in the window** (GPUI has no native one on
+  Linux). It takes focus while a menu is open: keys go to it until Escape
+  or a chosen item gives focus back.
+- **Open Folder… (ctrl+o) and Open File…** need xdg-desktop-portal, which
+  Xvfb has none of: they show "The open panel isn't available". Pass the
+  folder to `start` instead.
 - **rust-analyzer restarts, then stops** ("closed its output (EOF)") unless
   `rustup component add rust-analyzer` has been run; the status bar shows it.
   Harmless for everything else.
