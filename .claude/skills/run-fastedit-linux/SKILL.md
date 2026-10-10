@@ -69,7 +69,14 @@ project tree's rows start at about (1020, 105), 24 px apart, and the
 editor's first line is at y 93. Settings, keymap and trust decisions go to
 `/tmp/fastedit-run/{config,state}`, never the user's `~/.config` and
 `~/.local/state`. Environment variables `FE_DISPLAY` (default `:99`),
-`FE_RUN_DIR` and `FE_SESSION` move it.
+`FE_RUN_DIR` and `FE_SESSION` move it, and `FE_BIN` runs another binary,
+such as the kiln gallery:
+
+```bash
+cargo build -p kiln --example gallery
+FE_BIN=target/debug/examples/gallery FE_DISPLAY=:97 FE_SESSION=gallery \
+  FE_RUN_DIR=/tmp/gallery-run $D start
+```
 
 ### On Wayland
 

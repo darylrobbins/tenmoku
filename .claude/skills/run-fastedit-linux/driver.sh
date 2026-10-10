@@ -13,7 +13,9 @@
 #   driver.sh stop                  quit the app and Xvfb
 #
 # FE_WAYLAND=1 driver.sh start runs the app on Wayland instead: Weston,
-# nested in Xvfb, with no server-side decorations, as GNOME.
+# nested in Xvfb, with no server-side decorations, as GNOME. FE_BIN runs
+# another binary the same way, such as the kiln gallery
+# (target/debug/examples/gallery), which ignores the path.
 set -euo pipefail
 
 DISPLAY_NUM="${FE_DISPLAY:-:99}"
@@ -21,7 +23,7 @@ RUN_DIR="${FE_RUN_DIR:-/tmp/fastedit-run}"
 SESSION="${FE_SESSION:-fastedit}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../../.." && pwd)"
-BIN="$REPO/target/debug/fastedit"
+BIN="${FE_BIN:-$REPO/target/debug/fastedit}"
 FB="$RUN_DIR/fb/Xvfb_screen0"
 LOG="$RUN_DIR/app.log"
 export PATH="$HOME/.cargo/bin:$PATH"
