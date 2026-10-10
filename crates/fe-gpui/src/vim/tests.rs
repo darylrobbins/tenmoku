@@ -9,7 +9,7 @@ use fe_command::{ContextFrame, ContextStack, Invocation, Source, Value};
 use fe_editor::EditorModel;
 use fe_keymap::{
     DEFAULT_KEYMAP_PATH, DEFAULT_MACOS, ItemKind, Keymap, KeymapLayer, KeymapStore, Keystroke,
-    MenuBar, Modifiers,
+    Modifiers,
 };
 use gpui::{Bounds, Entity, Focusable as _, Pixels, TestAppContext, VisualTestContext, px, size};
 
@@ -278,7 +278,7 @@ fn setting_and_toggle(cx: &mut TestAppContext) {
     // The View menu's item runs `vim.toggle`.
     let catalog = command_catalog();
     // fe-workbench's items are dropped: their commands are in its catalog.
-    let (bar, diagnostics) = MenuBar::default_macos(Some(&*catalog));
+    let (bar, diagnostics) = fe_keymap::default_menus_macos(Some(&*catalog));
     assert!(
         diagnostics.iter().all(|d| !d.message.contains("vim.")),
         "{diagnostics:?}"

@@ -1,9 +1,11 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 //! Matching keystrokes as they're pressed against a keymap, including
 //! chords such as `cmd-k cmd-0`.
 
 use std::sync::Arc;
 
-use fe_command::{CommandId, ContextStack, Invocation};
+use kiln_command::{CommandId, ContextStack, Invocation};
 
 use crate::{
     keymap::{Binding, Keymap},
@@ -15,7 +17,7 @@ use crate::{
 pub enum KeyOutcome {
     /// The keys pressed so far match a binding exactly, and no longer
     /// binding in the context starts with them: run it. Its source is
-    /// [`fe_command::Source::Keyboard`] and its context the stack.
+    /// [`kiln_command::Source::Keyboard`] and its context the stack.
     Dispatch(Invocation),
     /// The keys pressed so far start a longer binding: wait for the next
     /// keystroke, or for the host's chord timer to call [`Matcher::flush`].

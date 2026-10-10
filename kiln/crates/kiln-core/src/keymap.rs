@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 //! Keymap files and the keymap layered from them.
 //!
 //! A keymap file is a flat list of bindings:
@@ -24,11 +26,11 @@ use std::{
     sync::Arc,
 };
 
-use fe_command::{
+use crate::{Diagnostic, Layer, Severity};
+use kiln_command::{
     CommandId, CommandTarget, ContextPredicate, ContextStack, DispatchError, Invocation, Registry,
     Value,
 };
-use fe_config::{Diagnostic, Layer, Severity};
 use toml::de::{DeTable, DeValue};
 
 use crate::keystroke::{Key, KeySequence, Keystroke};
@@ -112,7 +114,7 @@ impl Binding {
     pub fn invocation(&self, stack: &ContextStack) -> Invocation {
         Invocation::new(self.command.clone())
             .args(self.args.clone())
-            .source(fe_command::Source::Keyboard)
+            .source(kiln_command::Source::Keyboard)
             .context(stack.clone())
     }
 }
@@ -188,7 +190,7 @@ impl Keymap {
     /// later entry), or `None` if none applies. Longer bindings starting
     /// with it are ignored and no chord is touched: for a click
     /// ([`Key::Click`]), which never starts one. Like a matched key's, the
-    /// invocation's source is [`fe_command::Source::Keyboard`] and its
+    /// invocation's source is [`kiln_command::Source::Keyboard`] and its
     /// context `stack`; a host dispatching a click sets the source.
     pub fn lookup(&self, keystroke: &Keystroke, stack: &ContextStack) -> Option<Invocation> {
         self.bindings

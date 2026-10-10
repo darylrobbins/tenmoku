@@ -20,7 +20,7 @@ use crate::{
 };
 
 fn default_bar() -> MenuBar {
-    let (bar, diagnostics) = MenuBar::default_macos(None);
+    let (bar, diagnostics) = fe_keymap::default_menus_macos(None);
     assert_eq!(diagnostics, []);
     bar.unwrap()
 }

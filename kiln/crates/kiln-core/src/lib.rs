@@ -10,19 +10,45 @@
 //! which files changed; [`write_setting`] changes one setting in a file,
 //! keeping its comments; [`AppPaths`] says where an app keeps its files; and
 //! [`trust`] records which folders the user trusts.
+//!
+//! Keys: keystrokes such as `cmd-shift-left` and chords such as
+//! `cmd-k cmd-0`; [`Keymap`]s layered from files (an app's defaults, then the
+//! user's `keymap.toml`), reloaded by a [`KeymapStore`]; a [`Matcher`] that
+//! matches keystrokes as they're pressed against the bindings whose context
+//! holds; and reports of bindings that hide or delay each other. [`menu`]
+//! is the menu bar as data, its shortcuts read from the keymap.
 
 pub mod diagnostic;
+mod keymap;
+mod keystroke;
+mod label;
 pub mod layers;
+mod load;
+mod matcher;
+pub mod menu;
 pub mod paths;
 pub mod platform;
+mod report;
 pub mod trust;
 pub mod watch;
 pub mod write;
 
 pub use diagnostic::{Diagnostic, Severity};
+pub use keymap::{Binding, CatalogError, CommandCatalog, Entry, Keymap, KeymapLayer, Location};
+pub use keystroke::{Key, KeySequence, Keystroke, KeystrokeError, Modifiers};
+pub use label::{macos_label, pc_label, shortcut_label};
 pub use layers::{Layer, load_layer, merge, parse_layer};
+pub use load::{
+    DEFAULT_KEYMAP_PATH, KEYMAP_FILE, KeymapEvent, KeymapStore, load_keymap, load_keymap_layer,
+};
+pub use matcher::{KeyOutcome, Matcher};
+pub use menu::{
+    Alternative, CommandItem, ItemKind, Menu, MenuBar, MenuItem, OsAction, Place, SystemItem,
+    SystemMenu, shortcuts,
+};
 pub use paths::{AppId, AppPaths, PathStyle};
 pub use platform::Os;
+pub use report::KeymapIssue;
 pub use watch::ConfigWatcher;
 pub use write::write_setting;
 

@@ -27,7 +27,7 @@ fn keymap(user: Option<&str>) -> Keymap {
 }
 
 fn default_bar() -> MenuBar {
-    let (bar, diagnostics) = MenuBar::default_macos(None);
+    let (bar, diagnostics) = fe_keymap::default_menus_macos(None);
     assert_eq!(diagnostics, []);
     bar.expect("the default menus load")
 }
@@ -346,7 +346,7 @@ fn hosts_extend_and_replace() {
     );
 
     // A catalog that lacks a command drops its item, warning once.
-    let (bar, diagnostics) = MenuBar::default_macos(Some(&Without("outline.show")));
+    let (bar, diagnostics) = fe_keymap::default_menus_macos(Some(&Without("outline.show")));
     assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     assert_eq!(diagnostics[0].severity, Severity::Warning);
     assert!(diagnostics[0].message.contains("outline.show"));
@@ -430,7 +430,7 @@ fn commands_by_menu(bar: &MenuBar) -> Vec<(String, Vec<String>)> {
 
 #[test]
 fn linux_menus_are_the_macos_menus_without_the_app_menu() {
-    let (linux, diagnostics) = MenuBar::default_linux(None);
+    let (linux, diagnostics) = fe_keymap::default_menus_linux(None);
     assert_eq!(diagnostics, []);
     let linux = linux.expect("the Linux menus load");
     let names: Vec<_> = linux.menus.iter().map(|menu| menu.name.as_str()).collect();

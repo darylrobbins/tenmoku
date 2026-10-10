@@ -1857,6 +1857,7 @@ version = "0.1.0"
 dependencies = [
  "fe-config",
  "kiln-command",
+ "kiln-core",
  "schemars",
  "serde",
  "serde_json",
@@ -3528,12 +3529,15 @@ dependencies = [
 name = "kiln-core"
 version = "0.1.0"
 dependencies = [
+ "kiln-command",
  "libc",
  "log",
  "notify",
+ "schemars",
  "serde",
  "serde_json",
  "tempfile",
+ "thiserror 2.0.21",
  "toml 1.1.6+spec-1.1.0",
  "toml_edit 0.25.15+spec-1.1.0",
 ]

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 //! Loading the default and user keymaps, and reloading the user's when it
 //! changes.
 
@@ -6,20 +8,14 @@ use std::{
     sync::Arc,
 };
 
-use fe_config::Diagnostic;
+use crate::Diagnostic;
 
 use crate::keymap::{CommandCatalog, Keymap, KeymapLayer};
 
-/// The user keymap's name, in the user config directory.
-pub const KEYMAP_FILE: &str = "keymap.toml";
+pub use crate::paths::KEYMAP_FILE;
 
 /// The path diagnostics and bindings name for the built-in default keymap.
 pub const DEFAULT_KEYMAP_PATH: &str = "<default keymap>";
-
-/// `<config_dir>/keymap.toml`: see [`fe_config::config_dir`].
-pub fn user_keymap_path() -> Option<PathBuf> {
-    fe_config::config_dir().map(|dir| dir.join(KEYMAP_FILE))
-}
 
 /// The keymap from the built-in `default_source` and the user's file, if
 /// any, and their diagnostics. A file with errors is left out; a missing
@@ -30,14 +26,14 @@ pub fn load_keymap(default_source: &str, user: Option<&Path>) -> (Keymap, Vec<Di
     (Keymap::clone(&store.keymap), store.diagnostics)
 }
 
-/// Reads the keymap file at `path` through [`fe_config::load_layer`]: the
+/// Reads the keymap file at `path` through [`crate::load_layer`]: the
 /// layer if it has no errors, and the diagnostics either way. A missing file
 /// is an empty layer.
 pub fn load_keymap_layer(
     path: &Path,
     catalog: Option<&dyn CommandCatalog>,
 ) -> (Option<KeymapLayer>, Vec<Diagnostic>) {
-    let layer = fe_config::load_layer(path);
+    let layer = crate::load_layer(path);
     if layer.has_errors() {
         return (None, layer.diagnostics);
     }
@@ -90,7 +86,7 @@ impl UserLayer {
 impl KeymapStore {
     /// Loads the built-in `default_source` and the user's keymap file at
     /// `user`, which may be missing. With a `catalog`, such as the command
-    /// [`fe_command::Registry`], bindings to unknown commands are dropped
+    /// [`kiln_command::Registry`], bindings to unknown commands are dropped
     /// with a warning and bad args are errors.
     pub fn load(
         default_source: &str,
@@ -135,7 +131,7 @@ impl KeymapStore {
         &self.diagnostics
     }
 
-    /// The user's keymap file, for a [`fe_config::ConfigWatcher`].
+    /// The user's keymap file, for a [`crate::ConfigWatcher`].
     pub fn paths(&self) -> Vec<PathBuf> {
         self.user.iter().map(|layer| layer.path.clone()).collect()
     }

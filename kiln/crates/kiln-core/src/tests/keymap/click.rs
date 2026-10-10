@@ -1,9 +1,11 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 //! A click as a bindable key: `cmd-click` parses and prints, binds only as
 //! one modified keystroke, and [`crate::Keymap::lookup`] finds what it runs.
 
 use std::path::Path;
 
-use fe_config::Severity;
+use crate::Severity;
 
 use super::{keymap, keystroke, stack};
 use crate::{Key, KeyOutcome, KeymapLayer, Keystroke, Matcher, Modifiers};

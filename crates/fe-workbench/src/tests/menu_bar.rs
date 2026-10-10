@@ -6,7 +6,7 @@ use std::{cell::RefCell, fs, path::Path, rc::Rc};
 
 use fe_buffer::Buffer;
 use fe_command::{Invocation, Source};
-use fe_keymap::{DEFAULT_KEYMAP_PATH, DEFAULT_LINUX, Keymap, KeymapLayer, MenuBar};
+use fe_keymap::{DEFAULT_KEYMAP_PATH, DEFAULT_LINUX, Keymap, KeymapLayer};
 use fe_ui::MENU_BAR_HEIGHT;
 use gpui::{Entity, Focusable as _, Modifiers, TestAppContext, VisualTestContext, point, px};
 
@@ -35,7 +35,7 @@ fn setup(
     cx.update(|_, cx| {
         let (layer, _) = KeymapLayer::parse(Path::new(DEFAULT_KEYMAP_PATH), DEFAULT_LINUX, None);
         fe_gpui::set_user_keymap(cx, Keymap::from_layers([layer.unwrap()]));
-        let (bar, diagnostics) = MenuBar::default_linux(Some(&*crate::command_catalog()));
+        let (bar, diagnostics) = fe_keymap::default_menus_linux(Some(&*crate::command_catalog()));
         assert_eq!(diagnostics, []);
         fe_gpui::menu::install(cx, bar.unwrap());
         let sink = seen.clone();

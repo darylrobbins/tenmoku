@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+mod keymap;
 mod paths;
 mod watch;
 mod watch_late;

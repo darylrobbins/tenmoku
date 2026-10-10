@@ -5,7 +5,7 @@
 use std::{cell::RefCell, path::Path, rc::Rc};
 
 use fe_command::{Invocation, Source};
-use fe_keymap::{DEFAULT_KEYMAP_PATH, DEFAULT_MACOS, Keymap, KeymapLayer, MenuBar};
+use fe_keymap::{DEFAULT_KEYMAP_PATH, DEFAULT_MACOS, Keymap, KeymapLayer};
 use gpui::{Context, IntoElement, Render, TestAppContext, Window, WindowHandle, div};
 
 use super::{MenuCommand, choose, native};
@@ -14,7 +14,7 @@ use crate::{commands::observe_invocations, init, menu, set_user_keymap};
 fn install(cx: &mut TestAppContext) {
     cx.update(|cx| {
         init(cx);
-        let (bar, diagnostics) = MenuBar::default_macos(None);
+        let (bar, diagnostics) = fe_keymap::default_menus_macos(None);
         assert_eq!(diagnostics, []);
         menu::install(cx, bar.unwrap());
     });

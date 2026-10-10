@@ -1,7 +1,9 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 use std::path::Path;
 
-use fe_command::CommandId;
-use fe_config::Severity;
+use crate::Severity;
+use kiln_command::CommandId;
 
 use super::{keymap, keys, keystroke, registry, stack, write};
 use crate::{KeyOutcome, KeymapIssue, KeymapStore, Location, Matcher};

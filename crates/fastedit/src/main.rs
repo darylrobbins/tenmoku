@@ -16,7 +16,7 @@ use fe_buffer::Buffer;
 use fe_config::{ConfigWatcher, Diagnostic, Settings, SettingsStore};
 use fe_gpui::{
     EditorTheme,
-    fe_keymap::{self, KeymapStore, MenuBar},
+    fe_keymap::{self, KeymapStore},
 };
 use fe_workbench::{Workbench, loader};
 use gpui::{
@@ -101,7 +101,7 @@ fn load_keymap() -> KeymapStore {
 /// shortcuts follow the keymap: hot reload reinstalls it.
 fn install_menus(cx: &mut App) {
     let catalog = fe_workbench::command_catalog();
-    let (menus, diagnostics) = MenuBar::default_for_platform(Some(&*catalog));
+    let (menus, diagnostics) = fe_keymap::default_menus(Some(&*catalog));
     log_diagnostics(&diagnostics);
     if let Some(menus) = menus {
         fe_gpui::menu::install(cx, menus);

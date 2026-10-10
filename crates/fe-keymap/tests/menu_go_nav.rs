@@ -5,7 +5,7 @@ use std::path::Path;
 use fe_keymap::{DEFAULT_KEYMAP_PATH, DEFAULT_MACOS, KeySequence, Keymap, KeymapLayer, MenuBar};
 
 fn default_bar() -> MenuBar {
-    let (bar, diagnostics) = MenuBar::default_macos(None);
+    let (bar, diagnostics) = fe_keymap::default_menus_macos(None);
     assert_eq!(diagnostics, []);
     bar.expect("the default menus load")
 }

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 //! Keystrokes such as `cmd-shift-left`, and sequences of them such as
 //! `cmd-k cmd-0`.
 

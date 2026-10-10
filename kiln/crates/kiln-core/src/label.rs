@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 //! Key sequences as menus and tooltips print them: in macOS symbols, such
 //! as `⇧⌘F`, or spelled out elsewhere, such as `Ctrl+Shift+F`.
 
@@ -64,7 +66,7 @@ pub fn pc_label(keys: &KeySequence) -> String {
 /// `keys` as this platform prints them: [`macos_label`] on macOS,
 /// [`pc_label`] elsewhere.
 pub fn shortcut_label(keys: &KeySequence) -> String {
-    if cfg!(target_os = "macos") {
+    if crate::Os::current() == crate::Os::MacOs {
         macos_label(keys)
     } else {
         pc_label(keys)

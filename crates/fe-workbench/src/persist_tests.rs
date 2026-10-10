@@ -11,7 +11,7 @@ use std::{
 use fe_command::{ContextFrame, ContextStack, Invocation};
 use fe_config::{Settings, SettingsStore};
 use fe_gpui::{EditorSettings, EditorTheme, commands::RunCommand, menu::MenuCommand, vim_enabled};
-use fe_keymap::{ItemKind, MenuBar};
+use fe_keymap::ItemKind;
 use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 
 use super::{Saver, VIM, save_toggles_to};
@@ -186,7 +186,7 @@ fn menu_toggle_with_no_window_keeps_its_value(
     for (menus_first, cx) in [(true, menus_first), (false, saving_first)] {
         let (_dir, path) = settings_file();
         let catalog = crate::command_catalog();
-        let (bar, _) = MenuBar::default_macos(Some(&*catalog));
+        let (bar, _) = fe_keymap::default_menus_macos(Some(&*catalog));
         let bar = bar.unwrap();
         let item = bar
             .menu("View")

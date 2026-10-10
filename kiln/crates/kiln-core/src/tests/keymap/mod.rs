@@ -1,5 +1,7 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
+mod bindings;
 mod click;
-mod keymap;
 mod keystroke;
 mod load;
 mod matcher;
@@ -9,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use fe_command::{
+use kiln_command::{
     CommandTarget, ContextFrame, ContextPredicate, ContextStack, Dispatched, Effect, Registry,
 };
 use schemars::JsonSchema;

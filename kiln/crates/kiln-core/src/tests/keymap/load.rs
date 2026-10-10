@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 //! The one test that waits on the file system. Waits are bounded by
 //! [`TIMEOUT`], and no duration is asserted.
 
@@ -8,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-use fe_config::ConfigWatcher;
+use crate::ConfigWatcher;
 
 use super::{keystroke, stack, write};
 use crate::{KeyOutcome, KeymapStore, Matcher};

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 use crate::{Key, KeySequence, Keystroke, Modifiers};
 
 fn parse(source: &str) -> Keystroke {

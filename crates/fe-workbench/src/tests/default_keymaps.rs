@@ -110,7 +110,7 @@ fn vim_keeps_its_ctrl_keys_on_linux() {
 
 #[test]
 fn the_linux_menus_name_known_commands() {
-    let (bar, diagnostics) = fe_keymap::MenuBar::default_linux(Some(&*command_catalog()));
+    let (bar, diagnostics) = fe_keymap::default_menus_linux(Some(&*command_catalog()));
     assert_eq!(diagnostics, []);
     assert!(bar.is_some());
 }

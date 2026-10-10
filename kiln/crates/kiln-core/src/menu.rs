@@ -1,7 +1,8 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 //! The menu bar as data: a table of menus and items, read from TOML, whose
-//! shortcuts come from the active [`Keymap`]. GPUI-free, so a host can
-//! replace or extend fastedit's menus without GPUI code; `fe-gpui` installs
-//! them.
+//! shortcuts come from the active [`Keymap`]. GPUI-free, so an app's menus,
+//! and a host's changes to them, are data; `kiln-platform` installs them.
 //!
 //! ```toml
 //! [[menus]]
@@ -29,10 +30,10 @@
 
 use std::{collections::HashSet, ops::Range, path::Path, sync::Arc};
 
-use fe_command::{
+use crate::{Diagnostic, Layer, Severity};
+use kiln_command::{
     CommandId, ContextFrame, ContextPredicate, ContextStack, Invocation, Source, Value,
 };
-use fe_config::{Diagnostic, Layer, Severity};
 use toml::de::{DeTable, DeValue};
 
 use crate::{
@@ -168,37 +169,6 @@ impl MenuBar {
         let bar = parser.parse();
         let ok = !parser.diagnostics.iter().any(Diagnostic::is_error);
         (ok.then_some(bar), parser.diagnostics)
-    }
-
-    /// The built-in macOS menus, [`crate::DEFAULT_MACOS_MENUS`].
-    pub fn default_macos(catalog: Option<&dyn CommandCatalog>) -> (Option<Self>, Vec<Diagnostic>) {
-        Self::parse(
-            Path::new(DEFAULT_MENUS_PATH),
-            crate::DEFAULT_MACOS_MENUS,
-            catalog,
-        )
-    }
-
-    /// The built-in Linux menus, [`crate::DEFAULT_LINUX_MENUS`]: macOS's,
-    /// but for its app menu, whose Settings… and Quit are in File.
-    pub fn default_linux(catalog: Option<&dyn CommandCatalog>) -> (Option<Self>, Vec<Diagnostic>) {
-        Self::parse(
-            Path::new(DEFAULT_MENUS_PATH),
-            crate::DEFAULT_LINUX_MENUS,
-            catalog,
-        )
-    }
-
-    /// This platform's built-in menus: [`MenuBar::default_macos`] on macOS,
-    /// [`MenuBar::default_linux`] elsewhere.
-    pub fn default_for_platform(
-        catalog: Option<&dyn CommandCatalog>,
-    ) -> (Option<Self>, Vec<Diagnostic>) {
-        if cfg!(target_os = "macos") {
-            Self::default_macos(catalog)
-        } else {
-            Self::default_linux(catalog)
-        }
     }
 
     pub fn menu(&self, name: &str) -> Option<&Menu> {

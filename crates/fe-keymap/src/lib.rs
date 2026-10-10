@@ -6,27 +6,58 @@
 //! feeds it keystrokes and context stacks and runs its chord timer. Must
 //! never depend on GPUI.
 
-mod keymap;
-mod keystroke;
-mod label;
-mod load;
-mod matcher;
-pub mod menu;
-mod report;
+// The keymap and menu machinery is kiln's (docs/decisions/app-framework.md);
+// fastedit keeps its names for it, and its own keymaps and menus here.
+pub use kiln_core::menu;
+pub use kiln_core::{
+    Alternative, Binding, CatalogError, CommandCatalog, CommandItem, DEFAULT_KEYMAP_PATH, Entry,
+    ItemKind, KEYMAP_FILE, Key, KeyOutcome, KeySequence, Keymap, KeymapEvent, KeymapIssue,
+    KeymapLayer, KeymapStore, Keystroke, KeystrokeError, Location, Matcher, Menu, MenuBar,
+    MenuItem, Modifiers, OsAction, Place, SystemItem, SystemMenu, load_keymap, load_keymap_layer,
+    macos_label, pc_label, shortcut_label, shortcuts,
+};
 
-pub use keymap::{Binding, CatalogError, CommandCatalog, Entry, Keymap, KeymapLayer, Location};
-pub use keystroke::{Key, KeySequence, Keystroke, KeystrokeError, Modifiers};
-pub use label::{macos_label, pc_label, shortcut_label};
-pub use load::{
-    DEFAULT_KEYMAP_PATH, KEYMAP_FILE, KeymapEvent, KeymapStore, load_keymap, load_keymap_layer,
-    user_keymap_path,
-};
-pub use matcher::{KeyOutcome, Matcher};
-pub use menu::{
-    Alternative, CommandItem, ItemKind, Menu, MenuBar, MenuItem, OsAction, Place, SystemItem,
-    SystemMenu, shortcuts,
-};
-pub use report::KeymapIssue;
+use std::path::{Path, PathBuf};
+
+use fe_config::Diagnostic;
+
+/// `<config_dir>/keymap.toml`: fastedit's user keymap.
+pub fn user_keymap_path() -> Option<PathBuf> {
+    fe_config::paths::app_paths().keymap_file()
+}
+
+/// The built-in macOS menus, [`DEFAULT_MACOS_MENUS`].
+pub fn default_menus_macos(
+    catalog: Option<&dyn CommandCatalog>,
+) -> (Option<MenuBar>, Vec<Diagnostic>) {
+    MenuBar::parse(
+        Path::new(menu::DEFAULT_MENUS_PATH),
+        DEFAULT_MACOS_MENUS,
+        catalog,
+    )
+}
+
+/// The built-in Linux menus, [`DEFAULT_LINUX_MENUS`]: macOS's, but for its
+/// app menu, whose Settings… and Quit are in File.
+pub fn default_menus_linux(
+    catalog: Option<&dyn CommandCatalog>,
+) -> (Option<MenuBar>, Vec<Diagnostic>) {
+    MenuBar::parse(
+        Path::new(menu::DEFAULT_MENUS_PATH),
+        DEFAULT_LINUX_MENUS,
+        catalog,
+    )
+}
+
+/// This platform's built-in menus: [`default_menus_macos`] on macOS,
+/// [`default_menus_linux`] elsewhere.
+pub fn default_menus(catalog: Option<&dyn CommandCatalog>) -> (Option<MenuBar>, Vec<Diagnostic>) {
+    if cfg!(target_os = "macos") {
+        default_menus_macos(catalog)
+    } else {
+        default_menus_linux(catalog)
+    }
+}
 
 /// The built-in macOS keymap, the first layer under the user's: see
 /// [`KeymapStore::load`].
@@ -44,12 +75,9 @@ pub const DEFAULT: &str = if cfg!(target_os = "macos") {
     DEFAULT_LINUX
 };
 
-/// The built-in macOS menu bar: see [`MenuBar::default_macos`].
+/// The built-in macOS menu bar: see [`default_menus_macos`].
 pub const DEFAULT_MACOS_MENUS: &str = include_str!("../menus/default-macos.toml");
 
 /// The built-in Linux menu bar, drawn in the window: see
-/// [`MenuBar::default_linux`].
+/// [`default_menus_linux`].
 pub const DEFAULT_LINUX_MENUS: &str = include_str!("../menus/default-linux.toml");
-
-#[cfg(test)]
-mod tests;

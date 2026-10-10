@@ -1,8 +1,10 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 //! Bindings that hide or delay each other.
 
 use std::fmt;
 
-use fe_command::{ContextFrame, ContextStack};
+use kiln_command::{ContextFrame, ContextStack};
 
 use crate::keymap::{Binding, Keymap};
 
