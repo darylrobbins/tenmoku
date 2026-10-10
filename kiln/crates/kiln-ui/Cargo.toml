@@ -9,9 +9,11 @@ rust-version.workspace = true
 license = "LicenseRef-Proprietary"
 publish = false
 
-# GPUI only: no workspace crate, so any host can use these.
+# GPUI and kiln's GPUI-free core (TextField's editing model): no app
+# crate, so any host can use these.
 [dependencies]
 gpui.workspace = true
+kiln-core.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

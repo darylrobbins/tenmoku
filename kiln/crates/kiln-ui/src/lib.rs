@@ -4,8 +4,9 @@
 //! makes active with [`set_ui_theme`]. Views that own an app's state, such
 //! as a project tree or a tab pane, build their rows and tabs from these.
 //!
-//! Depends on GPUI alone. Written for kiln: nothing here is copied from
-//! gpui-kit or elsewhere.
+//! Depends on GPUI and kiln-core (for [`TextField`]'s editing model).
+//! Written for kiln, except [`TextField`], adapted from GPUI's Apache-2.0
+//! input example (see its header); nothing is copied from gpui-kit.
 
 mod activity_rail;
 mod assets;
@@ -19,6 +20,7 @@ mod palette;
 mod prompt;
 mod status_bar;
 mod tab_bar;
+pub mod text_field;
 mod text_input;
 mod theme;
 mod toggle_button;
@@ -37,6 +39,7 @@ pub use palette::{PALETTE_WIDTH, PaletteFrame};
 pub use prompt::{PROMPT_WIDTH, Prompt, prompt_renderer};
 pub use status_bar::{StatusBarFrame, StatusEntry};
 pub use tab_bar::{TAB_HEIGHT, Tab, TabBar};
+pub use text_field::{TextField, TextFieldEvent};
 pub use text_input::{TextInput, TextInputEvent};
 pub use theme::{ActiveUiTheme, ROW_HEIGHT, UiTheme, set_ui_theme, ui_theme};
 pub use toggle_button::ToggleButton;

@@ -18,11 +18,17 @@
 | `crates/fe-syntax/queries/outline/scala.scm` | tree-sitter-scala crate `queries/tags.scm` | version 0.26.2 | MIT |
 | `crates/fe-syntax/queries/definitions/scala.scm` | tree-sitter-scala crate `queries/tags.scm` | version 0.26.2 | MIT |
 | `crates/fe-syntax/queries/outline/lua.scm` | tree-sitter-lua crate `queries/tags.scm` | version 0.5.0 | MIT |
+| `kiln/crates/kiln-ui/src/text_field.rs` | [gpui-pre](https://crates.io/crates/gpui-pre) 0.3.7 `examples/input.rs` (Zed's Apache-2.0 GPUI) | zed `1a28cff` | Apache-2.0 |
 
 gpui-kit is Copyright 2024 - 2026 Longbridge. Its files carry no license
 header and the repository has no NOTICE file, so each adapted file starts with
 a header naming the source, commit and license and saying what was changed.
 Ship the Apache-2.0 license text with them.
+
+kiln's `TextField` adapts the text-input example that ships with GPUI
+(Copyright Zed Industries, Apache-2.0): its line shaping, selection and caret
+quads, IME marked-range underline and input-handler methods. The file's
+header names the source and licence and its module docs say what was changed.
 
 The outline and definitions queries adapted from a grammar crate's
 `queries/tags.scm` come from the crate version `fe-syntax` already links
