@@ -25,7 +25,7 @@ type ClickHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
 
 /// Applies `own` (the control's look) to `base`, then the styles the
 /// caller set on it, so the caller's win.
-fn styled(
+pub(crate) fn styled(
     mut base: Stateful<Div>,
     own: impl FnOnce(Stateful<Div>) -> Stateful<Div>,
 ) -> Stateful<Div> {

@@ -4,6 +4,7 @@ mod active_theme;
 mod assets;
 mod controls;
 mod file_icons;
+mod layout;
 mod list;
 mod prompt;
 mod text_field;
