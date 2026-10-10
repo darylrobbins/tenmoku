@@ -127,3 +127,28 @@ fn a_long_legacy_line_with_many_hits_is_decoded_in_bounded_work() {
     }
     assert!(elapsed.as_secs() < 5, "{elapsed:?}");
 }
+
+/// A hit that starts inside a multibyte character of a legacy encoding is
+/// rejected, and the hit after it on the line is still placed.
+#[test]
+fn a_rejected_hit_inside_a_multibyte_character_leaves_later_hits_placed() {
+    // Shift_JIS: `\xC2\x81` is U+0081 as UTF-8 to the search, but in
+    // Shift_JIS `\x81t` is one character that a hit boundary splits.
+    let mut bytes = b"// \x82\xA0\x82\xA2\x82\xA4\x82\xA6\x82\xA8\n".to_vec();
+    bytes.extend(b"fn target() {}\n");
+    bytes.extend(b"fn main() { \xC2\x81target target(); }\n");
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("file.rs"), &bytes).unwrap();
+    let buffer = Buffer::from_reader_detecting(bytes.as_slice()).unwrap();
+    let batches = find(dir.path());
+    let refs: Vec<_> = (batches.into_iter().flatten())
+        .filter(|file| file.rel == Path::new("file.rs"))
+        .flat_map(|file| file.refs)
+        .collect();
+    let verified: Vec<_> = refs.iter().filter(|r| r.verified).collect();
+    assert!(verified.iter().any(|r| r.location.row == 2), "{refs:?}");
+    for r in verified {
+        let text = buffer.text().slice_to_string(r.location.range.clone());
+        assert_eq!(text, "target", "{r:?}");
+    }
+}

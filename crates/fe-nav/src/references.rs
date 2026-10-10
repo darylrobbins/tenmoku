@@ -741,8 +741,8 @@ enum Kind {
     },
     /// Any other encoding: where each of the file's lines starts.
     Lines {
-        /// The length in the text of bytes of a line, decoded.
-        text_len: TextLen,
+        /// A decoder of a line, to measure it in pieces.
+        decoder: NewDecoder,
         /// UTF-16: the search's ranges in a line are in UTF-8.
         wide: bool,
         raw: Vec<u8>,
@@ -760,16 +760,20 @@ struct Cursor {
     raw: usize,
     /// The length in the text of the bytes before `raw`.
     text: usize,
+    /// Decodes the line from its start up to `raw`, keeping a character
+    /// split by a hit's boundary, so lengths add up.
+    decoder: Option<PieceLen>,
 }
 
 impl Cursor {
     /// The length in the text of the `to` first bytes of `line`.
-    fn advance(&mut self, line: &[u8], to: usize, text_len: &TextLen) -> Option<usize> {
+    fn advance(&mut self, line: &[u8], to: usize, new_decoder: &NewDecoder) -> Option<usize> {
         let bytes = line.get(..to)?;
         if to < self.raw {
             *self = Cursor::default();
         }
-        self.text += text_len(&bytes[self.raw..]);
+        let decoder = self.decoder.get_or_insert_with(|| new_decoder());
+        self.text += decoder(&bytes[self.raw..]);
         self.raw = to;
         Some(self.text)
     }
@@ -777,6 +781,13 @@ impl Cursor {
 
 /// See [`Kind::Lines`]; a closure as `fe_text::Encoding` isn't nameable here.
 type TextLen = Box<dyn Fn(&[u8]) -> usize + Send + Sync>;
+
+/// The length in the text of the next piece of a line, decoded after the
+/// pieces before it.
+type PieceLen = Box<dyn FnMut(&[u8]) -> usize + Send + Sync>;
+
+/// A new [`PieceLen`], at a line's start.
+type NewDecoder = Box<dyn Fn() -> PieceLen + Send + Sync>;
 
 impl Decoded {
     /// For the file of `raw` bytes that `buffer` was loaded from.
@@ -797,6 +808,15 @@ impl Decoded {
             // Each `\r\n` is one byte in the text.
             let (text, _) = encoding.decode_without_bom_handling(bytes);
             text.len() - text.matches("\r\n").count()
+        });
+        let decoder: NewDecoder = Box::new(move || {
+            let mut decoder = encoding.new_decoder_without_bom_handling();
+            Box::new(move |bytes| {
+                let mut text =
+                    String::with_capacity(decoder.max_utf8_buffer_length(bytes.len()).unwrap_or(0));
+                let _ = decoder.decode_to_string(bytes, &mut text, false);
+                text.len() - text.matches("\r\n").count()
+            })
         });
         let bom = if wide && file_encoding.bom { 2 } else { 0 };
         let mut starts = Vec::new();
@@ -822,7 +842,7 @@ impl Decoded {
         Decoded {
             bom: 0,
             kind: Kind::Lines {
-                text_len,
+                decoder,
                 wide,
                 raw,
                 starts,
@@ -882,10 +902,11 @@ impl Decoded {
                 Some(self.map(start).checked_sub(self.bom)?..self.map(end).checked_sub(self.bom)?)
             }
             Kind::Lines {
-                text_len,
+                decoder,
                 wide,
                 raw,
                 starts,
+                ..
             } => {
                 let ix = starts
                     .binary_search_by_key(&line_offset, |&(file, _)| file)
@@ -896,8 +917,8 @@ impl Decoded {
                     return Some(text_at + hit.start..text_at + hit.end);
                 }
                 let line = raw.get(line_offset..)?;
-                let start = cursor.advance(line, hit.start, text_len)?;
-                let end = cursor.advance(line, hit.end, text_len)?;
+                let start = cursor.advance(line, hit.start, decoder)?;
+                let end = cursor.advance(line, hit.end, decoder)?;
                 Some(text_at + start..text_at + end)
             }
         }
