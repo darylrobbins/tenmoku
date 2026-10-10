@@ -748,3 +748,37 @@ context = "find_bar"
 keys = { macos = "alt-cmd-r", default = "alt-r" }
 command = "find.toggle_regex"
 context = "find_bar"
+
+# Completion: `ctrl-space` asks at the caret. While the menu shows, its keys
+# win over the editor's and vim's insert mode's, being later at the same
+# depth.
+
+[[bindings]]
+keys = "ctrl-space"
+command = "editor.trigger_completion"
+context = "editor"
+
+[[bindings]]
+keys = "up"
+command = "completion.select_prev"
+context = "completion"
+
+[[bindings]]
+keys = "down"
+command = "completion.select_next"
+context = "completion"
+
+[[bindings]]
+keys = "enter"
+command = "completion.accept"
+context = "completion"
+
+[[bindings]]
+keys = "tab"
+command = "completion.accept"
+context = "completion"
+
+[[bindings]]
+keys = "escape"
+command = "completion.dismiss"
+context = "completion"
