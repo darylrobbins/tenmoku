@@ -4,6 +4,7 @@ mod golden;
 pub(crate) mod imports_recovery;
 mod injected_clears;
 mod kotlin_sql_overrides;
+mod query_budget_cache;
 mod query_overrides;
 
 use fe_buffer::{Buffer, Origin};

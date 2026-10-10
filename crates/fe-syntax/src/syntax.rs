@@ -34,15 +34,24 @@ const WINDOW_BYTES: usize = 32 * 1024;
 const FLAT_CHILDREN: u32 = 1024;
 
 /// How long one [`Syntax::highlights`] call may query and parse injected
-/// layers for. Sixty rows take about 0.1 ms, so only a pathological tree or
-/// query reaches this; its highlights stop where the time ran out. Tests and
-/// the `no-query-budget` feature have no limit, so a busy machine can't make
-/// them flaky.
-const QUERY_BUDGET: Duration = if cfg!(any(test, feature = "no-query-budget")) {
+/// layers for. Sixty rows take about 0.1 ms, but a debug build or a loaded
+/// machine can take longer; the highlights then stop where the time ran out,
+/// and the range is queried again with twice the time, up to
+/// [`QUERY_BUDGET_MAX`]. Tests have a deadline too far off to pass unless
+/// they say (see `DEADLINE_AFTER`), and the `no-query-budget` feature has
+/// none, so a busy machine can't make them flaky.
+const QUERY_BUDGET: Duration = if cfg!(test) {
+    Duration::from_secs(3600)
+} else if cfg!(feature = "no-query-budget") {
     Duration::MAX
 } else {
     Duration::from_millis(2)
 };
+
+/// The most time a range's query is given, after running out of 2, 4 and
+/// 8 ms. One that runs out of 16 ms is pathological: what it found is cached
+/// like a complete result, so it isn't queried, and drawn, forever.
+const QUERY_BUDGET_MAX: Duration = QUERY_BUDGET.saturating_mul(8);
 
 /// How long [`ParseJob::run`] lets a parse take before giving up on it.
 /// Tree-sitter's progress callback is the only way to stop one, and some
@@ -63,19 +72,37 @@ const FULL_PARSE_CAP: Duration = Duration::from_secs(5);
 /// one range per run of consecutive visible rows.
 const CACHED_RANGES: usize = 8;
 
+/// How many ranges whose query ran out of time [`Syntax`] remembers. Far
+/// more than a frame queries, so that cycling through a frame's ranges, more
+/// than [`CACHED_RANGES`] of them, never forgets one's attempts and starts it
+/// again at [`QUERY_BUDGET`], asking for a redraw forever.
+const CUT_SHORT_RANGES: usize = 1024;
+
 /// What [`Syntax::highlights`] keeps between calls.
 #[derive(Default)]
 struct Cache {
     /// Recent results for the current tree, newest last, so frames that
     /// neither scroll nor edit don't query again.
     ranges: VecDeque<(Range<usize>, Vec<HighlightSpan>)>,
+    /// Recent ranges whose query ran out of time on the current tree, newest
+    /// last, with how many times it did: the next query of one gets
+    /// [`QUERY_BUDGET`] doubled that many times. A range that ran out of
+    /// [`QUERY_BUDGET_MAX`] stays here, so if `ranges` drops its result, it's
+    /// queried again with that much time and cached, without a redraw.
+    cut_short: VecDeque<(Range<usize>, u32)>,
     /// Kept across edits, which are applied to them as to the tree.
     layers: Layers,
 }
 
 impl Cache {
-    fn clear(&mut self) {
+    /// Forgets the results for the current tree.
+    fn forget_ranges(&mut self) {
         self.ranges.clear();
+        self.cut_short.clear();
+    }
+
+    fn clear(&mut self) {
+        self.forget_ranges();
         self.layers.clear();
     }
 }
@@ -154,7 +181,7 @@ impl Syntax {
         let version = self.version();
         let cache = self.cache.get_mut();
         if snapshot.id() != self.snapshot.id() || snapshot.version() != version {
-            cache.ranges.clear();
+            cache.forget_ranges();
         }
         let mapped = snapshot.id() == self.snapshot.id()
             && snapshot.version() >= version
@@ -314,7 +341,7 @@ impl Syntax {
         for edit in input_edits(parsed.snapshot.text(), &self.snapshot, version) {
             tree.edit(&edit);
         }
-        self.cache.get_mut().ranges.clear();
+        self.cache.get_mut().forget_ranges();
         if parsed.window.is_some() {
             self.window = Some((included_range(&tree), tree));
             self.window_parsed = Some(version);
@@ -343,10 +370,14 @@ impl Syntax {
     /// before the tree changes doesn't query again.
     ///
     /// A query that runs out of [`QUERY_BUDGET`] returns the highlights found
-    /// so far, and they're cached like any others. But if time runs out while
-    /// finding or parsing injections, or an injected language isn't compiled
-    /// yet (see [`Syntax::take_missing_languages`]), the result isn't cached: the
-    /// next call tries again, keeping the layers parsed so far.
+    /// so far, which color the top of the range and leave the rest plain. They
+    /// aren't cached: the next call queries the range again with twice the
+    /// time, and [`Syntax::take_missing_languages`] returns the host language
+    /// so that call comes without waiting for input. A range that runs out
+    /// of [`QUERY_BUDGET_MAX`] too keeps what it found, cached like a complete
+    /// result. If time runs out while finding or parsing injections, or an
+    /// injected language isn't compiled yet, the result isn't cached either:
+    /// the next call tries again, keeping the layers parsed so far.
     ///
     /// Without a full tree, the window's highlights are used, those in
     /// `range` ∩ [`Syntax::window`].
@@ -377,12 +408,15 @@ impl Syntax {
         }
 
         let parsed = parsed == Some(self.version());
+        let attempt = cache.cut_short.iter().position(|(cut, _)| *cut == range);
+        let attempts = attempt.map_or(0, |attempt| cache.cut_short[attempt].1);
+        let budget = QUERY_BUDGET.saturating_mul(1 << attempts);
         let layers = &mut cache.layers;
         let query = || {
             // `None` for a budget too long to be a time.
-            let deadline = Instant::now().checked_add(QUERY_BUDGET);
+            let deadline = Instant::now().checked_add(budget);
             let language = self.language;
-            let spans = highlight_query(
+            let (spans, finished) = highlight_query_finished(
                 language,
                 text,
                 tree,
@@ -396,9 +430,10 @@ impl Syntax {
                 tree,
                 parsed,
             };
-            injection::paint(host, range.clone(), deadline, layers, spans)
+            let (spans, complete) = injection::paint(host, range.clone(), deadline, layers, spans);
+            (spans, finished, complete)
         };
-        let Ok((spans, complete)) = catch_unwind(AssertUnwindSafe(query)) else {
+        let Ok((spans, finished, complete)) = catch_unwind(AssertUnwindSafe(query)) else {
             log::error!(
                 "{}: highlighting panicked; showing plain text",
                 self.language.name()
@@ -407,7 +442,27 @@ impl Syntax {
             return Vec::new();
         };
         let spans = highlighted(spans);
-        if complete {
+        if let Some(attempt) = attempt {
+            cache.cut_short.remove(attempt);
+        }
+        // Whether the next call gets more time for what this one didn't find.
+        let retry = !finished && budget < QUERY_BUDGET_MAX;
+        if retry {
+            // Draw again, so the rows past the cut get their colors.
+            let name = self.language.name();
+            if !cache.layers.missing.contains(&name) {
+                cache.layers.missing.push(name);
+            }
+        }
+        if !finished {
+            if cache.cut_short.len() == CUT_SHORT_RANGES {
+                cache.cut_short.pop_front();
+            }
+            cache
+                .cut_short
+                .push_back((range.clone(), attempts + u32::from(retry)));
+        }
+        if complete && !retry {
             if cache.ranges.len() == CACHED_RANGES {
                 cache.ranges.pop_front();
             }
@@ -423,6 +478,9 @@ impl Syntax {
     ///
     /// A language compiled since it was found is still returned: the
     /// highlights already shown lack it all the same, and need redrawing.
+    /// So is the buffer's own language after a query that ran out of time
+    /// and wasn't cached, though it's compiled: the rows past the cut showed
+    /// plain, and the next call has more time for them.
     pub fn take_missing_languages(&self) -> Vec<&'static str> {
         std::mem::take(&mut self.cache.borrow_mut().layers.missing)
     }
@@ -444,7 +502,7 @@ impl Syntax {
     }
 
     /// Queries `tree` for the highlights in `range` without injections,
-    /// stopping after `budget`. See [`highlight_query`].
+    /// stopping after `budget`. See [`highlight_query_finished`].
     #[cfg(test)]
     pub(crate) fn query(
         &self,
@@ -493,21 +551,34 @@ impl Syntax {
 /// Queries `tree`, of `language` and parsed from `text`, for the highlights
 /// in `range`, stopping at `deadline`, with the runs `@none` cleared. With `split`, nodes with many children
 /// are queried a child at a time; that's only correct when no pattern spans
-/// several siblings.
-pub(crate) fn highlight_query(
+/// several siblings. Also returns whether the query ran to the end, rather
+/// than stopping at the deadline.
+pub(crate) fn highlight_query_finished(
     language: &Language,
     text: &Text,
     tree: &Tree,
     range: Range<usize>,
     split: bool,
     deadline: Option<Instant>,
-) -> Vec<Painted> {
+) -> (Vec<Painted>, bool) {
     fault_point("query");
     let mut captures = Vec::new();
+    // Set once the deadline passes. As in finding injections, a split tree
+    // can have a root per short statement, each queried too briefly for the
+    // progress callback to check the deadline, so it's checked at each root.
+    let mut stopped = false;
     for_each_query_root(tree, &range, split, |cursor, node| {
+        if stopped || out_of_time(deadline) {
+            stopped = true;
+            return;
+        }
         // Predicates like `#match?` read node text straight from the rope.
         let source = |node: Node| chunks(text, node.byte_range());
-        let mut progress = |_: &_| until(deadline);
+        let mut progress = |_: &_| {
+            let flow = until(deadline);
+            stopped |= flow.is_break();
+            flow
+        };
         let options = QueryCursorOptions::new().progress_callback(&mut progress);
         let mut matches = cursor.captures_with_options(&language.query, node, source, options);
         while let Some((found, ix)) = matches.next() {
@@ -526,13 +597,27 @@ pub(crate) fn highlight_query(
             }
         }
     });
-    if out_of_time(deadline) {
+    if stopped {
         log::debug!(
             "{}: highlighting {range:?} ran out of time; showing what was found",
             language.name()
         );
     }
-    flatten(captures, range)
+    (flatten(captures, range), !stopped)
+}
+
+/// [`highlight_query_finished`]'s highlights. Injected layers use this: a
+/// layer's query that stops leaves the deadline passed, which
+/// [`injection::paint`] checks after it.
+pub(crate) fn highlight_query(
+    language: &Language,
+    text: &Text,
+    tree: &Tree,
+    range: Range<usize>,
+    split: bool,
+    deadline: Option<Instant>,
+) -> Vec<Painted> {
+    highlight_query_finished(language, text, tree, range, split, deadline).0
 }
 
 /// Whether `deadline` has passed. `None` never does.
