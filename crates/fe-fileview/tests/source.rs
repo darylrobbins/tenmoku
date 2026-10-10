@@ -298,6 +298,86 @@ fn unreadable_context_keeps_readable_text() {
     assert_eq!(text.slice_to_string(chunk..chunk + 10), "");
 }
 
+/// A completed two-chunk file whose first chunk ends with `tail` (and whose
+/// second is `x`s), truncated to the first chunk.
+fn truncated_after(tail: &[u8]) -> FileText {
+    let dir = tempfile::tempdir().unwrap();
+    let chunk = CHUNK_BYTES as usize;
+    let mut bytes = vec![b'x'; chunk - tail.len()];
+    bytes.extend_from_slice(tail);
+    bytes.extend(vec![b'x'; chunk]);
+    let path = dir.path().join("cut.txt");
+    fs::write(&path, bytes).unwrap();
+    let view = Arc::new(FileView::open(&path).unwrap());
+    let text = complete(&view);
+    OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len(CHUNK_BYTES)
+        .unwrap();
+    text
+}
+
+#[test]
+fn truncation_keeps_surviving_multibyte_chars() {
+    let chunk = CHUNK_BYTES as usize;
+    let text = truncated_after("é".as_bytes());
+    assert_eq!(text.char_at(chunk - 2), Some('é'));
+    assert_eq!(text.char_at(chunk - 1), None);
+    assert!(!text.is_char_boundary(chunk - 1));
+    assert_eq!(text.clip_offset(chunk - 1, Bias::Left), chunk - 2);
+    assert_eq!(text.clip_offset(chunk - 1, Bias::Right), chunk);
+    assert_eq!(text.error(), Some(ReadErrorKind::Changed));
+
+    let text = truncated_after("€".as_bytes());
+    assert_eq!(text.char_at(chunk - 3), Some('€'));
+    for inside in [chunk - 2, chunk - 1] {
+        assert!(!text.is_char_boundary(inside), "{inside}");
+        assert_eq!(text.clip_offset(inside, Bias::Left), chunk - 3);
+        assert_eq!(text.clip_offset(inside, Bias::Right), chunk);
+    }
+    assert_eq!(text.slice_to_string(chunk - 3..chunk), "€");
+}
+
+#[test]
+fn truncation_keeps_surviving_crlf() {
+    let chunk = CHUNK_BYTES as usize;
+    let text = truncated_after(b"\r\n");
+    assert_eq!(text.char_at(chunk - 2), Some('\n'));
+    assert!(!text.is_char_boundary(chunk - 1));
+    assert_eq!(text.clip_offset(chunk - 1, Bias::Left), chunk - 2);
+    assert_eq!(text.clip_offset(chunk - 1, Bias::Right), chunk);
+    // A range cut inside the break reads the rest of it.
+    assert_eq!(text.slice_to_string(chunk - 3..chunk - 1), "x");
+    assert_eq!(text.slice_to_string(chunk - 1..chunk), "\n");
+}
+
+#[test]
+fn cached_text_keeps_readable_preceding_context() {
+    let dir = tempfile::tempdir().unwrap();
+    let chunk = CHUNK_BYTES as usize;
+    let mut bytes = vec![b'x'; chunk];
+    bytes.extend_from_slice("€".as_bytes());
+    bytes.extend(vec![b'x'; chunk]);
+    let path = dir.path().join("prev.txt");
+    fs::write(&path, bytes).unwrap();
+    let view = Arc::new(FileView::open(&path).unwrap());
+    let text = complete(&view);
+    // Cache the second chunk, then lose the file's start.
+    assert_eq!(text.char_at(chunk), Some('€'));
+    OpenOptions::new()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_len(0)
+        .unwrap();
+    assert_eq!(text.char_at(chunk), Some('€'));
+    assert!(!text.is_char_boundary(chunk + 1));
+    assert_eq!(text.clip_offset(chunk + 1, Bias::Left), chunk);
+    assert_eq!(text.clip_offset(chunk + 2, Bias::Right), chunk + 3);
+}
+
 #[test]
 fn oversized_and_reversed_ranges_are_clamped() {
     let dir = tempfile::tempdir().unwrap();

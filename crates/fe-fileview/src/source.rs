@@ -126,15 +126,32 @@ impl FileText {
         let end = range.end.min(self.len);
         let start = range.start.min(end);
         let middle = self.bytes(start..end)?;
-        let mut window = self
-            .bytes(start.saturating_sub(CONTEXT)..start)
-            .unwrap_or_default();
-        let lo = start - window.len() as u64;
+        let before = self.context(start, false);
+        let lo = start - before.len() as u64;
+        let mut window = before;
         window.extend(middle);
-        if let Some(after) = self.bytes(end..end + CONTEXT) {
-            window.extend(after);
-        }
+        window.extend(self.context(end, true));
         Some((lo, window))
+    }
+
+    /// Up to [`CONTEXT`] bytes after `at` (or before it, if `after` is false),
+    /// as many as can be read: the contiguous run nearest `at`, stopping at
+    /// the first unavailable byte or chunk. Failures are recorded.
+    fn context(&self, at: u64, after: bool) -> Vec<u8> {
+        for n in (1..=CONTEXT).rev() {
+            let range = if after {
+                at..at + n
+            } else {
+                at.saturating_sub(n)..at
+            };
+            if range.is_empty() || range.start >= self.len {
+                continue;
+            }
+            if let Some(bytes) = self.bytes(range) {
+                return bytes;
+            }
+        }
+        Vec::new()
     }
 
     /// Where `offset` sits, for the char boundary questions.
