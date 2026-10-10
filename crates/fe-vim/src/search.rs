@@ -27,6 +27,20 @@ pub struct Pattern {
     /// other), which are checked on each match by character class, as
     /// Vim does, not left to `regex`'s word boundaries.
     word: (bool, bool),
+    /// Whether a match must stand alone, between characters that aren't
+    /// word characters (a [`FindQuery`]'s `whole_word`).
+    whole: bool,
+}
+
+/// A find bar's query: what [`Pattern::from_query`] builds a pattern from.
+/// The fields mean what they do in `fe_project::search::SearchQuery`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FindQuery {
+    pub text: String,
+    /// `text` is a `regex`-crate pattern, not literal text.
+    pub regex: bool,
+    pub match_case: bool,
+    pub whole_word: bool,
 }
 
 /// Why [`Pattern::parse`] refused a pattern.
@@ -38,6 +52,10 @@ pub enum PatternError {
     /// A pattern Vim rejects too.
     #[error("invalid pattern: {0}")]
     Invalid(&'static str),
+    /// A [`FindQuery`]'s regex that doesn't compile: the first line of
+    /// `regex`'s message.
+    #[error("invalid regex: {0}")]
+    Regex(String),
     /// Past `regex`'s size limit, or nested too deeply.
     #[error("pattern too large: {0}")]
     TooLarge(String),
@@ -60,24 +78,57 @@ impl Pattern {
             ignore_case,
         };
         let source = translator.alternation(Opened::Pattern)?;
-        let regex = RegexBuilder::new(&source)
-            .build()
-            .map_err(|error| match error {
-                regex::Error::CompiledTooBig(limit) => {
-                    PatternError::TooLarge(format!("over {limit} bytes compiled"))
-                }
-                // Past the nesting limit: its message's last line says so.
-                other => PatternError::TooLarge(
-                    other
-                        .to_string()
-                        .lines()
-                        .last()
-                        .unwrap_or_default()
-                        .trim()
-                        .to_string(),
-                ),
-            })?;
-        Ok(Self { regex, word })
+        let regex = build(RegexBuilder::new(&source), |error| {
+            // Past the nesting limit: its message's last line says so.
+            PatternError::TooLarge(
+                error
+                    .to_string()
+                    .lines()
+                    .last()
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string(),
+            )
+        })?;
+        Ok(Self {
+            regex,
+            word,
+            whole: false,
+        })
+    }
+
+    /// The pattern for a find bar's `query`: its text literal, or with
+    /// `regex` in the `regex` crate's syntax (never Vim's), case-insensitive
+    /// unless `match_case`. Matching is row by row, so a `\n` in a regex
+    /// never matches. With `whole_word` a match is kept only between
+    /// characters that aren't word characters (Unicode `\w`).
+    pub fn from_query(query: &FindQuery) -> Result<Self, PatternError> {
+        if query.text.is_empty() {
+            return Err(PatternError::Invalid("empty pattern"));
+        }
+        let source = if query.regex {
+            query.text.clone()
+        } else {
+            regex::escape(&query.text)
+        };
+        let mut builder = RegexBuilder::new(&source);
+        builder.case_insensitive(!query.match_case);
+        let regex = build(builder, |error| {
+            let message = error.to_string();
+            PatternError::Regex(message.lines().next().unwrap_or_default().to_string())
+        })?;
+        Ok(Self {
+            regex,
+            word: (false, false),
+            whole: query.whole_word,
+        })
+    }
+
+    /// The first match starting at or after `from`, then row by row to the
+    /// end and round to the start, wrapping once: [`Pattern::find`] going
+    /// forward, but taking a match at `from`. Each row is searched once.
+    pub fn find_from(&self, text: &Text, from: usize) -> Option<Range<usize>> {
+        self.forward(text, from, true)
     }
 
     /// The match `/` (`forward`) or `?` would go to from `from`: the first
@@ -89,21 +140,71 @@ impl Pattern {
     /// so is any on `from`'s row from its last character, where the search
     /// starts at the next row. Each row is searched once.
     pub fn find(&self, text: &Text, from: usize, forward: bool) -> Option<Range<usize>> {
+        if forward {
+            return self.forward(text, from, false);
+        }
         let at = text.offset_to_point(text.clip_offset(from.min(text.len()), Bias::Left));
         let column = at.column as usize;
         let rows = text.row_count();
         let mut buf = String::new();
         let (start, hay) = row_text(text, at.row, &mut buf);
         let shift = |range: Range<usize>, start: usize| start + range.start..start + range.end;
+        let mut before = None;
+        let mut last = None;
+        for found in self.matches(hay) {
+            if found.start < column {
+                before = Some(found.clone());
+            }
+            last = Some(found);
+        }
+        if let Some(found) = before {
+            return Some(shift(found, start));
+        }
         // What `from`'s row offers once the search wraps back to it.
-        let wrapped;
-        if forward {
-            // As in Vim, the search starts a whole character on from
-            // `from` (from wherever in a character it is), and from the
-            // row's last character that's the next row.
-            let past = column + unit(&hay[column..]).unwrap_or(0);
-            let on_last = past >= hay.len();
-            let mut first = None;
+        let wrapped = last.map(|found| shift(found, start));
+        for row in (0..at.row).rev().chain((at.row + 1..rows).rev()) {
+            let (start, hay) = row_text(text, row, &mut buf);
+            if let Some(found) = self.matches(hay).last() {
+                return Some(shift(found, start));
+            }
+        }
+        wrapped
+    }
+
+    /// The forward walk of [`Pattern::find`] and [`Pattern::find_from`]:
+    /// `inclusive` takes a match at `from`; otherwise, as in Vim, the search
+    /// starts a whole character on from `from` (from wherever in a character
+    /// it is), and from the row's last character that's the next row.
+    fn forward(&self, text: &Text, from: usize, inclusive: bool) -> Option<Range<usize>> {
+        let at = text.offset_to_point(text.clip_offset(from.min(text.len()), Bias::Left));
+        let column = at.column as usize;
+        let rows = text.row_count();
+        let mut buf = String::new();
+        let (start, hay) = row_text(text, at.row, &mut buf);
+        let shift = |range: Range<usize>, start: usize| start + range.start..start + range.end;
+        let past = if inclusive {
+            column
+        } else {
+            column + unit(&hay[column..]).unwrap_or(0)
+        };
+        let on_last = !inclusive && past >= hay.len();
+        let mut first = None;
+        if inclusive {
+            // The row's first match: if it starts at or after `from` it is
+            // the answer; else look on from `from`, and fall back to it
+            // once wrapped. Each stretch of the row is searched once.
+            first = self.matches(hay).next();
+            if let Some(found) = &first
+                && found.start >= column
+            {
+                return Some(shift(found.clone(), start));
+            }
+            if first.is_some()
+                && let Some(found) = self.matches_from(hay, column).next()
+            {
+                return Some(shift(found, start));
+            }
+        } else {
             for found in self.matches(hay) {
                 if found.start >= past && !on_last {
                     return Some(shift(found, start));
@@ -113,31 +214,13 @@ impl Pattern {
                     break;
                 }
             }
-            wrapped = first.map(|found| shift(found, start));
-            for row in (at.row + 1..rows).chain(0..at.row) {
-                let (start, hay) = row_text(text, row, &mut buf);
-                if let Some(found) = self.matches(hay).next() {
-                    return Some(shift(found, start));
-                }
-            }
-        } else {
-            let mut before = None;
-            let mut last = None;
-            for found in self.matches(hay) {
-                if found.start < column {
-                    before = Some(found.clone());
-                }
-                last = Some(found);
-            }
-            if let Some(found) = before {
+        }
+        // What `from`'s row offers once the search wraps back to it.
+        let wrapped = first.map(|found| shift(found, start));
+        for row in (at.row + 1..rows).chain(0..at.row) {
+            let (start, hay) = row_text(text, row, &mut buf);
+            if let Some(found) = self.matches(hay).next() {
                 return Some(shift(found, start));
-            }
-            wrapped = last.map(|found| shift(found, start));
-            for row in (0..at.row).rev().chain((at.row + 1..rows).rev()) {
-                let (start, hay) = row_text(text, row, &mut buf);
-                if let Some(found) = self.matches(hay).last() {
-                    return Some(shift(found, start));
-                }
             }
         }
         wrapped
@@ -177,11 +260,18 @@ impl Pattern {
     /// (an extended grapheme cluster) on from an empty one, and not at the
     /// row's end once past its start.
     fn matches<'a>(&'a self, hay: &'a str) -> RowMatches<'a> {
+        self.matches_from(hay, 0)
+    }
+
+    /// [`Pattern::matches`] with the first search starting at `at`, with the
+    /// text before it still there for anchors and boundaries to see.
+    fn matches_from<'a>(&'a self, hay: &'a str, at: usize) -> RowMatches<'a> {
         RowMatches {
             regex: &self.regex,
             word: self.word,
+            whole: self.whole,
             hay,
-            at: Some(0),
+            at: Some(at),
         }
     }
 }
@@ -467,6 +557,7 @@ fn unit(text: &str) -> Option<usize> {
 struct RowMatches<'a> {
     regex: &'a Regex,
     word: (bool, bool),
+    whole: bool,
     hay: &'a str,
     at: Option<usize>,
 }
@@ -485,17 +576,46 @@ impl Iterator for RowMatches<'_> {
             let (start, end) = (self.word.0, self.word.1);
             if (start && !word_starts(self.hay, found.start()))
                 || (end && !word_ends(self.hay, found.end()))
+                || (self.whole && !stands_alone(self.hay, found.range()))
             {
                 // Not a whole word: the next search starts a character on.
-                let step = unit(&self.hay[found.start()..]).unwrap_or(1);
+                let rest = &self.hay[found.start()..];
+                let step = if self.whole {
+                    rest.chars().next().map_or(1, char::len_utf8)
+                } else {
+                    unit(rest).unwrap_or(1)
+                };
                 let on = found.start() + step;
-                self.at = (on < self.hay.len()).then_some(on);
+                // A whole-word query's `$` can still match at the row's end.
+                self.at =
+                    (on < self.hay.len() || (self.whole && on == self.hay.len())).then_some(on);
                 continue;
             }
             self.at = (next < self.hay.len()).then_some(next);
             return Some(found.range());
         }
     }
+}
+
+/// Compiles `builder`'s regex; a size-limit failure is `TooLarge`, any other
+/// `other`'s.
+fn build(
+    builder: RegexBuilder,
+    other: impl FnOnce(regex::Error) -> PatternError,
+) -> Result<Regex, PatternError> {
+    builder.build().map_err(|error| match error {
+        regex::Error::CompiledTooBig(limit) => {
+            PatternError::TooLarge(format!("over {limit} bytes compiled"))
+        }
+        error => other(error),
+    })
+}
+
+/// Whether neither the character before `found` in `hay` nor the one after
+/// it is a word character.
+fn stands_alone(hay: &str, found: Range<usize>) -> bool {
+    let word = |ch: Option<char>| ch.is_some_and(regex_syntax::is_word_character);
+    !word(hay[..found.start].chars().next_back()) && !word(hay[found.end..].chars().next())
 }
 
 /// Takes a leading `\<` and a trailing `\>` off `tokens` if they are the

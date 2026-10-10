@@ -1925,6 +1925,7 @@ dependencies = [
  "fe-editor",
  "fe-text",
  "regex",
+ "regex-syntax",
  "schemars",
  "serde",
  "serde_json",
