@@ -10,6 +10,7 @@ mod lsp_diagnostics;
 mod lsp_hover;
 mod lsp_nav;
 mod lsp_quit;
+mod lsp_resolve_retry;
 mod lsp_symlinks;
 mod m3_signoff;
 mod nav;

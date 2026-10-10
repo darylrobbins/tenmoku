@@ -13,7 +13,9 @@
 //!   symlink is followed; only a file that doesn't exist yet is resolved
 //!   by its folder, so a new file works too), so a launch through `..`,
 //!   which fe-lsp refuses, or a symlink still syncs, and a file is under
-//!   the root only if it really is.
+//!   the root only if it really is. A path that fails to resolve is tried
+//!   again at that buffer's next save, and every path at a root change
+//!   (a root that fails, at the next save of any shown buffer).
 //! - **Buffers.** Once a frame, after the draw, every buffer an editor
 //!   shows, with a file under the root and a language, is opened on the
 //!   manager once, however many panes show it, and closed when no view of
@@ -73,7 +75,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use fe_buffer::{Buffer, BufferId, Version};
+use fe_buffer::{Buffer, BufferEvent, BufferId, Version};
 use fe_command::{
     Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Invocation, Registry,
 };
@@ -306,6 +308,15 @@ pub(crate) struct Lsp {
     hover: Rc<LspHover>,
     /// The buffers whose files are being resolved.
     resolving: HashSet<BufferId>,
+    /// The saves of each buffer whose file is being resolved or failed to
+    /// resolve: a save is when a new file's folder has to exist.
+    retry: HashMap<BufferId, fe_buffer::Subscription>,
+    /// The root, when it failed to resolve and so has no manager.
+    root_failed: Option<PathBuf>,
+    /// The saves of each shown buffer, while `root_failed` is set.
+    root_saves: HashMap<BufferId, fe_buffer::Subscription>,
+    /// The failed root is being resolved again.
+    root_retrying: bool,
     /// Resolves the root for the next manager.
     _root: Option<Task<()>>,
     _tasks: Vec<Task<()>>,
@@ -349,6 +360,10 @@ impl Lsp {
             resolved: HashMap::new(),
             hover: Rc::default(),
             resolving: HashSet::new(),
+            retry: HashMap::new(),
+            root_failed: None,
+            root_saves: HashMap::new(),
+            root_retrying: false,
             _root: None,
             _tasks: Vec::new(),
             _subscriptions: Vec::new(),
@@ -436,6 +451,12 @@ impl Workbench {
         lsp.owners.clear();
         lsp.servers.clear();
         lsp.messages.clear();
+        lsp.resolved.clear();
+        lsp.resolving.clear();
+        lsp.retry.clear();
+        lsp.root_failed = None;
+        lsp.root_saves.clear();
+        lsp.root_retrying = false;
         lsp.generation += 1;
         lsp.root = None;
         lsp._root = None;
@@ -458,7 +479,8 @@ impl Workbench {
                     match resolved {
                         Ok(root) => workbench.start_lsp_manager(root, cx),
                         Err(error) => {
-                            log::warn!("no language servers for {}: {error}", root.display())
+                            log::warn!("no language servers for {}: {error}", root.display());
+                            workbench.lsp.root_failed = Some(root);
                         }
                     }
                     cx.notify();
@@ -556,10 +578,30 @@ impl Workbench {
                 editor.update(cx, |view, _| view.set_hover_provider(Some(hover.clone())));
             }
         }
+        if self.lsp.manager.is_none() && self.lsp.root_failed.is_some() {
+            self.retry_lsp_root(&editors, cx);
+        }
         let lsp = &mut self.lsp;
         let (Some(manager), Some(root)) = (lsp.manager.clone(), &lsp.root) else {
             return;
         };
+        // A failed file whose buffer was saved is resolved again.
+        let saved: Vec<BufferId> = lsp
+            .retry
+            .iter()
+            .filter(|(buffer, _)| lsp.resolved.get(buffer) == Some(&None))
+            .filter(|(_, saves)| {
+                saves
+                    .drain()
+                    .iter()
+                    .any(|event| matches!(event, BufferEvent::Saved { .. }))
+            })
+            .map(|(&buffer, _)| buffer)
+            .collect();
+        for buffer in saved {
+            lsp.resolved.remove(&buffer);
+            lsp.retry.remove(&buffer);
+        }
         let mut manager = lock(&manager);
         let documents = &mut lsp.documents;
         let owners = &mut lsp.owners;
@@ -567,6 +609,7 @@ impl Workbench {
         let watch = &lsp.watch;
         let mut shown = HashSet::new();
         let mut to_resolve = Vec::new();
+        let mut to_follow = Vec::new();
         for editor in editors {
             let view = editor.read(cx);
             let model = view.model();
@@ -582,6 +625,7 @@ impl Workbench {
             // Resolved while its language loads, if it does.
             if !lsp.resolved.contains_key(&buffer) && lsp.resolving.insert(buffer) {
                 to_resolve.push((buffer, path.to_owned()));
+                to_follow.push(editor.clone());
             }
             let language = view.syntax().map(|syntax| syntax.language().name());
             match (documents.get(&buffer), language) {
@@ -657,14 +701,30 @@ impl Workbench {
                 })
         });
         lsp.resolved.retain(|buffer, _| shown.contains(buffer));
+        lsp.retry.retain(|buffer, _| shown.contains(buffer));
+        // Subscribed before the resolution starts, so a save while it runs
+        // retries it.
+        for editor in to_follow {
+            let saves = editor.update(cx, |view, _| view.model_mut().buffer_mut().subscribe());
+            lsp.retry
+                .insert(editor.read(cx).model().buffer().id(), saves);
+        }
+        let generation = lsp.generation;
         for (buffer, path) in to_resolve {
             let resolved = cx.background_spawn(async move { resolve(&path) });
             cx.spawn(async move |workbench, cx| {
                 let resolved = resolved.await;
                 workbench
                     .update(cx, |workbench, cx| {
-                        workbench.lsp.resolving.remove(&buffer);
-                        workbench.lsp.resolved.insert(buffer, resolved);
+                        let lsp = &mut workbench.lsp;
+                        if lsp.generation != generation {
+                            return;
+                        }
+                        lsp.resolving.remove(&buffer);
+                        if resolved.is_some() {
+                            lsp.retry.remove(&buffer);
+                        }
+                        lsp.resolved.insert(buffer, resolved);
                         cx.notify();
                     })
                     .ok();
@@ -683,6 +743,59 @@ impl Workbench {
             cx.notify();
         }
         self.show_lsp_status(cx);
+    }
+
+    /// With the root failed to resolve and so no manager: resolves it again
+    /// at the next save of a shown buffer.
+    fn retry_lsp_root(
+        &mut self,
+        editors: &[gpui::Entity<fe_gpui::EditorView>],
+        cx: &mut Context<Self>,
+    ) {
+        let mut shown = HashSet::new();
+        let mut saved = false;
+        for editor in editors {
+            let buffer = editor.read(cx).model().buffer().id();
+            shown.insert(buffer);
+            let lsp = &mut self.lsp;
+            saved |= lsp
+                .root_saves
+                .entry(buffer)
+                .or_insert_with(|| {
+                    editor.update(cx, |view, _| view.model_mut().buffer_mut().subscribe())
+                })
+                .drain()
+                .iter()
+                .any(|event| matches!(event, BufferEvent::Saved { .. }));
+        }
+        let lsp = &mut self.lsp;
+        lsp.root_saves.retain(|buffer, _| shown.contains(buffer));
+        let Some(root) = lsp.root_failed.clone() else {
+            return;
+        };
+        if !saved || lsp.root_retrying {
+            return;
+        }
+        lsp.root_retrying = true;
+        let generation = lsp.generation;
+        let resolved = cx.background_spawn(async move { fs::canonicalize(&root) });
+        lsp._root = Some(cx.spawn(async move |workbench, cx| {
+            let resolved = resolved.await;
+            workbench
+                .update(cx, |workbench, cx| {
+                    if workbench.lsp.generation != generation {
+                        return;
+                    }
+                    workbench.lsp.root_retrying = false;
+                    if let Ok(root) = resolved {
+                        workbench.lsp.root_failed = None;
+                        workbench.lsp.root_saves.clear();
+                        workbench.start_lsp_manager(root, cx);
+                    }
+                    cx.notify();
+                })
+                .ok();
+        }));
     }
 
     fn lsp_event(&mut self, generation: u64, event: LspEvent, cx: &mut Context<Self>) {
