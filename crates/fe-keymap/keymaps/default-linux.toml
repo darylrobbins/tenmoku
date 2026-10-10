@@ -640,3 +640,50 @@ context = "editor && vim.mode == insert"
 keys = "ctrl-["
 command = "vim.normal_mode"
 context = "editor && vim.mode == insert"
+
+# In-file find: the pane's find bar (`find_bar`) and the editor it searches.
+
+[[bindings]]
+keys = "ctrl-f"
+command = "find.show"
+context = "editor"
+
+[[bindings]]
+keys = "ctrl-g"
+command = "find.next"
+context = "editor || find_bar"
+
+[[bindings]]
+keys = "ctrl-shift-g"
+command = "find.previous"
+context = "editor || find_bar"
+
+[[bindings]]
+keys = "enter"
+command = "find.next"
+context = "find_bar && text_input"
+
+[[bindings]]
+keys = "shift-enter"
+command = "find.previous"
+context = "find_bar && text_input"
+
+[[bindings]]
+keys = "escape"
+command = "find.close"
+context = "find_bar"
+
+[[bindings]]
+keys = "alt-c"
+command = "find.toggle_case"
+context = "find_bar"
+
+[[bindings]]
+keys = "alt-w"
+command = "find.toggle_whole_word"
+context = "find_bar"
+
+[[bindings]]
+keys = "alt-r"
+command = "find.toggle_regex"
+context = "find_bar"
