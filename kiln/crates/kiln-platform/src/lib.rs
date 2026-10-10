@@ -8,7 +8,8 @@
 //! and menu item dispatches, and the app's own commands.
 //! [`command_actions`] makes commands real GPUI actions, declared with
 //! [`commands!`]. [`keys`] is key input: kiln's keymap matched against
-//! every keystroke, with an app's [`keys::KeyOwner`] taking part.
+//! every keystroke, with an app's [`keys::KeyOwner`] taking part, and
+//! [`menus`] the native menu bar, whose items dispatch as keys do.
 //! [`Capabilities`] says what a platform does natively, and
 //! [`window_options`], [`fonts`] and [`dialogs`] act on it.
 
@@ -18,6 +19,7 @@ pub mod commands;
 pub mod dialogs;
 pub mod fonts;
 pub mod keys;
+pub mod menus;
 pub mod window_options;
 
 pub use capabilities::Capabilities;

@@ -259,12 +259,15 @@ pub fn init(cx: &mut App, keymap: impl Into<Arc<Keymap>>) {
 }
 
 /// Swaps the keymap, as on hot reload, dropping any chord in progress.
-/// Windows redraw, so anything drawn from the keymap follows. Call after
-/// [`init`].
+/// Menus [`crate::menus::install`]ed are reinstalled, so their shortcuts
+/// follow; without any, it touches neither GPUI's menus nor its keymap.
+/// Windows redraw, so anything drawn from the keymap follows too. Call
+/// after [`init`].
 pub fn set_keymap(cx: &mut App, keymap: impl Into<Arc<Keymap>>) {
     let input = cx.global_mut::<KeyInput>();
     input.matcher.set_keymap(keymap);
     input.pending = None;
+    crate::menus::refresh(cx);
     cx.refresh_windows();
 }
 
@@ -391,7 +394,7 @@ fn on_timeout(handle: AnyWindowHandle, cx: &mut App) {
 
 /// Runs `invocation` on the focused element, synchronously, as GPUI's own
 /// keymap does; without one, on the window, once the current dispatch is
-/// over.
+/// over. Menu items run through it too.
 pub(crate) fn dispatch(invocation: Invocation, window: &mut Window, cx: &mut App) {
     if let Err(error) = dispatch_invocation(invocation, window, cx) {
         log::warn!("{error}");
