@@ -31,7 +31,7 @@ use fe_editor::diagnostics::Severity;
 pub use fe_keymap;
 use fe_syntax::Highlight;
 pub use file_viewer::{FileViewer, FileViewerEvent};
-use gpui::{App, Hsla, Pixels, SharedString, font, px, rgb, rgba};
+use gpui::{App, Hsla, Pixels, SharedString, px, rgb, rgba};
 pub use hover::{HoverContent, HoverFuture, HoverProvider};
 
 pub use keymap::{default_keymap, keymap_report, set_user_keymap};
@@ -179,37 +179,7 @@ fn font_family(settings: &EditorSettings, cx: &App) -> SharedString {
     if let Some(family) = &settings.font_family {
         return family.clone().into();
     }
-    // Resolving a family loads just that family, which the first frame
-    // needs anyway; listing every installed font took ~70 ms at launch.
-    // A missing family resolves to a fallback font under another name.
-    let text_system = cx.text_system();
-    let installed = |family: &str| {
-        let id = text_system.resolve_font(&font(family));
-        text_system
-            .get_font_for_id(id)
-            .is_some_and(|resolved| resolved.family == family)
-    };
-    // macOS ships SF Mono and Menlo; common Linux distributions ship the
-    // others. Unknown families fall back to a proportional font there, so
-    // the last resort is one most Linux systems have.
-    let last_resort = if cfg!(target_os = "macos") {
-        "Menlo"
-    } else {
-        "DejaVu Sans Mono"
-    };
-    [
-        "JetBrains Mono",
-        "SF Mono",
-        "Menlo",
-        "DejaVu Sans Mono",
-        "Ubuntu Mono",
-        "Liberation Mono",
-        "Noto Sans Mono",
-    ]
-    .into_iter()
-    .find(|family| installed(family))
-    .unwrap_or(last_resort)
-    .into()
+    kiln_platform::fonts::mono_family(cx)
 }
 
 #[cfg(test)]

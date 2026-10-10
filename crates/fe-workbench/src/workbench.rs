@@ -1364,15 +1364,8 @@ impl Render for Workbench {
     }
 }
 
-/// The prompt shown when the open panel fails with `error`: on Linux the
-/// panel is xdg-desktop-portal's, so the detail says what to install.
+/// The prompt shown when the open panel fails with `error`: see
+/// [`kiln_platform::dialogs::open_panel_failed`].
 pub(crate) fn open_panel_failed(error: &str) -> (&'static str, String) {
-    let mut detail = error.to_owned();
-    if cfg!(target_os = "linux") {
-        detail.push_str(
-            "\n\nThe open panel comes from xdg-desktop-portal: install it with a \
-             backend for your desktop, such as xdg-desktop-portal-gtk.",
-        );
-    }
-    ("The open panel isn't available", detail)
+    kiln_platform::dialogs::open_panel_failed(error, kiln_platform::Os::current())
 }

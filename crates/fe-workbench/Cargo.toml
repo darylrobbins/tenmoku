@@ -21,6 +21,7 @@ fe-nav.workspace = true
 fe-project.workspace = true
 fe-syntax.workspace = true
 fe-ui.workspace = true
+kiln-platform.workspace = true
 gpui.workspace = true
 libc.workspace = true
 log.workspace = true

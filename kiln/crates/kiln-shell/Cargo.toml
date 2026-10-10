@@ -12,6 +12,10 @@ publish = false
 [dependencies]
 gpui.workspace = true
 kiln-platform.workspace = true
+kiln-ui.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
 
 [lints]
 workspace = true

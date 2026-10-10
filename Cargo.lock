@@ -1727,6 +1727,8 @@ dependencies = [
  "fe-workbench",
  "gpui-pre",
  "gpui-pre-platform",
+ "kiln-platform",
+ "kiln-shell",
  "kiln-ui",
  "libc",
  "log",
@@ -2005,6 +2007,7 @@ dependencies = [
  "gpui-pre-platform",
  "image",
  "kiln-command",
+ "kiln-platform",
  "kiln-ui",
  "libc",
  "log",
@@ -3555,6 +3558,7 @@ version = "0.1.0"
 dependencies = [
  "gpui-pre",
  "kiln-platform",
+ "kiln-ui",
 ]
 
 [[package]]

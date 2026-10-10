@@ -6,34 +6,17 @@ use std::path::Path;
 
 use fe_ui::UiTheme;
 use gpui::{
-    InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, ParentElement as _, Pixels,
-    Point, SharedString, Styled as _, TitlebarOptions, Window, div, point, px,
+    InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, ParentElement as _,
+    SharedString, Styled as _, Window, div,
 };
 
-/// The bar's height.
-pub const TITLE_BAR_HEIGHT: Pixels = px(32.);
-
-/// Where the traffic lights sit, from the window's top-left corner: 9 px
-/// down centres the 14 px buttons in the 32 px bar.
-pub const TRAFFIC_LIGHTS: Point<Pixels> = point(px(12.), px(9.));
-
-/// The width the traffic lights take, plus a gap: the label stays out of it
-/// on both sides.
-pub const TRAFFIC_LIGHT_INSET: Pixels = px(78.);
+// The unified title bar's metrics and window options are kiln's.
+pub use kiln_platform::window_options::{
+    TITLE_BAR_HEIGHT, TRAFFIC_LIGHT_INSET, TRAFFIC_LIGHTS, titlebar_options,
+};
 
 /// What the bar reads with no root folder.
 const NO_ROOT: &str = "fastedit";
-
-/// The window options for a window whose content draws under its title bar.
-/// A host opting in must also set `WindowOptions::app_owns_titlebar_drag`
-/// to `true`, and call `Workbench::set_title_bar(true)`.
-pub fn titlebar_options(title: impl Into<SharedString>) -> TitlebarOptions {
-    TitlebarOptions {
-        title: Some(title.into()),
-        appears_transparent: true,
-        traffic_light_position: Some(TRAFFIC_LIGHTS),
-    }
-}
 
 /// What a mouse down on the bar asked the window to do, under test, where
 /// the platform's window move is unimplemented.

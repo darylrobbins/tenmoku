@@ -19,17 +19,8 @@ use fe_gpui::{
     fe_keymap::{self, KeymapStore},
 };
 use fe_workbench::{Workbench, loader};
-use gpui::{
-    App, AppContext as _, Focusable as _, TitlebarOptions, WindowBounds, WindowHandle,
-    WindowOptions, px, size,
-};
-
-/// Whether the window draws the unified macOS title bar itself.
-const UNIFIED_TITLE_BAR: bool = cfg!(target_os = "macos");
-
-/// Whether the menus show natively, in the platform's menu bar, rather than
-/// in the window: GPUI has a native menu bar on macOS only.
-const NATIVE_MENUS: bool = cfg!(target_os = "macos");
+use gpui::{App, AppContext as _, Focusable as _, WindowHandle};
+use kiln_platform::{Capabilities, WindowSpec, window_options};
 
 /// The buffer a finished read produced: a missing file is a new one, which
 /// saving creates. The workbench shows an error in the tab's place.
@@ -260,11 +251,9 @@ fn main() {
         }
         install_menus(cx);
         log_keymap_report(cx);
-        // macOS shows prompts as native alerts; elsewhere GPUI's fallback
-        // would draw them, unthemed and unwrapped.
-        if !cfg!(target_os = "macos") {
-            cx.set_prompt_builder(fe_ui::prompt_renderer);
-        }
+        // Prompts are drawn in the window where there are no native alerts.
+        kiln_shell::init(cx);
+        let capabilities = Capabilities::current();
         cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {
                 cx.quit();
@@ -276,21 +265,7 @@ fn main() {
         let mut failed = None;
         let window = cx
             .open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::centered(size(px(1200.), px(800.)), cx)),
-                    // The unified title bar is macOS's; elsewhere the
-                    // window manager draws the title bar.
-                    titlebar: Some(if UNIFIED_TITLE_BAR {
-                        fe_workbench::titlebar_options("fastedit")
-                    } else {
-                        TitlebarOptions {
-                            title: Some("fastedit".into()),
-                            ..Default::default()
-                        }
-                    }),
-                    app_owns_titlebar_drag: UNIFIED_TITLE_BAR,
-                    ..Default::default()
-                },
+                window_options(&WindowSpec::main("fastedit"), &capabilities, cx),
                 |window, cx| {
                     startup.view = Some(Instant::now());
                     // Show the file on the first frame if it's read by now.
@@ -311,10 +286,12 @@ fn main() {
                     let workbench = cx.new(|cx| {
                         let mut workbench =
                             Workbench::new(launch, theme, editor_settings, window, cx);
-                        workbench.set_title_bar(UNIFIED_TITLE_BAR, cx);
-                        workbench.set_menu_bar(!NATIVE_MENUS, cx);
-                        // GNOME on Wayland leaves the window's frame to the app.
-                        workbench.set_window_frame(!UNIFIED_TITLE_BAR, cx);
+                        // The unified title bar is macOS's. Elsewhere the menus
+                        // are drawn in the window, and the frame too where the
+                        // window manager leaves it to the app (GNOME on Wayland).
+                        workbench.set_title_bar(capabilities.unified_title_bar, cx);
+                        workbench.set_menu_bar(!capabilities.native_menus, cx);
+                        workbench.set_window_frame(!capabilities.unified_title_bar, cx);
                         workbench.set_status_bar_visible(settings.status_bar.visible, cx);
                         workbench
                     });
