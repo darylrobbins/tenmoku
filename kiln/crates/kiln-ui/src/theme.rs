@@ -343,6 +343,17 @@ pub fn set_themes(cx: &mut App, mode: ThemeMode, dark: Theme, light: Theme) {
     activate(cx, active, Some((mode, dark, light)));
 }
 
+/// Switches to `mode` over the dark and light pair [`set_themes`] set, or
+/// kiln's bundled pair if none was set.
+pub fn set_theme_mode(cx: &mut App, mode: ThemeMode) {
+    let (dark, light) = cx
+        .try_global::<GlobalTheme>()
+        .and_then(|global| global.choice.as_ref())
+        .map(|(_, dark, light)| (dark.clone(), light.clone()))
+        .unwrap_or_else(|| (Theme::dark(), Theme::light()));
+    set_themes(cx, mode, dark, light);
+}
+
 /// Keeps the active theme matching `window`'s appearance while the mode is
 /// [`ThemeMode::System`], until the subscription is dropped. One window is
 /// enough: the appearance is the system's.

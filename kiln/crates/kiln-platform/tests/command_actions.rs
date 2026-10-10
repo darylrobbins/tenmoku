@@ -13,8 +13,8 @@ use kiln_command::{CommandId, DispatchError, Invocation, Source, Value};
 use kiln_core::{CatalogError, CommandCatalog as _};
 use kiln_platform::{
     command_actions::{
-        CommandInfo, command_id, current_invocation, dispatch_invocation, register_command,
-        typed_command,
+        Command, CommandInfo, command_id, current_invocation, dispatch_invocation,
+        register_command, typed_command,
     },
     commands::{self, RunCommand, observe_invocations},
 };
@@ -223,4 +223,48 @@ fn ids_come_from_action_names() {
     );
     assert_eq!(id("notes::Undo2").as_deref(), Some("notes.undo2"));
     assert_eq!(id("NoNamespace"), None);
+}
+
+/// An action with args opts in to [`Command`] for its ID.
+impl Command for OpenNote {}
+
+#[test]
+fn typed_commands_know_their_ids() {
+    assert_eq!(notes::NewNote::id().as_str(), "notes.new_note");
+    assert_eq!(notes::DeleteNote::id().as_str(), "notes.delete_note");
+    assert_eq!(OpenNote::id().as_str(), "notes.open_note");
+}
+
+/// `commands!` names GPUI only through kiln, so it works where `gpui`
+/// isn't the GPUI crate, as in an app that depends on kiln alone.
+mod shadowed {
+    #[allow(dead_code, reason = "shadows the gpui crate for the macro")]
+    mod gpui {}
+
+    kiln_platform::commands!(
+        shadowed,
+        [
+            /// Shadowed
+            ///
+            /// Declared where `gpui` is something else.
+            Shadowed,
+        ]
+    );
+}
+
+#[gpui::test]
+fn the_macro_needs_no_gpui_of_its_own(cx: &mut TestAppContext) {
+    assert_eq!(shadowed::Shadowed::name_for_type(), "shadowed::Shadowed");
+    assert_eq!(
+        <shadowed::Shadowed as Action>::documentation(),
+        Some("Shadowed\n\nDeclared where `gpui` is something else."),
+        "documented as GPUI's derive does"
+    );
+    assert_eq!(
+        <notes::NewNote as Action>::documentation(),
+        Some("New Note")
+    );
+    // GPUI's registry knows it, so it builds by name.
+    let built = cx.update(|cx| cx.build_action("shadowed::Shadowed", None));
+    assert!(built.unwrap().partial_eq(&shadowed::Shadowed));
 }

@@ -11,21 +11,24 @@ publish = false
 
 [dependencies]
 gpui.workspace = true
+# kiln::application(): GPUI's platform, for the app's own windows.
+gpui_platform.workspace = true
 kiln-command.workspace = true
 kiln-core.workspace = true
 kiln-platform.workspace = true
 kiln-shell.workspace = true
 kiln-ui.workspace = true
+log.workspace = true
+
+# GPUI's Linux windowing backends, so an app on kiln needs no GPUI
+# dependencies of its own.
+[target.'cfg(target_os = "linux")'.dependencies]
+gpui_platform = { workspace = true, features = ["wayland", "x11"] }
 
 # The gallery example (examples/gallery) opens a real window, and its tests
 # (tests/gallery.rs) drive it headless.
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
-gpui_platform.workspace = true
-
-# GPUI's Linux windowing backends, for the gallery.
-[target.'cfg(target_os = "linux")'.dev-dependencies]
-gpui_platform = { workspace = true, features = ["wayland", "x11"] }
 
 [lints]
 workspace = true

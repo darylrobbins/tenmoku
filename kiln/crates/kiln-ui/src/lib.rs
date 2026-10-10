@@ -60,8 +60,8 @@ pub use text_field::{TextField, TextFieldEvent};
 pub use text_input::{TextInput, TextInputEvent};
 pub use theme::{
     ActiveTheme, ActiveUiTheme, Appearance, Color, GlobalTheme, ROW_HEIGHT, Theme, ThemeData,
-    ThemeMode, Tokens, UiTheme, hsla, observe_system_appearance, set_theme, set_themes,
-    set_ui_theme, system_appearance_changed, ui_theme,
+    ThemeMode, Tokens, UiTheme, hsla, observe_system_appearance, set_theme, set_theme_mode,
+    set_themes, set_ui_theme, system_appearance_changed, ui_theme,
 };
 pub use toggle_button::ToggleButton;
 pub use tooltip::Tooltip;

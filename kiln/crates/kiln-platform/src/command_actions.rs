@@ -21,9 +21,10 @@
 //! ```
 //!
 //! A command's ID is its action's GPUI name with `::` for `.` and the type
-//! in snake case: `notes::NewNote` is `notes.new_note`. The generated
-//! actions derive `gpui::Action`, whose code names the `gpui` crate, so an
-//! app using the macro depends on `gpui` (as every GPUI app does).
+//! in snake case: `notes::NewNote` is `notes.new_note`, which
+//! [`Command::id`] gives without spelling it: `NewNote::id()`. The macro
+//! implements `gpui::Action` itself, through kiln's re-export of GPUI, so
+//! an app using it needs no `gpui` dependency of its own.
 
 use std::collections::HashMap;
 
@@ -31,6 +32,26 @@ use gpui::{Action, App, Global, Window};
 use kiln_command::{CommandId, ContextPredicate, DispatchError, Invocation, Value};
 
 use crate::commands::{RunCommand, notify_observers};
+
+/// A typed command: an action whose GPUI name has a namespace, so it has a
+/// kiln [`CommandId`]. [`commands!`] implements it for the actions it
+/// declares; an action with args, declared with `#[derive(gpui::Action)]`
+/// and `#[action(namespace = ..)]`, can opt in with an empty
+/// `impl Command for OpenNote {}`.
+pub trait Command: Action {
+    /// The command's ID: `notes::NewNote`'s is `notes.new_note`.
+    ///
+    /// # Panics
+    ///
+    /// If the action's GPUI name has no namespace.
+    fn id() -> CommandId
+    where
+        Self: Sized,
+    {
+        let name = Self::name_for_type();
+        command_id(name).unwrap_or_else(|| panic!("{name} needs a namespace to be a command"))
+    }
+}
 
 /// What [`register_command`] records about a command besides its action.
 #[derive(Clone, Debug, Default)]
@@ -202,11 +223,80 @@ fn set_current(invocation: Option<Invocation>, cx: &mut App) -> Option<Invocatio
 /// Declares typed commands: unit-struct GPUI actions in namespace `$ns`,
 /// each titled by its first doc line and optionally limited to a context
 /// with `#[command(context = "...")]`, plus `pub fn register(cx)`, which
-/// records them (see [`register_command`]).
+/// records them (see [`register_command`]). Each implements [`Command`],
+/// so `NewNote::id()` is its ID.
+///
+/// It implements `gpui::Action` as `#[derive(gpui::Action)]` would, but
+/// names GPUI only through `$crate`, so it works with nothing but kiln as
+/// a dependency: GPUI's derive writes bare `gpui::` paths, which resolve
+/// only where the `gpui` crate is in scope under that name. Each action's
+/// documentation, for GPUI's action registry, is its doc lines.
 #[macro_export]
 macro_rules! commands {
     ($ns:ident, [ $( $(#[doc = $doc:literal])* $(#[command(context = $context:literal)])? $name:ident ),* $(,)? ]) => {
-        $crate::gpui::actions!($ns, [ $( $(#[doc = $doc])* $name ),* ]);
+        $(
+            $(#[doc = $doc])*
+            #[derive(::std::clone::Clone, ::std::cmp::PartialEq, ::std::default::Default, ::std::fmt::Debug)]
+            pub struct $name;
+
+            impl $crate::gpui::Action for $name {
+                fn name(&self) -> &'static str {
+                    <Self as $crate::gpui::Action>::name_for_type()
+                }
+
+                fn name_for_type() -> &'static str
+                where
+                    Self: Sized,
+                {
+                    ::std::concat!(::std::stringify!($ns), "::", ::std::stringify!($name))
+                }
+
+                fn partial_eq(&self, action: &dyn $crate::gpui::Action) -> bool {
+                    action.as_any().downcast_ref::<Self>().is_some_and(|a| self == a)
+                }
+
+                fn boxed_clone(&self) -> ::std::boxed::Box<dyn $crate::gpui::Action> {
+                    ::std::boxed::Box::new(self.clone())
+                }
+
+                fn build(
+                    _: $crate::gpui::private::serde_json::Value,
+                ) -> $crate::gpui::Result<::std::boxed::Box<dyn $crate::gpui::Action>> {
+                    ::std::result::Result::Ok(::std::boxed::Box::new(Self))
+                }
+
+                fn documentation() -> ::std::option::Option<&'static str>
+                where
+                    Self: Sized,
+                {
+                    static DOC: ::std::sync::OnceLock<::std::option::Option<::std::string::String>> =
+                        ::std::sync::OnceLock::new();
+                    DOC.get_or_init(|| $crate::command_actions::documentation_from_doc(&[$($doc),*]))
+                        .as_deref()
+                }
+            }
+
+            impl $crate::command_actions::Command for $name {}
+
+            // GPUI's action registry finds its actions through `inventory`,
+            // as its derive arranges.
+            const _: () = {
+                fn builder() -> $crate::gpui::MacroActionData {
+                    $crate::gpui::MacroActionData {
+                        name: <$name as $crate::gpui::Action>::name_for_type(),
+                        type_id: ::std::any::TypeId::of::<$name>(),
+                        build: <$name as $crate::gpui::Action>::build,
+                        json_schema: <$name as $crate::gpui::Action>::action_json_schema,
+                        deprecated_aliases: <$name as $crate::gpui::Action>::deprecated_aliases(),
+                        deprecation_message: <$name as $crate::gpui::Action>::deprecation_message(),
+                        documentation: <$name as $crate::gpui::Action>::documentation(),
+                    }
+                }
+                $crate::gpui::private::inventory::submit! {
+                    $crate::gpui::MacroActionBuilder(builder)
+                }
+            };
+        )*
 
         /// Records this module's commands' titles and contexts.
         pub fn register(cx: &mut $crate::gpui::App) {
@@ -214,8 +304,8 @@ macro_rules! commands {
                 $crate::command_actions::register_command::<$name>(
                     cx,
                     $crate::command_actions::CommandInfo {
-                        title: $crate::command_actions::title_from_doc(&[$($doc),*], stringify!($name)),
-                        context: None $(.or(Some($context)))?,
+                        title: $crate::command_actions::title_from_doc(&[$($doc),*], ::std::stringify!($name)),
+                        context: ::std::option::Option::None $(.or(::std::option::Option::Some($context)))?,
                     },
                 );
             )*
@@ -233,4 +323,18 @@ pub fn title_from_doc(lines: &[&str], name: &str) -> String {
         .find(|line| !line.is_empty())
         .unwrap_or(name)
         .to_owned()
+}
+
+/// An action's documentation from doc lines, as GPUI's derive writes it:
+/// each line trimmed, joined by newlines, trimmed; `None` without any.
+#[doc(hidden)]
+pub fn documentation_from_doc(lines: &[&str]) -> Option<String> {
+    if lines.is_empty() {
+        return None;
+    }
+    let joined: String = lines
+        .iter()
+        .map(|line| format!("{}\n", line.trim()))
+        .collect();
+    Some(joined.trim().to_owned())
 }
