@@ -78,7 +78,8 @@ pub struct VimState {
     /// Set in `cmdline` mode: what the line is for and the mode it came
     /// from.
     pub(crate) cmdline: Option<CommandLine>,
-    /// The last error, for the host to show until the next key.
+    /// The last error (or `:s`'s report), for the host to show until the
+    /// next key.
     pub(crate) message: Option<String>,
     /// The last search's pattern, painted while 'hlsearch' is on.
     pub(crate) highlight: Option<Pattern>,
@@ -106,8 +107,9 @@ impl VimState {
     }
 
     /// The last error, such as a search's `E486: Pattern not found: foo`,
-    /// for the host to show; the next key [`VimState::feed`] reads, or the
-    /// next command line, clears it.
+    /// or `:s`'s report ("3 substitutions on 2 lines"), for the host to
+    /// show; the next key [`VimState::feed`] reads, or the next command
+    /// line, clears it.
     pub fn message(&self) -> Option<&str> {
         self.message.as_deref()
     }

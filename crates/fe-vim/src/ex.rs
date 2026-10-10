@@ -10,6 +10,7 @@ use crate::{
     motion::{self, Cursor},
     operator,
     search::{self, Pattern, PatternError},
+    substitute::{self, Substitute},
 };
 
 /// A parsed ex line.
@@ -66,7 +67,8 @@ pub enum LineSearch {
     Pattern { pattern: String, forward: bool },
     /// `\/` or `\?`: the last search's pattern.
     LastSearch { forward: bool },
-    /// `\&`: the last substitute's pattern (there's none yet: E33).
+    /// `\&`: the last substitute's pattern, forward (E33 before one): it
+    /// becomes the last search.
     LastSubstitute,
 }
 
@@ -84,6 +86,8 @@ pub enum ExCommand {
     },
     /// `:noh[lsearch]`: no highlight until the next search.
     NoHighlight,
+    /// `:s[ubstitute]`, `:&` and `:&&`: see [`Substitute`].
+    Substitute(Substitute),
     /// A file or window command, which the host runs.
     Host(HostCommand),
 }
@@ -142,6 +146,14 @@ pub enum ExError {
     NoPreviousSubstitute,
     #[error("E486: Pattern not found: {0}")]
     NotFound(String),
+    /// A count of 2147483647 or more, as typed.
+    #[error("E1510: Value too large: {0}")]
+    ValueTooLarge(String),
+    #[error("E146: Regular expressions can't be delimited by letters")]
+    LetterDelimiter,
+    /// `\n` in a replacement, which in Vim puts in a NUL.
+    #[error("\\n in a replacement (a NUL): not supported")]
+    NulInReplacement,
     /// `:w {path}`.
     #[error("{0}: not supported yet")]
     Unsupported(String),
@@ -183,6 +195,11 @@ fn command(line: &str, range: &[Address], rest: &str) -> Result<ExCommand, ExErr
         .find(|ch: char| !ch.is_ascii_alphabetic())
         .unwrap_or(rest.len());
     let (name, after) = rest.split_at(name_len);
+    if name.is_empty()
+        && let Some(args) = after.strip_prefix('&')
+    {
+        return Ok(ExCommand::Substitute(Substitute::repeat(args, true)?));
+    }
     if name.is_empty() {
         let ignored = |address: &Address| {
             address.base == Base::All && (address.offset != 0 || !address.searches.is_empty())
@@ -194,6 +211,9 @@ fn command(line: &str, range: &[Address], rest: &str) -> Result<ExCommand, ExErr
     }
     if let Some(command) = host(name) {
         return host_command(command, range, after);
+    }
+    if "substitute".starts_with(name) {
+        return Ok(ExCommand::Substitute(Substitute::parse(after)?));
     }
     let delete = DELETE.contains(&name);
     let nohlsearch = name.len() >= 3 && "nohlsearch".starts_with(name);
@@ -515,23 +535,41 @@ fn execute(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Result<Hand
             Ok(Dispatched::new(Effect::Notify))
         }
         ExCommand::Delete { register, count } => {
-            let (first, end) = lines.unwrap_or_else(|| {
-                let line = cursor_line(target);
-                (line, line)
-            });
-            if end > last {
-                return Err(ExError::InvalidRange);
-            }
-            if first > end {
-                return Err(ExError::Backwards);
-            }
-            let end = end.max(1);
-            let (first, end) = match count {
-                Some(count) => (end, end.saturating_add(i64::from(count) - 1).min(last)),
-                None => (first.max(1), end),
-            };
+            let (first, end) = counted_lines(target, lines, count, last)?;
             delete(target, actor, first, end, register)
         }
+        ExCommand::Substitute(sub) => {
+            let (first, end) = counted_lines(target, lines, sub.count, last)?;
+            // Lines from 1 as rows from 0: they're within the text.
+            let row = |line: i64| u32::try_from(line - 1).unwrap_or(u32::MAX);
+            return substitute::run(target, actor, row(first)..row(end) + 1, &sub);
+        }
+    })
+}
+
+/// The lines a command taking a range and a count acts on, from 1: the
+/// range's (the cursor's line with none), or with a count that many from
+/// its last, within the text.
+fn counted_lines(
+    target: &VimTarget<'_>,
+    lines: Option<(i64, i64)>,
+    count: Option<u32>,
+    last: i64,
+) -> Result<(i64, i64), ExError> {
+    let (first, end) = lines.unwrap_or_else(|| {
+        let line = cursor_line(target);
+        (line, line)
+    });
+    if end > last {
+        return Err(ExError::InvalidRange);
+    }
+    if first > end {
+        return Err(ExError::Backwards);
+    }
+    let end = end.max(1);
+    Ok(match count {
+        Some(count) => (end, end.saturating_add(i64::from(count) - 1).min(last)),
+        None => (first.max(1), end),
     })
 }
 
@@ -617,7 +655,10 @@ fn search_line(target: &mut VimTarget<'_>, search: &LineSearch, from: i64) -> Re
             .ok_or(ExError::NoPreviousSearch)
     };
     let (pattern, forward) = match search {
-        LineSearch::LastSubstitute => return Err(ExError::NoPreviousSubstitute),
+        LineSearch::LastSubstitute => match target.registers.substitute.pattern() {
+            Some(pattern) => (pattern.to_string(), true),
+            None => return Err(ExError::NoPreviousSubstitute),
+        },
         LineSearch::LastSearch { forward } => (last_search()?, *forward),
         LineSearch::Pattern { pattern, forward } if pattern.is_empty() => {
             (last_search()?, *forward)
@@ -626,7 +667,10 @@ fn search_line(target: &mut VimTarget<'_>, search: &LineSearch, from: i64) -> Re
     };
     // As `/` and `?` do: the pattern becomes the last search even if
     // nothing matches or Vim rejects it, but not one fe-vim can't search.
-    let keep = matches!(search, LineSearch::Pattern { .. });
+    let keep = matches!(
+        search,
+        LineSearch::Pattern { .. } | LineSearch::LastSubstitute
+    );
     let parsed = match Pattern::parse(&pattern) {
         Ok(parsed) => parsed,
         Err(error) => {

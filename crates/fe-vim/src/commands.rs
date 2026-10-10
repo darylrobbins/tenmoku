@@ -9,7 +9,7 @@ use fe_editor::{EditorModel, commands::EditorHost};
 use crate::{
     CommandLineArgs, CountArgs, InsertArgs, MoveArgs, OperateArgs, PutArgs, Registers,
     ReplaceCharArgs, SelectArgs, SubmitArgs, SwapArgs, VimState, VisualArgs, cmdline, edit,
-    history, insert, motion, operator, repeat, visual,
+    history, insert, motion, operator, repeat, substitute, visual,
 };
 
 /// What vim's commands run against: an editor's model, its host, its vim
@@ -32,7 +32,8 @@ impl CommandTarget for VimCommands {
 
 /// Vim's registry: `vim.move`, `vim.operate`, `vim.put`, `vim.insert`,
 /// `vim.normal_mode`, `vim.join`, `vim.replace_char`, `vim.toggle_case`,
-/// `vim.undo`, `vim.redo`, `vim.repeat`, and for the visual modes
+/// `vim.undo`, `vim.redo`, `vim.repeat`, `vim.repeat_substitute`, and for
+/// the visual modes
 /// `vim.visual`, `vim.visual_exit`, `vim.visual_swap`, `vim.visual_put`,
 /// `vim.reselect` and `vim.select`, and for the command line (searches and
 /// ex commands) `vim.command_line`, `vim.command_line_submit` and
@@ -217,6 +218,20 @@ pub fn registry() -> Registry<VimCommands> {
         .description(
             "Repeats the last change and the text its insert session typed, as one transaction; a count replaces the change's own.",
         )
+        .context(normal.clone())
+        .mutates_buffer(true);
+    registry
+        .register_with_args(
+            "vim.repeat_substitute",
+            "Vim Repeat Substitute",
+            |target: &mut VimTarget<'_>, actor: &Actor, args: CountArgs| {
+                substitute::repeat(target, actor, args.count)
+            },
+        )
+        .expect("vim command IDs are valid and distinct")
+        .description(
+            "Repeats the last substitute with its flags on the cursor's line, or `count` lines from it (`&`, as nvim's `:&&`): one transaction, which `.` doesn't repeat.",
+        )
         .context(normal)
         .mutates_buffer(true);
     registry
@@ -320,7 +335,7 @@ pub fn registry() -> Registry<VimCommands> {
         )
         .expect("vim command IDs are valid and distinct")
         .description(
-            "Ends the command line with its `text`, back in the mode it came from, and runs it: a search moves to the `count`th match of the pattern (an empty one is the last search's), or applies the pending operator up to it; an ex line runs its command over its range (`:{range}`, `:d`, `:noh`). A line that fails leaves a message and changes nothing else.",
+            "Ends the command line with its `text`, back in the mode it came from, and runs it: a search moves to the `count`th match of the pattern (an empty one is the last search's), or applies the pending operator up to it; an ex line runs its command over its range (`:{range}`, `:d`, `:noh`, `:s`, `:&`). A line that fails leaves a message and changes nothing else.",
         )
         .context(cmdline_mode.clone())
         .mutates_buffer(true);

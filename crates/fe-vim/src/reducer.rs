@@ -405,6 +405,13 @@ pub fn step(mut pending: Pending, key: VimKey) -> Step {
                 );
             }
             return match ch {
+                // nvim's default mapping, `:&&`: the count is lines.
+                '&' => invocation(
+                    "vim.repeat_substitute",
+                    CountArgs {
+                        count: pending.count,
+                    },
+                ),
                 'p' | 'P' => invocation(
                     "vim.put",
                     PutArgs {

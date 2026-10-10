@@ -7,7 +7,7 @@ use std::ops::Range;
 use std::sync::OnceLock;
 
 use fe_text::{Bias, Text};
-use regex::{Regex, RegexBuilder};
+use regex::{CaptureLocations, Regex, RegexBuilder};
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::args::SearchPattern;
@@ -65,10 +65,18 @@ impl Pattern {
     /// Translates `pattern`, in Vim's default 'magic' syntax, matching case
     /// exactly unless it holds `\c`.
     pub fn parse(pattern: &str) -> Result<Self, PatternError> {
+        Self::parse_with(pattern, false)
+    }
+
+    /// [`Pattern::parse`], ignoring case if `ignore_case` (`:s`'s `i` flag;
+    /// `I` is `false`) unless the pattern says otherwise: `\c` ignores case
+    /// and `\C` matches it, `\c` winning.
+    pub fn parse_with(pattern: &str, ignore_case: bool) -> Result<Self, PatternError> {
         if pattern.is_empty() {
             return Err(PatternError::Invalid("empty pattern"));
         }
-        let (mut tokens, ignore_case) = Lexer::new(pattern).run()?;
+        let (mut tokens, case) = Lexer::new(pattern).run()?;
+        let ignore_case = case.unwrap_or(ignore_case);
         let word = word_bounds(&mut tokens);
         let mut translator = Translator {
             tokens: &tokens,
@@ -272,6 +280,22 @@ impl Pattern {
             whole: self.whole,
             hay,
             at: Some(at),
+            groups: None,
+            last_end: None,
+        }
+    }
+
+    /// The matches in one row as `:s` takes them, each with its groups
+    /// ([`RowMatches::group`]) if `groups`: as [`Pattern::matches`] finds
+    /// them, but an
+    /// empty match where the last match ended is skipped, the search going
+    /// on a whole character later, as in nvim (`:s/b*/-/g` makes `abc`
+    /// `-a-c`).
+    pub(crate) fn substitutions<'a>(&'a self, hay: &'a str, groups: bool) -> RowMatches<'a> {
+        RowMatches {
+            groups: groups.then(|| self.regex.capture_locations()),
+            last_end: Some(None),
+            ..self.matches(hay)
         }
     }
 }
@@ -515,7 +539,7 @@ thread_local! {
 
 /// `row`'s offset and text, without its line break: borrowed from `text`
 /// when it lies in one chunk, else gathered into `buf`.
-fn row_text<'a>(text: &'a Text, row: u32, buf: &'a mut String) -> (usize, &'a str) {
+pub(crate) fn row_text<'a>(text: &'a Text, row: u32, buf: &'a mut String) -> (usize, &'a str) {
     #[cfg(test)]
     ROWS_SEARCHED.with(|rows| rows.set(rows.get() + 1));
     let start = text.row_start(row);
@@ -553,13 +577,26 @@ fn unit(text: &str) -> Option<usize> {
     Some(first + text[first..].graphemes(true).next().map_or(0, str::len))
 }
 
-/// See [`Pattern::matches`].
-struct RowMatches<'a> {
+/// See [`Pattern::matches`] and [`Pattern::substitutions`].
+pub(crate) struct RowMatches<'a> {
     regex: &'a Regex,
     word: (bool, bool),
     whole: bool,
     hay: &'a str,
     at: Option<usize>,
+    /// The last match's groups, if they're wanted.
+    groups: Option<CaptureLocations>,
+    /// For `:s`: where the last non-empty match ended, if one did.
+    last_end: Option<Option<usize>>,
+}
+
+impl RowMatches<'_> {
+    /// Group `n`'s range in the last match (0 is the whole match), if it
+    /// took part; `None` if the groups weren't wanted.
+    pub(crate) fn group(&self, n: usize) -> Option<Range<usize>> {
+        let (start, end) = self.groups.as_ref()?.get(n)?;
+        Some(start..end)
+    }
 }
 
 impl Iterator for RowMatches<'_> {
@@ -567,32 +604,46 @@ impl Iterator for RowMatches<'_> {
 
     fn next(&mut self) -> Option<Range<usize>> {
         loop {
-            let found = self.regex.find_at(self.hay, self.at.take()?)?;
+            let at = self.at.take()?;
+            let found = match &mut self.groups {
+                Some(groups) => {
+                    self.regex.captures_read_at(groups, self.hay, at)?;
+                    let (start, end) = groups.get(0).expect("a match has group 0");
+                    start..end
+                }
+                None => self.regex.find_at(self.hay, at)?.range(),
+            };
             let next = if found.is_empty() {
-                unit(&self.hay[found.start()..]).map_or(usize::MAX, |unit| found.start() + unit)
+                unit(&self.hay[found.start..]).map_or(usize::MAX, |unit| found.start + unit)
             } else {
-                found.end()
+                found.end
             };
             let (start, end) = (self.word.0, self.word.1);
-            if (start && !word_starts(self.hay, found.start()))
-                || (end && !word_ends(self.hay, found.end()))
-                || (self.whole && !stands_alone(self.hay, found.range()))
+            let skipped = found.is_empty() && self.last_end == Some(Some(found.start));
+            if skipped
+                || (start && !word_starts(self.hay, found.start))
+                || (end && !word_ends(self.hay, found.end))
+                || (self.whole && !stands_alone(self.hay, found.clone()))
             {
-                // Not a whole word: the next search starts a character on.
-                let rest = &self.hay[found.start()..];
+                // Not a whole word, or empty where `:s`'s last match ended:
+                // the next search starts a character on.
+                let rest = &self.hay[found.start..];
                 let step = if self.whole {
                     rest.chars().next().map_or(1, char::len_utf8)
                 } else {
                     unit(rest).unwrap_or(1)
                 };
-                let on = found.start() + step;
+                let on = found.start + step;
                 // A whole-word query's `$` can still match at the row's end.
                 self.at =
                     (on < self.hay.len() || (self.whole && on == self.hay.len())).then_some(on);
                 continue;
             }
+            if let Some(last_end) = &mut self.last_end {
+                *last_end = (!found.is_empty()).then_some(found.end);
+            }
             self.at = (next < self.hay.len()).then_some(next);
-            return Some(found.range());
+            return Some(found);
         }
     }
 }
@@ -765,6 +816,8 @@ struct Lexer<'a> {
     at: usize,
     magic: Magic,
     ignore_case: bool,
+    /// The pattern holds `\C`.
+    match_case: bool,
     tokens: Vec<Token>,
 }
 
@@ -775,6 +828,7 @@ impl<'a> Lexer<'a> {
             at: 0,
             magic: Magic::On,
             ignore_case: false,
+            match_case: false,
             tokens: Vec::new(),
         }
     }
@@ -789,9 +843,10 @@ impl<'a> Lexer<'a> {
         Some(ch)
     }
 
-    /// The pattern's tokens, and whether it holds `\c` (which wins over
-    /// `\C`, wherever either is).
-    fn run(mut self) -> Result<(Vec<Token>, bool), PatternError> {
+    /// The pattern's tokens, and whether it ignores case: `Some(true)` if it
+    /// holds `\c` (which wins over `\C`, wherever either is), `Some(false)`
+    /// if it holds only `\C`, `None` if neither.
+    fn run(mut self) -> Result<(Vec<Token>, Option<bool>), PatternError> {
         while let Some(ch) = self.bump() {
             let start = self.at - ch.len_utf8();
             let (escaped, ch) = match ch {
@@ -816,7 +871,12 @@ impl<'a> Lexer<'a> {
                 self.tokens.push(Token::Char(ch));
             }
         }
-        Ok((self.tokens, self.ignore_case))
+        let case = match (self.ignore_case, self.match_case) {
+            (true, _) => Some(true),
+            (false, true) => Some(false),
+            (false, false) => None,
+        };
+        Ok((self.tokens, case))
     }
 
     /// A special `op` from [`OPERATORS`], which began at `start`, `bare` if
@@ -878,8 +938,11 @@ impl<'a> Lexer<'a> {
                 self.ignore_case = true;
                 Token::Flag
             }
-            // Match case: the default here, and `\c` wins over it.
-            'C' => Token::Flag,
+            // Match case: `\c` wins over it.
+            'C' => {
+                self.match_case = true;
+                Token::Flag
+            }
             'v' | 'm' | 'M' | 'V' => {
                 self.magic = match ch {
                     'v' => Magic::Very,
@@ -1482,7 +1545,11 @@ impl Translator<'_> {
         // `alternation` returned at the closing `\)`.
         self.next += 1;
         self.depth -= 1;
-        Ok(format!("(?:{inner})"))
+        // `\(` captures, for `:s`'s `\1` to `\9`.
+        Ok(match capture {
+            true => format!("({inner})"),
+            false => format!("(?:{inner})"),
+        })
     }
 }
 

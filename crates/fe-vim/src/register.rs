@@ -3,6 +3,8 @@
 
 use fe_editor::commands::EditorHost;
 
+use crate::substitute::LastSubstitute;
+
 /// A register's text, and whether it holds whole lines (its text then ends
 /// in `\n`) or a block.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -67,6 +69,8 @@ pub struct Registers {
     search: Option<Register>,
     /// Whether the last search went forward (`/`, not `?`).
     search_forward: bool,
+    /// The last `:s`, which `:&` repeats; shared like the last search.
+    pub(crate) substitute: LastSubstitute,
 }
 
 /// The clipboard's name in [`Registers::unnamed`].

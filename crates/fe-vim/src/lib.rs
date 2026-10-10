@@ -6,7 +6,7 @@
 //! command comes out as an [`Invocation`](fe_command::Invocation) of one of
 //! vim's commands (`vim.move`, `vim.operate`, `vim.put`, `vim.insert`,
 //! `vim.join`, `vim.replace_char`, `vim.toggle_case`, `vim.undo`, `vim.redo`,
-//! `vim.repeat`, `vim.visual`, `vim.visual_exit`, `vim.visual_swap`,
+//! `vim.repeat`, `vim.repeat_substitute`, `vim.visual`, `vim.visual_exit`, `vim.visual_swap`,
 //! `vim.visual_put`, `vim.reselect`, `vim.select` and the command line's
 //! `vim.command_line`, `vim.command_line_submit` and
 //! `vim.command_line_cancel`, for searches and ex commands), dispatched through
@@ -176,8 +176,9 @@
 //! round the text, the line it started from last; its pattern, in the
 //! syntax below, becomes the last search with its direction and is
 //! highlighted, even if no line matches (E486). An empty pattern, `\/` and
-//! `\?` are the last search's (E35 with none); `\&` is the last substitute
-//! pattern, which nothing sets yet (E33). Line 0 is before the first.
+//! `\?` are the last search's (E35 with none); `\&` searches forward for
+//! the last substitute's pattern (E33 before one), which becomes the last
+//! search. Line 0 is before the first.
 //!
 //! - `:{range}` alone goes to the range's last line as `{N}G` does, keeping
 //!   the goal column; past the last line it stops there. With no range
@@ -192,6 +193,55 @@
 //!   what `.` repeats. The caret goes to the first non-blank of the line
 //!   that took the range's place.
 //! - `:noh[lsearch]` clears [`VimState::highlight`] until the next search.
+//! - `:s[ubstitute]/{pattern}/{string}/[flags] [count]` replaces matches of
+//!   the pattern on the range's lines (by default the cursor's; with a
+//!   count, that many from the range's last), the first on each line. Any
+//!   delimiter but a letter, digit, `\`, `"` or `|` may stand for `/`,
+//!   after blanks; without its last delimiter the flags are empty, and
+//!   without the second the string is. An empty pattern is the last
+//!   search's (E35 with none). The flags ([`Flags`], `:help s_flags`):
+//!   `&` (first only) keeps the last substitute's flags; `g` replaces every
+//!   match on a line (each `g` toggles it); `i` ignores case and `I`
+//!   matches it, the last of them winning, and `\c` or `\C` in the
+//!   pattern beating both; `n` counts the matches, changing nothing; `e`
+//!   makes finding nothing quiet instead of E486 (each `e` toggles it, and
+//!   `&e` toggles the kept one). `c` (confirm) is refused
+//!   with a message, as are the print flags, which nvim takes: fe-vim has
+//!   no prompt or output. The string's specials (`:help
+//!   sub-replace-special`, magic): `&` and `\0` are the whole match, `\1`
+//!   to `\9` the groups `\(…\)` captured (empty if one took no part); `~`
+//!   is the last substitute's string as typed (a `~` in it already
+//!   expanded); `\r` (or a typed carriage return) breaks the line; `\t`
+//!   is a tab and `\b` a backspace; `\&`, `\~`, `\\` and a backslash
+//!   before any other character are that character, and a trailing one is
+//!   itself; `\u` and `\l` make the next character upper or lower case
+//!   (the last one given; a line break uses one up), and `\U` and `\L`
+//!   those after, until `\E` or `\e` (which also drops a waiting `\u` or
+//!   `\l`); a `\u` or `\l` beats a `\U` or `\L` for its character. Case
+//!   changes one character at a time by nvim's tables, as visual `U` and
+//!   `u` do (`ß` becomes `ẞ`). `\n`, a NUL in Vim, is refused, as is
+//!   `\=` (an expression). The pattern becomes the last search, keeping
+//!   the last search's direction, and is highlighted; the pattern, string
+//!   and flags become the last substitute, even if nothing matches. Each
+//!   line is read once and every replacement goes in as one transaction,
+//!   which one `u` undoes (the caret back at the first changed line's
+//!   start, as redo leaves it too); `.` doesn't repeat it. The caret goes to
+//!   the first non-blank of the last line changed (the last a `\r` made);
+//!   with `n`, to its own line's first non-blank; finding nothing, nowhere.
+//!   Within a line the matches are found as a search's are, but an empty
+//!   match where the last match ended is passed over (`:s/b*/-/g` makes
+//!   `abc` `-a-c`). More than two replacements, or any count with `n`,
+//!   leave nvim's report in [`VimState::message`] ("3 substitutions on 2
+//!   lines", "1 match on 1 line").
+//! - `:s [flags] [count]` with no pattern, and `:&[&][flags] [count]`
+//!   (blanks allowed after `:&`), repeat the last substitute (E33 before
+//!   one; its pattern, not the last search's) on the
+//!   range, with the flags given: with `&&` (a second `&`) the last
+//!   substitute's own, which nvim keeps from every substitute run, repeats
+//!   included. Neither changes the last search. In normal mode `&` is
+//!   nvim's default mapping, `:&&`, and a count before it makes the range
+//!   `.,.+{count-1}`: `vim.repeat_substitute`, which `.` doesn't repeat
+//!   either.
 //! - File and window commands aren't run: `:w[rite][!]`, `:q[uit][!]`,
 //!   `:wq[!]`, `:x[it][!]`, `:exi[t][!]`, `:e[dit][!] [path]`, `:qa[ll][!]`
 //!   (`:quita[ll]`) and `:wa[ll]` leave a [`HostCommand`] for the host to
@@ -206,12 +256,15 @@
 //! alone) past the last, E493 for a range given backwards (nvim asks
 //! whether to swap it, and headless nvim answers no), E20 for a mark not
 //! set, E477 for a `!`, E481 for a range on `:noh`, E488 for trailing
-//! characters and E939 for a count of 0.
+//! characters and E939 for a count of 0; for `:s`, E1510 for a count of
+//! 2147483647 or more, E146 for a letter as the delimiter and E486 when
+//! nothing matches (but with `e`).
 //!
-//! Not yet: `:s`, `:&` and
-//! `&`, the GPUI line. Not planned for M7's first ex cards: `:g`, `:v`,
+//! Not yet: the GPUI line. Not planned for M7's first ex cards: `:g`, `:v`,
 //! `:normal`, `:m`, `:t`, `:co`, `:j`, `:y`, `:>`, `:<`, `:pu`, `:r`,
 //! `:sort`, `:set`, `:marks`, `:reg`, `:undo`, `:!`, `|` between commands,
+//! `:s`'s `c`, `r` and print flags, `\=` in its string, `:s\/`, `:s\?`
+//! and `:s\&`, the two-letter forms (`:sg`, `:si`, …), `g&`, `:~`,
 //! the line's history and completion, marks other than `'<` and `'>`
 //! (`'a` is E20 until marks come), `*` for `'<,'>`, and a count before
 //! `:` in a visual mode (nvim drops it too). These are E492, or, for a
@@ -238,8 +291,8 @@
 //!   `\{-}` (bounds given the wrong way round are swapped). A `*` with
 //!   nothing before it, at the start of a branch or right after `^`, is
 //!   itself (not `\*` after `\M` or `\V`, which is misplaced there).
-//! - Groups `\(…\)` (at most nine) and `\%(…\)`, and `\|` between
-//!   branches.
+//! - Groups `\(…\)` (at most nine, which `:s`'s `\1` to `\9` take) and
+//!   `\%(…\)`, and `\|` between branches.
 //! - `^` at the start of a branch and `$` at its end, matching a row's start
 //!   and end; elsewhere they're themselves. `\<` and `\>`, a word's start
 //!   and end.
@@ -259,7 +312,8 @@
 //!   within ASCII: `\c[a-z]` doesn't take the Kelvin sign, but `\c[a-y]`,
 //!   `\c[\x61-z]` and `\c[a-z[:digit:]]` do. `\v`, `\m`, `\M` and `\V` switch to very
 //!   magic, magic, nomagic and very nomagic for what follows.
-//! - `~`, as itself: Vim's last substitute string doesn't exist yet.
+//! - `~`, as itself. In nvim it's the last substitute's string (E33 before
+//!   one); patterns here are parsed without one.
 //!
 //! Anything else is an error naming the atom, "pattern not supported: \zs",
 //! never a different match: `\n`, `\_x`, `\zs` and the other `\z` atoms,
@@ -505,6 +559,7 @@ mod register;
 mod repeat;
 pub mod search;
 mod state;
+mod substitute;
 mod text_object;
 mod visual;
 
@@ -522,6 +577,7 @@ pub use reducer::{Pending, PendingKind, Step, step};
 pub use register::{Register, RegisterError, Registers, Write};
 pub use repeat::{Change, LastChange};
 pub use state::{Mode, VimState, context};
+pub use substitute::{Flags, Substitute};
 pub use visual::Mark;
 
 #[cfg(test)]

@@ -20,6 +20,7 @@ mod search;
 mod search_next;
 mod search_pattern;
 mod state;
+mod substitute;
 mod undo;
 mod visual;
 mod visual_block;

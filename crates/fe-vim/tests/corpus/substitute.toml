@@ -1,0 +1,460 @@
+# Substitute cases for fe-vim's oracle: `:s` with and without its flags
+# (g i I & n e), an empty pattern, `:s` alone, `:&`, `:&&` and normal mode's
+# `&`, every replacement special, other delimiters, ranges (`%`, `'<,'>`, a
+# search, a count), `u`, `<C-r>` and `.` after one, and finding nothing (a
+# case ends at an error: nvim flushes the keys after it). nvim keeps its last
+# substitute between cases, so a case that repeats one or uses `~` makes its
+# own first. Hand-written: name, buffer (rows joined with \n, no trailing
+# newline), cursor = [row, byte column] and keys in vim notation. What nvim
+# does with each is recorded in substitute.expected.json by the ignored
+# `record_corpus_with_neovim` test; edit a case, then re-record.
+
+[[case]]
+name = "sub_first"
+buffer = "a a a\n  xa a\nb"
+cursor = [0, 2]
+keys = ":s/a/b/<CR>"
+
+[[case]]
+name = "sub_global"
+buffer = "a a a\n  xa a\nb"
+cursor = [0, 2]
+keys = ":s/a/b/g<CR>"
+
+[[case]]
+name = "sub_percent_first_per_row"
+buffer = "a a a\n  xa a\nb"
+cursor = [2, 0]
+keys = ":%s/a/b/<CR>"
+
+[[case]]
+name = "sub_ignore_case"
+buffer = "a A a\nA"
+cursor = [0, 0]
+keys = ":s/a/b/gi<CR>"
+
+[[case]]
+name = "sub_match_case"
+buffer = "a A a\nA"
+cursor = [0, 0]
+keys = ":s/A/x/gI<CR>"
+
+[[case]]
+name = "sub_last_case_flag_wins"
+buffer = "a A a"
+cursor = [0, 0]
+keys = ":s/a/b/giI<CR>"
+
+[[case]]
+name = "sub_pattern_case_beats_flag"
+buffer = "a A a"
+cursor = [0, 0]
+keys = ':s/\Ca/b/gi<CR>'
+
+[[case]]
+name = "sub_pattern_ignore_beats_flag"
+buffer = "a A a"
+cursor = [0, 0]
+keys = ':s/\ca/b/gI<CR>'
+
+[[case]]
+name = "sub_global_twice_toggles"
+buffer = "a a a"
+cursor = [0, 0]
+keys = ":s/a/b/gg<CR>"
+
+[[case]]
+name = "sub_count_only"
+buffer = "  xa\n  ab\n  b c"
+cursor = [0, 3]
+keys = ":%s/a/X/n<CR>"
+
+[[case]]
+name = "sub_count_only_global"
+buffer = "  xa a\n  ab\n  b c"
+cursor = [2, 4]
+keys = ":%s/a/X/gn<CR>"
+
+[[case]]
+name = "sub_quiet_not_found"
+buffer = "  xa\n  ab\n  b c"
+cursor = [2, 4]
+keys = ":%s/z/X/e<CR>"
+
+[[case]]
+name = "sub_keep_flags"
+buffer = "a A a\n  xa a\nb"
+cursor = [0, 3]
+keys = ":s/a/X/g<CR>j:s/a/Y/&<CR>"
+
+[[case]]
+name = "sub_count"
+buffer = "a a\na a\na a\na"
+cursor = [0, 2]
+keys = ":s/a/X/ 2<CR>"
+
+[[case]]
+name = "sub_count_with_flags"
+buffer = "a a\na a\na a\na"
+cursor = [0, 2]
+keys = ":s/a/X/g2<CR>"
+
+[[case]]
+name = "sub_no_closing_delimiter"
+buffer = "a A a"
+cursor = [0, 3]
+keys = ":s/a/X<CR>"
+
+[[case]]
+name = "sub_empty_replacement"
+buffer = "a A a"
+cursor = [0, 3]
+keys = ":s/a<CR>"
+
+[[case]]
+name = "sub_abbreviated_name"
+buffer = "a a\na a"
+cursor = [0, 0]
+keys = ":su/a/X/g<CR>j:substitute/a/Y/<CR>"
+
+[[case]]
+name = "empty_pattern_last_search"
+buffer = "a A a\nA"
+cursor = [0, 0]
+keys = "/A<CR>:s//x/<CR>"
+
+[[case]]
+name = "empty_pattern_last_substitute"
+buffer = "foo bar baz"
+cursor = [0, 0]
+keys = ":s/a/X/<CR>:s//Y/<CR>"
+
+[[case]]
+name = "empty_pattern_search_after_substitute"
+buffer = "foo bar baz"
+cursor = [0, 0]
+keys = ":s/a/X/<CR>/z<CR>:s//Y/<CR>"
+
+[[case]]
+name = "repeat_bare_s"
+buffer = "a A a\n  xa a\nb"
+cursor = [0, 3]
+keys = ":s/a/X/g<CR>j:s<CR>"
+
+[[case]]
+name = "repeat_ampersand_drops_flags"
+buffer = "a A a\n  xa a\nb"
+cursor = [0, 3]
+keys = ":s/a/X/g<CR>j:&<CR>"
+
+[[case]]
+name = "repeat_ampersand_ampersand_keeps_flags"
+buffer = "a A a\n  xa a\nb"
+cursor = [0, 3]
+keys = ":s/a/X/g<CR>j:&&<CR>"
+
+[[case]]
+name = "repeat_ampersand_new_flags"
+buffer = "a a\na a\na a"
+cursor = [0, 0]
+keys = ":s/a/X/<CR>j:&g<CR>"
+
+[[case]]
+name = "repeat_flags_saved_each_run"
+buffer = "a a\na a\na a"
+cursor = [0, 0]
+keys = ":s/a/X/g<CR>j:&<CR>j:&&<CR>"
+
+[[case]]
+name = "repeat_ampersand_range"
+buffer = "a a\na a\na a"
+cursor = [0, 0]
+keys = ":s/a/X/<CR>:%&g<CR>"
+
+[[case]]
+name = "repeat_uses_substitute_pattern"
+buffer = "a z\na z\na z"
+cursor = [0, 0]
+keys = ":s/a/X/<CR>/z<CR>j:s<CR>"
+
+[[case]]
+name = "normal_ampersand"
+buffer = "a A a\n  xa a\nb"
+cursor = [0, 3]
+keys = ":s/a/X/g<CR>j&"
+
+[[case]]
+name = "normal_ampersand_count"
+buffer = "a\na\na\na"
+cursor = [0, 0]
+keys = ":s/a/b/<CR>j2&"
+
+[[case]]
+name = "normal_ampersand_search_kept"
+buffer = "a\na\na\na\na"
+cursor = [2, 0]
+keys = "?a<CR>:s/a/A/<CR>jj&n"
+
+[[case]]
+name = "special_whole_match"
+buffer = "foo bar baz"
+cursor = [0, 0]
+keys = ':s/b\(a\)\(.\)/[&,\&]/g<CR>'
+
+[[case]]
+name = "special_groups"
+buffer = "foo bar baz"
+cursor = [0, 0]
+keys = ':s/\(b\)\(a\)\(.\)/\0-\3\2\1-\9/g<CR>'
+
+[[case]]
+name = "special_tilde"
+buffer = "a a\na a\na a"
+cursor = [0, 0]
+keys = ":s/a/X/<CR>j:s/a/~Y/<CR>j:s/a/~/<CR>"
+
+[[case]]
+name = "special_tilde_escaped"
+buffer = "a a\na a\na a"
+cursor = [0, 0]
+keys = ':s/a/X/<CR>j:s/a/\~~/<CR>'
+
+[[case]]
+name = "special_tilde_repeat_keep"
+buffer = "a a a a"
+cursor = [0, 0]
+keys = ":s/a/X/<CR>:s/a/~Y/<CR>:&&<CR>:&&<CR>"
+
+[[case]]
+name = "special_tilde_repeat_normal"
+buffer = "a a a a"
+cursor = [0, 0]
+keys = ":s/a/X/<CR>:s/a/~Y/<CR>&&"
+
+[[case]]
+name = "special_tilde_after_not_found"
+buffer = "aa"
+cursor = [0, 0]
+keys = ":s/a/X/<CR>:s/zzz/~Y/e<CR>:s/a/~/<CR>"
+
+[[case]]
+name = "special_line_break"
+buffer = "one two three"
+cursor = [0, 4]
+keys = ':s/ /\r/g<CR>'
+
+[[case]]
+name = "special_line_break_first"
+buffer = "one two three"
+cursor = [0, 4]
+keys = ':s/ /\r/<CR>'
+
+[[case]]
+name = "special_line_break_many_rows"
+buffer = "a\na\nb"
+cursor = [2, 0]
+keys = ':%s/a/X\rY/g<CR>'
+
+[[case]]
+name = "special_tab_and_backslash"
+buffer = "foo bar"
+cursor = [0, 0]
+keys = ':s/o/\t,\\,\x/<CR>'
+
+[[case]]
+name = "special_upper_lower_one"
+buffer = "foo bar baz"
+cursor = [0, 0]
+keys = ':s/bar/\u&-\l\U&/<CR>'
+
+[[case]]
+name = "special_upper_lower_run"
+buffer = "foo bar baz"
+cursor = [0, 0]
+keys = ':s/b\(a\)/\U&x\Ey-\L&AB\eC/g<CR>'
+
+[[case]]
+name = "special_lower_word"
+buffer = "FOO bar"
+cursor = [0, 0]
+keys = ':s/FOO/\l&-\L&-\u\L&/<CR>'
+
+[[case]]
+name = "special_one_beats_run"
+buffer = "foo bar baz"
+cursor = [0, 0]
+keys = ':s/bar/\U\lABC/<CR>'
+
+[[case]]
+name = "special_one_after_line_break"
+buffer = "abc"
+cursor = [0, 0]
+keys = ':s/b/\u\rd/<CR>'
+
+[[case]]
+name = "special_end_cancels_one"
+buffer = "abc"
+cursor = [0, 0]
+keys = ':s/b/\u\E&/<CR>'
+
+[[case]]
+name = "special_upper_unicode"
+buffer = "straße ǆ"
+cursor = [0, 0]
+keys = ':s/straße ǆ/\U&/<CR>'
+
+[[case]]
+name = "delimiter_hash"
+buffer = "a/a a"
+cursor = [0, 0]
+keys = ":s#a#/#g<CR>"
+
+[[case]]
+name = "delimiter_semicolon_count"
+buffer = "a a\na a\na a"
+cursor = [0, 0]
+keys = ":s;a;X;g 2<CR>"
+
+[[case]]
+name = "delimiter_after_blanks"
+buffer = "a a\na a"
+cursor = [0, 0]
+keys = ":s /a/X/<CR>"
+
+[[case]]
+name = "percent_many_rows"
+buffer = "x0 x\nx1 x\nx2 x\nx3 x\nx4 x\nx5 x\nx6 x\nx7 x\nx8 x\nx9 x\nx10 x\nx11 x"
+cursor = [5, 1]
+keys = ":%s/x/y/<CR>"
+
+[[case]]
+name = "percent_some_rows"
+buffer = "b\n  ab\n  b\n  ba\nc"
+cursor = [4, 0]
+keys = ":%s/a/X/g<CR>"
+
+[[case]]
+name = "visual_line_range"
+buffer = "xa\n  ab\n  ba\na"
+cursor = [1, 0]
+keys = "Vj:s/a/X/<CR>"
+
+[[case]]
+name = "visual_char_range"
+buffer = "xa\n  ab\n  ba\na"
+cursor = [1, 3]
+keys = "vj:s/a/X/g<CR>"
+
+[[case]]
+name = "search_range"
+buffer = "a\nb a\nc a"
+cursor = [0, 0]
+keys = ":/c/s/a/X/<CR>"
+
+[[case]]
+name = "undo_after_percent"
+buffer = "b\n  ab\n  ba\na"
+cursor = [3, 0]
+keys = ":%s/a/X/<CR>u"
+
+[[case]]
+name = "redo_after_percent"
+buffer = "b\n  ab\n  ba\na"
+cursor = [3, 0]
+keys = ":%s/a/X/<CR>u<C-r>"
+
+[[case]]
+name = "undo_after_line_break"
+buffer = "one two"
+cursor = [0, 0]
+keys = ':s/ /\r/<CR>u'
+
+[[case]]
+name = "dot_repeats_change_before"
+buffer = "xab\n  ab\n  ba"
+cursor = [0, 0]
+keys = "x:s/b/X/<CR>j."
+
+[[case]]
+name = "empty_matches"
+buffer = "abbcb"
+cursor = [0, 0]
+keys = ":s/b*/-/g<CR>"
+
+[[case]]
+name = "empty_matches_alternation"
+buffer = "abcd"
+cursor = [0, 0]
+keys = ':s/b\|x\=\|c/-/g<CR>'
+
+[[case]]
+name = "start_of_line"
+buffer = "  abc"
+cursor = [0, 4]
+keys = ":s/^/> /<CR>"
+
+[[case]]
+name = "end_of_line"
+buffer = "abc\nd"
+cursor = [0, 0]
+keys = ":%s/$/!/<CR>"
+
+[[case]]
+name = "whole_words"
+buffer = "a ab a ba a"
+cursor = [0, 0]
+keys = ':s/\<a\>/X/g<CR>'
+
+[[case]]
+name = "sub_quiet_toggled"
+buffer = "a a\na a"
+cursor = [0, 2]
+keys = ":s/a/X/e<CR>j:s/a/Y/&e<CR>:%s/a/Z/gee<CR>"
+
+[[case]]
+name = "repeat_ampersand_blank_flags"
+buffer = "a a a\na a a"
+cursor = [0, 0]
+keys = ":s/a/X/<CR>:& g<CR>"
+
+[[case]]
+name = "repeat_ampersand_blank_keep"
+buffer = "a a a\na a a"
+cursor = [0, 0]
+keys = ":s/a/X/g<CR>j:& &<CR>"
+
+[[case]]
+name = "repeat_ampersand_keep_blank_flags"
+buffer = "a a a\na a a"
+cursor = [0, 0]
+keys = ":s/a/X/g<CR>j:&& g<CR>"
+
+[[case]]
+name = "sub_count_largest"
+buffer = "a\na\na"
+cursor = [1, 0]
+keys = ":s/a/X/ 2147483646<CR>"
+
+[[case]]
+name = "sub_count_too_large"
+buffer = "a\na\na"
+cursor = [1, 0]
+keys = ":s/a/X/ 2147483647<CR>"
+
+[[case]]
+name = "not_found"
+buffer = "  xa\n  ab\n  b c"
+cursor = [2, 4]
+keys = ":s/z/X/<CR>"
+
+[[case]]
+name = "not_found_percent"
+buffer = "a\nb\nb"
+cursor = [2, 0]
+keys = ":%s/zz/X/<CR>"
+
+[[case]]
+name = "not_found_on_repeat"
+buffer = "a A a\n  xa a\nb"
+cursor = [0, 0]
+keys = ":s/a/X/<CR>:s/A/Y/<CR>j:s<CR>"
