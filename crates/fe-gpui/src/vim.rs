@@ -220,7 +220,14 @@ pub(crate) fn live_stack(
             .vim
             .as_ref()
             .is_some_and(|state| state.pending().kind().is_some());
-        (stamp(stack, view.vim.as_ref()), pending)
+        // And the completion menu as it is now, not as the last frame
+        // drew it: a key after the menu closed is the editor's again.
+        view.drop_stale_completion();
+        let stack = stamp(stack, view.vim.as_ref());
+        (
+            crate::completion_menu::stamp(stack, view.completion_shown()),
+            pending,
+        )
     })
 }
 

@@ -75,6 +75,13 @@ pub struct EditorView {
     pub(crate) popover: crate::hover::HoverPopover,
     /// Where the popover's hover text comes from, if anywhere.
     pub(crate) hover_provider: Option<std::rc::Rc<dyn crate::HoverProvider>>,
+    /// The completion menu, open or awaiting its first answer
+    /// ([`crate::completion_menu`]).
+    pub(crate) completion: Option<crate::completion_menu::Menu>,
+    /// Where completions come from, if anywhere.
+    pub(crate) completion_provider: Option<std::rc::Rc<dyn crate::CompletionProvider>>,
+    /// Close the menu on `escape` and on losing focus.
+    pub(crate) completion_subscriptions: Vec<Subscription>,
     /// The frames around the view's own in its context stack, as last seen
     /// while it was focused: see [`EditorView::context_stack`].
     ancestors: Option<ContextStack>,
@@ -110,6 +117,9 @@ pub struct EditorView {
     /// Its parts, and the font each was set in.
     #[cfg(test)]
     pub(crate) painted_popover_blocks: Vec<(crate::hover::Block, gpui::SharedString)>,
+    /// The completion menu, as the last frame showed it.
+    #[cfg(test)]
+    pub(crate) painted_completion: Option<crate::completion_menu::Painted>,
 }
 
 /// A word a bound click would run its command on: see [`EditorView::hover`].
@@ -157,6 +167,9 @@ impl EditorView {
             hover_blur: None,
             popover: Default::default(),
             hover_provider: None,
+            completion: None,
+            completion_provider: None,
+            completion_subscriptions: Vec::new(),
             ancestors: None,
             find: Default::default(),
             #[cfg(test)]
@@ -177,6 +190,8 @@ impl EditorView {
             painted_popover: None,
             #[cfg(test)]
             painted_popover_blocks: Vec::new(),
+            #[cfg(test)]
+            painted_completion: None,
         };
         crate::vim::register(&view.focus, cx);
         crate::hover::hide_on_escape(&mut view, cx);
@@ -395,6 +410,7 @@ impl EditorView {
             Drag::Words(_) => Drag::Words(selected(&self.model)),
             Drag::Rows(_) => Drag::Rows(selected(&self.model)),
         });
+        self.sync_completion(cx);
         self.changed(cx);
     }
 
@@ -946,6 +962,13 @@ impl Render for EditorView {
         if let Some(state) = &self.vim {
             crate::vim::add_to_key_context(&mut key_context, state);
         }
+        if self.completion_subscriptions.is_empty() {
+            Self::close_completion_on_escape_and_blur(self, window, cx);
+        }
+        self.drop_stale_completion();
+        if self.completion_shown() {
+            key_context.add(crate::completion_menu::KEY_CONTEXT);
+        }
         div()
             .id("editor")
             .key_context(key_context)
@@ -962,6 +985,7 @@ impl Render for EditorView {
             .on_key_down(cx.listener(Self::on_vim_key))
             .child(EditorElement::new(cx.entity()))
             .child(crate::hover::popover_layer(cx))
+            .child(crate::completion_menu::menu_layer(cx))
     }
 }
 
@@ -1106,3 +1130,6 @@ mod diagnostics_tests;
 
 #[cfg(test)]
 mod hover_tests;
+
+#[cfg(test)]
+mod completion_tests;

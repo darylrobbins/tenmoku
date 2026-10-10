@@ -757,6 +757,42 @@ impl LspManager {
         )
     }
 
+    /// Sends `R` to `server` as [`request`](Self::request) does, but only
+    /// if `send` agrees, given the documents the server has open as it's
+    /// sent ([`Opened`]): `Ok(None)` if it doesn't. To keep a request to a
+    /// session that may have ended (an item it gave, say) from reaching
+    /// its successor.
+    pub(crate) fn request_if<R: Request>(
+        &self,
+        server: ServerId,
+        params: R::Params,
+        send: impl FnOnce(&Opened) -> bool + Send + 'static,
+    ) -> impl Future<Output = Result<Option<Reply<R::Result>>, LspError>> + Send + 'static {
+        let (answer, answered) = oneshot::channel();
+        let admit: WithDocuments = Box::new(move |opened| match opened {
+            Ok(opened) if send(&opened) => {
+                Some(call::<R, _>(answer, params, |_, reply| reply.map(Some)))
+            }
+            Ok(_) => {
+                let _ = answer.send(Ok(None));
+                None
+            }
+            Err(err) => {
+                let _ = answer.send(Err(err));
+                None
+            }
+        });
+        // A server that has gone drops the command, and `answer` with it.
+        self.send(server, Command::WithDocuments(admit));
+        let answered = answered.map(|answer| answer.unwrap_or(Err(LspError::ServerDown)));
+        within(
+            answered,
+            self.timeout::<R>(),
+            &*self.clock,
+            Err(LspError::Timeout),
+        )
+    }
+
     /// The server documents of fe-syntax's `language` under `root` go to
     /// now, by name, with the latest status of one started there (`None`
     /// if none has been); `None` if they'd go to none: no server lists the

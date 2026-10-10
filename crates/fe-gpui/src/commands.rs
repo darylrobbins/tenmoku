@@ -15,7 +15,7 @@ use fe_keymap::{CatalogError, CommandCatalog};
 use fe_syntax::Syntax;
 use gpui::{Action, App, ClipboardItem, Context, Global, Window};
 
-use crate::{EditorView, view::synced_syntax, vim};
+use crate::{EditorView, completion_menu, view::synced_syntax, vim};
 
 /// Runs a command: the one GPUI action every binding dispatches.
 #[derive(Clone, Debug, PartialEq, Action)]
@@ -53,7 +53,8 @@ thread_local! {
 /// Shows the hover popover at the caret ([`crate::hover`]).
 pub const SHOW_HOVER: &str = "editor.show_hover";
 
-/// fe-editor's commands, and the view's own, in the editor's context. The
+/// fe-editor's commands, and the view's own: in the editor's context, and
+/// the completion menu's in its own ([`completion_menu`]). The
 /// view's do nothing to the model: once one has dispatched, the view does
 /// its work ([`EditorView::run_command`]).
 fn editor_registry() -> Registry<Editor> {
@@ -66,6 +67,41 @@ fn editor_registry() -> Registry<Editor> {
         )
         .expect("view command IDs are valid and distinct")
         .context(ContextPredicate::identifier(fe_editor::commands::CONTEXT));
+    let menu = [
+        (
+            completion_menu::TRIGGER,
+            "Trigger Completion",
+            fe_editor::commands::CONTEXT,
+        ),
+        (
+            completion_menu::SELECT_PREV,
+            "Select Previous Completion",
+            completion_menu::KEY_CONTEXT,
+        ),
+        (
+            completion_menu::SELECT_NEXT,
+            "Select Next Completion",
+            completion_menu::KEY_CONTEXT,
+        ),
+        (
+            completion_menu::ACCEPT,
+            "Accept Completion",
+            completion_menu::KEY_CONTEXT,
+        ),
+        (
+            completion_menu::DISMISS,
+            "Dismiss Completion",
+            completion_menu::KEY_CONTEXT,
+        ),
+    ];
+    for (id, title, context) in menu {
+        registry
+            .register(id, title, |_: &mut EditorTarget<'_>, _: &Actor| {
+                Ok(Dispatched::new(Effect::Nothing))
+            })
+            .expect("view command IDs are valid and distinct")
+            .context(ContextPredicate::identifier(context));
+    }
     registry
 }
 
@@ -290,8 +326,15 @@ impl EditorView {
                     Err(error) => Err(error),
                     Ok(_) => match invocation.command.as_str() {
                         vim::NEWLINE => vim::line_break(state, &mut self.model, &invocation),
-                        // Edits nothing, so the session goes on.
+                        // Edit nothing, or as typing does, so the session
+                        // goes on.
                         SHOW_HOVER => dispatch(&mut self.model),
+                        command
+                            if command == completion_menu::TRIGGER
+                                || command.starts_with("completion.") =>
+                        {
+                            dispatch(&mut self.model)
+                        }
                         command if vim::TEXT_INPUT.contains(&command) => dispatch(&mut self.model),
                         command => {
                             split = true;
@@ -319,7 +362,11 @@ impl EditorView {
         }
         match self.dispatched(result, &invocation, mutates, cx) {
             Ok(()) if invocation.command.as_str() == SHOW_HOVER => self.show_hover(cx),
-            Ok(()) => {}
+            Ok(()) => {
+                if !self.run_completion_command(invocation.command.as_str(), cx) {
+                    self.sync_completion(cx);
+                }
+            }
             Err(DispatchError::UnknownCommand(_)) => {
                 cx.default_global::<Commands>().propagated = Some(invocation);
                 // In case no app handler takes it.
@@ -374,5 +421,6 @@ impl EditorView {
             .args(Value::from_iter([("text", text)]))
             .source(Source::Keyboard);
         self.run_command(invocation, cx);
+        self.completion_typed(text, cx);
     }
 }

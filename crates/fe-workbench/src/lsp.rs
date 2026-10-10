@@ -51,6 +51,9 @@
 //!   manager ([`LspManager::hover`]), which sends it to the server its
 //!   buffer is open on. Anything but an answer, such as no server, a
 //!   timeout or an error, shows nothing.
+//! - **Completion.** The same provider asks for an editor's completions
+//!   ([`LspManager::completion`]), resolves the selected one, and reports
+//!   the server's trigger characters for the buffer.
 //! - **Shutdown.** Closing the window shuts its servers down (§3.4) on
 //!   their threads. Quitting shuts every workbench's down, and blocks until
 //!   each closed window's and each workbench's server has stopped, for as
@@ -80,6 +83,7 @@ use fe_command::{
     Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Invocation, Registry,
 };
 use fe_config::settings::LspSettings;
+use fe_editor::completion::{CompletionItem, CompletionList, CompletionTrigger};
 use fe_editor::{
     EditorModel,
     diagnostics::{Diagnostic, DiagnosticTag, Severity},
@@ -304,7 +308,8 @@ pub(crate) struct Lsp {
     delivered: Vec<(u64, LspEvent, Option<bool>)>,
     /// Each shown buffer's file, resolved, or `None` if it can't be.
     resolved: HashMap<BufferId, Option<PathBuf>>,
-    /// Every editor's hover provider, following the manager.
+    /// Every editor's hover and completion provider, following the
+    /// manager.
     hover: Rc<LspHover>,
     /// The buffers whose files are being resolved.
     resolving: HashSet<BufferId>,
@@ -572,10 +577,17 @@ impl Workbench {
     pub(crate) fn sync_lsp(&mut self, cx: &mut Context<Self>) {
         let editors = self.open_editors(cx);
         let hover: Rc<dyn fe_gpui::HoverProvider> = self.lsp.hover.clone();
+        let completion: Rc<dyn fe_gpui::CompletionProvider> = self.lsp.hover.clone();
         for editor in &editors {
             let set = editor.read(cx).hover_provider();
             if !set.is_some_and(|set| Rc::ptr_eq(set, &hover)) {
                 editor.update(cx, |view, _| view.set_hover_provider(Some(hover.clone())));
+            }
+            let set = editor.read(cx).completion_provider();
+            if !set.is_some_and(|set| Rc::ptr_eq(set, &completion)) {
+                editor.update(cx, |view, _| {
+                    view.set_completion_provider(Some(completion.clone()))
+                });
             }
         }
         if self.lsp.manager.is_none() && self.lsp.root_failed.is_some() {
@@ -984,9 +996,9 @@ impl Workbench {
     }
 }
 
-/// Hover text for an editor, from the server its buffer is open on, through
-/// whichever manager the workbench has now: none (no root, or a closed
-/// window) answers nothing.
+/// Hover text and completions for an editor, from the server its buffer is
+/// open on, through whichever manager the workbench has now: none (no root,
+/// or a closed window) answers nothing.
 #[derive(Default)]
 struct LspHover {
     manager: RefCell<Weak<Mutex<LspManager>>>,
@@ -1011,6 +1023,92 @@ impl fe_gpui::HoverProvider for LspHover {
                 }
             }
         })
+    }
+}
+
+impl fe_gpui::CompletionProvider for LspHover {
+    fn trigger_characters(&self, buffer: BufferId) -> Vec<String> {
+        match self.manager.borrow().upgrade() {
+            Some(manager) => lock(&manager).trigger_characters(buffer),
+            None => Vec::new(),
+        }
+    }
+
+    fn completions(
+        &self,
+        buffer: BufferId,
+        version: Version,
+        offset: usize,
+        trigger: CompletionTrigger,
+    ) -> fe_gpui::CompletionFuture {
+        let Some(manager) = self.manager.borrow().upgrade() else {
+            return Box::pin(async { None });
+        };
+        let trigger = match trigger {
+            CompletionTrigger::Invoked => fe_lsp::CompletionTrigger::Invoked,
+            CompletionTrigger::Character(c) => fe_lsp::CompletionTrigger::Character(c),
+            CompletionTrigger::Incomplete => fe_lsp::CompletionTrigger::Incomplete,
+        };
+        // Sent under the lock; awaited without it.
+        let reply = lock(&manager).completion(buffer, version, offset, trigger);
+        Box::pin(async move {
+            match reply.await {
+                Ok(completions) => completions.map(|completions| CompletionList {
+                    items: completions.items.into_iter().map(completion_item).collect(),
+                    is_incomplete: completions.is_incomplete,
+                }),
+                Err(error) => {
+                    log::debug!("no completions: {error}");
+                    None
+                }
+            }
+        })
+    }
+
+    fn resolve(&self, item: CompletionItem) -> fe_gpui::ResolveFuture {
+        let manager = self.manager.borrow().upgrade();
+        let lsp =
+            (item.data.as_ref()).and_then(|data| data.downcast_ref::<fe_lsp::CompletionItem>());
+        let (Some(manager), Some(lsp)) = (manager, lsp) else {
+            return Box::pin(async { item });
+        };
+        let reply = lock(&manager).resolve(lsp.clone());
+        Box::pin(async move {
+            match reply.await {
+                Ok(resolved) => completion_item(resolved),
+                Err(error) => {
+                    log::debug!("not resolved: {error}");
+                    item
+                }
+            }
+        })
+    }
+}
+
+/// fe-lsp's completion item as fe-editor's, holding it to resolve.
+fn completion_item(item: fe_lsp::CompletionItem) -> CompletionItem {
+    // `labelDetails`' detail right after the label, its description after
+    // a space.
+    let description =
+        (item.label_description.as_ref()).map(|description| format!(" {description}"));
+    let label_detail = match (&item.label_detail, description) {
+        (None, None) => None,
+        (detail, description) => {
+            Some(detail.clone().unwrap_or_default() + &description.unwrap_or_default())
+        }
+    };
+    let edit = |edit: &fe_lsp::CompletionEdit| (edit.range.clone(), edit.text.clone());
+    CompletionItem {
+        label: item.label.clone(),
+        label_detail,
+        kind: item.kind.map(|kind| fe_lsp::kind_name(kind).to_owned()),
+        detail: item.detail.clone(),
+        documentation: item.documentation.clone(),
+        filter_text: item.filter_text.clone(),
+        sort_text: item.sort_text.clone(),
+        edit: edit(&item.edit),
+        additional_edits: item.additional_edits.iter().map(edit).collect(),
+        data: Some(Rc::new(item)),
     }
 }
 

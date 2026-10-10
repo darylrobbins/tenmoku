@@ -561,6 +561,14 @@ impl Element for EditorElement {
             prepaint_took: Duration::ZERO,
         };
         layout.matches = match_rects(&mut layout, view);
+        // The completion menu goes by its word's start in this frame, which
+        // the view doesn't hold until paint.
+        let word = self.view.read(cx).completion_word_start();
+        let word = word.and_then(|start| layout.caret_bounds(start));
+        let (viewport, line_height) = (window.viewport_size(), px(layout.frame.line_height));
+        self.view.update(cx, |view, cx| {
+            view.place_completion(word, viewport, line_height, cx)
+        });
         layout.prepaint_took = started.elapsed();
         Some(layout)
     }

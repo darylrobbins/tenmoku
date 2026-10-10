@@ -9,10 +9,13 @@
 //! `fe-syntax`, then paints the result, with the buffer's diagnostics as
 //! squiggles and gutter marks, and their messages in a popover on hover
 //! (`hover`), with what the host's [`HoverProvider`] says about the word
-//! there, or at the caret on `editor.show_hover`. Vim mode, one app-wide switch
+//! there, or at the caret on `editor.show_hover`, and a completion menu
+//! (`completion_menu`) of what the host's [`CompletionProvider`] offers at
+//! the caret. Vim mode, one app-wide switch
 //! ([`set_vim_enabled`]), routes an editor's keys through `fe-vim`.
 
 pub mod commands;
+pub mod completion_menu;
 mod element;
 mod file_viewer;
 mod hover;
@@ -22,6 +25,7 @@ mod timing;
 mod view;
 mod vim;
 
+pub use completion_menu::{CompletionFuture, CompletionProvider, ResolveFuture};
 pub use fe_config::{EditorSettings, SettingsEvent};
 use fe_editor::diagnostics::Severity;
 pub use fe_keymap;

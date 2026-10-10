@@ -32,6 +32,9 @@
 //!   session ends.
 //! - [`LspManager::hover`] asks for a [`Hover`] at an offset of an open
 //!   buffer: its text, and its range in that buffer's version.
+//! - [`LspManager::completion`] asks for [`Completions`] at an offset of
+//!   an open buffer, as edits in that buffer's version, and
+//!   [`LspManager::resolve`] fills in an item's documentation.
 //! - [`LspNavigation`] answers fe-nav's go-to-definition, references and
 //!   workspace symbols from a manager's servers, once each is ready.
 //!
@@ -50,6 +53,7 @@
 //! This crate must never depend on GPUI.
 
 mod clock;
+mod completion;
 mod diagnostics;
 mod document;
 mod encoding;
@@ -77,6 +81,7 @@ mod tests;
 #[cfg(any(test, feature = "test-support"))]
 pub use clock::ManualClock;
 pub use clock::{Clock, SystemClock};
+pub use completion::{CompletionEdit, CompletionItem, CompletionTrigger, Completions, kind_name};
 pub use diagnostics::{Diagnostic, DiagnosticTag, Severity};
 pub use document::{Admitted, Opened, SentDocument, SentVersion};
 pub use encoding::{PositionEncoding, from_lsp, to_lsp};

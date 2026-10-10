@@ -3,6 +3,7 @@
 
 mod admission;
 mod cancel;
+mod completion;
 mod diagnostics;
 mod encoding;
 mod hover;

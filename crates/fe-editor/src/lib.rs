@@ -4,7 +4,7 @@
 
 use std::{
     cell::{Cell, Ref, RefCell, RefMut},
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     io,
     ops::{Range, RangeInclusive},
     path::{Path, PathBuf},
@@ -20,6 +20,7 @@ use fe_display::{CharWidth, DisplayMap, ExpandedRow, Monospace, WRAP_SLICE_BYTES
 use unicode_segmentation::UnicodeSegmentation;
 
 pub mod commands;
+pub mod completion;
 pub mod diagnostics;
 mod viewer;
 
@@ -990,7 +991,8 @@ impl EditorModel {
         self.sync_display();
         let ours = &self.origin;
         let result = self.buffer.borrow_mut().undo(|origin| origin == ours);
-        self.place_carets_after_history_change(EditKind::Undo);
+        let pick = self.caret_pick(&result).and_then(|pick| pick.undo);
+        self.place_carets_after_history_change(EditKind::Undo, pick);
         self.produced(result)
     }
 
@@ -998,8 +1000,24 @@ impl EditorModel {
         self.sync_display();
         let ours = &self.origin;
         let result = self.buffer.borrow_mut().redo(|origin| origin == ours);
-        self.place_carets_after_history_change(EditKind::Redo);
+        let pick = self.caret_pick(&result).and_then(|pick| pick.redo);
+        self.place_carets_after_history_change(EditKind::Redo, pick);
         self.produced(result)
+    }
+
+    /// Where the transaction `result` undid or redid puts its caret, if it
+    /// was given one ([`History::caret_picks`]).
+    fn caret_pick(&self, result: &Result<Option<TransactionId>, UndoError>) -> Option<CaretPick> {
+        let Ok(Some(id)) = result else {
+            return None;
+        };
+        self.history.borrow().caret_picks.get(id).copied()
+    }
+
+    /// Has undoing and redoing transaction `id`, from this model or any
+    /// other of its buffer, put one caret, as `pick` says.
+    pub(crate) fn pick_caret(&mut self, id: TransactionId, pick: CaretPick) {
+        self.history.borrow_mut().caret_picks.insert(id, pick);
     }
 
     /// Runs `f` with edits, undo and redo acting as `origin` rather than
@@ -1051,7 +1069,10 @@ impl EditorModel {
         result
     }
 
-    fn place_carets_after_history_change(&mut self, kind: EditKind) {
+    /// Puts a caret at the end of each edit the last undo or redo batch
+    /// made, or, with `pick`, one where it says, if the batch still has
+    /// that many edits.
+    fn place_carets_after_history_change(&mut self, kind: EditKind, pick: Option<CaretAt>) {
         let last = self
             .events
             .drain()
@@ -1069,7 +1090,14 @@ impl EditorModel {
         // through another model.
         let carets = last.map(|edits| {
             let snapshot = self.buffer.borrow().snapshot();
-            SelectionSet::from_resolved(&snapshot, edits.iter().map(|edit| caret(edit.new.end)))
+            let heads: Vec<usize> = match pick {
+                Some(at) if edits.len() == at.count => {
+                    let new = &edits[at.edit].new;
+                    vec![(new.start + at.offset).min(new.end)]
+                }
+                _ => edits.iter().map(|edit| edit.new.end).collect(),
+            };
+            SelectionSet::from_resolved(&snapshot, heads.into_iter().map(caret))
         });
         self.sync_display();
         if let Some(carets) = carets {
@@ -1115,6 +1143,24 @@ impl EditorModel {
         self.goals.clear();
         self.selections = carets;
     }
+}
+
+/// Where the caret goes when a transaction is undone (in its first batch,
+/// the last an undo reverts) and redone (in its last), rather than one at
+/// each edit: for an accepted completion, whose import shouldn't get one.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CaretPick {
+    pub(crate) undo: Option<CaretAt>,
+    pub(crate) redo: Option<CaretAt>,
+}
+
+/// A caret `offset` bytes into the text the `edit`th of a batch's `count`
+/// edits puts in.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct CaretAt {
+    pub(crate) edit: usize,
+    pub(crate) count: usize,
+    pub(crate) offset: usize,
 }
 
 /// The shared buffer, borrowed for editing by [`EditorModel::buffer_mut`].
@@ -1232,6 +1278,10 @@ struct History {
     batches: VecDeque<Recorded>,
     /// The version each model is caught up to; dropped models' go dead.
     models: Vec<Weak<Cell<Version>>>,
+    /// Where undoing and redoing a transaction puts the caret, for those
+    /// given one: accepted completions. Kept while the buffer lives, a few
+    /// words each: fe-buffer doesn't say when it drops a transaction.
+    caret_picks: HashMap<TransactionId, CaretPick>,
 }
 
 struct Recorded {
@@ -1250,6 +1300,7 @@ impl History {
             last: snapshot.text().clone(),
             batches: VecDeque::new(),
             models: Vec::new(),
+            caret_picks: HashMap::new(),
         }
     }
 
