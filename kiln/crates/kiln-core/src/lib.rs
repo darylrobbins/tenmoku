@@ -17,6 +17,9 @@
 //! matches keystrokes as they're pressed against the bindings whose context
 //! holds; and reports of bindings that hide or delay each other. [`menu`]
 //! is the menu bar as data, its shortcuts read from the keymap.
+//!
+//! [`TextEdit`] is the model behind a single-line text field: a selection
+//! on grapheme boundaries, word motions, IME composition and undo.
 
 pub mod diagnostic;
 mod keymap;
@@ -29,6 +32,7 @@ pub mod menu;
 pub mod paths;
 pub mod platform;
 mod report;
+pub mod text_edit;
 pub mod trust;
 pub mod watch;
 pub mod write;
@@ -49,6 +53,7 @@ pub use menu::{
 pub use paths::{AppId, AppPaths, PathStyle};
 pub use platform::Os;
 pub use report::KeymapIssue;
+pub use text_edit::{Motion, Selection, TextEdit};
 pub use watch::ConfigWatcher;
 pub use write::write_setting;
 

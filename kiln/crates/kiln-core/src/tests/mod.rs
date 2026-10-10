@@ -2,6 +2,7 @@
 
 mod keymap;
 mod paths;
+mod text_edit;
 mod watch;
 mod watch_late;
 pub(crate) mod watch_reconcile;
