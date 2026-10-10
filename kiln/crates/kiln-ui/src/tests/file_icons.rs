@@ -103,5 +103,6 @@ fn window_button_icons_are_bundled_but_unmapped() {
         (Icon::Square, "kiln-ui/icons/square.svg"),
         (Icon::Copy, "kiln-ui/icons/copy.svg"),
         (Icon::X, "kiln-ui/icons/x.svg"),
+        (Icon::Check, "kiln-ui/icons/check.svg"),
     ]);
 }

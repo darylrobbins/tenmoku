@@ -126,15 +126,15 @@ properties; no code was copied or adapted for them.
 
 | Our path | Source | Tag / commit | License | Files |
 |---|---|---|---|---|
-| `kiln/crates/kiln-ui/assets/icons/` | [lucide-icons/lucide](https://github.com/lucide-icons/lucide) `icons/` | 1.52.0 @ `500620a2e8123f8d1db191538886dc0c223f69a9` | ISC (Feather-derived icons: MIT) | `arrow-left.svg`, `arrow-right.svg`, `chevron-right.svg`, `columns-2.svg`, `container.svg`, `copy.svg`, `database.svg`, `ellipsis.svg`, `file.svg`, `file-archive.svg`, `file-braces.svg`, `file-code.svg`, `file-cog.svg`, `file-diff.svg`, `file-image.svg`, `file-key.svg`, `file-lock.svg`, `file-music.svg`, `file-spreadsheet.svg`, `file-symlink.svg`, `file-terminal.svg`, `file-text.svg`, `file-video-camera.svg`, `files.svg`, `folder.svg`, `folder-open.svg`, `git-branch.svg`, `list-tree.svg`, `minus.svg`, `package.svg`, `rows-2.svg`, `scale.svg`, `search.svg`, `square.svg`, `x.svg` |
+| `kiln/crates/kiln-ui/assets/icons/` | [lucide-icons/lucide](https://github.com/lucide-icons/lucide) `icons/` | 1.52.0 @ `500620a2e8123f8d1db191538886dc0c223f69a9` | ISC (Feather-derived icons: MIT) | `arrow-left.svg`, `arrow-right.svg`, `check.svg`, `chevron-right.svg`, `columns-2.svg`, `container.svg`, `copy.svg`, `database.svg`, `ellipsis.svg`, `file.svg`, `file-archive.svg`, `file-braces.svg`, `file-code.svg`, `file-cog.svg`, `file-diff.svg`, `file-image.svg`, `file-key.svg`, `file-lock.svg`, `file-music.svg`, `file-spreadsheet.svg`, `file-symlink.svg`, `file-terminal.svg`, `file-text.svg`, `file-video-camera.svg`, `files.svg`, `folder.svg`, `folder-open.svg`, `git-branch.svg`, `list-tree.svg`, `minus.svg`, `package.svg`, `rows-2.svg`, `scale.svg`, `search.svg`, `square.svg`, `x.svg` |
 
-The 35 SVGs are copied unmodified, compiled into `kiln-ui` with `include_bytes!`.
+The 36 SVGs are copied unmodified, compiled into `kiln-ui` with `include_bytes!`.
 Lucide is ISC, "Copyright (c) 2026 Lucide Icons and Contributors". Icons derived
 from Feather are MIT, "Copyright (c) 2013-present Cole Bemis". Of ours, these are
 Feather-derived:
 
 - named in Lucide's `LICENSE` Feather list: `arrow-left`, `arrow-right`,
-  `chevron-right`, `database`, `minus`, `search`, `square`, `x`, `columns-2`
+  `check`, `chevron-right`, `database`, `minus`, `search`, `square`, `x`, `columns-2`
   (listed under its old name `columns`) and `ellipsis` (listed as
   `more-horizontal`);
 - not in that list, but crediting Feather's author `colebemis` as a contributor

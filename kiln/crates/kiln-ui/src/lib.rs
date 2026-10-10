@@ -10,6 +10,7 @@
 mod activity_rail;
 mod assets;
 mod breadcrumbs;
+mod controls;
 mod file_icons;
 mod highlighted_label;
 mod icon_button;
@@ -27,6 +28,7 @@ mod tree_row;
 pub use activity_rail::{ActivityRail, RAIL_WIDTH, RailButton};
 pub use assets::Assets;
 pub use breadcrumbs::{Breadcrumbs, Crumb, CrumbKind, TOOLBAR_HEIGHT};
+pub use controls::{Button, ButtonSize, ButtonVariant, Checkbox, Switch};
 pub use file_icons::{Icon, file_icon, folder_icon};
 pub use highlighted_label::{HighlightedLabel, char_ranges};
 pub use icon_button::IconButton;

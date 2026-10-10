@@ -88,6 +88,8 @@ icons! {
     Square => "square",
     Copy => "copy",
     X => "x",
+    // The checkbox's mark.
+    Check => "check",
 }
 
 /// Exact file names, ASCII lowercase. Checked before any extension.
