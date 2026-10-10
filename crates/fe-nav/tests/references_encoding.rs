@@ -98,34 +98,62 @@ fn references_in_a_utf16_file_select_the_word() {
     assert!(refs.iter().all(|r| r.verified), "{refs:?}");
 }
 
-/// A long line in a legacy encoding with many hits is decoded about once,
-/// not from its start for each hit.
-#[test]
-fn a_long_legacy_line_with_many_hits_is_decoded_in_bounded_work() {
+/// A file of a legacy-encoded comment, then one line of `units` hits: a
+/// `target` every 1.5 KB.
+fn long_legacy_line(units: usize) -> Vec<u8> {
     let mut bytes = b"// caf\xE9\n".to_vec();
-    // One 3 MB line, `target` every 1.5 KB.
     let unit = [&b"target "[..], &[b'a'; 1_500][..], b"\xE9 "].concat();
-    for _ in 0..2_000 {
+    for _ in 0..units {
         bytes.extend(&unit);
     }
     bytes.push(b'\n');
+    bytes
+}
+
+/// The references found in `file.rs` once `bytes` are written there, and the
+/// least time of `runs` searches.
+fn timed_find(bytes: &[u8], runs: usize) -> (Vec<Reference>, std::time::Duration) {
     let dir = tempfile::tempdir().unwrap();
-    fs::write(dir.path().join("file.rs"), &bytes).unwrap();
-    let start = std::time::Instant::now();
-    let batches = find(dir.path());
-    let elapsed = start.elapsed();
-    let buffer = Buffer::from_reader_detecting(bytes.as_slice()).unwrap();
-    assert_ne!(buffer.encoding().name(), "UTF-8");
-    let refs: Vec<_> = (batches.into_iter().flatten())
+    fs::write(dir.path().join("file.rs"), bytes).unwrap();
+    let mut least = std::time::Duration::MAX;
+    let mut batches = Vec::new();
+    for _ in 0..runs {
+        let start = std::time::Instant::now();
+        batches = find(dir.path());
+        least = least.min(start.elapsed());
+    }
+    let refs = (batches.into_iter().flatten())
         .filter(|file| file.rel == Path::new("file.rs"))
         .flat_map(|file| file.refs)
         .collect();
+    (refs, least)
+}
+
+/// A long line in a legacy encoding with many hits is decoded about once,
+/// not from its start for each hit. The check is on how the time grows with
+/// the line, not on the time, so machine load doesn't decide it: the least
+/// of a few runs of a line four times as long takes about four times as
+/// long if the line is decoded once (16 if it's decoded per hit).
+#[test]
+fn a_long_legacy_line_with_many_hits_is_decoded_in_bounded_work() {
+    // One 3 MB line, and one a quarter as long.
+    let bytes = long_legacy_line(2_000);
+    let (refs, long) = timed_find(&bytes, 3);
+    let (quarter_refs, quarter) = timed_find(&long_legacy_line(500), 3);
+    let buffer = Buffer::from_reader_detecting(bytes.as_slice()).unwrap();
+    assert_ne!(buffer.encoding().name(), "UTF-8");
     assert!(refs.len() >= 2_000, "{}", refs.len());
+    assert!(quarter_refs.len() >= 500, "{}", quarter_refs.len());
     for r in &refs {
         let text = buffer.text().slice_to_string(r.location.range.clone());
         assert_eq!(text, "target", "{r:?}");
     }
-    assert!(elapsed.as_secs() < 5, "{elapsed:?}");
+    // Generous slack over the 4 of linear growth, short of the 16 of quadratic.
+    assert!(
+        long < quarter * 9,
+        "4x the line took {:.1}x as long ({quarter:?}, {long:?})",
+        long.as_secs_f64() / quarter.as_secs_f64()
+    );
 }
 
 /// A hit that starts inside a multibyte character of a legacy encoding is
