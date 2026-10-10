@@ -213,6 +213,11 @@ pub(crate) fn live_stack(
     };
     editor.update(cx, |view, cx| {
         view.sync_vim(cx);
+        // A key ends vim's message, whether it's bound or fed to the reducer.
+        if let Some(state) = view.vim.as_mut().filter(|state| state.message().is_some()) {
+            state.clear_message();
+            cx.notify();
+        }
         // So `cmd-c` copies the visual extent even if no frame was drawn
         // since another view's edit.
         view.sync_visual();
@@ -342,6 +347,12 @@ impl EditorView {
     /// or `None` with vim off.
     pub fn vim_mode(&self) -> Option<&'static str> {
         self.vim.as_ref().map(VimState::mode_name)
+    }
+
+    /// The vim state, or `None` with vim off: for a host's command line
+    /// and the messages it shows.
+    pub fn vim_state(&self) -> Option<&VimState> {
+        self.vim.as_ref()
     }
 
     /// Whether typing and input methods insert text: with vim off, or in

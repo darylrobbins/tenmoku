@@ -437,6 +437,8 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
                         | "editor || find_bar"
                         | "project_panel"
                         | "ReferencesPanel"
+                        | "vim_line"
+                        | "vim_line && text_input"
                         | "editor"
                 )
             ),

@@ -10,9 +10,13 @@
 //! on every caret move and edit. The workbench embeds the bar cached, so
 //! its other redraws reuse the bar's last frame.
 //!
+//! While that editor has vim's command line open, the line shows in the
+//! bar's place, even with the bar hidden: see [`vim_line`].
+//!
 //! Its commands, `view.toggle_status_bar` and `language.select`, are those
-//! of [`init`]'s registry, in the workbench's [`crate::KEY_CONTEXT`]. Their
-//! handlers only name an op: the workbench does it.
+//! of [`init`]'s registry, in the workbench's [`crate::KEY_CONTEXT`], with
+//! `vim_line.cancel` in the line's. Their handlers only name an op: the
+//! workbench does it, or the line.
 
 use std::rc::Rc;
 
@@ -22,6 +26,7 @@ use fe_command::{
 };
 use fe_gpui::{EditorView, commands::RunCommand};
 use fe_ui::{StatusBarFrame, StatusEntry, UiTheme};
+use fe_vim::VimState;
 use gpui::{
     App, Context, Entity, EntityId, Global, IntoElement, Render, SharedString, Subscription,
     WeakEntity, Window,
@@ -58,6 +63,9 @@ impl StatusItem {
     /// `NORMAL`, `INSERT`, `VISUAL`, `VISUAL LINE` or `VISUAL BLOCK`, only
     /// with vim on: on the left, priority 0.
     pub const VIM_MODE: &str = "vim_mode";
+    /// Vim's last message, such as `E486: Pattern not found: zzz`, until
+    /// the next key in the editor: on the left, priority 10.
+    pub const VIM_MESSAGE: &str = "vim_message";
     /// `Ln 12, Col 5`, then ` (17 selected)` or ` (3 selections)`: priority
     /// 100.
     pub const CURSOR: &str = "cursor";
@@ -124,6 +132,7 @@ pub struct StatusBar {
     /// The host's items, in the order first set.
     items: Vec<StatusItem>,
     ui: UiTheme,
+    line: vim_line::VimLine,
     _observe: Option<Subscription>,
     /// Each item drawn by the last render, in order: its side, id and text.
     #[cfg(test)]
@@ -138,6 +147,7 @@ impl StatusBar {
             editor: None,
             items: Vec::new(),
             ui,
+            line: vim_line::VimLine::default(),
             _observe: None,
             #[cfg(test)]
             drawn: Vec::new(),
@@ -165,12 +175,26 @@ impl StatusBar {
     /// Follows `editor`, the active pane's active tab's, or none. The
     /// workbench calls it as it renders, as it does
     /// [`crate::OutlinePanel::set_editor`].
-    pub fn set_editor(&mut self, editor: Option<&Entity<EditorView>>, cx: &mut Context<Self>) {
+    pub fn set_editor(
+        &mut self,
+        editor: Option<&Entity<EditorView>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if editor.map(Entity::entity_id) == self.editor_id() {
             return;
         }
+        // Now, while the last frame still draws the editor left.
+        self.leave_line(editor.map(Entity::entity_id), window, cx);
         self.editor = editor.map(Entity::downgrade);
-        self._observe = editor.map(|editor| cx.observe(editor, |_, _, cx| cx.notify()));
+        self._observe = editor.map(|editor| {
+            cx.observe_in(editor, window, |bar, _, window, cx| {
+                bar.sync_line(window, cx);
+                cx.notify();
+            })
+        });
+        // Not while the workbench draws.
+        cx.defer_in(window, Self::sync_line);
         cx.notify();
     }
 
@@ -247,6 +271,16 @@ fn built_in_items(editor: &EditorView) -> Vec<StatusItem> {
         text: vim_mode_label(mode),
         command: None,
     });
+    let vim_message = editor
+        .vim_state()
+        .and_then(VimState::message)
+        .map(|message| StatusItem {
+            id: StatusItem::VIM_MESSAGE.into(),
+            side: StatusSide::Left,
+            priority: 10,
+            text: message.to_owned().into(),
+            command: None,
+        });
     let language_command = Invocation::of("language.select").expect("a valid command ID");
     let texts: [(SharedString, Option<Invocation>); 5] = [
         (cursor.into(), None),
@@ -266,7 +300,11 @@ fn built_in_items(editor: &EditorView) -> Vec<StatusItem> {
                 text,
                 command,
             });
-    vim_mode.into_iter().chain(right).collect()
+    vim_mode
+        .into_iter()
+        .chain(vim_message)
+        .chain(right)
+        .collect()
 }
 
 /// The bar's text for a `vim.mode`: an operator waiting is still normal
@@ -308,6 +346,14 @@ fn focused_context(window: &Window) -> ContextStack {
 
 impl Render for StatusBar {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(line) = self.render_line(cx) {
+            #[cfg(test)]
+            {
+                self.renders += 1;
+                self.drawn.clear();
+            }
+            return line.into_any_element();
+        }
         let items = self.items(cx);
         #[cfg(test)]
         {
@@ -323,6 +369,7 @@ impl Render for StatusBar {
         StatusBarFrame::new(&self.ui)
             .left(left.into_iter().map(|item| self.entry(item)))
             .right(right.into_iter().map(|item| self.entry(item)))
+            .into_any_element()
     }
 }
 
@@ -350,6 +397,8 @@ impl StatusBar {
 pub(crate) enum StatusOp {
     ToggleStatusBar,
     SelectLanguage,
+    /// The line runs it: it applies only there.
+    CancelVimLine,
 }
 
 /// The [`CommandTarget`] of status bar commands: the op to do.
@@ -379,8 +428,17 @@ pub(crate) fn registry() -> Registry<StatusCommands> {
         ),
         ("language.select", "Change Language Mode…", SelectLanguage),
     ];
+    let commands = commands
+        .map(|(id, title, op)| (id, title, crate::KEY_CONTEXT, op))
+        .into_iter()
+        .chain([(
+            vim_line::CANCEL,
+            "Cancel Command Line",
+            vim_line::KEY_CONTEXT,
+            CancelVimLine,
+        )]);
     let mut registry = Registry::new();
-    for (id, title, op) in commands {
+    for (id, title, context, op) in commands {
         registry
             .register(
                 id,
@@ -391,7 +449,7 @@ pub(crate) fn registry() -> Registry<StatusCommands> {
                 },
             )
             .expect("status bar command IDs are valid and distinct")
-            .context(ContextPredicate::identifier(crate::KEY_CONTEXT));
+            .context(ContextPredicate::identifier(context));
     }
     registry
 }
@@ -407,6 +465,9 @@ pub(crate) fn op(run: &RunCommand, cx: &App) -> Option<StatusOp> {
     }
     op
 }
+
+#[path = "vim_line.rs"]
+mod vim_line;
 
 #[cfg(test)]
 #[path = "status_bar_vim_tests.rs"]

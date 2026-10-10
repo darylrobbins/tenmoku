@@ -689,6 +689,19 @@ keys = "alt-cmd-r"
 command = "find.toggle_regex"
 context = "find_bar"
 
+# Vim's command line (`vim_line`), which the status bar shows for `/`, `?`
+# and `:`. Its input's other keys are `text_input`'s.
+
+[[bindings]]
+keys = "enter"
+command = "text_input.submit"
+context = "vim_line && text_input"
+
+[[bindings]]
+keys = "escape"
+command = "vim_line.cancel"
+context = "vim_line"
+
 # Completion: `ctrl-space` asks at the caret. While the menu shows, its keys
 # win over the editor's and vim's insert mode's, being later at the same
 # depth.

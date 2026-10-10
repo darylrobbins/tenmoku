@@ -439,8 +439,9 @@ fn the_default_keymap_binds_the_search_commands() {
         "search.toggle_regex",
         "search.toggle_case",
         "search.toggle_whole_word",
-        "text_input.submit",
     ] {
         assert_eq!(bound(command), 1, "{command}");
     }
+    // Search's input's, and vim's command line's.
+    assert_eq!(bound("text_input.submit"), 2);
 }

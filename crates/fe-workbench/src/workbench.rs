@@ -1066,6 +1066,7 @@ impl Workbench {
                 persist::save_status_bar(self.status_bar_visible, cx);
             }
             StatusOp::SelectLanguage => self.select_language(window, cx),
+            StatusOp::CancelVimLine => {}
         }
     }
 
@@ -1081,7 +1082,7 @@ impl Workbench {
     /// focuses it), so the workbench calls it as it renders. With splits,
     /// it's the active pane's active editor. Whether the status bar's editor
     /// changed.
-    fn follow_active_editor(&mut self, window: &Window, cx: &mut Context<Self>) -> bool {
+    fn follow_active_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let editor = self.active_editor(cx).cloned();
         let outline = self.dock.read(cx).outline().clone();
         outline.update(cx, |outline, cx| outline.set_editor(editor.as_ref(), cx));
@@ -1089,7 +1090,7 @@ impl Workbench {
         let id = editor.as_ref().map(Entity::entity_id);
         let followed = self.status_bar.update(cx, |bar, cx| {
             let followed = bar.editor_id() != id;
-            bar.set_editor(editor.as_ref(), cx);
+            bar.set_editor(editor.as_ref(), window, cx);
             followed
         });
         let reveal = id != self.revealed;
@@ -1300,7 +1301,9 @@ impl Render for Workbench {
         // ask for another frame.
         let mut style = StyleRefinement::default().w_full().h(ROW_HEIGHT);
         style.flex_shrink = Some(0.);
-        let status_bar = self.status_bar_visible.then(|| {
+        // Vim's command line shows in the bar's place even with it hidden.
+        let line_open = self.status_bar.read(cx).line_open();
+        let status_bar = (self.status_bar_visible || line_open).then(|| {
             let bar = self.status_bar.clone();
             if followed {
                 bar.into_any_element()

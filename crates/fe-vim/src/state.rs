@@ -114,6 +114,13 @@ impl VimState {
         self.message.as_deref()
     }
 
+    /// Clears [`VimState::message`], as the next key [`VimState::feed`]
+    /// reads does: for a host whose keys don't all go through `feed`, such
+    /// as those its keymap binds to commands.
+    pub fn clear_message(&mut self) {
+        self.message = None;
+    }
+
     /// The file or window command (`:w`, `:q`, `:e` and the like) an ex line
     /// submitted, for the host to run: returned once, then `None`.
     pub fn take_host_command(&mut self) -> Option<HostCommand> {
@@ -281,4 +288,24 @@ pub fn context(state: &VimState) -> ContextStack {
             false => frame.clone(),
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::HeadlessVim;
+
+    #[test]
+    fn clear_message_clears_only_the_message() {
+        let mut vim = HeadlessVim::new("one\nfoo", (0, 0));
+        vim.feed("/zzz<CR>").unwrap();
+        assert_eq!(vim.state().message(), Some("E486: Pattern not found: zzz"));
+        let mut expected = vim.state().clone();
+        expected.message = None;
+        vim.state_mut().clear_message();
+        assert_eq!(vim.state().message(), None);
+        assert_eq!(format!("{:?}", vim.state()), format!("{expected:?}"));
+        // The search it left is still the last one.
+        vim.feed("n").unwrap();
+        assert_eq!(vim.state().message(), Some("E486: Pattern not found: zzz"));
+    }
 }
