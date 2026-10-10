@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 use gpui::{
     Context, IntoElement, ParentElement as _, Render, SharedString, Styled as _, Window, div,
     prelude::FluentBuilder as _, px,

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 use std::collections::HashSet;
 
 use gpui::AssetSource;
@@ -77,29 +79,29 @@ fn assert_bundled_but_unmapped(expected: &[(Icon, &str)]) {
 #[test]
 fn rail_icons_are_bundled_but_unmapped() {
     assert_bundled_but_unmapped(&[
-        (Icon::Files, "fe-ui/icons/files.svg"),
-        (Icon::Search, "fe-ui/icons/search.svg"),
-        (Icon::ListTree, "fe-ui/icons/list-tree.svg"),
+        (Icon::Files, "kiln-ui/icons/files.svg"),
+        (Icon::Search, "kiln-ui/icons/search.svg"),
+        (Icon::ListTree, "kiln-ui/icons/list-tree.svg"),
     ]);
 }
 
 #[test]
 fn toolbar_icons_are_bundled_but_unmapped() {
     assert_bundled_but_unmapped(&[
-        (Icon::ArrowLeft, "fe-ui/icons/arrow-left.svg"),
-        (Icon::ArrowRight, "fe-ui/icons/arrow-right.svg"),
-        (Icon::Columns2, "fe-ui/icons/columns-2.svg"),
-        (Icon::Rows2, "fe-ui/icons/rows-2.svg"),
-        (Icon::Ellipsis, "fe-ui/icons/ellipsis.svg"),
+        (Icon::ArrowLeft, "kiln-ui/icons/arrow-left.svg"),
+        (Icon::ArrowRight, "kiln-ui/icons/arrow-right.svg"),
+        (Icon::Columns2, "kiln-ui/icons/columns-2.svg"),
+        (Icon::Rows2, "kiln-ui/icons/rows-2.svg"),
+        (Icon::Ellipsis, "kiln-ui/icons/ellipsis.svg"),
     ]);
 }
 
 #[test]
 fn window_button_icons_are_bundled_but_unmapped() {
     assert_bundled_but_unmapped(&[
-        (Icon::Minus, "fe-ui/icons/minus.svg"),
-        (Icon::Square, "fe-ui/icons/square.svg"),
-        (Icon::Copy, "fe-ui/icons/copy.svg"),
-        (Icon::X, "fe-ui/icons/x.svg"),
+        (Icon::Minus, "kiln-ui/icons/minus.svg"),
+        (Icon::Square, "kiln-ui/icons/square.svg"),
+        (Icon::Copy, "kiln-ui/icons/copy.svg"),
+        (Icon::X, "kiln-ui/icons/x.svg"),
     ]);
 }

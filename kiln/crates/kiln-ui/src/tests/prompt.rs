@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 //! The in-window prompt: Enter answers with the default button, Escape with
 //! the cancel button.
 

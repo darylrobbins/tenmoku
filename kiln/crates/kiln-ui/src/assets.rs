@@ -1,4 +1,6 @@
-//! fe-ui's bundled assets, served to GPUI.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
+//! kiln-ui's bundled assets, served to GPUI.
 
 use std::borrow::Cow;
 
@@ -6,12 +8,12 @@ use gpui::{AssetSource, SharedString};
 
 use crate::Icon;
 
-/// Serves fe-ui's icons at `fe-ui/icons/<name>.svg` (see [`Icon::path`]).
+/// Serves kiln-ui's icons at `kiln-ui/icons/<name>.svg` (see [`Icon::path`]).
 /// The files are compiled in, so nothing is read from disk.
 ///
-/// Register it with `Application::with_assets(fe_ui::Assets)`. A host that
+/// Register it with `Application::with_assets(kiln_ui::Assets)`. A host that
 /// already has its own `AssetSource` must delegate the paths it doesn't know
-/// to `fe_ui::Assets`, or `svg()` elements using these icons draw nothing.
+/// to `kiln_ui::Assets`, or `svg()` elements using these icons draw nothing.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Assets;
 

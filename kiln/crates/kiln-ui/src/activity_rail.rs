@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 use gpui::{
     AnyView, App, ClickEvent, ElementId, InteractiveElement as _, IntoElement, ParentElement as _,
     Pixels, RenderOnce, ScrollHandle, StatefulInteractiveElement as _, Styled as _, Window, div,

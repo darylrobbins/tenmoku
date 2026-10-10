@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 //! The bundled icon set and the file-name → icon mapping.
 //!
 //! Icons are Lucide's, unmodified (see `assets/icons/LICENSE` and
@@ -11,7 +13,7 @@ use std::{collections::HashMap, sync::LazyLock};
 
 macro_rules! icons {
     ($($variant:ident => $name:literal,)*) => {
-        /// An icon bundled with fe-ui; draw it with `svg().path(icon.path())`
+        /// An icon bundled with kiln-ui; draw it with `svg().path(icon.path())`
         /// once the app's asset source serves [`crate::Assets`].
         #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
         pub enum Icon {
@@ -29,10 +31,10 @@ macro_rules! icons {
                 }
             }
 
-            /// The asset path, e.g. `"fe-ui/icons/file-code.svg"`.
+            /// The asset path, e.g. `"kiln-ui/icons/file-code.svg"`.
             pub fn path(self) -> &'static str {
                 match self {
-                    $(Icon::$variant => concat!("fe-ui/icons/", $name, ".svg"),)*
+                    $(Icon::$variant => concat!("kiln-ui/icons/", $name, ".svg"),)*
                 }
             }
 

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 use std::f32::consts::FRAC_PI_2;
 
 use gpui::{

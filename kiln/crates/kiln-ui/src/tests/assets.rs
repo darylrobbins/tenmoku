@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
 
 use gpui::{AssetSource, SvgRenderer};
@@ -15,11 +17,11 @@ fn every_icon_is_bundled_and_parses() {
             .unwrap_or_else(|| panic!("{icon:?} isn't bundled"));
         assert!(renderer.parse_svg(&bytes).is_ok(), "{icon:?} doesn't parse");
     }
-    assert!(matches!(Assets.load("fe-ui/icons/nope.svg"), Ok(None)));
+    assert!(matches!(Assets.load("kiln-ui/icons/nope.svg"), Ok(None)));
     assert!(matches!(Assets.load("icons/file.svg"), Ok(None)));
 
     let listed: BTreeSet<String> = Assets
-        .list("fe-ui/icons/")
+        .list("kiln-ui/icons/")
         .expect("list")
         .iter()
         .map(|p| p.to_string())
@@ -27,7 +29,7 @@ fn every_icon_is_bundled_and_parses() {
     let expected: BTreeSet<String> = Icon::ALL.iter().map(|i| i.path().to_owned()).collect();
     assert_eq!(listed, expected);
     assert_eq!(
-        Assets.list("fe-ui/icons/").expect("list").len(),
+        Assets.list("kiln-ui/icons/").expect("list").len(),
         Icon::ALL.len()
     );
     assert!(Assets.list("other/").expect("list").is_empty());

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 use gpui::{App, Global, Hsla, Pixels, px, rgb, rgba};
 
 /// Every list row's height: the project tree's, the outline's, the quick-open
@@ -81,7 +83,7 @@ impl Default for UiTheme {
 
 /// The chrome colours in use, as a GPUI global. The host sets it with
 /// [`set_ui_theme`]; components read it with [`ui_theme`] and follow
-/// changes with `cx.observe_global::<ActiveUiTheme>`. fe-ui never reads
+/// changes with `cx.observe_global::<ActiveUiTheme>`. kiln-ui never reads
 /// settings or theme files itself.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ActiveUiTheme(pub UiTheme);

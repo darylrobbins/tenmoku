@@ -22,8 +22,10 @@ kiln-command = { path = "kiln/crates/kiln-command" }
 kiln-core = { path = "kiln/crates/kiln-core" }
 kiln-platform = { path = "kiln/crates/kiln-platform" }
 kiln-shell = { path = "kiln/crates/kiln-shell" }
+kiln-ui = { path = "kiln/crates/kiln-ui" }
 # fastedit's names for the kiln crates that moved out of it.
 fe-command = { package = "kiln-command", path = "kiln/crates/kiln-command" }
+fe-ui = { package = "kiln-ui", path = "kiln/crates/kiln-ui" }
 fe-display = { path = "crates/fe-display" }
 fe-editor = { path = "crates/fe-editor" }
 fe-gpui = { path = "crates/fe-gpui" }
@@ -31,7 +33,6 @@ fe-syntax = { path = "crates/fe-syntax" }
 fe-project = { path = "crates/fe-project" }
 fe-config = { path = "crates/fe-config" }
 fe-keymap = { path = "crates/fe-keymap" }
-fe-ui = { path = "crates/fe-ui" }
 fe-workbench = { path = "crates/fe-workbench" }
 fe-nav = { path = "crates/fe-nav" }
 fe-vim = { path = "crates/fe-vim" }

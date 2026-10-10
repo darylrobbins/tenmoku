@@ -5,7 +5,7 @@
 # kiln/, the app framework, stands alone (scripts/check_kiln_boundary.py).
 set -euo pipefail
 
-UI_CRATES=(fastedit fe-ui fe-gpui fe-workbench kiln kiln-platform kiln-shell)
+UI_CRATES=(fastedit fe-gpui fe-workbench kiln kiln-platform kiln-shell kiln-ui)
 
 cd "$(dirname "$0")/.."
 

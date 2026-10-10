@@ -1,10 +1,11 @@
-//! fastedit's UI primitives: stateless GPUI elements styled by a
-//! [`UiTheme`], which a host makes active with [`set_ui_theme`]. Views that
-//! own state (the project panel, the tab pane) live in `fe-workbench` and
-//! build their rows and tabs from these.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
+//! Kiln's widgets: GPUI elements styled by a [`UiTheme`], which a host
+//! makes active with [`set_ui_theme`]. Views that own an app's state, such
+//! as a project tree or a tab pane, build their rows and tabs from these.
 //!
-//! Depends on GPUI alone, never on a workspace crate. Written for fastedit:
-//! nothing here is copied from gpui-kit or elsewhere.
+//! Depends on GPUI alone. Written for kiln: nothing here is copied from
+//! gpui-kit or elsewhere.
 
 mod activity_rail;
 mod assets;

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 //! The active chrome colours, as a GPUI global a host sets.
 
 use std::{cell::Cell, rc::Rc};

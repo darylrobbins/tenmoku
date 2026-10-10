@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 use crate::{TreeRow, UiTheme};
 
 #[test]
