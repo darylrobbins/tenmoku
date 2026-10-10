@@ -22,3 +22,24 @@ or (package(fe-keymap) and test(=tests::load::hot_reload_swaps_the_keymap))
 or (package(fe-project) and test(=tests::watcher::watcher_batches_create_rename_delete))
 '''
 retries = 2
+
+# Writing 100k files floods FSEvents, and while it does FSEvents drops a burst
+# of events with no drop or rescan flag (T331's probe lost 27 sentinels in a
+# row), so a test waiting on delivery can't pass, and the FSEvents tests'
+# control can't tell that loss from a watcher failure. One test at a time in
+# this group keeps every flood apart from every delivery wait in a run: the
+# real-FSEvents tests of fe-project and fe-config, and each test that writes
+# 10k or more files.
+[test-groups.fsevents]
+max-threads = 1
+
+[[profile.default.overrides]]
+filter = '''
+(package(fe-project) and (test(/^tests::watcher::/)
+  or test(=tests::large::a_100k_file_tree_loads_lazily)
+  or test(=tests::finder::a_100k_file_index_bounds_query_work)))
+or (package(fe-config) and (test(/^tests::watch::/) or test(/^tests::watch_late::/)))
+or (package(fe-workbench) and (test(=tests::m3_signoff::a_100k_file_project_end_to_end)
+  or test(=tests::project_panel::only_visible_rows_are_built)))
+'''
+test-group = "fsevents"
