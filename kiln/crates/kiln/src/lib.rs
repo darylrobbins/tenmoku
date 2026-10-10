@@ -9,6 +9,13 @@ pub use kiln_command as command;
 pub use kiln_core as core;
 pub use kiln_platform as platform;
 pub use kiln_shell as shell;
+pub use kiln_ui as ui;
+
+/// The extension traits that put kiln's calls on GPUI's own types:
+/// `use kiln::prelude::*;` then `cx.theme()`.
+pub mod prelude {
+    pub use kiln_ui::ActiveTheme;
+}
 
 // Commands: `kiln::commands!` declares typed commands (GPUI actions with a
 // title and context), and these dispatch and record them.

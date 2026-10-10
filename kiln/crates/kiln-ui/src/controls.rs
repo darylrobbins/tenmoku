@@ -6,8 +6,8 @@
 //! the caller's styles applied over the control's own, and its handlers
 //! take GPUI's arguments, so `cx.listener(..)` fits them. Values are the
 //! caller's: a checkbox shows `checked` and reports a click with
-//! `on_change`, leaving the caller to store it. Colours come from the
-//! active theme ([`crate::ui_theme`]) when the control is drawn.
+//! `on_change`, leaving the caller to store it. Colours are the active
+//! theme's tokens (`cx.theme()`), read when the control is drawn.
 
 use std::rc::Rc;
 
@@ -18,7 +18,7 @@ use gpui::{
     prelude::FluentBuilder as _, px, svg,
 };
 
-use crate::{Icon, UiTheme, ui_theme};
+use crate::{ActiveTheme as _, Icon, Tokens};
 
 type ChangeHandler<T> = Rc<dyn Fn(&T, &mut Window, &mut App)>;
 type ClickHandler = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
@@ -171,33 +171,35 @@ impl Button {
         self.on_click = Some(Rc::new(handler));
         self
     }
+}
 
+impl ButtonVariant {
     /// (background, text, border, hover background) for the variant.
-    fn colors(&self, theme: &UiTheme) -> (Hsla, Hsla, Hsla, Hsla) {
-        match self.variant {
+    pub(crate) fn colors(self, c: &Tokens<Hsla>) -> (Hsla, Hsla, Hsla, Hsla) {
+        match self {
             ButtonVariant::Primary => (
-                theme.accent,
-                theme.tab_active_text,
-                theme.accent,
-                theme.accent.opacity(0.85),
+                c.accent.base,
+                c.text.on_accent,
+                c.accent.base,
+                c.accent.hover,
             ),
             ButtonVariant::Secondary => (
-                theme.panel_background,
-                theme.text,
-                theme.border,
-                theme.row_hover,
+                c.surface.panel,
+                c.text.primary,
+                c.border.default,
+                c.state.hover,
             ),
             ButtonVariant::Ghost => (
                 gpui::transparent_black(),
-                theme.text,
+                c.text.primary,
                 gpui::transparent_black(),
-                theme.row_hover,
+                c.state.hover,
             ),
             ButtonVariant::Danger => (
-                theme.error_text,
-                theme.tab_active_text,
-                theme.error_text,
-                theme.error_text.opacity(0.85),
+                c.status.error,
+                c.text.on_accent,
+                c.status.error,
+                c.status.error.opacity(0.85),
             ),
         }
     }
@@ -219,10 +221,10 @@ impl StatefulInteractiveElement for Button {}
 
 impl RenderOnce for Button {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = ui_theme(cx);
-        let (bg, fg, border, hover) = self.colors(&theme);
+        let c = cx.theme().colors;
+        let (bg, fg, border, hover) = self.variant.colors(&c);
         let (fg, size, disabled) = (
-            if self.disabled { theme.muted_text } else { fg },
+            if self.disabled { c.text.disabled } else { fg },
             self.size,
             self.disabled,
         );
@@ -319,7 +321,7 @@ impl StatefulInteractiveElement for Checkbox {}
 
 impl RenderOnce for Checkbox {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = ui_theme(cx);
+        let c = cx.theme().colors;
         let (checked, disabled) = (self.checked, self.disabled);
         let box_ = div()
             .flex()
@@ -328,18 +330,22 @@ impl RenderOnce for Checkbox {
             .size(px(14.))
             .rounded_sm()
             .border_1()
-            .border_color(if checked { theme.accent } else { theme.border })
-            .bg(if checked {
-                theme.accent
+            .border_color(if checked {
+                c.accent.base
             } else {
-                theme.panel_background
+                c.border.default
+            })
+            .bg(if checked {
+                c.accent.base
+            } else {
+                c.surface.panel
             })
             .when(checked, |box_| {
                 box_.child(
                     svg()
                         .path(Icon::Check.path())
                         .size(px(10.))
-                        .text_color(theme.tab_active_text),
+                        .text_color(c.text.on_accent),
                 )
             });
         toggle_row(
@@ -349,7 +355,7 @@ impl RenderOnce for Checkbox {
             checked,
             disabled,
             self.on_change,
-            &theme,
+            &c,
         )
     }
 }
@@ -414,7 +420,7 @@ impl StatefulInteractiveElement for Switch {}
 
 impl RenderOnce for Switch {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = ui_theme(cx);
+        let c = cx.theme().colors;
         let (on, disabled) = (self.on, self.disabled);
         let track = div()
             .flex()
@@ -423,9 +429,9 @@ impl RenderOnce for Switch {
             .h(px(16.))
             .p(px(2.))
             .rounded_full()
-            .bg(if on { theme.accent } else { theme.border })
+            .bg(if on { c.accent.base } else { c.border.default })
             .when(on, |track| track.justify_end())
-            .child(div().size(px(12.)).rounded_full().bg(theme.tab_active_text));
+            .child(div().size(px(12.)).rounded_full().bg(c.text.on_accent));
         toggle_row(
             self.base,
             track,
@@ -433,7 +439,7 @@ impl RenderOnce for Switch {
             on,
             disabled,
             self.on_change,
-            &theme,
+            &c,
         )
     }
 }
@@ -447,12 +453,12 @@ fn toggle_row(
     value: bool,
     disabled: bool,
     on_change: Option<ChangeHandler<bool>>,
-    theme: &UiTheme,
+    c: &Tokens<Hsla>,
 ) -> AnyElement {
     let text = if disabled {
-        theme.muted_text
+        c.text.disabled
     } else {
-        theme.text
+        c.text.primary
     };
     styled(base, |base| {
         base.flex()

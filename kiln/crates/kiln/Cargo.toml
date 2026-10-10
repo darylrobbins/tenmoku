@@ -15,6 +15,7 @@ kiln-command.workspace = true
 kiln-core.workspace = true
 kiln-platform.workspace = true
 kiln-shell.workspace = true
+kiln-ui.workspace = true
 
 [lints]
 workspace = true

@@ -6,4 +6,5 @@ mod controls;
 mod file_icons;
 mod prompt;
 mod text_field;
+mod theme_tokens;
 mod tree_row;

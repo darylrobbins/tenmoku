@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-//! Kiln's widgets: GPUI elements styled by a [`UiTheme`], which a host
-//! makes active with [`set_ui_theme`]. Views that own an app's state, such
-//! as a project tree or a tab pane, build their rows and tabs from these.
+//! Kiln's widgets: GPUI elements styled by the active [`Theme`], which a
+//! host makes active with [`set_theme`] and widgets read with `cx.theme()`
+//! ([`ActiveTheme`]); the older ones take a flat [`UiTheme`]. Views that
+//! own an app's state, such as a project tree or a tab pane, build their
+//! rows and tabs from these.
 //!
-//! Depends on GPUI and kiln-core (for [`TextField`]'s editing model).
-//! Written for kiln, except [`TextField`], adapted from GPUI's Apache-2.0
-//! input example (see its header); nothing is copied from gpui-kit.
+//! Depends on GPUI and kiln-core (theme data, and [`TextField`]'s editing
+//! model). Written for kiln, except [`TextField`], adapted from GPUI's
+//! Apache-2.0 input example (see its header); nothing is copied from
+//! gpui-kit.
 
 mod activity_rail;
 mod assets;
@@ -41,7 +44,11 @@ pub use status_bar::{StatusBarFrame, StatusEntry};
 pub use tab_bar::{TAB_HEIGHT, Tab, TabBar};
 pub use text_field::{TextField, TextFieldEvent};
 pub use text_input::{TextInput, TextInputEvent};
-pub use theme::{ActiveUiTheme, ROW_HEIGHT, UiTheme, set_ui_theme, ui_theme};
+pub use theme::{
+    ActiveTheme, ActiveUiTheme, Appearance, Color, GlobalTheme, ROW_HEIGHT, Theme, ThemeData,
+    ThemeMode, Tokens, UiTheme, hsla, observe_system_appearance, set_theme, set_themes,
+    set_ui_theme, system_appearance_changed, ui_theme,
+};
 pub use toggle_button::ToggleButton;
 pub use tooltip::Tooltip;
 pub use tree_row::{CHEVRON_WIDTH, ICON_SIZE, TREE_INDENT, TreeRow};
