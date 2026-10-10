@@ -1754,6 +1754,8 @@ dependencies = [
  "fe-buffer",
  "fe-command",
  "fe-display",
+ "fe-fileview",
+ "fe-text",
  "proptest",
  "rand 0.9.5",
  "schemars",

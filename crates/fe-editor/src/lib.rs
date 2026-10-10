@@ -21,6 +21,9 @@ use unicode_segmentation::UnicodeSegmentation;
 
 pub mod commands;
 pub mod diagnostics;
+mod viewer;
+
+pub use viewer::{COPY_LIMIT, CopyError, Outcome, ViewerModel};
 
 use diagnostics::{AnyDiagnosticSet, Diagnostic, DiagnosticEntry, DiagnosticSet};
 
