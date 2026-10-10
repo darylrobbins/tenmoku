@@ -2,6 +2,7 @@
 
 mod keymap;
 mod paths;
+mod settings;
 mod text_edit;
 mod theme;
 mod watch;

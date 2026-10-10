@@ -12,7 +12,9 @@
 //! [`menus`] the native menu bar, whose items dispatch as keys do.
 //! [`action_dispatch`] dispatches an action the app holds, such as a
 //! button's, as its command, and [`focus`] keeps keys working when the
-//! focused element stops being drawn. [`Capabilities`] says what a
+//! focused element stops being drawn. [`config`] watches the app's config
+//! files (settings, keymap, theme) and applies each change to every
+//! window. [`Capabilities`] says what a
 //! platform does natively, and [`window_options`], [`fonts`] and
 //! [`dialogs`] act on it.
 
@@ -20,6 +22,7 @@ pub mod action_dispatch;
 mod capabilities;
 pub mod command_actions;
 pub mod commands;
+pub mod config;
 pub mod dialogs;
 pub mod focus;
 pub mod fonts;

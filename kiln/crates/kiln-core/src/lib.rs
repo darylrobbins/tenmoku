@@ -6,7 +6,8 @@
 //! the same config and keymaps as the app.
 //!
 //! [`layers`] loads TOML layers checked against a JSON schema, with
-//! [`Diagnostic`]s that point at the offending token; [`ConfigWatcher`] says
+//! [`Diagnostic`]s that point at the offending token; a [`SettingsStore`]
+//! layers an app's own settings type from them, keeping the last good; [`ConfigWatcher`] says
 //! which files changed; [`write_setting`] changes one setting in a file,
 //! keeping its comments; [`AppPaths`] says where an app keeps its files; and
 //! [`trust`] records which folders the user trusts.
@@ -35,6 +36,7 @@ pub mod menu;
 pub mod paths;
 pub mod platform;
 mod report;
+pub mod settings;
 pub mod text_edit;
 pub mod theme;
 pub mod trust;
@@ -57,6 +59,7 @@ pub use menu::{
 pub use paths::{AppId, AppPaths, PathStyle};
 pub use platform::Os;
 pub use report::KeymapIssue;
+pub use settings::{SettingsEvent, SettingsStore, SettingsType};
 pub use text_edit::{Motion, Selection, TextEdit};
 pub use watch::ConfigWatcher;
 pub use write::write_setting;

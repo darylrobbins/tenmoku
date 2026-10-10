@@ -9,7 +9,7 @@ fail-fast = false
 [profile.ci.junit]
 path = "junit.xml"
 
-# These six tests use the real FSEvents, which under load can deliver late or
+# These seven tests use the real FSEvents, which under load can deliver late or
 # not at all, and no timeout bounds that. A pass after a retry is reported
 # FLAKY in the JUnit report.
 [[profile.ci.overrides]]
@@ -20,6 +20,7 @@ or (package(kiln-core) and (test(=tests::watch::watcher_follows_links_changed_wh
   or test(=tests::watch_late::late_user_event_does_not_hide_project_edit)))
 or (package(fe-keymap) and test(=tests::load::hot_reload_swaps_the_keymap))
 or (package(fe-project) and test(=tests::watcher::watcher_batches_create_rename_delete))
+or (package(kiln-platform) and test(=the_watcher_reloads_settings_saved_on_disk))
 '''
 retries = 2
 
@@ -28,8 +29,8 @@ retries = 2
 # row), so a test waiting on delivery can't pass, and the FSEvents tests'
 # control can't tell that loss from a watcher failure. One test at a time in
 # this group keeps every flood apart from every delivery wait in a run: the
-# real-FSEvents tests of fe-project, fe-config and kiln-core, and each test
-# that writes 10k or more files.
+# real-FSEvents tests of fe-project, fe-config, kiln-core and kiln-platform,
+# and each test that writes 10k or more files.
 [test-groups.fsevents]
 max-threads = 1
 
@@ -40,6 +41,7 @@ filter = '''
   or test(=tests::finder::a_100k_file_index_bounds_query_work)))
 or (package(fe-config) and test(/^tests::watch::/))
 or (package(kiln-core) and (test(/^tests::watch::/) or test(/^tests::watch_late::/)))
+or (package(kiln-platform) and test(=the_watcher_reloads_settings_saved_on_disk))
 or (package(fe-workbench) and (test(=tests::m3_signoff::a_100k_file_project_end_to_end)
   or test(=tests::project_panel::only_visible_rows_are_built)))
 '''

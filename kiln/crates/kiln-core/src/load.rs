@@ -98,6 +98,19 @@ impl KeymapStore {
             default_source,
             catalog.as_deref(),
         );
+        Self::with_default(default, default_diagnostics, user, catalog)
+    }
+
+    /// A store over an app keymap already parsed, such as
+    /// [`KeymapLayer::parse_for`] gives for one platform, with its
+    /// diagnostics, and the user's keymap file at `user`, read as
+    /// [`KeymapStore::load`] reads it.
+    pub fn with_default(
+        default: Option<KeymapLayer>,
+        default_diagnostics: Vec<Diagnostic>,
+        user: Option<PathBuf>,
+        catalog: Option<Box<dyn CommandCatalog>>,
+    ) -> Self {
         let user = user.map(|path| {
             let mut layer = UserLayer {
                 good: KeymapLayer {
