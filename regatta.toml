@@ -40,8 +40,9 @@ deny = 'scripts/ci-env.sh cargo deny check licenses bans sources'
 gate = ["fmt", "vet", "build", "test", "no_gpui", "syntax_features", "deny"]
 fast = ["fmt", "vet", "test"]
 post_merge = ["build", "test"]
-# Each lane has its own target/; ci-env.sh caps cargo at 6 jobs apiece, so 2 stages keep the load bounded.
-max_parallel = 2
+# Each lane has its own target/; ci-env.sh caps cargo at 6 jobs apiece. 1 stage at a time since 2026-10-10
+# (user-approved): the Mac hit load 150+ with several gates at once.
+max_parallel = 1
 
 [[pipeline.stages]]
 name = "fmt"
@@ -102,8 +103,9 @@ shared_append_only = [
 [caps]
 # Each lane has its own target/ (see top), so every lane costs a full build dir of disk (several GiB);
 # sccache shares the compiled dependencies, and ci-env.sh caps cargo at 6 jobs per build.
-# 4 since 2026-10-07 (user-approved), with disk headroom guarded by scripts/ci-env.sh (T158).
-lanes_max = 4
+# 2 since 2026-10-10 (user-approved), down from 4: the Mac hit load 150+, and more lanes run on neon's own
+# board. Disk headroom is guarded by scripts/ci-env.sh (T158).
+lanes_max = 2
 
 [review]
 on_finish = true
