@@ -7,6 +7,8 @@ use std::{fmt, str::FromStr};
 
 use serde::{Deserialize, Serialize};
 
+use crate::Os;
+
 /// The modifiers held for a keystroke.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Modifiers {
@@ -170,8 +172,15 @@ impl Keystroke {
     /// `cmd--`; `left`, `right`, `up`, `down`, `home`, `end`, `pageup`,
     /// `pagedown`, `backspace`, `delete`, `enter`, `tab`, `escape` or
     /// `space`; `f1` to `f20`; or `click`, a mouse click ([`Key::Click`]).
-    /// Case doesn't matter.
+    /// Case doesn't matter. `secondary` is this platform's: see
+    /// [`Keystroke::parse_for`].
     pub fn parse(source: &str) -> Result<Self, KeystrokeError> {
+        Self::parse_for(source, Os::current())
+    }
+
+    /// [`Keystroke::parse`] as on `os`: the `secondary` modifier is `cmd` on
+    /// macOS and `ctrl` elsewhere, so one binding serves every platform.
+    pub fn parse_for(source: &str, os: Os) -> Result<Self, KeystrokeError> {
         let error = |offset, message: String| KeystrokeError { offset, message };
         // The key is after the last `-`, unless that `-` is the key.
         let (modifiers, key) = if source == "-" {
@@ -186,14 +195,21 @@ impl Keystroke {
         if key_offset > 0 {
             let mut offset = 0;
             for name in modifiers.split('-') {
-                let flag = match parsed.flag(&name.to_ascii_lowercase()) {
+                let lower = name.to_ascii_lowercase();
+                let modifier = match lower.as_str() {
+                    "secondary" if os.secondary_is_cmd() => "cmd",
+                    "secondary" => "ctrl",
+                    other => other,
+                };
+                let flag = match parsed.flag(modifier) {
                     Some(flag) => flag,
                     None if name.is_empty() => {
                         return Err(error(offset, "expected a modifier".into()));
                     }
                     None => {
                         let message = format!(
-                            "unknown modifier {name:?}: expected cmd, ctrl, alt, shift or fn"
+                            "unknown modifier {name:?}: expected cmd, ctrl, alt, shift, fn \
+                             or secondary"
                         );
                         return Err(error(offset, message));
                     }
@@ -261,6 +277,11 @@ pub struct KeySequence(Vec<Keystroke>);
 impl KeySequence {
     /// Parses whitespace-separated keystrokes: see [`Keystroke::parse`].
     pub fn parse(source: &str) -> Result<Self, KeystrokeError> {
+        Self::parse_for(source, Os::current())
+    }
+
+    /// [`KeySequence::parse`] as on `os`: see [`Keystroke::parse_for`].
+    pub fn parse_for(source: &str, os: Os) -> Result<Self, KeystrokeError> {
         let mut keystrokes = Vec::new();
         let mut rest = source;
         loop {
@@ -270,10 +291,11 @@ impl KeySequence {
             }
             let offset = source.len() - rest.len();
             let len = rest.find(char::is_whitespace).unwrap_or(rest.len());
-            let keystroke = Keystroke::parse(&rest[..len]).map_err(|error| KeystrokeError {
-                offset: offset + error.offset,
-                ..error
-            })?;
+            let keystroke =
+                Keystroke::parse_for(&rest[..len], os).map_err(|error| KeystrokeError {
+                    offset: offset + error.offset,
+                    ..error
+                })?;
             keystrokes.push(keystroke);
             rest = &rest[len..];
         }

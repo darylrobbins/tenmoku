@@ -5,6 +5,7 @@ mod click;
 mod keystroke;
 mod load;
 mod matcher;
+mod platform;
 
 use std::{
     fs,

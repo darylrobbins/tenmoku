@@ -26,7 +26,7 @@ use std::{
     sync::Arc,
 };
 
-use crate::{Diagnostic, Layer, Severity};
+use crate::{Diagnostic, Layer, Os, Severity, platform::PlatformFilter};
 use kiln_command::{
     CommandId, CommandTarget, ContextPredicate, ContextStack, DispatchError, Invocation, Registry,
     Value,
@@ -279,10 +279,33 @@ impl KeymapLayer {
     /// in a single keystroke with a modifier, such as `cmd-click`: `click`
     /// alone, `cmd-k click` and `click a` are dropped. Unknown keys are
     /// warnings.
+    ///
+    /// The keymap is this platform's: see [`KeymapLayer::parse_for`].
     pub fn parse(
         path: &Path,
         source: &str,
         catalog: Option<&dyn CommandCatalog>,
+    ) -> (Option<Self>, Vec<Diagnostic>) {
+        Self::parse_for(path, source, catalog, Os::current())
+    }
+
+    /// [`KeymapLayer::parse`] as on `os`, so one file serves every
+    /// platform:
+    ///
+    /// - `secondary` in keys is `cmd` on macOS and `ctrl` elsewhere;
+    /// - `keys` may be a table of keys by platform, `{ macos = "alt-left",
+    ///   default = "ctrl-left" }`, its `default` for any not named; with no
+    ///   entry for `os`, the binding is left out;
+    /// - `platform = "macos"` (or `"!macos"`, or a list such as
+    ///   `"linux, windows"`) leaves the binding out elsewhere.
+    ///
+    /// Every platform's keys and filter are checked, so a mistake in one
+    /// shows wherever the file is loaded.
+    pub fn parse_for(
+        path: &Path,
+        source: &str,
+        catalog: Option<&dyn CommandCatalog>,
+        os: Os,
     ) -> (Option<Self>, Vec<Diagnostic>) {
         let mut layer = Layer::default();
         layer.path = path.to_owned();
@@ -290,6 +313,7 @@ impl KeymapLayer {
         let mut parser = EntryParser {
             layer,
             catalog,
+            os,
             diagnostics: Vec::new(),
         };
         let entries = parser.parse();
@@ -320,6 +344,8 @@ struct EntryParser<'a> {
     /// The file's path and source, for diagnostics.
     layer: Layer,
     catalog: Option<&'a dyn CommandCatalog>,
+    /// The platform the keymap is for.
+    os: Os,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -388,18 +414,14 @@ impl EntryParser<'_> {
 
     /// The entry, or `None` if it has errors or is dropped.
     fn entry(&mut self, key: &str, fields: &Fields<'_, '_>) -> Option<Entry> {
-        self.unknown_keys(fields.table, &["keys", "command", "context", "args"], key);
+        self.unknown_keys(
+            fields.table,
+            &["keys", "command", "context", "args", "platform"],
+            key,
+        );
         let errors = self.error_count();
-        let keys = self
-            .string(key, fields, "keys", true)
-            .and_then(|(text, span)| {
-                KeySequence::parse(&text)
-                    .map_err(|error| {
-                        let offset = self.inner_offset(&span, &text, error.offset);
-                        self.error(Some(&format!("{key}.keys")), offset, error.message);
-                    })
-                    .ok()
-            });
+        let included = self.platform(key, fields);
+        let keys = self.keys(key, fields);
         let command = self
             .string(key, fields, "command", true)
             .and_then(|(text, span)| {
@@ -449,7 +471,11 @@ impl EntryParser<'_> {
         if self.error_count() > errors {
             return None;
         }
-        let (keys, command) = (keys?, command?);
+        // Left out here, though checked for every platform.
+        if !included? {
+            return None;
+        }
+        let (keys, command) = (keys??, command?);
         if !click_is_bindable(&keys) {
             let offset = fields
                 .table
@@ -505,6 +531,90 @@ impl EntryParser<'_> {
             args,
             location: self.location(fields.span.start),
         })
+    }
+
+    /// Whether the entry's `platform` filter includes this keymap's
+    /// platform: `Some(true)` with none, `None` if it's malformed.
+    fn platform(&mut self, key: &str, fields: &Fields<'_, '_>) -> Option<bool> {
+        let Some((text, span)) = self.string(key, fields, "platform", false) else {
+            return Some(fields.table.get("platform").is_none());
+        };
+        match PlatformFilter::parse(&text) {
+            Ok(filter) => Some(filter.matches(self.os)),
+            Err(message) => {
+                self.error(Some(&format!("{key}.platform")), span.start, message);
+                None
+            }
+        }
+    }
+
+    /// The entry's keys on this platform: `Some(None)` if it has none here,
+    /// `None` if any platform's are malformed.
+    fn keys(&mut self, key: &str, fields: &Fields<'_, '_>) -> Option<Option<KeySequence>> {
+        let field = format!("{key}.keys");
+        let (Some(spanned), Some(value)) = (fields.table.get("keys"), fields.values.get("keys"))
+        else {
+            self.error(Some(key), fields.span.start, "missing `keys`".into());
+            return None;
+        };
+        // Each platform's keys, parsed as on that platform.
+        let variants: Vec<(String, String, Range<usize>)> = match (spanned.get_ref(), value) {
+            (_, toml::Value::String(text)) => {
+                vec![("".into(), text.clone(), spanned.span())]
+            }
+            (DeValue::Table(table), toml::Value::Table(values)) => {
+                let mut variants = Vec::new();
+                for (name, value) in values {
+                    let span = table
+                        .get(name.as_str())
+                        .map_or(spanned.span(), |value| value.span());
+                    if name != "default" && Os::from_name(name).is_none() {
+                        let message = format!(
+                            "unknown platform {name:?}: expected macos, linux, windows or default"
+                        );
+                        self.error(Some(&format!("{field}.{name}")), span.start, message);
+                        continue;
+                    }
+                    match value {
+                        toml::Value::String(text) => {
+                            variants.push((name.clone(), text.clone(), span));
+                        }
+                        value => {
+                            let message = format!("expected a string, found {}", value.type_str());
+                            self.error(Some(&format!("{field}.{name}")), span.start, message);
+                        }
+                    }
+                }
+                variants
+            }
+            (_, value) => {
+                let message = format!(
+                    "expected a string or a table of keys by platform, found {}",
+                    value.type_str()
+                );
+                self.error(Some(&field), spanned.span().start, message);
+                return None;
+            }
+        };
+        let errors = self.error_count();
+        let mut here = None;
+        let mut fallback = None;
+        for (name, text, span) in variants {
+            // A shared or default entry is checked as on this platform.
+            let os = Os::from_name(&name).unwrap_or(self.os);
+            match KeySequence::parse_for(&text, os) {
+                Ok(keys) if name.is_empty() || os == self.os && name != "default" => {
+                    here = Some(keys);
+                }
+                Ok(keys) if name == "default" => fallback = Some(keys),
+                Ok(_) => {}
+                Err(error) => {
+                    let offset = self.inner_offset(&span, &text, error.offset);
+                    self.error(Some(&field), offset, error.message);
+                }
+            }
+        }
+        (self.error_count() == errors).then(|| here.or(fallback))
     }
 
     /// The string `name` of the entry and its span. Missing, it's an error

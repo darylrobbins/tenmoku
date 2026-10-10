@@ -7,6 +7,8 @@
 
 pub(crate) mod fs;
 
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 
 /// An operating system kiln runs on.
@@ -19,6 +21,29 @@ pub enum Os {
 }
 
 impl Os {
+    /// Every one, in the order filters and keymaps name them.
+    pub const ALL: [Os; 3] = [Os::MacOs, Os::Linux, Os::Windows];
+
+    /// Its name in keymaps and menu tables: `macos`, `linux`, `windows`.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Os::MacOs => "macos",
+            Os::Linux => "linux",
+            Os::Windows => "windows",
+        }
+    }
+
+    /// The one named `name`, as [`Os::name`] gives it.
+    pub fn from_name(name: &str) -> Option<Os> {
+        Os::ALL.into_iter().find(|os| os.name() == name)
+    }
+
+    /// Whether `secondary-` in a keystroke means cmd (macOS) rather than
+    /// ctrl (everywhere else): the modifier an app's own shortcuts use.
+    pub const fn secondary_is_cmd(self) -> bool {
+        matches!(self, Os::MacOs)
+    }
+
     /// The one this process runs on. The BSDs and other Unixes count as
     /// Linux: they share its conventions (XDG directories, ctrl shortcuts).
     pub const fn current() -> Os {
@@ -29,5 +54,50 @@ impl Os {
         } else {
             Os::Linux
         }
+    }
+}
+
+/// Which platforms a binding or menu item is for: `"macos"`, `"!macos"`
+/// (all but macOS), or a comma-separated list of either kind, such as
+/// `"linux, windows"`. Negations exclude; names include, and a filter with
+/// no names includes everything not excluded.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlatformFilter {
+    include: Vec<Os>,
+    exclude: Vec<Os>,
+}
+
+impl PlatformFilter {
+    pub fn parse(source: &str) -> Result<Self, String> {
+        let mut filter = PlatformFilter {
+            include: Vec::new(),
+            exclude: Vec::new(),
+        };
+        for part in source.split(',').map(str::trim) {
+            let (name, list) = match part.strip_prefix('!') {
+                Some(name) => (name.trim(), &mut filter.exclude),
+                None => (part, &mut filter.include),
+            };
+            let os = Os::from_name(name).ok_or_else(|| {
+                format!("unknown platform {name:?}: expected macos, linux or windows")
+            })?;
+            list.push(os);
+        }
+        Ok(filter)
+    }
+
+    pub fn matches(&self, os: Os) -> bool {
+        !self.exclude.contains(&os) && (self.include.is_empty() || self.include.contains(&os))
+    }
+}
+
+impl fmt::Display for PlatformFilter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let names = self
+            .include
+            .iter()
+            .map(|os| os.name().to_owned())
+            .chain(self.exclude.iter().map(|os| format!("!{}", os.name())));
+        f.write_str(&names.collect::<Vec<_>>().join(", "))
     }
 }

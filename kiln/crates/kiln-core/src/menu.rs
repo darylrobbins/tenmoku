@@ -30,7 +30,7 @@
 
 use std::{collections::HashSet, ops::Range, path::Path, sync::Arc};
 
-use crate::{Diagnostic, Layer, Severity};
+use crate::{Diagnostic, Layer, Os, Severity, platform::PlatformFilter};
 use kiln_command::{
     CommandId, ContextFrame, ContextPredicate, ContextStack, Invocation, Source, Value,
 };
@@ -153,10 +153,26 @@ impl MenuBar {
     /// kind, and a repeated ID are errors. With a `catalog`, an item or
     /// alternative whose command it doesn't know or whose args it rejects
     /// is dropped with a warning, and the rest loads.
+    ///
+    /// The table is this platform's: see [`MenuBar::parse_for`].
     pub fn parse(
         path: &Path,
         source: &str,
         catalog: Option<&dyn CommandCatalog>,
+    ) -> (Option<Self>, Vec<Diagnostic>) {
+        Self::parse_for(path, source, catalog, Os::current())
+    }
+
+    /// [`MenuBar::parse`] as on `os`, so one table serves every platform: a
+    /// menu or item with `platform = "macos"` (or `"!macos"`, or a list such
+    /// as `"linux, windows"`) is left out elsewhere, along with separators
+    /// left stray and menus left empty. Every platform's filters are
+    /// checked, so a mistake in one shows wherever the table is loaded.
+    pub fn parse_for(
+        path: &Path,
+        source: &str,
+        catalog: Option<&dyn CommandCatalog>,
+        os: Os,
     ) -> (Option<Self>, Vec<Diagnostic>) {
         let mut layer = Layer::default();
         layer.path = path.to_owned();
@@ -164,6 +180,7 @@ impl MenuBar {
         let mut parser = Parser {
             layer,
             catalog,
+            os,
             diagnostics: Vec::new(),
         };
         let bar = parser.parse();
@@ -374,6 +391,8 @@ struct Parser<'a> {
     /// The file's path and source, for diagnostics.
     layer: Layer,
     catalog: Option<&'a dyn CommandCatalog>,
+    /// The platform the table is for.
+    os: Os,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -437,7 +456,8 @@ impl Parser<'_> {
     }
 
     fn menu(&mut self, fields: &Fields<'_, '_>) -> Option<Menu> {
-        self.unknown_fields(fields, &["name", "items"]);
+        self.unknown_fields(fields, &["name", "items", "platform"]);
+        let included = self.platform(fields);
         let name = self.string(fields, "name", true)?;
         let key = fields.key("items");
         let mut items = Vec::new();
@@ -458,6 +478,9 @@ impl Parser<'_> {
                 Ok(None) => dropped = true,
                 Err(()) => {}
             }
+        }
+        if !included {
+            return None;
         }
         let mut menu = Menu { name, items };
         // Dropping items leaves no stray separators, nor an empty menu.
@@ -487,9 +510,11 @@ impl Parser<'_> {
                 "before",
                 "after",
                 "remove",
+                "platform",
             ],
         );
         let errors = self.error_count();
+        let included = self.platform(fields);
         let place = match (
             self.string(fields, "before", false),
             self.string(fields, "after", false),
@@ -572,7 +597,9 @@ impl Parser<'_> {
                 return Err(());
             }
             let args = args.unwrap_or(Value::Null);
-            if !self.known(fields, "command", &command, &args) {
+            // Left out here, before the catalog can warn about another
+            // platform's command.
+            if !included || !self.known(fields, "command", &command, &args) {
                 return Ok(None);
             }
             ItemKind::Command(CommandItem {
@@ -588,7 +615,26 @@ impl Parser<'_> {
         if self.error_count() > errors {
             return Err(());
         }
+        if !included {
+            return Ok(None);
+        }
         Ok(Some(MenuItem { kind, place }))
+    }
+
+    /// Whether the table's `platform` filter includes this table's platform;
+    /// a malformed one is an error, and includes it.
+    fn platform(&mut self, fields: &Fields<'_, '_>) -> bool {
+        let Some(text) = self.string(fields, "platform", false) else {
+            return true;
+        };
+        match PlatformFilter::parse(&text) {
+            Ok(filter) => filter.matches(self.os),
+            Err(message) => {
+                let span = fields.span("platform");
+                self.error(Some(&fields.key("platform")), span.start, message);
+                true
+            }
+        }
     }
 
     fn alternatives(&mut self, fields: &Fields<'_, '_>) -> Vec<Alternative> {
