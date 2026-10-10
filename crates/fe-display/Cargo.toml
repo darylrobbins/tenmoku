@@ -15,6 +15,7 @@ unicode-segmentation.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
+fe-fileview.workspace = true
 proptest.workspace = true
 rand.workspace = true
 

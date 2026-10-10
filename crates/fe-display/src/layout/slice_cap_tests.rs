@@ -4,6 +4,7 @@
 //! [`super::cluster_row_tests`], and widening that reaches the cap.
 
 use fe_buffer::Buffer;
+use fe_text::Text;
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::{

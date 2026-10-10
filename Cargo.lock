@@ -1739,6 +1739,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "fe-buffer",
+ "fe-fileview",
  "fe-text",
  "gpui-pre-sum-tree",
  "proptest",

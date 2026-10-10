@@ -5,16 +5,21 @@
 // Version 2.0 (see THIRD_PARTY.md).
 //
 // Modified for fastedit: GPUI-free, follows `fe_buffer` snapshots and their
-// edit log instead of being told about each change, and maps byte offsets
-// rather than points.
+// edit log instead of being told about each change, maps byte offsets
+// rather than points, and can show any read-only `TextSource`.
 
-use std::ops::{Range, RangeInclusive};
+use std::{
+    ops::{Range, RangeInclusive},
+    sync::Arc,
+};
 
 use fe_buffer::{BufferSnapshot, Text, Version};
+use fe_text::TextSource;
 
 use crate::{
     CharWidth,
     fold_map::{Fold, FoldMap},
+    long_row::{SourceId, SourceKey},
     wrap_map::WrapMap,
 };
 
@@ -28,11 +33,34 @@ pub const WRAP_SLICE_BYTES: usize = 128 * 1024;
 /// The map follows one buffer through [`DisplayMap::sync`], which re-wraps
 /// only the rows edits touched. A new wrap width re-wraps the other rows in
 /// slices through [`DisplayMap::wrap_pending`].
+///
+/// A map made with [`DisplayMap::read_only`] shows any [`TextSource`], such
+/// as a file too big to load, one row per buffer row: it never soft wraps
+/// or folds, and follows the source through [`DisplayMap::replace_text`].
 pub struct DisplayMap {
-    snapshot: BufferSnapshot,
+    source: Source,
     tab_size: usize,
     wrap: WrapMap,
     folds: FoldMap,
+}
+
+/// The text a [`DisplayMap`] shows.
+enum Source {
+    Buffer(BufferSnapshot),
+    /// A read-only source, with the id [`SourceKey`]s tell it apart by.
+    ReadOnly {
+        text: Arc<dyn TextSource>,
+        id: SourceId,
+    },
+}
+
+impl Source {
+    fn text(&self) -> &dyn TextSource {
+        match self {
+            Source::Buffer(snapshot) => snapshot.text(),
+            Source::ReadOnly { text, .. } => &**text,
+        }
+    }
 }
 
 /// One displayed row: all or part of a buffer row.
@@ -53,37 +81,86 @@ impl DisplayMap {
     /// Shows every buffer row of `snapshot` as one row, unwrapped and
     /// unfolded.
     pub fn new(snapshot: &BufferSnapshot, tab_size: usize) -> Self {
+        Self::with_source(Source::Buffer(snapshot.clone()), tab_size)
+    }
+
+    /// Shows every row of `text` as one row. The map never soft wraps or
+    /// folds, and [`DisplayMap::replace_text`] moves it on to a later
+    /// snapshot of the same source.
+    pub fn read_only(text: Arc<dyn TextSource>, tab_size: usize) -> Self {
+        let id = SourceId::new();
+        Self::with_source(Source::ReadOnly { text, id }, tab_size)
+    }
+
+    fn with_source(source: Source, tab_size: usize) -> Self {
         let mut map = Self {
-            snapshot: snapshot.clone(),
+            wrap: WrapMap::new(source.text(), tab_size),
+            source,
             tab_size: tab_size.max(1),
-            wrap: WrapMap::new(snapshot.text(), tab_size),
             folds: FoldMap::default(),
         };
         map.rebuild_folds();
         map
     }
 
-    pub fn text(&self) -> &Text {
-        self.snapshot.text()
+    pub fn text(&self) -> &dyn TextSource {
+        self.source.text()
     }
 
-    /// The buffer snapshot the rows are of.
-    pub fn snapshot(&self) -> &BufferSnapshot {
-        &self.snapshot
+    /// The buffer snapshot the rows are of, or `None` for a read-only map.
+    pub fn snapshot(&self) -> Option<&BufferSnapshot> {
+        match &self.source {
+            Source::Buffer(snapshot) => Some(snapshot),
+            Source::ReadOnly { .. } => None,
+        }
+    }
+
+    /// Which text the rows are of, for [`crate::LongRows`].
+    pub fn source_key(&self) -> SourceKey {
+        match &self.source {
+            Source::Buffer(snapshot) => snapshot.into(),
+            Source::ReadOnly { text, id } => SourceKey::read_only(*id, &**text),
+        }
+    }
+
+    fn is_read_only(&self) -> bool {
+        matches!(self.source, Source::ReadOnly { .. })
+    }
+
+    /// Moves a read-only map on to `text`, a later snapshot of the same
+    /// source: the rows it had, but for its last, which may have grown, and
+    /// perhaps more after them. The rows shown before keep their layout.
+    /// A caller bug on a buffer's map, which panics in debug builds and is
+    /// ignored otherwise.
+    pub fn replace_text(&mut self, text: Arc<dyn TextSource>) {
+        let Source::ReadOnly { text: ours, .. } = &mut self.source else {
+            debug_assert!(false, "replace_text on a buffer's DisplayMap");
+            return;
+        };
+        debug_assert!(text.row_count() >= ours.row_count());
+        *ours = text;
+        self.wrap.reset(self.source.text());
+        self.rebuild_folds();
     }
 
     /// Catches up with `snapshot`, a later version of the same buffer,
     /// re-wrapping the rows edited since. Folds edits touched are dropped.
     /// Another buffer, or an earlier version, shows unwrapped and unfolded,
     /// with every row pending a wrap.
+    ///
+    /// A read-only map has no buffer to follow: syncing one is a caller bug,
+    /// which panics in debug builds and is ignored otherwise.
     pub fn sync(&mut self, snapshot: &BufferSnapshot, widths: &mut dyn CharWidth) {
-        let ours = &self.snapshot;
+        let Source::Buffer(ours) = &self.source else {
+            debug_assert!(false, "sync on a read-only DisplayMap");
+            return;
+        };
         if snapshot.id() == ours.id() && snapshot.version() == ours.version() {
             return;
         }
         if snapshot.id() != ours.id() || snapshot.version() < ours.version() {
             // Another buffer, or history we can't follow.
-            self.snapshot = snapshot.clone();
+            self.source = Source::Buffer(snapshot.clone());
             self.folds.unfold_all();
             self.wrap.reset(snapshot.text());
             self.rebuild_folds();
@@ -99,7 +176,7 @@ impl DisplayMap {
             );
             self.folds.edit(edit.start, edit.old_rows, edit.new_rows);
         }
-        self.snapshot = snapshot.clone();
+        self.source = Source::Buffer(snapshot.clone());
         self.rebuild_folds();
     }
 
@@ -110,11 +187,12 @@ impl DisplayMap {
     /// Wraps rows wider than `width`, as measured by `widths`, or with
     /// `None` stops wrapping. A new width wraps nothing yet: every row is
     /// pending, shown as it was, until [`DisplayMap::wrap_pending`] gets to
-    /// it.
+    /// it. A read-only map stays unwrapped.
     pub fn set_wrap_width(&mut self, width: Option<f32>, widths: &mut dyn CharWidth) {
+        let width = width.filter(|_| !self.is_read_only());
         if width != self.wrap.width() {
             self.wrap
-                .rebuild(self.snapshot.text(), width, self.tab_size, widths);
+                .rebuild(self.source.text(), width, self.tab_size, widths);
             self.rebuild_folds();
         }
     }
@@ -130,12 +208,8 @@ impl DisplayMap {
     /// Marks every row pending a wrap, for when `widths` measures
     /// differently, such as after a font change.
     pub fn rewrap(&mut self, widths: &mut dyn CharWidth) {
-        self.wrap.rebuild(
-            self.snapshot.text(),
-            self.wrap.width(),
-            self.tab_size,
-            widths,
-        );
+        self.wrap
+            .rebuild(self.source.text(), self.wrap.width(), self.tab_size, widths);
         self.rebuild_folds();
     }
 
@@ -160,7 +234,7 @@ impl DisplayMap {
         }
         let pending = self
             .wrap
-            .wrap_pending(self.snapshot.text(), around, budget_bytes, widths);
+            .wrap_pending(self.source.text(), around, budget_bytes, widths);
         self.rebuild_folds();
         pending
     }
@@ -204,8 +278,12 @@ impl DisplayMap {
         self.folds.nearest_display_row(wrap_row) as u32
     }
 
-    /// Folds `rows` behind their first. Returns false if there's only one.
+    /// Folds `rows` behind their first. Returns false if there's only one,
+    /// or the map is read-only.
     pub fn fold(&mut self, rows: RangeInclusive<u32>) -> bool {
+        if self.is_read_only() {
+            return false;
+        }
         let last = self.text().row_count() - 1;
         let folded = self.folds.fold(*rows.start()..=(*rows.end()).min(last));
         self.rebuild_folds();
@@ -214,6 +292,9 @@ impl DisplayMap {
 
     /// Folds each of `folds` as [`DisplayMap::fold`] does, rebuilding once.
     pub fn fold_many(&mut self, folds: impl IntoIterator<Item = RangeInclusive<u32>>) {
+        if self.is_read_only() {
+            return;
+        }
         let last = self.text().row_count() - 1;
         let folds = folds
             .into_iter()

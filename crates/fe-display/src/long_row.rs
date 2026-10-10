@@ -10,10 +10,17 @@
 //! exact in an `f64` up to about 2^31, so x matches measuring the prefix
 //! exactly, whichever way it's found.
 
-use std::{collections::HashMap, ops::Range};
+use std::{
+    collections::HashMap,
+    ops::Range,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use fe_buffer::{BufferId, BufferSnapshot, Version};
-use fe_text::{Bias, Text};
+use fe_text::{Bias, TextSource};
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{CharWidth, layout::MAX_SHAPED_ROW_BYTES};
@@ -77,7 +84,7 @@ enum Target {
 /// own. When it's all one width (a monospace font), runs of it advance
 /// without per-char work.
 pub struct RowIndex {
-    text: Text,
+    text: Arc<dyn TextSource>,
     end: usize,
     tab_size: usize,
     ascii: [f64; 128],
@@ -106,9 +113,10 @@ pub struct RowSlice {
 
 impl RowIndex {
     /// Indexes the buffer row of `text` at `range`, which excludes its line
-    /// break. Nothing past the row's start is measured yet.
+    /// break. Nothing past the row's start is measured yet. Keeps a
+    /// [`TextSource::share`] of `text`.
     pub fn new(
-        text: &Text,
+        text: &dyn TextSource,
         range: Range<usize>,
         tab_size: usize,
         measure: &mut dyn CharWidth,
@@ -121,7 +129,7 @@ impl RowIndex {
             .all(|&width| width == printable[0])
             .then_some(printable[0]);
         Self {
-            text: text.clone(),
+            text: text.share(),
             end: range.end,
             tab_size: tab_size.max(1),
             ascii,
@@ -632,13 +640,56 @@ fn is_own_cluster(ch: char) -> bool {
     && ch != '\r'
 }
 
-/// The [`RowIndex`]es of long rows of one buffer version, kept from frame to
-/// frame. Another version or buffer drops them all; so does
+/// Which text a [`LongRows`] holds indexes of: a version of a buffer, or a
+/// snapshot of a read-only source (see [`crate::DisplayMap::read_only`]),
+/// told apart by its row count and length. Get one from
+/// [`crate::DisplayMap::source_key`], or from a [`BufferSnapshot`].
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct SourceKey(Key);
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum Key {
+    Buffer(BufferId, Version),
+    ReadOnly { id: SourceId, rows: u32, len: usize },
+}
+
+/// A read-only source, unique in the process.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SourceId(u64);
+
+impl SourceId {
+    pub(crate) fn new() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        Self(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
+impl SourceKey {
+    /// `text`, a snapshot of the read-only source `id`, which grows from one
+    /// snapshot to the next: a later one has more rows, or the same rows and
+    /// a longer last row.
+    pub(crate) fn read_only(id: SourceId, text: &dyn TextSource) -> Self {
+        Self(Key::ReadOnly {
+            id,
+            rows: text.row_count(),
+            len: text.len(),
+        })
+    }
+}
+
+impl From<&BufferSnapshot> for SourceKey {
+    fn from(snapshot: &BufferSnapshot) -> Self {
+        Self(Key::Buffer(snapshot.id(), snapshot.version()))
+    }
+}
+
+/// The [`RowIndex`]es of long rows of one text, kept from frame to frame.
+/// Another text (another [`SourceKey`]) drops them all; so does
 /// [`LongRows::clear`], which a font or tab size change must call. Rows the
 /// current or last frame used are never dropped, however many there are.
 #[derive(Default)]
 pub struct LongRows {
-    key: Option<(BufferId, Version)>,
+    key: Option<SourceKey>,
     /// Each index, with the frame that last used it.
     rows: HashMap<u32, (RowIndex, u64)>,
     frame: u64,
@@ -650,15 +701,16 @@ impl LongRows {
         self.frame += 1;
     }
 
-    /// The index of buffer row `row` of `snapshot`.
+    /// The index of buffer row `row` of `text`, which `key` names.
     pub fn index(
         &mut self,
-        snapshot: &BufferSnapshot,
+        key: SourceKey,
+        text: &dyn TextSource,
         row: u32,
         tab_size: usize,
         measure: &mut dyn CharWidth,
     ) -> &mut RowIndex {
-        let key = Some((snapshot.id(), snapshot.version()));
+        let key = Some(key);
         if self.key != key {
             self.rows.clear();
             self.key = key;
@@ -668,7 +720,6 @@ impl LongRows {
             self.rows.retain(|_, (_, used)| *used + 1 >= frame);
         }
         let (index, used) = self.rows.entry(row).or_insert_with(|| {
-            let text = snapshot.text();
             let start = text.row_start(row);
             let index = RowIndex::new(
                 text,
@@ -696,6 +747,7 @@ impl LongRows {
 
 #[cfg(test)]
 mod tests {
+    use fe_text::Text;
     use proptest::prelude::*;
 
     use super::*;
@@ -986,17 +1038,46 @@ mod tests {
         let mut buffer = fe_buffer::Buffer::new("ab\n\tcd");
         let mut rows = LongRows::default();
         let measure = &mut Monospace;
-        assert_eq!(rows.index(&buffer.snapshot(), 1, 4, measure).range(), 3..6);
         assert_eq!(
-            rows.index(&buffer.snapshot(), 1, 4, measure).width(measure),
+            rows.index(
+                (&buffer.snapshot()).into(),
+                buffer.snapshot().text(),
+                1,
+                4,
+                measure
+            )
+            .range(),
+            3..6
+        );
+        assert_eq!(
+            rows.index(
+                (&buffer.snapshot()).into(),
+                buffer.snapshot().text(),
+                1,
+                4,
+                measure
+            )
+            .width(measure),
             6.
         );
         assert_eq!(rows.rows.len(), 1);
 
         buffer.edit([(0..0, "xyz")], fe_buffer::Origin::User);
-        let index = rows.index(&buffer.snapshot(), 1, 4, measure);
+        let index = rows.index(
+            (&buffer.snapshot()).into(),
+            buffer.snapshot().text(),
+            1,
+            4,
+            measure,
+        );
         assert_eq!((index.range(), index.width(measure)), (6..9, 6.));
-        rows.index(&buffer.snapshot(), 0, 4, measure);
+        rows.index(
+            (&buffer.snapshot()).into(),
+            buffer.snapshot().text(),
+            0,
+            4,
+            measure,
+        );
         assert_eq!(rows.rows.len(), 2);
     }
 }

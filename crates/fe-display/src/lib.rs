@@ -16,7 +16,7 @@ pub use block_map::{Block, BlockMap, ScreenRow};
 pub use display_map::{DisplayMap, DisplayRow, WRAP_SLICE_BYTES};
 pub use fe_text::Bias;
 pub use fold_map::Fold;
-pub use long_row::{LongRows, MAX_CLUSTER_BYTES, RowIndex, RowSlice};
+pub use long_row::{LongRows, MAX_CLUSTER_BYTES, RowIndex, RowSlice, SourceKey};
 
 /// Measures chars for soft wrapping, in the unit of the wrap width (the UI
 /// uses pixels).

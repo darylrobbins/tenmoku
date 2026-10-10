@@ -6,6 +6,7 @@
 //! `{…}` one whose head is at its start. The first is primary.
 
 use fe_buffer::Buffer;
+use fe_text::Text;
 
 use super::*;
 
@@ -144,7 +145,7 @@ fn lay_out_display(
         highlights,
         |_| Vec::new(),
     );
-    (frame, display.text().clone())
+    (frame, buffer.current().text().clone())
 }
 
 pub(super) fn rect(x: f32, y: f32, width: f32, height: f32) -> Rect {

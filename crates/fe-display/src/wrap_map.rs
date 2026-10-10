@@ -5,9 +5,9 @@
 // Version 2.0 (see THIRD_PARTY.md).
 //
 // Modified for fastedit: GPUI-free (wrapping measures through `CharWidth`),
-// lines are read from `fe_text::Text`, items store only their wrap points,
-// an unwrapped map keeps no tree at all, and a new width re-wraps rows in
-// slices rather than all at once.
+// lines are read through `fe_text::TextSource`, items store only their wrap
+// points, an unwrapped map keeps no tree at all, and a new width re-wraps
+// rows in slices rather than all at once.
 
 //! Soft wrapping: buffer rows ↔ wrap rows.
 //!
@@ -20,9 +20,9 @@
 //! row becomes pending and keeps showing its previous wrap until
 //! [`WrapMap::wrap_pending`] gets to it.
 
-use std::ops::Range;
+use std::{borrow::Cow, ops::Range};
 
-use fe_text::Text;
+use fe_text::TextSource;
 use sum_tree::{Bias, ContextLessSummary, Dimension, Dimensions, Item, SumTree};
 
 use crate::CharWidth;
@@ -118,7 +118,7 @@ pub(crate) struct WrapMap {
 }
 
 impl WrapMap {
-    pub(crate) fn new(text: &Text, tab_size: usize) -> Self {
+    pub(crate) fn new(text: &dyn TextSource, tab_size: usize) -> Self {
         Self {
             width: None,
             tab_size: tab_size.max(1),
@@ -138,7 +138,7 @@ impl WrapMap {
     /// none) until [`WrapMap::wrap_pending`] reaches it.
     pub(crate) fn rebuild(
         &mut self,
-        text: &Text,
+        text: &dyn TextSource,
         width: Option<f32>,
         tab_size: usize,
         widths: &mut dyn CharWidth,
@@ -163,7 +163,7 @@ impl WrapMap {
 
     /// Follows `text`, which isn't an edit of the text so far: every row
     /// shows unwrapped and, when wrapping, is pending.
-    pub(crate) fn reset(&mut self, text: &Text) {
+    pub(crate) fn reset(&mut self, text: &dyn TextSource) {
         self.line_count = text.row_count() as usize;
         if self.width.is_some() {
             self.lines = unwrapped(self.line_count);
@@ -175,7 +175,7 @@ impl WrapMap {
     /// `text`, which is the text after the edit, wrapping them.
     pub(crate) fn splice(
         &mut self,
-        text: &Text,
+        text: &dyn TextSource,
         start: usize,
         old_rows: usize,
         new_rows: usize,
@@ -186,7 +186,8 @@ impl WrapMap {
             return;
         };
         let mut wrapper = Wrapper::new(width, self.tab_size, &self.ascii, widths);
-        let new_lines = (start..start + new_rows).map(|row| wrapper.wrap_row(text, row as u32).0);
+        let mut rows = RowReader::new(text, start as u32..(start + new_rows) as u32);
+        let new_lines = (0..new_rows).map(|_| wrapper.wrap_next(&mut rows).0);
         replace_rows(&mut self.lines, start..start + old_rows, new_lines);
         self.pending
             .splice(start as u32, old_rows as u32, new_rows as u32);
@@ -203,7 +204,7 @@ impl WrapMap {
     /// are still pending.
     pub(crate) fn wrap_pending(
         &mut self,
-        text: &Text,
+        text: &dyn TextSource,
         around: u32,
         budget: usize,
         widths: &mut dyn CharWidth,
@@ -214,19 +215,17 @@ impl WrapMap {
         let mut wrapper = Wrapper::new(width, self.tab_size, &self.ascii, widths);
         let mut spent = 0;
         let mut new_lines = Vec::new();
-        let mut wrap = |row: u32, spent: &mut usize| {
-            let (line, len) = wrapper.wrap_row(text, row);
-            *spent += len + 1;
-            line
-        };
         while spent < budget || spent == 0 {
             let ix = self.pending.0.partition_point(|rows| rows.end <= around);
             new_lines.clear();
             let rows = if let Some(rows) = self.pending.0.get(ix) {
                 let start = rows.start.max(around);
                 let mut end = start;
+                let mut reader = RowReader::new(text, start..rows.end);
                 while end < rows.end && (spent < budget || spent == 0) {
-                    new_lines.push(wrap(end, &mut spent));
+                    let (line, len) = wrapper.wrap_next(&mut reader);
+                    spent += len + 1;
+                    new_lines.push(line);
                     end += 1;
                 }
                 start..end
@@ -234,7 +233,9 @@ impl WrapMap {
                 let mut start = rows.end;
                 while start > rows.start && (spent < budget || spent == 0) {
                     start -= 1;
-                    new_lines.push(wrap(start, &mut spent));
+                    let (line, len) = wrapper.wrap_row(text, start);
+                    spent += len + 1;
+                    new_lines.push(line);
                 }
                 new_lines.reverse();
                 start..rows.end
@@ -292,7 +293,7 @@ impl WrapMap {
     }
 
     /// Where wrap row `row` (clamped to the last) is.
-    pub(crate) fn segment(&self, text: &Text, row: usize) -> WrapSegment {
+    pub(crate) fn segment(&self, text: &dyn TextSource, row: usize) -> WrapSegment {
         let row = row.min(self.row_count().saturating_sub(1));
         let (buffer_row, breaks, index) = if self.width.is_none() {
             (row, &[][..], 0)
@@ -455,30 +456,96 @@ impl<'a> Wrapper<'a> {
     }
 
     /// Wraps `row`, returning its length too.
-    fn wrap_row(&mut self, text: &Text, row: u32) -> (LineItem, usize) {
-        let start = text.row_start(row);
-        let end = if row + 1 < text.row_count() {
-            text.row_start(row + 1) - 1
-        } else {
-            text.len()
-        };
-        let range = start..end;
-        if range.len() <= self.ascii.fits
-            && text
-                .chunks_in_range(range.clone())
-                .all(|chunk| chunk.bytes().all(|b| b.is_ascii() && b != b'\t'))
-        {
-            return (LineItem::Wrapped(Box::default()), range.len());
-        }
+    fn wrap_row(&mut self, text: &dyn TextSource, row: u32) -> (LineItem, usize) {
+        self.wrap_next(&mut RowReader::new(text, row..row + 1))
+    }
+
+    /// Wraps the next row `rows` reads, returning its length too.
+    fn wrap_next(&mut self, rows: &mut RowReader) -> (LineItem, usize) {
         let mut line = std::mem::take(&mut self.line);
-        line.clear();
-        line.extend(text.chunks_in_range(range.clone()));
-        let (ascii, widths) = (self.ascii, &mut *self.widths);
-        let breaks = break_points(&line, self.width, self.tab_size, |ch| {
-            ascii.get(ch).unwrap_or_else(|| widths.char_width(ch))
-        });
+        let len = rows.read(&mut line);
+        let item = if len <= self.ascii.fits && line.bytes().all(|b| b.is_ascii() && b != b'\t') {
+            LineItem::Wrapped(Box::default())
+        } else {
+            let (ascii, widths) = (self.ascii, &mut *self.widths);
+            LineItem::Wrapped(break_points(&line, self.width, self.tab_size, |ch| {
+                ascii.get(ch).unwrap_or_else(|| widths.char_width(ch))
+            }))
+        };
         self.line = line;
-        (LineItem::Wrapped(breaks), range.len())
+        (item, len)
+    }
+}
+
+/// Reads rows of a text in order, in one pass over it from the first row's
+/// start. A run of rows costs two row lookups however long it is, where
+/// [`TextSource::row_start`] and [`TextSource::row_len`] for each would take
+/// three lookups per row, which on a rope is a tenth of wrapping a row.
+struct RowReader<'a> {
+    text: &'a dyn TextSource,
+    /// The next row.
+    row: u32,
+    chunks: Box<dyn Iterator<Item = Cow<'a, str>> + 'a>,
+    chunk: Cow<'a, str>,
+    /// Where the next row starts in `chunk`.
+    at: usize,
+}
+
+impl<'a> RowReader<'a> {
+    /// Reads `rows` of `text`.
+    fn new(text: &'a dyn TextSource, rows: Range<u32>) -> Self {
+        let chunks: Box<dyn Iterator<Item = Cow<'a, str>>> = if rows.is_empty() {
+            Box::new(std::iter::empty())
+        } else {
+            let start = text.row_start(rows.start);
+            let end = if rows.end < text.row_count() {
+                text.row_start(rows.end)
+            } else {
+                text.len()
+            };
+            text.chunks_in_range(start..end)
+        };
+        Self {
+            text,
+            row: rows.start,
+            chunks,
+            chunk: Cow::Borrowed(""),
+            at: 0,
+        }
+    }
+
+    /// Reads the next row into `line`, without its line break, and returns
+    /// its length.
+    fn read(&mut self, line: &mut String) -> usize {
+        line.clear();
+        loop {
+            let rest = &self.chunk[self.at..];
+            if let Some(ix) = rest.find('\n') {
+                line.push_str(&rest[..ix]);
+                self.at += ix + 1;
+                break;
+            }
+            line.push_str(rest);
+            match self.chunks.next() {
+                Some(chunk) => (self.chunk, self.at) = (chunk, 0),
+                None => {
+                    self.at = self.chunk.len();
+                    break;
+                }
+            }
+        }
+        // The line break, one byte or two, reads as `\n` from a `Text` or a
+        // `FileText`. Read any other way, the row's length says where it
+        // ends.
+        let len = if line.ends_with('\r') {
+            self.text.row_len(self.row) as usize
+        } else {
+            line.len()
+        };
+        line.truncate(len);
+        debug_assert_eq!(len, self.text.row_len(self.row) as usize);
+        self.row += 1;
+        len
     }
 }
 
@@ -527,6 +594,7 @@ fn break_points(
 
 #[cfg(test)]
 mod tests {
+    use fe_text::Text;
     use proptest::prelude::*;
 
     use super::*;

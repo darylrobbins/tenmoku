@@ -12,7 +12,7 @@
 use std::ops::Range;
 
 use fe_buffer::ResolvedSelection;
-use fe_text::{Bias, Text};
+use fe_text::{Bias, TextSource};
 
 use crate::{
     BlockMap, CharWidth, DisplayMap, DisplayRow, ExpandedRow, LongRows, RowIndex, RowSlice,
@@ -423,7 +423,7 @@ impl<L: MeasuredLine> Frame<L> {
     /// `long_rows` and `widths` are what the frame was laid out with.
     pub fn offset_at(
         &self,
-        text: &Text,
+        text: &dyn TextSource,
         position: Vec2,
         long_rows: &mut LongRows,
         widths: &mut dyn CharWidth,
@@ -543,7 +543,7 @@ pub fn layout_frame_with_blocks<M: TextMeasure>(
         ref styles,
     } = *input;
     let text = display.text();
-    let snapshot = display.snapshot();
+    let source = display.source_key();
     long_rows.start_frame();
 
     let row_count = display.row_count();
@@ -590,9 +590,9 @@ pub fn layout_frame_with_blocks<M: TextMeasure>(
     let shown: Vec<_> = display_rows
         .iter()
         .filter(|row| !is_long(row))
-        .map(cut)
+        .map(|row| (row.buffer_row, cut(row)))
         .collect();
-    let spans = visible_spans(&shown, &mut highlights);
+    let spans = visible_spans(text, &shown, &mut highlights);
 
     let shape_row = |measure: &mut M,
                      row: u32,
@@ -649,7 +649,7 @@ pub fn layout_frame_with_blocks<M: TextMeasure>(
                     .then(|| row.x_for_offset(primary_head, long_rows, widths)),
                 Err((_, row)) => contains(row.range.clone(), row.last, primary_head).then(|| {
                     long_rows
-                        .index(snapshot, row.buffer_row, tab_size, widths)
+                        .index(source, text, row.buffer_row, tab_size, widths)
                         .x_for_offset(primary_head, widths)
                 }),
             })
@@ -667,7 +667,7 @@ pub fn layout_frame_with_blocks<M: TextMeasure>(
             .map(|row| match row {
                 Ok(row) => f64::from(row.line.width()),
                 Err((_, row)) => long_rows
-                    .index(snapshot, row.buffer_row, tab_size, widths)
+                    .index(source, text, row.buffer_row, tab_size, widths)
                     .width(widths),
             })
             .fold(0., f64::max);
@@ -683,7 +683,7 @@ pub fn layout_frame_with_blocks<M: TextMeasure>(
         .map(|row| match row {
             Ok(row) => row,
             Err((row, display_row)) => {
-                let index = long_rows.index(snapshot, display_row.buffer_row, tab_size, widths);
+                let index = long_rows.index(source, text, display_row.buffer_row, tab_size, widths);
                 let mut slice = index.slice(view.clone(), slice_margin, widths);
                 let mut shape_slice = |slice: &RowSlice| {
                     let spans = highlights(slice.range.clone());
@@ -938,19 +938,36 @@ pub fn layout_frame_with_blocks<M: TextMeasure>(
 /// Spans for the visible rows that are shaped from their start. Consecutive
 /// rows (across a line break or a soft wrap) are queried together; a row cut
 /// short ends the query, so the hidden rest of a long line isn't
-/// highlighted.
+/// highlighted. `rows` are the shown ranges with their buffer rows.
 fn visible_spans<S>(
-    rows: &[Range<usize>],
+    text: &dyn TextSource,
+    rows: &[(u32, Range<usize>)],
     highlights: &mut impl FnMut(Range<usize>) -> Vec<StyledSpan<S>>,
 ) -> Vec<StyledSpan<S>> {
-    let mut ranges: Vec<Range<usize>> = Vec::new();
-    for row in rows {
+    // Whether `end`, in `buffer_row`, is followed by `start`, past only the
+    // line break, which is one byte or two.
+    let across_line_break = |buffer_row: u32, end: usize, start: usize| {
+        end == text.row_start(buffer_row) + text.row_len(buffer_row) as usize
+            && buffer_row + 1 < text.row_count()
+            && start == text.row_start(buffer_row + 1)
+    };
+    // Each range, with the buffer row it ends in.
+    let mut ranges: Vec<(Range<usize>, u32)> = Vec::new();
+    for (buffer_row, row) in rows {
         match ranges.last_mut() {
-            Some(last) if row.start == last.end || row.start == last.end + 1 => last.end = row.end,
-            _ => ranges.push(row.clone()),
+            Some((last, last_row))
+                if row.start == last.end || across_line_break(*last_row, last.end, row.start) =>
+            {
+                last.end = row.end;
+                *last_row = *buffer_row;
+            }
+            _ => ranges.push((row.clone(), *buffer_row)),
         }
     }
-    ranges.into_iter().flat_map(highlights).collect()
+    ranges
+        .into_iter()
+        .flat_map(|(range, _)| highlights(range))
+        .collect()
 }
 
 /// Style runs covering a row's displayed text: spans in their own style and

@@ -5,6 +5,7 @@
 //! acute accent is 1 cell, not 2.
 
 use fe_buffer::Buffer;
+use fe_text::Text;
 use unicode_segmentation::UnicodeSegmentation;
 
 use super::{
