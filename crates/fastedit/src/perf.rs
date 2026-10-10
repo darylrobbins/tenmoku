@@ -620,8 +620,7 @@ fn print_memory(when: &str, file_bytes: usize) {
         mb(info.ri_lifetime_max_phys_footprint),
         mb(info.ri_resident_size),
         // Bytes on macOS.
-        // Kilobytes on the BSDs.
-        mb(usage.ru_maxrss as u64 * 1024),
+        mb(usage.ru_maxrss as u64),
         mb(file_bytes as u64),
     );
 }
@@ -661,7 +660,8 @@ fn print_memory(when: &str, file_bytes: usize) {
     let mb = |bytes: u64| bytes as f64 / (1024. * 1024.);
     say!(
         "memory {when}: resident peak {:.0} MB; file {:.0} MB",
-        mb(usage.ru_maxrss as u64),
+        // Kilobytes on the BSDs.
+        mb(usage.ru_maxrss as u64 * 1024),
         mb(file_bytes as u64),
     );
 }

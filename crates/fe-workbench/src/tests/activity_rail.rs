@@ -5,7 +5,7 @@
 use std::{fs, path::Path, time::Duration};
 
 use fe_buffer::Buffer;
-use fe_keymap::{DEFAULT_KEYMAP_PATH, DEFAULT_MACOS, KeySequence, Keymap, KeymapLayer};
+use fe_keymap::{DEFAULT_KEYMAP_PATH, DEFAULT_MACOS, Keymap, KeymapLayer};
 use fe_ui::{Icon, RAIL_WIDTH, ROW_HEIGHT, TAB_HEIGHT};
 use gpui::{
     AssetSource as _, Entity, Focusable as _, Modifiers, TestAppContext, VisualTestContext, point,
@@ -200,19 +200,29 @@ fn tooltips_show_name_and_shortcut(cx: &mut TestAppContext) {
         draw(cx);
         dock.read_with(cx, |dock, _| dock.last_tooltip())
     };
-    // The keymap is macOS's; its keys print as this platform prints them.
-    let shown = |title: &str, keys: &str| {
-        let keys = fe_keymap::shortcut_label(&KeySequence::parse(keys).unwrap());
-        Some(format!("{title} {keys}"))
+    // The keymap is macOS's; its keys print as this platform prints them:
+    // in symbols on macOS, spelled out elsewhere.
+    let shown = |mac: &str, other: &str| {
+        Some(
+            if cfg!(target_os = "macos") {
+                mac
+            } else {
+                other
+            }
+            .to_owned(),
+        )
     };
     assert_eq!(
         hover(DockPanel::Project, cx),
-        shown("Project", "cmd-shift-e")
+        shown("Project ⇧⌘E", "Project Shift+Super+E")
     );
-    assert_eq!(hover(DockPanel::Search, cx), shown("Search", "cmd-shift-f"));
+    assert_eq!(
+        hover(DockPanel::Search, cx),
+        shown("Search ⇧⌘F", "Search Shift+Super+F")
+    );
     assert_eq!(
         hover(DockPanel::Outline, cx),
-        shown("Outline", "cmd-shift-o")
+        shown("Outline ⇧⌘O", "Outline Shift+Super+O")
     );
 
     let keymap = |user: &str| {
@@ -230,7 +240,10 @@ fn tooltips_show_name_and_shortcut(cx: &mut TestAppContext) {
         "#,
     );
     cx.update(|_, cx| fe_gpui::set_user_keymap(cx, moved));
-    assert_eq!(hover(DockPanel::Search, cx), shown("Search", "alt-cmd-f"));
+    assert_eq!(
+        hover(DockPanel::Search, cx),
+        shown("Search ⌥⌘F", "Search Alt+Super+F")
+    );
 
     let unbound = keymap(
         r#"

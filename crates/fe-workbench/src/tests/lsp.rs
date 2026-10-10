@@ -475,8 +475,14 @@ fn paths_through_parent_folders_start_servers(cx: &mut TestAppContext) {
         .wait_for_document(&s.uri("src/lib.rs"), "lib.rs", |r| r.is_some());
     assert_eq!(s.fake.launched()[1].1, root.join("src"));
 
-    // A new root through `..`, and a file through it.
-    let new_root = root.join("src/../src");
+    // A new root through `..`, and a file through it. macOS resolves `..`
+    // after a file (`tool.py/..`); Linux refuses it (ENOTDIR), as a shell
+    // would, so it goes through a directory there.
+    let new_root = if cfg!(target_os = "macos") {
+        root.join("tool.py/../src")
+    } else {
+        root.join("src/../src")
+    };
     let workbench = s.workbench.clone();
     s.cx.update(|window, cx| workbench.update(cx, |w, cx| w.set_root(new_root, window, cx)));
     s.draw();

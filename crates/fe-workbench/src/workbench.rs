@@ -451,7 +451,7 @@ impl Workbench {
     /// Shows the open panel for `op`, then opens what's picked: a folder
     /// re-roots the workbench, and a file opens in the active pane as a
     /// tree click does, the root staying. Cancelling does nothing, and an
-    /// error from the panel is logged and shown in a prompt
+    /// error from the panel is logged and, off macOS, shown in a prompt
     /// ([`open_panel_failed`]). Asked again while the panel shows, it does
     /// nothing.
     fn prompt_open(&mut self, op: OpenOp, window: &mut Window, cx: &mut Context<Self>) {
@@ -481,7 +481,10 @@ impl Workbench {
             workbench
                 .update_in(cx, |workbench, window, cx| {
                     workbench.prompting = false;
-                    if let Some(error) = failed {
+                    // Off macOS only, for now: there the panel is
+                    // xdg-desktop-portal's, which a minimal desktop may lack.
+                    // Whether macOS should show it too is still open.
+                    if let Some(error) = failed.filter(|_| !cfg!(target_os = "macos")) {
                         let (message, detail) = open_panel_failed(&error);
                         // Answered by its one button; nothing waits on it.
                         drop(window.prompt(

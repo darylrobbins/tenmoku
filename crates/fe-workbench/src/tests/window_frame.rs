@@ -9,16 +9,21 @@ use gpui::{Modifiers, TestAppContext, Tiling};
 use super::open;
 use crate::Launch;
 
-fn launch() -> Launch {
-    Launch {
-        root: Some(std::env::temp_dir()),
+/// A launch on an empty folder of its own, kept while the test runs: not
+/// the shared system temp dir, which would be scanned and watched whole.
+fn launch() -> (tempfile::TempDir, Launch) {
+    let dir = tempfile::tempdir().unwrap();
+    let launch = Launch {
+        root: Some(dir.path().to_owned()),
         file: None,
-    }
+    };
+    (dir, launch)
 }
 
 #[gpui::test]
 fn client_decorations_draw_the_title_and_buttons(cx: &mut TestAppContext) {
-    let (workbench, cx, _) = open(cx, launch());
+    let (_dir, launch) = launch();
+    let (workbench, cx, _) = open(cx, launch);
     let seen = Rc::new(RefCell::new(Vec::<Invocation>::new()));
     cx.update(|_, cx| {
         let sink = seen.clone();
@@ -66,7 +71,8 @@ fn client_decorations_draw_the_title_and_buttons(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn the_frame_is_off_unless_the_host_asks(cx: &mut TestAppContext) {
-    let (workbench, cx, _) = open(cx, launch());
+    let (_dir, launch) = launch();
+    let (workbench, cx, _) = open(cx, launch);
     workbench.update(cx, |workbench, cx| {
         workbench.client_tiling = Some(Tiling::default());
         cx.notify();

@@ -4,7 +4,6 @@ use std::{fs, path::Path, time::Duration};
 
 use fe_command::{ContextFrame, ContextStack, Invocation, Source};
 use fe_gpui::{EditorView, commands::RunCommand};
-use fe_keymap::KeySequence;
 use fe_ui::{CrumbKind, TAB_HEIGHT, TOOLBAR_HEIGHT, file_icon};
 use gpui::{
     Bounds, Entity, Focusable as _, Modifiers, Pixels, TestAppContext, VisualTestContext, px, size,
@@ -565,14 +564,20 @@ fn buttons_and_pane_commands(cx: &mut TestAppContext) {
     });
     let shortcut =
         |title: &str| shortcuts[titles.iter().position(|t| *t == title).unwrap()].clone();
-    // The keymap is macOS's; its keys print as this platform prints them.
-    let label = |keys: &str| {
-        Some(fe_keymap::shortcut_label(
-            &KeySequence::parse(keys).unwrap(),
-        ))
+    // The keymap is macOS's; its keys print as this platform prints them:
+    // in symbols on macOS, spelled out elsewhere.
+    let label = |mac: &str, other: &str| {
+        Some(
+            if cfg!(target_os = "macos") {
+                mac
+            } else {
+                other
+            }
+            .to_owned(),
+        )
     };
-    assert_eq!(shortcut("Split Right"), label("cmd-\\"));
-    assert_eq!(shortcut("Close Tab"), label("cmd-w"));
+    assert_eq!(shortcut("Split Right"), label("⌘\\", "Super+\\"));
+    assert_eq!(shortcut("Close Tab"), label("⌘W", "Super+W"));
     assert_eq!(shortcut("Close Pane"), None);
     assert_eq!(shortcut("Toggle Breadcrumbs"), None);
 
@@ -599,8 +604,7 @@ fn buttons_and_pane_commands(cx: &mut TestAppContext) {
     cx.executor().advance_clock(Duration::from_millis(500));
     draw(cx);
     let tooltip = right.read_with(cx, |pane, _| pane.last_tooltip());
-    let keys = label("cmd-\\").unwrap();
-    assert_eq!(tooltip, Some(format!("Split Right {keys}")));
+    assert_eq!(tooltip, label("Split Right ⌘\\", "Split Right Super+\\"));
 }
 
 #[gpui::test]
