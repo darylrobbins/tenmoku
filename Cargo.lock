@@ -1786,7 +1786,6 @@ dependencies = [
  "fe-config",
  "fe-display",
  "fe-editor",
- "fe-fileview",
  "fe-keymap",
  "fe-syntax",
  "fe-vim",
@@ -1795,7 +1794,6 @@ dependencies = [
  "image",
  "log",
  "serde_json",
- "tempfile",
  "unicode-segmentation",
 ]
 
