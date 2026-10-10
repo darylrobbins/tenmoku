@@ -1,0 +1,635 @@
+# The built-in keymap on Linux and other platforms without a cmd key: the
+# first layer, which the user's keymap.toml overrides. See fe_keymap's
+# `keymap` module for the format. It binds what default-macos.toml does, with
+# ctrl where macOS has cmd, and PC keys where macOS has its own: ctrl-left
+# for a word, home and end for the line, ctrl-home and ctrl-end for the
+# document. app.hide, app.hide_others and window.minimize, which have no
+# Linux convention, have no key.
+#
+# A shifted punctuation key is named by what it types, without `shift`, as
+# GPUI on Linux reports it: ctrl-shift-[ is `ctrl-{`, ctrl-shift-- `ctrl-_`.
+
+[[bindings]]
+keys = "left"
+command = "editor.move_left"
+context = "editor"
+
+[[bindings]]
+keys = "right"
+command = "editor.move_right"
+context = "editor"
+
+[[bindings]]
+keys = "up"
+command = "editor.move_up"
+context = "editor"
+
+[[bindings]]
+keys = "down"
+command = "editor.move_down"
+context = "editor"
+
+[[bindings]]
+keys = "ctrl-left"
+command = "editor.move_word_left"
+context = "editor"
+
+[[bindings]]
+keys = "ctrl-right"
+command = "editor.move_word_right"
+context = "editor"
+
+[[bindings]]
+keys = "home"
+command = "editor.move_line_start"
+context = "editor"
+
+[[bindings]]
+keys = "end"
+command = "editor.move_line_end"
+context = "editor"
+
+[[bindings]]
+keys = "ctrl-home"
+command = "editor.move_document_start"
+context = "editor"
+
+[[bindings]]
+keys = "ctrl-end"
+command = "editor.move_document_end"
+context = "editor"
+
+[[bindings]]
+keys = "pageup"
+command = "editor.page_up"
+context = "editor"
+
+[[bindings]]
+keys = "pagedown"
+command = "editor.page_down"
+context = "editor"
+
+[[bindings]]
+keys = "shift-left"
+command = "editor.select_left"
+context = "editor"
+
+[[bindings]]
+keys = "shift-right"
+command = "editor.select_right"
+context = "editor"
+
+[[bindings]]
+keys = "shift-up"
+command = "editor.select_up"
+context = "editor"
+
+[[bindings]]
+keys = "shift-down"
+command = "editor.select_down"
+context = "editor"
+
+[[bindings]]
+keys = "ctrl-shift-left"
+command = "editor.select_word_left"
+context = "editor"
+
+[[bindings]]
+keys = "ctrl-shift-right"
+command = "editor.select_word_right"
+context = "editor"
+
+[[bindings]]
+keys = "shift-home"
+command = "editor.select_line_start"
+context = "editor"
+
+[[bindings]]
+keys = "shift-end"
+command = "editor.select_line_end"
+context = "editor"
+
+[[bindings]]
+keys = "ctrl-shift-home"
+command = "editor.select_document_start"
+context = "editor"
+
+[[bindings]]
+keys = "ctrl-shift-end"
+command = "editor.select_document_end"
+context = "editor"
+
+[[bindings]]
+keys = "shift-pageup"
+command = "editor.select_page_up"
+context = "editor"
+
+[[bindings]]
+keys = "shift-pagedown"
+command = "editor.select_page_down"
+context = "editor"
+
+[[bindings]]
+keys = "ctrl-a"
+command = "editor.select_all"
+context = "editor"
+
+[[bindings]]
+keys = "backspace"
+command = "editor.backspace"
+context = "editor"
+
+[[bindings]]
+keys = "shift-backspace"
+command = "editor.backspace"
+context = "editor"
+
+[[bindings]]
+keys = "delete"
+command = "editor.delete"
+context = "editor"
+
+[[bindings]]
+keys = "ctrl-backspace"
+command = "editor.delete_word_left"
+context = "editor"
+
+[[bindings]]
+keys = "enter"
+command = "editor.newline"
+context = "editor"
+
+[[bindings]]
+keys = "tab"
+command = "editor.tab"
+context = "editor"
+
+[[bindings]]
+keys = "ctrl-{"
+command = "editor.fold"
+context = "editor"
+
+[[bindings]]
+keys = "ctrl-}"
+command = "editor.unfold"
+context = "editor"
+
+[[bindings]]
+keys = "ctrl-k ctrl-0"
+command = "editor.fold_all"
+context = "editor"
+
+[[bindings]]
+keys = "ctrl-k ctrl-j"
+command = "editor.unfold_all"
+context = "editor"
+
+# VS Code's chord: the hover popover for what's at the caret.
+[[bindings]]
+keys = "ctrl-k ctrl-i"
+command = "editor.show_hover"
+context = "editor"
+
+[[bindings]]
+keys = "alt-z"
+command = "editor.toggle_soft_wrap"
+context = "editor"
+
+[[bindings]]
+keys = "ctrl-c"
+command = "editor.copy"
+context = "editor"
+
+[[bindings]]
+keys = "ctrl-x"
+command = "editor.cut"
+context = "editor"
+
+[[bindings]]
+keys = "ctrl-v"
+command = "editor.paste"
+context = "editor"
+
+[[bindings]]
+keys = "ctrl-z"
+command = "editor.undo"
+context = "editor"
+
+[[bindings]]
+keys = "ctrl-shift-z"
+command = "editor.redo"
+context = "editor"
+
+[[bindings]]
+keys = "ctrl-y"
+command = "editor.redo"
+context = "editor"
+
+[[bindings]]
+keys = "ctrl-s"
+command = "editor.save"
+context = "editor"
+
+[[bindings]]
+keys = "ctrl-q"
+command = "app.quit"
+
+[[bindings]]
+keys = "f11"
+command = "window.toggle_fullscreen"
+
+[[bindings]]
+keys = "ctrl-shift-w"
+command = "window.close"
+
+[[bindings]]
+keys = "ctrl-w"
+command = "workbench.close_tab"
+context = "workbench"
+
+[[bindings]]
+keys = "ctrl-pagedown"
+command = "workbench.next_tab"
+context = "workbench"
+
+[[bindings]]
+keys = "ctrl-pageup"
+command = "workbench.previous_tab"
+context = "workbench"
+
+# `workbench.open_file` has no key yet: it's in the File menu.
+[[bindings]]
+keys = "ctrl-o"
+command = "workbench.open_folder"
+context = "workbench"
+
+[[bindings]]
+keys = "ctrl-,"
+command = "workbench.open_settings"
+context = "workbench"
+
+[[bindings]]
+keys = "ctrl-p"
+command = "quick_open.toggle"
+context = "workbench"
+
+# A click on a word with ctrl held: the editor places the caret there, then
+# runs this. Above f12, so menus and tooltips show f12, the later entry.
+[[bindings]]
+keys = "ctrl-click"
+command = "nav.goto_definition"
+context = "workbench"
+
+[[bindings]]
+keys = "f12"
+command = "nav.goto_definition"
+context = "workbench"
+
+[[bindings]]
+keys = "ctrl-t"
+command = "nav.workspace_symbols"
+context = "workbench"
+
+[[bindings]]
+keys = "shift-f12"
+command = "nav.find_references"
+context = "workbench"
+
+[[bindings]]
+keys = "ctrl-alt--"
+command = "nav.back"
+context = "workbench"
+
+[[bindings]]
+keys = "ctrl-_"
+command = "nav.forward"
+context = "workbench"
+
+[[bindings]]
+keys = "up"
+command = "picker.select_prev"
+context = "picker"
+
+[[bindings]]
+keys = "down"
+command = "picker.select_next"
+context = "picker"
+
+[[bindings]]
+keys = "enter"
+command = "picker.confirm"
+context = "picker"
+
+[[bindings]]
+keys = "escape"
+command = "picker.dismiss"
+context = "picker"
+
+[[bindings]]
+keys = "backspace"
+command = "text_input.backspace"
+context = "text_input"
+
+[[bindings]]
+keys = "ctrl-backspace"
+command = "text_input.delete_word_left"
+context = "text_input"
+
+[[bindings]]
+keys = "ctrl-shift-backspace"
+command = "text_input.clear"
+context = "text_input"
+
+[[bindings]]
+keys = "ctrl-v"
+command = "text_input.paste"
+context = "text_input"
+
+[[bindings]]
+keys = "ctrl-shift-f"
+command = "search.show"
+context = "workbench"
+
+[[bindings]]
+keys = "ctrl-shift-e"
+command = "dock.show_project"
+context = "workbench"
+
+[[bindings]]
+keys = "ctrl-b"
+command = "dock.toggle"
+context = "workbench"
+
+[[bindings]]
+keys = "ctrl-shift-o"
+command = "outline.show"
+context = "workbench"
+
+[[bindings]]
+keys = "alt-r"
+command = "search.toggle_regex"
+context = "search_panel"
+
+[[bindings]]
+keys = "alt-c"
+command = "search.toggle_case"
+context = "search_panel"
+
+[[bindings]]
+keys = "alt-w"
+command = "search.toggle_whole_word"
+context = "search_panel"
+
+# Only in search's input: the palettes' Enter is `picker.confirm`.
+[[bindings]]
+keys = "enter"
+command = "text_input.submit"
+context = "search_panel && text_input"
+
+# Panes, as VS Code binds them. The ctrl-k chords sit beside the editor's
+# ctrl-k ctrl-0 and ctrl-k ctrl-j: a chord's second key picks the binding.
+[[bindings]]
+keys = "ctrl-\\"
+command = "pane.split_right"
+context = "workbench"
+
+[[bindings]]
+keys = "ctrl-k ctrl-\\"
+command = "pane.split_down"
+context = "workbench"
+
+[[bindings]]
+keys = "ctrl-k ctrl-left"
+command = "pane.focus_left"
+context = "workbench"
+
+[[bindings]]
+keys = "ctrl-k ctrl-right"
+command = "pane.focus_right"
+context = "workbench"
+
+[[bindings]]
+keys = "ctrl-k ctrl-up"
+command = "pane.focus_up"
+context = "workbench"
+
+[[bindings]]
+keys = "ctrl-k ctrl-down"
+command = "pane.focus_down"
+context = "workbench"
+
+[[bindings]]
+keys = "ctrl-alt-left"
+command = "pane.move_tab_left"
+context = "workbench"
+
+[[bindings]]
+keys = "ctrl-alt-right"
+command = "pane.move_tab_right"
+context = "workbench"
+
+[[bindings]]
+keys = "ctrl-alt-up"
+command = "pane.move_tab_up"
+context = "workbench"
+
+[[bindings]]
+keys = "ctrl-alt-down"
+command = "pane.move_tab_down"
+context = "workbench"
+
+[[bindings]]
+keys = "ctrl-k ctrl-w"
+command = "pane.close"
+context = "workbench"
+
+# The project tree, when it has focus. `project_panel.reveal_active` has no
+# key yet: it's for the command palette.
+[[bindings]]
+keys = "up"
+command = "project_panel.select_prev"
+context = "project_panel"
+
+[[bindings]]
+keys = "down"
+command = "project_panel.select_next"
+context = "project_panel"
+
+[[bindings]]
+keys = "left"
+command = "project_panel.collapse_or_parent"
+context = "project_panel"
+
+[[bindings]]
+keys = "right"
+command = "project_panel.expand_or_first_child"
+context = "project_panel"
+
+[[bindings]]
+keys = "enter"
+command = "project_panel.open"
+context = "project_panel"
+
+# Find references' results, when they have focus.
+[[bindings]]
+keys = "up"
+command = "references_panel.select_prev"
+context = "ReferencesPanel"
+
+[[bindings]]
+keys = "down"
+command = "references_panel.select_next"
+context = "ReferencesPanel"
+
+[[bindings]]
+keys = "enter"
+command = "references_panel.open"
+context = "ReferencesPanel"
+
+# Vim's layer, last so that it wins over the plain editor's bindings in the
+# same frame. In normal and visual mode the arrows are vim's motions
+# (`h l k j`), and the editing keys are vim's (`vim.key` hands the keystroke
+# to vim) rather than the editor's. A vim ctrl key bound to anything else,
+# here ctrl-v (paste) and ctrl-q (quit), is bound to `vim.key` too, so it
+# reaches vim; one bound to nothing, such as ctrl-r, reaches it unmatched.
+
+[[bindings]]
+keys = "left"
+command = "vim.move"
+args = { motion = "left" }
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "right"
+command = "vim.move"
+args = { motion = "right" }
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "up"
+command = "vim.move"
+args = { motion = "up" }
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "down"
+command = "vim.move"
+args = { motion = "down" }
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "left"
+command = "vim.move"
+args = { motion = "left" }
+context = "editor && vim.visual"
+
+[[bindings]]
+keys = "right"
+command = "vim.move"
+args = { motion = "right" }
+context = "editor && vim.visual"
+
+[[bindings]]
+keys = "up"
+command = "vim.move"
+args = { motion = "up" }
+context = "editor && vim.visual"
+
+[[bindings]]
+keys = "down"
+command = "vim.move"
+args = { motion = "down" }
+context = "editor && vim.visual"
+
+[[bindings]]
+keys = "enter"
+command = "vim.key"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "tab"
+command = "vim.key"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "backspace"
+command = "vim.key"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "shift-backspace"
+command = "vim.key"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "delete"
+command = "vim.key"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-backspace"
+command = "vim.key"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-v"
+command = "vim.key"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-q"
+command = "vim.key"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "enter"
+command = "vim.key"
+context = "editor && vim.visual"
+
+[[bindings]]
+keys = "tab"
+command = "vim.key"
+context = "editor && vim.visual"
+
+[[bindings]]
+keys = "backspace"
+command = "vim.key"
+context = "editor && vim.visual"
+
+[[bindings]]
+keys = "shift-backspace"
+command = "vim.key"
+context = "editor && vim.visual"
+
+[[bindings]]
+keys = "delete"
+command = "vim.key"
+context = "editor && vim.visual"
+
+[[bindings]]
+keys = "ctrl-backspace"
+command = "vim.key"
+context = "editor && vim.visual"
+
+[[bindings]]
+keys = "ctrl-v"
+command = "vim.key"
+context = "editor && vim.visual"
+
+[[bindings]]
+keys = "ctrl-q"
+command = "vim.key"
+context = "editor && vim.visual"
+
+# Insert mode keeps the editor's keys; `escape` and `ctrl-[` end the session
+# and return to normal mode.
+
+[[bindings]]
+keys = "escape"
+command = "vim.normal_mode"
+context = "editor && vim.mode == insert"
+
+[[bindings]]
+keys = "ctrl-["
+command = "vim.normal_mode"
+context = "editor && vim.mode == insert"

@@ -15,7 +15,7 @@
 use std::{
     cell::{Cell, RefCell},
     rc::Rc,
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant},
 };
 
 use fe_gpui::{EditorView, FrameTiming};
@@ -95,7 +95,10 @@ impl Startup {
 /// The kernel's start time for this process, as an `Instant`. It's
 /// wall-clock time to the microsecond, so it's converted through the wall
 /// clock now, taken next to `now`.
+#[cfg(target_os = "macos")]
 fn process_start(now: Instant) -> Option<Instant> {
+    use std::time::SystemTime;
+
     let wall = SystemTime::now();
     // SAFETY: `info` is a `proc_bsdinfo`, the flavour asked for, and the
     // size passed is its size.
@@ -117,6 +120,12 @@ fn process_start(now: Instant) -> Option<Instant> {
         + Duration::from_secs(info.pbi_start_tvsec)
         + Duration::from_micros(info.pbi_start_tvusec);
     now.checked_sub(wall.duration_since(started).ok()?)
+}
+
+/// Elsewhere the kernel's start time isn't read; launch falls back to `main`.
+#[cfg(not(target_os = "macos"))]
+fn process_start(_now: Instant) -> Option<Instant> {
+    None
 }
 
 thread_local! {
@@ -561,6 +570,7 @@ fn percentiles(samples: &mut [Duration]) -> String {
     )
 }
 
+#[cfg(target_os = "macos")]
 fn print_memory(when: &str, file_bytes: usize) {
     // SAFETY: `info` is a `rusage_info_v4`, the flavour asked for.
     let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
@@ -586,6 +596,21 @@ fn print_memory(when: &str, file_bytes: usize) {
         mb(info.ri_resident_size),
         // Bytes on macOS.
         mb(usage.ru_maxrss as u64),
+        mb(file_bytes as u64),
+    );
+}
+
+/// Elsewhere only the resident peak from `getrusage` is reported.
+#[cfg(not(target_os = "macos"))]
+fn print_memory(when: &str, file_bytes: usize) {
+    // SAFETY: `getrusage` fills in the struct it's given.
+    let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
+    unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
+    let mb = |bytes: u64| bytes as f64 / (1024. * 1024.);
+    say!(
+        "memory {when}: resident peak {:.0} MB; file {:.0} MB",
+        // Kilobytes on Linux.
+        mb(usage.ru_maxrss as u64 * 1024),
         mb(file_bytes as u64),
     );
 }

@@ -166,9 +166,9 @@ pub(crate) fn caret(editor: &EditorView) -> usize {
     }
 }
 
-/// The first single key that runs `command` in the workbench's editor, in
-/// macOS symbols, read from the keymap now so it follows reloads. A chord
-/// isn't shown.
+/// The first single key that runs `command` in the workbench's editor, as
+/// this platform prints it, read from the keymap now so it follows
+/// reloads. A chord isn't shown.
 pub(crate) fn shortcut(command: &str, cx: &App) -> Option<String> {
     let command = CommandId::parse(command).ok()?;
     let stack: ContextStack = [crate::KEY_CONTEXT, fe_gpui::KEY_CONTEXT]
@@ -179,7 +179,7 @@ pub(crate) fn shortcut(command: &str, cx: &App) -> Option<String> {
     fe_keymap::shortcuts(&keymap, &command, &Value::Null, &stack)
         .iter()
         .find(|keys| keys.keystrokes().len() == 1)
-        .map(fe_keymap::macos_label)
+        .map(fe_keymap::shortcut_label)
 }
 
 /// Dispatches `command` as a key would, to the focused element and up to

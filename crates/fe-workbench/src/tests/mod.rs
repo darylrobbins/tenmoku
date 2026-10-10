@@ -3,6 +3,7 @@
 //! Fixtures are `fe_project::fixture` trees in a temporary directory.
 
 mod activity_rail;
+mod default_keymaps;
 mod find_bar;
 mod find_keys;
 mod launch;

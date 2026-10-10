@@ -16,7 +16,7 @@ mod report;
 
 pub use keymap::{Binding, CatalogError, CommandCatalog, Entry, Keymap, KeymapLayer, Location};
 pub use keystroke::{Key, KeySequence, Keystroke, KeystrokeError, Modifiers};
-pub use label::macos_label;
+pub use label::{macos_label, pc_label, shortcut_label};
 pub use load::{
     DEFAULT_KEYMAP_PATH, KEYMAP_FILE, KeymapEvent, KeymapStore, load_keymap, load_keymap_layer,
     user_keymap_path,
@@ -31,6 +31,18 @@ pub use report::KeymapIssue;
 /// The built-in macOS keymap, the first layer under the user's: see
 /// [`KeymapStore::load`].
 pub const DEFAULT_MACOS: &str = include_str!("../keymaps/default-macos.toml");
+
+/// The built-in keymap where there's no cmd key (Linux, Windows): the
+/// macOS one's bindings with ctrl for cmd, and PC keys for macOS's own.
+pub const DEFAULT_LINUX: &str = include_str!("../keymaps/default-linux.toml");
+
+/// This platform's built-in keymap: [`DEFAULT_MACOS`] on macOS,
+/// [`DEFAULT_LINUX`] elsewhere.
+pub const DEFAULT: &str = if cfg!(target_os = "macos") {
+    DEFAULT_MACOS
+} else {
+    DEFAULT_LINUX
+};
 
 /// The built-in macOS menu bar: see [`MenuBar::default_macos`].
 pub const DEFAULT_MACOS_MENUS: &str = include_str!("../menus/default-macos.toml");

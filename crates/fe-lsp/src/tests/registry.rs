@@ -1538,33 +1538,39 @@ fn bare_commands_use_the_login_shell_path() {
     }
     // A file found first that this user may not run is passed over, as a
     // shell would, though it has an execute bit: one only its group may
-    // run, and one an ACL denies.
+    // run, and, on macOS, one an ACL denies. (Linux ACLs can't deny the
+    // owner what its mode bits allow.)
     let mut shells = 9;
     if !rustix::process::geteuid().is_root() {
         let group_only = dir.join("group-only");
         let denied = dir.join("denied");
-        for unrunnable in [&group_only, &denied] {
-            std::fs::create_dir(unrunnable).unwrap();
-            script(&unrunnable.join("fe-test-server"), "exit 1");
+        let mut unrunnable = vec![&group_only];
+        if cfg!(target_os = "macos") {
+            unrunnable.push(&denied);
+        }
+        for folder in &unrunnable {
+            std::fs::create_dir(folder).unwrap();
+            script(&folder.join("fe-test-server"), "exit 1");
         }
         std::fs::set_permissions(
             group_only.join("fe-test-server"),
             std::fs::Permissions::from_mode(0o610),
         )
         .unwrap();
-        let acl = std::process::Command::new("/bin/chmod")
-            .args(["+a", "everyone deny execute"])
-            .arg(denied.join("fe-test-server"))
-            .status()
-            .unwrap();
-        assert!(acl.success());
+        if cfg!(target_os = "macos") {
+            let acl = std::process::Command::new("/bin/chmod")
+                .args(["+a", "everyone deny execute"])
+                .arg(denied.join("fe-test-server"))
+                .status()
+                .unwrap();
+            assert!(acl.success());
+        }
         let passing = dir.join("passing-shell");
-        let path = format!(
-            "{}:{}:{}:/bin:/usr/bin",
-            group_only.display(),
-            denied.display(),
-            bin.display()
-        );
+        let path = std::env::join_paths(unrunnable.iter().copied().chain([&bin]))
+            .unwrap()
+            .into_string()
+            .unwrap()
+            + ":/bin:/usr/bin";
         login_shell(&passing, "", &path, "");
         shells += 1;
         let login = Arc::new(LoginPath::new(&passing));

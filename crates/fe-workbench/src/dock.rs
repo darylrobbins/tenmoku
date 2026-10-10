@@ -282,8 +282,8 @@ impl Dock {
     }
 }
 
-/// The first key sequence that runs `command` in the workbench's editor, in
-/// macOS symbols, read from the keymap now so it follows reloads.
+/// The first key sequence that runs `command` in the workbench's editor, as
+/// this platform prints it, read from the keymap now so it follows reloads.
 fn shortcut(command: &str, cx: &App) -> Option<String> {
     let command = CommandId::parse(command).ok()?;
     let stack: ContextStack = [crate::KEY_CONTEXT, fe_gpui::KEY_CONTEXT]
@@ -292,7 +292,7 @@ fn shortcut(command: &str, cx: &App) -> Option<String> {
         .collect();
     let keymap = fe_gpui::current_keymap(cx);
     let shortcuts = fe_keymap::shortcuts(&keymap, &command, &Value::Null, &stack);
-    shortcuts.first().map(fe_keymap::macos_label)
+    shortcuts.first().map(fe_keymap::shortcut_label)
 }
 
 #[cfg(test)]

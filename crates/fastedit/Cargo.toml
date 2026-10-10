@@ -19,5 +19,9 @@ gpui_platform.workspace = true
 libc.workspace = true
 log.workspace = true
 
+# GPUI's Linux windowing backends.
+[target.'cfg(target_os = "linux")'.dependencies]
+gpui_platform = { workspace = true, features = ["wayland", "x11"] }
+
 [lints]
 workspace = true

@@ -541,14 +541,12 @@ fn may_shift(line: &LineMatch) -> bool {
 
 /// Opens the regular file at `path` for reading, without following a link
 /// or waiting on a FIFO that has taken its place since it was searched.
-#[cfg(target_os = "macos")]
+#[cfg(unix)]
 fn open_regular(path: &Path) -> io::Result<File> {
     use std::os::unix::fs::OpenOptionsExt as _;
-    // O_NOFOLLOW | O_NONBLOCK, as macOS has them.
-    const FLAGS: i32 = 0x0100 | 0x0004;
     let file = fs::OpenOptions::new()
         .read(true)
-        .custom_flags(FLAGS)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)?;
     if !file.metadata()?.is_file() {
         return Err(io::ErrorKind::InvalidInput.into());
@@ -556,9 +554,8 @@ fn open_regular(path: &Path) -> io::Result<File> {
     Ok(file)
 }
 
-/// Elsewhere, where those flags differ, nothing: the offsets stay as the
-/// search gave them.
-#[cfg(not(target_os = "macos"))]
+/// Elsewhere nothing: the offsets stay as the search gave them.
+#[cfg(not(unix))]
 fn open_regular(_: &Path) -> io::Result<File> {
     Err(io::ErrorKind::Unsupported.into())
 }

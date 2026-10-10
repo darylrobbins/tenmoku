@@ -20,8 +20,12 @@ use fe_gpui::{
 };
 use fe_workbench::{Workbench, loader};
 use gpui::{
-    App, AppContext as _, Focusable as _, WindowBounds, WindowHandle, WindowOptions, px, size,
+    App, AppContext as _, Focusable as _, TitlebarOptions, WindowBounds, WindowHandle,
+    WindowOptions, px, size,
 };
+
+/// Whether the window draws the unified macOS title bar itself.
+const UNIFIED_TITLE_BAR: bool = cfg!(target_os = "macos");
 
 /// The buffer a finished read produced: a missing file is a new one, which
 /// saving creates. The workbench shows an error in the tab's place.
@@ -81,7 +85,7 @@ fn log_diagnostics(diagnostics: &[Diagnostic]) {
 /// checked against the workbench's, the editor's and the app's commands.
 fn load_keymap() -> KeymapStore {
     let store = KeymapStore::load(
-        fe_keymap::DEFAULT_MACOS,
+        fe_keymap::DEFAULT,
         fe_keymap::user_keymap_path(),
         Some(fe_workbench::command_catalog()),
     );
@@ -252,6 +256,11 @@ fn main() {
         }
         install_menus(cx);
         log_keymap_report(cx);
+        // macOS shows prompts as native alerts; elsewhere GPUI's fallback
+        // would draw them, unthemed and unwrapped.
+        if !cfg!(target_os = "macos") {
+            cx.set_prompt_builder(fe_ui::prompt_renderer);
+        }
         cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {
                 cx.quit();
@@ -265,8 +274,17 @@ fn main() {
             .open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::centered(size(px(1200.), px(800.)), cx)),
-                    titlebar: Some(fe_workbench::titlebar_options("fastedit")),
-                    app_owns_titlebar_drag: true,
+                    // The unified title bar is macOS's; elsewhere the
+                    // window manager draws the title bar.
+                    titlebar: Some(if UNIFIED_TITLE_BAR {
+                        fe_workbench::titlebar_options("fastedit")
+                    } else {
+                        TitlebarOptions {
+                            title: Some("fastedit".into()),
+                            ..Default::default()
+                        }
+                    }),
+                    app_owns_titlebar_drag: UNIFIED_TITLE_BAR,
                     ..Default::default()
                 },
                 |window, cx| {
@@ -289,7 +307,7 @@ fn main() {
                     let workbench = cx.new(|cx| {
                         let mut workbench =
                             Workbench::new(launch, theme, editor_settings, window, cx);
-                        workbench.set_title_bar(true, cx);
+                        workbench.set_title_bar(UNIFIED_TITLE_BAR, cx);
                         workbench.set_status_bar_visible(settings.status_bar.visible, cx);
                         workbench
                     });

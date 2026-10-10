@@ -250,6 +250,42 @@ raising the tolerance: a failing run uploads `target/screenshots/` as the
 (OFL-1.1) would be steadier, but bundling it needs the licence added to
 the allowlist and a THIRD_PARTY.md row.
 
+## Linux
+
+macOS is the primary platform and the only one in CI, but the app, every
+test and every bench also build and run on Linux (X11 or Wayland). On
+Ubuntu 26.04, GPUI needs:
+
+```sh
+sudo apt install libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev \
+  libfontconfig-dev libfreetype-dev libssl-dev libx11-xcb-dev libxcb1-dev \
+  libxcb-xkb-dev libasound2-dev libzstd-dev clang cmake mesa-vulkan-drivers
+```
+
+Then `cargo run -- <folder or file>`, and `cargo test --workspace` as usual.
+Without a display, run under Xvfb (`apt install xvfb`), which renders
+through Mesa's software Vulkan driver, and drive it with `xdotool`.
+
+What differs from macOS:
+
+- **Keys** come from `fe-keymap/keymaps/default-linux.toml`: ctrl where
+  macOS has cmd, and PC keys (ctrl-left by word, home and end, ctrl-home)
+  where macOS has its own. A user `keymap.toml` layers over it as on macOS.
+  Shifted punctuation is named by what it types: `ctrl-{`, not
+  `ctrl-shift-[`.
+- **Prompts** such as the trust question are drawn in the window
+  (`fe_ui::prompt_renderer`), not as native alerts.
+- **The window manager** draws the title bar; the unified title bar is
+  macOS's.
+- **There is no menu bar.** GPUI has no native one on Linux, so commands
+  only in a menu, such as Open File…, Untrust This Folder and Restart
+  Language Server, can't be reached until there's a command palette. Vim
+  mode and the status bar can still be set in settings (ctrl-,).
+- **Screenshots** render with Metal, so their examples only run on macOS;
+  `cargo test` still runs their comparison's unit tests.
+- **`fastedit --perf`** reports launch from `main`, not from the kernel's
+  process start, and memory as the peak resident size only.
+
 ## Fuzzing
 
 The grammars are C, several with hand-written external scanners, and a

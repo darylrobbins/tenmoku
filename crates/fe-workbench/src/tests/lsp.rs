@@ -476,7 +476,7 @@ fn paths_through_parent_folders_start_servers(cx: &mut TestAppContext) {
     assert_eq!(s.fake.launched()[1].1, root.join("src"));
 
     // A new root through `..`, and a file through it.
-    let new_root = root.join("tool.py/../src");
+    let new_root = root.join("src/../src");
     let workbench = s.workbench.clone();
     s.cx.update(|window, cx| workbench.update(cx, |w, cx| w.set_root(new_root, window, cx)));
     s.draw();

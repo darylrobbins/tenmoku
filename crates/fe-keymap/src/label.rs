@@ -1,4 +1,5 @@
-//! Key sequences as macOS prints them in menus and tooltips, such as `⇧⌘F`.
+//! Key sequences as menus and tooltips print them: in macOS symbols, such
+//! as `⇧⌘F`, or spelled out elsewhere, such as `Ctrl+Shift+F`.
 
 use crate::{Key, KeySequence, Keystroke};
 
@@ -49,4 +50,57 @@ fn keystroke_label(keystroke: &Keystroke) -> String {
     };
     label.push_str(symbol);
     label
+}
+
+/// `keys` spelled out, as Linux and Windows print them: each keystroke's
+/// modifiers in the order Ctrl, Alt, Shift, Super (`cmd`), then its key
+/// (letters uppercase, named keys by name), joined by `+`; the keystrokes
+/// of a chord separated by a space. The `fn` modifier isn't shown.
+pub fn pc_label(keys: &KeySequence) -> String {
+    let labels: Vec<String> = keys.keystrokes().iter().map(pc_keystroke_label).collect();
+    labels.join(" ")
+}
+
+/// `keys` as this platform prints them: [`macos_label`] on macOS,
+/// [`pc_label`] elsewhere.
+pub fn shortcut_label(keys: &KeySequence) -> String {
+    if cfg!(target_os = "macos") {
+        macos_label(keys)
+    } else {
+        pc_label(keys)
+    }
+}
+
+fn pc_keystroke_label(keystroke: &Keystroke) -> String {
+    let modifiers = keystroke.modifiers;
+    let key = match keystroke.key {
+        Key::Char(ch) => ch.to_uppercase().collect(),
+        Key::F(n) => format!("F{n}"),
+        Key::Left => "Left".into(),
+        Key::Right => "Right".into(),
+        Key::Up => "Up".into(),
+        Key::Down => "Down".into(),
+        Key::Enter => "Enter".into(),
+        Key::Escape => "Esc".into(),
+        Key::Backspace => "Backspace".into(),
+        Key::Delete => "Delete".into(),
+        Key::Tab => "Tab".into(),
+        Key::Space => "Space".into(),
+        Key::Click => "Click".into(),
+        Key::PageUp => "PageUp".into(),
+        Key::PageDown => "PageDown".into(),
+        Key::Home => "Home".into(),
+        Key::End => "End".into(),
+    };
+    [
+        ("Ctrl", modifiers.ctrl),
+        ("Alt", modifiers.alt),
+        ("Shift", modifiers.shift),
+        ("Super", modifiers.cmd),
+    ]
+    .into_iter()
+    .filter_map(|(name, held)| held.then_some(name.to_owned()))
+    .chain(std::iter::once(key))
+    .collect::<Vec<_>>()
+    .join("+")
 }
