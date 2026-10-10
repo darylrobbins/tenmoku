@@ -16,6 +16,7 @@ mod lsp_hover;
 mod lsp_nav;
 mod lsp_quit;
 mod lsp_resolve_retry;
+mod lsp_resolve_retry_pending;
 mod lsp_symlinks;
 mod m3_signoff;
 mod menu_bar;

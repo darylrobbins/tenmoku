@@ -325,6 +325,9 @@ pub(crate) struct Lsp {
     root_saves: HashMap<BufferId, fe_buffer::Subscription>,
     /// The failed root is being resolved again.
     root_retrying: bool,
+    /// A save arrived while the root was being resolved again: if that
+    /// fails, it's resolved once more.
+    root_save_pending: bool,
     /// Resolves the root for the next manager.
     _root: Option<Task<()>>,
     _tasks: Vec<Task<()>>,
@@ -373,6 +376,7 @@ impl Lsp {
             root_failed: None,
             root_saves: HashMap::new(),
             root_retrying: false,
+            root_save_pending: false,
             _root: None,
             _tasks: Vec::new(),
             _subscriptions: Vec::new(),
@@ -467,6 +471,7 @@ impl Workbench {
         lsp.root_failed = None;
         lsp.root_saves.clear();
         lsp.root_retrying = false;
+        lsp.root_save_pending = false;
         lsp.generation += 1;
         lsp.root = None;
         lsp._root = None;
@@ -830,12 +835,25 @@ impl Workbench {
         let Some(root) = lsp.root_failed.clone() else {
             return;
         };
-        if !saved || lsp.root_retrying {
+        if !saved {
             return;
         }
+        if lsp.root_retrying {
+            lsp.root_save_pending = true;
+            return;
+        }
+        self.resolve_lsp_root(root, cx);
+    }
+
+    /// Resolves the failed root again; if that fails and a save arrived
+    /// meanwhile, once more.
+    fn resolve_lsp_root(&mut self, root: PathBuf, cx: &mut Context<Self>) {
+        let lsp = &mut self.lsp;
         lsp.root_retrying = true;
+        lsp.root_save_pending = false;
         let generation = lsp.generation;
-        let resolved = cx.background_spawn(async move { fs::canonicalize(&root) });
+        let path = root.clone();
+        let resolved = cx.background_spawn(async move { fs::canonicalize(&path) });
         lsp._root = Some(cx.spawn(async move |workbench, cx| {
             let resolved = resolved.await;
             workbench
@@ -844,10 +862,17 @@ impl Workbench {
                         return;
                     }
                     workbench.lsp.root_retrying = false;
-                    if let Ok(root) = resolved {
-                        workbench.lsp.root_failed = None;
-                        workbench.lsp.root_saves.clear();
-                        workbench.start_lsp_manager(root, cx);
+                    match resolved {
+                        Ok(root) => {
+                            workbench.lsp.root_failed = None;
+                            workbench.lsp.root_saves.clear();
+                            workbench.lsp.root_save_pending = false;
+                            workbench.start_lsp_manager(root, cx);
+                        }
+                        Err(_) if workbench.lsp.root_save_pending => {
+                            workbench.resolve_lsp_root(root, cx);
+                        }
+                        Err(_) => {}
                     }
                     cx.notify();
                 })
