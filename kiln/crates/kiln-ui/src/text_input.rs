@@ -4,12 +4,12 @@ use std::ops::Range;
 
 use gpui::{
     App, Bounds, Context, ElementInputHandler, EntityInputHandler, EventEmitter, FocusHandle,
-    Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Point, Render,
-    SharedString, Styled as _, UTF16Selection, Window, canvas, div, prelude::FluentBuilder as _,
-    px,
+    Focusable, Hsla, InteractiveElement as _, IntoElement, MouseButton, ParentElement as _, Pixels,
+    Point, Render, SharedString, Styled as _, UTF16Selection, Window, canvas, div,
+    prelude::FluentBuilder as _, px,
 };
 
-use crate::{ActiveTheme as _, UiTheme};
+use crate::{ActiveTheme as _, Tokens, UiTheme};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TextInputEvent {
@@ -27,10 +27,14 @@ pub enum TextInputEvent {
 /// call [`TextInput::backspace`], [`TextInput::delete_word_left`],
 /// [`TextInput::clear`] and [`TextInput::paste`]: this crate knows no
 /// command registry.
+///
+/// A click focuses it. It has no border unless [`TextInput::bordered`]
+/// gives it one. Its colours are the active theme's, read as it renders.
 pub struct TextInput {
     text: String,
     placeholder: SharedString,
     focus: FocusHandle,
+    bordered: bool,
 }
 
 impl EventEmitter<TextInputEvent> for TextInput {}
@@ -45,7 +49,25 @@ impl TextInput {
             text: String::new(),
             placeholder: placeholder.into(),
             focus: cx.focus_handle(),
+            bordered: false,
         }
+    }
+
+    /// Draws it as a field on its own: on the panel colour, in a rounded
+    /// border that takes the accent (`border.focused`) while it has focus.
+    pub fn bordered(mut self) -> Self {
+        self.bordered = true;
+        self
+    }
+
+    /// Its border colour, if it's [`TextInput::bordered`], as focused or
+    /// not.
+    pub(crate) fn border_color(&self, focused: bool, c: &Tokens<Hsla>) -> Option<Hsla> {
+        self.bordered.then_some(if focused {
+            c.border.focused
+        } else {
+            c.border.default
+        })
     }
 
     pub fn text(&self) -> &str {
@@ -224,12 +246,25 @@ impl EntityInputHandler for TextInput {
 impl Render for TextInput {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = &cx.theme().colors;
-        let (text, muted) = (colors.tab.active_text, colors.text.muted);
+        let (text, muted, panel) = (
+            colors.tab.active_text,
+            colors.text.muted,
+            colors.surface.panel,
+        );
+        let focused = self.focus.is_focused(window);
+        let border = self.border_color(focused, colors);
         let focus = self.focus.clone();
         let input = cx.entity();
         div()
             .key_context(Self::KEY_CONTEXT)
             .track_focus(&self.focus)
+            .on_mouse_down(MouseButton::Left, {
+                let focus = self.focus.clone();
+                move |_, window, cx| window.focus(&focus, cx)
+            })
+            .when_some(border, |row, border| {
+                row.border_1().border_color(border).rounded_md().bg(panel)
+            })
             .relative()
             .flex()
             .items_center()
@@ -237,7 +272,7 @@ impl Render for TextInput {
             .px_3()
             .text_color(text)
             .child(self.text.clone())
-            .when(self.focus.is_focused(window), |row| {
+            .when(focused, |row| {
                 row.child(div().w(px(1.)).h(px(14.)).bg(text))
             })
             .when(self.text.is_empty(), |row| {

@@ -187,6 +187,29 @@ impl Button {
 }
 
 impl ButtonVariant {
+    /// Whether it's filled with a colour, which a disabled button trades
+    /// for the neutral `state.disabled`: faded, the colour's text would no
+    /// longer read on it.
+    fn filled(self) -> bool {
+        matches!(self, ButtonVariant::Primary | ButtonVariant::Danger)
+    }
+
+    /// (background, text, border, hover background) for the variant,
+    /// disabled or not. A disabled filled button is `state.disabled` with
+    /// the primary text at 0.8; any other disabled button keeps its colours
+    /// with the disabled text, and is faded as a whole when drawn.
+    pub(crate) fn colors_for(self, disabled: bool, c: &Tokens<Hsla>) -> (Hsla, Hsla, Hsla, Hsla) {
+        let (bg, fg, border, hover) = self.colors(c);
+        match (disabled, self.filled()) {
+            (false, _) => (bg, fg, border, hover),
+            (true, true) => {
+                let fill = c.state.disabled;
+                (fill, c.text.primary.opacity(0.8), fill, fill)
+            }
+            (true, false) => (bg, c.text.disabled, border, hover),
+        }
+    }
+
     /// (background, text, border, hover background) for the variant.
     pub(crate) fn colors(self, c: &Tokens<Hsla>) -> (Hsla, Hsla, Hsla, Hsla) {
         match self {
@@ -235,12 +258,9 @@ impl StatefulInteractiveElement for Button {}
 impl RenderOnce for Button {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
         let c = cx.theme().colors;
-        let (bg, fg, border, hover) = self.variant.colors(&c);
-        let (fg, size, disabled) = (
-            if self.disabled { c.text.disabled } else { fg },
-            self.size,
-            self.disabled,
-        );
+        let (bg, fg, border, hover) = self.variant.colors_for(self.disabled, &c);
+        let (size, disabled) = (self.size, self.disabled);
+        let faded = disabled && !self.variant.filled();
         let icon_only = self.label.is_none();
         styled(self.base, |base| {
             base.flex()
@@ -257,7 +277,7 @@ impl RenderOnce for Button {
                 .bg(bg)
                 .text_color(fg)
                 .text_size(size.text())
-                .when(disabled, |base| base.opacity(0.6))
+                .when(faded, |base| base.opacity(0.6))
                 .when(!disabled, |base| {
                     base.cursor(CursorStyle::PointingHand)
                         .hover(move |style| style.bg(hover))

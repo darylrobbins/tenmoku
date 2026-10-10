@@ -6,8 +6,8 @@
 //! here.
 
 use gpui::{
-    AppContext as _, Context, Entity, Focusable as _, InteractiveElement as _, IntoElement,
-    MouseButton, ParentElement as _, Render, Styled as _, Subscription, Window, div, px,
+    AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
+    Render, Styled as _, Subscription, Window, div, px,
 };
 use kiln::{
     prelude::*,
@@ -30,9 +30,8 @@ impl TextPage {
         let field = cx.new(|cx| {
             TextField::new(window, cx).placeholder("Type, select with shift-arrows, undo…")
         });
-        // TextInput copies the theme when it's made, so it doesn't follow a
-        // theme switch.
-        let input = cx.new(|cx| TextInput::new("Type; backspace deletes", &ui_theme(cx), cx));
+        let input =
+            cx.new(|cx| TextInput::new("Type; backspace deletes", &ui_theme(cx), cx).bordered());
         let field_events = cx.subscribe_in(&field, window, |page, field, event, _, cx| {
             if *event == TextFieldEvent::Submitted {
                 page.submitted = Some(field.read(cx).value().to_owned());
@@ -62,7 +61,6 @@ impl Render for TextPage {
         let value = self.field.read(cx).value().to_owned();
         let selected = self.field.read(cx).selected_range();
         let input_text = self.input.read(cx).text().to_owned();
-        let focus = self.input.focus_handle(cx);
         let field = v_flex()
             .gap_2()
             .w(px(420.))
@@ -80,16 +78,8 @@ impl Render for TextPage {
             .gap_2()
             .w(px(420.))
             .child(
-                // TextInput has no border and doesn't take focus on a click
-                // by itself.
+                // Its editing keys are the gallery's commands.
                 div()
-                    .border_1()
-                    .border_color(c.border.default)
-                    .rounded_md()
-                    .bg(c.surface.panel)
-                    .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                        window.focus(&focus, cx)
-                    })
                     .on_action(cx.listener(|page, _: &InputBackspace, _, cx| {
                         page.input.update(cx, |input, cx| input.backspace(cx))
                     }))

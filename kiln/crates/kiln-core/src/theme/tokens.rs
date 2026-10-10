@@ -122,6 +122,9 @@ tokens! {
         drop_target,
         /// The mark on something with unsaved changes.
         dirty,
+        /// The fill of a disabled control that's otherwise filled with a
+        /// colour, such as a primary button: neutral, so its text reads.
+        disabled,
     }
     status: Status {
         error,
@@ -214,6 +217,10 @@ pub const RULES: &[(&str, Rule)] = &[
     ("state.focus_ring", Rule::Alpha("accent.base", 0xaa)),
     ("state.drop_target", Rule::Same("accent.base")),
     ("state.dirty", Rule::Same("status.warning")),
+    (
+        "state.disabled",
+        Rule::Mix("surface.panel", "text.muted", 0.25),
+    ),
     ("status.info", Rule::Same("accent.base")),
     ("list.row_hover", Rule::Same("state.hover")),
     ("list.row_selected", Rule::Same("state.selected")),
