@@ -1,8 +1,9 @@
 # App shell: one `fe-shell` crate for the host app and fastedit
 
-Status: **build**. Decided 2026-10-08. Source card T242. The extraction
-cards in §5 are drafted from this document afterwards; this card changes no
-code.
+Status: **superseded** on 2026-10-10 by `app-framework.md`: its `kiln`
+framework replaces `fe-shell`. §1–§2's crate boundary no longer applies;
+§3–§4 remain the reference design for `kiln-shell`; §5's cards map onto
+K-cards (`app-framework.md` §6). Decided 2026-10-08. Source card T242.
 
 The user decided on 2026-10-08 that the host app (the AI-first dev tool that
 replaces Eclipse Theia, `~/.claude/plans/glittery-foraging-graham.md` line 4;
