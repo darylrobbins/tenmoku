@@ -612,6 +612,7 @@ impl Element for EditorElement {
                 .collect(),
         };
         let selections = selection_rects(&mut layout, view);
+        let matches = match_rects(&mut layout, view);
         let (squiggles, marks) = {
             let diagnostics = view.model.diagnostics();
             diagnostic_marks(&mut layout, view.model.text(), &diagnostics, &theme)
@@ -622,6 +623,8 @@ impl Element for EditorElement {
         let mut painted = Vec::new();
         #[cfg(test)]
         let mut painted_selections = Vec::new();
+        #[cfg(test)]
+        let mut painted_matches = Vec::new();
         #[cfg(test)]
         let mut painted_chevrons = Vec::new();
 
@@ -645,6 +648,15 @@ impl Element for EditorElement {
                     bounds: text_bounds,
                 }),
                 |window| {
+                    // Under the selection, which stays visible over a match.
+                    for &found in &matches {
+                        let found = layout.bounds(found);
+                        window.paint_quad(fill(found, search_match_color(&theme)));
+                        #[cfg(test)]
+                        if found.intersects(&text_bounds) {
+                            painted_matches.push(found);
+                        }
+                    }
                     for &selection in &selections {
                         let selection = layout.bounds(selection);
                         window.paint_quad(fill(selection, theme.selection));
@@ -785,6 +797,7 @@ impl Element for EditorElement {
             {
                 view.painted_carets = painted;
                 view.painted_selections = painted_selections;
+                view.painted_matches = painted_matches;
                 view.painted_chevrons = painted_chevrons;
                 let underlines = underlines.iter().map(|&(bounds, _)| bounds).collect();
                 view.painted_hover = (underlines, hover.is_some());
@@ -1178,6 +1191,93 @@ fn selection_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
             width: space,
             ..bar
         });
+    }
+    rects
+}
+
+/// The most search matches painted in a frame.
+pub(crate) const MAX_MATCHES: usize = 1_000;
+
+/// The theme's search-match colour: its foreground, faint, until the theme
+/// has a slot for it.
+fn search_match_color(theme: &EditorTheme) -> Hsla {
+    theme.foreground.opacity(0.22)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many matches the last [`match_rects`] on this thread looked at.
+    pub(crate) static CANDIDATES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The rects of vim's search matches in the frame's displayed rows, at most
+/// [`MAX_MATCHES`] of them, the first in view; none with vim off or after
+/// `:noh`. Folded rows aren't searched, and matches off the displayed part
+/// of a wrapped or scrolled line don't use the budget. A zero-width match is one space wide.
+fn match_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
+    let Some(pattern) = view.vim.as_ref().and_then(|vim| vim.highlight()) else {
+        return Vec::new();
+    };
+    let FrameLayout {
+        frame,
+        long_rows,
+        glyph_widths,
+        ..
+    } = layout;
+    #[cfg(test)]
+    CANDIDATES.with(|n| n.set(0));
+    let text = view.model.text();
+    let space = glyph_widths.char_width(' ');
+    let visible = frame.text_bounds();
+    let mut rects = Vec::new();
+    // A buffer row's matches, kept for its other wrapped rows: found once a
+    // frame, with the whole row as context, however long the row is.
+    let mut whole: Option<(u32, Vec<Range<usize>>)> = None;
+    for row in &frame.rows {
+        if whole.as_ref().is_none_or(|(at, _)| *at != row.buffer_row) {
+            let rows = row.buffer_row..row.buffer_row + 1;
+            let all = fe_vim::search::matches_in(text, rows, pattern, usize::MAX);
+            whole = Some((row.buffer_row, all));
+        }
+        let found = whole.as_ref().map_or(&[][..], |(_, all)| all.as_slice());
+        // The matches ordered by position: from the first that reaches the
+        // displayed part to the first that starts past it.
+        let displayed = row.shown();
+        let first = found.partition_point(|range| range.end < displayed.start);
+        for range in found[first..]
+            .iter()
+            .take_while(|range| range.start <= displayed.end)
+            .cloned()
+        {
+            #[cfg(test)]
+            CANDIDATES.with(|n| n.set(n.get() + 1));
+            let (start, end) = (range.start.max(row.start), range.end.min(row.end));
+            let shown = match range.is_empty() {
+                true => row.contains(range.start),
+                false => start < end,
+            };
+            if !shown {
+                continue;
+            }
+            let left = frame.view_x(row.x_for_offset(start, long_rows, glyph_widths));
+            let width = match range.is_empty() {
+                true => space,
+                false => frame.view_x(row.x_for_offset(end, long_rows, glyph_widths)) - left,
+            };
+            // Off to a side of a scrolled line: not worth the budget.
+            if left + width <= visible.x || left >= visible.x + visible.width {
+                continue;
+            }
+            rects.push(Rect {
+                x: left,
+                y: frame.row_top(row.row),
+                width,
+                height: frame.line_height,
+            });
+            if rects.len() >= MAX_MATCHES {
+                return rects;
+            }
+        }
     }
     rects
 }

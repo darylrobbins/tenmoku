@@ -84,6 +84,9 @@ pub struct EditorView {
     /// The selection rects the last frame painted, in window coordinates.
     #[cfg(test)]
     pub(crate) painted_selections: Vec<Bounds<Pixels>>,
+    /// The search-match rects the last frame painted, in window coordinates.
+    #[cfg(test)]
+    pub(crate) painted_matches: Vec<Bounds<Pixels>>,
     /// The chevrons the last frame painted: buffer row, folded, and box in
     /// window coordinates.
     #[cfg(test)]
@@ -157,6 +160,8 @@ impl EditorView {
             painted_carets: Vec::new(),
             #[cfg(test)]
             painted_selections: Vec::new(),
+            #[cfg(test)]
+            painted_matches: Vec::new(),
             #[cfg(test)]
             painted_chevrons: Vec::new(),
             #[cfg(test)]

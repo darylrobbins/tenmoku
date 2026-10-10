@@ -505,3 +505,6 @@ mod insert_tests;
 
 #[cfg(test)]
 mod visual_tests;
+
+#[cfg(test)]
+mod search_tests;
