@@ -148,6 +148,8 @@ fn matches(editor: &Entity<EditorView>, cx: &mut VisualTestContext) -> Option<us
     editor.read_with(cx, |editor, _| editor.find_count().map(|count| count.total))
 }
 
+mod toggle_focus;
+
 #[gpui::test]
 fn show_prefill_and_type(cx: &mut TestAppContext) {
     let (_dir, workbench, cx) = opened(cx, &[("a.txt", "foo one\nfoo two\nfoo one\n")]);

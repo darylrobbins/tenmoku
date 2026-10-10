@@ -25,8 +25,8 @@ use fe_ui::{TextInput, TextInputEvent, ToggleButton, UiTheme};
 use fe_vim::search::{FindQuery, Pattern, PatternError};
 use gpui::{
     App, AppContext as _, Context, Entity, Focusable as _, Global, InteractiveElement as _,
-    IntoElement, ParentElement as _, SharedString, Styled as _, Subscription, WeakEntity, Window,
-    div, px,
+    IntoElement, MouseButton, ParentElement as _, SharedString, Styled as _, Subscription,
+    WeakEntity, Window, div, px,
 };
 
 use crate::{
@@ -336,9 +336,15 @@ impl FindBar {
         .into_iter()
         .enumerate()
         .map(|(ix, (op, text, on))| {
-            ToggleButton::new(("find-option", ix), text, ui)
-                .on(on)
-                .on_click(cx.listener(move |pane, _, window, cx| pane.run_find(op, window, cx)))
+            div()
+                .debug_selector(move || format!("find-toggle:{ix}"))
+                .child(
+                    ToggleButton::new(("find-option", ix), text, ui)
+                        .on(on)
+                        .on_click(
+                            cx.listener(move |pane, _, window, cx| pane.run_find(op, window, cx)),
+                        ),
+                )
         });
         let label = label.map(|(text, error)| {
             let color = if error { ui.error_text } else { ui.muted_text };
@@ -370,7 +376,17 @@ impl FindBar {
             .debug_selector(|| "pane-find-bar".into())
             .child(div().flex_1().min_w_0().child(self.input.clone()))
             .children(label)
-            .child(div().flex().flex_none().gap_0p5().children(toggles));
+            .child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .gap_0p5()
+                    // The pane takes focus on a click inside it unless
+                    // something prevents the default; a toggle keeps focus
+                    // where it was, the input or the editor.
+                    .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+                    .children(toggles),
+            );
         Some(bar)
     }
 }
