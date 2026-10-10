@@ -4,7 +4,7 @@
       "description": "Settings for the text editor.",
       "properties": {
         "font_family": {
-          "description": "The font family. Unset, the first installed of JetBrains Mono, SF Mono\nand Menlo.",
+          "description": "The font family. Unset, the first installed of JetBrains Mono, SF Mono,\nMenlo, DejaVu Sans Mono, Ubuntu Mono, Liberation Mono and Noto Sans Mono.",
           "minLength": 1,
           "type": [
             "string",

@@ -4,7 +4,8 @@
 # overrides it, key by key. Uncomment a line to change that setting.
 
 [editor]
-# The font family. Unset, the first installed of JetBrains Mono, SF Mono and Menlo.
+# The font family. Unset, the first installed of JetBrains Mono, SF Mono,
+# Menlo, DejaVu Sans Mono, Ubuntu Mono, Liberation Mono and Noto Sans Mono.
 # font_family = "JetBrains Mono"
 
 # The font size, in points (6 to 72).

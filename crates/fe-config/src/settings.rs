@@ -64,8 +64,8 @@ impl Default for StatusBarSettings {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct EditorSettings {
-    /// The font family. Unset, the first installed of JetBrains Mono, SF Mono
-    /// and Menlo.
+    /// The font family. Unset, the first installed of JetBrains Mono, SF Mono,
+    /// Menlo, DejaVu Sans Mono, Ubuntu Mono, Liberation Mono and Noto Sans Mono.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(length(min = 1))]
     pub font_family: Option<String>,

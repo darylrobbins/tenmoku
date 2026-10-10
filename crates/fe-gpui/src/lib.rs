@@ -189,11 +189,27 @@ fn font_family(settings: &EditorSettings, cx: &App) -> SharedString {
             .get_font_for_id(id)
             .is_some_and(|resolved| resolved.family == family)
     };
-    ["JetBrains Mono", "SF Mono", "Menlo"]
-        .into_iter()
-        .find(|family| installed(family))
-        .unwrap_or("Menlo")
-        .into()
+    // macOS ships SF Mono and Menlo; common Linux distributions ship the
+    // others. Unknown families fall back to a proportional font there, so
+    // the last resort is one most Linux systems have.
+    let last_resort = if cfg!(target_os = "macos") {
+        "Menlo"
+    } else {
+        "DejaVu Sans Mono"
+    };
+    [
+        "JetBrains Mono",
+        "SF Mono",
+        "Menlo",
+        "DejaVu Sans Mono",
+        "Ubuntu Mono",
+        "Liberation Mono",
+        "Noto Sans Mono",
+    ]
+    .into_iter()
+    .find(|family| installed(family))
+    .unwrap_or(last_resort)
+    .into()
 }
 
 #[cfg(test)]
