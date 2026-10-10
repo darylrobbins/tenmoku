@@ -13,14 +13,14 @@ use std::{
 use perf::Startup;
 
 use fe_buffer::Buffer;
-use fe_config::{ConfigWatcher, Diagnostic, Settings, SettingsStore};
+use fe_config::{Diagnostic, Settings, SettingsStore};
 use fe_gpui::{
     EditorTheme,
     fe_keymap::{self, KeymapStore},
 };
 use fe_workbench::{Workbench, loader};
 use gpui::{App, AppContext as _, Focusable as _, WindowHandle};
-use kiln_platform::{Capabilities, WindowSpec, window_options};
+use kiln_platform::{Capabilities, WindowSpec, config::ConfigService, window_options};
 
 /// The buffer a finished read produced: a missing file is a new one, which
 /// saving creates. The workbench shows an error in the tab's place.
@@ -106,10 +106,11 @@ fn log_keymap_report(cx: &App) {
     }
 }
 
-/// Watches the settings and keymap files, applying each change on the main
-/// thread: settings to the window's editors, the keymap to key input.
-/// Diagnostics are logged when they change. The watcher's first batch names
-/// every file, so a save made since the stores loaded applies too.
+/// Watches the settings and keymap files with kiln's config service,
+/// applying each change on the main thread: settings to the window's
+/// editors, the keymap to key input. Diagnostics are logged when they
+/// change. The watcher's first batch names every file, so a save made since
+/// the stores loaded applies too.
 fn watch_config(
     mut settings: SettingsStore,
     mut keymap: KeymapStore,
@@ -124,60 +125,45 @@ fn watch_config(
     {
         log::warn!("can't create {}: {error}", dir.display());
     }
-    let (sender, batches) = async_channel::unbounded();
     let paths = settings.paths().into_iter().chain(keymap.paths()).collect();
-    let watcher = ConfigWatcher::new(paths, move |batch| {
-        sender.send_blocking(batch).ok();
-    });
-    let watcher = match watcher {
-        Ok(watcher) => watcher,
-        Err(error) => {
-            log::warn!("settings and keymap won't reload when changed: {error}");
-            return;
-        }
-    };
-    cx.spawn(async move |cx| {
-        // Watching for as long as this task runs.
-        let _watcher = watcher;
-        while let Ok(batch) = batches.recv().await {
-            let previous = keymap.diagnostics().to_vec();
-            if let Some(event) = keymap.reload(&batch) {
-                if event.diagnostics != previous {
-                    log_diagnostics(&event.diagnostics);
-                }
-                if event.keymap != event.previous {
-                    log::info!("keymap reloaded");
-                    cx.update(|cx| {
-                        fe_gpui::set_user_keymap(cx, event.keymap);
-                        log_keymap_report(cx);
-                    });
-                }
-            }
-            let previous = settings.diagnostics().to_vec();
-            let Some(event) = settings.reload(&batch) else {
-                continue;
-            };
+    let service = ConfigService::new().on_change(paths, move |batch, cx| {
+        let previous = keymap.diagnostics().to_vec();
+        if let Some(event) = keymap.reload(batch) {
             if event.diagnostics != previous {
                 log_diagnostics(&event.diagnostics);
             }
-            if *event.settings != *event.previous {
-                log::info!("settings reloaded");
-            }
-            // Only when the file changed it, so that reloading anything else
-            // keeps a Toggle Vim Mode.
-            let vim = event.settings.vim.enabled;
-            if vim != event.previous.vim.enabled {
-                cx.update(|cx| fe_gpui::set_vim_enabled(cx, vim));
-            }
-            let applied = window.update(cx, |workbench, _, cx| {
-                workbench.reload_settings(&event, cx);
-            });
-            if applied.is_err() {
-                break;
+            if event.keymap != event.previous {
+                log::info!("keymap reloaded");
+                fe_gpui::set_user_keymap(cx, event.keymap);
+                log_keymap_report(cx);
             }
         }
-    })
-    .detach();
+        let previous = settings.diagnostics().to_vec();
+        let Some(event) = settings.reload(batch) else {
+            return;
+        };
+        if event.diagnostics != previous {
+            log_diagnostics(&event.diagnostics);
+        }
+        if *event.settings != *event.previous {
+            log::info!("settings reloaded");
+        }
+        // Only when the file changed it, so that reloading anything else
+        // keeps a Toggle Vim Mode.
+        let vim = event.settings.vim.enabled;
+        if vim != event.previous.vim.enabled {
+            fe_gpui::set_vim_enabled(cx, vim);
+        }
+        // The app quits once its window closes.
+        window
+            .update(cx, |workbench, _, cx| workbench.reload_settings(&event, cx))
+            .ok();
+    });
+    // Watching for as long as the app runs.
+    match service.start(cx) {
+        Ok(task) => task.detach(),
+        Err(error) => log::warn!("settings and keymap won't reload when changed: {error}"),
+    }
 }
 
 /// Logs to stderr: warnings and errors, and fastedit's own info. `RUST_LOG`
