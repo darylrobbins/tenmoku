@@ -122,8 +122,30 @@ fn process_start(now: Instant) -> Option<Instant> {
     now.checked_sub(wall.duration_since(started).ok()?)
 }
 
+/// The kernel's start time for this process, as an `Instant`, from
+/// `/proc/self/stat`: clock ticks since boot (10 ms each, typically),
+/// converted through the boot clock now, taken next to `now`.
+#[cfg(target_os = "linux")]
+fn process_start(now: Instant) -> Option<Instant> {
+    let stat = std::fs::read_to_string("/proc/self/stat").ok()?;
+    // Fields after the command, which is in parentheses and may hold
+    // spaces; the start time is field 22, the 20th after it.
+    let after_command = &stat[stat.rfind(')')? + 2..];
+    let ticks: u64 = after_command.split(' ').nth(19)?.parse().ok()?;
+    // SAFETY: `sysconf` reads a constant; `clock_gettime` fills in the
+    // struct it's given.
+    let per_second = u64::try_from(unsafe { libc::sysconf(libc::_SC_CLK_TCK) }).ok()?;
+    let mut boot: libc::timespec = unsafe { std::mem::zeroed() };
+    if unsafe { libc::clock_gettime(libc::CLOCK_BOOTTIME, &mut boot) } != 0 {
+        return None;
+    }
+    let since_boot = Duration::new(boot.tv_sec as u64, boot.tv_nsec as u32);
+    let started = Duration::from_nanos(ticks * 1_000_000_000 / per_second);
+    now.checked_sub(since_boot.checked_sub(started)?)
+}
+
 /// Elsewhere the kernel's start time isn't read; launch falls back to `main`.
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn process_start(_now: Instant) -> Option<Instant> {
     None
 }
@@ -323,11 +345,14 @@ fn startup_phases(
 ) -> Vec<(String, Instant)> {
     let mut phases = vec![(startup.main, "to main".to_string())];
     phases.extend(startup.platform.map(|at| (at, "platform created".into())));
-    phases.extend(
-        startup
-            .app
-            .map(|at| (at, "app callback (AppKit launched)".into())),
-    );
+    phases.extend(startup.app.map(|at| {
+        let label = if cfg!(target_os = "macos") {
+            "app callback (AppKit launched)"
+        } else {
+            "app callback"
+        };
+        (at, label.into())
+    }));
     phases.extend(
         startup
             .view
@@ -595,13 +620,40 @@ fn print_memory(when: &str, file_bytes: usize) {
         mb(info.ri_lifetime_max_phys_footprint),
         mb(info.ri_resident_size),
         // Bytes on macOS.
-        mb(usage.ru_maxrss as u64),
+        // Kilobytes on the BSDs.
+        mb(usage.ru_maxrss as u64 * 1024),
+        mb(file_bytes as u64),
+    );
+}
+
+/// On Linux, the resident set and its peak from `/proc/self/status`; there
+/// is no physical footprint as macOS counts it.
+#[cfg(target_os = "linux")]
+fn print_memory(when: &str, file_bytes: usize) {
+    let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+    // `VmRSS:     123456 kB`
+    let kilobytes = |field: &str| {
+        status
+            .lines()
+            .find_map(|line| line.strip_prefix(field))
+            .and_then(|rest| rest.trim().strip_suffix(" kB"))
+            .and_then(|value| value.trim().parse::<u64>().ok())
+    };
+    let (Some(resident), Some(peak)) = (kilobytes("VmRSS:"), kilobytes("VmHWM:")) else {
+        say!("memory {when}: unavailable");
+        return;
+    };
+    let mb = |bytes: u64| bytes as f64 / (1024. * 1024.);
+    say!(
+        "memory {when}: resident {:.0} MB, peak {:.0} MB; file {:.0} MB",
+        mb(resident * 1024),
+        mb(peak * 1024),
         mb(file_bytes as u64),
     );
 }
 
 /// Elsewhere only the resident peak from `getrusage` is reported.
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn print_memory(when: &str, file_bytes: usize) {
     // SAFETY: `getrusage` fills in the struct it's given.
     let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
@@ -609,8 +661,7 @@ fn print_memory(when: &str, file_bytes: usize) {
     let mb = |bytes: u64| bytes as f64 / (1024. * 1024.);
     say!(
         "memory {when}: resident peak {:.0} MB; file {:.0} MB",
-        // Kilobytes on Linux.
-        mb(usage.ru_maxrss as u64 * 1024),
+        mb(usage.ru_maxrss as u64),
         mb(file_bytes as u64),
     );
 }

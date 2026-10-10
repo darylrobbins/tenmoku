@@ -283,8 +283,9 @@ What differs from macOS:
   mode and the status bar can still be set in settings (ctrl-,).
 - **Screenshots** render with Metal, so their examples only run on macOS;
   `cargo test` still runs their comparison's unit tests.
-- **`fastedit --perf`** reports launch from `main`, not from the kernel's
-  process start, and memory as the peak resident size only.
+- **`fastedit --perf`** times launch from the kernel's process start to
+  the nearest clock tick (10 ms), and reports memory as the resident set
+  and its peak: Linux has no physical footprint as macOS counts it.
 
 ## Fuzzing
 
