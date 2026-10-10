@@ -95,28 +95,42 @@ fn extraction_never_reads_through_a_directory_being_swapped() {
     let (a, aside) = (root.join("src/a"), root.join("src/a.aside"));
     let rel = Path::new("src/a/x.rs");
     let done = AtomicBool::new(false);
+    // The handshake with the swapper: `hold` asks it to stop between swaps,
+    // and it sets `parked` once it has, with `src/a` in place.
+    let (hold, parked) = (AtomicBool::new(false), AtomicBool::new(false));
     thread::scope(|scope| {
         // Stops the swapping however this thread leaves the scope.
         let _stop = Stop(&done);
-        scope.spawn(|| {
+        let swapper = scope.spawn(|| {
             while !done.load(Ordering::Relaxed) {
+                if hold.load(Ordering::Acquire) {
+                    parked.store(true, Ordering::Release);
+                    thread::yield_now();
+                    continue;
+                }
+                parked.store(false, Ordering::Release);
                 fs::rename(&a, &aside).unwrap();
                 symlink(&outside, &a).unwrap();
                 fs::remove_file(&a).unwrap();
                 fs::rename(&aside, &a).unwrap();
             }
         });
-        let mut read = 0;
+        // Safety: extracts racing the swaps never read from outside.
         for _ in 0..500 {
             match extract(&root, rel) {
-                Ok(file) => {
-                    assert_eq!(file.symbols[0].name, "inside");
-                    read += 1;
-                }
+                Ok(file) => assert_eq!(file.symbols[0].name, "inside"),
                 Err(skipped) => assert_eq!(skipped, Skipped::Unreadable(ErrorKind::NotFound)),
             }
         }
-        assert!(read > 0, "never caught the directory in place");
+        // Liveness: an extract with the directory known to be in place.
+        hold.store(true, Ordering::Release);
+        while !parked.load(Ordering::Acquire) {
+            assert!(!swapper.is_finished(), "the swapper died");
+            thread::yield_now();
+        }
+        let file = extract(&root, rel).expect("directory in place");
+        assert_eq!(file.symbols[0].name, "inside");
+        hold.store(false, Ordering::Release);
     });
 }
 
