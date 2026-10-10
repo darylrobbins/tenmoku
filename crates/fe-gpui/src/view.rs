@@ -78,6 +78,8 @@ pub struct EditorView {
     /// The frames around the view's own in its context stack, as last seen
     /// while it was focused: see [`EditorView::context_stack`].
     ancestors: Option<ContextStack>,
+    /// The find pattern and its count ([`find`]).
+    pub(crate) find: find::Find,
     /// The carets the last frame painted, in window coordinates.
     #[cfg(test)]
     pub(crate) painted_carets: Vec<Bounds<Pixels>>,
@@ -156,6 +158,7 @@ impl EditorView {
             popover: Default::default(),
             hover_provider: None,
             ancestors: None,
+            find: Default::default(),
             #[cfg(test)]
             painted_carets: Vec::new(),
             #[cfg(test)]
@@ -282,6 +285,9 @@ impl EditorView {
     /// Call after anything that moves the cursor or changes the text.
     pub(crate) fn changed(&mut self, cx: &mut Context<Self>) {
         self.autoscroll = true;
+        // An edit stops the find count running and starts another now, not
+        // at the next frame.
+        self.sync_find(cx);
         cx.notify();
     }
 
@@ -924,6 +930,7 @@ impl Render for EditorView {
             cx.defer_in(window, |view, _, cx| view.sync_syntax(cx));
         }
         self.sync_vim(cx);
+        self.sync_find(cx);
         if self.hover_blur.is_none() {
             // Blur listeners run at the end of a draw, which asks for no
             // frame after it: the notify waits until it's over.
@@ -1074,6 +1081,8 @@ impl EntityInputHandler for EditorView {
     }
 }
 
+mod find;
+
 #[cfg(test)]
 mod language_tests;
 
@@ -1082,6 +1091,9 @@ mod window_tests;
 
 #[cfg(test)]
 mod reveal_tests;
+
+#[cfg(test)]
+mod find_tests;
 
 #[cfg(test)]
 mod fold_hover_tests;

@@ -50,6 +50,8 @@ pub(crate) struct FrameLayout {
     clickable: Vec<Hitbox>,
     /// Over the text, right of the gutter, where a hover range is found.
     text: Hitbox,
+    /// The search matches to paint ([`match_rects`]).
+    matches: Vec<Rect>,
     /// When prepaint started and how long it took, for [`FrameTiming`].
     prepaint_started: Instant,
     prepaint_took: Duration,
@@ -431,12 +433,15 @@ impl Element for EditorElement {
 
         // Soft wrap fills the text area; catch the rows up with any edits.
         let width: f32 = bounds.size.width.into();
-        self.view.update(cx, |view, _| {
+        self.view.update(cx, |view, cx| {
             let rows = view.model.text().row_count();
             view.model
                 .fit_wrap_width(layout::wrap_width(width, rows, em));
             view.model.sync_display();
             view.sync_visual();
+            // Caught up with edits made through another view of the buffer:
+            // count them.
+            view.sync_find(cx);
         });
         // Wrap a slice of what's pending around the top of the viewport,
         // keeping the text at the top where it is unless the caret is about
@@ -540,20 +545,24 @@ impl Element for EditorElement {
             view.autoscroll = false;
             view.load_injected_languages(cx);
         });
-        let version = self.view.read(cx).model.snapshot().version();
-        Some(FrameLayout {
+        let view = self.view.read(cx);
+        let mut layout = FrameLayout {
             origin: bounds.origin,
             frame,
             long_rows,
             glyph_widths,
             tab_size,
-            version,
+            version: view.model.snapshot().version(),
             fold_column,
             clickable,
             text,
+            matches: Vec::new(),
             prepaint_started: started,
-            prepaint_took: started.elapsed(),
-        })
+            prepaint_took: Duration::ZERO,
+        };
+        layout.matches = match_rects(&mut layout, view);
+        layout.prepaint_took = started.elapsed();
+        Some(layout)
     }
 
     fn paint(
@@ -612,7 +621,7 @@ impl Element for EditorElement {
                 .collect(),
         };
         let selections = selection_rects(&mut layout, view);
-        let matches = match_rects(&mut layout, view);
+        let matches = mem::take(&mut layout.matches);
         let (squiggles, marks) = {
             let diagnostics = view.model.diagnostics();
             diagnostic_marks(&mut layout, view.model.text(), &diagnostics, &theme)
@@ -1198,8 +1207,8 @@ fn selection_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
 /// The most search matches painted in a frame.
 pub(crate) const MAX_MATCHES: usize = 1_000;
 
-/// The theme's search-match colour: its foreground, faint, until the theme
-/// has a slot for it.
+/// The theme's search-match colour, for vim's matches and the find
+/// pattern's: its foreground, faint, until the theme has a slot for it.
 fn search_match_color(theme: &EditorTheme) -> Hsla {
     theme.foreground.opacity(0.22)
 }
@@ -1208,14 +1217,31 @@ fn search_match_color(theme: &EditorTheme) -> Hsla {
 thread_local! {
     /// How many matches the last [`match_rects`] on this thread looked at.
     pub(crate) static CANDIDATES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// How many match ranges the last [`match_rects`] on this thread found.
+    pub(crate) static FOUND: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// The rects of vim's search matches in the frame's displayed rows, at most
-/// [`MAX_MATCHES`] of them, the first in view; none with vim off or after
-/// `:noh`. Folded rows aren't searched, and matches off the displayed part
-/// of a wrapped or scrolled line don't use the budget. A zero-width match is one space wide.
+/// The rects of the search matches in the frame's displayed rows, at most
+/// [`MAX_MATCHES`] of them, the first in view: the find pattern's
+/// ([`EditorView::set_find`]) while one is set, else vim's, none with vim
+/// off or after `:noh`. Folded rows aren't searched, and for vim's matches
+/// off the displayed part of a wrapped or scrolled line don't use the
+/// budget. A zero-width match is one space wide.
+///
+/// The find pattern's matches are found within [`MAX_MATCHES`] for the
+/// whole frame, from each displayed row's start, so a row dense with them
+/// costs no more; matches scrolled off to its left use that budget.
 fn match_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
-    let Some(pattern) = view.vim.as_ref().and_then(|vim| vim.highlight()) else {
+    // How many more ranges the frame may find: bounded for the find
+    // pattern only.
+    let (pattern, mut budget) = match view.find_pattern() {
+        Some(pattern) => (Some(pattern), MAX_MATCHES),
+        None => (
+            view.vim.as_ref().and_then(|vim| vim.highlight()),
+            usize::MAX,
+        ),
+    };
+    let Some(pattern) = pattern else {
         return Vec::new();
     };
     let FrameLayout {
@@ -1226,6 +1252,8 @@ fn match_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
     } = layout;
     #[cfg(test)]
     CANDIDATES.with(|n| n.set(0));
+    #[cfg(test)]
+    FOUND.with(|n| n.set(0));
     let text = view.model.text();
     let space = glyph_widths.char_width(' ');
     let visible = frame.text_bounds();
@@ -1236,7 +1264,10 @@ fn match_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
     for row in &frame.rows {
         if whole.as_ref().is_none_or(|(at, _)| *at != row.buffer_row) {
             let rows = row.buffer_row..row.buffer_row + 1;
-            let all = fe_vim::search::matches_in(text, rows, pattern, usize::MAX);
+            let all = fe_vim::search::matches_in(text, rows, pattern, budget);
+            budget = budget.saturating_sub(all.len());
+            #[cfg(test)]
+            FOUND.with(|n| n.set(n.get() + all.len()));
             whole = Some((row.buffer_row, all));
         }
         let found = whole.as_ref().map_or(&[][..], |(_, all)| all.as_slice());
