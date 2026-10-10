@@ -179,8 +179,10 @@ fn hover_replies_convert() {
                 delay: Duration::from_secs(1),
             },
         );
-        let asked = s.manager.hover(buffer.id(), buffer.version(), beta);
+        // `hover` sends at once, so count before asking or the request may
+        // already be counted.
         let count = hovers(&s.fake.records()).len();
+        let asked = s.manager.hover(buffer.id(), buffer.version(), beta);
         s.fake
             .wait_for("the hover", |records| hovers(records).len() > count);
         s.edit(&mut buffer, &uri, (0..0, "\n"), 1);
@@ -200,11 +202,11 @@ fn hover_replies_convert() {
                 delay: Duration::from_secs(60),
             },
         );
+        let count = hovers(&s.fake.records()).len();
         let mut late = s
             .manager
             .hover(buffer.id(), buffer.version(), beta + 1)
             .boxed();
-        let count = hovers(&s.fake.records()).len();
         let records = s
             .fake
             .wait_for("the late hover", |records| hovers(records).len() > count);
