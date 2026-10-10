@@ -35,7 +35,7 @@ use gpui::{
 };
 use kiln_core::{Motion, TextEdit};
 
-use crate::ui_theme;
+use crate::ActiveTheme as _;
 
 actions!(
     text_field,
@@ -514,7 +514,7 @@ impl EntityInputHandler for TextField {
 
 impl Render for TextField {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = ui_theme(cx);
+        let colors = cx.theme().colors;
         let focused = self.focus.is_focused(window);
         div()
             .key_context(Self::KEY_CONTEXT)
@@ -566,20 +566,20 @@ impl Render for TextField {
             .rounded_sm()
             .border_1()
             .border_color(if focused {
-                theme.row_focus_border
+                colors.list.row_focus_border
             } else {
-                theme.border
+                colors.border.default
             })
-            .bg(theme.background)
+            .bg(colors.surface.background)
             .text_size(px(13.))
             .line_height(px(18.))
-            .text_color(theme.tab_active_text)
+            .text_color(colors.tab.active_text)
             .overflow_hidden()
             .child(TextLine {
                 field: cx.entity(),
-                placeholder_color: theme.muted_text,
-                selection_color: theme.row_selected,
-                caret_color: theme.tab_active_text,
+                placeholder_color: colors.text.muted,
+                selection_color: colors.list.row_selected,
+                caret_color: colors.tab.active_text,
             })
     }
 }

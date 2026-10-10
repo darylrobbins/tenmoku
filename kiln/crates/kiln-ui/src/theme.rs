@@ -3,7 +3,8 @@
 //! The active theme: semantic colour tokens (kiln-core's [`ThemeData`])
 //! resolved to GPUI's colours once per change, read by widgets while they
 //! render with [`ActiveTheme::theme`] (`cx.theme()`). The flat [`UiTheme`]
-//! of the chrome's first widgets stays, as a view of the active theme.
+//! the chrome's widgets once took stays, as a view of the active theme and
+//! a way to set one ([`set_ui_theme`]).
 
 use std::sync::{Arc, LazyLock};
 
@@ -20,8 +21,9 @@ pub const ROW_HEIGHT: Pixels = px(24.);
 /// Colours for the workbench chrome: panels, rows and tabs, from before
 /// theme tokens. [`ui_theme`] reads them: the last [`set_ui_theme`]'s, or
 /// else the active [`Theme`]'s ([`Theme::ui_theme`]), which is
-/// [`UiTheme::default_dark`] until a theme is set. New widgets read
-/// `cx.theme()` instead.
+/// [`UiTheme::default_dark`] until a theme is set. kiln-ui's widgets read
+/// `cx.theme()` instead, whose tokens [`set_ui_theme`] sets to these
+/// colours.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct UiTheme {
     /// Behind the editor and the empty pane, as the editor's own background.

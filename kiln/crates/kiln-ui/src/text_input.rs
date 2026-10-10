@@ -9,7 +9,7 @@ use gpui::{
     px,
 };
 
-use crate::UiTheme;
+use crate::{ActiveTheme as _, UiTheme};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TextInputEvent {
@@ -31,7 +31,6 @@ pub struct TextInput {
     text: String,
     placeholder: SharedString,
     focus: FocusHandle,
-    theme: UiTheme,
 }
 
 impl EventEmitter<TextInputEvent> for TextInput {}
@@ -39,12 +38,13 @@ impl EventEmitter<TextInputEvent> for TextInput {}
 impl TextInput {
     pub const KEY_CONTEXT: &str = "text_input";
 
-    pub fn new(placeholder: impl Into<SharedString>, theme: &UiTheme, cx: &mut App) -> Self {
+    /// Its colours come from `cx.theme()` as it renders. `_theme` is
+    /// ignored: deprecated, kept so callers that pass a [`UiTheme`] build.
+    pub fn new(placeholder: impl Into<SharedString>, _theme: &UiTheme, cx: &mut App) -> Self {
         Self {
             text: String::new(),
             placeholder: placeholder.into(),
             focus: cx.focus_handle(),
-            theme: *theme,
         }
     }
 
@@ -223,7 +223,8 @@ impl EntityInputHandler for TextInput {
 
 impl Render for TextInput {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = self.theme;
+        let colors = &cx.theme().colors;
+        let (text, muted) = (colors.tab.active_text, colors.text.muted);
         let focus = self.focus.clone();
         let input = cx.entity();
         div()
@@ -234,17 +235,13 @@ impl Render for TextInput {
             .items_center()
             .h(px(30.))
             .px_3()
-            .text_color(theme.tab_active_text)
+            .text_color(text)
             .child(self.text.clone())
             .when(self.focus.is_focused(window), |row| {
-                row.child(div().w(px(1.)).h(px(14.)).bg(theme.tab_active_text))
+                row.child(div().w(px(1.)).h(px(14.)).bg(text))
             })
             .when(self.text.is_empty(), |row| {
-                row.child(
-                    div()
-                        .text_color(theme.muted_text)
-                        .child(self.placeholder.clone()),
-                )
+                row.child(div().text_color(muted).child(self.placeholder.clone()))
             })
             .child(
                 canvas(

@@ -3,48 +3,48 @@
 use std::ops::Range;
 
 use gpui::{
-    App, FontWeight, HighlightStyle, Hsla, IntoElement, ParentElement as _, RenderOnce,
-    SharedString, Styled as _, StyledText, Window, div,
+    App, FontWeight, HighlightStyle, IntoElement, ParentElement as _, RenderOnce, SharedString,
+    Styled as _, StyledText, Window, div,
 };
 
-use crate::UiTheme;
+use crate::{ActiveTheme as _, UiTheme};
 
 /// A label with some of its text in an accent colour and bold, such as the
-/// characters a fuzzy query matched.
+/// characters a fuzzy query matched: `text.primary`, highlighted in
+/// `tab.active_text`.
 #[derive(IntoElement)]
 pub struct HighlightedLabel {
     pub text: SharedString,
     /// Byte ranges of `text`, on char boundaries.
     pub highlights: Vec<Range<usize>>,
-    color: Hsla,
-    accent: Hsla,
 }
 
 impl HighlightedLabel {
+    /// Its colours come from `cx.theme()` as it renders. `_theme` is
+    /// ignored: deprecated, kept so callers that pass a [`UiTheme`] build.
     pub fn new(
         text: impl Into<SharedString>,
         highlights: Vec<Range<usize>>,
-        theme: &UiTheme,
+        _theme: &UiTheme,
     ) -> Self {
         Self {
             text: text.into(),
             highlights,
-            color: theme.text,
-            accent: theme.tab_active_text,
         }
     }
 }
 
 impl RenderOnce for HighlightedLabel {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let colors = &cx.theme().colors;
         let style = HighlightStyle {
-            color: Some(self.accent),
+            color: Some(colors.tab.active_text),
             font_weight: Some(FontWeight::BOLD),
             ..HighlightStyle::default()
         };
         let highlights = self.highlights.into_iter().map(|range| (range, style));
         div()
-            .text_color(self.color)
+            .text_color(colors.text.primary)
             .child(StyledText::new(self.text).with_highlights(highlights))
     }
 }

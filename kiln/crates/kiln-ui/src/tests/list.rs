@@ -10,7 +10,7 @@ use gpui::{
     prelude::FluentBuilder as _, px,
 };
 
-use crate::{List, ListDelegate, ListEvent, ROW_HEIGHT, RowState, ui_theme};
+use crate::{ActiveTheme as _, List, ListDelegate, ListEvent, ROW_HEIGHT, RowState};
 
 struct Numbers(usize);
 
@@ -26,12 +26,12 @@ impl ListDelegate for Numbers {
         _: &mut Window,
         cx: &mut Context<List<Self>>,
     ) -> AnyElement {
-        let theme = ui_theme(cx);
+        let list = cx.theme().colors.list;
         div()
             .h(ROW_HEIGHT)
             .debug_selector(move || format!("row-{ix}"))
-            .when(state.selected, |row| row.bg(theme.row_selected))
-            .when(state.hovered, |row| row.bg(theme.row_hover))
+            .when(state.selected, |row| row.bg(list.row_selected))
+            .when(state.hovered, |row| row.bg(list.row_hover))
             .child(format!("Row {ix}"))
             .into_any_element()
     }

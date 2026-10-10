@@ -6,7 +6,7 @@ use gpui::{
     Window, div, prelude::FluentBuilder as _, px, svg,
 };
 
-use crate::{ClickHandler, Icon, UiTheme};
+use crate::{ActiveTheme as _, ClickHandler, Icon, UiTheme};
 
 type TooltipBuilder = Box<dyn Fn(&mut Window, &mut App) -> AnyView>;
 
@@ -17,20 +17,20 @@ pub struct IconButton {
     id: SharedString,
     icon: Icon,
     disabled: bool,
-    theme: UiTheme,
     on_click: Option<ClickHandler>,
     tooltip: Option<TooltipBuilder>,
 }
 
 impl IconButton {
     /// `id` names the button's element and its `icon-button:<id>` debug
-    /// selector.
-    pub fn new(id: impl Into<SharedString>, icon: Icon, theme: &UiTheme) -> Self {
+    /// selector. Its colours come from `cx.theme()` as it renders;
+    /// `_theme` is ignored: deprecated, kept so callers that pass a
+    /// [`UiTheme`] build.
+    pub fn new(id: impl Into<SharedString>, icon: Icon, _theme: &UiTheme) -> Self {
         Self {
             id: id.into(),
             icon,
             disabled: false,
-            theme: *theme,
             on_click: None,
             tooltip: None,
         }
@@ -57,13 +57,14 @@ impl IconButton {
 }
 
 impl RenderOnce for IconButton {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        let theme = self.theme;
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let colors = &cx.theme().colors;
         let color = if self.disabled {
-            theme.muted_text
+            colors.text.muted
         } else {
-            theme.icon
+            colors.list.icon
         };
+        let hover = colors.list.row_hover;
         let id = self.id.clone();
         div()
             .id(ElementId::Name(self.id))
@@ -84,7 +85,7 @@ impl RenderOnce for IconButton {
             .when(!self.disabled, |button| {
                 button
                     .cursor(CursorStyle::PointingHand)
-                    .hover(move |style| style.bg(theme.row_hover))
+                    .hover(move |style| style.bg(hover))
                     .when_some(self.on_click, |button, on_click| button.on_click(on_click))
             })
             .when_some(self.tooltip, |button, tooltip| {

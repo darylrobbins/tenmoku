@@ -8,7 +8,7 @@ use gpui::{
     prelude::FluentBuilder as _, px,
 };
 
-use crate::UiTheme;
+use crate::{ActiveTheme as _, UiTheme};
 
 /// The menu bar's height.
 pub const MENU_BAR_HEIGHT: Pixels = px(28.);
@@ -25,17 +25,17 @@ type IndexHandler = Rc<dyn Fn(usize, &mut Window, &mut App)>;
 pub struct MenuStrip {
     names: Vec<SharedString>,
     open: Option<(usize, AnyElement)>,
-    theme: UiTheme,
     on_click: Option<IndexHandler>,
     on_hover: Option<IndexHandler>,
 }
 
 impl MenuStrip {
-    pub fn new(names: impl IntoIterator<Item = SharedString>, theme: &UiTheme) -> Self {
+    /// Its colours come from `cx.theme()` as it renders. `_theme` is
+    /// ignored: deprecated, kept so callers that pass a [`UiTheme`] build.
+    pub fn new(names: impl IntoIterator<Item = SharedString>, _theme: &UiTheme) -> Self {
         Self {
             names: names.into_iter().collect(),
             open: None,
-            theme: *theme,
             on_click: None,
             on_hover: None,
         }
@@ -61,8 +61,9 @@ impl MenuStrip {
 }
 
 impl RenderOnce for MenuStrip {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        let theme = self.theme;
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let colors = &cx.theme().colors;
+        let hover = colors.list.row_hover;
         let (open, mut panel) = match self.open {
             Some((ix, panel)) => (Some(ix), Some(panel)),
             None => (None, None),
@@ -83,10 +84,10 @@ impl RenderOnce for MenuStrip {
                 .rounded_sm()
                 .map(|name| {
                     if is_open {
-                        name.bg(theme.row_selected)
-                            .text_color(theme.tab_active_text)
+                        name.bg(colors.list.row_selected)
+                            .text_color(colors.tab.active_text)
                     } else {
-                        name.hover(move |style| style.bg(theme.row_hover))
+                        name.hover(move |style| style.bg(hover))
                     }
                 })
                 .child(name)
@@ -114,7 +115,7 @@ impl RenderOnce for MenuStrip {
             .h(MENU_BAR_HEIGHT)
             .px_1()
             .gap_px()
-            .text_color(theme.text)
+            .text_color(colors.text.primary)
             .children(names)
     }
 }
@@ -136,17 +137,17 @@ pub enum MenuEntry {
 pub struct MenuPanel {
     entries: Vec<MenuEntry>,
     highlighted: Option<usize>,
-    theme: UiTheme,
     on_click: Option<IndexHandler>,
     on_hover: Option<IndexHandler>,
 }
 
 impl MenuPanel {
-    pub fn new(entries: Vec<MenuEntry>, theme: &UiTheme) -> Self {
+    /// Its colours come from `cx.theme()` as it renders. `_theme` is
+    /// ignored: deprecated, kept so callers that pass a [`UiTheme`] build.
+    pub fn new(entries: Vec<MenuEntry>, _theme: &UiTheme) -> Self {
         Self {
             entries,
             highlighted: None,
-            theme: *theme,
             on_click: None,
             on_hover: None,
         }
@@ -171,14 +172,15 @@ impl MenuPanel {
 }
 
 impl RenderOnce for MenuPanel {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        let theme = self.theme;
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let colors = &cx.theme().colors;
+        let border = colors.border.default;
         let rows = self
             .entries
             .into_iter()
             .enumerate()
             .map(|(ix, entry)| match entry {
-                MenuEntry::Separator => div().my_1().h_px().bg(theme.border).into_any_element(),
+                MenuEntry::Separator => div().my_1().h_px().bg(border).into_any_element(),
                 MenuEntry::Item { title, shortcut } => {
                     let on_click = self.on_click.clone();
                     let on_hover = self.on_hover.clone();
@@ -195,11 +197,12 @@ impl RenderOnce for MenuPanel {
                         .px_3()
                         .rounded_sm()
                         .when(self.highlighted == Some(ix), |row| {
-                            row.bg(theme.row_selected).text_color(theme.tab_active_text)
+                            row.bg(colors.list.row_selected)
+                                .text_color(colors.tab.active_text)
                         })
                         .child(title)
                         .children(
-                            shortcut.map(|keys| div().text_color(theme.muted_text).child(keys)),
+                            shortcut.map(|keys| div().text_color(colors.text.muted).child(keys)),
                         )
                         .when_some(on_click, |row, on_click| {
                             row.on_click(move |_, window, cx| {
@@ -222,12 +225,12 @@ impl RenderOnce for MenuPanel {
             .flex()
             .flex_col()
             .p_1()
-            .bg(theme.panel_background)
+            .bg(colors.surface.panel)
             .border_1()
-            .border_color(theme.border)
+            .border_color(border)
             .rounded_md()
             .shadow_lg()
-            .text_color(theme.text)
+            .text_color(colors.text.primary)
             .children(rows)
     }
 }

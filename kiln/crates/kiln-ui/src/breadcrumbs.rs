@@ -6,7 +6,7 @@ use gpui::{
     prelude::FluentBuilder as _, px, svg,
 };
 
-use crate::{ClickHandler, Icon, UiTheme};
+use crate::{ActiveTheme as _, ClickHandler, Icon, UiTheme};
 
 /// The height of a pane's toolbar, which holds the breadcrumbs.
 pub const TOOLBAR_HEIGHT: Pixels = px(24.);
@@ -61,21 +61,20 @@ impl Crumb {
 #[derive(IntoElement)]
 pub struct Breadcrumbs {
     crumbs: Vec<Crumb>,
-    theme: UiTheme,
 }
 
 impl Breadcrumbs {
-    pub fn new(crumbs: Vec<Crumb>, theme: &UiTheme) -> Self {
-        Self {
-            crumbs,
-            theme: *theme,
-        }
+    /// Its colours come from `cx.theme()` as it renders. `_theme` is
+    /// ignored: deprecated, kept so callers that pass a [`UiTheme`] build.
+    pub fn new(crumbs: Vec<Crumb>, _theme: &UiTheme) -> Self {
+        Self { crumbs }
     }
 }
 
 impl RenderOnce for Breadcrumbs {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        let theme = self.theme;
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let colors = &cx.theme().colors;
+        let (hover, icon_color) = (colors.list.row_hover, colors.list.icon);
         let mut row = div()
             .flex()
             .flex_1()
@@ -90,7 +89,7 @@ impl RenderOnce for Breadcrumbs {
                         .path(Icon::ChevronRight.path())
                         .size(px(12.))
                         .flex_none()
-                        .text_color(theme.muted_text),
+                        .text_color(colors.text.muted),
                 );
             }
             let shrinks = crumb.kind == CrumbKind::Path;
@@ -104,7 +103,7 @@ impl RenderOnce for Breadcrumbs {
                 .px_1()
                 .h_full()
                 .rounded_sm()
-                .hover(move |style| style.bg(theme.row_hover))
+                .hover(move |style| style.bg(hover))
                 .map(|element| {
                     if shrinks {
                         element.flex_shrink(1.).min_w_0()
@@ -118,7 +117,7 @@ impl RenderOnce for Breadcrumbs {
                             .path(icon.path())
                             .size(px(14.))
                             .flex_none()
-                            .text_color(theme.icon),
+                            .text_color(icon_color),
                     )
                 })
                 .child(

@@ -2,7 +2,9 @@
 
 //! Kiln's widgets: GPUI elements styled by the active [`Theme`], which a
 //! host makes active with [`set_theme`] and widgets read with `cx.theme()`
-//! ([`ActiveTheme`]); the older ones take a flat [`UiTheme`]. Views that
+//! ([`ActiveTheme`]) as they render. The constructors that still take a
+//! flat [`UiTheme`] ignore it; it remains for apps that set their chrome's
+//! colours with [`set_ui_theme`], which sets the theme too. Views that
 //! own an app's state, such as a project tree or a tab pane, build their
 //! rows and tabs from these.
 //!

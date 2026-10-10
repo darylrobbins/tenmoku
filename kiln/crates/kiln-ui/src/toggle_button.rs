@@ -6,7 +6,7 @@ use gpui::{
     prelude::FluentBuilder as _, px,
 };
 
-use crate::{ClickHandler, UiTheme};
+use crate::{ActiveTheme as _, ClickHandler, UiTheme};
 
 /// A small button that is on or off, such as a search option: its label
 /// accented on a highlighted background when on, muted when off.
@@ -15,17 +15,17 @@ pub struct ToggleButton {
     id: ElementId,
     label: SharedString,
     on: bool,
-    theme: UiTheme,
     on_click: Option<ClickHandler>,
 }
 
 impl ToggleButton {
-    pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>, theme: &UiTheme) -> Self {
+    /// Its colours come from `cx.theme()` as it renders. `_theme` is
+    /// ignored: deprecated, kept so callers that pass a [`UiTheme`] build.
+    pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>, _theme: &UiTheme) -> Self {
         Self {
             id: id.into(),
             label: label.into(),
             on: false,
-            theme: *theme,
             on_click: None,
         }
     }
@@ -45,8 +45,9 @@ impl ToggleButton {
 }
 
 impl RenderOnce for ToggleButton {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        let theme = self.theme;
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let colors = &cx.theme().colors;
+        let hover = colors.list.row_hover;
         div()
             .id(self.id)
             .flex()
@@ -60,12 +61,12 @@ impl RenderOnce for ToggleButton {
             .map(|button| {
                 if self.on {
                     button
-                        .bg(theme.row_selected)
-                        .text_color(theme.tab_active_text)
+                        .bg(colors.list.row_selected)
+                        .text_color(colors.tab.active_text)
                 } else {
                     button
-                        .text_color(theme.muted_text)
-                        .hover(move |style| style.bg(theme.row_hover))
+                        .text_color(colors.text.muted)
+                        .hover(move |style| style.bg(hover))
                 }
             })
             .child(self.label)

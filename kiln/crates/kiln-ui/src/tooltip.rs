@@ -5,7 +5,7 @@ use gpui::{
     prelude::FluentBuilder as _, px,
 };
 
-use crate::UiTheme;
+use crate::{ActiveTheme as _, UiTheme};
 
 /// A small label shown on hover, and a muted shortcut after it if there is
 /// one, such as `Search ⇧⌘F`. Built by GPUI's `.tooltip(…)`, which shows it
@@ -13,19 +13,19 @@ use crate::UiTheme;
 pub struct Tooltip {
     label: SharedString,
     shortcut: Option<SharedString>,
-    theme: UiTheme,
 }
 
 impl Tooltip {
+    /// Its colours come from `cx.theme()` as it renders. `_theme` is
+    /// ignored: deprecated, kept so callers that pass a [`UiTheme`] build.
     pub fn new(
         label: impl Into<SharedString>,
         shortcut: Option<impl Into<SharedString>>,
-        theme: &UiTheme,
+        _theme: &UiTheme,
     ) -> Self {
         Self {
             label: label.into(),
             shortcut: shortcut.map(Into::into),
-            theme: *theme,
         }
     }
 
@@ -39,22 +39,23 @@ impl Tooltip {
 }
 
 impl Render for Tooltip {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let theme = self.theme;
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = &cx.theme().colors;
+        let muted = colors.text.muted;
         div()
             .flex()
             .gap_2()
             .px_2()
             .py_1()
             .rounded_sm()
-            .bg(theme.panel_background)
+            .bg(colors.surface.panel)
             .border_1()
-            .border_color(theme.border)
+            .border_color(colors.border.default)
             .text_size(px(12.))
-            .text_color(theme.tab_active_text)
+            .text_color(colors.tab.active_text)
             .child(self.label.clone())
             .when_some(self.shortcut.clone(), |tooltip, shortcut| {
-                tooltip.child(div().text_color(theme.muted_text).child(shortcut))
+                tooltip.child(div().text_color(muted).child(shortcut))
             })
     }
 }

@@ -4,17 +4,17 @@ use gpui::{
     App, AppContext as _, Context, EventEmitter, FocusHandle, Focusable, InteractiveElement as _,
     IntoElement, KeyDownEvent, ParentElement as _, PromptButton, PromptHandle, PromptLevel,
     PromptResponse, Render, RenderablePromptHandle, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Window, div, prelude::FluentBuilder as _, px, rgba,
+    Styled as _, Window, div, prelude::FluentBuilder as _, px,
 };
 
-use crate::{UiTheme, ui_theme};
+use crate::ActiveTheme as _;
 
 /// The prompt box's width, or the window's less a margin if that's
 /// narrower. The message and detail wrap to it.
 pub const PROMPT_WIDTH: gpui::Pixels = px(420.);
 
-/// Renders `window.prompt` in the window, styled by the active
-/// [`UiTheme`], where the platform has no native alert (Linux, Windows):
+/// Renders `window.prompt` in the window, in the active theme's colours
+/// (`cx.theme()`), where the platform has no native alert (Linux, Windows):
 /// a host passes it to `App::set_prompt_builder`. Enter answers with the
 /// default button, the first that isn't a cancel button; Escape with the
 /// cancel button, if there is one.
@@ -27,13 +27,11 @@ pub fn prompt_renderer(
     window: &mut Window,
     cx: &mut App,
 ) -> RenderablePromptHandle {
-    let theme = ui_theme(cx);
     let prompt = cx.new(|cx| Prompt {
         level,
         message: message.to_owned().into(),
         detail: detail.map(|detail| detail.to_owned().into()),
         buttons: buttons.to_vec(),
-        theme,
         focus: cx.focus_handle(),
     });
     handle.with_view(prompt, window, cx)
@@ -45,7 +43,6 @@ pub struct Prompt {
     message: SharedString,
     detail: Option<SharedString>,
     buttons: Vec<PromptButton>,
-    theme: UiTheme,
     focus: FocusHandle,
 }
 
@@ -87,12 +84,13 @@ impl Focusable for Prompt {
 
 impl Render for Prompt {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = self.theme;
+        let colors = cx.theme().colors;
         let default = Self::default_button(&self.buttons);
         let accent = match self.level {
-            PromptLevel::Critical => theme.error_text,
-            PromptLevel::Info | PromptLevel::Warning => theme.accent,
+            PromptLevel::Critical => colors.status.error,
+            PromptLevel::Info | PromptLevel::Warning => colors.accent.base,
         };
+        let hover = colors.list.row_hover;
         let buttons = self.buttons.iter().enumerate().map(|(ix, button)| {
             let is_default = Some(ix) == default;
             div()
@@ -109,11 +107,11 @@ impl Render for Prompt {
                     if is_default {
                         div.bg(accent)
                             .border_color(accent)
-                            .text_color(theme.tab_active_text)
+                            .text_color(colors.tab.active_text)
                     } else {
-                        div.border_color(theme.border)
-                            .text_color(theme.text)
-                            .hover(move |style| style.bg(theme.row_hover))
+                        div.border_color(colors.border.default)
+                            .text_color(colors.text.primary)
+                            .hover(move |style| style.bg(hover))
                     }
                 })
                 .child(button.label().clone())
@@ -130,12 +128,12 @@ impl Render for Prompt {
             .flex_col()
             .gap_2()
             .p_4()
-            .bg(theme.panel_background)
+            .bg(colors.surface.panel)
             .border_1()
-            .border_color(theme.border)
+            .border_color(colors.border.default)
             .rounded_md()
             .shadow_lg()
-            .text_color(theme.text)
+            .text_color(colors.text.primary)
             .text_size(px(13.))
             .child(
                 div()
@@ -144,7 +142,7 @@ impl Render for Prompt {
                     .child(self.message.clone()),
             )
             .when_some(self.detail.clone(), |prompt, detail| {
-                prompt.child(div().w_full().text_color(theme.muted_text).child(detail))
+                prompt.child(div().w_full().text_color(colors.text.muted).child(detail))
             })
             .child(
                 div()
@@ -166,7 +164,7 @@ impl Render for Prompt {
             .items_center()
             .justify_center()
             .px_4()
-            .bg(rgba(0x00000080))
+            .bg(colors.surface.overlay)
             .child(prompt)
     }
 }
