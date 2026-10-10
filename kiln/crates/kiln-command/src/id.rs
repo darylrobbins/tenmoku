@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 use std::{fmt, str::FromStr, sync::Arc};
 
 use serde::{Deserialize, Serialize};

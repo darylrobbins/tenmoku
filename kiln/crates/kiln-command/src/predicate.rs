@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 //! Context predicates, such as `editor && !read_only` or
 //! `vim.mode == normal`, and the context stacks they are evaluated against.
 //!

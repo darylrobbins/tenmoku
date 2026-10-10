@@ -1,11 +1,13 @@
 [package]
-name = "fe-command"
+name = "kiln-command"
 description = "Namespaced commands with typed args, context predicates and headless dispatch. Must not depend on GPUI."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
-publish.workspace = true
+# Set here, not inherited: kiln is to be open-sourced, and its licence
+# changes in one line per crate (docs/decisions/app-framework.md).
+license = "LicenseRef-Proprietary"
+publish = false
 
 [dependencies]
 schemars.workspace = true

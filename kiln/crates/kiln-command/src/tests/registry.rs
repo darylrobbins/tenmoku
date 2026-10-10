@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 use std::{cell::RefCell, rc::Rc};
 
 use schemars::JsonSchema;

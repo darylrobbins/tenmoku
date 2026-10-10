@@ -1,0 +1,18 @@
+[package]
+name = "kiln-platform"
+description = "Kiln's platform layer on GPUI: capabilities, window options, prompts, dialogs, key input and command dispatch."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+# Set here, not inherited: kiln is to be open-sourced, and its licence
+# changes in one line per crate (docs/decisions/app-framework.md).
+license = "LicenseRef-Proprietary"
+publish = false
+
+[dependencies]
+gpui.workspace = true
+kiln-command.workspace = true
+kiln-core.workspace = true
+
+[lints]
+workspace = true

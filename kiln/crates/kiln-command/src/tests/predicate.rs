@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 use super::*;
 
 fn parse(source: &str) -> ContextPredicate {

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+members = ["crates/*", "kiln/crates/*"]
 # Vendored crates build as dependencies only (see [patch.crates-io]).
 exclude = ["vendor"]
 default-members = ["crates/fastedit"]
@@ -16,7 +16,14 @@ publish = false
 # Internal crates.
 fe-text = { path = "crates/fe-text" }
 fe-buffer = { path = "crates/fe-buffer" }
-fe-command = { path = "crates/fe-command" }
+# Kiln, the app framework (kiln/, docs/decisions/app-framework.md).
+kiln = { path = "kiln/crates/kiln" }
+kiln-command = { path = "kiln/crates/kiln-command" }
+kiln-core = { path = "kiln/crates/kiln-core" }
+kiln-platform = { path = "kiln/crates/kiln-platform" }
+kiln-shell = { path = "kiln/crates/kiln-shell" }
+# fastedit's names for the kiln crates that moved out of it.
+fe-command = { package = "kiln-command", path = "kiln/crates/kiln-command" }
 fe-display = { path = "crates/fe-display" }
 fe-editor = { path = "crates/fe-editor" }
 fe-gpui = { path = "crates/fe-gpui" }

@@ -72,6 +72,13 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo nextest run --workspace --profile ci
+      - name: Kiln's GPUI-free crates build for Windows
+        # Windows is an addition to kiln, not a redesign
+        # (docs/decisions/app-framework.md): its headless core cross-checks
+        # here until a Windows job builds the rest.
+        run: |
+          rustup target add x86_64-pc-windows-msvc
+          cargo check -p kiln-command -p kiln-core --target x86_64-pc-windows-msvc
       - name: The app launches and draws a frame
         # Under Xvfb, with Mesa's software Vulkan; see the run-fastedit-linux
         # skill. `start` fails if the window draws nothing within 30 s.

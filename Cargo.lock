@@ -1770,17 +1770,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fe-command"
-version = "0.1.0"
-dependencies = [
- "schemars",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "toml 1.1.6+spec-1.1.0",
-]
-
-[[package]]
 name = "fe-config"
 version = "0.1.0"
 dependencies = [
@@ -1814,10 +1803,10 @@ name = "fe-editor"
 version = "0.1.0"
 dependencies = [
  "fe-buffer",
- "fe-command",
  "fe-display",
  "fe-fileview",
  "fe-text",
+ "kiln-command",
  "proptest",
  "rand 0.9.5",
  "schemars",
@@ -1844,7 +1833,6 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "fe-buffer",
- "fe-command",
  "fe-config",
  "fe-display",
  "fe-editor",
@@ -1855,6 +1843,7 @@ dependencies = [
  "gpui-pre",
  "gpui-pre-platform",
  "image",
+ "kiln-command",
  "log",
  "serde_json",
  "tempfile",
@@ -1865,8 +1854,8 @@ dependencies = [
 name = "fe-keymap"
 version = "0.1.0"
 dependencies = [
- "fe-command",
  "fe-config",
+ "kiln-command",
  "schemars",
  "serde",
  "serde_json",
@@ -1987,9 +1976,9 @@ name = "fe-vim"
 version = "0.1.0"
 dependencies = [
  "fe-buffer",
- "fe-command",
  "fe-editor",
  "fe-text",
+ "kiln-command",
  "regex",
  "regex-syntax",
  "schemars",
@@ -2006,7 +1995,6 @@ version = "0.1.0"
 dependencies = [
  "async-channel",
  "fe-buffer",
- "fe-command",
  "fe-config",
  "fe-editor",
  "fe-gpui",
@@ -2021,6 +2009,7 @@ dependencies = [
  "gpui-pre",
  "gpui-pre-platform",
  "image",
+ "kiln-command",
  "libc",
  "log",
  "lsp-types",
@@ -3511,6 +3500,49 @@ name = "khronos_api"
 version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
+
+[[package]]
+name = "kiln"
+version = "0.1.0"
+dependencies = [
+ "gpui-pre",
+ "kiln-command",
+ "kiln-core",
+ "kiln-platform",
+ "kiln-shell",
+]
+
+[[package]]
+name = "kiln-command"
+version = "0.1.0"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
+name = "kiln-core"
+version = "0.1.0"
+
+[[package]]
+name = "kiln-platform"
+version = "0.1.0"
+dependencies = [
+ "gpui-pre",
+ "kiln-command",
+ "kiln-core",
+]
+
+[[package]]
+name = "kiln-shell"
+version = "0.1.0"
+dependencies = [
+ "gpui-pre",
+ "kiln-platform",
+]
 
 [[package]]
 name = "kqueue"

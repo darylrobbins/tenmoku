@@ -1,0 +1,17 @@
+[package]
+name = "kiln-shell"
+description = "Kiln's app shell on GPUI: the root view, window frame, menus, panes, docks and palette."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+# Set here, not inherited: kiln is to be open-sourced, and its licence
+# changes in one line per crate (docs/decisions/app-framework.md).
+license = "LicenseRef-Proprietary"
+publish = false
+
+[dependencies]
+gpui.workspace = true
+kiln-platform.workspace = true
+
+[lints]
+workspace = true

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -77,8 +79,8 @@ impl Invocation {
     }
 }
 
-/// Who asked. Mirrors `fe_buffer::Origin`, which `fe-editor` converts it
-/// to so edits are stamped with it.
+/// Who asked. A document model can map it to its own record of who made
+/// each edit.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Actor {

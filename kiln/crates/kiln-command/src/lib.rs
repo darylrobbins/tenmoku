@@ -1,7 +1,10 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 //! Commands: stable namespaced IDs, typed args, the contexts they apply in,
 //! serializable invocation records, and a registry that dispatches them
-//! headlessly. Knows nothing about editors; `fe-editor` registers its
-//! commands on it. Must never depend on GPUI.
+//! headlessly. Knows nothing about any particular app: an app, or a
+//! component such as a text editor, registers its commands on it. Must never
+//! depend on GPUI.
 //!
 //! The design is recorded in `docs/decisions/command-model.md`.
 

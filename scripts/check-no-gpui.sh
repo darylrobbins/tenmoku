@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Fail if any core crate depends on GPUI, directly or transitively.
 # Core crates must stay headless so the AI backend and tests can use them.
-# Every workspace crate is core unless listed in UI_CRATES.
+# Every workspace crate is core unless listed in UI_CRATES. Then checks that
+# kiln/, the app framework, stands alone (scripts/check_kiln_boundary.py).
 set -euo pipefail
 
-UI_CRATES=(fastedit fe-ui fe-gpui fe-workbench)
+UI_CRATES=(fastedit fe-ui fe-gpui fe-workbench kiln kiln-platform kiln-shell)
 
 cd "$(dirname "$0")/.."
 
@@ -27,5 +28,7 @@ for crate in $members; do
     echo "ok: $crate"
   fi
 done
+
+python3 scripts/check_kiln_boundary.py || failed=1
 
 exit "$failed"
