@@ -4,6 +4,7 @@ use fe_buffer::Version;
 use fe_command::{ContextFrame, ContextStack};
 use fe_editor::{EditorModel, commands::CONTEXT};
 
+use crate::ex::HostCommand;
 use crate::search::Pattern;
 use crate::{
     CommandLineKind, LastChange, Motion, Pending, Step, VimKey, VisualKind,
@@ -81,6 +82,8 @@ pub struct VimState {
     pub(crate) message: Option<String>,
     /// The last search's pattern, painted while 'hlsearch' is on.
     pub(crate) highlight: Option<Pattern>,
+    /// The file or window command the last ex line gave, for the host.
+    pub(crate) host_command: Option<HostCommand>,
 }
 
 impl VimState {
@@ -107,6 +110,12 @@ impl VimState {
     /// next command line, clears it.
     pub fn message(&self) -> Option<&str> {
         self.message.as_deref()
+    }
+
+    /// The file or window command (`:w`, `:q`, `:e` and the like) an ex line
+    /// submitted, for the host to run: returned once, then `None`.
+    pub fn take_host_command(&mut self) -> Option<HostCommand> {
+        self.host_command.take()
     }
 
     /// The pattern a host paints as matches ('hlsearch', on as in nvim): the

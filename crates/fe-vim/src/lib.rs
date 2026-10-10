@@ -192,6 +192,12 @@
 //!   what `.` repeats. The caret goes to the first non-blank of the line
 //!   that took the range's place.
 //! - `:noh[lsearch]` clears [`VimState::highlight`] until the next search.
+//! - File and window commands aren't run: `:w[rite][!]`, `:q[uit][!]`,
+//!   `:wq[!]`, `:x[it][!]`, `:exi[t][!]`, `:e[dit][!] [path]`, `:qa[ll][!]`
+//!   (`:quita[ll]`) and `:wa[ll]` leave a [`HostCommand`] for the host to
+//!   fetch once with [`VimState::take_host_command`] (and map to its own
+//!   commands), changing no text, cursor or register. They take no range,
+//!   and no argument but `:e`'s path; `:w {path}` isn't supported yet.
 //!
 //! What can't run changes nothing (but where a `;` moved the cursor) and
 //! leaves nvim's error in [`VimState::message`]: E492 for any other command
@@ -202,7 +208,7 @@
 //! set, E477 for a `!`, E481 for a range on `:noh`, E488 for trailing
 //! characters and E939 for a count of 0.
 //!
-//! Not yet: the host's commands (`:w`, `:q` and the like), `:s`, `:&` and
+//! Not yet: `:s`, `:&` and
 //! `&`, the GPUI line. Not planned for M7's first ex cards: `:g`, `:v`,
 //! `:normal`, `:m`, `:t`, `:co`, `:j`, `:y`, `:>`, `:<`, `:pu`, `:r`,
 //! `:sort`, `:set`, `:marks`, `:reg`, `:undo`, `:!`, `|` between commands,
@@ -508,7 +514,7 @@ pub use args::{
     SubmitArgs, SwapArgs, Target, TextObject, VisualArgs, VisualKind,
 };
 pub use commands::{VimCommands, VimTarget, registry};
-pub use ex::{Address, Base, Ex, ExCommand, ExError, LineSearch};
+pub use ex::{Address, Base, Ex, ExCommand, ExError, HostCommand, LineSearch};
 pub use headless::{FeedError, HeadlessVim};
 pub use insert::Splits;
 pub use key::{KeyError, VimKey, parse_keys};

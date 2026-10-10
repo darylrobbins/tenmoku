@@ -84,6 +84,29 @@ pub enum ExCommand {
     },
     /// `:noh[lsearch]`: no highlight until the next search.
     NoHighlight,
+    /// A file or window command, which the host runs.
+    Host(HostCommand),
+}
+
+/// A file or window command fe-vim parses but leaves to the host (it knows
+/// no files, tabs or windows): [`crate::VimState::take_host_command`] hands
+/// over the last one submitted.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum HostCommand {
+    /// `:w[rite]`: save the buffer to its file; `force` is `!`.
+    Write { force: bool },
+    /// `:q[uit]`: close the window; `force` (`!`) discards changes.
+    Quit { force: bool },
+    /// `:wq` (`only_if_modified` false) and `:x[it]`, `:exi[t]` (true):
+    /// save, then close; `:x` writes only a modified buffer.
+    WriteQuit { force: bool, only_if_modified: bool },
+    /// `:e[dit] [path]`: open `path`, or with none reload the file, which
+    /// with `force` (`!`) discards changes.
+    Edit { path: Option<String>, force: bool },
+    /// `:qa[ll]`, `:quita[ll]`: close every window.
+    QuitAll { force: bool },
+    /// `:wa[ll]`: save every modified buffer (`:wa!` is the same).
+    WriteAll,
 }
 
 /// Why an ex line didn't run, as nvim says it.
@@ -119,6 +142,9 @@ pub enum ExError {
     NoPreviousSubstitute,
     #[error("E486: Pattern not found: {0}")]
     NotFound(String),
+    /// `:w {path}`.
+    #[error("{0}: not supported yet")]
+    Unsupported(String),
     /// A pattern fe-vim can't search, or Vim rejects.
     #[error("{0}")]
     Pattern(String),
@@ -165,6 +191,9 @@ fn command(line: &str, range: &[Address], rest: &str) -> Result<ExCommand, ExErr
             true => Ok(ExCommand::Goto),
             false => Err(not_a_command()),
         };
+    }
+    if let Some(command) = host(name) {
+        return host_command(command, range, after);
     }
     let delete = DELETE.contains(&name);
     let nohlsearch = name.len() >= 3 && "nohlsearch".starts_with(name);
@@ -216,6 +245,82 @@ fn command(line: &str, range: &[Address], rest: &str) -> Result<ExCommand, ExErr
         true => Ok(command),
         false => Err(ExError::Trailing(args.to_string())),
     }
+}
+
+/// Builds a host command from its `!` and its argument.
+type Build = fn(bool, &str) -> HostCommand;
+
+/// The host command `name` abbreviates (`:help :w`, `:q`, `:x`, `:exi`,
+/// `:e`, `:qa`, `:wa`), with its `!` still to read.
+fn host(name: &str) -> Option<Build> {
+    let is = |full: &str, min: usize| name.len() >= min && full.starts_with(name);
+    Some(match name {
+        _ if is("write", 1) => |force, _| HostCommand::Write { force },
+        _ if is("quit", 1) => |force, _| HostCommand::Quit { force },
+        "wq" => |force, _| HostCommand::WriteQuit {
+            force,
+            only_if_modified: false,
+        },
+        _ if is("xit", 1) || is("exit", 3) => |force, _| HostCommand::WriteQuit {
+            force,
+            only_if_modified: true,
+        },
+        _ if is("edit", 1) || name == "ex" => |force, path| {
+            let path = (!path.is_empty()).then(|| path.to_string());
+            HostCommand::Edit { path, force }
+        },
+        _ if is("qall", 2) || is("quitall", 5) => |force, _| HostCommand::QuitAll { force },
+        _ if is("wall", 2) => |_, _| HostCommand::WriteAll,
+        _ => return None,
+    })
+}
+
+/// A host command's line: no range, and an argument only `:e` takes
+/// (`:w {path}`, saving as, isn't supported yet).
+fn host_command(build: Build, range: &[Address], after: &str) -> Result<ExCommand, ExError> {
+    if !range.is_empty() {
+        return Err(ExError::NoRange);
+    }
+    let (force, args) = match after.strip_prefix('!') {
+        Some(args) => (true, args),
+        None => (false, after),
+    };
+    let args = args.trim_start_matches([' ', '\t']);
+    let args = trim_unescaped_end(args);
+    let command = build(force, &unescape(args));
+    match (&command, args.is_empty()) {
+        (_, true) | (HostCommand::Edit { .. }, _) => Ok(ExCommand::Host(command)),
+        (HostCommand::Write { .. }, false) => Err(ExError::Unsupported(format!(":w {args}"))),
+        (_, false) => Err(ExError::Trailing(args.to_string())),
+    }
+}
+
+/// `args` without trailing blanks that aren't escaped by a backslash.
+fn trim_unescaped_end(args: &str) -> &str {
+    let mut end = args.len();
+    while let Some(blank) = args[..end].strip_suffix([' ', '\t']) {
+        let slashes = blank.bytes().rev().take_while(|&b| b == b'\\').count();
+        if slashes % 2 == 1 {
+            break;
+        }
+        end = blank.len();
+    }
+    &args[..end]
+}
+
+/// A file name as nvim reads it: a backslash before a blank, another
+/// backslash or a character the shell or ex line treats specially is
+/// dropped, and any other stays.
+fn unescape(args: &str) -> String {
+    let mut name = String::with_capacity(args.len());
+    let mut chars = args.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match chars.peek() {
+            Some(next) if ch == '\\' && " \t\\|\"*?[{}$%#`'".contains(*next) => {}
+            _ => name.push(ch),
+        }
+    }
+    name
 }
 
 /// Digits as a number, or `None` past 64 bits.
@@ -368,6 +473,7 @@ type Handled = Result<Dispatched<TransactionId>, CommandError>;
 /// cursor, as nvim does. The line closing is at least an
 /// [`Effect::Notify`].
 pub(crate) fn run(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Handled {
+    target.state.host_command = None;
     let before = target.model.selections();
     let mut dispatched = match execute(target, actor, line) {
         Ok(handled) => handled?,
@@ -402,6 +508,10 @@ fn execute(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Result<Hand
         }
         ExCommand::NoHighlight => {
             target.state.highlight = None;
+            Ok(Dispatched::new(Effect::Notify))
+        }
+        ExCommand::Host(command) => {
+            target.state.host_command = Some(command);
             Ok(Dispatched::new(Effect::Notify))
         }
         ExCommand::Delete { register, count } => {

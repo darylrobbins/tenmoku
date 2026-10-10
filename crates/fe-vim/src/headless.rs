@@ -216,6 +216,11 @@ impl HeadlessVim {
         &self.state
     }
 
+    /// The state, for what a host takes from it ([`VimState::take_host_command`]).
+    pub fn state_mut(&mut self) -> &mut VimState {
+        &mut self.state
+    }
+
     pub fn model(&self) -> &EditorModel {
         &self.model
     }

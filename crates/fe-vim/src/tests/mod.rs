@@ -8,6 +8,7 @@ mod cmdline;
 mod commands;
 mod edits;
 mod ex;
+mod ex_host;
 mod insert;
 mod motions;
 mod operators;
