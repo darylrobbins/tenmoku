@@ -15,7 +15,7 @@ are relative to the repo root.
 Ubuntu 26.04. GPUI's Linux libraries, Xvfb, xdotool and tmux:
 
 ```bash
-sudo apt install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev libfontconfig-dev libfreetype-dev libssl-dev libx11-xcb-dev libxcb1-dev libxcb-xkb-dev libasound2-dev libzstd-dev clang cmake xvfb mesa-vulkan-drivers xdotool tmux
+sudo apt install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev libfontconfig-dev libfreetype-dev libssl-dev libx11-xcb-dev libxcb1-dev libxcb-xkb-dev libasound2-dev libzstd-dev clang cmake xvfb mesa-vulkan-drivers xdotool tmux weston
 ```
 
 Rust via rustup; the repo's `rust-toolchain.toml` pins the version, which
@@ -71,6 +71,19 @@ editor's first line is at y 93. Settings, keymap and trust decisions go to
 `~/.local/state`. Environment variables `FE_DISPLAY` (default `:99`),
 `FE_RUN_DIR` and `FE_SESSION` move it.
 
+### On Wayland
+
+```bash
+FE_WAYLAND=1 $D start /tmp/fastedit-demo/src/main.rs   # Weston, nested in Xvfb
+$D ss /tmp/fastedit-run/40-wayland.png
+$D stop
+```
+
+Weston, like GNOME, offers no server-side decorations, so the app draws its
+frame: the menu row is also the title bar, with the buttons at its right.
+Weston's panel takes the top 32 px, and the window opens at about (24, 32),
+so coordinates differ from X11's.
+
 ## Run (human path)
 
 ```bash
@@ -115,6 +128,11 @@ and then times out after 10 s; it passes alone. Install nextest with
 - **The menu bar is drawn in the window** (GPUI has no native one on
   Linux). It takes focus while a menu is open: keys go to it until Escape
   or a chosen item gives focus back.
+- **Weston's headless backend won't do**: it has no seat, and GPUI panics
+  at startup without one (`wayland/client.rs` `seat.unwrap()`). The X11
+  backend inside Xvfb gives it Xvfb's pointer and keyboard.
+- **GPUI's test windows only report server-side decorations**, so tests of
+  the client-side frame set `Workbench::client_tiling` (test-only) instead.
 - **Open Folder… (ctrl+o) and Open File…** need xdg-desktop-portal, which
   Xvfb has none of: they show "The open panel isn't available". Pass the
   folder to `start` instead.

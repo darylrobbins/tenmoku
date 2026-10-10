@@ -11,6 +11,9 @@
 #   driver.sh type <text>           type text
 #   driver.sh log [n]               last n lines of the app's log (default 30)
 #   driver.sh stop                  quit the app and Xvfb
+#
+# FE_WAYLAND=1 driver.sh start runs the app on Wayland instead: Weston,
+# nested in Xvfb, with no server-side decorations, as GNOME.
 set -euo pipefail
 
 DISPLAY_NUM="${FE_DISPLAY:-:99}"
@@ -54,13 +57,33 @@ case "$cmd" in
     for _ in $(seq 50); do [[ -f "$FB" ]] && break; sleep 0.1; done
     [[ -f "$FB" ]] || die "Xvfb didn't start (another server on $DISPLAY_NUM?)"
     # Settings, keymap and trust decisions go to $RUN_DIR, not the user's.
+    display="DISPLAY=$DISPLAY_NUM"
+    if [[ -n "${FE_WAYLAND:-}" ]]; then
+      command -v weston >/dev/null || die "FE_WAYLAND needs weston: apt install weston"
+      # Weston's X11 backend gives Wayland clients the X pointer and
+      # keyboard; its headless one has no seat, which GPUI needs.
+      runtime="$RUN_DIR/runtime"
+      mkdir -p "$runtime" && chmod 700 "$runtime"
+      tmux new-window -t "$SESSION" -n weston \
+        "DISPLAY=$DISPLAY_NUM XDG_RUNTIME_DIR='$runtime' weston --backend=x11 \
+         --renderer=pixman --width=1280 --height=800 --socket=wayland-fe \
+         > '$RUN_DIR/weston.log' 2>&1"
+      for _ in $(seq 50); do [[ -S "$runtime/wayland-fe" ]] && break; sleep 0.1; done
+      [[ -S "$runtime/wayland-fe" ]] || die "weston didn't start: $RUN_DIR/weston.log"
+      display="XDG_RUNTIME_DIR='$runtime' WAYLAND_DISPLAY=wayland-fe"
+    fi
     tmux new-window -t "$SESSION" -n app \
-      "cd '$REPO' && DISPLAY=$DISPLAY_NUM XDG_CONFIG_HOME='$RUN_DIR/config' \
+      "cd '$REPO' && $display XDG_CONFIG_HOME='$RUN_DIR/config' \
        XDG_STATE_HOME='$RUN_DIR/state' RUST_LOG=info \
        '$BIN' '$target' 2>&1 | tee '$LOG'"
-    # Ready once the window has drawn: the blank screen is one colour.
+    # Ready once the window has drawn: the blank screen is one colour, and
+    # under Weston the app has logged its renderer.
     for _ in $(seq 60); do
       sleep 0.5
+      if [[ -n "${FE_WAYLAND:-}" ]]; then
+        grep -q 'Selected GPU adapter' "$LOG" 2>/dev/null || continue
+        sleep 1
+      fi
       out="$(shot "$RUN_DIR/ready.png")"
       [[ "${out##*colours~}" -gt 2 ]] && { echo "ready: $out"; exit 0; }
     done
