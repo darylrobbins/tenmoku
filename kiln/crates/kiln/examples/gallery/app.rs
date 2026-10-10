@@ -5,8 +5,8 @@
 
 use gpui::{
     Action as _, AnyElement, AnyView, App, AppContext as _, ClickEvent, Context, Div, Entity,
-    FocusHandle, Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    Styled as _, Subscription, Window, div, px,
+    FocusHandle, Focusable, InteractiveElement as _, IntoElement, ParentElement as _, PromptLevel,
+    Render, Styled as _, Subscription, Window, div, px,
 };
 use kiln::{
     core::shortcut_label,
@@ -20,8 +20,11 @@ use kiln::{
 };
 
 use crate::{
-    commands::{NextPage, PreviousPage, ToggleTheme},
-    pages::{ControlsPage, ListsPage, Page, TextPage, list_row},
+    commands::{NextPage, PreviousPage, ShowPrompt, ToggleTheme},
+    pages::{
+        ChromePage, ControlsPage, LayoutPage, ListsPage, Page, PromptsPage, TextPage, ThemePage,
+        list_row,
+    },
 };
 
 /// The key context the gallery's root sets.
@@ -33,6 +36,7 @@ pub(crate) struct Gallery {
     /// Each page's view, in [`Page::ALL`] order, kept while another is
     /// shown so its state survives.
     pages: Vec<AnyView>,
+    prompts: Entity<PromptsPage>,
     sidebar: Entity<List<PageList>>,
     host: Entity<PageHost>,
     split: Entity<SplitPane>,
@@ -41,12 +45,17 @@ pub(crate) struct Gallery {
 
 impl Gallery {
     pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let prompts = cx.new(|_| PromptsPage::new());
         let pages: Vec<AnyView> = Page::ALL
             .iter()
             .map(|page| match page {
                 Page::Controls => cx.new(|_| ControlsPage::new()).into(),
                 Page::Text => cx.new(|cx| TextPage::new(window, cx)).into(),
                 Page::Lists => cx.new(|cx| ListsPage::new(window, cx)).into(),
+                Page::Layout => cx.new(|cx| LayoutPage::new(window, cx)).into(),
+                Page::Chrome => cx.new(|_| ChromePage::new()).into(),
+                Page::Prompts => prompts.clone().into(),
+                Page::Theme => cx.new(|_| ThemePage).into(),
             })
             .collect();
         let page = Page::default();
@@ -80,6 +89,7 @@ impl Gallery {
             focus: cx.focus_handle(),
             page,
             pages,
+            prompts,
             sidebar,
             host,
             split,
@@ -129,6 +139,11 @@ impl Gallery {
         set_mode(mode, cx);
     }
 
+    fn show_prompt(&mut self, _: &ShowPrompt, window: &mut Window, cx: &mut Context<Self>) {
+        self.prompts
+            .update(cx, |page, cx| page.ask(PromptLevel::Info, window, cx));
+    }
+
     fn header(&self, cx: &mut Context<Self>) -> Div {
         let c = cx.theme().colors;
         let mode = cx.global::<GlobalTheme>().mode();
@@ -169,6 +184,7 @@ impl Gallery {
             (NextPage.name(), "next page"),
             (PreviousPage.name(), "previous page"),
             (ToggleTheme.name(), "toggle theme"),
+            (ShowPrompt.name(), "prompt"),
         ]
         .iter()
         .filter_map(|(action, what)| Some(format!("{} {what}", shortcut(action, cx)?)))
@@ -215,6 +231,7 @@ impl Render for Gallery {
             .on_action(cx.listener(Self::next_page))
             .on_action(cx.listener(Self::previous_page))
             .on_action(cx.listener(Self::toggle_theme))
+            .on_action(cx.listener(Self::show_prompt))
             .size_full()
             // The sidebar shows the panel colour; the page host paints the
             // page's background over it.

@@ -3,19 +3,30 @@
 //! The gallery's pages: one view each, and the order the sidebar lists
 //! them in.
 
+mod chrome;
 mod controls;
+mod layout;
 mod lists;
+mod prompts;
 mod text;
+mod theme;
 
-use gpui::{App, IntoElement, ParentElement as _, SharedString, Styled as _, div, px};
+use gpui::{
+    App, Context, IntoElement, ParentElement as _, Render, SharedString, Styled as _, Window, div,
+    px,
+};
 use kiln::{
     prelude::*,
     ui::{h_flex, v_flex},
 };
 
+pub(crate) use chrome::ChromePage;
 pub(crate) use controls::ControlsPage;
+pub(crate) use layout::LayoutPage;
 pub(crate) use lists::{ListsPage, list_row};
+pub(crate) use prompts::PromptsPage;
 pub(crate) use text::TextPage;
+pub(crate) use theme::ThemePage;
 
 /// A page of the gallery, in sidebar order.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -24,16 +35,32 @@ pub(crate) enum Page {
     Controls,
     Text,
     Lists,
+    Layout,
+    Chrome,
+    Prompts,
+    Theme,
 }
 
 impl Page {
-    pub(crate) const ALL: [Page; 3] = [Page::Controls, Page::Text, Page::Lists];
+    pub(crate) const ALL: [Page; 7] = [
+        Page::Controls,
+        Page::Text,
+        Page::Lists,
+        Page::Layout,
+        Page::Chrome,
+        Page::Prompts,
+        Page::Theme,
+    ];
 
     pub(crate) fn title(self) -> &'static str {
         match self {
             Page::Controls => "Controls",
             Page::Text => "Text",
             Page::Lists => "Lists and trees",
+            Page::Layout => "Layout",
+            Page::Chrome => "Chrome",
+            Page::Prompts => "Prompts",
+            Page::Theme => "Theme",
         }
     }
 
@@ -105,4 +132,32 @@ pub(crate) fn page_frame(title: &str, blurb: &str, cx: &App) -> gpui::Div {
             )
             .child(div().text_color(c.text.muted).child(blurb.to_owned())),
     )
+}
+
+/// A plain labelled panel, for the views that containers such as
+/// `SplitPane` and `Tabs` hold: they take views, not elements.
+pub(crate) struct Placeholder {
+    label: SharedString,
+}
+
+impl Placeholder {
+    pub(crate) fn new(label: impl Into<SharedString>) -> Self {
+        Self {
+            label: label.into(),
+        }
+    }
+}
+
+impl Render for Placeholder {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let c = &cx.theme().colors;
+        div()
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(c.surface.panel)
+            .text_color(c.text.muted)
+            .child(self.label.clone())
+    }
 }
