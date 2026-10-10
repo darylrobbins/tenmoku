@@ -3,6 +3,7 @@ mod lsp;
 mod settings;
 mod watch;
 mod watch_late;
+pub(crate) mod watch_reconcile;
 
 use std::{fs, path::PathBuf};
 

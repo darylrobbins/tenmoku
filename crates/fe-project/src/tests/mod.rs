@@ -17,6 +17,7 @@ mod search;
 mod tree;
 mod tree_root_loss;
 mod watcher;
+pub(crate) mod watcher_recovery;
 
 /// A temporary directory and its canonical path (on macOS `/var` is a link to
 /// `/private/var`, and watchers report the latter).

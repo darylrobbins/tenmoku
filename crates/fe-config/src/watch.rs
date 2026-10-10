@@ -3,9 +3,12 @@
 use std::{
     collections::HashSet,
     convert::Infallible,
+    fs, io,
+    os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, PoisonError, mpsc},
     thread,
+    time::{Duration, Instant},
 };
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
@@ -26,8 +29,13 @@ use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 /// reason, every file's links are resolved again after registering, until
 /// they lead to no directory not yet watched.
 ///
-/// A directory that doesn't exist isn't watched, and is logged, so creating
-/// a missing config directory takes a restart. Symlinked directories are
+/// FSEvents can drop events without flagging it when something writes many
+/// files at once, anywhere. So every [`RECONCILE`] the thread also re-stats
+/// each file's chain, and reports every file whose chain changed since it
+/// was last reported, as if an event had named it: a change no event
+/// reported is picked up within [`RECONCILE`]. A directory that doesn't
+/// exist isn't watched, and is logged. Nothing reports creating it, but its
+/// file's chain then changes, so it's watched within [`RECONCILE`] too. Symlinked directories are
 /// resolved when the watcher starts or when a file's own links change. The
 /// watcher never creates directories.
 ///
@@ -36,6 +44,9 @@ pub struct ConfigWatcher {
     watcher: Option<Arc<Mutex<RecommendedWatcher>>>,
     thread: Option<thread::JoinHandle<()>>,
 }
+
+/// How often the watcher re-stats its files: see [`ConfigWatcher`].
+pub(crate) const RECONCILE: Duration = Duration::from_secs(3);
 
 impl ConfigWatcher {
     pub fn new(
@@ -55,6 +66,7 @@ impl ConfigWatcher {
         let mut tracker = Tracker::new(files);
         let (tx, rx) = mpsc::channel::<notify::Result<Event>>();
         let mut watcher = notify::recommended_watcher(tx)?;
+        let rx = source(rx);
         tracker.register(|dir| {
             watcher.watch(dir, RecursiveMode::NonRecursive)?;
             registered(dir);
@@ -71,25 +83,46 @@ impl ConfigWatcher {
                 if !first.is_empty() {
                     sink(first);
                 }
-                // Ends when the watcher, which owns the sender, is dropped.
-                while let Ok(event) = rx.recv() {
-                    let mut events = vec![event];
-                    events.extend(rx.try_iter());
-                    // Directories are registered before the sink reads
-                    // anything.
-                    let files = tracker.batch(&events, |dir| {
-                        let Some(watcher) = weak.upgrade() else {
-                            return;
-                        };
-                        let result = watcher
-                            .lock()
-                            .unwrap_or_else(PoisonError::into_inner)
-                            .watch(dir, RecursiveMode::NonRecursive);
-                        if let Err(error) = result {
-                            log::warn!("not watching {}: {error}", dir.display());
+                // Directories are registered before the sink reads anything.
+                let mut watch = |dir: &Path| {
+                    let Some(watcher) = weak.upgrade() else {
+                        return;
+                    };
+                    let result = watcher
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .watch(dir, RecursiveMode::NonRecursive);
+                    if let Err(error) = result {
+                        log::warn!("not watching {}: {error}", dir.display());
+                    }
+                    registered(dir);
+                };
+                // On a deadline, checked before every wait and while
+                // draining, so a steady stream of events can't put the
+                // re-stat off.
+                let mut reconcile_at = Instant::now() + RECONCILE;
+                loop {
+                    let now = Instant::now();
+                    let files = if now >= reconcile_at {
+                        reconcile_at = now + RECONCILE;
+                        tracker.reconcile(&mut watch)
+                    } else {
+                        match rx.recv_timeout(reconcile_at - now) {
+                            Ok(event) => {
+                                let mut events = vec![event];
+                                while Instant::now() < reconcile_at {
+                                    let Ok(event) = rx.try_recv() else {
+                                        break;
+                                    };
+                                    events.push(event);
+                                }
+                                tracker.batch(&events, &mut watch)
+                            }
+                            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                            // The watcher, which owns the sender, was dropped.
+                            Err(mpsc::RecvTimeoutError::Disconnected) => break,
                         }
-                        registered(dir);
-                    });
+                    };
                     if !files.is_empty() {
                         sink(files);
                     }
@@ -111,6 +144,23 @@ impl Drop for ConfigWatcher {
     }
 }
 
+type Events = mpsc::Receiver<notify::Result<Event>>;
+
+/// The events the thread reads: in tests,
+/// [`crate::tests::watch_reconcile::SOURCE`] stands in, if set on this
+/// thread.
+#[cfg(not(test))]
+fn source(events: Events) -> Events {
+    events
+}
+
+#[cfg(test)]
+fn source(events: Events) -> Events {
+    crate::tests::watch_reconcile::SOURCE
+        .take()
+        .unwrap_or(events)
+}
+
 /// Symlinks followed before giving up on a loop, as the OS does.
 const MAX_LINKS: usize = 40;
 
@@ -126,14 +176,19 @@ pub(crate) struct Tracker {
     dirs: HashSet<PathBuf>,
     /// Directories the chains need that couldn't be watched, logged once.
     unwatched: HashSet<PathBuf>,
+    /// For each file, its [`fingerprint`] when it was last reported, taken
+    /// before the sink reads it.
+    prints: Vec<Fingerprint>,
 }
 
 impl Tracker {
     /// A tracker for `files`, watching nothing yet: see
-    /// [`Tracker::register`].
+    /// [`Tracker::register`]. The first batch reports every file, so their
+    /// fingerprints are taken now.
     pub(crate) fn new(files: Vec<PathBuf>) -> Self {
         Self {
             chains: files.iter().map(|file| chain(file)).collect(),
+            prints: files.iter().map(|file| fingerprint(file)).collect(),
             files,
             dirs: HashSet::new(),
             unwatched: HashSet::new(),
@@ -149,7 +204,8 @@ impl Tracker {
     /// isn't watched yet. Events during the registration may be lost, links
     /// included, so after it every chain is resolved again, and any
     /// directory they now need is watched in turn, until none is: each
-    /// round watches more, or stops. Returns whether any was watched.
+    /// round watches more, or stops. Returns whether any was watched, and if
+    /// so, as every file is then reported, takes their fingerprints.
     pub(crate) fn register<E>(
         &mut self,
         mut watch: impl FnMut(&Path) -> Result<(), E>,
@@ -158,6 +214,9 @@ impl Tracker {
         loop {
             let new_dirs = self.new_dirs();
             if new_dirs.is_empty() {
+                if any {
+                    self.prints = self.files.iter().map(|file| fingerprint(file)).collect();
+                }
                 return Ok(any);
             }
             for dir in &new_dirs {
@@ -172,11 +231,13 @@ impl Tracker {
     /// watching, with `watch`, any directories their links now lead to.
     /// Dropped events and rescans may have changed any file, and so may
     /// anything during the registration of new directories, so either
-    /// reports every file.
+    /// reports every file. The files reported have their fingerprints taken
+    /// before this returns, so [`Tracker::reconcile`] doesn't report them
+    /// again unless they change afterwards.
     pub(crate) fn batch(
         &mut self,
         events: &[notify::Result<Event>],
-        mut watch: impl FnMut(&Path),
+        watch: impl FnMut(&Path),
     ) -> Vec<PathBuf> {
         let mut changed = vec![false; self.files.len()];
         for event in events {
@@ -195,20 +256,48 @@ impl Tracker {
                 Err(_) => changed.fill(true),
             }
         }
+        self.report(&changed, watch)
+    }
+
+    /// The files whose [`fingerprint`] changed since they were last
+    /// reported, handled as if an event had named each: FSEvents can drop
+    /// events without flagging it, and creating a directory a chain needs
+    /// gets no event at all. A new directory is watched with `watch`, which
+    /// reports every file, as [`Tracker::batch`] does.
+    pub(crate) fn reconcile(&mut self, watch: impl FnMut(&Path)) -> Vec<PathBuf> {
+        let changed: Vec<bool> = self
+            .files
+            .iter()
+            .zip(&self.prints)
+            .map(|(file, print)| fingerprint(file) != *print)
+            .collect();
+        self.report(&changed, watch)
+    }
+
+    /// Re-resolves the `changed` files' chains, watches with `watch` any
+    /// directory they now need, and returns the files to report: every one
+    /// if a directory was watched, else the changed ones. Takes the
+    /// fingerprints of those it returns.
+    fn report(&mut self, changed: &[bool], mut watch: impl FnMut(&Path)) -> Vec<PathBuf> {
         for (index, changed) in changed.iter().enumerate() {
             if *changed {
                 self.chains[index] = chain(&self.files[index]);
             }
         }
+        // Takes every fingerprint if it watched anything.
         let Ok(registered) = self.register(|dir| {
             watch(dir);
             Ok::<_, Infallible>(())
         });
         if registered {
-            self.files()
-        } else {
-            self.in_order(|index| changed[index])
+            return self.files();
         }
+        for (index, changed) in changed.iter().enumerate() {
+            if *changed {
+                self.prints[index] = fingerprint(&self.files[index]);
+            }
+        }
+        self.in_order(|index| changed[index])
     }
 
     fn in_order(&self, include: impl Fn(usize) -> bool) -> Vec<PathBuf> {
@@ -238,9 +327,10 @@ impl Tracker {
                 new_dirs.push(dir.to_owned());
             } else if self.unwatched.insert(dir.to_owned()) {
                 log::info!(
-                    "not watching {}: it's missing or inaccessible, so creating it \
-                     takes a restart for settings to reload",
-                    dir.display()
+                    "not watching {}: it's missing or inaccessible; it's watched once \
+                     it's created, within {} s",
+                    dir.display(),
+                    RECONCILE.as_secs()
                 );
             }
         }
@@ -264,6 +354,49 @@ fn chain(file: &Path) -> Vec<PathBuf> {
         path = canonical_dir(&target);
     }
     chain
+}
+
+/// What [`Tracker::reconcile`] compares: for each path resolving a file
+/// goes through, its [`Stat`]. Any change to the file, a link or the chain
+/// itself changes it.
+type Fingerprint = Vec<(PathBuf, Stat)>;
+
+/// What `symlink_metadata` says of a path, as far as a change shows in it.
+#[derive(Debug, PartialEq, Eq)]
+enum Stat {
+    Present {
+        dev: u64,
+        ino: u64,
+        kind: fs::FileType,
+        len: u64,
+        /// Seconds and nanoseconds.
+        mtime: (i64, i64),
+        ctime: (i64, i64),
+    },
+    Missing,
+    Error(io::ErrorKind),
+}
+
+/// `file`'s [`Fingerprint`], resolving its chain afresh.
+fn fingerprint(file: &Path) -> Fingerprint {
+    chain(file)
+        .into_iter()
+        .map(|path| {
+            let stat = match fs::symlink_metadata(&path) {
+                Ok(meta) => Stat::Present {
+                    dev: meta.dev(),
+                    ino: meta.ino(),
+                    kind: meta.file_type(),
+                    len: meta.len(),
+                    mtime: (meta.mtime(), meta.mtime_nsec()),
+                    ctime: (meta.ctime(), meta.ctime_nsec()),
+                },
+                Err(error) if error.kind() == io::ErrorKind::NotFound => Stat::Missing,
+                Err(error) => Stat::Error(error.kind()),
+            };
+            (path, stat)
+        })
+        .collect()
 }
 
 /// `path` with its directory canonicalized, if that exists.
