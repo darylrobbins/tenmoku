@@ -12,6 +12,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
+use fe_buffer::Buffer;
 use fe_project::{FileMatches, LineMatch};
 
 use crate::search_panel::{CHECK_BYTES, Cancelled, decode_batch, publish};
@@ -58,11 +59,20 @@ fn line(number: u64, offset: u64, range: Range<usize>, preview: &str, start: usi
     }
 }
 
+/// Plain lines that start each file, enough to put its invalid bytes past
+/// the 64 KiB the loader detects the encoding from, so it reads the files as
+/// UTF-8, lossily, as the batch's offsets assume.
+fn padding() -> (Vec<u8>, u64, u64) {
+    let lines = 64 * 1024 / 4 + 1;
+    (b"pad\n".repeat(lines as usize), lines, 4 * lines)
+}
+
 /// A batch of three files, each line starting with an invalid byte that
 /// decodes to a 3-byte U+FFFD, so decoding moves every match 2 bytes on: two
 /// short lines, one with `LONG` bytes before its match, and one more short
-/// one; and the batch decoded.
+/// one; and the batch decoded. Each file's lines come after the padding.
 fn batch(root: &Path) -> (Vec<FileMatches>, Vec<FileMatches>) {
+    let (pad, n, off) = padding();
     let mut long = b"\xFF".to_vec();
     long.extend(std::iter::repeat_n(b'x', LONG));
     long.extend(b"ab\n");
@@ -71,32 +81,40 @@ fn batch(root: &Path) -> (Vec<FileMatches>, Vec<FileMatches>) {
             "a.txt",
             b"\xFFab\n\xFEcd\n".to_vec(),
             vec![
-                line(1, 0, 1..3, "\u{FFFD}ab", 0),
-                line(2, 4, 1..3, "\u{FFFD}cd", 0),
+                line(n + 1, off, 1..3, "\u{FFFD}ab", 0),
+                line(n + 2, off + 4, 1..3, "\u{FFFD}cd", 0),
             ],
             vec![
-                line(1, 0, 3..5, "\u{FFFD}ab", 0),
-                line(2, 4, 3..5, "\u{FFFD}cd", 0),
+                line(n + 1, off, 3..5, "\u{FFFD}ab", 0),
+                line(n + 2, off + 4, 3..5, "\u{FFFD}cd", 0),
             ],
         ),
         (
             "long.txt",
             long,
-            vec![line(1, 0, 1 + LONG..3 + LONG, "ab", 1 + LONG)],
-            vec![line(1, 0, 3 + LONG..5 + LONG, "ab", 3 + LONG)],
+            vec![line(n + 1, off, 1 + LONG..3 + LONG, "ab", 1 + LONG)],
+            vec![line(n + 1, off, 3 + LONG..5 + LONG, "ab", 3 + LONG)],
         ),
         (
             "b.txt",
             b"\xFFef\n".to_vec(),
-            vec![line(1, 0, 1..3, "\u{FFFD}ef", 0)],
-            vec![line(1, 0, 3..5, "\u{FFFD}ef", 0)],
+            vec![line(n + 1, off, 1..3, "\u{FFFD}ef", 0)],
+            vec![line(n + 1, off, 3..5, "\u{FFFD}ef", 0)],
         ),
     ];
     let mut searched = Vec::new();
     let mut decoded = Vec::new();
-    for (name, bytes, lines, decoded_lines) in files {
+    for (name, tail, lines, decoded_lines) in files {
         let path = root.join(name);
-        fs::write(&path, bytes).unwrap();
+        let bytes = [pad.as_slice(), &tail].concat();
+        fs::write(&path, &bytes).unwrap();
+        assert_eq!(
+            Buffer::from_reader_detecting(bytes.as_slice())
+                .unwrap()
+                .encoding()
+                .label(),
+            "UTF-8"
+        );
         let file = |lines| FileMatches {
             path: path.clone(),
             rel: name.into(),

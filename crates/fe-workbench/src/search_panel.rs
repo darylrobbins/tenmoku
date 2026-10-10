@@ -26,6 +26,7 @@ use std::{
     },
 };
 
+use fe_buffer::FileEncoding;
 use fe_gpui::commands::RunCommand;
 use fe_project::{FileMatches, LineMatch, SearchError, SearchOptions, SearchQuery, SearchSummary};
 use fe_ui::{HighlightedLabel, ROW_HEIGHT, TextInput, TextInputEvent, ToggleButton, UiTheme};
@@ -498,10 +499,15 @@ fn decode_offsets(file: &mut FileMatches, cancelled: &dyn Fn() -> bool) -> Resul
     let Ok(source) = open_regular(&file.path) else {
         return Ok(());
     };
-    let mut bom = [0; 2];
-    if matches!(source.read_at(&mut bom, 0), Ok(2)) && matches!(bom, [0xFF, 0xFE] | [0xFE, 0xFF]) {
+    let Ok(file_encoding) = FileEncoding::detect(&source) else {
+        return Ok(());
+    };
+    let encoding = file_encoding;
+    if matches!(encoding.name(), "UTF-16LE" | "UTF-16BE") {
         return Ok(());
     }
+    let legacy = encoding.encoding != FileEncoding::UTF8.encoding;
+    let bom_len = if file_encoding.bom && !legacy { 3 } else { 0 };
     for line in lines {
         check(cancelled)?;
         let end = line.ranges.iter().map(|range| range.end).max().unwrap_or(0);
@@ -511,7 +517,14 @@ fn decode_offsets(file: &mut FileMatches, cancelled: &dyn Fn() -> bool) -> Resul
         // the end, as no unit is longer than 4.
         let len = end.max(preview_end) + 3;
         if let Ok(bytes) = read_line(&source, line.line_offset, len, cancelled)? {
-            decode_line(&bytes, line, cancelled)?;
+            if legacy {
+                decode_legacy_line(&bytes, line, encoding, cancelled)?;
+            } else {
+                let moved = decode_line(&bytes, line, cancelled)?;
+                if moved && line.line_offset == 0 && bom_len > 0 {
+                    drop_bom(line, bom_len);
+                }
+            }
         }
     }
     Ok(())
@@ -521,6 +534,7 @@ fn decode_offsets(file: &mut FileMatches, cancelled: &dyn Fn() -> bool) -> Resul
 fn may_shift(line: &LineMatch) -> bool {
     let end = line.ranges.iter().map(|range| range.end).max().unwrap_or(0);
     line.preview_start > 0
+        || (line.line_offset == 0 && line.preview.starts_with('\u{FEFF}'))
         || end > line.preview.len()
         || line.preview.contains(char::REPLACEMENT_CHARACTER)
 }
@@ -586,21 +600,21 @@ fn read_line(
 }
 
 /// Moves `line`'s offsets from `bytes`, the start of the line, to their
-/// lossy decoding, if `bytes` from the preview's start decode to its
+/// lossy decoding, and says whether it did, if `bytes` from the preview's start decode to its
 /// preview and hold its matches.
 fn decode_line(
     bytes: &[u8],
     line: &mut LineMatch,
     cancelled: &dyn Fn() -> bool,
-) -> Result<(), Cancelled> {
+) -> Result<bool, Cancelled> {
     let end = line.ranges.iter().map(|range| range.end).max().unwrap_or(0);
     let start = line.preview_start;
     if bytes.len() < end || bytes.len() < start {
-        return Ok(());
+        return Ok(false);
     }
     let window = &bytes[start..bytes.len().min(start + line.preview.len() + 3)];
     if !String::from_utf8_lossy(window).starts_with(&line.preview) {
-        return Ok(());
+        return Ok(false);
     }
     // Each offset, and whether it rounds up: the preview's start both ways,
     // as it must be where a unit starts, then each range's ends.
@@ -612,14 +626,160 @@ fn decode_line(
     );
     let decoded = decode_checked(bytes, &offsets, cancelled)?;
     if decoded[0] != decoded[1] {
-        return Ok(());
+        return Ok(false);
     }
     line.preview_start = decoded[0];
     let (ends, _) = decoded[2..].as_chunks::<2>();
     for (range, &[start, end]) in line.ranges.iter_mut().zip(ends) {
         *range = start..end;
     }
+    Ok(true)
+}
+
+/// Moves a BOM-prefixed file's first line, its offsets already in the lossy
+/// decoding, to the editor's text, which has no BOM: back by its `bom_len`
+/// bytes, and without the U+FEFF in the preview.
+fn drop_bom(line: &mut LineMatch, bom_len: usize) {
+    if line.preview_start == 0 && line.preview.starts_with('\u{FEFF}') {
+        line.preview.remove(0);
+    } else {
+        line.preview_start = line.preview_start.saturating_sub(bom_len);
+    }
+    for range in &mut line.ranges {
+        let start = range.start.saturating_sub(bom_len);
+        let end = range.end.saturating_sub(bom_len);
+        *range = start..end;
+    }
+}
+
+/// [`decode_line`] for a file in a legacy `encoding`: the offsets and the
+/// preview move to the text `encoding` decodes the bytes to, if the bytes
+/// from the preview's start still read as the preview in lossy UTF-8.
+fn decode_legacy_line(
+    bytes: &[u8],
+    line: &mut LineMatch,
+    encoding: FileEncoding,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(), Cancelled> {
+    let end = line.ranges.iter().map(|range| range.end).max().unwrap_or(0);
+    let start = line.preview_start;
+    if bytes.len() < end || bytes.len() < start {
+        return Ok(());
+    }
+    let window = &bytes[start..bytes.len().min(start + line.preview.len() + 3)];
+    if !String::from_utf8_lossy(window).starts_with(&line.preview) {
+        return Ok(());
+    }
+    // The bytes the preview was made of: the lossy units from `start` up to
+    // the preview's length.
+    let mut preview_bytes = 0;
+    let mut decoded_len = 0;
+    for chunk in bytes[start..].utf8_chunks() {
+        for c in chunk.valid().chars() {
+            if decoded_len >= line.preview.len() {
+                break;
+            }
+            preview_bytes += c.len_utf8();
+            decoded_len += c.len_utf8();
+        }
+        if decoded_len < line.preview.len() && !chunk.invalid().is_empty() {
+            preview_bytes += chunk.invalid().len();
+            decoded_len += char::REPLACEMENT_CHARACTER.len_utf8();
+        }
+        if decoded_len >= line.preview.len() {
+            break;
+        }
+    }
+    let mut offsets = vec![(start, false), (start, true)];
+    offsets.extend(
+        line.ranges
+            .iter()
+            .flat_map(|range| [(range.start, false), (range.end, true)]),
+    );
+    let decoded = decode_legacy_checked(bytes, &offsets, encoding, cancelled)?;
+    if decoded[0] != decoded[1] {
+        return Ok(());
+    }
+    let mut preview = String::new();
+    let mut decoder = encoding.encoding.new_decoder_without_bom_handling();
+    let window = &bytes[start..start + preview_bytes];
+    preview.reserve(
+        decoder
+            .max_utf8_buffer_length(window.len())
+            .expect("a line's worth of UTF-8 fits in usize"),
+    );
+    let _ = decoder.decode_to_string(window, &mut preview, true);
+    line.preview = preview;
+    line.preview_start = decoded[0];
+    let (ends, _) = decoded[2..].as_chunks::<2>();
+    for (range, &[start, end]) in line.ranges.iter_mut().zip(ends) {
+        *range = start..end;
+    }
     Ok(())
+}
+
+/// [`decode_checked`] for `encoding`: `offsets` as offsets in the text it
+/// decodes `bytes` to, found by feeding the decoder a byte at a time. An
+/// offset where the last byte fed completed a unit is at a char boundary;
+/// otherwise it's inside one, and goes to its start, or to its end if it
+/// rounds up.
+fn decode_legacy_checked(
+    bytes: &[u8],
+    offsets: &[(usize, bool)],
+    encoding: FileEncoding,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Vec<usize>, Cancelled> {
+    let mut order: Vec<usize> = (0..offsets.len()).collect();
+    order.sort_by_key(|&ix| offsets[ix].0);
+    let mut order = order.into_iter().peekable();
+    let mut decoded = vec![0; offsets.len()];
+    // Offsets that round up from inside a char, waiting for it to end.
+    let mut waiting = Vec::new();
+    let mut decoder = encoding.encoding.new_decoder_without_bom_handling();
+    let mut scratch = String::new();
+    let mut out = 0;
+    let mut at = 0;
+    let mut last_grew = false;
+    loop {
+        while let Some(&ix) = order.peek() {
+            if offsets[ix].0 > at {
+                break;
+            }
+            order.next();
+            decoded[ix] = out;
+            if offsets[ix].1 && at > 0 && !last_grew {
+                waiting.push(ix);
+            }
+        }
+        if at >= bytes.len() || (order.peek().is_none() && waiting.is_empty()) {
+            break;
+        }
+        if at % CHECK_BYTES == 0 {
+            check(cancelled)?;
+        }
+        scratch.clear();
+        scratch.reserve(
+            decoder
+                .max_utf8_buffer_length(1)
+                .expect("one byte's worth of UTF-8 fits in usize"),
+        );
+        let _ = decoder.decode_to_string(&bytes[at..=at], &mut scratch, false);
+        at += 1;
+        out += scratch.len();
+        if !scratch.is_empty() {
+            for ix in waiting.drain(..) {
+                decoded[ix] = out;
+            }
+        }
+        last_grew = !scratch.is_empty();
+    }
+    for ix in waiting {
+        decoded[ix] = out;
+    }
+    for ix in order {
+        decoded[ix] = out;
+    }
+    Ok(decoded)
 }
 
 /// `offsets`, byte offsets in `bytes` and whether each rounds up, as offsets

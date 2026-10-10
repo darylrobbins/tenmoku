@@ -7,6 +7,8 @@ use std::{fs, ops::Range, path::Path};
 use fe_project::{SearchOptions, SearchQuery};
 use gpui::{Entity, Focusable as _, Modifiers, MouseButton, TestAppContext, VisualTestContext};
 
+mod encoding;
+
 use super::open_root;
 use crate::{DockPanel, SearchPanel, Workbench, search_panel::ShownRow};
 

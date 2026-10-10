@@ -106,6 +106,45 @@ impl From<io::Error> for EncodeError {
     }
 }
 
+impl FileEncoding {
+    /// The encoding [`Text::from_reader_detecting`] would read `reader` in,
+    /// found the same way: by its BOM, then the validity of its first 64 KiB
+    /// as UTF-8, then `chardetng`. Reads at most those 64 KiB and a byte.
+    pub fn detect(reader: impl Read) -> io::Result<FileEncoding> {
+        let mut head = Vec::with_capacity(SNIFF_LEN + 1);
+        reader.take(SNIFF_LEN as u64 + 1).read_to_end(&mut head)?;
+        Ok(detect_head(&head).0)
+    }
+}
+
+/// The encoding of a file starting with `head` (up to 64 KiB and a byte past
+/// it, or the whole file if shorter), and the length of its BOM.
+fn detect_head(head: &[u8]) -> (FileEncoding, usize) {
+    let at_eof = head.len() <= SNIFF_LEN;
+    let sniffed = &head[..head.len().min(SNIFF_LEN)];
+    if let Some((encoding, bom_len)) = Encoding::for_bom(head) {
+        (
+            FileEncoding {
+                encoding,
+                bom: true,
+            },
+            bom_len,
+        )
+    } else if starts_with_utf8(sniffed, at_eof) {
+        (FileEncoding::UTF8, 0)
+    } else {
+        let mut detector = chardetng::EncodingDetector::new();
+        detector.feed(sniffed, at_eof);
+        (
+            FileEncoding {
+                encoding: detector.guess(None, false),
+                bom: false,
+            },
+            0,
+        )
+    }
+}
+
 impl Text {
     /// Like [`Text::from_reader`], but detects the file's encoding first:
     ///
@@ -124,25 +163,8 @@ impl Text {
         (&mut reader)
             .take(SNIFF_LEN as u64 + 1)
             .read_to_end(&mut head)?;
-        let at_eof = head.len() <= SNIFF_LEN;
-        let sniffed = &head[..head.len().min(SNIFF_LEN)];
-
-        let file_encoding = if let Some((encoding, bom_len)) = Encoding::for_bom(&head) {
-            head.drain(..bom_len);
-            FileEncoding {
-                encoding,
-                bom: true,
-            }
-        } else if starts_with_utf8(sniffed, at_eof) {
-            FileEncoding::UTF8
-        } else {
-            let mut detector = chardetng::EncodingDetector::new();
-            detector.feed(sniffed, at_eof);
-            FileEncoding {
-                encoding: detector.guess(None, false),
-                bom: false,
-            }
-        };
+        let (file_encoding, bom_len) = detect_head(&head);
+        head.drain(..bom_len);
 
         let mut replaced = false;
         let (text, line_ending) = if file_encoding.encoding == UTF_8 {

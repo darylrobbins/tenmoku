@@ -30,7 +30,7 @@ pub use buffer::{
     Buffer, BufferEvent, EditError, EditKind, Origin, Subscription, TransactionId, UndoError,
 };
 pub use edit::Edit;
-pub use fe_text::{Bias, LineEnding, Point, PointUtf16, Text};
+pub use fe_text::{Bias, FileEncoding, LineEnding, Point, PointUtf16, Text};
 pub use proposed::{
     Conflict, DryRun, HunkId, HunkOutcome, HunkStatus, HunkView, Outcome, ProposalError,
     ProposedChange,
