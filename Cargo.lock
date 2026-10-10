@@ -1950,6 +1950,7 @@ dependencies = [
  "fe-project",
  "fe-syntax",
  "fe-ui",
+ "fe-vim",
  "futures",
  "gpui-pre",
  "gpui-pre-platform",

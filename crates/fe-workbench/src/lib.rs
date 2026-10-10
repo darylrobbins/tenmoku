@@ -11,6 +11,7 @@
 //! and propagates.
 
 mod dock;
+mod find_bar;
 mod language_picker;
 pub mod loader;
 mod lsp;
@@ -132,6 +133,7 @@ pub fn command_catalog() -> Box<dyn CommandCatalog> {
         Box::new(new_registry()),
         Box::new(picker::registry()),
         Box::new(dock::registry()),
+        Box::new(find_bar::registry()),
         Box::new(lsp::registry()),
         Box::new(nav::registry()),
         Box::new(open::registry()),

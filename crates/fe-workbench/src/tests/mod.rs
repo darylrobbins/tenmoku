@@ -3,6 +3,7 @@
 //! Fixtures are `fe_project::fixture` trees in a temporary directory.
 
 mod activity_rail;
+mod find_bar;
 mod launch;
 pub(crate) mod lsp;
 mod lsp_aliases;

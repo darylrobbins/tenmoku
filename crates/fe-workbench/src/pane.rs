@@ -12,7 +12,7 @@ use std::{
 use fe_buffer::{Bias, Buffer, ResolvedSelection};
 use fe_command::Source;
 use fe_editor::EditorModel;
-use fe_gpui::{EditorSettings, EditorTheme, EditorView, SettingsEvent};
+use fe_gpui::{EditorSettings, EditorTheme, EditorView, SettingsEvent, commands::RunCommand};
 use fe_ui::{
     Breadcrumbs, Crumb, CrumbKind, Icon, IconButton, TAB_HEIGHT, TOOLBAR_HEIGHT, TabBar, Tooltip,
     UiTheme, file_icon,
@@ -24,6 +24,7 @@ use gpui::{
 };
 
 use crate::{
+    find_bar::{self, FindBar, FindOp},
     loader,
     nav::Place,
     pane_drag::{self, DraggedTab, DropTarget, DropZone, TabDropped, TabGhost},
@@ -109,6 +110,8 @@ pub struct Pane {
     /// Whether the pane's last tab closed: see [`Pane::take_emptied`].
     emptied: bool,
     toolbar: Toolbar,
+    /// Made by the first `find.show`.
+    find: Option<FindBar>,
     /// The tab bar's buttons' laid-out bounds.
     #[cfg(test)]
     actions: ScrollHandle,
@@ -151,6 +154,7 @@ impl Pane {
             id: cx.entity_id(),
             emptied: false,
             toolbar: Toolbar::default(),
+            find: None,
             #[cfg(test)]
             actions: ScrollHandle::new(),
             #[cfg(test)]
@@ -287,7 +291,7 @@ impl Pane {
         self.push_tab(editor, cx);
         self.active = self.tabs.len() - 1;
         self.error = None;
-        self.note_shown();
+        self.note_shown(cx);
         cx.notify();
     }
 
@@ -327,7 +331,7 @@ impl Pane {
         self.reveal = reveal.map(|reveal| (path.clone(), reveal));
         self.opening = Some(path.clone());
         self.error = None;
-        self.note_shown();
+        self.note_shown(cx);
         window.focus(&self.focus, cx);
         cx.notify();
         if self.reads.contains_key(&path) {
@@ -354,7 +358,7 @@ impl Pane {
     /// [`Pane::file_read`].
     pub fn opening(&mut self, path: PathBuf, cx: &mut Context<Self>) {
         self.opening = Some(path);
-        self.note_shown();
+        self.note_shown(cx);
         cx.notify();
     }
 
@@ -408,7 +412,7 @@ impl Pane {
                 }
             }
         }
-        self.note_shown();
+        self.note_shown(cx);
         cx.notify();
     }
 
@@ -435,12 +439,14 @@ impl Pane {
     }
 
     /// Counts a change to the editor shown in the active tab's place, by
-    /// identity: called after anything that may change it.
-    fn note_shown(&mut self) {
+    /// identity: called after anything that may change it. An open find
+    /// bar follows the change.
+    fn note_shown(&mut self, cx: &mut App) {
         let shown = self.active_editor().map(Entity::entity_id);
         if shown != self.shown {
             self.shown = shown;
             self.shown_serial += 1;
+            self.update_find(|find, editor, cx| find.follow(editor, cx), cx);
         }
     }
 
@@ -464,7 +470,7 @@ impl Pane {
         self.reveal = None;
         self.error = None;
         window.focus(&tab.editor.focus_handle(cx), cx);
-        self.note_shown();
+        self.note_shown(cx);
     }
 
     /// Activates the next tab, or with `back` the previous one, wrapping. A
@@ -521,7 +527,7 @@ impl Pane {
         } else if ix < self.active {
             self.active -= 1;
         }
-        self.note_shown();
+        self.note_shown(cx);
         Some(tab)
     }
 
@@ -926,8 +932,10 @@ impl Render for Pane {
             .flex_col()
             .bg(self.ui.background)
             .child(record(&self.bounds))
+            .on_action(cx.listener(Self::on_run_command))
             .child(self.tab_row(tab_bar, cx))
             .children(self.toolbar_row(cx))
+            .children(self.find_row(cx))
             .child(
                 div()
                     .relative()
@@ -941,8 +949,60 @@ impl Render for Pane {
     }
 }
 
+/// The find bar: see [`crate::find_bar`].
 impl Pane {
-    fn on_drop(&mut self, dragged: &DraggedTab, window: &mut Window, cx: &mut Context<Self>) {
+    /// Runs a `find.*` command; anything else goes on.
+    fn on_run_command(&mut self, run: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
+        match find_bar::op(run, cx) {
+            Some(op) => self.run_find(op, window, cx),
+            None => cx.propagate(),
+        }
+    }
+
+    /// Does `op` in the find bar, made by the first `find.show`: before
+    /// that, nothing else does anything. Closing it focuses the active
+    /// editor.
+    pub(crate) fn run_find(&mut self, op: FindOp, window: &mut Window, cx: &mut Context<Self>) {
+        if op == FindOp::Show && self.find.is_none() {
+            self.find = Some(FindBar::new(&self.ui, cx));
+        }
+        self.update_find(|find, editor, cx| find.run(op, editor, window, cx), cx);
+        if op == FindOp::Close {
+            window.focus(&self.focus_target(cx), cx);
+        }
+        cx.notify();
+    }
+
+    /// Changes the find bar, if there is one, given the active editor.
+    pub(crate) fn update_find(
+        &mut self,
+        update: impl FnOnce(&mut FindBar, Option<&Entity<EditorView>>, &mut App),
+        cx: &mut App,
+    ) {
+        let editor = self.active_editor().cloned();
+        if let Some(find) = &mut self.find {
+            update(find, editor.as_ref(), cx);
+        }
+    }
+
+    fn find_row(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
+        let editor = self.active_editor().cloned();
+        self.find.as_ref()?.render(editor.as_ref(), &self.ui, cx)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn find_bar(&self) -> Option<&FindBar> {
+        self.find.as_ref()
+    }
+}
+
+impl Pane {
+    pub(crate) fn on_drop(
+        &mut self,
+        dragged: &DraggedTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.dropped(dragged, window.mouse_position(), cx);
     }
 }
