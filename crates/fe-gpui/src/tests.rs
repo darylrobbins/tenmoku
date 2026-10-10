@@ -285,6 +285,8 @@ fn bindings_are_all_tested() {
                 .as_ref()
                 .is_some_and(|context| context.to_string() == KEY_CONTEXT)
         })
+        // `find.show` is fe-workbench's, tested there (`find_keys`).
+        .filter(|binding| !binding.command.as_str().starts_with("find."))
         .map(|binding| normalized(&binding.keys.to_string()))
         .collect();
     assert!(

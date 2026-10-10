@@ -4,6 +4,7 @@
 
 mod activity_rail;
 mod find_bar;
+mod find_keys;
 mod launch;
 pub(crate) mod lsp;
 mod lsp_aliases;
