@@ -5,6 +5,7 @@
 mod activity_rail;
 mod launch;
 pub(crate) mod lsp;
+mod lsp_aliases;
 mod lsp_diagnostics;
 mod lsp_hover;
 mod lsp_nav;

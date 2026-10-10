@@ -17,7 +17,10 @@
 //! - **Buffers.** Once a frame, after the draw, every buffer an editor
 //!   shows, with a file under the root and a language, is opened on the
 //!   manager once, however many panes show it, and closed when no view of
-//!   it is left. A buffer that emitted events since the last frame (edits
+//!   it is left. Path aliases of one file (`src/main.rs`, `src/../src/main.rs`)
+//!   are separate buffers but one server document: the first to open owns
+//!   it, the others send nothing, and when the owner closes, a remaining
+//!   buffer opens at the next frame with its own text. A buffer that emitted events since the last frame (edits
 //!   or a save) is nudged ([`LspManager::changed`]), at most once a frame,
 //!   so its changes go out without waiting for fe-lsp's backstop.
 //! - **Events.** The manager's sink sends them with
@@ -274,6 +277,10 @@ pub(crate) struct Lsp {
     sender: async_channel::Sender<(u64, LspEvent)>,
     events: async_channel::Receiver<(u64, LspEvent)>,
     documents: HashMap<BufferId, Document>,
+    /// The buffer holding each resolved path's document, kept in step with
+    /// `documents`: path aliases of a file are separate buffers, but the
+    /// server has one document for it.
+    owners: HashMap<PathBuf, BufferId>,
     /// Each server's name and latest status.
     servers: HashMap<ServerId, (String, ServerStatus)>,
     /// Each server's latest `window/showMessage`, shown in place of its
@@ -307,6 +314,8 @@ pub(crate) struct Lsp {
 
 /// A buffer opened on the manager.
 struct Document {
+    /// Its file, resolved.
+    path: PathBuf,
     /// fe-syntax's name for it.
     language: &'static str,
     /// The server it went to, kept after the server stops.
@@ -326,6 +335,7 @@ impl Lsp {
             sender,
             events,
             documents: HashMap::new(),
+            owners: HashMap::new(),
             servers: HashMap::new(),
             messages: HashMap::new(),
             settings: LspSettings::default(),
@@ -423,6 +433,7 @@ impl Workbench {
         }
         let lsp = &mut self.lsp;
         lsp.documents.clear();
+        lsp.owners.clear();
         lsp.servers.clear();
         lsp.messages.clear();
         lsp.generation += 1;
@@ -551,6 +562,8 @@ impl Workbench {
         };
         let mut manager = lock(&manager);
         let documents = &mut lsp.documents;
+        let owners = &mut lsp.owners;
+        let mut released = Vec::new();
         let watch = &lsp.watch;
         let mut shown = HashSet::new();
         let mut to_resolve = Vec::new();
@@ -577,7 +590,10 @@ impl Workbench {
                 (None, None) => continue,
                 _ => {}
             }
-            documents.remove(&buffer);
+            if let Some(document) = documents.remove(&buffer) {
+                owners.remove(&document.path);
+                released.push(document.path);
+            }
             manager.close(buffer);
             let Some(language) = language else {
                 continue;
@@ -590,6 +606,11 @@ impl Workbench {
                 continue;
             };
             let path = path.clone();
+            // The server has one document per path: a buffer that is an
+            // alias of an owned file waits for its owner to close.
+            if owners.contains_key(&path) {
+                continue;
+            }
             let (synced, moved, text, version) = editor.update(cx, |view, _| {
                 let mut buffer = view.model_mut().buffer_mut();
                 let synced = buffer.subscribe();
@@ -608,20 +629,32 @@ impl Workbench {
             if let (Some(server), Some(watch)) = (server, watch) {
                 watch.started(server);
             }
+            owners.insert(path.clone(), buffer);
             documents.insert(
                 buffer,
                 Document {
+                    path,
                     language,
                     server,
                     moved,
                 },
             );
         }
-        documents.retain(|&buffer, _| {
+        documents.retain(|&buffer, document| {
             shown.contains(&buffer) || {
                 manager.close(buffer);
+                owners.remove(&document.path);
+                released.push(document.path.clone());
                 false
             }
+        });
+        // A path freed while another shown buffer resolves to it: that
+        // buffer is opened at the next frame.
+        let handed_over = released.iter().any(|path| {
+            !owners.contains_key(path)
+                && lsp.resolved.iter().any(|(buffer, resolved)| {
+                    shown.contains(buffer) && resolved.as_ref() == Some(path)
+                })
         });
         lsp.resolved.retain(|buffer, _| shown.contains(buffer));
         for (buffer, path) in to_resolve {
@@ -645,6 +678,9 @@ impl Workbench {
             if let Some(server) = manager.server_of(buffer) {
                 document.server = Some(server);
             }
+        }
+        if handed_over {
+            cx.notify();
         }
         self.show_lsp_status(cx);
     }
