@@ -369,3 +369,15 @@ fn cancel_and_open_file(cx: &mut TestAppContext) {
     assert_eq!(tabs(&workbench, cx).0.len(), 2);
     assert!(changed.borrow().is_empty());
 }
+
+#[test]
+fn a_failed_open_panel_says_why() {
+    let (message, detail) = crate::workbench::open_panel_failed("Portal request failed");
+    assert_eq!(message, "The open panel isn't available");
+    assert!(detail.starts_with("Portal request failed"), "{detail}");
+    assert_eq!(
+        detail.contains("xdg-desktop-portal-gtk"),
+        cfg!(target_os = "linux"),
+        "{detail}"
+    );
+}

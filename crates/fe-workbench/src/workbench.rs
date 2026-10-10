@@ -12,8 +12,9 @@ use fe_gpui::{EditorSettings, EditorTheme, EditorView, SettingsEvent, commands::
 use fe_ui::{ROW_HEIGHT, UiTheme};
 use gpui::{
     App, AppContext as _, Context, DismissEvent, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Render, StyleRefinement,
-    Styled as _, Subscription, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
+    Focusable, InteractiveElement as _, IntoElement, ParentElement as _, PromptButton, PromptLevel,
+    Render, StyleRefinement, Styled as _, Subscription, WeakEntity, Window, div,
+    prelude::FluentBuilder as _, px,
 };
 
 use crate::{
@@ -434,8 +435,9 @@ impl Workbench {
     /// Shows the open panel for `op`, then opens what's picked: a folder
     /// re-roots the workbench, and a file opens in the active pane as a
     /// tree click does, the root staying. Cancelling does nothing, and an
-    /// error from the panel is logged. Asked again while the panel shows,
-    /// it does nothing.
+    /// error from the panel is logged and shown in a prompt
+    /// ([`open_panel_failed`]). Asked again while the panel shows, it does
+    /// nothing.
     fn prompt_open(&mut self, op: OpenOp, window: &mut Window, cx: &mut Context<Self>) {
         if op == OpenOp::Settings {
             return self.open_settings(window, cx);
@@ -446,11 +448,13 @@ impl Workbench {
         self.prompting = true;
         let answer = cx.prompt_for_paths(op.prompt());
         cx.spawn_in(window, async move |workbench, cx| {
+            let mut failed = None;
             let path = match answer.await {
                 Ok(Ok(Some(paths))) => paths.into_iter().next(),
                 Ok(Ok(None)) => None,
                 Ok(Err(error)) => {
                     log::warn!("the open panel failed: {error}");
+                    failed = Some(error.to_string());
                     None
                 }
                 Err(_) => {
@@ -461,6 +465,17 @@ impl Workbench {
             workbench
                 .update_in(cx, |workbench, window, cx| {
                     workbench.prompting = false;
+                    if let Some(error) = failed {
+                        let (message, detail) = open_panel_failed(&error);
+                        // Answered by its one button; nothing waits on it.
+                        drop(window.prompt(
+                            PromptLevel::Critical,
+                            message,
+                            Some(&detail),
+                            &[PromptButton::ok("OK")],
+                            cx,
+                        ));
+                    }
                     match (op, path) {
                         (_, None) | (OpenOp::Settings, Some(_)) => {}
                         (OpenOp::Folder, Some(path)) => workbench.set_root(path, window, cx),
@@ -1272,4 +1287,17 @@ impl Render for Workbench {
                 None => root,
             })
     }
+}
+
+/// The prompt shown when the open panel fails with `error`: on Linux the
+/// panel is xdg-desktop-portal's, so the detail says what to install.
+pub(crate) fn open_panel_failed(error: &str) -> (&'static str, String) {
+    let mut detail = error.to_owned();
+    if cfg!(target_os = "linux") {
+        detail.push_str(
+            "\n\nThe open panel comes from xdg-desktop-portal: install it with a \
+             backend for your desktop, such as xdg-desktop-portal-gtk.",
+        );
+    }
+    ("The open panel isn't available", detail)
 }
