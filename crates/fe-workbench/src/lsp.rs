@@ -9,10 +9,11 @@
 //!   trusted ([`Workbench::root_trusted`]). A new root gets a new manager;
 //!   the old one's servers shut down.
 //! - **Paths.** The root and each file go to the manager resolved
-//!   ([`fs::canonicalize`], off the main thread: a file by its folder, so a
-//!   new file works too), so a launch through `..`, which fe-lsp refuses,
-//!   or a symlink still syncs, and a file is under the root only if it
-//!   really is.
+//!   ([`fs::canonicalize`], off the main thread: a file fully, so its own
+//!   symlink is followed; only a file that doesn't exist yet is resolved
+//!   by its folder, so a new file works too), so a launch through `..`,
+//!   which fe-lsp refuses, or a symlink still syncs, and a file is under
+//!   the root only if it really is.
 //! - **Buffers.** Once a frame, after the draw, every buffer an editor
 //!   shows, with a file under the root and a language, is opened on the
 //!   manager once, however many panes show it, and closed when no view of
@@ -889,12 +890,19 @@ fn diagnostic(item: fe_lsp::Diagnostic) -> (std::ops::Range<usize>, Diagnostic) 
     (item.range, diagnostic)
 }
 
-/// `path` with its folder resolved, so through no `..` or symlinked
-/// folder; `None` if its folder can't be, or it names no file.
+/// `path` fully resolved, so through no `..` or symlink, its own
+/// included; `None` if it can't be (a dangling symlink too). A file that
+/// doesn't exist yet is resolved by its folder.
 fn resolve(path: &Path) -> Option<PathBuf> {
-    let name = path.file_name()?;
-    let folder = fs::canonicalize(path.parent()?).ok()?;
-    Some(folder.join(name))
+    match fs::symlink_metadata(path) {
+        Ok(_) => fs::canonicalize(path).ok(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let name = path.file_name()?;
+            let folder = fs::canonicalize(path.parent()?).ok()?;
+            Some(folder.join(name))
+        }
+        Err(_) => None,
+    }
 }
 
 /// What an LSP command asks for.
