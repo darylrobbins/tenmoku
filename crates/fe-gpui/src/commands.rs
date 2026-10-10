@@ -19,8 +19,8 @@ use crate::{EditorView, completion_menu, view::synced_syntax, vim};
 
 // The app's command plumbing is kiln's (docs/decisions/app-framework.md);
 // fastedit keeps its paths to it.
+pub(crate) use kiln_platform::commands::notify_observers;
 pub use kiln_platform::commands::{AppCommands, RunCommand, observe_invocations};
-pub(crate) use kiln_platform::commands::{dispatch_app, notify_observers};
 
 /// The name app commands are titled with (`Hide fastedit`).
 const APP_NAME: &str = "fastedit";

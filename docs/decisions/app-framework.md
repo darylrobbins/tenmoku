@@ -65,7 +65,10 @@ the same commands, config and keymaps.
   diagnostics, `.` and `==` in predicates, click bindings and headless
   per-platform tests. Bindings look like GPUI's (`KeyBinding::new
   ("secondary-s", Save, None)`), contexts come from `.key_context(..)`, and
-  keys kiln doesn't match fall through to GPUI's keymap.
+  keys kiln doesn't match fall through to GPUI's keymap. That keymap holds
+  only what kiln doesn't match: the menus' display-only bindings, which
+  kiln replaces on each keymap swap, and a widget's own GPUI bindings (such
+  as `TextField`'s), which it leaves alone.
 - **One keymap and one menu table per app.** `secondary-` is cmd on macOS
   and ctrl elsewhere; a binding can name keys per platform
   (`keys = { macos = "alt-left", default = "ctrl-left" }`) or be limited to
@@ -86,7 +89,11 @@ the same commands, config and keymaps.
   tests stay unedited.
 - No command ID or key context is renamed: fastedit keeps `workbench.*` and
   the `workbench` context, which the shell takes as a parameter. A renamed
-  context would silently stop matching users' keymap rows.
+  context would silently stop matching users' keymap rows. The one rename
+  is internal: the menus' display-only GPUI binding context and action,
+  `fastedit_menu` and `fastedit::MenuCommand`, become `kiln_menu` and
+  `kiln::MenuCommand`. No element sets that context and no user keymap can
+  name it, since users' rows go to kiln's matcher, not GPUI's.
 
 ## 5. Milestones
 
