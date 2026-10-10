@@ -1,19 +1,23 @@
-//! Workspace trust (docs/decisions/lsp-client.md Q7): which folders the
-//! user trusts to start language servers in, which can run a project's
-//! code. Kept in user state (`<state_dir>/trust.toml`, see
-//! [`paths::trust_path`](crate::paths::trust_path)), never in a project.
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
+//! Workspace trust: which folders the user trusts with something that can
+//! run a project's code, such as a language server or a build. Kept in user
+//! state (`<state>/trust.toml`, see
+//! [`AppPaths::trust_file`](crate::paths::AppPaths::trust_file)), never in a
+//! project.
 //!
 //! Decisions are made per canonical folder and inherited: a folder's trust
 //! is that of the nearest of it and its ancestors with a decision. A file
-//! that can't be read, or isn't what fastedit writes, loads as empty, so
+//! that can't be read, or isn't one this store writes, loads as empty, so
 //! every folder is undecided, and is never overwritten.
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Write as _};
-use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+
+use crate::platform::fs::{create_private_dir, private};
 
 /// Whether a folder is trusted to start language servers in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,10 +30,9 @@ pub enum Trust {
 
 /// The first lines of the file, above its `[folders]` table.
 const HEADER: &str = "\
-# fastedit writes this file: the folders you trusted (true) or didn't
-# (false) to start language servers in. Subfolders follow the nearest
-# folder listed. Use File > Trust This Folder or Untrust This Folder to
-# change one.
+# This file records the folders you trusted (true) or didn't (false) to
+# run their code. Subfolders follow the nearest folder listed. The app's
+# Trust This Folder and Untrust This Folder commands change one.
 
 ";
 
@@ -60,7 +63,7 @@ impl TrustStore {
         let folders = match fs::read_to_string(&path) {
             Ok(text) => parse(&text).or_else(|| {
                 log::error!(
-                    "{} isn't a trust file fastedit wrote: every folder is untrusted \
+                    "{} isn't a trust file: every folder is untrusted \
                      until it's fixed or removed",
                     path.display()
                 );
@@ -86,7 +89,7 @@ impl TrustStore {
     /// lock on `<path>.lock` (created, mode 0600, beside the file and never
     /// removed), [`load`](Self::load)s the file as it is now, runs `apply`
     /// on it, and [`save`](Self::save)s, holding the lock throughout. Two
-    /// updates, in this process or another fastedit, never interleave, so
+    /// updates, in this process or another, never interleave, so
     /// neither writes over the other's decision with a stale snapshot.
     /// Blocks while another holds the lock.
     ///
@@ -98,13 +101,14 @@ impl TrustStore {
         lock_name.push(".lock");
         let lock_path = path.with_file_name(lock_name);
         create_dir(lock_path.parent().unwrap_or(Path::new(".")))?;
-        let lock = fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .mode(0o600)
-            .open(&lock_path)?;
+        let lock = private(
+            fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false),
+        )
+        .open(&lock_path)?;
         lock.lock()?;
         let mut store = Self::load(path);
         apply(&mut store);
@@ -168,7 +172,7 @@ impl TrustStore {
         };
         if self.bad {
             return Err(io::Error::other(format!(
-                "{} isn't a trust file fastedit wrote, so it's left as it is",
+                "{} isn't a trust file, so it's left as it is",
                 path.display()
             )));
         }
@@ -228,11 +232,8 @@ fn write(path: &Path, contents: &[u8]) -> io::Result<()> {
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
     let written = (|| {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&temporary)?;
+        let mut file =
+            private(fs::OpenOptions::new().write(true).create_new(true)).open(&temporary)?;
         file.write_all(contents)?;
         file.sync_all()?;
         fs::rename(&temporary, path)
@@ -250,8 +251,5 @@ fn create_dir(dir: &Path) -> io::Result<()> {
     } else {
         dir
     };
-    fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(dir)
+    create_private_dir(dir)
 }

@@ -1,10 +1,11 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 //! Watching config files for changes.
 
 use std::{
     collections::HashSet,
     convert::Infallible,
     fs, io,
-    os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, PoisonError, mpsc},
     thread,
@@ -12,6 +13,8 @@ use std::{
 };
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+
+use crate::platform::fs::FileStamp;
 
 /// Watches config files and hands the ones that changed to a sink, on its
 /// own thread. Each file's parent directory is watched, not recursively, so
@@ -365,13 +368,8 @@ type Fingerprint = Vec<(PathBuf, Stat)>;
 #[derive(Debug, PartialEq, Eq)]
 enum Stat {
     Present {
-        dev: u64,
-        ino: u64,
         kind: fs::FileType,
-        len: u64,
-        /// Seconds and nanoseconds.
-        mtime: (i64, i64),
-        ctime: (i64, i64),
+        stamp: FileStamp,
     },
     Missing,
     Error(io::ErrorKind),
@@ -384,12 +382,8 @@ fn fingerprint(file: &Path) -> Fingerprint {
         .map(|path| {
             let stat = match fs::symlink_metadata(&path) {
                 Ok(meta) => Stat::Present {
-                    dev: meta.dev(),
-                    ino: meta.ino(),
                     kind: meta.file_type(),
-                    len: meta.len(),
-                    mtime: (meta.mtime(), meta.mtime_nsec()),
-                    ctime: (meta.ctime(), meta.ctime_nsec()),
+                    stamp: FileStamp::of(&meta),
                 },
                 Err(error) if error.kind() == io::ErrorKind::NotFound => Stat::Missing,
                 Err(error) => Stat::Error(error.kind()),

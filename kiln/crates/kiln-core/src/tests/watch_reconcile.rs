@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 //! Changes no event reports are picked up by re-statting the files. FSEvents'
 //! silent losses can't be made on demand, so these tests make a change that
 //! gets no event at all: creating a directory the watcher couldn't watch, or
@@ -19,7 +21,7 @@ use std::{
 
 use notify::{Event, EventKind, event::ModifyKind};
 
-use crate::{ConfigWatcher, SettingsStore};
+use crate::ConfigWatcher;
 
 thread_local! {
     /// What [`ConfigWatcher::new`] reads instead of notify's events, when
@@ -34,12 +36,17 @@ const TIMEOUT: Duration = Duration::from_secs(30);
 /// Twice the re-stat period, and a little more.
 const QUIET: Duration = Duration::from_secs(7);
 
+/// What a settings store reloading `batch` would see: whether it names
+/// `path` and `path` now holds `text`.
+fn reloads(batch: &[PathBuf], path: &PathBuf, text: &str) -> bool {
+    batch.contains(path) && fs::read_to_string(path).is_ok_and(|now| now == text)
+}
+
 #[test]
 fn a_file_in_a_directory_made_later_is_reported() {
     let dir = tempfile::tempdir().unwrap();
     let missing = dir.path().join("missing");
     let path = missing.join("settings.toml");
-    let mut store = SettingsStore::load(Some(path.clone()), None);
     let (tx, batches) = mpsc::channel();
     let _watcher = ConfigWatcher::new(vec![path.clone()], move |batch| {
         tx.send(batch).ok();
@@ -57,13 +64,14 @@ fn a_file_in_a_directory_made_later_is_reported() {
     // A re-stat may see the directory before the file is written, and report
     // it then too.
     let deadline = Instant::now() + TIMEOUT;
-    while store.settings().editor.font_size != 18. {
+    let mut reloaded = false;
+    while !reloaded {
         let remaining = deadline.saturating_duration_since(Instant::now());
         let batch = batches
             .recv_timeout(remaining)
             .expect("a batch naming the file in a directory made after the watcher started");
         assert_eq!(batch, std::slice::from_ref(&path));
-        store.reload(&batch);
+        reloaded = reloads(&batch, &path, "editor.font_size = 18\n");
     }
 }
 
@@ -75,7 +83,6 @@ fn a_change_amid_unrelated_events_is_reported() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("settings.toml");
     fs::write(&path, "editor.font_size = 13\n").unwrap();
-    let mut store = SettingsStore::load(Some(path.clone()), None);
     let (events, rx) = mpsc::channel();
     SOURCE.set(Some(rx));
     let noise = Noise::start(events, dir.path().join("unrelated"));
@@ -92,13 +99,14 @@ fn a_change_amid_unrelated_events_is_reported() {
 
     fs::write(&path, "editor.font_size = 18\n").unwrap();
     let deadline = Instant::now() + TIMEOUT;
-    while store.settings().editor.font_size != 18. {
+    let mut reloaded = false;
+    while !reloaded {
         let remaining = deadline.saturating_duration_since(Instant::now());
         let batch = batches
             .recv_timeout(remaining)
             .expect("a batch naming the file changed amid unrelated events");
         assert_eq!(batch, std::slice::from_ref(&path));
-        store.reload(&batch);
+        reloaded = reloads(&batch, &path, "editor.font_size = 18\n");
     }
 }
 

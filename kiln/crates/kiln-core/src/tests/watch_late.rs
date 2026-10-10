@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 //! A late event for the user's chain, after the first batch, must not hide
 //! the project's edit.
 

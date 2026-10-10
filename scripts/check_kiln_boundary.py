@@ -23,7 +23,7 @@ KILN = "kiln"
 # The only places that may branch on the operating system.
 OS_DIRS = ("kiln/crates/kiln-core/src/platform", "kiln/crates/kiln-platform/src")
 SPDX = re.compile(r"^// SPDX-License-Identifier: \S+")
-OS_CFG = re.compile(r"cfg!?\([^)]*target_os")
+OS_CFG = re.compile(r"cfg!?\([^)]*\b(?:target_os|target_family|unix|windows)\b")
 INCLUDE = re.compile(r'(?:#\[path\s*=\s*|include_(?:str|bytes)!\(\s*)"([^"]+)"')
 FASTEDIT = re.compile(r"fastedit|\bfe[-_][a-z]", re.IGNORECASE)
 LICENSE = re.compile(r'^license\s*=\s*"([^"]+)"', re.MULTILINE)
@@ -44,7 +44,9 @@ def check_files(root: Path) -> list[str]:
         for number, line in enumerate(text.splitlines(), 1):
             if FASTEDIT.search(line):
                 errors.append(f"{rel}:{number}: names fastedit: {line.strip()}")
-            if OS_CFG.search(line) and not rel.startswith(OS_DIRS):
+            # Tests may use one platform's file system to set up a case.
+            in_tests = "/tests/" in rel
+            if OS_CFG.search(line) and not rel.startswith(OS_DIRS) and not in_tests:
                 errors.append(f"{rel}:{number}: branches on the OS outside {', '.join(OS_DIRS)}")
             for target in INCLUDE.findall(line):
                 resolved = (path.parent / target).resolve()
@@ -120,6 +122,8 @@ def self_test() -> int:
             "names it": (header + "// see fastedit\n", "names fastedit"),
             "names a crate": (header + "use fe_gpui::x;\n", "names fastedit"),
             "branches on the OS": (header + "#[cfg(target_os = \"linux\")]\nfn f() {}\n", "branches on the OS"),
+            "branches on unix": (header + "#[cfg(unix)]\nfn f() {}\n", "branches on the OS"),
+            "asks cfg! for windows": (header + "const W: bool = cfg!(windows);\n", "branches on the OS"),
             "includes outside": (header + 'const X: &str = include_str!("../../../../crates/a.txt");\n', "outside kiln/"),
             "path outside": (header + '#[path = "../../../../crates/m.rs"]\nmod m;\n', "outside kiln/"),
         }

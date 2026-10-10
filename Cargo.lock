@@ -1773,6 +1773,7 @@ dependencies = [
 name = "fe-config"
 version = "0.1.0"
 dependencies = [
+ "kiln-core",
  "libc",
  "log",
  "notify",
@@ -3526,6 +3527,16 @@ dependencies = [
 [[package]]
 name = "kiln-core"
 version = "0.1.0"
+dependencies = [
+ "libc",
+ "log",
+ "notify",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml 1.1.6+spec-1.1.0",
+ "toml_edit 0.25.15+spec-1.1.0",
+]
 
 [[package]]
 name = "kiln-platform"

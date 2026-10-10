@@ -1,18 +1,30 @@
-//! Where config files live.
+//! Where fastedit's config files live: kiln-core's [`AppPaths`] for the
+//! `fastedit` app, in the XDG layout on every platform, so they stay where
+//! they've always been (`~/.config/fastedit`, `~/.local/state/fastedit`).
 
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
 };
 
-/// The settings file's name, in the user and project config directories.
-pub const SETTINGS_FILE: &str = "settings.toml";
+use kiln_core::{AppId, AppPaths, Os, PathStyle};
 
-/// The themes directory's name, in the user config directory.
-pub const THEMES_DIR: &str = "themes";
+pub use kiln_core::paths::{SETTINGS_FILE, THEMES_DIR, TRUST_FILE};
 
-/// The workspace trust file's name, in the state directory.
-pub const TRUST_FILE: &str = "trust.toml";
+/// fastedit, as kiln knows it.
+pub fn app_id() -> AppId {
+    AppId::new("dev.fastedit.fastedit", "fastedit", "fastedit")
+}
+
+/// fastedit's directories, reading variables through `env`.
+pub fn app_paths_from(env: impl Fn(&str) -> Option<OsString>) -> AppPaths {
+    AppPaths::resolve(&app_id(), PathStyle::Xdg, Os::current(), env)
+}
+
+/// fastedit's directories, from the process environment.
+pub fn app_paths() -> AppPaths {
+    app_paths_from(|name| std::env::var_os(name))
+}
 
 /// The user config directory, from the process environment: see
 /// [`config_dir_from`]. `None` with none of its variables set.
@@ -29,23 +41,12 @@ pub fn config_dir() -> Option<PathBuf> {
 /// Empty variables count as unset, and so does a relative
 /// `$XDG_CONFIG_HOME`, as the XDG spec says.
 pub fn config_dir_from(env: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
-    let var = |name: &str| {
-        env(name)
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-    };
-    if let Some(dir) = var("FASTEDIT_CONFIG_DIR") {
-        return Some(dir);
-    }
-    if let Some(dir) = var("XDG_CONFIG_HOME").filter(|dir| dir.is_absolute()) {
-        return Some(dir.join("fastedit"));
-    }
-    var("HOME").map(|home| home.join(".config").join("fastedit"))
+    app_paths_from(env).config_dir().map(Path::to_owned)
 }
 
 /// `<config_dir>/settings.toml`.
 pub fn user_settings_path() -> Option<PathBuf> {
-    config_dir().map(|dir| dir.join(SETTINGS_FILE))
+    app_paths().settings_file()
 }
 
 /// `<config_dir>/themes`, from the process environment: see
@@ -57,12 +58,12 @@ pub fn themes_dir() -> Option<PathBuf> {
 /// `<config_dir>/themes`, reading variables through `env` as
 /// [`config_dir_from`] does.
 pub fn themes_dir_from(env: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
-    config_dir_from(env).map(|dir| dir.join(THEMES_DIR))
+    app_paths_from(env).themes_dir()
 }
 
 /// `<root>/.fastedit/settings.toml`.
 pub fn project_settings_path(root: &Path) -> PathBuf {
-    root.join(".fastedit").join(SETTINGS_FILE)
+    app_paths().project_settings_file(root)
 }
 
 /// The user state directory, from the process environment: see
@@ -81,21 +82,10 @@ pub fn state_dir() -> Option<PathBuf> {
 /// Empty variables count as unset, and so does a relative
 /// `$XDG_STATE_HOME`, as the XDG spec says.
 pub fn state_dir_from(env: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
-    let var = |name: &str| {
-        env(name)
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-    };
-    if let Some(dir) = var("FASTEDIT_STATE_DIR") {
-        return Some(dir);
-    }
-    if let Some(dir) = var("XDG_STATE_HOME").filter(|dir| dir.is_absolute()) {
-        return Some(dir.join("fastedit"));
-    }
-    var("HOME").map(|home| home.join(".local").join("state").join("fastedit"))
+    app_paths_from(env).state_dir().map(Path::to_owned)
 }
 
 /// `<state_dir>/trust.toml`: see [`crate::trust`].
 pub fn trust_path() -> Option<PathBuf> {
-    state_dir().map(|dir| dir.join(TRUST_FILE))
+    app_paths().trust_file()
 }

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 //! Loading one TOML file as a config layer, checking it against a JSON
 //! schema, and merging layers. Nothing here knows about settings, so the
 //! keymap can load the same way.
@@ -100,11 +102,7 @@ const MAX_BYTES: u64 = 1 << 20;
 /// untrusted. It's opened without blocking, as opening a FIFO would block,
 /// and checked once open, so nothing can be swapped in between.
 fn read(path: &Path) -> io::Result<Option<String>> {
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NONBLOCK);
-    let file = match options.open(path) {
+    let file = match crate::platform::fs::open_for_reading(path) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),

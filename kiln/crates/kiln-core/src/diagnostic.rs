@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 //! Problems found in a config file, with where they are.
 
 use std::{

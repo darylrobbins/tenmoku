@@ -1,4 +1,5 @@
-//! Layered TOML configuration: built-in defaults, then the user's
+//! fastedit's configuration, on kiln-core's config machinery: built-in
+//! defaults, then the user's
 //! `settings.toml`, then the project's, each checked against a JSON schema,
 //! with diagnostics that point at the offending token and a watcher for hot
 //! reload. Must not depend on GPUI.
@@ -9,15 +10,15 @@
 //! reads the colour themes, and [`ThemeStore`] holds the selected one
 //! across reloads.
 
-pub mod diagnostic;
-pub mod layers;
 pub mod paths;
 pub mod settings;
 pub mod theme;
 pub mod theme_store;
-pub mod trust;
-pub mod watch;
 pub mod write;
+
+// The generic config machinery is kiln's (docs/decisions/app-framework.md);
+// fastedit keeps its paths to it.
+pub use kiln_core::{diagnostic, layers, trust, watch};
 
 pub use diagnostic::{Diagnostic, Severity};
 pub use layers::{Layer, load_layer, merge, parse_layer};

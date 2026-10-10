@@ -10,6 +10,19 @@ license = "LicenseRef-Proprietary"
 publish = false
 
 [dependencies]
+log.workspace = true
+notify.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+toml_edit.workspace = true
+
+# O_NONBLOCK, for opening untrusted files (src/platform/fs.rs).
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true
