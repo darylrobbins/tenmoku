@@ -28,6 +28,7 @@ mod scroll_area;
 mod split_pane;
 mod status_bar;
 mod tab_bar;
+mod tabs;
 pub mod text_field;
 mod text_input;
 mod theme;
@@ -52,6 +53,7 @@ pub use scroll_area::{SCROLLBAR_WIDTH, ScrollArea};
 pub use split_pane::{SplitPane, SplitPaneEvent};
 pub use status_bar::{StatusBarFrame, StatusEntry};
 pub use tab_bar::{TAB_HEIGHT, Tab, TabBar};
+pub use tabs::{Tabs, TabsEvent};
 pub use text_field::{TextField, TextFieldEvent};
 pub use text_input::{TextInput, TextInputEvent};
 pub use theme::{

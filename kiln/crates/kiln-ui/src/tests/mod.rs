@@ -7,6 +7,7 @@ mod file_icons;
 mod layout;
 mod list;
 mod prompt;
+mod tabs;
 mod text_field;
 mod theme_tokens;
 mod tree;
