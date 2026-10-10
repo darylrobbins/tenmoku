@@ -14,30 +14,28 @@ mod pages;
 mod setup;
 
 use gpui::{App, AppContext as _, Focusable as _};
-use kiln::platform::{Capabilities, WindowSpec, window_options};
+use kiln::{WindowSpec, prelude::*};
 
 use crate::app::Gallery;
 
 fn main() {
-    gpui_platform::application()
-        .with_assets(kiln::ui::Assets)
-        .run(|cx: &mut App| {
-            setup::init(cx);
-            cx.on_window_closed(|cx, _| {
-                if cx.windows().is_empty() {
-                    cx.quit();
-                }
-            })
-            .detach();
-            let capabilities = Capabilities::current();
-            let spec = WindowSpec::main(setup::APP_NAME).app_id("dev.kiln.Gallery");
-            cx.open_window(window_options(&spec, &capabilities, cx), |window, cx| {
-                let gallery = cx.new(|cx| Gallery::new(window, cx));
-                let focus = gallery.focus_handle(cx);
-                window.focus(&focus, cx);
-                gallery
-            })
-            .expect("the gallery's window opens");
-            cx.activate(true);
-        });
+    kiln::application().run(|cx: &mut App| {
+        kiln::init(cx, setup::config());
+        cx.on_window_closed(|cx, _| {
+            if cx.windows().is_empty() {
+                cx.quit();
+            }
+        })
+        .detach();
+        let spec = WindowSpec::main(setup::APP_NAME);
+        cx.open_window(kiln::window_options(&spec, cx), |window, cx| {
+            window.follow_system_appearance(cx);
+            let gallery = cx.new(|cx| Gallery::new(window, cx));
+            let focus = gallery.focus_handle(cx);
+            window.focus(&focus, cx);
+            gallery
+        })
+        .expect("the gallery's window opens");
+        cx.activate(true);
+    });
 }

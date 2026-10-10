@@ -4,18 +4,16 @@
 //! pages beside the page shown, split by a SplitPane, and a status bar.
 
 use gpui::{
-    Action as _, AnyElement, AnyView, App, AppContext as _, ClickEvent, Context, Div, Entity,
-    FocusHandle, Focusable, InteractiveElement as _, IntoElement, ParentElement as _, PromptLevel,
-    Render, Styled as _, Subscription, Window, div, px,
+    AnyElement, AnyView, App, AppContext as _, ClickEvent, Context, Div, Entity, FocusHandle,
+    Focusable, InteractiveElement as _, IntoElement, ParentElement as _, PromptLevel, Render,
+    Styled as _, Subscription, Window, div, px,
 };
 use kiln::{
-    core::shortcut_label,
-    platform::{command_actions::command_id, keys},
+    command::CommandId,
     prelude::*,
     ui::{
-        Button, GlobalTheme, List, ListDelegate, ListEvent, RowState, SplitPane, StatusBarFrame,
-        StatusEntry, Theme, ThemeMode, h_flex, observe_system_appearance, set_themes, ui_theme,
-        v_flex,
+        Button, ButtonVariant, GlobalTheme, List, ListDelegate, ListEvent, RowState, SplitPane,
+        StatusBarFrame, StatusEntry, ThemeMode, h_flex, ui_theme, v_flex,
     },
 };
 
@@ -72,19 +70,15 @@ impl Gallery {
                 .with_ratio(0.18)
                 .with_min_sizes(px(150.), px(400.))
         });
-        let subscriptions = vec![
-            cx.subscribe_in(
-                &sidebar,
-                window,
-                |gallery, _, event, window, cx| match *event {
-                    ListEvent::Selected(ix) | ListEvent::Confirmed(ix) => {
-                        gallery.show(Page::ALL[ix], window, cx)
-                    }
-                },
-            ),
-            // The System mode follows the window's appearance.
-            observe_system_appearance(window),
-        ];
+        let subscriptions = vec![cx.subscribe_in(
+            &sidebar,
+            window,
+            |gallery, _, event, window, cx| match *event {
+                ListEvent::Selected(ix) | ListEvent::Confirmed(ix) => {
+                    gallery.show(Page::ALL[ix], window, cx)
+                }
+            },
+        )];
         Self {
             focus: cx.focus_handle(),
             page,
@@ -136,7 +130,7 @@ impl Gallery {
         } else {
             ThemeMode::Dark
         };
-        set_mode(mode, cx);
+        cx.set_theme_mode(mode);
     }
 
     fn show_prompt(&mut self, _: &ShowPrompt, window: &mut Window, cx: &mut Context<Self>) {
@@ -156,12 +150,29 @@ impl Gallery {
             Button::new(label, label)
                 .small()
                 .variant(if mode == Some(choice) {
-                    kiln::ui::ButtonVariant::Primary
+                    ButtonVariant::Primary
                 } else {
-                    kiln::ui::ButtonVariant::Ghost
+                    ButtonVariant::Ghost
                 })
-                .on_click(move |_: &ClickEvent, _, cx| set_mode(choice, cx))
+                .on_click(move |_: &ClickEvent, _, cx| cx.set_theme_mode(choice))
         }));
+        // Buttons that run commands, as their keys and menu items do.
+        let paging = h_flex()
+            .gap_1()
+            .child(
+                Button::new("previous-page", "Previous")
+                    .small()
+                    .ghost()
+                    .debug_selector(|| "previous-page".into())
+                    .command(PreviousPage),
+            )
+            .child(
+                Button::new("next-page", "Next")
+                    .small()
+                    .ghost()
+                    .debug_selector(|| "next-page".into())
+                    .command(NextPage),
+            );
         h_flex()
             .flex_none()
             .h(px(40.))
@@ -172,7 +183,14 @@ impl Gallery {
             .border_color(c.border.default)
             .bg(c.surface.panel)
             .child(div().text_color(c.text.primary).child("Kiln Gallery"))
-            .child(div().text_color(c.text.muted).child(self.page.title()))
+            // A fixed width keeps the paging buttons still between pages.
+            .child(
+                div()
+                    .w(px(110.))
+                    .text_color(c.text.muted)
+                    .child(self.page.title()),
+            )
+            .child(paging)
             .child(div().flex_1())
             .child(div().text_color(c.text.muted).child("Theme"))
             .child(switcher)
@@ -180,16 +198,17 @@ impl Gallery {
 
     fn status_bar(&self, cx: &mut Context<Self>) -> StatusBarFrame {
         let theme = ui_theme(cx);
-        let hints = [
-            (NextPage.name(), "next page"),
-            (PreviousPage.name(), "previous page"),
-            (ToggleTheme.name(), "toggle theme"),
-            (ShowPrompt.name(), "prompt"),
-        ]
-        .iter()
-        .filter_map(|(action, what)| Some(format!("{} {what}", shortcut(action, cx)?)))
-        .collect::<Vec<_>>()
-        .join("   ");
+        let hints: [(CommandId, _); 4] = [
+            (NextPage::id(), "next page"),
+            (PreviousPage::id(), "previous page"),
+            (ToggleTheme::id(), "toggle theme"),
+            (ShowPrompt::id(), "prompt"),
+        ];
+        let hints = hints
+            .iter()
+            .filter_map(|(command, what)| Some(format!("{} {what}", cx.binding_label(command)?)))
+            .collect::<Vec<_>>()
+            .join("   ");
         let position = format!(
             "Page {} of {}: {}",
             self.page.index() + 1,
@@ -200,20 +219,6 @@ impl Gallery {
             .left([StatusEntry::new("page", position, &theme)])
             .right([StatusEntry::new("keys", hints, &theme)])
     }
-}
-
-/// Sets the theme mode, over kiln's bundled dark and light themes.
-pub(crate) fn set_mode(mode: ThemeMode, cx: &mut App) {
-    set_themes(cx, mode, Theme::dark(), Theme::light());
-}
-
-/// The label of the key the keymap binds to the command GPUI calls
-/// `action`, such as `Ctrl+]`.
-fn shortcut(action: &str, cx: &App) -> Option<String> {
-    let id = command_id(action)?;
-    let keymap = keys::current_keymap(cx);
-    let binding = keymap.bindings_for(&id).into_iter().next()?;
-    Some(shortcut_label(&binding.keys))
 }
 
 impl Focusable for Gallery {

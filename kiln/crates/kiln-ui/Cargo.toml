@@ -13,7 +13,10 @@ publish = false
 # model): no app crate, so any host can use these.
 [dependencies]
 gpui.workspace = true
+kiln-command.workspace = true
 kiln-core.workspace = true
+# Button::command dispatches its action as a kiln command.
+kiln-platform.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

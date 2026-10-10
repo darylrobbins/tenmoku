@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
 //! The gallery example's own logic, headless: its keymap and menus load
-//! cleanly on every platform, and its typed commands, from an invocation
-//! or a key, page through it and switch the theme.
+//! cleanly on every platform, and its typed commands, from an invocation,
+//! a key or a button, page through it and switch the theme.
 
 #[path = "../examples/gallery/app.rs"]
 mod app;
@@ -13,22 +13,26 @@ mod pages;
 #[path = "../examples/gallery/setup.rs"]
 mod setup;
 
-use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
+use gpui::{Entity, Focusable as _, Modifiers, TestAppContext, VisualTestContext};
 use kiln::{
     command::Invocation,
     core::Os,
-    dispatch_invocation,
     platform::commands::catalog,
     prelude::*,
     ui::{Appearance, ThemeMode},
 };
 
-use app::{Gallery, set_mode};
+use app::Gallery;
 use pages::Page;
+
+fn init(cx: &mut gpui::App) {
+    let diagnostics = kiln::init(cx, setup::config());
+    assert_eq!(diagnostics, []);
+}
 
 /// The gallery's window, set up as `main` does, its root focused.
 fn gallery(cx: &mut TestAppContext) -> (Entity<Gallery>, &mut VisualTestContext) {
-    cx.update(setup::init);
+    cx.update(init);
     let (gallery, cx) = cx.add_window_view(Gallery::new);
     cx.update(|window, cx| {
         let focus = gallery.focus_handle(cx);
@@ -40,7 +44,7 @@ fn gallery(cx: &mut TestAppContext) -> (Entity<Gallery>, &mut VisualTestContext)
 
 fn run(command: &str, cx: &mut VisualTestContext) {
     let invocation = Invocation::of(command).unwrap();
-    cx.update(|window, cx| dispatch_invocation(invocation, window, cx).unwrap());
+    cx.update(|window, cx| window.run_command(invocation, cx).unwrap());
     cx.run_until_parked();
 }
 
@@ -60,14 +64,15 @@ fn sec(keys: &str) -> String {
 
 #[gpui::test]
 fn keymap_and_menus_load_cleanly_on_every_platform(cx: &mut TestAppContext) {
-    cx.update(setup::init);
+    cx.update(init);
     cx.update(|cx| {
         let catalog = catalog(cx);
+        let config = setup::config();
         for os in [Os::MacOs, Os::Linux, Os::Windows] {
-            let (keymap, diagnostics) = setup::keymap(os, Some(&*catalog));
+            let (keymap, diagnostics) = config.keymap_for(os, Some(&*catalog));
             assert_eq!(diagnostics, [], "keymap on {os:?}");
             assert_eq!(keymap.bindings().len(), 7, "keymap on {os:?}");
-            let (menus, diagnostics) = setup::menu_bar(os, Some(&*catalog));
+            let (menus, diagnostics) = config.menu_bar_for(os, Some(&*catalog));
             assert_eq!(diagnostics, [], "menus on {os:?}");
             assert_eq!(menus.menus.len(), 3, "menus on {os:?}");
         }
@@ -102,9 +107,38 @@ fn keys_from_the_keymap_run_the_page_commands(cx: &mut TestAppContext) {
 #[gpui::test]
 fn toggle_theme_flips_between_dark_and_light(cx: &mut TestAppContext) {
     let (_, cx) = gallery(cx);
-    cx.update(|_, cx| set_mode(ThemeMode::Dark, cx));
+    cx.update(|_, cx| cx.set_theme_mode(ThemeMode::Dark));
     run("gallery.toggle_theme", cx);
     assert_eq!(cx.read(|cx| cx.theme().appearance), Appearance::Light);
     run("gallery.toggle_theme", cx);
     assert_eq!(cx.read(|cx| cx.theme().appearance), Appearance::Dark);
+}
+
+#[gpui::test]
+fn the_header_buttons_run_the_page_commands(cx: &mut TestAppContext) {
+    let (gallery, cx) = gallery(cx);
+    let click = |selector: &'static str, cx: &mut VisualTestContext| {
+        let bounds = cx.debug_bounds(selector).expect(selector);
+        cx.simulate_click(bounds.center(), Modifiers::none());
+        cx.run_until_parked();
+    };
+    click("next-page", cx);
+    assert_eq!(page(&gallery, cx), Page::Text);
+    click("previous-page", cx);
+    click("previous-page", cx);
+    assert_eq!(page(&gallery, cx), Page::ALL[Page::ALL.len() - 1]);
+}
+
+#[gpui::test]
+fn the_status_bar_labels_shortcuts_from_the_keymap(cx: &mut TestAppContext) {
+    let (_, cx) = gallery(cx);
+    let label = cx.update(|_, cx| cx.binding_label(&commands::NextPage::id()));
+    let expected = if Os::current() == Os::MacOs {
+        "⌘]"
+    } else {
+        "Ctrl+]"
+    };
+    assert_eq!(label.as_deref(), Some(expected));
+    let quit = cx.update(|_, cx| cx.binding_label(&kiln::app::Quit::id()));
+    assert!(quit.is_some(), "app.quit is bound");
 }

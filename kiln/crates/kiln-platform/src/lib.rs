@@ -10,9 +10,11 @@
 //! [`commands!`]. [`keys`] is key input: kiln's keymap matched against
 //! every keystroke, with an app's [`keys::KeyOwner`] taking part, and
 //! [`menus`] the native menu bar, whose items dispatch as keys do.
-//! [`Capabilities`] says what a platform does natively, and
-//! [`window_options`], [`fonts`] and [`dialogs`] act on it.
+//! [`action_dispatch`] dispatches an action the app holds, such as a
+//! button's, as its command. [`Capabilities`] says what a platform does
+//! natively, and [`window_options`], [`fonts`] and [`dialogs`] act on it.
 
+pub mod action_dispatch;
 mod capabilities;
 pub mod command_actions;
 pub mod commands;

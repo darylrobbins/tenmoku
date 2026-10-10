@@ -19,7 +19,7 @@ command = "gallery.show_prompt"
 
 [[bindings]]
 keys = "secondary-q"
-command = "gallery.quit"
+command = "app.quit"
 
 # TextInput leaves its editing keys to the app (see pages/text.rs).
 [[bindings]]

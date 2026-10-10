@@ -12,6 +12,7 @@ use gpui::{
 use kiln_command::{CommandId, DispatchError, Invocation, Source, Value};
 use kiln_core::{CatalogError, CommandCatalog as _};
 use kiln_platform::{
+    action_dispatch::{dispatch_action, invocation_for},
     command_actions::{
         Command, CommandInfo, command_id, current_invocation, dispatch_invocation,
         register_command, typed_command,
@@ -267,4 +268,34 @@ fn the_macro_needs_no_gpui_of_its_own(cx: &mut TestAppContext) {
     // GPUI's registry knows it, so it builds by name.
     let built = cx.update(|cx| cx.build_action("shadowed::Shadowed", None));
     assert!(built.unwrap().partial_eq(&shadowed::Shadowed));
+}
+
+#[gpui::test]
+fn a_held_typed_action_dispatches_as_an_invocation(cx: &mut TestAppContext) {
+    let (log, seen, cx) = notes_window(cx);
+    cx.update(|window, cx| dispatch_action(&notes::NewNote, Source::Mouse, window, cx));
+    cx.run_until_parked();
+    let (what, current) = log.borrow().last().cloned().unwrap();
+    assert_eq!(what, "new");
+    assert_eq!(current.unwrap().source, Source::Mouse);
+    assert_eq!(seen.borrow().len(), 1, "observers hear of it");
+    assert_eq!(
+        cx.update(|_, cx| invocation_for(&notes::NewNote, cx))
+            .map(|invocation| invocation.command.to_string())
+            .as_deref(),
+        Some("notes.new_note")
+    );
+}
+
+#[gpui::test]
+fn a_held_action_with_args_dispatches_as_itself(cx: &mut TestAppContext) {
+    let (log, seen, cx) = notes_window(cx);
+    let open = OpenNote { index: 2 };
+    assert!(cx.update(|_, cx| invocation_for(&open, cx)).is_none());
+    cx.update(|window, cx| dispatch_action(&open, Source::Mouse, window, cx));
+    cx.run_until_parked();
+    let (what, current) = log.borrow().last().cloned().unwrap();
+    assert_eq!(what, "open 2");
+    assert_eq!(current, None, "no invocation describes it");
+    assert_eq!(seen.borrow().len(), 0);
 }

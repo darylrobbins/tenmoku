@@ -12,11 +12,14 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, ClickEvent, CursorStyle, Div, ElementId, Hsla, InteractiveElement,
+    Action, AnyElement, App, ClickEvent, CursorStyle, Div, ElementId, Hsla, InteractiveElement,
     Interactivity, IntoElement, ParentElement as _, Pixels, Refineable as _, RenderOnce,
     SharedString, Stateful, StatefulInteractiveElement, StyleRefinement, Styled, Window, div,
     prelude::FluentBuilder as _, px, svg,
 };
+
+use kiln_command::Source;
+use kiln_platform::action_dispatch::dispatch_action;
 
 use crate::{ActiveTheme as _, Icon, Tokens};
 
@@ -170,6 +173,16 @@ impl Button {
     ) -> Self {
         self.on_click = Some(Rc::new(handler));
         self
+    }
+
+    /// Clicking dispatches `action` from the focused element, as a key
+    /// bound to it would: a typed command goes as an invocation from the
+    /// mouse, so observers hear of it (see
+    /// [`kiln_platform::action_dispatch`]). Replaces any `on_click`.
+    pub fn command(self, action: impl Action) -> Self {
+        self.on_click(move |_, window, cx| {
+            dispatch_action(&action, Source::Mouse, window, cx);
+        })
     }
 }
 

@@ -13,7 +13,7 @@ separator = true
 
 [[menus.items]]
 title = "Quit Kiln Gallery"
-command = "gallery.quit"
+command = "app.quit"
 
 [[menus]]
 name = "Go"

@@ -2,6 +2,7 @@
 
 mod active_theme;
 mod assets;
+mod button_command;
 mod controls;
 mod file_icons;
 mod layout;
