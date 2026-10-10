@@ -10,7 +10,7 @@ env:
 
 jobs:
   check:
-    # macOS first; Linux and Windows jobs come later.
+    # macOS, the primary platform; Linux is the `linux` job below.
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
@@ -48,6 +48,48 @@ jobs:
         with:
           name: screenshots
           path: target/screenshots/
+          if-no-files-found: ignore
+
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install GPUI's libraries, and Xvfb and xdotool for the launch
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libvulkan-dev libfontconfig-dev libfreetype-dev libssl-dev libx11-xcb-dev \
+            libxcb1-dev libxcb-xkb-dev libasound2-dev libzstd-dev clang cmake \
+            mesa-vulkan-drivers xvfb xdotool tmux
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      # Formatting and the platform-independent scripts run on macOS only.
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo nextest run --workspace --profile ci
+      - name: The app launches and draws a frame
+        # Under Xvfb, with Mesa's software Vulkan; see the run-fastedit-linux
+        # skill. `start` fails if the window draws nothing within 30 s.
+        run: |
+          D=.claude/skills/run-fastedit-linux/driver.sh
+          $D build
+          $D start
+          mkdir -p target/screenshots
+          $D ss target/screenshots/linux-launch.png
+          $D stop
+      - name: Upload the launch screenshot and log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-launch
+          path: |
+            target/screenshots/
+            /tmp/fastedit-run/app.log
           if-no-files-found: ignore
 
   deny:

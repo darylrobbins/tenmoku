@@ -252,8 +252,10 @@ the allowlist and a THIRD_PARTY.md row.
 
 ## Linux
 
-macOS is the primary platform and the only one in CI, but the app, every
-test and every bench also build and run on Linux (X11 or Wayland). On
+macOS is the primary platform, but the app, every test and every bench
+also build and run on Linux (X11 or Wayland). CI's `linux` job runs clippy
+and the tests on Ubuntu 24.04, then launches the app under Xvfb and fails
+if it draws nothing. On
 Ubuntu 26.04, GPUI needs:
 
 ```sh
