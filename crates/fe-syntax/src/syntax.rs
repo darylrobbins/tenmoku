@@ -606,9 +606,9 @@ pub(crate) fn highlight_query_finished(
     (flatten(captures, range), !stopped)
 }
 
-/// [`highlight_query_finished`]'s highlights. Injected layers use this: a
-/// layer's query that stops leaves the deadline passed, which
-/// [`injection::paint`] checks after it.
+/// [`highlight_query_finished`]'s highlights, for tests that don't need to
+/// know whether it finished.
+#[cfg(test)]
 pub(crate) fn highlight_query(
     language: &Language,
     text: &Text,

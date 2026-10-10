@@ -58,7 +58,9 @@ use crate::{
     Language,
     highlight::{Painted, clip, overlay},
     language::{Injected, injected_language},
-    syntax::{chunks, for_each_query_root, highlight_query, out_of_time, parse_text, until},
+    syntax::{
+        chunks, for_each_query_root, highlight_query_finished, out_of_time, parse_text, until,
+    },
 };
 
 /// How many layers deep injections nest.
@@ -355,7 +357,7 @@ impl Painter<'_> {
             let Some(layer) = self.layer(&injection) else {
                 continue;
             };
-            let own = highlight_query(
+            let (own, finished) = highlight_query_finished(
                 injection.language,
                 self.text,
                 &layer,
@@ -363,6 +365,7 @@ impl Painter<'_> {
                 injection.language.local_patterns,
                 self.deadline,
             );
+            self.complete &= finished;
             let own = self.paint(
                 injection.language,
                 &layer,

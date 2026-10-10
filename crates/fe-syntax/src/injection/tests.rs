@@ -883,6 +883,53 @@ fn painting_stops_at_the_deadline() {
     assert_eq!(parses, layer(ranges));
 }
 
+/// However early or late the deadline passes, painting `text` as `host`
+/// isn't complete unless it ran to the end: in particular when it passes
+/// inside the query of the last injected layer, which no injection query or
+/// deeper layer checks after.
+fn assert_incomplete_unless_run_to_the_end(host: &str, text: &str) {
+    let buffer = Buffer::new(text);
+    let syntax = parsed(host, &buffer);
+    // Compile the injected languages' queries.
+    syntax.highlights_compiling(0..text.len());
+    let deadline = far_deadline();
+    let paint = |after| {
+        let paint = &mut || paint_all(&buffer, &syntax, deadline, &mut Layers::default());
+        with_deadline_after(after, paint)
+    };
+    let (complete, checks) = paint(usize::MAX);
+    assert!(complete);
+    assert!(checks > 0);
+    for after in 0..checks {
+        let (complete, _) = paint(after);
+        assert!(
+            !complete,
+            "{host}: complete with the deadline after {after} of {checks}"
+        );
+    }
+}
+
+/// TOML has no injection query, so nothing checks the deadline after its
+/// layer's highlight query stops.
+#[test]
+fn a_timeout_in_the_last_injected_layer_is_incomplete() {
+    let text = "# T\n\n```toml\n[[a]]\nname = \"x\"\nsize = 3\n```\n";
+    assert_incomplete_unless_run_to_the_end("markdown", text);
+}
+
+/// A layer at [`MAX_DEPTH`] is highlighted, but its own injections aren't
+/// looked for, so nothing checks the deadline after its query either.
+#[test]
+fn a_timeout_in_a_layer_at_the_depth_limit_is_incomplete() {
+    let mut text = "[[a]]\nname = \"x\"\n".to_string();
+    for _ in 0..super::MAX_DEPTH {
+        text = format!("````markdown\n{text}````\n");
+    }
+    text = format!("```toml\n{text}```\n");
+    let text = text.replacen("```toml", "```markdown", 1);
+    assert_incomplete_unless_run_to_the_end("markdown", &text);
+}
+
 /// An injection with too many ranges stays plain, and one with just few
 /// enough is parsed. Either way the result is complete: it would be the same
 /// every time.
