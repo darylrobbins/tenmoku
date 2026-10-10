@@ -34,6 +34,7 @@ mod status_bar;
 mod title_bar;
 mod toolbar_picker;
 mod trust;
+mod window_frame;
 mod workbench;
 
 use std::rc::Rc;

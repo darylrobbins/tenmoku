@@ -313,6 +313,8 @@ fn main() {
                             Workbench::new(launch, theme, editor_settings, window, cx);
                         workbench.set_title_bar(UNIFIED_TITLE_BAR, cx);
                         workbench.set_menu_bar(!NATIVE_MENUS, cx);
+                        // GNOME on Wayland leaves the window's frame to the app.
+                        workbench.set_window_frame(!UNIFIED_TITLE_BAR, cx);
                         workbench.set_status_bar_visible(settings.status_bar.visible, cx);
                         workbench
                     });

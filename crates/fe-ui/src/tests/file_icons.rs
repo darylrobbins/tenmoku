@@ -93,3 +93,13 @@ fn toolbar_icons_are_bundled_but_unmapped() {
         (Icon::Ellipsis, "fe-ui/icons/ellipsis.svg"),
     ]);
 }
+
+#[test]
+fn window_button_icons_are_bundled_but_unmapped() {
+    assert_bundled_but_unmapped(&[
+        (Icon::Minus, "fe-ui/icons/minus.svg"),
+        (Icon::Square, "fe-ui/icons/square.svg"),
+        (Icon::Copy, "fe-ui/icons/copy.svg"),
+        (Icon::X, "fe-ui/icons/x.svg"),
+    ]);
+}

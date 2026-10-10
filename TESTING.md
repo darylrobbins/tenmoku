@@ -277,7 +277,11 @@ What differs from macOS:
   `ctrl-shift-[`.
 - **Prompts** such as the trust question are drawn in the window
   (`fe_ui::prompt_renderer`), not as native alerts.
-- **The window manager** draws the title bar; the unified title bar is
+- **The window manager** draws the title bar where it can (X11, KDE). Where
+  it leaves that to the app, as GNOME on Wayland does, the menu bar's row
+  becomes the title bar, with the folder's name, minimize, maximize and close,
+  a drag to move and a double click to maximize, and the window's edges
+  resize it (`fe-workbench/src/window_frame.rs`). The unified title bar is
   macOS's.
 - **The menu bar is drawn in the window**, above the panes, from
   `fe-keymap/menus/default-linux.toml`: GPUI has no native menu bar on

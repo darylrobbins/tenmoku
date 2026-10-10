@@ -38,6 +38,7 @@ use crate::{
     title_bar,
     toolbar_picker::ToolbarPicker,
     trust::{self, RootTrust, TrustChanged},
+    window_frame,
 };
 
 /// Shown in a tab when fastedit starts with nothing to open.
@@ -129,6 +130,13 @@ pub struct Workbench {
     /// The menu bar drawn in the window, where the platform has no native
     /// one: see [`Workbench::set_menu_bar`].
     menu_bar: Option<Entity<MenuBarView>>,
+    /// Whether the workbench draws the window's frame when the platform
+    /// asks the app to: see [`Workbench::set_window_frame`].
+    window_frame: bool,
+    /// Stands in for the platform's client-side decorations: the test
+    /// platform's windows only have server-side ones.
+    #[cfg(test)]
+    pub(crate) client_tiling: Option<gpui::Tiling>,
     /// The folder the workbench is rooted at, if any.
     pub(crate) root: Option<PathBuf>,
     /// The editor whose file the project panel last revealed.
@@ -254,6 +262,9 @@ impl Workbench {
             status_bar_visible: true,
             title_bar: false,
             menu_bar: None,
+            window_frame: false,
+            #[cfg(test)]
+            client_tiling: None,
             root: launch_root,
             revealed: None,
             launch_read: launch_read.map(|path| (path, pane.downgrade())),
@@ -1015,6 +1026,14 @@ impl Workbench {
         cx.notify();
     }
 
+    /// Draws the window's frame (title, buttons, resize edges) whenever the
+    /// platform asks the app to, as GNOME on Wayland does; the window manager
+    /// draws it otherwise. For a standalone app on Linux. Off by default.
+    pub fn set_window_frame(&mut self, drawn: bool, cx: &mut Context<Self>) {
+        self.window_frame = drawn;
+        cx.notify();
+    }
+
     /// The menu bar, while it's shown.
     pub fn menu_bar(&self) -> Option<&Entity<MenuBarView>> {
         self.menu_bar.as_ref()
@@ -1286,6 +1305,22 @@ impl Render for Workbench {
                 bar.cached(style).into_any_element()
             }
         });
+        #[cfg(test)]
+        let client_tiling = self
+            .client_tiling
+            .or_else(|| window_frame::client_tiling(window));
+        #[cfg(not(test))]
+        let client_tiling = window_frame::client_tiling(window);
+        let tiling = client_tiling.filter(|_| self.window_frame);
+        let top_row = (self.menu_bar.is_some() || tiling.is_some()).then(|| {
+            window_frame::top_row(
+                self.menu_bar.clone().map(IntoElement::into_any_element),
+                title_bar::name(self.root.as_deref()),
+                tiling.is_some(),
+                &self.ui,
+                window,
+            )
+        });
         div()
             .key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::on_run_command))
@@ -1303,7 +1338,7 @@ impl Render for Workbench {
                 self.title_bar
                     .then(|| title_bar::title_bar(self.root.as_deref(), &self.ui)),
             )
-            .children(self.menu_bar.clone())
+            .children(top_row)
             .child(main)
             .children(status_bar)
             .map(|root| match self.palette {
@@ -1314,6 +1349,12 @@ impl Render for Workbench {
                 Some(Palette::Symbols) => root.child(self.nav_state.symbols.clone()),
                 None => root,
             })
+            // The frame's border and resize edges, over everything, unless
+            // the window fills the screen.
+            .when_some(tiling.filter(|tiling| !tiling.is_tiled()), |root, _| {
+                root.border_1().border_color(self.ui.border)
+            })
+            .children(tiling.into_iter().flat_map(window_frame::resize_handles))
     }
 }
 

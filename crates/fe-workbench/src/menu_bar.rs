@@ -303,11 +303,9 @@ impl Render for MenuBarView {
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::on_key_down))
             .relative()
+            // The workbench's top row draws the background and border.
             .flex_none()
-            .w_full()
-            .bg(ui.panel_background)
-            .border_b_1()
-            .border_color(ui.border)
+            .h_full()
             .children(closer)
             .child(strip)
     }

@@ -80,6 +80,12 @@ icons! {
     Columns2 => "columns-2",
     Rows2 => "rows-2",
     Ellipsis => "ellipsis",
+    // The window buttons drawn under client-side decorations; not mapped
+    // from names.
+    Minus => "minus",
+    Square => "square",
+    Copy => "copy",
+    X => "x",
 }
 
 /// Exact file names, ASCII lowercase. Checked before any extension.

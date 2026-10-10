@@ -44,6 +44,7 @@ mod title_bar;
 mod toolbar_history;
 mod tree_keys;
 mod tree_style;
+mod window_frame;
 
 use std::{cell::Cell, path::Path, rc::Rc};
 
