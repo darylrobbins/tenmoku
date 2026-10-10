@@ -305,6 +305,9 @@ pub(crate) struct Lsp {
     /// How many `Diagnostics` events the sinks have sent.
     #[cfg(test)]
     diagnostics_sent: Arc<std::sync::atomic::AtomicUsize>,
+    /// How many `Restarting` statuses the sinks have sent.
+    #[cfg(test)]
+    restarting_sent: Arc<std::sync::atomic::AtomicUsize>,
     /// Every event delivered, in order, with its manager's generation and,
     /// for `Diagnostics`, whether an editor applied it.
     #[cfg(test)]
@@ -367,6 +370,8 @@ impl Lsp {
             local: false,
             #[cfg(test)]
             diagnostics_sent: Arc::default(),
+            #[cfg(test)]
+            restarting_sent: Arc::default(),
             #[cfg(test)]
             delivered: Vec::new(),
             resolved: HashMap::new(),
@@ -520,10 +525,22 @@ impl Workbench {
         let watched = running.clone();
         #[cfg(test)]
         let sent = lsp.diagnostics_sent.clone();
+        #[cfg(test)]
+        let restarting = lsp.restarting_sent.clone();
         let sink = move |event: LspEvent| {
             #[cfg(test)]
             if matches!(event, LspEvent::Diagnostics { .. }) {
                 sent.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
+            #[cfg(test)]
+            if matches!(
+                event,
+                LspEvent::Status {
+                    status: ServerStatus::Restarting(_),
+                    ..
+                }
+            ) {
+                restarting.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
             if let LspEvent::Status { server, status, .. } = &event {
                 let mut running = lock(&running);
@@ -1303,6 +1320,12 @@ impl Workbench {
     /// How many `Diagnostics` events the managers' sinks have sent.
     pub(crate) fn lsp_diagnostics_sent(&self) -> usize {
         (self.lsp.diagnostics_sent).load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// How many `Restarting` statuses the managers' sinks have sent.
+    #[cfg(test)]
+    pub(crate) fn lsp_restarting_sent(&self) -> usize {
+        (self.lsp.restarting_sent).load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// How many events wait in the channel for the workbench to take.

@@ -115,6 +115,11 @@ impl Lsp {
             .read_with(&self.cx, |w, _| w.lsp_diagnostics_sent())
     }
 
+    fn restarting_sent(&mut self) -> usize {
+        self.workbench
+            .read_with(&self.cx, |w, _| w.lsp_restarting_sent())
+    }
+
     fn queued(&mut self) -> usize {
         self.workbench.read_with(&self.cx, |w, _| w.lsp_queued())
     }
@@ -178,7 +183,15 @@ fn stale_events_are_rejected(cx: &mut TestAppContext) {
     s.until("the second", |s| s.messages(&editor) == ["second"]);
     let since = s.delivered().len();
     s.publish_queued(&main, 1, "stale across the restart");
+    let restarting = s.restarting_sent();
     s.fake.crash();
+    // The stderr drain arms its own 1 s `STDERR_GRACE` sleep first; once
+    // `Restarting` is sent only the backoff can still be armed.
+    let workbench = s.workbench.clone();
+    let cx = &s.cx;
+    wait("the restart status", || {
+        workbench.read_with(cx, |w, _| w.lsp_restarting_sent()) > restarting
+    });
     s.clock.wait_for_sleep(Duration::from_secs(1));
     s.clock.advance(Duration::from_secs(1));
     s.fake.wait_initialized_at(2);
