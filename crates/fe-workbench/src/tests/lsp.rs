@@ -4,13 +4,17 @@
 //! fire when a test moves it.
 
 use std::{
-    fs, io,
+    fs,
+    future::Future,
+    io,
     path::{Path, PathBuf},
+    pin::Pin,
     rc::Rc,
     sync::{
         Arc, Condvar, Mutex,
         atomic::{AtomicBool, Ordering},
     },
+    task::{Context, Poll},
     thread,
     time::{Duration, Instant},
 };
@@ -19,7 +23,7 @@ use fe_command::{ContextFrame, ContextStack, Invocation};
 use fe_config::{Settings, SettingsEvent};
 use fe_gpui::{EditorView, commands::RunCommand};
 use fe_lsp::{
-    LaunchCancel, ManualClock, ServerIo, ServerLauncher, ServerSpec,
+    ExitInfo, LaunchCancel, ManualClock, ServerIo, ServerLauncher, ServerProcess, ServerSpec,
     fake::{FakeLauncher, FakeServer, OnExit, Record, Script},
 };
 use gpui::{Entity, Focusable as _, Modifiers, TestAppContext, VisualTestContext};
@@ -74,6 +78,55 @@ struct Switch {
     python: Arc<FakeLauncher>,
     missing: Arc<AtomicBool>,
     hold: Arc<Hold>,
+    /// Set once the actor of the first server `fake` launches, which has
+    /// stopped waiting for its process to exit, has let go of that wait.
+    gone: Arc<AtomicBool>,
+}
+
+/// A fake's process that sets `gone` once its `exited` has resolved and been
+/// dropped: for the shutdown actor, once it has seen the server exit and
+/// cancelled its 1-s timeout.
+struct Watched {
+    inner: Box<dyn ServerProcess>,
+    gone: Arc<AtomicBool>,
+}
+
+struct WatchedExit<'a> {
+    inner: Pin<Box<dyn Future<Output = ExitInfo> + Send + 'a>>,
+    resolved: bool,
+    gone: &'a AtomicBool,
+}
+
+impl Future for WatchedExit<'_> {
+    type Output = ExitInfo;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<ExitInfo> {
+        let poll = self.inner.as_mut().poll(cx);
+        self.resolved |= poll.is_ready();
+        poll
+    }
+}
+
+impl Drop for WatchedExit<'_> {
+    fn drop(&mut self) {
+        if self.resolved {
+            self.gone.store(true, Ordering::SeqCst);
+        }
+    }
+}
+
+impl ServerProcess for Watched {
+    fn exited(&mut self) -> Pin<Box<dyn Future<Output = ExitInfo> + Send + '_>> {
+        Box::pin(WatchedExit {
+            inner: self.inner.exited(),
+            resolved: false,
+            gone: &self.gone,
+        })
+    }
+
+    fn kill(&mut self) {
+        self.inner.kill();
+    }
 }
 
 impl ServerLauncher for Switch {
@@ -89,7 +142,14 @@ impl ServerLauncher for Switch {
         }
         match spec.name.as_str() {
             "pyright" => self.python.launch(spec, root, cancel),
-            _ => self.fake.launch(spec, root, cancel),
+            _ => {
+                let mut io = self.fake.launch(spec, root, cancel)?;
+                io.process = Box::new(Watched {
+                    inner: io.process,
+                    gone: self.gone.clone(),
+                });
+                Ok(io)
+            }
         }
     }
 }
@@ -112,6 +172,8 @@ pub(crate) struct Lsp {
     pub(crate) clock: Arc<ManualClock>,
     missing: Arc<AtomicBool>,
     hold: Arc<Hold>,
+    /// rust-analyzer's actor is done with its process (see [`Watched`]).
+    rust_gone: Arc<AtomicBool>,
     dir: Rc<tempfile::TempDir>,
     /// The project's folder, resolved, as the manager has it.
     pub(crate) root: PathBuf,
@@ -175,11 +237,13 @@ impl Lsp {
         let clock = Arc::new(ManualClock::new());
         let missing = Arc::new(AtomicBool::new(false));
         let hold = Arc::new(Hold::default());
+        let gone = Arc::new(AtomicBool::new(false));
         let launcher = Arc::new(Switch {
             fake: fake.launcher(),
             python: python.launcher(),
             missing: missing.clone(),
             hold: hold.clone(),
+            gone: gone.clone(),
         });
         let manager_clock = clock.clone();
         cx.update(|cx| {
@@ -197,6 +261,7 @@ impl Lsp {
             clock,
             missing,
             hold,
+            rust_gone: gone,
             dir,
             root,
         };
@@ -235,6 +300,7 @@ impl Lsp {
             clock: self.clock.clone(),
             missing: self.missing.clone(),
             hold: self.hold.clone(),
+            rust_gone: self.rust_gone.clone(),
             dir: self.dir.clone(),
             root: self.root.clone(),
         };
@@ -703,32 +769,102 @@ fn settings_and_shutdown(cx: &mut TestAppContext) {
     assert_eq!(s.workbench.read_with(&s.cx, |w, _| w.lsp_manager()), None);
 }
 
-/// Moves the manual clock to each sleep as it's armed, until dropped, so
-/// fe-lsp's shutdown timeouts run out.
-struct Hurry(Arc<AtomicBool>, Option<thread::JoinHandle<()>>);
+/// Drives the manual clock through quitting with `s.fake` (rust-analyzer) and
+/// `s.python` (pyright), launch 1, so that each timeout runs out only once
+/// the fakes have seen what precedes it, as in production, where a server has
+/// the timeout's time to read `exit`:
+///
+/// 1. both have `shutdown` and two 2-s sleeps are armed: advance 2 s;
+/// 2. both have `shutdown`, then `exit`, rust-analyzer's actor has seen it exit
+///    (so its 1-s sleep is cancelled), and exactly one 1-s sleep is armed,
+///    pyright's: advance 1 s;
+/// 3. until dropped, advance to each sleep as it's armed.
+///
+/// A step that isn't reached in 10 s of real time is recorded, the driver
+/// falls through to 3 so that quitting can't hang, and `Drop` panics.
+struct QuitDriver(
+    Arc<AtomicBool>,
+    Option<thread::JoinHandle<Vec<&'static str>>>,
+);
 
-impl Hurry {
-    fn new(clock: Arc<ManualClock>) -> Self {
+impl QuitDriver {
+    const PATIENCE: Duration = Duration::from_secs(10);
+
+    fn new(
+        clock: Arc<ManualClock>,
+        rust: FakeServer,
+        python: FakeServer,
+        rust_gone: Arc<AtomicBool>,
+    ) -> Self {
         let done = Arc::new(AtomicBool::new(false));
         let thread = thread::spawn({
             let done = done.clone();
             move || {
+                let mut missed = Vec::new();
+                let have = |f: &dyn Fn(&[Record]) -> bool| {
+                    f(&rust.records_of(1)) && f(&python.records_of(1))
+                };
+                let sleeps = |left: Duration, n: usize| {
+                    // Other timers may be armed too.
+                    clock.sleeping().iter().filter(|s| **s == left).count() == n
+                };
+                let wait = |ready: &dyn Fn() -> bool| {
+                    let give_up = Instant::now() + Self::PATIENCE;
+                    while !ready() {
+                        if done.load(Ordering::SeqCst) || Instant::now() >= give_up {
+                            return false;
+                        }
+                        thread::sleep(Duration::from_millis(1));
+                    }
+                    true
+                };
+                let has_shutdown =
+                    |records: &[Record]| records.iter().any(|r| r.method() == "shutdown");
+                let steps: [(&'static str, Duration, &dyn Fn() -> bool); 2] = [
+                    (
+                        "2 s: both shutdown, two 2-s sleeps",
+                        Duration::from_secs(2),
+                        &|| have(&has_shutdown) && sleeps(Duration::from_secs(2), 2),
+                    ),
+                    (
+                        "1 s: both shut_down, one 1-s sleep",
+                        Duration::from_secs(1),
+                        // Once rust-analyzer's actor has seen it exit and
+                        // dropped its 1-s sleep, the one left is pyright's.
+                        &|| {
+                            have(&shut_down)
+                                && rust_gone.load(Ordering::SeqCst)
+                                && sleeps(Duration::from_secs(1), 1)
+                        },
+                    ),
+                ];
+                for (name, by, ready) in steps {
+                    if !wait(ready) {
+                        missed.push(name);
+                        break;
+                    }
+                    clock.advance(by);
+                }
                 while !done.load(Ordering::SeqCst) {
                     if let Some(next) = clock.sleeping().into_iter().min() {
                         clock.advance(next.max(Duration::from_millis(1)));
                     }
                     thread::sleep(Duration::from_millis(1));
                 }
+                missed
             }
         });
         Self(done, Some(thread))
     }
 }
 
-impl Drop for Hurry {
+impl Drop for QuitDriver {
     fn drop(&mut self) {
         self.0.store(true, Ordering::SeqCst);
-        self.1.take().unwrap().join().unwrap();
+        let missed = self.1.take().unwrap().join().unwrap();
+        if !thread::panicking() {
+            assert!(missed.is_empty(), "QuitDriver missed step: {missed:?}");
+        }
     }
 }
 
@@ -763,7 +899,12 @@ fn quitting_waits_for_slow_servers(cx: &mut TestAppContext) {
     // timeouts.
     let started = Instant::now();
     {
-        let _hurry = Hurry::new(s.clock.clone());
+        let _driver = QuitDriver::new(
+            s.clock.clone(),
+            s.fake.clone(),
+            s.python.clone(),
+            s.rust_gone.clone(),
+        );
         t.cx.update(|_, cx| crate::lsp::shut_down_all(cx));
     }
     assert!(
