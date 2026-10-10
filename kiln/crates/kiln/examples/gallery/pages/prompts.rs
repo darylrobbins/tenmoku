@@ -12,7 +12,7 @@ use kiln::{
     ui::{Button, h_flex},
 };
 
-use super::{page_frame, section};
+use super::{page_frame, page_root, section};
 
 const ANSWERS: [&str; 3] = ["Save", "Don't Save", "Cancel"];
 
@@ -71,12 +71,14 @@ impl Render for PromptsPage {
             .answer
             .clone()
             .unwrap_or_else(|| "No answer yet".to_owned());
-        page_frame(
-            "Prompts",
-            "window.prompt is GPUI's own; the Show Prompt command asks the Info one.",
-            cx,
+        page_root("prompts-page", cx).child(
+            page_frame(
+                "Prompts",
+                "window.prompt is GPUI's own; the Show Prompt command asks the Info one.",
+                cx,
+            )
+            .child(section("WINDOW.PROMPT", buttons, cx))
+            .child(div().text_color(c.text.muted).child(answer)),
         )
-        .child(section("WINDOW.PROMPT", buttons, cx))
-        .child(div().text_color(c.text.muted).child(answer))
     }
 }

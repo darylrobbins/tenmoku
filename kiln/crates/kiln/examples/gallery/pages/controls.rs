@@ -10,10 +10,10 @@ use gpui::{
 };
 use kiln::{
     prelude::*,
-    ui::{Button, ButtonSize, ButtonVariant, Checkbox, Icon, ScrollArea, Switch, h_flex, v_flex},
+    ui::{Button, ButtonSize, ButtonVariant, Checkbox, Icon, Switch, h_flex, v_flex},
 };
 
-use super::{labelled, page_frame, section};
+use super::{labelled, page_frame, page_root, section};
 
 const VARIANTS: [(ButtonVariant, &str); 4] = [
     (ButtonVariant::Primary, "Primary"),
@@ -185,7 +185,7 @@ impl Render for ControlsPage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let buttons = self.buttons(cx);
         let toggles = self.toggles(cx);
-        ScrollArea::new("controls-page").size_full().child(
+        page_root("controls-page", cx).child(
             page_frame(
                 "Controls",
                 "Button in each variant and size, with icons and disabled; Checkbox and Switch.",

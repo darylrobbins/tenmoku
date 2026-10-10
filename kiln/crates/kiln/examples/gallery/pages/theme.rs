@@ -6,10 +6,10 @@ use gpui::{Context, IntoElement, ParentElement as _, Render, Styled as _, Window
 use kiln::{
     core::theme::{TOKEN_GROUPS, TOKEN_KEYS},
     prelude::*,
-    ui::{Appearance, ScrollArea, h_flex, v_flex},
+    ui::{Appearance, h_flex, v_flex},
 };
 
-use super::{page_frame, section};
+use super::{page_frame, page_root, section};
 
 pub(crate) struct ThemePage;
 
@@ -64,8 +64,6 @@ impl Render for ThemePage {
             theme.name
         );
         let groups: Vec<_> = groups.collect();
-        ScrollArea::new("theme-page")
-            .size_full()
-            .child(page_frame("Theme", &blurb, cx).children(groups))
+        page_root("theme-page", cx).child(page_frame("Theme", &blurb, cx).children(groups))
     }
 }

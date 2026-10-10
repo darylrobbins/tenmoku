@@ -3,21 +3,29 @@
 //! [`List`]: a virtualised list of rows a [`ListDelegate`] supplies, with a
 //! selection the list keeps and moves.
 //!
+//! [`ListRow`] is a row's usual look, for delegates to build on. The list
+//! draws a scrollbar over its right edge while its rows overflow.
+//!
 //! Keys are handled with `on_key_down` on the focused list, not GPUI
 //! actions, so a list works with no keymap: `up`, `down`, `home`, `end`,
 //! `pageup` and `pagedown` move the selection and `enter` confirms it. A
 //! key with a modifier, and any other key, goes on to the app's bindings.
 
-use std::ops::Range;
+use std::{cell::Cell, ops::Range, rc::Rc};
 
 use gpui::{
-    AnyElement, App, ClickEvent, Context, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, ParentElement as _, Render,
-    ScrollStrategy, StatefulInteractiveElement as _, Styled as _, UniformListScrollHandle, Window,
-    div, uniform_list,
+    AnyElement, App, ClickEvent, Context, Div, EventEmitter, FocusHandle, Focusable, Hsla,
+    InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, ParentElement, Pixels,
+    Refineable as _, Render, RenderOnce, ScrollStrategy, StatefulInteractiveElement as _,
+    StyleRefinement, Styled, UniformListScrollHandle, Window, div, prelude::FluentBuilder as _,
+    uniform_list,
 };
 
-use crate::nav::{NavKey, nav_key, page_rows};
+use crate::{
+    ActiveTheme as _, ROW_HEIGHT, Tokens,
+    nav::{NavKey, nav_key, page_rows},
+    scroll_area::scrollbar,
+};
 
 /// How a row is to be drawn.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -29,13 +37,79 @@ pub struct RowState {
     pub focused: bool,
 }
 
+impl RowState {
+    /// The row's (background, border) in the theme's list colours: hovered,
+    /// selected in a focused list (outlined), or selected in one without
+    /// focus.
+    pub(crate) fn colors(self, c: &Tokens<Hsla>) -> (Option<Hsla>, Option<Hsla>) {
+        let list = &c.list;
+        match (self.selected, self.focused, self.hovered) {
+            (true, true, _) => (Some(list.row_selected), Some(list.row_focus_border)),
+            (true, false, _) => (Some(list.row_selected_inactive), None),
+            (false, _, true) => (Some(list.row_hover), None),
+            (false, _, false) => (None, None),
+        }
+    }
+}
+
+/// A list row's usual look for its [`RowState`], in the theme's list
+/// colours: [`ROW_HEIGHT`] tall and full width, its children in a row,
+/// centred vertically. Styled like a `div`, the caller's styles over its
+/// own.
+///
+/// ```ignore
+/// fn render_row(&mut self, ix: usize, state: RowState, ..) -> AnyElement {
+///     ListRow::new(state).px_3().child(self.names[ix].clone()).into_any_element()
+/// }
+/// ```
+#[derive(IntoElement)]
+pub struct ListRow {
+    base: Div,
+    state: RowState,
+}
+
+impl ListRow {
+    pub fn new(state: RowState) -> Self {
+        Self { base: div(), state }
+    }
+}
+
+impl Styled for ListRow {
+    fn style(&mut self) -> &mut StyleRefinement {
+        self.base.style()
+    }
+}
+
+impl ParentElement for ListRow {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+        self.base.extend(elements);
+    }
+}
+
+impl RenderOnce for ListRow {
+    fn render(mut self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let (background, border) = self.state.colors(&cx.theme().colors);
+        let caller = std::mem::take(self.base.style());
+        let mut row = self
+            .base
+            .flex()
+            .h(ROW_HEIGHT)
+            .w_full()
+            .items_center()
+            .when_some(background, |row, background| row.bg(background))
+            .when_some(border, |row, border| row.border_1().border_color(border));
+        row.style().refine(&caller);
+        row
+    }
+}
+
 /// What a [`List`] shows: how many rows, and each row's element.
 pub trait ListDelegate: Sized + 'static {
     fn count(&self) -> usize;
 
     /// Row `ix`'s element. Rows are measured from the first, so they should
     /// share one height (such as [`crate::ROW_HEIGHT`]). The list adds the
-    /// row's click handling around it.
+    /// row's click handling around it. [`ListRow`] gives it the usual look.
     fn render_row(
         &mut self,
         ix: usize,
@@ -66,6 +140,8 @@ pub struct List<D: ListDelegate> {
     hovered: Option<usize>,
     focus: FocusHandle,
     scroll: UniformListScrollHandle,
+    /// The scrollbar's thumb while it's dragged.
+    grab: Rc<Cell<Option<Pixels>>>,
 }
 
 impl<D: ListDelegate> EventEmitter<ListEvent> for List<D> {}
@@ -78,6 +154,7 @@ impl<D: ListDelegate> List<D> {
             hovered: None,
             focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
+            grab: Rc::default(),
         }
     }
 
@@ -206,12 +283,14 @@ impl<D: ListDelegate> Focusable for List<D> {
 impl<D: ListDelegate> Render for List<D> {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focus = self.focus.clone();
+        let handle = self.scroll.0.borrow().base_handle.clone();
         div()
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::on_key_down))
             .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                 window.focus(&focus, cx)
             })
+            .relative()
             .size_full()
             .child(
                 uniform_list(
@@ -222,5 +301,6 @@ impl<D: ListDelegate> Render for List<D> {
                 .track_scroll(&self.scroll)
                 .size_full(),
             )
+            .child(scrollbar(handle, self.grab.clone(), cx))
     }
 }

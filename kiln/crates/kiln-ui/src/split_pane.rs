@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
 //! [`SplitPane`]: two views side by side or one above the other, sharing
-//! the space by a ratio that dragging the border between them changes.
+//! the space by a ratio, or one side a fixed size and the other the rest,
+//! which dragging the border between them changes.
 
 use gpui::{
     AnyView, App, AppContext as _, Axis, Bounds, Context, CursorStyle, DragMoveEvent, EntityId,
@@ -15,23 +16,39 @@ use crate::ActiveTheme as _;
 const HANDLE: Pixels = px(6.);
 
 /// Two views, `first` left of (or above) `second`, with a 1 px border
-/// between them. `first` takes [`SplitPane::ratio`] of the space; dragging
-/// the border changes it, each side kept at least its minimum size, and
-/// emits [`SplitPaneEvent::Resized`]. The ratio, not either side's size,
-/// is what's kept, so both grow with the pane.
+/// between them. `first` takes [`SplitPane::ratio`] of the space, so both
+/// grow with the pane; or, given [`SplitPane::first_size`] or
+/// [`SplitPane::second_size`], that side keeps its size and the other
+/// takes the rest. Dragging the border changes the ratio or the size, each
+/// side kept at least its minimum, and emits [`SplitPaneEvent::Resized`].
+/// Either view can be swapped ([`SplitPane::set_first`]).
+///
+/// It holds views, not elements: each side keeps its own state and
+/// redraws alone, and an element would have to be rebuilt by the pane's
+/// owner every frame, which a view already is.
 pub struct SplitPane {
     axis: Axis,
     first: AnyView,
     second: AnyView,
     ratio: f32,
+    /// A side that keeps its size, if one does.
+    fixed: Option<Fixed>,
     min_first: Pixels,
     min_second: Pixels,
+}
+
+/// The side of a [`SplitPane`] that keeps its size.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Fixed {
+    First(Pixels),
+    Second(Pixels),
 }
 
 /// What a [`SplitPane`] tells its subscribers.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SplitPaneEvent {
-    /// Dragging the border set the ratio to this.
+    /// Dragging the border put it at this share of the space: the new
+    /// ratio, or the fixed side's new size over the pane's.
     Resized(f32),
 }
 
@@ -59,6 +76,7 @@ impl SplitPane {
             first: first.into(),
             second: second.into(),
             ratio: 0.5,
+            fixed: None,
             min_first: px(0.),
             min_second: px(0.),
         }
@@ -68,6 +86,37 @@ impl SplitPane {
     pub fn with_ratio(mut self, ratio: f32) -> Self {
         self.ratio = ratio.clamp(0., 1.);
         self
+    }
+
+    /// `first` keeps `size` (its width, or its height in a vertical
+    /// split), and `second` takes the rest.
+    pub fn first_size(mut self, size: Pixels) -> Self {
+        self.fixed = Some(Fixed::First(size));
+        self
+    }
+
+    /// `second` keeps `size`, and `first` takes the rest.
+    pub fn second_size(mut self, size: Pixels) -> Self {
+        self.fixed = Some(Fixed::Second(size));
+        self
+    }
+
+    /// The size of the side that keeps one, if one does.
+    pub fn fixed_size(&self) -> Option<Pixels> {
+        self.fixed
+            .map(|(Fixed::First(size) | Fixed::Second(size))| size)
+    }
+
+    /// Shows `view` as the first side, in place of the one before.
+    pub fn set_first(&mut self, view: impl Into<AnyView>, cx: &mut Context<Self>) {
+        self.first = view.into();
+        cx.notify();
+    }
+
+    /// Shows `view` as the second side, in place of the one before.
+    pub fn set_second(&mut self, view: impl Into<AnyView>, cx: &mut Context<Self>) {
+        self.second = view.into();
+        cx.notify();
     }
 
     /// The least each side gets by dragging the border.
@@ -92,19 +141,24 @@ impl SplitPane {
         cx.notify();
     }
 
-    /// The ratio that puts the border at `position` in a pane laid out at
-    /// `bounds`, each side kept to its minimum where there's room for both.
-    pub(crate) fn ratio_at(&self, position: Point<Pixels>, bounds: Bounds<Pixels>) -> f32 {
+    /// Where the border goes for a drag at `position` in a pane laid out
+    /// at `bounds`, each side kept to its minimum where there's room for
+    /// both, and the pane's length; `None` if it has none.
+    fn border_at(
+        &self,
+        position: Point<Pixels>,
+        bounds: Bounds<Pixels>,
+    ) -> Option<(Pixels, Pixels)> {
         let (at, total) = match self.axis {
             Axis::Horizontal => (position.x - bounds.left(), bounds.size.width),
             Axis::Vertical => (position.y - bounds.top(), bounds.size.height),
         };
         if total <= px(0.) {
-            return self.ratio;
+            return None;
         }
         let low = self.min_first.min(total);
         let high = (total - self.min_second).max(low);
-        at.clamp(low, high) / total
+        Some((at.clamp(low, high), total))
     }
 
     fn on_drag_move(
@@ -116,10 +170,20 @@ impl SplitPane {
         if event.drag(cx).0 != cx.entity_id() {
             return;
         }
-        let ratio = self.ratio_at(event.event.position, event.bounds);
-        if ratio != self.ratio {
-            self.ratio = ratio;
-            cx.emit(SplitPaneEvent::Resized(ratio));
+        let Some((at, total)) = self.border_at(event.event.position, event.bounds) else {
+            return;
+        };
+        let changed = match &mut self.fixed {
+            None => std::mem::replace(&mut self.ratio, at / total) != at / total,
+            Some(Fixed::First(size)) => std::mem::replace(size, at) != at,
+            // The border's pixel is the first side's.
+            Some(Fixed::Second(size)) => {
+                let second = (total - at - px(1.)).max(px(0.));
+                std::mem::replace(size, second) != second
+            }
+        };
+        if changed {
+            cx.emit(SplitPaneEvent::Resized(at / total));
             cx.notify();
         }
     }
@@ -129,15 +193,28 @@ impl Render for SplitPane {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let border = cx.theme().colors.border.default;
         let horizontal = self.axis == Axis::Horizontal;
-        let cell = |grow: f32, view: AnyView| {
+        // A side with a fixed size keeps it; the others share the rest by
+        // their grow factors.
+        let cell = |grow: f32, fixed: Option<Pixels>, view: AnyView| {
             div()
                 .flex()
-                .flex_basis(px(0.))
-                .flex_grow(grow)
                 .min_w_0()
                 .min_h_0()
                 .overflow_hidden()
+                .map(|cell| match fixed {
+                    Some(size) if horizontal => cell.flex_none().w(size),
+                    Some(size) => cell.flex_none().h(size),
+                    // Opposite a fixed side, the rest: grow factors below
+                    // 1 would take only their share of it.
+                    None if self.fixed.is_some() => cell.flex_basis(px(0.)).flex_grow(1.),
+                    None => cell.flex_basis(px(0.)).flex_grow(grow),
+                })
                 .child(view)
+        };
+        let (first_fixed, second_fixed) = match self.fixed {
+            Some(Fixed::First(size)) => (Some(size), None),
+            Some(Fixed::Second(size)) => (None, Some(size)),
+            None => (None, None),
         };
         let drag = DividerDrag(cx.entity_id());
         let handle = div()
@@ -183,8 +260,8 @@ impl Render for SplitPane {
             .flex()
             .when(!horizontal, |pane| pane.flex_col())
             .on_drag_move(cx.listener(Self::on_drag_move))
-            .child(cell(self.ratio, self.first.clone()))
+            .child(cell(self.ratio, first_fixed, self.first.clone()))
             .child(divider)
-            .child(cell(1. - self.ratio, self.second.clone()))
+            .child(cell(1. - self.ratio, second_fixed, self.second.clone()))
     }
 }

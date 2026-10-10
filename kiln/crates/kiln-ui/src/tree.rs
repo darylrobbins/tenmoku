@@ -8,20 +8,22 @@
 //! are: `up`, `down`, `home`, `end`, `pageup` and `pagedown` move the
 //! selection, `enter` confirms it, `right` expands the selected node (or,
 //! expanded, moves to its first child) and `left` collapses it (or,
-//! collapsed, moves to its parent).
+//! collapsed, moves to its parent). It draws a scrollbar over its right
+//! edge while its rows overflow.
 
-use std::{collections::HashSet, hash::Hash, ops::Range};
+use std::{cell::Cell, collections::HashSet, hash::Hash, ops::Range, rc::Rc};
 
 use gpui::{
     AnyElement, App, ClickEvent, Context, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, ParentElement as _, Render,
-    ScrollStrategy, SharedString, StatefulInteractiveElement as _, Styled as _,
+    InteractiveElement as _, IntoElement, KeyDownEvent, MouseButton, ParentElement as _, Pixels,
+    Render, ScrollStrategy, SharedString, StatefulInteractiveElement as _, Styled as _,
     UniformListScrollHandle, Window, div, prelude::FluentBuilder as _, uniform_list,
 };
 
 use crate::{
     CHEVRON_WIDTH, Icon, TREE_INDENT, TreeRow, UiTheme,
     nav::{NavKey, nav_key, page_rows},
+    scroll_area::scrollbar,
     tree_row::PADDING,
 };
 
@@ -85,6 +87,8 @@ pub struct Tree<M: TreeModel> {
     selected: Option<usize>,
     focus: FocusHandle,
     scroll: UniformListScrollHandle,
+    /// The scrollbar's thumb while it's dragged.
+    grab: Rc<Cell<Option<Pixels>>>,
 }
 
 impl<M: TreeModel> EventEmitter<TreeEvent<M::Id>> for Tree<M> {}
@@ -98,6 +102,7 @@ impl<M: TreeModel> Tree<M> {
             selected: None,
             focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
+            grab: Rc::default(),
         };
         tree.flatten();
         tree
@@ -358,12 +363,14 @@ impl<M: TreeModel> Focusable for Tree<M> {
 impl<M: TreeModel> Render for Tree<M> {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focus = self.focus.clone();
+        let handle = self.scroll.0.borrow().base_handle.clone();
         div()
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::on_key_down))
             .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                 window.focus(&focus, cx)
             })
+            .relative()
             .size_full()
             .child(
                 uniform_list(
@@ -374,5 +381,6 @@ impl<M: TreeModel> Render for Tree<M> {
                 .track_scroll(&self.scroll)
                 .size_full(),
             )
+            .child(scrollbar(handle, self.grab.clone(), cx))
     }
 }

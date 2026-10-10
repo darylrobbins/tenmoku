@@ -85,7 +85,6 @@ struct ScrollState {
 
 impl RenderOnce for ScrollArea {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let scrollbar = cx.theme().colors.scrollbar;
         let given = self.handle;
         let state = window.use_keyed_state(self.id, cx, |_, _| ScrollState {
             handle: given.clone().unwrap_or_default(),
@@ -95,66 +94,6 @@ impl RenderOnce for ScrollArea {
             let state = state.read(cx);
             (state.handle.clone(), state.grab.clone())
         };
-        let (thumb, thumb_hover) = (scrollbar.thumb, scrollbar.thumb_hover);
-        let (painted, dragged) = (handle.clone(), handle.clone());
-        let bar = canvas(
-            move |track, window, _| {
-                let thumb = thumb_bounds(track, -painted.offset().y, painted.max_offset().y)?;
-                Some((
-                    thumb,
-                    window.insert_hitbox(thumb, HitboxBehavior::BlockMouseExceptScroll),
-                ))
-            },
-            move |track, thumb_hit, window, _| {
-                let Some((bounds, hitbox)) = thumb_hit else {
-                    return;
-                };
-                let hot = grab.get().is_some() || hitbox.is_hovered(window);
-                window.paint_quad(
-                    fill(bounds, if hot { thumb_hover } else { thumb }).corner_radii(px(3.)),
-                );
-                let hover_was = hitbox.is_hovered(window);
-                let (pressed, moved, released) = (grab.clone(), grab.clone(), grab);
-                window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
-                    if phase.bubble()
-                        && event.button == MouseButton::Left
-                        && hitbox.is_hovered(window)
-                    {
-                        pressed.set(Some(event.position.y - bounds.top()));
-                        cx.stop_propagation();
-                        window.refresh();
-                    }
-                });
-                let handle = dragged;
-                window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, _| {
-                    if !phase.bubble() {
-                        return;
-                    }
-                    match moved.get() {
-                        Some(grab) if event.dragging() => {
-                            let top = event.position.y - grab;
-                            let max = handle.max_offset().y;
-                            let scroll = scroll_for_thumb(track, bounds.size.height, top, max);
-                            handle.set_offset(point(handle.offset().x, -scroll));
-                            window.refresh();
-                        }
-                        Some(_) => moved.set(None),
-                        None if bounds.contains(&event.position) != hover_was => window.refresh(),
-                        None => {}
-                    }
-                });
-                window.on_mouse_event(move |_: &MouseUpEvent, phase, window, _| {
-                    if phase.bubble() && released.take().is_some() {
-                        window.refresh();
-                    }
-                });
-            },
-        )
-        .absolute()
-        .top_0()
-        .right_0()
-        .bottom_0()
-        .w(SCROLLBAR_WIDTH);
         styled(self.base, |area| area.relative().overflow_hidden())
             .child(
                 div()
@@ -164,8 +103,81 @@ impl RenderOnce for ScrollArea {
                     .track_scroll(&handle)
                     .children(self.children),
             )
-            .child(bar)
+            .child(scrollbar(handle, grab, cx))
     }
+}
+
+/// A vertical scrollbar along its parent's right edge, over its content,
+/// for what `handle` scrolls: a thumb in the theme's scrollbar colours
+/// showing where it's scrolled to, nothing if the content fits. Dragging
+/// the thumb scrolls it; `grab` holds the drag between frames, so the
+/// owner keeps it as long as the scrollbar. The parent is `relative`.
+/// [`ScrollArea`] draws one, and so do [`crate::List`] and [`crate::Tree`]
+/// over a `uniform_list`'s handle.
+pub(crate) fn scrollbar(
+    handle: ScrollHandle,
+    grab: Rc<Cell<Option<Pixels>>>,
+    cx: &App,
+) -> impl IntoElement {
+    let scrollbar = cx.theme().colors.scrollbar;
+    let (thumb, thumb_hover) = (scrollbar.thumb, scrollbar.thumb_hover);
+    let (painted, dragged) = (handle.clone(), handle);
+    canvas(
+        move |track, window, _| {
+            let thumb = thumb_bounds(track, -painted.offset().y, painted.max_offset().y)?;
+            Some((
+                thumb,
+                window.insert_hitbox(thumb, HitboxBehavior::BlockMouseExceptScroll),
+            ))
+        },
+        move |track, thumb_hit, window, _| {
+            let Some((bounds, hitbox)) = thumb_hit else {
+                return;
+            };
+            let hot = grab.get().is_some() || hitbox.is_hovered(window);
+            window.paint_quad(
+                fill(bounds, if hot { thumb_hover } else { thumb }).corner_radii(px(3.)),
+            );
+            let hover_was = hitbox.is_hovered(window);
+            let (pressed, moved, released) = (grab.clone(), grab.clone(), grab);
+            window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
+                if phase.bubble() && event.button == MouseButton::Left && hitbox.is_hovered(window)
+                {
+                    pressed.set(Some(event.position.y - bounds.top()));
+                    cx.stop_propagation();
+                    window.refresh();
+                }
+            });
+            let handle = dragged;
+            window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, _| {
+                if !phase.bubble() {
+                    return;
+                }
+                match moved.get() {
+                    Some(grab) if event.dragging() => {
+                        let top = event.position.y - grab;
+                        let max = handle.max_offset().y;
+                        let scroll = scroll_for_thumb(track, bounds.size.height, top, max);
+                        handle.set_offset(point(handle.offset().x, -scroll));
+                        window.refresh();
+                    }
+                    Some(_) => moved.set(None),
+                    None if bounds.contains(&event.position) != hover_was => window.refresh(),
+                    None => {}
+                }
+            });
+            window.on_mouse_event(move |_: &MouseUpEvent, phase, window, _| {
+                if phase.bubble() && released.take().is_some() {
+                    window.refresh();
+                }
+            });
+        },
+    )
+    .absolute()
+    .top_0()
+    .right_0()
+    .bottom_0()
+    .w(SCROLLBAR_WIDTH)
 }
 
 /// The thumb in a scrollbar `track` the content's viewport tall, scrolled

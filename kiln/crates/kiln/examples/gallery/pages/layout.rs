@@ -11,7 +11,7 @@ use kiln::{
     ui::{ScrollArea, SplitPane, Tabs, TabsEvent, h_flex, v_flex},
 };
 
-use super::{Placeholder, page_frame, section};
+use super::{Placeholder, page_frame, page_root, section};
 
 pub(crate) struct LayoutPage {
     split: Entity<SplitPane>,
@@ -84,7 +84,7 @@ impl Render for LayoutPage {
             .child(ScrollArea::new("layout-scroll").size_full().children(lines));
         let split = frame().w(px(420.)).h(px(220.)).child(self.split.clone());
         let tabs = frame().w(px(520.)).h(px(180.)).child(self.tabs.clone());
-        ScrollArea::new("layout-page").size_full().child(
+        page_root("layout-page", cx).child(
             page_frame(
                 "Layout",
                 "ScrollArea draws a draggable thumb; SplitPane's border drags; Tabs shows one view.",

@@ -17,13 +17,13 @@ use gpui::{
 };
 use kiln::{
     prelude::*,
-    ui::{h_flex, v_flex},
+    ui::{ScrollArea, h_flex, v_flex},
 };
 
 pub(crate) use chrome::ChromePage;
 pub(crate) use controls::ControlsPage;
 pub(crate) use layout::LayoutPage;
-pub(crate) use lists::{ListsPage, list_row};
+pub(crate) use lists::ListsPage;
 pub(crate) use prompts::PromptsPage;
 pub(crate) use text::TextPage;
 pub(crate) use theme::ThemePage;
@@ -115,6 +115,14 @@ pub(crate) fn labelled(
                 .child(label.into()),
         )
         .child(content)
+}
+
+/// A page's root: it scrolls, on the window's background. The sidebar
+/// beside it is on the panel colour.
+pub(crate) fn page_root(id: &'static str, cx: &App) -> ScrollArea {
+    ScrollArea::new(id)
+        .size_full()
+        .bg(cx.theme().colors.surface.background)
 }
 
 /// A page's frame: its title and a line saying what it shows, then its

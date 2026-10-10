@@ -5,17 +5,17 @@
 
 use gpui::{
     AnyElement, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render,
-    SharedString, Styled as _, Subscription, Window, div, prelude::FluentBuilder as _, px,
+    SharedString, Styled as _, Subscription, Window, div, px,
 };
 use kiln::{
     prelude::*,
     ui::{
-        Icon, List, ListDelegate, ListEvent, ROW_HEIGHT, RowState, Tree, TreeModel, file_icon,
+        Icon, List, ListDelegate, ListEvent, ListRow, RowState, Tree, TreeModel, file_icon,
         folder_icon, h_flex, v_flex,
     },
 };
 
-use super::{page_frame, section};
+use super::{page_frame, page_root, section};
 
 /// How many rows the list has.
 pub(crate) const ROWS: usize = 1_000;
@@ -36,7 +36,7 @@ impl ListDelegate for Numbers {
         cx: &mut Context<List<Self>>,
     ) -> AnyElement {
         let c = cx.theme().colors;
-        list_row(state, &c)
+        ListRow::new(state)
             .px_3()
             .justify_between()
             .child(format!("Row {}", ix + 1))
@@ -47,25 +47,6 @@ impl ListDelegate for Numbers {
             )
             .into_any_element()
     }
-}
-
-/// A list row's look for `state`: the list leaves that to its delegate.
-pub(crate) fn list_row(state: RowState, c: &kiln::ui::Tokens<gpui::Hsla>) -> gpui::Div {
-    h_flex()
-        .h(ROW_HEIGHT)
-        .w_full()
-        .items_center()
-        .when(state.hovered && !state.selected, |row| {
-            row.bg(c.list.row_hover)
-        })
-        .when(state.selected && state.focused, |row| {
-            row.bg(c.list.row_selected)
-                .border_1()
-                .border_color(c.list.row_focus_border)
-        })
-        .when(state.selected && !state.focused, |row| {
-            row.bg(c.list.row_selected_inactive)
-        })
 }
 
 /// A small project, as a table of paths and their children.
@@ -131,7 +112,9 @@ impl ListsPage {
         let tree = cx.new(|cx| {
             let mut tree = Tree::new(Project, cx);
             tree.set_expanded(&"notes", true, cx);
-            tree.set_expanded(&"notes/src", true, cx);
+            for id in ["notes/src", "notes/tests", "assets", "assets/icons"] {
+                tree.set_expanded(&id, true, cx);
+            }
             tree
         });
         let list_events = cx.subscribe_in(&list, window, |page, _, event, _, cx| {
@@ -159,7 +142,7 @@ impl Render for ListsPage {
         let c = cx.theme().colors;
         let framed = |view: gpui::AnyView| {
             div()
-                .h(px(420.))
+                .h(px(300.))
                 .w(px(300.))
                 .border_1()
                 .border_color(c.border.default)
@@ -170,22 +153,25 @@ impl Render for ListsPage {
             .last_event
             .clone()
             .unwrap_or_else(|| "Click a row, or focus a view and use the arrow keys".into());
-        page_frame(
-            "Lists and trees",
-            "List virtualises its rows; Tree expands a model's nodes. Both keep the selection.",
-            cx,
+        page_root("lists-page", cx).child(
+            page_frame(
+                "Lists and trees",
+                "List virtualises its rows, drawn with ListRow; Tree expands a model's nodes. \
+                 Both keep the selection, and scroll with a draggable thumb.",
+                cx,
+            )
+            .child(
+                h_flex()
+                    .gap_5()
+                    .items_start()
+                    .child(section(
+                        format!("LIST ({ROWS} ROWS)"),
+                        framed(self.list.clone().into()),
+                        cx,
+                    ))
+                    .child(section("TREE", framed(self.tree.clone().into()), cx)),
+            )
+            .child(v_flex().text_color(c.text.muted).child(status)),
         )
-        .child(
-            h_flex()
-                .gap_5()
-                .items_start()
-                .child(section(
-                    format!("LIST ({ROWS} ROWS)"),
-                    framed(self.list.clone().into()),
-                    cx,
-                ))
-                .child(section("TREE", framed(self.tree.clone().into()), cx)),
-        )
-        .child(v_flex().text_color(c.text.muted).child(status))
     }
 }

@@ -47,7 +47,7 @@ pub use file_icons::{Icon, file_icon, folder_icon};
 pub use highlighted_label::{HighlightedLabel, char_ranges};
 pub use icon_button::IconButton;
 pub use layout::{h_flex, v_flex};
-pub use list::{List, ListDelegate, ListEvent, RowState};
+pub use list::{List, ListDelegate, ListEvent, ListRow, RowState};
 pub use menu_bar::{MENU_BAR_HEIGHT, MenuEntry, MenuPanel, MenuStrip};
 pub use palette::{PALETTE_WIDTH, PaletteFrame};
 pub use prompt::{PROMPT_WIDTH, Prompt, prompt_renderer};

@@ -224,3 +224,56 @@ fn changed_rows_keep_the_selection_in_range(cx: &mut TestAppContext) {
         "the owner's changes emit nothing"
     );
 }
+
+#[gpui::test]
+fn the_scrollbar_drags_the_rows(cx: &mut TestAppContext) {
+    use crate::{SCROLLBAR_WIDTH, scroll_area::thumb_bounds};
+    use gpui::{Bounds, point, size};
+
+    let (_, cx) = host(100, cx);
+    let list = cx.debug_bounds("list").unwrap();
+    let track = Bounds::new(
+        point(list.right() - SCROLLBAR_WIDTH, list.top()),
+        size(SCROLLBAR_WIDTH, list.size.height),
+    );
+    // Ninety rows past the ten in view.
+    let max = ROW_HEIGHT * 90.;
+    let thumb = thumb_bounds(track, px(0.), max).unwrap();
+    let room = track.size.height - thumb.size.height;
+    let (from, none) = (thumb.center(), Modifiers::none());
+    let to = point(from.x, from.y + room / 2.);
+    cx.simulate_mouse_down(from, MouseButton::Left, none);
+    cx.simulate_mouse_move(to, MouseButton::Left, none);
+    cx.simulate_mouse_up(to, MouseButton::Left, none);
+    draw(cx);
+    assert!(cx.debug_bounds("row-0").is_none(), "scrolled away");
+    let row = cx
+        .debug_bounds("row-45")
+        .expect("half way: row 45 at the top");
+    assert!((row.top() - list.top()).abs() <= px(1.), "{row:?}");
+}
+
+#[test]
+fn list_rows_show_their_state() {
+    let theme = crate::Theme::dark();
+    let (c, list) = (&theme.colors, &theme.colors.list);
+    let state = |selected, focused, hovered| RowState {
+        selected,
+        focused,
+        hovered,
+    };
+    assert_eq!(state(false, true, false).colors(c), (None, None));
+    assert_eq!(
+        state(false, false, true).colors(c),
+        (Some(list.row_hover), None)
+    );
+    assert_eq!(
+        state(true, true, true).colors(c),
+        (Some(list.row_selected), Some(list.row_focus_border)),
+        "selected wins over hovered"
+    );
+    assert_eq!(
+        state(true, false, false).colors(c),
+        (Some(list.row_selected_inactive), None)
+    );
+}

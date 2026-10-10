@@ -12,13 +12,12 @@ use gpui::{
 use kiln::{
     prelude::*,
     ui::{
-        ActivityRail, Breadcrumbs, Crumb, CrumbKind, Icon, IconButton, RailButton, ScrollArea,
-        StatusBarFrame, StatusEntry, Tab, TabBar, ToggleButton, Tooltip, file_icon, h_flex,
-        ui_theme,
+        ActivityRail, Breadcrumbs, Crumb, CrumbKind, Icon, IconButton, RailButton, StatusBarFrame,
+        StatusEntry, Tab, TabBar, ToggleButton, Tooltip, file_icon, h_flex, ui_theme,
     },
 };
 
-use super::{labelled, page_frame, section};
+use super::{labelled, page_frame, page_root, section};
 
 const TABS: [(&str, bool); 4] = [
     ("main.rs", false),
@@ -208,6 +207,6 @@ impl Render for ChromePage {
                 cx,
             ))
             .child(div().text_color(c.text.muted).child(last));
-        ScrollArea::new("chrome-page").size_full().child(page)
+        page_root("chrome-page", cx).child(page)
     }
 }

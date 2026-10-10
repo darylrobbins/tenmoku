@@ -159,11 +159,20 @@ struct Split {
 }
 
 fn split(axis: Axis, cx: &mut TestAppContext) -> (Entity<Split>, &mut VisualTestContext) {
+    split_with(axis, |pane| pane, cx)
+}
+
+/// [`split`], with `build` applied to the pane.
+fn split_with(
+    axis: Axis,
+    build: impl FnOnce(SplitPane) -> SplitPane + 'static,
+    cx: &mut TestAppContext,
+) -> (Entity<Split>, &mut VisualTestContext) {
     let (split, cx) = cx.add_window_view(|window, cx| {
         let first = cx.new(|_| Side("first"));
         let second = cx.new(|_| Side("second"));
-        let pane =
-            cx.new(|_| SplitPane::new(axis, first, second).with_min_sizes(px(100.), px(150.)));
+        let pane = cx
+            .new(|_| build(SplitPane::new(axis, first, second).with_min_sizes(px(100.), px(150.))));
         let events = cx.subscribe_in(&pane, window, |split: &mut Split, _, event, _, _| {
             let SplitPaneEvent::Resized(ratio) = event;
             split.resized.push(*ratio);
@@ -242,6 +251,63 @@ fn a_vertical_split_drags_up_and_down(cx: &mut TestAppContext) {
     assert!((ratio(&split, cx) - 400. / 601.).abs() < 0.01);
     let second = cx.debug_bounds("second").unwrap();
     assert!(near(second.size.height, px(200.)), "{second:?}");
+}
+
+#[gpui::test]
+fn a_fixed_side_keeps_its_size_and_drags_within_the_minimums(cx: &mut TestAppContext) {
+    let (split, cx) = split_with(Axis::Horizontal, |pane| pane.first_size(px(200.)), cx);
+    let width =
+        |name: &'static str, cx: &mut VisualTestContext| cx.debug_bounds(name).unwrap().size.width;
+    assert!(near(width("first", cx), px(200.)));
+    assert!(near(width("second", cx), px(400.)), "the rest");
+
+    let border = |cx: &mut VisualTestContext| {
+        let first = cx.debug_bounds("first").unwrap();
+        point(first.right() + px(0.5), first.center().y)
+    };
+    let origin = cx.debug_bounds("first").unwrap().left();
+    let from = border(cx);
+    drag(from, point(origin + px(320.), from.y), cx);
+    let size = |cx: &mut VisualTestContext| {
+        split.read_with(cx, |split, cx| split.pane.read(cx).fixed_size().unwrap())
+    };
+    assert!(near(size(cx), px(320.)), "{:?}", size(cx));
+    assert!(near(width("first", cx), px(320.)));
+    let from = border(cx);
+    drag(from, point(origin + px(590.), from.y), cx);
+    assert!(near(size(cx), px(451.)), "second kept to 150 px");
+    let resized = split.read_with(cx, |split, _| split.resized.clone());
+    assert!(!resized.is_empty());
+}
+
+#[gpui::test]
+fn a_fixed_second_side_leaves_the_rest_to_the_first(cx: &mut TestAppContext) {
+    let (_, cx) = split_with(Axis::Vertical, |pane| pane.second_size(px(180.)), cx);
+    let second = cx.debug_bounds("second").unwrap();
+    assert!(near(second.size.height, px(180.)), "{second:?}");
+    let first = cx.debug_bounds("first").unwrap();
+    assert!(near(first.size.height, px(420.)), "{first:?}");
+}
+
+#[gpui::test]
+fn a_side_can_be_swapped(cx: &mut TestAppContext) {
+    let (split, cx) = split(Axis::Horizontal, cx);
+    let pane = split.read_with(cx, |split, _| split.pane.clone());
+    cx.update(|_, cx| {
+        let third = cx.new(|_| Side("third"));
+        pane.update(cx, |pane, cx| pane.set_second(third, cx));
+    });
+    draw(cx);
+    assert!(cx.debug_bounds("second").is_none(), "gone");
+    let third = cx.debug_bounds("third").unwrap();
+    assert!(near(third.size.width, px(300.)), "in its place: {third:?}");
+    cx.update(|_, cx| {
+        let fourth = cx.new(|_| Side("fourth"));
+        pane.update(cx, |pane, cx| pane.set_first(fourth, cx));
+    });
+    draw(cx);
+    assert!(cx.debug_bounds("first").is_none());
+    assert!(cx.debug_bounds("fourth").is_some());
 }
 
 #[gpui::test]

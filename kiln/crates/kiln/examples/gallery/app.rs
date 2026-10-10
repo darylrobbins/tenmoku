@@ -12,8 +12,8 @@ use kiln::{
     command::CommandId,
     prelude::*,
     ui::{
-        Button, ButtonVariant, GlobalTheme, List, ListDelegate, ListEvent, RowState, SplitPane,
-        StatusBarFrame, StatusEntry, ThemeMode, h_flex, ui_theme, v_flex,
+        Button, ButtonVariant, GlobalTheme, List, ListDelegate, ListEvent, ListRow, RowState,
+        SplitPane, StatusBarFrame, StatusEntry, ThemeMode, h_flex, ui_theme, v_flex,
     },
 };
 
@@ -21,7 +21,6 @@ use crate::{
     commands::{NextPage, PreviousPage, ShowPrompt, ToggleTheme},
     pages::{
         ChromePage, ControlsPage, LayoutPage, ListsPage, Page, PromptsPage, TextPage, ThemePage,
-        list_row,
     },
 };
 
@@ -36,7 +35,7 @@ pub(crate) struct Gallery {
     pages: Vec<AnyView>,
     prompts: Entity<PromptsPage>,
     sidebar: Entity<List<PageList>>,
-    host: Entity<PageHost>,
+    /// The sidebar, then the page shown.
     split: Entity<SplitPane>,
     _subscriptions: Vec<Subscription>,
 }
@@ -62,13 +61,14 @@ impl Gallery {
             list.set_selected(Some(page.index()), cx);
             list
         });
-        let host = cx.new(|_| PageHost {
-            view: pages[page.index()].clone(),
-        });
         let split = cx.new(|_| {
-            SplitPane::new(gpui::Axis::Horizontal, sidebar.clone(), host.clone())
-                .with_ratio(0.18)
-                .with_min_sizes(px(150.), px(400.))
+            SplitPane::new(
+                gpui::Axis::Horizontal,
+                sidebar.clone(),
+                pages[page.index()].clone(),
+            )
+            .first_size(px(200.))
+            .with_min_sizes(px(150.), px(400.))
         });
         let subscriptions = vec![cx.subscribe_in(
             &sidebar,
@@ -85,7 +85,6 @@ impl Gallery {
             pages,
             prompts,
             sidebar,
-            host,
             split,
             _subscriptions: subscriptions,
         }
@@ -110,10 +109,8 @@ impl Gallery {
         self.sidebar
             .update(cx, |list, cx| list.set_selected(Some(page.index()), cx));
         let view = self.pages[page.index()].clone();
-        self.host.update(cx, |host, cx| {
-            host.view = view;
-            cx.notify();
-        });
+        self.split
+            .update(cx, |split, cx| split.set_second(view, cx));
         cx.notify();
     }
 
@@ -240,8 +237,8 @@ impl Render for Gallery {
             .on_action(cx.listener(Self::toggle_theme))
             .on_action(cx.listener(Self::show_prompt))
             .size_full()
-            // The sidebar shows the panel colour; the page host paints the
-            // page's background over it.
+            // The sidebar shows the panel colour; each page paints the
+            // background over it.
             .bg(c.surface.panel)
             .text_color(c.text.primary)
             .text_size(px(13.))
@@ -264,27 +261,11 @@ impl ListDelegate for PageList {
         ix: usize,
         state: RowState,
         _: &mut Window,
-        cx: &mut Context<List<Self>>,
+        _: &mut Context<List<Self>>,
     ) -> AnyElement {
-        let c = cx.theme().colors;
-        list_row(state, &c)
+        ListRow::new(state)
             .px_3()
             .child(Page::ALL[ix].title())
             .into_any_element()
-    }
-}
-
-/// The page side of the split: whichever page is shown. SplitPane holds
-/// its two views for good, so swapping the page means a view in between.
-pub(crate) struct PageHost {
-    view: AnyView,
-}
-
-impl Render for PageHost {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .size_full()
-            .bg(cx.theme().colors.surface.background)
-            .child(self.view.clone())
     }
 }

@@ -14,7 +14,7 @@ use kiln::{
     ui::{TextField, TextFieldEvent, TextInput, TextInputEvent, ui_theme, v_flex},
 };
 
-use super::{labelled, page_frame, section};
+use super::{labelled, page_frame, page_root, section};
 use crate::commands::{InputBackspace, InputDeleteWord};
 
 pub(crate) struct TextPage {
@@ -94,12 +94,14 @@ impl Render for TextPage {
                     .text_color(c.text.muted)
                     .child(format!("Text: {input_text:?}")),
             );
-        page_frame(
-            "Text",
-            "TextField is a full single-line editor; TextInput appends only.",
-            cx,
+        page_root("text-page", cx).child(
+            page_frame(
+                "Text",
+                "TextField is a full single-line editor; TextInput appends only.",
+                cx,
+            )
+            .child(section("TEXTFIELD", labelled("Field", field, cx), cx))
+            .child(section("TEXTINPUT", labelled("Input", input, cx), cx)),
         )
-        .child(section("TEXTFIELD", labelled("Field", field, cx), cx))
-        .child(section("TEXTINPUT", labelled("Input", input, cx), cx))
     }
 }
