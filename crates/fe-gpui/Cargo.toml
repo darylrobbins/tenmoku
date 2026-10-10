@@ -13,6 +13,7 @@ fe-command.workspace = true
 fe-config.workspace = true
 fe-display.workspace = true
 fe-editor.workspace = true
+fe-fileview.workspace = true
 fe-keymap.workspace = true
 fe-syntax.workspace = true
 fe-vim.workspace = true
@@ -28,6 +29,7 @@ gpui_platform = { workspace = true, features = ["test-support"] }
 image.workspace = true
 # Invocations recorded in tests go through JSON, as a macro or log would.
 serde_json.workspace = true
+tempfile.workspace = true
 
 # Golden screenshots of the editor view (TESTING.md, "Screenshots"). Built as a
 # test so the gate runs the pixel-comparison unit tests; rendering only happens

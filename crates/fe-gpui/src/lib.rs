@@ -14,6 +14,7 @@
 
 pub mod commands;
 mod element;
+mod file_viewer;
 mod hover;
 pub mod keymap;
 pub mod menu;
@@ -25,6 +26,7 @@ pub use fe_config::{EditorSettings, SettingsEvent};
 use fe_editor::diagnostics::Severity;
 pub use fe_keymap;
 use fe_syntax::Highlight;
+pub use file_viewer::{FileViewer, FileViewerEvent};
 use gpui::{App, Hsla, Pixels, SharedString, font, px, rgb, rgba};
 pub use hover::{HoverContent, HoverFuture, HoverProvider};
 
