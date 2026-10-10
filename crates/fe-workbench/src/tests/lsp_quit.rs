@@ -55,6 +55,24 @@ impl ServerLauncher for Cooperating {
     }
 }
 
+/// Launches the fake with a stderr that never ends, so the server thread
+/// reads on after the server's graceful exit, its process group possibly
+/// still alive.
+struct EndlessStderr(Arc<fe_lsp::fake::FakeLauncher>);
+
+impl ServerLauncher for EndlessStderr {
+    fn launch(
+        &self,
+        spec: &ServerSpec,
+        root: &Path,
+        cancel: &LaunchCancel,
+    ) -> io::Result<ServerIo> {
+        let mut io = self.0.launch(spec, root, cancel)?;
+        io.stderr = Some(Box::pin(futures::io::repeat(b'!')));
+        Ok(io)
+    }
+}
+
 /// Blocks each launch until released, ignoring the cancel, then launches
 /// the fake.
 struct Ignoring {
@@ -266,5 +284,27 @@ fn quit_kills_a_server_awaiting_initialize(cx: &mut TestAppContext) {
             assert_eq!(quit.left, 0, "{script:?} {window_open}");
             assert_eq!(fake.kills(), 1, "{script:?} {window_open}");
         }
+    }
+}
+
+#[gpui::test]
+fn quit_kills_a_server_stopped_but_not_reaped(cx: &mut TestAppContext) {
+    for window_open in [true, false] {
+        let fake = FakeServer::new(Script::default());
+        let mut q = Quitting::new(cx, Arc::new(EndlessStderr(fake.launcher())));
+        q.open_main();
+        fake.wait_initialized();
+        if !window_open {
+            q.close_window();
+        }
+        // It shuts down and exits, reporting `Stopped`, but its thread
+        // reads stderr on until the switch is thrown.
+        let quit = if window_open {
+            q.quit(GRACE, FORCE)
+        } else {
+            cx.update(|cx| shut_down_all_within(cx, GRACE, FORCE))
+        };
+        assert_eq!(quit, Quit { forced: 1, left: 0 }, "{window_open}");
+        assert_eq!(fake.kills(), 1, "{window_open}");
     }
 }

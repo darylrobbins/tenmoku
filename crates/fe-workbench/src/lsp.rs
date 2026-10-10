@@ -180,6 +180,25 @@ impl Global for Shutdowns {}
 struct Running {
     running: HashSet<ServerId>,
     stopped: HashSet<ServerId>,
+    /// The manager and its servers' threads have all ended and dropped
+    /// the sink. A `Stopped` status isn't that: the thread may still be
+    /// reaping the server's process group.
+    finished: bool,
+}
+
+/// Held by a manager's sink, so it drops with the last of the manager and
+/// its server threads: that is when cleanup is complete.
+struct Cleanup {
+    running: Arc<Mutex<Running>>,
+    /// Gets a message each time a server stops, and when cleanup ends.
+    stop: mpsc::Sender<()>,
+}
+
+impl Drop for Cleanup {
+    fn drop(&mut self) {
+        lock(&self.running).finished = true;
+        self.stop.send(()).ok();
+    }
 }
 
 /// What waiting for a manager's servers to stop needs: its own channel, so
@@ -202,12 +221,21 @@ impl Watch {
         }
     }
 
+    /// Everything it watches has ended, processes reaped, not merely
+    /// reported `Stopped`.
     fn is_done(&self) -> bool {
-        lock(&self.running).running.is_empty()
+        lock(&self.running).finished
     }
 
+    /// The servers not done: those not reported stopped, and at least one
+    /// while a thread is still cleaning up after a `Stopped`.
     fn count(&self) -> usize {
-        lock(&self.running).running.len()
+        let running = lock(&self.running);
+        if running.finished {
+            0
+        } else {
+            running.running.len().max(1)
+        }
     }
 
     /// Blocks until every server it watches has stopped, or `deadline`.
@@ -523,6 +551,7 @@ impl Workbench {
         let running = Arc::new(Mutex::new(Running::default()));
         let (stop, stopped) = mpsc::channel();
         let watched = running.clone();
+        let cleanup = Cleanup { running, stop };
         #[cfg(test)]
         let sent = lsp.diagnostics_sent.clone();
         #[cfg(test)]
@@ -543,11 +572,11 @@ impl Workbench {
                 restarting.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
             if let LspEvent::Status { server, status, .. } = &event {
-                let mut running = lock(&running);
+                let mut running = lock(&cleanup.running);
                 if matches!(status, ServerStatus::Stopped(_)) {
                     running.running.remove(server);
                     running.stopped.insert(*server);
-                    stop.send(()).ok();
+                    cleanup.stop.send(()).ok();
                 } else if !running.stopped.contains(server) {
                     running.running.insert(*server);
                 }
