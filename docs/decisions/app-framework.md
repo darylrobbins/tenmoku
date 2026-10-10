@@ -78,6 +78,15 @@ the same commands, config and keymaps.
   GPUI's `Styled`, `InteractiveElement` and `FluentBuilder` methods work on
   them; values are controlled. Stateful ones are `Entity<T>` views that emit
   events (`cx.subscribe_in`). Widgets read `cx.theme()` while rendering.
+- **GPUI internals kiln relies on.** gpui-pre is pinned (`=0.3.7`), and a
+  bump is its own card. `kiln::commands!` implements `gpui::Action` by hand
+  rather than through GPUI's derive, so that an app needs no `gpui`
+  dependency of its own: the derive writes bare `gpui::` paths. That impl
+  names `gpui::MacroActionData`, `MacroActionBuilder` and
+  `gpui::private::inventory`, which are public but not stable. A bump that
+  changes them fails to compile in kiln-platform, and
+  `the_macro_makes_gpui_actions` and `the_macro_needs_no_gpui_of_its_own`
+  test the result.
 
 ## 4. Compatibility for fastedit
 
