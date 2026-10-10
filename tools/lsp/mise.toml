@@ -1,0 +1,3 @@
+# Node for tools/lsp's language servers (scripts/lsp-real.sh, .github/workflows/lsp.yml).
+[tools]
+node = "24.21.0"

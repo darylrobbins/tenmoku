@@ -1,0 +1,54 @@
+name: LSP
+
+# fe-lsp against real language servers (scripts/lsp-real.sh, TESTING.md's
+# "Real language servers"): rust-analyzer, pyright, typescript-language-server
+# and typescript-go. On demand only, never on PRs or a schedule, so the gate
+# needs no Node, network or server binaries (docs/decisions/lsp-client.md §6.3
+# and Q4).
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  real-servers:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      # Before the install, so the toolchain and its rust-analyzer component
+      # come from the cache. rust-cache keeps ~/.cargo and target, not
+      # ~/.rustup.
+      - name: Cache rustup toolchains
+        uses: actions/cache@v6
+        with:
+          path: ~/.rustup/toolchains
+          key: rustup-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml') }}
+      - name: Install toolchain from rust-toolchain.toml
+        run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      - name: Install Node from tools/lsp/mise.toml
+        uses: jdx/mise-action@v5
+        with:
+          working_directory: tools/lsp
+      - name: Node version
+        id: node
+        working-directory: tools/lsp
+        # Assigned first, so a failing `mise exec` fails the step.
+        run: |
+          version=$(mise exec -- node --version)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Cache npm
+        uses: actions/cache@v6
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-node-${{ steps.node.outputs.version }}-${{ hashFiles('tools/lsp/package-lock.json') }}
+      - name: Real-server tests
+        env:
+          # A missing server fails rather than skips.
+          FE_LSP_REQUIRE_SERVERS: 1
+        run: scripts/lsp-real.sh

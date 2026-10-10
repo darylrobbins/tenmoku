@@ -1647,8 +1647,8 @@ Whether fastedit ever installs or bundles servers for users is Q2. The
   - readiness from launch to `Ready` within 60 s
   - clean shutdown
 - **A separate workflow,** `.github/workflows/lsp.yml`, on `macos-15`, with a
-  45-minute timeout. Its triggers are Q4: recommended `workflow_dispatch` plus
-  a nightly `schedule`.
+  45-minute timeout. Its trigger is Q4: `workflow_dispatch` only, with no
+  `schedule`.
 - **Skipping cleanly.** Each real-server test first resolves its binary:
   - `FE_LSP_<SERVER>` env var, then `tools/lsp/node_modules/.bin/…`, then
     `rustup which`
@@ -1702,7 +1702,7 @@ dependency beyond §2's.
 7. **Diagnostics (GPUI for rendering).** gpui-kit's `DiagnosticSet` copied into `fe-editor` on anchored byte ranges (§4.3), the active-identity check and rebasing of versioned ranges on delivery (§4.1), and squiggles, gutter marks and hover messages in `fe-gpui`. Depends on 2 and 5.
 8. **Hover popover (GPUI).** `textDocument/hover` and a popover that shares card 7's hover surface. Depends on 5.
 9. **Completion (GPUI for the menu).** Request, resolve, menu, and accept as one `Origin::User` transaction through `fe_buffer::Buffer::edit_from` (`crates/fe-buffer/src/buffer.rs:346`). Depends on 5.
-10. **Real-server tests and `lsp.yml`.** The `tools/lsp` lockfile and mise pin, `scripts/lsp-real.sh`, the `real_server_*` tests and emoji columns (§6), and M4's "precisely via rust-analyzer, pyright and tsserver" check. Depends on 6 and Q4/Q5; the workflow change needs the user's approval under Regatta's rules.
+10. **Real-server tests and `lsp.yml`.** The `tools/lsp` lockfile and mise pin, `scripts/lsp-real.sh`, the `real_server_*` tests and emoji columns (§6), and M4's "precisely via rust-analyzer, pyright and tsserver" check, which the headless `LspNavigation` definition tests stand in for (the in-app F12 check is human card T323). Depends on 6 and Q4/Q5; the workflow change needs the user's approval under Regatta's rules.
 
 ## 9. Questions for the user
 
@@ -1773,7 +1773,8 @@ Recommendation: **(a)**.
 
 Recommendation: **(a)**. The gate stays free of Node and network either way.
 
-**Decided (user, 2026-10-06): (a).**
+**Decided (user, 2026-10-06): (a).** **Changed (user, 2026-10-10): (c).**
+`lsp.yml` runs on `workflow_dispatch` only; a `schedule` can be added later.
 
 **Q5. Which TypeScript server is the default?**
 
@@ -1897,17 +1898,60 @@ would run its code once the workbench drives fe-lsp (T143).
 - **How often "search instead of empty" helps or hurts.** For pyright and
   typescript-language-server, a true "no definition" (a builtin, say) shows
   search's guesses, labelled "by search". Not measured for frequency.
-- **Which servers version their diagnostics.** The probe logged
-  `publishDiagnostics` counts but not whether `version` was set. Unversioned
-  publications are dropped unless the server's spec names a verified
-  guarantee that fixes their text, including across a reopen (§4.1), and no
-  server has one yet. So a server that never versions them would show no
-  diagnostics at all. Card 7 checks all three servers, and records a
-  guarantee in a spec only with the server's source and a test behind it.
-- **rust-analyzer from the 1.98.1 rustup component.** Not run. The probe used
-  the 2026-10-05 standalone release. The component is older, so its encoding
-  negotiation should be re-checked in card 10. The negotiation code has been
-  stable, but this wasn't verified.
+- **Which servers version their diagnostics: checked in card 10
+  (2026-10-09).** The real-server tests watch the wire and record it
+  (`real_server_*` in `crates/fe-lsp/tests/real_server.rs`, run by
+  `scripts/lsp-real.sh`). Each test opens a file and adds an error, saved
+  for rust-analyzer and unsaved for the others. It then waits up to 30 s for
+  the first `publishDiagnostics` after the edit that holds a diagnostic for
+  that file:
+  - **rust-analyzer** (1.98.1 component) versions them. But it pushes only
+    `cargo check`'s diagnostics, whose `source` is `rustc`. It advertises
+    `diagnosticProvider` whatever the client offers, and sends
+    `workspace/diagnostic/refresh`. Its own diagnostics are pull-only, such
+    as an unresolved import in an unsaved buffer: for that edit it pushed an
+    empty, versioned list. fe-lsp doesn't pull (§7), so fastedit shows Rust
+    diagnostics only after a save. The save test,
+    `real_server_rust_analyzer_diagnostics_follow_saves`, sees E0308 from
+    `rustc` appear after saving a type error and leave after saving the fix.
+  - **pyright** 1.1.414 versions them.
+  - **typescript-language-server** 6.0.1 never sets `version`. Unversioned
+    publications are dropped (§4.1), so TypeScript and JavaScript files show
+    no diagnostics under the default server.
+  - **typescript-go** 7.0.2 pushes none for source files within 30 s. It
+    pushed one empty, unversioned list for `tsconfig.json`, with the path
+    lowercased (`…/t/.tmp…`).
+
+  No server-specific remedy is in card 10's scope. Two follow-up cards cover
+  it: T305 for typescript-language-server's unversioned diagnostics, and T306
+  for pulling diagnostics.
+- **rust-analyzer from the 1.98.1 rustup component: checked in card 10
+  (2026-10-09).** Version `rust-analyzer 1.98.1 (48a229ce 2026-09-01)`.
+  - Offered `["utf-8", "utf-16"]`, it negotiates **utf-8**, as the
+    2026-10-05 probe release did.
+  - Offered `["utf-16"]` alone, it negotiates utf-16.
+  - Under each, definitions of §4.4 cases 1, 3 and 7 land on §4.2's columns
+    for that encoding: 25, 39, 24 under utf-8 and 23, 29, 23 under utf-16.
+- **Launch to `Ready` on this repository: measured in card 10
+  (2026-10-09).** A scratch run (not committed) used the built-in
+  rust-analyzer spec on the 1.98.1 component, `server-status` mode, plus
+  `cargo.targetDir = true`. It opened `crates/fe-lsp/src/lib.rs` at the
+  workspace root. Ready came after 68.4 s with build scripts not yet built,
+  and after 60.0 s with them built, at a load average of 24 to 91. The time
+  went to:
+  - compile-time deps: about 16 s
+  - proc macros and fetching: about 22 s
+  - cache priming ("Indexing"): about 18 s
+
+  Each server's launch to `Ready` over its one-file fixture, from the same
+  runs:
+  - rust-analyzer: 3.5–23.7 s (the slowest under heavy load)
+  - pyright: 0.6–1.3 s
+  - typescript-language-server: 0.8–3.1 s
+  - typescript-go: 0.5–0.8 s
+
+  So the 60 s bound in the tests holds for the fixtures, but not for this
+  repository: the first `Ready` here can take a minute or more.
 - **rust-analyzer without client file watching: checked in card 4
   (2026-10-07).** In the same run, fe-lsp's capabilities (no
   `didChangeWatchedFiles`), a function appended on disk to a file the client

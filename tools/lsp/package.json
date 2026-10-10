@@ -1,0 +1,12 @@
+{
+  "name": "fastedit-lsp-test-servers",
+  "private": true,
+  "description": "Language servers for fe-lsp's real-server tests (scripts/lsp-real.sh) only: fastedit never installs them for users.",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "pyright": "1.1.414",
+    "typescript": "6.0.3",
+    "typescript-go": "npm:typescript@7.0.2",
+    "typescript-language-server": "6.0.1"
+  }
+}

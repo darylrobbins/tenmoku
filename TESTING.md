@@ -31,6 +31,7 @@ cargo nextest run --workspace     # what CI runs on every push; each test in its
 scripts/soak.sh                   # 50k cases per property, release (a few minutes);
                                   # run after changing undo/redo or anchor code
 scripts/check-syntax-features.sh  # fe-syntax with no languages, then each alone (CI runs it)
+scripts/lsp-real.sh               # fe-lsp against real language servers; see Real language servers
 scripts/prune-build-cache.sh --dry-run   # stale incremental dirs of this lane; see Disk
 scripts/test-prune-build-cache.sh        # fixture test for the prune script
 cargo mutants -p fe-buffer -j 4   # by hand, before milestones
@@ -47,6 +48,99 @@ large-text rope tests, which run a hundredth as many (at least 8). Note that
 `proptest!` lets the variable override `ProptestConfig::with_cases`, so a test
 that needs its own count has to drive `TestRunner` itself, as `large.rs` does.
 CI's `soak` workflow runs `scripts/soak.sh` on demand.
+
+## Real language servers
+
+fe-lsp's gate tests run against an in-process fake server. The slow group in
+`crates/fe-lsp/tests/real_server.rs` runs the real servers instead:
+rust-analyzer, pyright, typescript-language-server and typescript-go
+(docs/decisions/lsp-client.md §6.2, §6.3).
+
+```zsh
+scripts/lsp-real.sh                            # installs the servers, runs the tests
+FE_LSP_REQUIRE_SERVERS=1 scripts/lsp-real.sh   # a missing server fails instead of skipping
+```
+
+The script does three things:
+
+1. It installs Node from `tools/lsp/mise.toml` (`mise install`) and the npm
+   servers from `tools/lsp/package-lock.json` (`npm ci --prefix tools/lsp`).
+   They are pinned there for these tests only. fastedit never installs
+   servers for users.
+2. It adds the pinned toolchain's rust-analyzer (`rustup component add
+   rust-analyzer`). The component isn't listed in `rust-toolchain.toml`, so
+   everyday builds don't download it.
+3. It runs `cargo nextest run -p fe-lsp --run-ignored only -E
+   'test(/real_server_/)'` on tools/lsp's Node.
+
+Each `real_server_*` test is `#[ignore]`d, so `cargo nextest run --workspace`
+runs none of them. Each one copies its project from
+`crates/fe-lsp/tests/fixtures/real/` into a temporary directory. It finds its
+server's binary in this order:
+
+- `FE_LSP_RUST_ANALYZER`, `FE_LSP_PYRIGHT`, `FE_LSP_TYPESCRIPT_LANGUAGE_SERVER`
+  or `FE_LSP_TYPESCRIPT_GO`
+- `tools/lsp/node_modules`
+- `rustup which`
+
+A missing server prints `skipped: <bin> not found (run scripts/lsp-real.sh)`
+and the test passes, unless `FE_LSP_REQUIRE_SERVERS=1`.
+
+The tests check:
+
+- launch to `Ready` within 60 s
+- §4.4's emoji cases 1, 3 and 7 at the columns the probe measured:
+  - rust-analyzer under utf-8, and under utf-16 (offered alone)
+  - pyright and typescript-language-server under utf-16
+  - typescript-go under utf-8
+- definition and references through `LspNavigation`
+- a clean stop (typescript-go's exit code 1 counts as one)
+- rust-analyzer's `cargo check` diagnostics after saving a type error, and
+  after saving its fix
+- whether each server's `publishDiagnostics` carries a version
+
+A warm run takes about 35 s.
+
+`.github/workflows/lsp.yml` runs the script on `workflow_dispatch` only, on
+`macos-15`, with `FE_LSP_REQUIRE_SERVERS=1`: never on PRs and not on a
+schedule. Run it from the Actions tab or with `gh workflow run lsp.yml`.
+
+**M4's manual check: go-to-definition in the app.** The script's
+`LspNavigation` definition checks through rust-analyzer, pyright and
+typescript-language-server cover it headlessly. A person runs these steps
+for card T323, and again after changing fe-lsp, `LspNavigation` or the
+workbench's LSP wiring. Point the app at
+tools/lsp's servers, on tools/lsp's Node, with a scratch config directory.
+rust-analyzer comes from rustup's proxy on your `PATH`.
+
+```zsh
+scripts/lsp-real.sh    # installs tools/lsp's servers
+lsp_path=$(mise exec -C tools/lsp -- printenv PATH)
+mkdir -p /tmp/fe-lsp-check && cat > /tmp/fe-lsp-check/settings.toml <<EOF
+[lsp.servers.pyright]
+command = "$PWD/tools/lsp/node_modules/.bin/pyright-langserver"
+env = { PATH = "$lsp_path" }
+[lsp.servers.typescript-language-server]
+command = "$PWD/tools/lsp/node_modules/.bin/typescript-language-server"
+env = { PATH = "$lsp_path" }
+EOF
+cp -R crates/fe-lsp/tests/fixtures/real /tmp/fe-lsp-real
+# The tests write the Rust fixture's manifest into their copy; so does this.
+printf '[package]\nname = "real"\nversion = "0.1.0"\nedition = "2024"\n\n[workspace]\n' \
+  > /tmp/fe-lsp-real/rust/Cargo.toml
+for project in rust python typescript; do
+  FASTEDIT_CONFIG_DIR=/tmp/fe-lsp-check cargo run -p fastedit -- /tmp/fe-lsp-real/$project
+done
+```
+
+In each project, open `src/main.rs`, `main.py` or `main.ts`, and wait for the
+status bar to show the server ready. Then:
+
+- Press F12 on `e1`, `e3` and `e7` in the row below each declaration. The
+  caret must land on the declared name, after the emoji, the ZWJ family and
+  the combining accent.
+- Press F12 on the call of `hello`. It must open the greet file with the caret
+  on `hello`.
 
 ## Disk
 
