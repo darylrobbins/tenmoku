@@ -1283,18 +1283,34 @@ mod tests {
     #[test]
     fn the_deadline_doesnt_wait_for_an_extraction() {
         let dir = callers(2);
-        let gate = Gate::default();
-        let nav = unbuilt(dir.path())
-            .with_budget(Duration::from_millis(300))
-            .with_extract(gate.extract());
-        let defs = nav
-            .definitions(&other(dir.path()), &AtomicBool::new(false))
-            .unwrap();
-        // The extraction is still waiting, and the answer came anyway.
-        assert_eq!(gate.started(), 1);
-        assert!(defs.items.is_empty());
-        assert!(defs.partial);
-        gate.release();
+        // Under load the deadline can pass before the request reaches the
+        // extraction, which proves nothing: try again with twice the budget.
+        let mut budget = Duration::from_millis(300);
+        let cap = Duration::from_secs(10);
+        loop {
+            let gate = Gate::default();
+            let nav = unbuilt(dir.path())
+                .with_budget(budget)
+                .with_extract(gate.extract());
+            let defs = nav
+                .definitions(&other(dir.path()), &AtomicBool::new(false))
+                .unwrap();
+            if gate.started() == 0 {
+                gate.release();
+                assert!(
+                    budget < cap,
+                    "no extraction started within a budget of {budget:?}"
+                );
+                budget = (budget * 2).min(cap);
+                continue;
+            }
+            // The extraction is still waiting, and the answer came anyway.
+            assert_eq!(gate.started(), 1);
+            assert!(defs.items.is_empty());
+            assert!(defs.partial);
+            gate.release();
+            return;
+        }
     }
 
     #[test]
