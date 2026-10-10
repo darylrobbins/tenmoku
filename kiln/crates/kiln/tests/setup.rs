@@ -172,7 +172,10 @@ fn the_user_keymap_loads_over_the_apps(cx: &mut TestAppContext) {
         "[[bindings]]\nkeys = \"secondary-shift-n\"\ncommand = \"notes.new_note\"\n",
     )
     .unwrap();
-    let diagnostics = cx.update(|cx| kiln::init(cx, config().user_keymap(&user)));
+    // Not watched: the watcher's thread would wake the service's task.
+    let (_, closed) = kiln::platform::config::batch_channel();
+    let config = config().user_keymap(&user).watch_with(closed);
+    let diagnostics = cx.update(|cx| kiln::init(cx, config));
     std::fs::remove_dir_all(&dir).ok();
     assert_eq!(diagnostics, []);
     cx.update(|cx| {

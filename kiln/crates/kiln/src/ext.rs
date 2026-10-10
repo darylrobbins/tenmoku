@@ -1,19 +1,26 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
 //! Extension traits that put kiln's calls on GPUI's own `App` and `Window`:
-//! `use kiln::prelude::*;`, then `cx.set_theme_mode(..)` or
-//! `window.run_command(..)`.
+//! `use kiln::prelude::*;`, then `cx.settings::<S>()`,
+//! `cx.set_theme_mode(..)` or `window.run_command(..)`.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use gpui::{App, Global, SharedString, Subscription, Window, WindowId};
 use kiln_command::{CommandId, DispatchError, Invocation};
 use kiln_core::{Keymap, Os, macos_label, pc_label};
-use kiln_platform::{command_actions::dispatch_invocation, keys};
+use kiln_platform::{command_actions::dispatch_invocation, config, keys};
 use kiln_ui::{ThemeMode, observe_system_appearance, set_theme_mode};
 
 /// kiln's calls on GPUI's [`App`] (and so on every `Context`).
 pub trait AppExt {
+    /// The app's settings of type `S`, as [`crate::Config::settings`]
+    /// loaded them and kiln keeps them as their files change:
+    /// `S::default()` if the config has none. Follow changes with
+    /// `cx.observe_global::<GlobalSettings<S>>(..)`; windows redraw on
+    /// each, so reading them while rendering is enough.
+    fn settings<S: Default + 'static>(&self) -> Arc<S>;
+
     /// Switches the theme to `mode` over the dark and light pair in use.
     fn set_theme_mode(&mut self, mode: ThemeMode);
 
@@ -24,6 +31,10 @@ pub trait AppExt {
 }
 
 impl AppExt for App {
+    fn settings<S: Default + 'static>(&self) -> Arc<S> {
+        config::settings::<S>(self)
+    }
+
     fn set_theme_mode(&mut self, mode: ThemeMode) {
         set_theme_mode(self, mode);
     }

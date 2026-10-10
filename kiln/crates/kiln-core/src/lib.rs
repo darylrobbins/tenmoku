@@ -59,6 +59,8 @@ pub use menu::{
 pub use paths::{AppId, AppPaths, PathStyle};
 pub use platform::Os;
 pub use report::KeymapIssue;
+/// serde, for an app's settings type ([`SettingsType`]).
+pub use serde;
 pub use settings::{SettingsEvent, SettingsStore, SettingsType};
 pub use text_edit::{Motion, Selection, TextEdit};
 pub use watch::ConfigWatcher;

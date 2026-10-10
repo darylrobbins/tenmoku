@@ -202,6 +202,28 @@ impl ConfigService {
     /// If the files can't be watched, what was loaded still applies, and
     /// the error says why they won't reload.
     pub fn start(mut self, cx: &mut App) -> io::Result<Task<()>> {
+        self.create_dirs();
+        let (sender, batches) = batch_channel();
+        let paths = self.paths();
+        self.install(cx);
+        let watcher =
+            ConfigWatcher::new(paths, move |batch| sender.send(batch)).map_err(io::Error::other)?;
+        Ok(self.run(batches, Some(watcher), cx))
+    }
+
+    /// [`ConfigService::start`] without a watcher: `batches` says which
+    /// files changed, as the watcher would. Directories are created as
+    /// `start` creates them. For tests, and for an app with
+    /// its own watcher.
+    pub fn start_with(mut self, batches: Batches, cx: &mut App) -> Task<()> {
+        self.create_dirs();
+        self.install(cx);
+        self.run(batches, None, cx)
+    }
+
+    /// Creates each user file's directory, and those from
+    /// [`ConfigService::create_dir`], if missing.
+    fn create_dirs(&mut self) {
         let dirs = self.sources.iter().flat_map(|source| {
             source
                 .user_files()
@@ -216,20 +238,6 @@ impl ConfigService {
                 log::warn!("can't create {}: {error}", dir.display());
             }
         }
-        let (sender, batches) = batch_channel();
-        let paths = self.paths();
-        self.install(cx);
-        let watcher =
-            ConfigWatcher::new(paths, move |batch| sender.send(batch)).map_err(io::Error::other)?;
-        Ok(self.run(batches, Some(watcher), cx))
-    }
-
-    /// [`ConfigService::start`] without a watcher: `batches` says which
-    /// files changed, as the watcher would. For tests, and for an app with
-    /// its own watcher.
-    pub fn start_with(mut self, batches: Batches, cx: &mut App) -> Task<()> {
-        self.install(cx);
-        self.run(batches, None, cx)
     }
 
     fn install(&mut self, cx: &mut App) {

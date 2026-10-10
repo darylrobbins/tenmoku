@@ -5,12 +5,17 @@
 //!
 //! ```ignore
 //! kiln::application().run(|cx: &mut App| {
+//!     let id = AppId::new("com.example.Notes", "notes", "Notes");
+//!     let paths = AppPaths::new(&id, PathStyle::Native);
 //!     kiln::init(
 //!         cx,
 //!         kiln::Config::new("com.example.Notes", "Notes")
 //!             .commands(notes::register)
 //!             .keymap("keymap.toml", include_str!("keymap.toml"))
-//!             .menus("menus.toml", include_str!("menus.toml")),
+//!             .menus("menus.toml", include_str!("menus.toml"))
+//!             .settings::<NotesSettings>(paths.settings_file(), None)
+//!             .user_keymap(paths.keymap_file().unwrap())
+//!             .user_theme(paths.config_dir().unwrap().join("theme.toml")),
 //!     );
 //!     cx.open_window(kiln::window_options(&WindowSpec::main("Notes"), cx), |window, cx| {
 //!         window.follow_system_appearance(cx);
@@ -25,13 +30,26 @@
 //! command registered when it runs: one registered later would be dropped
 //! from them as unknown. Taking them in the config makes that order the
 //! only one there is.
+//!
+//! The user's files (settings, keymap and theme) are watched from `init`
+//! on, and each change applies to every window: see
+//! [`kiln_platform::config`].
 
-use std::{borrow::Cow, path::PathBuf};
+use std::{borrow::Cow, path::PathBuf, rc::Rc};
 
-use gpui::{App, Global, SharedString, WindowOptions};
-use kiln_core::{CommandCatalog, Diagnostic, Keymap, KeymapLayer, MenuBar, Os, load_keymap_layer};
-use kiln_platform::{Capabilities, WindowSpec, commands, keys, menus};
+use gpui::{App, Global, SharedString, Task, WindowOptions};
+use kiln_core::{
+    CommandCatalog, Diagnostic, Keymap, KeymapLayer, KeymapStore, MenuBar, Os, SettingsStore,
+    SettingsType, load_keymap_layer,
+};
+use kiln_platform::{
+    Capabilities, WindowSpec, commands,
+    config::{Batches, ConfigService, ConfigSource as _, batch_channel, log_diagnostics},
+    keys, menus,
+};
 use kiln_ui::{Assets, TextField, Theme, ThemeMode, set_themes};
+
+use crate::config::UserTheme;
 
 /// GPUI's application for this platform, with kiln-ui's icons and other
 /// assets installed. GPUI's Linux backends (X11 and Wayland) come with
@@ -48,8 +66,12 @@ struct Source {
 
 type Register = Box<dyn FnOnce(&mut App)>;
 
+/// Adds a settings store to the service, returning its diagnostics.
+type AddSettings = Box<dyn FnOnce(ConfigService) -> (ConfigService, Vec<Diagnostic>)>;
+
 /// What [`init`] sets up: the app's identity, its typed commands, its one
-/// keymap and one menu table, and the theme mode it starts in.
+/// keymap and one menu table, the theme mode it starts in, and the user's
+/// files it watches: settings, keymap and theme.
 pub struct Config {
     app_id: String,
     app_name: SharedString,
@@ -58,6 +80,9 @@ pub struct Config {
     user_keymap: Option<PathBuf>,
     menus: Option<Source>,
     theme_mode: ThemeMode,
+    settings: Vec<AddSettings>,
+    user_theme: Option<PathBuf>,
+    batches: Option<Batches>,
 }
 
 impl Config {
@@ -75,6 +100,9 @@ impl Config {
             user_keymap: None,
             menus: None,
             theme_mode: ThemeMode::System,
+            settings: Vec::new(),
+            user_theme: None,
+            batches: None,
         }
     }
 
@@ -101,10 +129,49 @@ impl Config {
         self
     }
 
-    /// The user's keymap file, read over the app's; a missing file is no
-    /// bindings, and one with errors is left out.
+    /// The user's keymap file, read over the app's and reloaded when it
+    /// changes; a missing file is no bindings, and one with errors keeps
+    /// its last good version (none, at first).
     pub fn user_keymap(mut self, path: impl Into<PathBuf>) -> Self {
         self.user_keymap = Some(path.into());
+        self
+    }
+
+    /// The app's settings, of its own type `S`: the user's file, then the
+    /// project's, over `S::default()`, either file absent or missing, and
+    /// reloaded when they change. Read them with `cx.settings::<S>()`
+    /// ([`crate::prelude::AppExt::settings`]) and follow changes with
+    /// `cx.observe_global::<GlobalSettings<S>>(..)`. A file with errors
+    /// keeps its last good version. Each type is its own store: call it
+    /// once for each.
+    pub fn settings<S: SettingsType>(
+        mut self,
+        user: Option<PathBuf>,
+        project: Option<PathBuf>,
+    ) -> Self {
+        self.settings.push(Box::new(move |service| {
+            let store = SettingsStore::<S>::load(user, project);
+            let diagnostics = store.diagnostics().to_vec();
+            (service.settings(store), diagnostics)
+        }));
+        self
+    }
+
+    /// The user's theme file, reloaded when it changes. Laid over kiln's
+    /// dark or light base, as its `appearance` says, it takes that one's
+    /// place, so [`Config::theme_mode`] and `cx.set_theme_mode` still pick
+    /// between dark and light. A missing file is no theme of the user's,
+    /// and one with errors keeps its last good version.
+    pub fn user_theme(mut self, path: impl Into<PathBuf>) -> Self {
+        self.user_theme = Some(path.into());
+        self
+    }
+
+    /// Takes the changed files from `batches` instead of watching them:
+    /// for tests, which send what the watcher would
+    /// ([`kiln_platform::config::batch_channel`]).
+    pub fn watch_with(mut self, batches: Batches) -> Self {
+        self.batches = Some(batches);
         self
     }
 
@@ -148,6 +215,21 @@ impl Config {
         (Keymap::from_layers(layers), diagnostics)
     }
 
+    /// The keymap store [`init`] reloads: the app's keymap parsed for `os`,
+    /// then the user's file.
+    fn keymap_store(&self, os: Os, catalog: Rc<dyn CommandCatalog>) -> KeymapStore {
+        let (layer, diagnostics) = match &self.keymap {
+            Some(source) => KeymapLayer::parse_for(&source.path, &source.text, Some(&*catalog), os),
+            None => (None, Vec::new()),
+        };
+        KeymapStore::with_default(
+            layer,
+            diagnostics,
+            self.user_keymap.clone(),
+            Some(Box::new(catalog)),
+        )
+    }
+
     /// The menu bar as on `os`, its items checked against `catalog` if
     /// given; empty without a table, or with errors in it.
     pub fn menu_bar_for(
@@ -173,6 +255,11 @@ pub struct AppInfo {
 
 impl Global for AppInfo {}
 
+/// The config service's task, held for as long as the app runs.
+struct Watching(#[allow(dead_code, reason = "held, not read")] Task<()>);
+
+impl Global for Watching {}
+
 /// Sets kiln up for the app, on this platform, in this order:
 ///
 /// 1. kiln's command dispatch, with the app commands (`app.quit`,
@@ -183,10 +270,14 @@ impl Global for AppInfo {}
 ///    every command registered so far, then installed;
 /// 4. in-window prompts where the platform has no native ones, and
 ///    `TextField`'s editing keys for this platform;
-/// 5. kiln's dark and light themes, in [`Config::theme_mode`].
+/// 5. kiln's dark and light themes, in [`Config::theme_mode`];
+/// 6. the user's settings, keymap and theme files, watched from now on
+///    ([`kiln_platform::config`]); a user theme applies at once.
 ///
-/// Returns the keymap's and menus' diagnostics, which it has also logged:
-/// errors and warnings at those levels.
+/// Returns the keymap's, menus', settings' and theme's diagnostics, which
+/// it has also logged: errors and warnings at those levels. Those the
+/// user's files have later are logged as they change, and
+/// [`kiln_platform::config::diagnostics`] has them all.
 pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
     commands::init(cx, config.app_name.clone());
     crate::app_commands::init(cx);
@@ -200,22 +291,45 @@ pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
 
     let os = Os::current();
     let catalog = commands::catalog(cx);
-    let (keymap, mut diagnostics) = config.keymap_for(os, Some(&*catalog));
-    keys::init(cx, keymap);
+    let keymap = config.keymap_store(os, catalog.clone());
+    let mut diagnostics = keymap.diagnostics().to_vec();
+    keys::init(cx, keymap.keymap().clone());
     let (menu_bar, menu_diagnostics) = config.menu_bar_for(os, Some(&*catalog));
     diagnostics.extend(menu_diagnostics);
     menus::install(cx, menu_bar);
-    for diagnostic in &diagnostics {
-        if diagnostic.is_error() {
-            log::error!("{diagnostic}");
-        } else {
-            log::warn!("{diagnostic}");
-        }
-    }
 
     kiln_shell::init(cx);
     cx.bind_keys(TextField::key_bindings(os == Os::MacOs));
     set_themes(cx, config.theme_mode, Theme::dark(), Theme::light());
+
+    let mut service = ConfigService::new().keymap(keymap);
+    for add in std::mem::take(&mut config.settings) {
+        let found;
+        (service, found) = add(service);
+        diagnostics.extend(found);
+    }
+    if let Some(path) = config.user_theme.take() {
+        let theme = UserTheme::load(path);
+        diagnostics.extend(theme.diagnostics());
+        service = service.source(theme);
+    }
+    log_diagnostics(&diagnostics);
+    let task = match config.batches.take() {
+        Some(batches) => service.start_with(batches, cx),
+        None if service.paths().is_empty() => {
+            // Nothing to watch: the service only applies what's loaded.
+            let (_, closed) = batch_channel();
+            service.start_with(closed, cx)
+        }
+        None => match service.start(cx) {
+            Ok(task) => task,
+            Err(error) => {
+                log::warn!("config files won't reload when changed: {error}");
+                Task::ready(())
+            }
+        },
+    };
+    cx.set_global(Watching(task));
     diagnostics
 }
 

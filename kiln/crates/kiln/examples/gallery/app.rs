@@ -22,6 +22,7 @@ use crate::{
     pages::{
         ChromePage, ControlsPage, LayoutPage, ListsPage, Page, PromptsPage, TextPage, ThemePage,
     },
+    settings::GallerySettings,
 };
 
 /// The key context the gallery's root sets.
@@ -139,6 +140,7 @@ impl Gallery {
 
     fn header(&self, cx: &mut Context<Self>) -> Div {
         let c = cx.theme().colors;
+        let title = cx.settings::<GallerySettings>().title.clone();
         let mode = cx.global::<GlobalTheme>().mode();
         let modes = [
             (ThemeMode::Dark, "Dark"),
@@ -181,7 +183,8 @@ impl Gallery {
             .border_b_1()
             .border_color(c.border.default)
             .bg(c.surface.panel)
-            .child(div().text_color(c.text.primary).child("Kiln Gallery"))
+            // From the user's settings.toml, reloaded as it's saved.
+            .child(div().text_color(c.text.primary).child(title))
             // A fixed width keeps the paging buttons still between pages.
             .child(
                 div()

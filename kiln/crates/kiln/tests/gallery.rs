@@ -10,6 +10,8 @@ mod app;
 mod commands;
 #[path = "../examples/gallery/pages/mod.rs"]
 mod pages;
+#[path = "../examples/gallery/settings.rs"]
+mod settings;
 #[path = "../examples/gallery/setup.rs"]
 mod setup;
 

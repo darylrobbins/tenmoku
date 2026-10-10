@@ -314,6 +314,12 @@ impl GlobalTheme {
     pub fn mode(&self) -> Option<ThemeMode> {
         self.choice.as_ref().map(|(mode, _, _)| *mode)
     }
+
+    /// The dark and light pair [`set_themes`] set, or `None` if the theme
+    /// was set alone.
+    pub fn themes(&self) -> Option<(&Theme, &Theme)> {
+        self.choice.as_ref().map(|(_, dark, light)| (dark, light))
+    }
 }
 
 /// Reads the active theme: `cx.theme()`, from any `App` or `Context`.

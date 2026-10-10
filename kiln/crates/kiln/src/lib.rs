@@ -6,6 +6,7 @@
 //! others; see `docs/decisions/app-framework.md`.
 
 mod app_commands;
+mod config;
 mod ext;
 mod setup;
 
@@ -17,13 +18,20 @@ pub use kiln_shell as shell;
 pub use kiln_ui as ui;
 
 pub use ext::binding_label_for;
+/// serde, for an app's settings type without a serde dependency of its
+/// own: `#[derive(Deserialize, Serialize)]` with
+/// `#[serde(crate = "kiln::serde", default)]`.
+pub use kiln_core::serde;
+pub use kiln_core::{SettingsType, settings::SettingsEvent};
 pub use kiln_platform::WindowSpec;
+pub use kiln_platform::config::{ConfigDiagnostics, GlobalSettings};
 pub use setup::{AppInfo, Config, application, init, window_options};
 
 /// The extension traits that put kiln's calls on GPUI's own types:
-/// `use kiln::prelude::*;` then `cx.theme()`, `cx.set_theme_mode(..)`,
-/// `cx.binding_label(..)` or `window.run_command(..)`; and [`Command`], for
-/// a typed command's ID: `NewNote::id()`.
+/// `use kiln::prelude::*;` then `cx.theme()`, `cx.settings::<S>()`,
+/// `cx.set_theme_mode(..)`, `cx.binding_label(..)` or
+/// `window.run_command(..)`; and [`Command`], for a typed command's ID:
+/// `NewNote::id()`.
 pub mod prelude {
     pub use crate::ext::{AppExt, WindowExt};
     pub use kiln_platform::command_actions::Command;
