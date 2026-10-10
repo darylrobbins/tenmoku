@@ -27,6 +27,10 @@ use gpui::{
 /// Whether the window draws the unified macOS title bar itself.
 const UNIFIED_TITLE_BAR: bool = cfg!(target_os = "macos");
 
+/// Whether the menus show natively, in the platform's menu bar, rather than
+/// in the window: GPUI has a native menu bar on macOS only.
+const NATIVE_MENUS: bool = cfg!(target_os = "macos");
+
 /// The buffer a finished read produced: a missing file is a new one, which
 /// saving creates. The workbench shows an error in the tab's place.
 fn loaded(read: loader::Read, started: Instant) -> io::Result<Buffer> {
@@ -97,7 +101,7 @@ fn load_keymap() -> KeymapStore {
 /// shortcuts follow the keymap: hot reload reinstalls it.
 fn install_menus(cx: &mut App) {
     let catalog = fe_workbench::command_catalog();
-    let (menus, diagnostics) = MenuBar::default_macos(Some(&*catalog));
+    let (menus, diagnostics) = MenuBar::default_for_platform(Some(&*catalog));
     log_diagnostics(&diagnostics);
     if let Some(menus) = menus {
         fe_gpui::menu::install(cx, menus);
@@ -308,6 +312,7 @@ fn main() {
                         let mut workbench =
                             Workbench::new(launch, theme, editor_settings, window, cx);
                         workbench.set_title_bar(UNIFIED_TITLE_BAR, cx);
+                        workbench.set_menu_bar(!NATIVE_MENUS, cx);
                         workbench.set_status_bar_visible(settings.status_bar.visible, cx);
                         workbench
                     });

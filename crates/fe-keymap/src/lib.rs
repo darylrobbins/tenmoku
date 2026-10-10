@@ -47,5 +47,9 @@ pub const DEFAULT: &str = if cfg!(target_os = "macos") {
 /// The built-in macOS menu bar: see [`MenuBar::default_macos`].
 pub const DEFAULT_MACOS_MENUS: &str = include_str!("../menus/default-macos.toml");
 
+/// The built-in Linux menu bar, drawn in the window: see
+/// [`MenuBar::default_linux`].
+pub const DEFAULT_LINUX_MENUS: &str = include_str!("../menus/default-linux.toml");
+
 #[cfg(test)]
 mod tests;

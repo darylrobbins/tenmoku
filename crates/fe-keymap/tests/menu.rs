@@ -411,3 +411,82 @@ fn hosts_extend_and_replace() {
     assert_eq!(names, ["Host"]);
     assert_eq!(ids(&bar, "Host"), ["app.quit"]);
 }
+
+/// Every command item's command, by menu, in order.
+fn commands_by_menu(bar: &MenuBar) -> Vec<(String, Vec<String>)> {
+    bar.menus
+        .iter()
+        .map(|menu| {
+            let commands = menu
+                .items
+                .iter()
+                .filter_map(|item| item.command())
+                .map(|item| item.command.as_str().to_owned())
+                .collect();
+            (menu.name.clone(), commands)
+        })
+        .collect()
+}
+
+#[test]
+fn linux_menus_are_the_macos_menus_without_the_app_menu() {
+    let (linux, diagnostics) = MenuBar::default_linux(None);
+    assert_eq!(diagnostics, []);
+    let linux = linux.expect("the Linux menus load");
+    let names: Vec<_> = linux.menus.iter().map(|menu| menu.name.as_str()).collect();
+    assert_eq!(names, ["File", "Edit", "View", "Go", "Window"]);
+
+    // macOS's, but for what only macOS has, with the app menu's Settings…
+    // and Quit in File, before Close Tab and last.
+    let macos_only = [
+        "app.hide",
+        "app.hide_others",
+        "app.show_all",
+        "window.minimize",
+        "window.zoom",
+    ];
+    let mut expected = commands_by_menu(&default_bar());
+    expected.remove(0);
+    for (_, commands) in &mut expected {
+        commands.retain(|command| !macos_only.contains(&command.as_str()));
+    }
+    let file = &mut expected[0].1;
+    let close_tab = file
+        .iter()
+        .position(|c| c == "workbench.close_tab")
+        .unwrap();
+    file.insert(close_tab, "workbench.open_settings".to_owned());
+    file.push("app.quit".to_owned());
+    assert_eq!(commands_by_menu(&linux), expected);
+
+    // No system item and no doubled or trailing separator.
+    for menu in &linux.menus {
+        assert!(!matches!(
+            menu.items.last().unwrap().kind,
+            ItemKind::Separator
+        ));
+        for pair in menu.items.windows(2) {
+            let separators = pair
+                .iter()
+                .filter(|item| matches!(item.kind, ItemKind::Separator))
+                .count();
+            assert!(separators < 2, "{}", menu.name);
+        }
+        assert!(
+            menu.items
+                .iter()
+                .all(|item| !matches!(item.kind, ItemKind::System(_))),
+            "{}",
+            menu.name
+        );
+    }
+    // Edit > Paste keeps its alternative for the search box.
+    let paste = item(&linux, "Edit", "editor.paste");
+    assert_eq!(
+        paste
+            .invocation(&stack(&["workbench", "text_input"]))
+            .command
+            .as_str(),
+        "text_input.paste"
+    );
+}

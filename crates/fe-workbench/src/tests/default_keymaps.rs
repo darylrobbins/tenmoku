@@ -57,10 +57,12 @@ fn linux_keymap_binds_the_macos_commands_with_ctrl() {
     let linux = keymap(DEFAULT_LINUX);
     // macOS's own, with no Linux convention to follow.
     let macos_only = ["app.hide", "app.hide_others", "window.minimize"];
-    let expected: BTreeSet<_> = commands(&macos)
+    let mut expected: BTreeSet<_> = commands(&macos)
         .into_iter()
         .filter(|command| !macos_only.contains(&command.as_str()))
         .collect();
+    // Linux's own: its menu bar is in the window.
+    expected.insert("menu_bar.open".to_owned());
     assert_eq!(commands(&linux), expected);
     for binding in linux.bindings() {
         let cmd = binding.keys.keystrokes().iter().any(|k| k.modifiers.cmd);
@@ -104,4 +106,11 @@ fn vim_keeps_its_ctrl_keys_on_linux() {
         );
     }
     assert_eq!(run(&linux, "ctrl-r", Some(("normal", false))), None);
+}
+
+#[test]
+fn the_linux_menus_name_known_commands() {
+    let (bar, diagnostics) = fe_keymap::MenuBar::default_linux(Some(&*command_catalog()));
+    assert_eq!(diagnostics, []);
+    assert!(bar.is_some());
 }

@@ -279,10 +279,9 @@ What differs from macOS:
   (`fe_ui::prompt_renderer`), not as native alerts.
 - **The window manager** draws the title bar; the unified title bar is
   macOS's.
-- **There is no menu bar.** GPUI has no native one on Linux, so commands
-  only in a menu, such as Open File…, Untrust This Folder and Restart
-  Language Server, can't be reached until there's a command palette. Vim
-  mode and the status bar can still be set in settings (ctrl-,).
+- **The menu bar is drawn in the window**, above the panes, from
+  `fe-keymap/menus/default-linux.toml`: GPUI has no native menu bar on
+  Linux. F10 opens it. See `docs/decisions/linux-menu-bar.md`.
 - **Screenshots** render with Metal, so their examples only run on macOS;
   `cargo test` still runs their comparison's unit tests.
 - **`fastedit --perf`** times launch from the kernel's process start to

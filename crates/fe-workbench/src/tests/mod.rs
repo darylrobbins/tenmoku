@@ -17,6 +17,7 @@ mod lsp_quit;
 mod lsp_resolve_retry;
 mod lsp_symlinks;
 mod m3_signoff;
+mod menu_bar;
 mod nav;
 mod nav_click;
 mod nav_pending;

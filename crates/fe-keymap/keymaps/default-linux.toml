@@ -273,6 +273,13 @@ keys = "ctrl-p"
 command = "quick_open.toggle"
 context = "workbench"
 
+# Linux only: the menu bar is drawn in the window, and F10 opens it, as in
+# GNOME and KDE apps.
+[[bindings]]
+keys = "f10"
+command = "menu_bar.open"
+context = "workbench"
+
 # A click on a word with ctrl held: the editor places the caret there, then
 # runs this. Above f12, so menus and tooltips show f12, the later entry.
 [[bindings]]

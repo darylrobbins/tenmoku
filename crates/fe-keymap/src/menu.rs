@@ -179,6 +179,28 @@ impl MenuBar {
         )
     }
 
+    /// The built-in Linux menus, [`crate::DEFAULT_LINUX_MENUS`]: macOS's,
+    /// but for its app menu, whose Settings… and Quit are in File.
+    pub fn default_linux(catalog: Option<&dyn CommandCatalog>) -> (Option<Self>, Vec<Diagnostic>) {
+        Self::parse(
+            Path::new(DEFAULT_MENUS_PATH),
+            crate::DEFAULT_LINUX_MENUS,
+            catalog,
+        )
+    }
+
+    /// This platform's built-in menus: [`MenuBar::default_macos`] on macOS,
+    /// [`MenuBar::default_linux`] elsewhere.
+    pub fn default_for_platform(
+        catalog: Option<&dyn CommandCatalog>,
+    ) -> (Option<Self>, Vec<Diagnostic>) {
+        if cfg!(target_os = "macos") {
+            Self::default_macos(catalog)
+        } else {
+            Self::default_linux(catalog)
+        }
+    }
+
     pub fn menu(&self, name: &str) -> Option<&Menu> {
         self.menus.iter().find(|menu| menu.name == name)
     }

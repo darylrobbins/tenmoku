@@ -15,6 +15,7 @@ mod find_bar;
 mod language_picker;
 pub mod loader;
 mod lsp;
+mod menu_bar;
 mod nav;
 mod nav_picker;
 mod open;
@@ -43,6 +44,7 @@ use gpui::{App, Global, Window};
 
 pub use dock::{Dock, DockPanel};
 pub use lsp::{set_lsp_settings, set_server_launcher};
+pub use menu_bar::MenuBarView;
 pub use outline_panel::OutlinePanel;
 pub use pane::{Pane, PaneEvent, Tab};
 pub use pane_group::{Axis, Direction, Member, Members, PaneGroup};
@@ -82,6 +84,7 @@ pub fn init(cx: &mut App) {
     picker::init(cx);
     dock::init(cx);
     lsp::init(cx);
+    menu_bar::init(cx);
     nav::init(cx);
     open::init(cx);
     outline_panel::init(cx);
@@ -135,6 +138,7 @@ pub fn command_catalog() -> Box<dyn CommandCatalog> {
         Box::new(dock::registry()),
         Box::new(find_bar::registry()),
         Box::new(lsp::registry()),
+        Box::new(menu_bar::registry()),
         Box::new(nav::registry()),
         Box::new(open::registry()),
         Box::new(outline_panel::registry()),

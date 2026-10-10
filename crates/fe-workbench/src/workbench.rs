@@ -23,6 +23,7 @@ use crate::{
     dock::{self, DockEvent, DockOp},
     language_picker::LanguagePicker,
     lsp::{self, Lsp},
+    menu_bar::{self, MenuBarView},
     nav::{self, Nav},
     open::{self, OpenOp},
     outline_panel,
@@ -125,6 +126,9 @@ pub struct Workbench {
     status_bar: Entity<StatusBar>,
     status_bar_visible: bool,
     title_bar: bool,
+    /// The menu bar drawn in the window, where the platform has no native
+    /// one: see [`Workbench::set_menu_bar`].
+    menu_bar: Option<Entity<MenuBarView>>,
     /// The folder the workbench is rooted at, if any.
     pub(crate) root: Option<PathBuf>,
     /// The editor whose file the project panel last revealed.
@@ -249,6 +253,7 @@ impl Workbench {
             status_bar: cx.new(|_| StatusBar::new(ui)),
             status_bar_visible: true,
             title_bar: false,
+            menu_bar: None,
             root: launch_root,
             revealed: None,
             launch_read: launch_read.map(|path| (path, pane.downgrade())),
@@ -999,6 +1004,22 @@ impl Workbench {
         cx.notify();
     }
 
+    /// Shows or hides the menu bar drawn in the window, from the menus
+    /// [`fe_gpui::menu::install`] set: for platforms with no native menu bar
+    /// (Linux). Off by default.
+    pub fn set_menu_bar(&mut self, shown: bool, cx: &mut Context<Self>) {
+        self.menu_bar = shown.then(|| {
+            let ui = self.ui;
+            cx.new(|cx| MenuBarView::new(ui, cx))
+        });
+        cx.notify();
+    }
+
+    /// The menu bar, while it's shown.
+    pub fn menu_bar(&self) -> Option<&Entity<MenuBarView>> {
+        self.menu_bar.as_ref()
+    }
+
     /// The name the title bar reads.
     #[cfg(test)]
     pub(crate) fn title_bar_name(&self) -> gpui::SharedString {
@@ -1201,6 +1222,12 @@ impl Workbench {
             if pane_toolbar::toggles(run, cx) {
                 return self.toggle_breadcrumbs(cx);
             }
+            if menu_bar::opens(run, cx) {
+                if let Some(bar) = &self.menu_bar {
+                    bar.update(cx, |bar, cx| bar.open(0, true, window, cx));
+                }
+                return;
+            }
             let op = if outline_panel::shows(run, cx) {
                 Some(DockOp::ShowOutline)
             } else {
@@ -1276,6 +1303,7 @@ impl Render for Workbench {
                 self.title_bar
                     .then(|| title_bar::title_bar(self.root.as_deref(), &self.ui)),
             )
+            .children(self.menu_bar.clone())
             .child(main)
             .children(status_bar)
             .map(|root| match self.palette {

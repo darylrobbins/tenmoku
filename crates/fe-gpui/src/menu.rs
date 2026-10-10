@@ -11,7 +11,7 @@
 
 use fe_command::ContextStack;
 use fe_keymap::{CommandItem, ItemKind, MenuBar, OsAction, SystemMenu};
-use gpui::{Action, App, Global, KeyBinding, Menu, MenuItem, SystemMenuType};
+use gpui::{Action, App, Global, KeyBinding, Menu, MenuItem, SystemMenuType, Window};
 
 use crate::{commands, keymap};
 
@@ -49,6 +49,27 @@ pub fn install(cx: &mut App, menus: MenuBar) {
     }
     cx.set_global(Installed(menus));
     refresh(cx);
+}
+
+/// The menus [`install`] set, if any: for a menu bar the host draws itself
+/// where the platform has none.
+pub fn installed(cx: &App) -> Option<&MenuBar> {
+    cx.try_global::<Installed>().map(|installed| &installed.0)
+}
+
+/// Runs `menu`'s item `item` as choosing it in a native menu does, in
+/// `window`'s focused context: for a menu bar drawn in the window. An item
+/// that isn't installed does nothing.
+pub fn run(menu: &str, item: &str, window: &mut Window, cx: &mut App) {
+    let Some(item) = installed(cx)
+        .and_then(|bar| bar.menu(menu)?.item(item)?.command())
+        .cloned()
+    else {
+        log::warn!("no menu item {menu} > {item}");
+        return;
+    };
+    let stack = keymap::context_stack(&window.context_stack());
+    keymap::dispatch(item.invocation(&stack), window, cx);
 }
 
 /// Rebuilds the installed menus and their key bindings from the current
