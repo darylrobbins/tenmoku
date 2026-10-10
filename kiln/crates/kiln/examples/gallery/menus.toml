@@ -1,0 +1,39 @@
+# The gallery's menus: one table for every platform. The first menu is the
+# app menu on macOS; elsewhere it's the gallery's own.
+
+[[menus]]
+name = "Kiln Gallery"
+
+[[menus.items]]
+title = "Toggle Theme"
+command = "gallery.toggle_theme"
+
+[[menus.items]]
+separator = true
+
+[[menus.items]]
+title = "Quit Kiln Gallery"
+command = "gallery.quit"
+
+[[menus]]
+name = "Go"
+
+[[menus.items]]
+title = "Next Page"
+command = "gallery.next_page"
+
+[[menus.items]]
+title = "Previous Page"
+command = "gallery.previous_page"
+
+[[menus]]
+name = "Window"
+
+[[menus.items]]
+title = "Show Prompt"
+command = "gallery.show_prompt"
+
+[[menus.items]]
+title = "Minimize"
+command = "window.minimize"
+platform = "macos"

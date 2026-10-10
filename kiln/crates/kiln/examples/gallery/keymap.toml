@@ -1,0 +1,33 @@
+# The gallery's keymap: one file for every platform. `secondary` is cmd on
+# macOS and ctrl elsewhere.
+
+[[bindings]]
+keys = "secondary-]"
+command = "gallery.next_page"
+
+[[bindings]]
+keys = "secondary-["
+command = "gallery.previous_page"
+
+[[bindings]]
+keys = "secondary-shift-t"
+command = "gallery.toggle_theme"
+
+[[bindings]]
+keys = "secondary-p"
+command = "gallery.show_prompt"
+
+[[bindings]]
+keys = "secondary-q"
+command = "gallery.quit"
+
+# TextInput leaves its editing keys to the app (see pages/text.rs).
+[[bindings]]
+keys = "backspace"
+command = "gallery.input_backspace"
+context = "text_input"
+
+[[bindings]]
+keys = { macos = "alt-backspace", default = "ctrl-backspace" }
+command = "gallery.input_delete_word"
+context = "text_input"
