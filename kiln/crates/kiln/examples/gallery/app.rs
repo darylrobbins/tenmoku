@@ -96,15 +96,17 @@ impl Gallery {
         self.page
     }
 
+    /// `page`'s view.
+    #[allow(dead_code, reason = "for tests/gallery.rs")]
+    pub(crate) fn page_view(&self, page: Page) -> AnyView {
+        self.pages[page.index()].clone()
+    }
+
     /// Shows `page`, selecting it in the sidebar.
-    pub(crate) fn show(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn show(&mut self, page: Page, _: &mut Window, cx: &mut Context<Self>) {
         self.page = page;
-        // Focus left in the page being hidden stays on its element, which
-        // is no longer drawn, and keys dispatched there reach nothing: the
-        // gallery takes it back, unless the sidebar has it.
-        if !self.sidebar.focus_handle(cx).is_focused(window) {
-            window.focus(&self.focus, cx);
-        }
+        // Focus left in the page being hidden moves to the gallery once
+        // the page isn't drawn: kiln watches the window.
         self.sidebar
             .update(cx, |list, cx| list.set_selected(Some(page.index()), cx));
         let view = self.pages[page.index()].clone();

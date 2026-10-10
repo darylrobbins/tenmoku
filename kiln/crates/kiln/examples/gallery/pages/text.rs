@@ -49,6 +49,13 @@ impl TextPage {
     }
 }
 
+impl TextPage {
+    #[allow(dead_code, reason = "for tests/gallery.rs")]
+    pub(crate) fn field(&self) -> &Entity<TextField> {
+        &self.field
+    }
+}
+
 impl Render for TextPage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let c = cx.theme().colors;

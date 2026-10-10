@@ -27,12 +27,17 @@ pub fn user_keymap_path() -> Option<PathBuf> {
     fe_config::paths::app_paths().keymap_file()
 }
 
+/// The frames a menu item's shortcut is resolved in: the workbench with
+/// an editor focused.
+pub const MENU_SHORTCUT_CONTEXT: [&str; 2] = ["workbench", "editor"];
+
 /// The built-in menus, [`MENUS`], as on `os`.
 pub fn default_menus_for(
     catalog: Option<&dyn CommandCatalog>,
     os: Os,
 ) -> (Option<MenuBar>, Vec<Diagnostic>) {
-    MenuBar::parse_for(Path::new(menu::DEFAULT_MENUS_PATH), MENUS, catalog, os)
+    let path = Path::new(menu::DEFAULT_MENUS_PATH);
+    MenuBar::parse_in(path, MENUS, catalog, os, &MENU_SHORTCUT_CONTEXT)
 }
 
 /// The built-in menus as on macOS, with its app menu.

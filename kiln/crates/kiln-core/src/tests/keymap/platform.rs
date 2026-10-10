@@ -249,3 +249,58 @@ fn menus_and_items_can_be_for_some_platforms() {
         "{diagnostics:?}"
     );
 }
+
+#[test]
+fn menu_shortcuts_resolve_in_the_apps_context() {
+    let keymap = r#"
+[[bindings]]
+keys = "ctrl-n"
+command = "notes.new"
+context = "notes"
+
+[[bindings]]
+keys = "ctrl-q"
+command = "app.quit"
+"#;
+    let (layer, diagnostics) = layer(keymap, Os::Linux);
+    assert_eq!(diagnostics, []);
+    let keymap = crate::Keymap::from_layers([layer.unwrap()]);
+    let menus = r#"
+[[menus]]
+name = "File"
+
+[[menus.items]]
+title = "New"
+command = "notes.new"
+
+[[menus.items]]
+title = "New Elsewhere"
+id = "elsewhere"
+command = "notes.new"
+shortcut_context = ["other"]
+
+[[menus.items]]
+title = "Quit"
+command = "app.quit"
+"#;
+    let shortcuts = |context: &[&str]| -> Vec<Option<String>> {
+        let path = Path::new("menus.toml");
+        let (bar, diagnostics) = MenuBar::parse_in(path, menus, None, Os::Linux, context);
+        assert_eq!(diagnostics, []);
+        let bar = bar.unwrap();
+        bar.menus[0]
+            .items
+            .iter()
+            .filter_map(|item| item.command())
+            .map(|item| item.shortcut(&keymap).map(|keys| keys.to_string()))
+            .collect()
+    };
+    let (new, quit) = (Some("ctrl-n".to_owned()), Some("ctrl-q".to_owned()));
+    // By default, no frames: only the binding without a context shows.
+    assert_eq!(shortcuts(&[]), [None, None, quit.clone()]);
+    // The app's frames, unless an item names its own.
+    assert_eq!(shortcuts(&["notes"]), [new, None, quit]);
+    let (default, _) = MenuBar::parse(Path::new("menus.toml"), menus, None);
+    let (none, _) = MenuBar::parse_in(Path::new("menus.toml"), menus, None, Os::current(), &[]);
+    assert_eq!(default, none, "parse resolves in no frames");
+}

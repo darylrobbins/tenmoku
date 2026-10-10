@@ -24,7 +24,8 @@
 //!
 //! An item also takes `args` (a table, as in keymaps), `id` (the command ID
 //! by default, unique within its menu) and `shortcut_context` (the frame
-//! names its shortcut is resolved in, `["workbench", "editor"]` by default).
+//! names its shortcut is resolved in, the app's by default: see
+//! [`MenuBar::parse_in`]).
 //! A host's extension layer (see [`MenuBar::extend`]) may set `before` or
 //! `after` to an item's `id`, or `remove = true`. Unknown fields are errors.
 
@@ -44,9 +45,6 @@ use crate::{
 
 /// The path diagnostics name for the built-in menus.
 pub const DEFAULT_MENUS_PATH: &str = "<default menus>";
-
-/// The frames an item's shortcut is resolved in, unless it says otherwise.
-const DEFAULT_SHORTCUT_CONTEXT: [&str; 2] = ["workbench", "editor"];
 
 /// The menus, left to right. The first is the app menu.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -154,7 +152,9 @@ impl MenuBar {
     /// alternative whose command it doesn't know or whose args it rejects
     /// is dropped with a warning, and the rest loads.
     ///
-    /// The table is this platform's: see [`MenuBar::parse_for`].
+    /// The table is this platform's: see [`MenuBar::parse_for`]. Items
+    /// resolve their shortcuts in no context unless they name one: see
+    /// [`MenuBar::parse_in`].
     pub fn parse(
         path: &Path,
         source: &str,
@@ -174,6 +174,22 @@ impl MenuBar {
         catalog: Option<&dyn CommandCatalog>,
         os: Os,
     ) -> (Option<Self>, Vec<Diagnostic>) {
+        Self::parse_in(path, source, catalog, os, &[])
+    }
+
+    /// [`MenuBar::parse_for`], with the frames an item's shortcut is
+    /// resolved in when it doesn't name its own `shortcut_context`: the
+    /// app's, those its main view usually has, such as `["main", "editor"]`,
+    /// so a binding limited to them shows in the menu. With none, only
+    /// bindings that hold in no context show. It's the app's, not the
+    /// table's, so a host's layer parsed alone resolves the same way.
+    pub fn parse_in(
+        path: &Path,
+        source: &str,
+        catalog: Option<&dyn CommandCatalog>,
+        os: Os,
+        shortcut_context: &[&str],
+    ) -> (Option<Self>, Vec<Diagnostic>) {
         let mut layer = Layer::default();
         layer.path = path.to_owned();
         layer.source = source.to_owned();
@@ -181,6 +197,10 @@ impl MenuBar {
             layer,
             catalog,
             os,
+            shortcut_context: shortcut_context
+                .iter()
+                .map(|&name| name.to_owned())
+                .collect(),
             diagnostics: Vec::new(),
         };
         let bar = parser.parse();
@@ -393,6 +413,8 @@ struct Parser<'a> {
     catalog: Option<&'a dyn CommandCatalog>,
     /// The platform the table is for.
     os: Os,
+    /// The frames shortcuts are resolved in when an item names none.
+    shortcut_context: Vec<String>,
     diagnostics: Vec<Diagnostic>,
 }
 
@@ -676,7 +698,7 @@ impl Parser<'_> {
 
     fn shortcut_context(&mut self, fields: &Fields<'_, '_>) -> ContextStack {
         let names: Vec<String> = match fields.values.get("shortcut_context") {
-            None => DEFAULT_SHORTCUT_CONTEXT.map(str::to_owned).to_vec(),
+            None => self.shortcut_context.clone(),
             Some(toml::Value::Array(names)) if names.iter().all(toml::Value::is_str) => names
                 .iter()
                 .filter_map(|name| name.as_str().map(str::to_owned))

@@ -6,8 +6,8 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
-    Action, Context, FocusHandle, InteractiveElement as _, IntoElement, Render, TestAppContext,
-    VisualTestContext, Window, div,
+    Action, Context, Entity, FocusHandle, InteractiveElement as _, IntoElement, ParentElement as _,
+    Render, TestAppContext, VisualTestContext, Window, div,
 };
 use kiln_command::{CommandId, DispatchError, Invocation, Source, Value};
 use kiln_core::{CatalogError, CommandCatalog as _};
@@ -298,4 +298,123 @@ fn a_held_action_with_args_dispatches_as_itself(cx: &mut TestAppContext) {
     assert_eq!(what, "open 2");
     assert_eq!(current, None, "no invocation describes it");
     assert_eq!(seen.borrow().len(), 0);
+}
+
+/// Which of a [`Page`]'s elements ran `NewNote`, in order.
+type Ran = Rc<RefCell<Vec<&'static str>>>;
+
+/// The invocations observers saw.
+type Seen = Rc<RefCell<Vec<Invocation>>>;
+
+/// A root that handles `NewNote`, holding a child that handles it too
+/// while it's shown.
+struct Page {
+    root: FocusHandle,
+    child: FocusHandle,
+    shown: bool,
+    log: Ran,
+}
+
+impl Render for Page {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let child = self.shown.then(|| {
+            let log = self.log.clone();
+            div()
+                .track_focus(&self.child)
+                .on_action(move |_: &notes::NewNote, _, _| log.borrow_mut().push("child"))
+        });
+        let log = self.log.clone();
+        div()
+            .track_focus(&self.root)
+            .on_action(move |_: &notes::NewNote, _, _| log.borrow_mut().push("root"))
+            .children(child)
+    }
+}
+
+/// A [`Page`] window with its child focused, `NewNote` registered, and
+/// what observers see.
+fn page_window(cx: &mut TestAppContext) -> (Entity<Page>, Ran, Seen, &mut VisualTestContext) {
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    cx.update(|cx| {
+        notes::register(cx);
+        let sink = seen.clone();
+        observe_invocations(cx, move |invocation| {
+            sink.borrow_mut().push(invocation.clone())
+        });
+    });
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let (page, cx) = cx.add_window_view({
+        let log = log.clone();
+        move |_, cx| Page {
+            root: cx.focus_handle(),
+            child: cx.focus_handle(),
+            shown: true,
+            log,
+        }
+    });
+    cx.update(|window, cx| {
+        let child = page.read(cx).child.clone();
+        window.focus(&child, cx);
+    });
+    cx.run_until_parked();
+    (page, log, seen, cx)
+}
+
+/// Stops drawing the page's child, and draws.
+fn hide_child(page: &Entity<Page>, cx: &mut VisualTestContext) {
+    page.update(cx, |page, cx| {
+        page.shown = false;
+        cx.notify();
+    });
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.run_until_parked();
+}
+
+fn new_note() -> Invocation {
+    invocation("notes.new_note", Value::Null)
+}
+
+#[gpui::test]
+fn focus_on_an_element_no_longer_drawn_moves_to_its_ancestor(cx: &mut TestAppContext) {
+    let (page, log, seen, cx) = page_window(cx);
+
+    // Drawn: it runs on the child, before dispatch returns.
+    let ran = cx.update(|window, cx| {
+        dispatch_invocation(new_note(), window, cx).unwrap();
+        log.borrow().clone()
+    });
+    assert_eq!(ran, ["child"], "synchronously, on the focused element");
+
+    // Dispatch watched the window: once the child isn't drawn, the root,
+    // its focusable ancestor, has focus, and runs the next one.
+    hide_child(&page, cx);
+    let ran = cx.update(|window, cx| {
+        let root = page.read(cx).root.clone();
+        assert!(root.is_focused(window), "focus moved to the root");
+        dispatch_invocation(new_note(), window, cx).unwrap();
+        log.borrow().clone()
+    });
+    assert_eq!(ran, ["child", "root"]);
+    assert_eq!(seen.borrow().len(), 2, "observers hear of both");
+}
+
+#[gpui::test]
+fn an_action_for_an_undrawn_element_goes_to_the_window(cx: &mut TestAppContext) {
+    let (page, log, _, cx) = page_window(cx);
+    let global = Rc::new(RefCell::new(0));
+    cx.update(|_, cx| {
+        let global = global.clone();
+        cx.on_action(move |_: &notes::NewNote, _| *global.borrow_mut() += 1);
+    });
+
+    // Nothing watched the window yet, so focus stays on the hidden child.
+    hide_child(&page, cx);
+    cx.update(|window, cx| {
+        let child = page.read(cx).child.clone();
+        assert!(child.is_focused(window), "GPUI keeps the focus");
+    });
+    dispatch(new_note(), cx).unwrap();
+    assert_eq!(*global.borrow(), 1, "the app's global handler runs it");
+    assert!(log.borrow().is_empty(), "no element was reached");
 }

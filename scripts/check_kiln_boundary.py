@@ -26,6 +26,10 @@ SPDX = re.compile(r"^// SPDX-License-Identifier: \S+")
 OS_CFG = re.compile(r"cfg!?\([^)]*\b(?:target_os|target_family|unix|windows)\b")
 INCLUDE = re.compile(r'(?:#\[path\s*=\s*|include_(?:str|bytes)!\(\s*)"([^"]+)"')
 FASTEDIT = re.compile(r"fastedit|\bfe[-_][a-z]", re.IGNORECASE)
+# fastedit's key context frames, as string literals: kiln takes an app's
+# frames as parameters (such as a menu's shortcut context). Tests may name
+# them as examples.
+APP_FRAME = re.compile(r'"workbench"')
 LICENSE = re.compile(r'^license\s*=\s*"([^"]+)"', re.MULTILINE)
 
 
@@ -46,6 +50,8 @@ def check_files(root: Path) -> list[str]:
                 errors.append(f"{rel}:{number}: names fastedit: {line.strip()}")
             # Tests may use one platform's file system to set up a case.
             in_tests = "/tests/" in rel
+            if APP_FRAME.search(line) and not in_tests:
+                errors.append(f"{rel}:{number}: names fastedit's key context: {line.strip()}")
             if OS_CFG.search(line) and not rel.startswith(OS_DIRS) and not in_tests:
                 errors.append(f"{rel}:{number}: branches on the OS outside {', '.join(OS_DIRS)}")
             for target in INCLUDE.findall(line):
@@ -121,6 +127,7 @@ def self_test() -> int:
             "no header": ("pub fn f() {}\n", "SPDX"),
             "names it": (header + "// see fastedit\n", "names fastedit"),
             "names a crate": (header + "use fe_gpui::x;\n", "names fastedit"),
+            "names its frame": (header + 'const F: &str = "workbench";\n', "key context"),
             "branches on the OS": (header + "#[cfg(target_os = \"linux\")]\nfn f() {}\n", "branches on the OS"),
             "branches on unix": (header + "#[cfg(unix)]\nfn f() {}\n", "branches on the OS"),
             "asks cfg! for windows": (header + "const W: bool = cfg!(windows);\n", "branches on the OS"),

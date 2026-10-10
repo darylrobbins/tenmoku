@@ -291,6 +291,7 @@ fn on_keystroke(event: &KeystrokeEvent, window: &mut Window, cx: &mut App) {
     {
         return;
     }
+    crate::focus::watch(window, cx);
     let target = Target::of(window, cx);
     let input = cx.global_mut::<KeyInput>();
     // A chord started in another window or element doesn't continue here.
@@ -393,8 +394,9 @@ fn on_timeout(handle: AnyWindowHandle, cx: &mut App) {
 }
 
 /// Runs `invocation` on the focused element, synchronously, as GPUI's own
-/// keymap does; without one, on the window, once the current dispatch is
-/// over. Menu items run through it too.
+/// keymap does; without one, or if it wasn't drawn, on the window, once
+/// the current dispatch is over (see [`dispatch_invocation`]). Menu items
+/// run through it too.
 pub(crate) fn dispatch(invocation: Invocation, window: &mut Window, cx: &mut App) {
     if let Err(error) = dispatch_invocation(invocation, window, cx) {
         log::warn!("{error}");

@@ -142,3 +142,35 @@ fn the_status_bar_labels_shortcuts_from_the_keymap(cx: &mut TestAppContext) {
     let quit = cx.update(|_, cx| cx.binding_label(&kiln::app::Quit::id()));
     assert!(quit.is_some(), "app.quit is bound");
 }
+
+fn draw(cx: &mut VisualTestContext) {
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn keys_still_work_once_the_focused_page_is_hidden(cx: &mut TestAppContext) {
+    let (gallery, cx) = gallery(cx);
+    run("gallery.next_page", cx);
+    let text = cx
+        .read(|cx| gallery.read(cx).page_view(Page::Text))
+        .downcast::<pages::TextPage>()
+        .unwrap();
+    cx.update(|window, cx| {
+        let field = text.read(cx).field().focus_handle(cx);
+        window.focus(&field, cx);
+    });
+    draw(cx);
+
+    // The page goes, and its field with it: focus moves to the gallery,
+    // so the next key still reaches it.
+    cx.simulate_keystrokes(&sec("secondary-]"));
+    draw(cx);
+    assert_eq!(page(&gallery, cx), Page::Lists);
+    cx.update(|window, cx| {
+        assert!(gallery.focus_handle(cx).is_focused(window));
+    });
+    cx.simulate_keystrokes(&sec("secondary-]"));
+    assert_eq!(page(&gallery, cx), Page::Layout);
+}

@@ -165,10 +165,18 @@ pub fn current_invocation(cx: &App) -> Option<Invocation> {
 /// Dispatches `invocation` in `window`, from its focused element: as its
 /// typed command's action, built from its args, if one is registered; as
 /// a [`RunCommand`] otherwise, for commands that live in a registry
-/// rather than as actions. With an element focused it runs now; with none,
-/// once the current dispatch is over, from the window's root (as
-/// [`Window::dispatch_action`] does). Observers hear of a typed command
-/// that some element handles; a registry's handler tells them itself.
+/// rather than as actions. With an element focused, and drawn in the
+/// window's last frame, it runs now; otherwise once the current dispatch
+/// is over, from the window's root (as [`Window::dispatch_action`] does).
+/// Observers hear of a typed command that some element handles; a
+/// registry's handler tells them itself.
+///
+/// Focus can rest on an element that's no longer drawn, such as one in a
+/// page that was hidden: GPUI keeps it focused, and drops an action sent
+/// to it. Sent from the root instead, it reaches the app's global
+/// handlers, such as its command registry's; and the window is
+/// [`crate::focus::watch`]ed, so once a frame is drawn focus moves to a
+/// view that is.
 pub fn dispatch_invocation(
     invocation: Invocation,
     window: &mut Window,
@@ -187,7 +195,11 @@ pub fn dispatch_invocation(
     };
     let typed = !action.as_any().is::<RunCommand>();
     let handled = typed && window.is_action_available(action.as_ref(), cx);
-    match window.focused(cx) {
+    crate::focus::watch(window, cx);
+    match window
+        .focused(cx)
+        .filter(|focus| crate::focus::is_drawn(focus, window, cx))
+    {
         Some(focus) => {
             let previous = set_current(Some(invocation.clone()), cx);
             focus.dispatch_action(action.as_ref(), window, cx);
