@@ -1,49 +1,29 @@
-//! GPUI's side of `fe-command`. Every key binding dispatches one GPUI
-//! action, [`RunCommand`], carrying an [`Invocation`] (see
-//! [`crate::keymap`]). The focused
-//! [`EditorView`] runs it through the editor's registry and lets any other
-//! ID propagate to the app's registry, which [`init`] owns.
+//! The editor's commands. Every key binding dispatches one GPUI action,
+//! kiln's [`RunCommand`], carrying an [`Invocation`] (see
+//! [`crate::keymap`]). The focused [`EditorView`] runs it through the
+//! editor's registry and lets any other ID propagate to the app's registry,
+//! which kiln owns; [`init`] adds vim's commands to it.
 
 use std::{ops::Range, ops::RangeInclusive, rc::Rc};
 
 use fe_command::{
-    Actor, CommandError, CommandId, CommandTarget, ContextPredicate, DispatchError, Dispatched,
-    Effect, Invocation, Registry, Source, Value,
+    Actor, CommandError, CommandId, ContextPredicate, DispatchError, Dispatched, Effect,
+    Invocation, Registry, Source, Value,
 };
 use fe_editor::commands::{Editor, EditorHost, EditorTarget};
 use fe_keymap::{CatalogError, CommandCatalog};
 use fe_syntax::Syntax;
-use gpui::{Action, App, ClipboardItem, Context, Global, Window};
+use gpui::{App, ClipboardItem, Context, Window};
 
 use crate::{EditorView, completion_menu, view::synced_syntax, vim};
 
-/// Runs a command: the one GPUI action every binding dispatches.
-#[derive(Clone, Debug, PartialEq, Action)]
-#[action(namespace = fastedit, no_json)]
-pub struct RunCommand(pub Invocation);
+// The app's command plumbing is kiln's (docs/decisions/app-framework.md);
+// fastedit keeps its paths to it.
+pub use kiln_platform::commands::{AppCommands, RunCommand, observe_invocations};
+pub(crate) use kiln_platform::commands::{dispatch_app, notify_observers};
 
-/// The [`CommandTarget`] of app commands, such as `app.quit`: the whole
-/// GPUI app.
-pub struct AppCommands;
-
-impl CommandTarget for AppCommands {
-    type Tx = ();
-    type Target<'a> = &'a mut App;
-}
-
-type Observer = Rc<dyn Fn(&Invocation)>;
-
-#[derive(Default)]
-struct Commands {
-    app: Rc<Registry<AppCommands>>,
-    observers: Vec<Observer>,
-    /// The invocation a focused view propagated, stamped with its
-    /// context: GPUI propagates the original [`RunCommand`], whose context
-    /// is empty. Cleared once the dispatch is over.
-    propagated: Option<Invocation>,
-}
-
-impl Global for Commands {}
+/// The name app commands are titled with (`Hide fastedit`).
+const APP_NAME: &str = "fastedit";
 
 thread_local! {
     /// Built once: GPUI runs on one thread, and handlers aren't `Sync`.
@@ -107,29 +87,11 @@ fn editor_registry() -> Registry<Editor> {
 
 type AppCommand = fn(&mut App);
 
-/// The app commands, in no context. The window ones act on the active
-/// window, and do nothing without one. `vim.key` does nothing when
-/// dispatched: a binding to it hands its keystroke to vim instead
+/// vim's app commands: `vim.toggle`, and `vim.key`, which does nothing
+/// when dispatched: a binding to it hands its keystroke to vim instead
 /// ([`crate::vim`]).
-fn app_registry() -> Registry<AppCommands> {
-    let mut app = Registry::new();
-    let commands: [(&str, &str, AppCommand); 10] = [
-        ("app.quit", "Quit", |cx| cx.quit()),
-        ("app.hide", "Hide fastedit", |cx| cx.hide()),
-        ("app.hide_others", "Hide Others", |cx| cx.hide_other_apps()),
-        ("app.show_all", "Show All", |cx| cx.unhide_other_apps()),
-        ("window.minimize", "Minimize", |cx| {
-            on_active_window(cx, |window| window.minimize_window())
-        }),
-        ("window.zoom", "Zoom", |cx| {
-            on_active_window(cx, |window| window.zoom_window())
-        }),
-        ("window.toggle_fullscreen", "Toggle Full Screen", |cx| {
-            on_active_window(cx, |window| window.toggle_fullscreen())
-        }),
-        ("window.close", "Close Window", |cx| {
-            on_active_window(cx, |window| window.remove_window())
-        }),
+fn register_vim_commands(app: &mut Registry<AppCommands>) {
+    let commands: [(&str, &str, AppCommand); 2] = [
         (vim::TOGGLE, "Toggle Vim Mode", |cx| {
             let enabled = vim::vim_enabled(cx);
             vim::set_vim_enabled(cx, !enabled)
@@ -141,20 +103,15 @@ fn app_registry() -> Registry<AppCommands> {
             run(cx);
             Ok(Dispatched::new(Effect::Nothing))
         })
-        .expect("app command IDs are valid and distinct");
+        .expect("vim's app command IDs are valid and distinct");
     }
-    app
 }
 
-/// Runs `f` on the active window, if any, once the current dispatch is
-/// over: a key or menu item runs its command while GPUI has that window
-/// out for the dispatch, so it can't be updated until then.
-fn on_active_window(cx: &mut App, f: fn(&mut Window)) {
-    if let Some(handle) = cx.active_window() {
-        cx.defer(move |cx| {
-            handle.update(cx, |_, window, _| f(window)).ok();
-        });
-    }
+/// kiln's app commands and vim's, as [`init`] installs them.
+fn app_registry() -> Registry<AppCommands> {
+    let mut app = kiln_platform::commands::app_commands(APP_NAME);
+    register_vim_commands(&mut app);
+    app
 }
 
 /// The editor's, vim's and the app's commands, to check keymap bindings
@@ -187,55 +144,11 @@ impl CommandCatalog for Catalog {
     }
 }
 
-/// Registers the app commands and the handler that runs them.
+/// Registers the app commands, vim's among them, and the handler that runs
+/// them.
 pub(crate) fn init(cx: &mut App) {
-    cx.default_global::<Commands>().app = Rc::new(app_registry());
-    cx.on_action(|run: &RunCommand, cx| {
-        let propagated = cx.default_global::<Commands>().propagated.take();
-        // The view's stamped copy, if this is what it propagated.
-        let invocation = propagated
-            .filter(|stamped| {
-                Invocation {
-                    context: run.0.context.clone(),
-                    ..stamped.clone()
-                } == run.0
-            })
-            .unwrap_or_else(|| run.0.clone());
-        dispatch_app(&invocation, cx)
-    });
-}
-
-/// Calls `observer` with every invocation the editor and app registries
-/// dispatch successfully, after it ran: the seam for a macro recorder, a
-/// logger or an agent bridge.
-pub fn observe_invocations(cx: &mut App, observer: impl Fn(&Invocation) + 'static) {
-    cx.default_global::<Commands>()
-        .observers
-        .push(Rc::new(observer));
-}
-
-pub(crate) fn notify_observers(invocation: &Invocation, cx: &App) {
-    if let Some(commands) = cx.try_global::<Commands>() {
-        for observer in &commands.observers {
-            observer(invocation);
-        }
-    }
-}
-
-/// Runs an app command. Reached by whatever no focused view handled, and
-/// by a menu item chosen with no window open.
-pub(crate) fn dispatch_app(invocation: &Invocation, cx: &mut App) {
-    let Some(registry) = cx
-        .try_global::<Commands>()
-        .map(|commands| commands.app.clone())
-    else {
-        return;
-    };
-    let mut target = &mut *cx;
-    match registry.dispatch(&mut target, invocation) {
-        Ok(_) => notify_observers(invocation, cx),
-        Err(error) => log::warn!("{error}"),
-    }
+    kiln_platform::commands::init(cx, APP_NAME);
+    kiln_platform::commands::register_app_commands(cx, register_vim_commands);
 }
 
 /// The editor's side of a dispatch: the view's clipboard, viewport and
@@ -368,10 +281,7 @@ impl EditorView {
                 }
             }
             Err(DispatchError::UnknownCommand(_)) => {
-                cx.default_global::<Commands>().propagated = Some(invocation);
-                // In case no app handler takes it.
-                cx.defer(|cx| cx.default_global::<Commands>().propagated = None);
-                cx.propagate();
+                kiln_platform::commands::propagate_with_context(invocation, cx);
             }
             Err(error) => log::error!("{error}"),
         }
