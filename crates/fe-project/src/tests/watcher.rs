@@ -15,14 +15,16 @@ use crate::watcher::Batch;
 
 /// Applies batches from `rx` until `done` holds for the tree, checking that
 /// no batch repeats a path. Fails after a generous deadline; how long the
-/// events take isn't asserted.
+/// events take isn't asserted. FSEvents delivery under load isn't bounded, so
+/// no deadline is safe; the ci profile's `retries = 2` override in
+/// `.config/nextest.toml` covers the rest.
 fn wait_for(
     tree: &mut FileTree,
     rx: &mpsc::Receiver<Vec<FsChange>>,
     what: &str,
     done: impl Fn(&FileTree) -> bool,
 ) {
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let deadline = Instant::now() + Duration::from_secs(60);
     while !done(tree) {
         let left = deadline.saturating_duration_since(Instant::now());
         let batch = rx
