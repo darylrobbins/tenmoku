@@ -214,3 +214,7 @@ impl<R: Read> Read for Counted<R> {
         Ok(n)
     }
 }
+
+#[cfg(test)]
+#[path = "extract_lossy_tests.rs"]
+mod lossy_tests;
