@@ -114,6 +114,7 @@ impl EditorView {
     /// the end, as a find bar does while its query is typed, and reveals it
     /// as [`EditorView::find_next`] does.
     pub fn find_from(&mut self, offset: usize, cx: &mut Context<Self>) -> bool {
+        self.catch_up_find(cx);
         let Some(pattern) = &self.find.pattern else {
             return false;
         };
@@ -124,7 +125,15 @@ impl EditorView {
         true
     }
 
+    /// Catches up with edits made through another view of the buffer, as
+    /// prepaint does, so a search reads the text and selection as they are.
+    fn catch_up_find(&mut self, cx: &mut Context<Self>) {
+        self.model.sync_display();
+        self.sync_find(cx);
+    }
+
     fn step_find(&mut self, forward: bool, cx: &mut Context<Self>) -> bool {
+        self.catch_up_find(cx);
         let Some(pattern) = &self.find.pattern else {
             return false;
         };

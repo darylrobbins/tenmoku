@@ -280,3 +280,6 @@ fn count_off_thread(cx: &mut TestAppContext) {
     let capped = count(&view, cx).unwrap();
     assert_eq!((capped.total, capped.capped), (10_000, true));
 }
+
+#[cfg(test)]
+mod peer_edit_tests;
