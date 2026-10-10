@@ -600,6 +600,8 @@ fn restart_and_show_log(cx: &mut TestAppContext) {
     s.open("src/main.rs");
     let main = s.uri("src/main.rs");
     s.fake.wait_initialized();
+    // The restart needs the workbench to have applied the server's Starting status.
+    s.wait_item(Some("rust-analyzer: starting…"));
 
     s.run("lsp.restart");
     s.fake.wait_initialized_at(2);
