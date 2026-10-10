@@ -287,6 +287,9 @@ pub(crate) struct Lsp {
     /// `documents`: path aliases of a file are separate buffers, but the
     /// server has one document for it.
     owners: HashMap<PathBuf, BufferId>,
+    /// An alias a path is kept for after its owner changed language, until
+    /// it opens the path.
+    reserved: HashMap<PathBuf, BufferId>,
     /// Each server's name and latest status.
     servers: HashMap<ServerId, (String, ServerStatus)>,
     /// Each server's latest `window/showMessage`, shown in place of its
@@ -352,6 +355,7 @@ impl Lsp {
             events,
             documents: HashMap::new(),
             owners: HashMap::new(),
+            reserved: HashMap::new(),
             servers: HashMap::new(),
             messages: HashMap::new(),
             settings: LspSettings::default(),
@@ -454,6 +458,7 @@ impl Workbench {
         let lsp = &mut self.lsp;
         lsp.documents.clear();
         lsp.owners.clear();
+        lsp.reserved.clear();
         lsp.servers.clear();
         lsp.messages.clear();
         lsp.resolved.clear();
@@ -617,11 +622,23 @@ impl Workbench {
         let mut manager = lock(&manager);
         let documents = &mut lsp.documents;
         let owners = &mut lsp.owners;
+        let reserved = &mut lsp.reserved;
         let mut released = Vec::new();
         let watch = &lsp.watch;
         let mut shown = HashSet::new();
         let mut to_resolve = Vec::new();
         let mut to_follow = Vec::new();
+        // Each shown buffer's language, by its first view, for finding an
+        // alias that can take over a released path.
+        let mut languages: HashMap<BufferId, &'static str> = HashMap::new();
+        for editor in &editors {
+            let view = editor.read(cx);
+            if let Some(language) = view.syntax().map(|syntax| syntax.language().name()) {
+                languages
+                    .entry(view.model().buffer().id())
+                    .or_insert(language);
+            }
+        }
         for editor in editors {
             let view = editor.read(cx);
             let model = view.model();
@@ -666,6 +683,34 @@ impl Workbench {
             // alias of an owned file waits for its owner to close.
             if owners.contains_key(&path) {
                 continue;
+            }
+            // An owner whose language changed hands the path to a waiting
+            // alias a server handles, which opens it at the next frame.
+            if released.contains(&path) && !reserved.contains_key(&path) {
+                let alias = lsp.resolved.iter().find(|&(&other, resolved)| {
+                    other != buffer
+                        && resolved.as_ref() == Some(&path)
+                        && !documents.contains_key(&other)
+                        && languages.get(&other).is_some_and(|language| {
+                            manager.language_server(root, language).is_some()
+                        })
+                });
+                if let Some((&alias, _)) = alias {
+                    reserved.insert(path, alias);
+                    continue;
+                }
+            }
+            match reserved.get(&path) {
+                Some(&alias) if alias == buffer => {
+                    reserved.remove(&path);
+                }
+                Some(alias) if languages.contains_key(alias) && !documents.contains_key(alias) => {
+                    continue;
+                }
+                Some(_) => {
+                    reserved.remove(&path);
+                }
+                None => {}
             }
             let (synced, moved, text, version) = editor.update(cx, |view, _| {
                 let mut buffer = view.model_mut().buffer_mut();

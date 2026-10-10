@@ -797,7 +797,7 @@ impl LspManager {
     /// now, by name, with the latest status of one started there (`None`
     /// if none has been); `None` if they'd go to none: no server lists the
     /// language, `[lsp]` turns it off, or `root` isn't trusted.
-    pub(crate) fn language_server(
+    pub fn language_server(
         &self,
         root: &Path,
         language: &str,
