@@ -1,13 +1,7 @@
-# The built-in keymap on Linux and other platforms without a cmd key: the
-# first layer, which the user's keymap.toml overrides. See fe_keymap's
-# `keymap` module for the format. It binds what default-macos.toml does, with
-# ctrl where macOS has cmd, and PC keys where macOS has its own: ctrl-left
-# for a word, home and end for the line, ctrl-home and ctrl-end for the
-# document. app.hide, app.hide_others and window.minimize, which have no
-# Linux convention, have no key.
-#
-# A shifted punctuation key is named by what it types, without `shift`, as
-# GPUI on Linux reports it: ctrl-shift-[ is `ctrl-{`, ctrl-shift-- `ctrl-_`.
+# fastedit.toml as it resolves on Linux and Windows: kept for tests that need
+# that platform's bindings on any host. Don't edit this to change fastedit's
+# defaults: edit keymaps/fastedit.toml, then this to match; fe-keymap's
+# tests/one_keymap.rs checks they agree.
 
 [[bindings]]
 keys = "left"

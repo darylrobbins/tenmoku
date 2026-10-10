@@ -1,5 +1,7 @@
-# The built-in macOS keymap: the first layer, which the user's keymap.toml
-# overrides. See fe_keymap's `keymap` module for the format.
+# fastedit.toml as it resolves on macOS: kept for tests that need
+# that platform's bindings on any host. Don't edit this to change fastedit's
+# defaults: edit keymaps/fastedit.toml, then this to match; fe-keymap's
+# tests/one_keymap.rs checks they agree.
 
 [[bindings]]
 keys = "left"

@@ -1,0 +1,703 @@
+# fastedit's built-in keymap, for every platform: the first layer, which the
+# user's keymap.toml overrides. See kiln-core's `keymap` module for the
+# format. `secondary` is cmd on macOS and ctrl elsewhere; a binding whose
+# keys differ elsewhere names them by platform (`keys = { macos = "..",
+# default = ".." }`), and `platform` limits a binding to some platforms.
+# Off macOS, PC keys stand in for macOS's own: ctrl-left for a word, home
+# and end for the line, ctrl-home and ctrl-end for the document; app.hide,
+# app.hide_others and window.minimize have no key there.
+#
+# A shifted punctuation key is named by what it types, without `shift`, as
+# GPUI on Linux reports it: ctrl-shift-[ is `ctrl-{`, ctrl-shift-- `ctrl-_`.
+#
+# fe-keymap's tests check this file resolves, on each platform, to exactly
+# the bindings of default-macos.toml and default-linux.toml.
+
+[[bindings]]
+keys = "left"
+command = "editor.move_left"
+context = "editor"
+
+[[bindings]]
+keys = "right"
+command = "editor.move_right"
+context = "editor"
+
+[[bindings]]
+keys = "up"
+command = "editor.move_up"
+context = "editor"
+
+[[bindings]]
+keys = "down"
+command = "editor.move_down"
+context = "editor"
+
+[[bindings]]
+keys = { macos = "alt-left", default = "ctrl-left" }
+command = "editor.move_word_left"
+context = "editor"
+
+[[bindings]]
+keys = { macos = "alt-right", default = "ctrl-right" }
+command = "editor.move_word_right"
+context = "editor"
+
+[[bindings]]
+keys = "cmd-left"
+command = "editor.move_line_start"
+context = "editor"
+platform = "macos"
+
+[[bindings]]
+keys = "home"
+command = "editor.move_line_start"
+context = "editor"
+
+[[bindings]]
+keys = "cmd-right"
+command = "editor.move_line_end"
+context = "editor"
+platform = "macos"
+
+[[bindings]]
+keys = "end"
+command = "editor.move_line_end"
+context = "editor"
+
+[[bindings]]
+keys = { macos = "cmd-up", default = "ctrl-home" }
+command = "editor.move_document_start"
+context = "editor"
+
+[[bindings]]
+keys = { macos = "cmd-down", default = "ctrl-end" }
+command = "editor.move_document_end"
+context = "editor"
+
+[[bindings]]
+keys = "pageup"
+command = "editor.page_up"
+context = "editor"
+
+[[bindings]]
+keys = "pagedown"
+command = "editor.page_down"
+context = "editor"
+
+[[bindings]]
+keys = "shift-left"
+command = "editor.select_left"
+context = "editor"
+
+[[bindings]]
+keys = "shift-right"
+command = "editor.select_right"
+context = "editor"
+
+[[bindings]]
+keys = "shift-up"
+command = "editor.select_up"
+context = "editor"
+
+[[bindings]]
+keys = "shift-down"
+command = "editor.select_down"
+context = "editor"
+
+[[bindings]]
+keys = { macos = "alt-shift-left", default = "ctrl-shift-left" }
+command = "editor.select_word_left"
+context = "editor"
+
+[[bindings]]
+keys = { macos = "alt-shift-right", default = "ctrl-shift-right" }
+command = "editor.select_word_right"
+context = "editor"
+
+[[bindings]]
+keys = "cmd-shift-left"
+command = "editor.select_line_start"
+context = "editor"
+platform = "macos"
+
+[[bindings]]
+keys = "shift-home"
+command = "editor.select_line_start"
+context = "editor"
+
+[[bindings]]
+keys = "cmd-shift-right"
+command = "editor.select_line_end"
+context = "editor"
+platform = "macos"
+
+[[bindings]]
+keys = "shift-end"
+command = "editor.select_line_end"
+context = "editor"
+
+[[bindings]]
+keys = { macos = "cmd-shift-up", default = "ctrl-shift-home" }
+command = "editor.select_document_start"
+context = "editor"
+
+[[bindings]]
+keys = { macos = "cmd-shift-down", default = "ctrl-shift-end" }
+command = "editor.select_document_end"
+context = "editor"
+
+[[bindings]]
+keys = "shift-pageup"
+command = "editor.select_page_up"
+context = "editor"
+
+[[bindings]]
+keys = "shift-pagedown"
+command = "editor.select_page_down"
+context = "editor"
+
+[[bindings]]
+keys = "secondary-a"
+command = "editor.select_all"
+context = "editor"
+
+[[bindings]]
+keys = "backspace"
+command = "editor.backspace"
+context = "editor"
+
+[[bindings]]
+keys = "shift-backspace"
+command = "editor.backspace"
+context = "editor"
+
+[[bindings]]
+keys = "delete"
+command = "editor.delete"
+context = "editor"
+
+[[bindings]]
+keys = { macos = "alt-backspace", default = "ctrl-backspace" }
+command = "editor.delete_word_left"
+context = "editor"
+
+[[bindings]]
+keys = "enter"
+command = "editor.newline"
+context = "editor"
+
+[[bindings]]
+keys = "tab"
+command = "editor.tab"
+context = "editor"
+
+[[bindings]]
+keys = { macos = "cmd-alt-[", default = "ctrl-{" }
+command = "editor.fold"
+context = "editor"
+
+[[bindings]]
+keys = { macos = "cmd-alt-]", default = "ctrl-}" }
+command = "editor.unfold"
+context = "editor"
+
+[[bindings]]
+keys = "secondary-k secondary-0"
+command = "editor.fold_all"
+context = "editor"
+
+[[bindings]]
+keys = "secondary-k secondary-j"
+command = "editor.unfold_all"
+context = "editor"
+
+# VS Code's chord: the hover popover for what's at the caret.
+[[bindings]]
+keys = "secondary-k secondary-i"
+command = "editor.show_hover"
+context = "editor"
+
+[[bindings]]
+keys = "alt-z"
+command = "editor.toggle_soft_wrap"
+context = "editor"
+
+[[bindings]]
+keys = "secondary-c"
+command = "editor.copy"
+context = "editor"
+
+[[bindings]]
+keys = "secondary-x"
+command = "editor.cut"
+context = "editor"
+
+[[bindings]]
+keys = "secondary-v"
+command = "editor.paste"
+context = "editor"
+
+[[bindings]]
+keys = "secondary-z"
+command = "editor.undo"
+context = "editor"
+
+[[bindings]]
+keys = "secondary-shift-z"
+command = "editor.redo"
+context = "editor"
+
+[[bindings]]
+keys = "ctrl-y"
+command = "editor.redo"
+context = "editor"
+platform = "!macos"
+
+[[bindings]]
+keys = "secondary-s"
+command = "editor.save"
+context = "editor"
+
+[[bindings]]
+keys = "secondary-q"
+command = "app.quit"
+
+[[bindings]]
+keys = "cmd-h"
+command = "app.hide"
+platform = "macos"
+
+[[bindings]]
+keys = "alt-cmd-h"
+command = "app.hide_others"
+platform = "macos"
+
+[[bindings]]
+keys = "cmd-m"
+command = "window.minimize"
+platform = "macos"
+
+[[bindings]]
+keys = { macos = "ctrl-cmd-f", default = "f11" }
+command = "window.toggle_fullscreen"
+
+[[bindings]]
+keys = "secondary-shift-w"
+command = "window.close"
+
+[[bindings]]
+keys = "secondary-w"
+command = "workbench.close_tab"
+context = "workbench"
+
+[[bindings]]
+keys = { macos = "cmd-shift-]", default = "ctrl-pagedown" }
+command = "workbench.next_tab"
+context = "workbench"
+
+[[bindings]]
+keys = { macos = "cmd-shift-[", default = "ctrl-pageup" }
+command = "workbench.previous_tab"
+context = "workbench"
+
+# `workbench.open_file` has no key yet: it's in the File menu.
+[[bindings]]
+keys = "secondary-o"
+command = "workbench.open_folder"
+context = "workbench"
+
+[[bindings]]
+keys = "secondary-,"
+command = "workbench.open_settings"
+context = "workbench"
+
+[[bindings]]
+keys = "secondary-p"
+command = "quick_open.toggle"
+context = "workbench"
+
+# Linux only: the menu bar is drawn in the window, and F10 opens it, as in
+# GNOME and KDE apps.
+[[bindings]]
+keys = "f10"
+command = "menu_bar.open"
+context = "workbench"
+platform = "!macos"
+
+# A click on a word with secondary held: the editor places the caret there, then
+# runs this. Above f12, so menus and tooltips show f12, the later entry.
+[[bindings]]
+keys = "secondary-click"
+command = "nav.goto_definition"
+context = "workbench"
+
+[[bindings]]
+keys = "f12"
+command = "nav.goto_definition"
+context = "workbench"
+
+[[bindings]]
+keys = "secondary-t"
+command = "nav.workspace_symbols"
+context = "workbench"
+
+[[bindings]]
+keys = "shift-f12"
+command = "nav.find_references"
+context = "workbench"
+
+[[bindings]]
+keys = { macos = "ctrl--", default = "ctrl-alt--" }
+command = "nav.back"
+context = "workbench"
+
+[[bindings]]
+keys = { macos = "ctrl-shift--", default = "ctrl-_" }
+command = "nav.forward"
+context = "workbench"
+
+[[bindings]]
+keys = "up"
+command = "picker.select_prev"
+context = "picker"
+
+[[bindings]]
+keys = "ctrl-p"
+command = "picker.select_prev"
+context = "picker"
+platform = "macos"
+
+[[bindings]]
+keys = "down"
+command = "picker.select_next"
+context = "picker"
+
+[[bindings]]
+keys = "ctrl-n"
+command = "picker.select_next"
+context = "picker"
+platform = "macos"
+
+[[bindings]]
+keys = "enter"
+command = "picker.confirm"
+context = "picker"
+
+[[bindings]]
+keys = "escape"
+command = "picker.dismiss"
+context = "picker"
+
+[[bindings]]
+keys = "backspace"
+command = "text_input.backspace"
+context = "text_input"
+
+[[bindings]]
+keys = { macos = "alt-backspace", default = "ctrl-backspace" }
+command = "text_input.delete_word_left"
+context = "text_input"
+
+[[bindings]]
+keys = { macos = "cmd-backspace", default = "ctrl-shift-backspace" }
+command = "text_input.clear"
+context = "text_input"
+
+[[bindings]]
+keys = "secondary-v"
+command = "text_input.paste"
+context = "text_input"
+
+[[bindings]]
+keys = "secondary-shift-f"
+command = "search.show"
+context = "workbench"
+
+[[bindings]]
+keys = "secondary-shift-e"
+command = "dock.show_project"
+context = "workbench"
+
+[[bindings]]
+keys = "secondary-b"
+command = "dock.toggle"
+context = "workbench"
+
+[[bindings]]
+keys = "secondary-shift-o"
+command = "outline.show"
+context = "workbench"
+
+[[bindings]]
+keys = { macos = "alt-cmd-r", default = "alt-r" }
+command = "search.toggle_regex"
+context = "search_panel"
+
+[[bindings]]
+keys = { macos = "alt-cmd-c", default = "alt-c" }
+command = "search.toggle_case"
+context = "search_panel"
+
+[[bindings]]
+keys = { macos = "alt-cmd-w", default = "alt-w" }
+command = "search.toggle_whole_word"
+context = "search_panel"
+
+# Only in search's input: the palettes' Enter is `picker.confirm`.
+[[bindings]]
+keys = "enter"
+command = "text_input.submit"
+context = "search_panel && text_input"
+
+# Panes, as VS Code binds them. The secondary-k chords sit beside the
+# editor's secondary-k secondary-0 and secondary-k secondary-j: a chord's
+# second key picks the binding.
+[[bindings]]
+keys = "secondary-\\"
+command = "pane.split_right"
+context = "workbench"
+
+[[bindings]]
+keys = "secondary-k secondary-\\"
+command = "pane.split_down"
+context = "workbench"
+
+[[bindings]]
+keys = "secondary-k secondary-left"
+command = "pane.focus_left"
+context = "workbench"
+
+[[bindings]]
+keys = "secondary-k secondary-right"
+command = "pane.focus_right"
+context = "workbench"
+
+[[bindings]]
+keys = "secondary-k secondary-up"
+command = "pane.focus_up"
+context = "workbench"
+
+[[bindings]]
+keys = "secondary-k secondary-down"
+command = "pane.focus_down"
+context = "workbench"
+
+[[bindings]]
+keys = { macos = "ctrl-cmd-left", default = "ctrl-alt-left" }
+command = "pane.move_tab_left"
+context = "workbench"
+
+[[bindings]]
+keys = { macos = "ctrl-cmd-right", default = "ctrl-alt-right" }
+command = "pane.move_tab_right"
+context = "workbench"
+
+[[bindings]]
+keys = { macos = "ctrl-cmd-up", default = "ctrl-alt-up" }
+command = "pane.move_tab_up"
+context = "workbench"
+
+[[bindings]]
+keys = { macos = "ctrl-cmd-down", default = "ctrl-alt-down" }
+command = "pane.move_tab_down"
+context = "workbench"
+
+[[bindings]]
+keys = "secondary-k secondary-w"
+command = "pane.close"
+context = "workbench"
+
+# The project tree, when it has focus. `project_panel.reveal_active` has no
+# key yet: it's for the command palette.
+[[bindings]]
+keys = "up"
+command = "project_panel.select_prev"
+context = "project_panel"
+
+[[bindings]]
+keys = "down"
+command = "project_panel.select_next"
+context = "project_panel"
+
+[[bindings]]
+keys = "left"
+command = "project_panel.collapse_or_parent"
+context = "project_panel"
+
+[[bindings]]
+keys = "right"
+command = "project_panel.expand_or_first_child"
+context = "project_panel"
+
+[[bindings]]
+keys = "enter"
+command = "project_panel.open"
+context = "project_panel"
+
+# Find references' results, when they have focus.
+[[bindings]]
+keys = "up"
+command = "references_panel.select_prev"
+context = "ReferencesPanel"
+
+[[bindings]]
+keys = "down"
+command = "references_panel.select_next"
+context = "ReferencesPanel"
+
+[[bindings]]
+keys = "enter"
+command = "references_panel.open"
+context = "ReferencesPanel"
+
+# Vim's layer, last so that it wins over the plain editor's bindings in the
+# same frame. In normal and visual mode the arrows are vim's motions
+# (`h l k j`), and the editing keys are vim's (`vim.key` hands the keystroke
+# to vim) rather than the editor's. A vim ctrl key bound to anything else,
+# off macOS ctrl-v (paste) and ctrl-q (quit), is bound to `vim.key` too, so it
+# reaches vim; one bound to nothing, such as ctrl-r, reaches it unmatched, as
+# every one does on macOS, where no `ctrl-` binding applies in the editor.
+[[bindings]]
+keys = "left"
+command = "vim.move"
+args = { motion = "left" }
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "right"
+command = "vim.move"
+args = { motion = "right" }
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "up"
+command = "vim.move"
+args = { motion = "up" }
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "down"
+command = "vim.move"
+args = { motion = "down" }
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "left"
+command = "vim.move"
+args = { motion = "left" }
+context = "editor && vim.visual"
+
+[[bindings]]
+keys = "right"
+command = "vim.move"
+args = { motion = "right" }
+context = "editor && vim.visual"
+
+[[bindings]]
+keys = "up"
+command = "vim.move"
+args = { motion = "up" }
+context = "editor && vim.visual"
+
+[[bindings]]
+keys = "down"
+command = "vim.move"
+args = { motion = "down" }
+context = "editor && vim.visual"
+
+[[bindings]]
+keys = "enter"
+command = "vim.key"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "tab"
+command = "vim.key"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "backspace"
+command = "vim.key"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "shift-backspace"
+command = "vim.key"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "delete"
+command = "vim.key"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = { macos = "alt-backspace", default = "ctrl-backspace" }
+command = "vim.key"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-v"
+command = "vim.key"
+context = "editor && vim.mode == normal"
+platform = "!macos"
+
+[[bindings]]
+keys = "ctrl-q"
+command = "vim.key"
+context = "editor && vim.mode == normal"
+platform = "!macos"
+
+[[bindings]]
+keys = "enter"
+command = "vim.key"
+context = "editor && vim.visual"
+
+[[bindings]]
+keys = "tab"
+command = "vim.key"
+context = "editor && vim.visual"
+
+[[bindings]]
+keys = "backspace"
+command = "vim.key"
+context = "editor && vim.visual"
+
+[[bindings]]
+keys = "shift-backspace"
+command = "vim.key"
+context = "editor && vim.visual"
+
+[[bindings]]
+keys = "delete"
+command = "vim.key"
+context = "editor && vim.visual"
+
+[[bindings]]
+keys = { macos = "alt-backspace", default = "ctrl-backspace" }
+command = "vim.key"
+context = "editor && vim.visual"
+
+[[bindings]]
+keys = "ctrl-v"
+command = "vim.key"
+context = "editor && vim.visual"
+platform = "!macos"
+
+[[bindings]]
+keys = "ctrl-q"
+command = "vim.key"
+context = "editor && vim.visual"
+platform = "!macos"
+
+# Insert mode keeps the editor's keys; `escape` and `ctrl-[` end the session
+# and return to normal mode.
+[[bindings]]
+keys = "escape"
+command = "vim.normal_mode"
+context = "editor && vim.mode == insert"
+
+[[bindings]]
+keys = "ctrl-["
+command = "vim.normal_mode"
+context = "editor && vim.mode == insert"

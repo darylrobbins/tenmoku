@@ -1,8 +1,7 @@
-# The built-in Linux menu bar, which the workbench draws in the window (GPUI
-# has no native menu bar there). The macOS table's menus and items, but for
-# macOS's app menu, whose Settings… and Quit move to File, and its Hide,
-# Minimize, Zoom and Services items. See fe_keymap's `menu` module for the
-# format; each item's shortcut is whatever the active keymap runs it with.
+# fastedit.toml as it resolves on Linux and Windows: kept for tests that need
+# that platform's bindings on any host. Don't edit this to change fastedit's
+# defaults: edit menus/fastedit.toml, then this to match; fe-keymap's
+# tests/one_keymap.rs checks they agree.
 
 [[menus]]
 name = "File"

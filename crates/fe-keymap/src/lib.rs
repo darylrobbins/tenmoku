@@ -20,64 +20,60 @@ pub use kiln_core::{
 use std::path::{Path, PathBuf};
 
 use fe_config::Diagnostic;
+use kiln_core::Os;
 
 /// `<config_dir>/keymap.toml`: fastedit's user keymap.
 pub fn user_keymap_path() -> Option<PathBuf> {
     fe_config::paths::app_paths().keymap_file()
 }
 
-/// The built-in macOS menus, [`DEFAULT_MACOS_MENUS`].
+/// The built-in menus, [`MENUS`], as on `os`.
+pub fn default_menus_for(
+    catalog: Option<&dyn CommandCatalog>,
+    os: Os,
+) -> (Option<MenuBar>, Vec<Diagnostic>) {
+    MenuBar::parse_for(Path::new(menu::DEFAULT_MENUS_PATH), MENUS, catalog, os)
+}
+
+/// The built-in menus as on macOS, with its app menu.
 pub fn default_menus_macos(
     catalog: Option<&dyn CommandCatalog>,
 ) -> (Option<MenuBar>, Vec<Diagnostic>) {
-    MenuBar::parse(
-        Path::new(menu::DEFAULT_MENUS_PATH),
-        DEFAULT_MACOS_MENUS,
-        catalog,
-    )
+    default_menus_for(catalog, Os::MacOs)
 }
 
-/// The built-in Linux menus, [`DEFAULT_LINUX_MENUS`]: macOS's, but for its
-/// app menu, whose Settings… and Quit are in File.
+/// The built-in menus as on Linux: macOS's, but for its app menu, whose
+/// Settings… and Quit are in File.
 pub fn default_menus_linux(
     catalog: Option<&dyn CommandCatalog>,
 ) -> (Option<MenuBar>, Vec<Diagnostic>) {
-    MenuBar::parse(
-        Path::new(menu::DEFAULT_MENUS_PATH),
-        DEFAULT_LINUX_MENUS,
-        catalog,
-    )
+    default_menus_for(catalog, Os::Linux)
 }
 
-/// This platform's built-in menus: [`default_menus_macos`] on macOS,
-/// [`default_menus_linux`] elsewhere.
+/// This platform's built-in menus.
 pub fn default_menus(catalog: Option<&dyn CommandCatalog>) -> (Option<MenuBar>, Vec<Diagnostic>) {
-    if cfg!(target_os = "macos") {
-        default_menus_macos(catalog)
-    } else {
-        default_menus_linux(catalog)
-    }
+    default_menus_for(catalog, Os::current())
 }
 
-/// The built-in macOS keymap, the first layer under the user's: see
-/// [`KeymapStore::load`].
+/// fastedit's built-in keymap, for every platform: the first layer under
+/// the user's, resolved for the platform it's loaded on (see
+/// [`KeymapLayer::parse_for`]).
+pub const DEFAULT: &str = include_str!("../keymaps/fastedit.toml");
+
+/// [`DEFAULT`] as resolved on macOS, for tests that need macOS's bindings
+/// on any host. `tests/one_keymap.rs` checks the two agree.
 pub const DEFAULT_MACOS: &str = include_str!("../keymaps/default-macos.toml");
 
-/// The built-in keymap where there's no cmd key (Linux, Windows): the
-/// macOS one's bindings with ctrl for cmd, and PC keys for macOS's own.
+/// [`DEFAULT`] as resolved on Linux and Windows, for tests that need those
+/// bindings on any host. `tests/one_keymap.rs` checks the two agree.
 pub const DEFAULT_LINUX: &str = include_str!("../keymaps/default-linux.toml");
 
-/// This platform's built-in keymap: [`DEFAULT_MACOS`] on macOS,
-/// [`DEFAULT_LINUX`] elsewhere.
-pub const DEFAULT: &str = if cfg!(target_os = "macos") {
-    DEFAULT_MACOS
-} else {
-    DEFAULT_LINUX
-};
+/// fastedit's built-in menu bar, for every platform: native on macOS, drawn
+/// in the window elsewhere. See [`default_menus`].
+pub const MENUS: &str = include_str!("../menus/fastedit.toml");
 
-/// The built-in macOS menu bar: see [`default_menus_macos`].
+/// [`MENUS`] as resolved on macOS. `tests/one_keymap.rs` checks they agree.
 pub const DEFAULT_MACOS_MENUS: &str = include_str!("../menus/default-macos.toml");
 
-/// The built-in Linux menu bar, drawn in the window: see
-/// [`default_menus_linux`].
+/// [`MENUS`] as resolved on Linux. `tests/one_keymap.rs` checks they agree.
 pub const DEFAULT_LINUX_MENUS: &str = include_str!("../menus/default-linux.toml");

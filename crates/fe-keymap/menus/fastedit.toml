@@ -1,0 +1,335 @@
+# fastedit's built-in menu bar, for every platform: native on macOS, drawn in
+# the window elsewhere. A host replaces it with a table of its own, or
+# extends it with a layer: see kiln-core's `menu` module for the format.
+# Each item's shortcut is whatever the active keymap runs it with.
+#
+# macOS has an app menu; elsewhere its Settings… and Quit are in File, and
+# macOS's Hide, Services, Minimize and Zoom are left out (`platform`).
+# fe-keymap's tests check this table resolves, on each platform, to exactly
+# default-macos.toml and default-linux.toml.
+
+[[menus]]
+name = "fastedit"
+platform = "macos"
+
+[[menus.items]]
+title = "Hide fastedit"
+command = "app.hide"
+
+[[menus.items]]
+title = "Hide Others"
+command = "app.hide_others"
+
+[[menus.items]]
+title = "Show All"
+command = "app.show_all"
+
+[[menus.items]]
+separator = true
+
+[[menus.items]]
+title = "Settings…"
+command = "workbench.open_settings"
+
+[[menus.items]]
+separator = true
+
+[[menus.items]]
+title = "Services"
+system = "services"
+
+[[menus.items]]
+separator = true
+
+[[menus.items]]
+title = "Quit fastedit"
+command = "app.quit"
+
+[[menus]]
+name = "File"
+
+[[menus.items]]
+title = "Open Folder…"
+command = "workbench.open_folder"
+
+[[menus.items]]
+title = "Open File…"
+command = "workbench.open_file"
+
+[[menus.items]]
+title = "Trust This Folder"
+command = "workbench.trust_folder"
+
+[[menus.items]]
+title = "Untrust This Folder"
+command = "workbench.untrust_folder"
+
+[[menus.items]]
+separator = true
+
+[[menus.items]]
+title = "Save"
+command = "editor.save"
+
+[[menus.items]]
+separator = true
+
+[[menus.items]]
+title = "Settings…"
+command = "workbench.open_settings"
+platform = "!macos"
+
+[[menus.items]]
+separator = true
+platform = "!macos"
+
+[[menus.items]]
+title = "Close Tab"
+command = "workbench.close_tab"
+
+[[menus.items]]
+title = "Close Pane"
+command = "pane.close"
+
+[[menus.items]]
+title = "Close Window"
+command = "window.close"
+
+[[menus.items]]
+separator = true
+platform = "!macos"
+
+[[menus.items]]
+title = "Quit"
+command = "app.quit"
+platform = "!macos"
+
+[[menus]]
+name = "Edit"
+
+[[menus.items]]
+title = "Undo"
+command = "editor.undo"
+os_action = "undo"
+
+[[menus.items]]
+title = "Redo"
+command = "editor.redo"
+os_action = "redo"
+
+[[menus.items]]
+separator = true
+
+[[menus.items]]
+title = "Cut"
+command = "editor.cut"
+os_action = "cut"
+
+[[menus.items]]
+title = "Copy"
+command = "editor.copy"
+os_action = "copy"
+
+[[menus.items]]
+title = "Paste"
+command = "editor.paste"
+os_action = "paste"
+alternatives = [{ command = "text_input.paste", when = "text_input" }]
+
+[[menus.items]]
+title = "Select All"
+command = "editor.select_all"
+os_action = "select_all"
+
+[[menus.items]]
+separator = true
+
+[[menus.items]]
+title = "Find in Files"
+command = "search.show"
+
+[[menus]]
+name = "View"
+
+[[menus.items]]
+title = "Project"
+command = "dock.show_project"
+
+[[menus.items]]
+title = "Search"
+command = "search.show"
+
+[[menus.items]]
+title = "Outline"
+command = "outline.show"
+
+[[menus.items]]
+title = "Toggle Dock"
+command = "dock.toggle"
+
+[[menus.items]]
+title = "Toggle Breadcrumbs"
+command = "view.toggle_breadcrumbs"
+
+[[menus.items]]
+title = "Status Bar"
+command = "view.toggle_status_bar"
+
+[[menus.items]]
+separator = true
+
+[[menus.items]]
+title = "Soft Wrap"
+command = "editor.toggle_soft_wrap"
+
+[[menus.items]]
+title = "Toggle Vim Mode"
+command = "vim.toggle"
+
+[[menus.items]]
+separator = true
+
+[[menus.items]]
+title = "Fold"
+command = "editor.fold"
+
+[[menus.items]]
+title = "Unfold"
+command = "editor.unfold"
+
+[[menus.items]]
+title = "Fold All"
+command = "editor.fold_all"
+
+[[menus.items]]
+title = "Unfold All"
+command = "editor.unfold_all"
+
+[[menus.items]]
+separator = true
+
+[[menus.items]]
+title = "Restart Language Server"
+command = "lsp.restart"
+
+[[menus.items]]
+title = "Language Server Log"
+command = "lsp.show_log"
+
+[[menus.items]]
+separator = true
+
+[[menus.items]]
+title = "Toggle Full Screen"
+command = "window.toggle_fullscreen"
+
+[[menus]]
+name = "Go"
+
+[[menus.items]]
+title = "Back"
+command = "nav.back"
+
+[[menus.items]]
+title = "Forward"
+command = "nav.forward"
+
+[[menus.items]]
+separator = true
+
+[[menus.items]]
+title = "Go to File…"
+command = "quick_open.toggle"
+
+[[menus.items]]
+title = "Go to Symbol in Workspace…"
+command = "nav.workspace_symbols"
+
+[[menus.items]]
+separator = true
+
+[[menus.items]]
+title = "Go to Definition"
+command = "nav.goto_definition"
+
+[[menus.items]]
+title = "Find All References"
+command = "nav.find_references"
+
+[[menus.items]]
+separator = true
+
+[[menus.items]]
+title = "Next Tab"
+command = "workbench.next_tab"
+
+[[menus.items]]
+title = "Previous Tab"
+command = "workbench.previous_tab"
+
+[[menus.items]]
+separator = true
+
+[[menus.items]]
+title = "Focus Left Pane"
+command = "pane.focus_left"
+
+[[menus.items]]
+title = "Focus Right Pane"
+command = "pane.focus_right"
+
+[[menus.items]]
+title = "Focus Above Pane"
+command = "pane.focus_up"
+
+[[menus.items]]
+title = "Focus Below Pane"
+command = "pane.focus_down"
+
+[[menus.items]]
+separator = true
+
+[[menus.items]]
+title = "Reveal Active File in Project"
+command = "project_panel.reveal_active"
+
+[[menus]]
+name = "Window"
+
+[[menus.items]]
+title = "Minimize"
+command = "window.minimize"
+platform = "macos"
+
+[[menus.items]]
+title = "Zoom"
+command = "window.zoom"
+platform = "macos"
+
+[[menus.items]]
+separator = true
+platform = "macos"
+
+[[menus.items]]
+title = "Split Right"
+command = "pane.split_right"
+
+[[menus.items]]
+title = "Split Down"
+command = "pane.split_down"
+
+[[menus.items]]
+title = "Move Tab Left"
+command = "pane.move_tab_left"
+
+[[menus.items]]
+title = "Move Tab Right"
+command = "pane.move_tab_right"
+
+[[menus.items]]
+title = "Move Tab Up"
+command = "pane.move_tab_up"
+
+[[menus.items]]
+title = "Move Tab Down"
+command = "pane.move_tab_down"

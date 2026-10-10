@@ -1,6 +1,7 @@
-# The built-in macOS menu bar. A host replaces it with a table of its own,
-# or extends it with a layer: see fe_keymap's `menu` module for the format.
-# Each item's shortcut is whatever the active keymap runs it with.
+# fastedit.toml as it resolves on macOS: kept for tests that need
+# that platform's bindings on any host. Don't edit this to change fastedit's
+# defaults: edit menus/fastedit.toml, then this to match; fe-keymap's
+# tests/one_keymap.rs checks they agree.
 
 [[menus]]
 name = "fastedit"
