@@ -1,0 +1,236 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
+//! Typed commands: each is a real [`gpui::Action`], handled the GPUI way
+//! (`.on_action(cx.listener(Self::save))`), with the metadata a command
+//! needs beyond that (a title, the context it applies in) so menus, the
+//! palette, keymap checks and agents can list it. Every dispatch, from a
+//! key, a menu, the palette or an agent, starts from an [`Invocation`]:
+//! [`dispatch_invocation`] builds the action from it, and handlers can read
+//! it back with [`current_invocation`].
+//!
+//! ```ignore
+//! kiln::commands!(notes, [
+//!     /// New Note
+//!     NewNote,
+//!     /// Delete Note
+//!     #[command(context = "notes_list")]
+//!     DeleteNote,
+//! ]);
+//! // notes::register(cx) records them; `.on_action(cx.listener(Self::new_note))`
+//! // handles one; Invocation::of("notes.new_note") dispatches it.
+//! ```
+//!
+//! A command's ID is its action's GPUI name with `::` for `.` and the type
+//! in snake case: `notes::NewNote` is `notes.new_note`. The generated
+//! actions derive `gpui::Action`, whose code names the `gpui` crate, so an
+//! app using the macro depends on `gpui` (as every GPUI app does).
+
+use std::collections::HashMap;
+
+use gpui::{Action, App, Global, Window};
+use kiln_command::{CommandId, ContextPredicate, DispatchError, Invocation, Value};
+
+use crate::commands::{RunCommand, notify_observers};
+
+/// What [`register_command`] records about a command besides its action.
+#[derive(Clone, Debug, Default)]
+pub struct CommandInfo {
+    /// What menus and the palette call it.
+    pub title: String,
+    /// Where it applies, as a key context predicate (`notes_list`); `None`
+    /// is everywhere.
+    pub context: Option<&'static str>,
+}
+
+/// One typed command.
+#[derive(Clone)]
+pub struct TypedCommand {
+    pub id: CommandId,
+    /// GPUI's name for the action: `notes::NewNote`.
+    pub action_name: &'static str,
+    pub title: String,
+    pub context: Option<ContextPredicate>,
+    build: fn(serde_json::Value) -> gpui::Result<Box<dyn Action>>,
+}
+
+impl TypedCommand {
+    /// The action for `args` (`Null` for none), or why they don't fit it.
+    pub fn build(&self, args: &Value) -> Result<Box<dyn Action>, String> {
+        (self.build)(args.clone()).map_err(|error| error.to_string())
+    }
+}
+
+#[derive(Default)]
+struct TypedCommands {
+    by_id: HashMap<CommandId, TypedCommand>,
+    /// The invocation being dispatched, while its handler runs.
+    current: Option<Invocation>,
+}
+
+impl Global for TypedCommands {}
+
+/// Records `A` as a command, under the ID its GPUI name gives it. A second
+/// registration of the same ID replaces the first.
+pub fn register_command<A: Action>(cx: &mut App, info: CommandInfo) {
+    let action_name = A::name_for_type();
+    let id = command_id(action_name)
+        .unwrap_or_else(|| panic!("{action_name} needs a namespace to be a command"));
+    let context = info.context.map(|context| {
+        ContextPredicate::parse(context)
+            .unwrap_or_else(|error| panic!("{action_name}'s context {context:?}: {error}"))
+    });
+    let command = TypedCommand {
+        id: id.clone(),
+        action_name,
+        title: info.title,
+        context,
+        build: A::build,
+    };
+    cx.default_global::<TypedCommands>()
+        .by_id
+        .insert(id, command);
+}
+
+/// Every typed command registered, by ID.
+pub fn typed_commands(cx: &App) -> Vec<TypedCommand> {
+    let mut commands: Vec<_> = cx
+        .try_global::<TypedCommands>()
+        .map(|typed| typed.by_id.values().cloned().collect())
+        .unwrap_or_default();
+    commands.sort_by(|a, b| a.id.as_str().cmp(b.id.as_str()));
+    commands
+}
+
+/// The typed command `id`, if one is registered.
+pub fn typed_command(id: &CommandId, cx: &App) -> Option<TypedCommand> {
+    cx.try_global::<TypedCommands>()?.by_id.get(id).cloned()
+}
+
+/// The command ID for GPUI's action name `name`: `notes::NewNote` is
+/// `notes.new_note`. `None` without a namespace.
+pub fn command_id(name: &str) -> Option<CommandId> {
+    let (namespace, type_name) = name.rsplit_once("::")?;
+    let id = format!("{}.{}", namespace.replace("::", "."), snake_case(type_name));
+    CommandId::parse(&id).ok()
+}
+
+fn snake_case(name: &str) -> String {
+    let chars: Vec<char> = name.chars().collect();
+    let mut out = String::new();
+    for (ix, &ch) in chars.iter().enumerate() {
+        if ch.is_uppercase() {
+            let after_lower =
+                ix > 0 && (chars[ix - 1].is_lowercase() || chars[ix - 1].is_ascii_digit());
+            let before_lower = ix > 0
+                && chars[ix - 1].is_uppercase()
+                && chars.get(ix + 1).is_some_and(|next| next.is_lowercase());
+            if after_lower || before_lower {
+                out.push('_');
+            }
+            out.extend(ch.to_lowercase());
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// The invocation being dispatched, while its typed command's handler
+/// runs: who asked (`actor`), from where (`source`), and in what context.
+pub fn current_invocation(cx: &App) -> Option<Invocation> {
+    cx.try_global::<TypedCommands>()?.current.clone()
+}
+
+/// Dispatches `invocation` in `window`, from its focused element: as its
+/// typed command's action, built from its args, if one is registered; as
+/// a [`RunCommand`] otherwise, for commands that live in a registry
+/// rather than as actions. With an element focused it runs now; with none,
+/// once the current dispatch is over, from the window's root (as
+/// [`Window::dispatch_action`] does). Observers hear of a typed command
+/// that some element handles; a registry's handler tells them itself.
+pub fn dispatch_invocation(
+    invocation: Invocation,
+    window: &mut Window,
+    cx: &mut App,
+) -> Result<(), DispatchError> {
+    let action: Box<dyn Action> = match typed_command(&invocation.command, cx) {
+        None => Box::new(RunCommand(invocation.clone())),
+        Some(command) => {
+            command
+                .build(&invocation.args)
+                .map_err(|message| DispatchError::BadArgs {
+                    command: invocation.command.clone(),
+                    message,
+                })?
+        }
+    };
+    let typed = !action.as_any().is::<RunCommand>();
+    let handled = typed && window.is_action_available(action.as_ref(), cx);
+    match window.focused(cx) {
+        Some(focus) => {
+            let previous = set_current(Some(invocation.clone()), cx);
+            focus.dispatch_action(action.as_ref(), window, cx);
+            set_current(previous, cx);
+        }
+        // The window dispatches later, so the invocation is set around
+        // that: deferred work runs in order.
+        None => {
+            let current = invocation.clone();
+            cx.defer(move |cx| {
+                set_current(Some(current), cx);
+            });
+            window.dispatch_action(action, cx);
+            cx.defer(|cx| {
+                set_current(None, cx);
+            });
+        }
+    }
+    if handled {
+        notify_observers(&invocation, cx);
+    }
+    Ok(())
+}
+
+/// Sets the invocation handlers see, returning the one it replaces.
+fn set_current(invocation: Option<Invocation>, cx: &mut App) -> Option<Invocation> {
+    std::mem::replace(
+        &mut cx.default_global::<TypedCommands>().current,
+        invocation,
+    )
+}
+
+/// Declares typed commands: unit-struct GPUI actions in namespace `$ns`,
+/// each titled by its first doc line and optionally limited to a context
+/// with `#[command(context = "...")]`, plus `pub fn register(cx)`, which
+/// records them (see [`register_command`]).
+#[macro_export]
+macro_rules! commands {
+    ($ns:ident, [ $( $(#[doc = $doc:literal])* $(#[command(context = $context:literal)])? $name:ident ),* $(,)? ]) => {
+        $crate::gpui::actions!($ns, [ $( $(#[doc = $doc])* $name ),* ]);
+
+        /// Records this module's commands' titles and contexts.
+        pub fn register(cx: &mut $crate::gpui::App) {
+            $(
+                $crate::command_actions::register_command::<$name>(
+                    cx,
+                    $crate::command_actions::CommandInfo {
+                        title: $crate::command_actions::title_from_doc(&[$($doc),*], stringify!($name)),
+                        context: None $(.or(Some($context)))?,
+                    },
+                );
+            )*
+        }
+    };
+}
+
+/// A title from doc lines: the first non-empty one, trimmed, or the type's
+/// name if there's none.
+#[doc(hidden)]
+pub fn title_from_doc(lines: &[&str], name: &str) -> String {
+    lines
+        .iter()
+        .map(|line| line.trim())
+        .find(|line| !line.is_empty())
+        .unwrap_or(name)
+        .to_owned()
+}

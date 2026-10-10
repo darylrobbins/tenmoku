@@ -124,20 +124,36 @@ pub fn register_app_commands(cx: &mut App, f: impl FnOnce(&mut Registry<AppComma
     commands.app = registry;
 }
 
-/// The app registry's commands, to check bindings and menu items against.
+/// The app's commands, to check bindings and menu items against: the app
+/// registry's, then the typed commands registered so far
+/// ([`crate::command_actions`]), whose args are checked by building their
+/// action.
 pub fn catalog(cx: &App) -> Rc<dyn CommandCatalog> {
     let registry = cx
         .try_global::<Commands>()
         .map(|commands| commands.app.clone())
         .unwrap_or_default();
-    Rc::new(AppCatalog(registry))
+    Rc::new(AppCatalog {
+        registry,
+        typed: crate::command_actions::typed_commands(cx),
+    })
 }
 
-struct AppCatalog(Rc<Registry<AppCommands>>);
+struct AppCatalog {
+    registry: Rc<Registry<AppCommands>>,
+    typed: Vec<crate::command_actions::TypedCommand>,
+}
 
 impl CommandCatalog for AppCatalog {
     fn check(&self, command: &CommandId, args: &Value) -> Result<(), CatalogError> {
-        self.0.check(command, args)
+        match self.registry.check(command, args) {
+            Err(CatalogError::UnknownCommand) => {
+                let typed = self.typed.iter().find(|typed| &typed.id == command);
+                let typed = typed.ok_or(CatalogError::UnknownCommand)?;
+                typed.build(args).map(drop).map_err(CatalogError::BadArgs)
+            }
+            result => result,
+        }
     }
 }
 

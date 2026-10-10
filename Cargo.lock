@@ -3544,6 +3544,9 @@ dependencies = [
  "kiln-command",
  "kiln-core",
  "log",
+ "schemars",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

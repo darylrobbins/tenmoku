@@ -6,5 +6,10 @@
 //!
 //! [`commands`] is GPUI's side of `kiln-command`: the one action every key
 //! and menu item dispatches, and the app's own commands.
+//! [`command_actions`] makes commands real GPUI actions, declared with
+//! [`commands!`].
 
+pub mod command_actions;
 pub mod commands;
+
+pub use gpui;
