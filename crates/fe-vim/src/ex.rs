@@ -23,15 +23,14 @@ pub struct Ex {
     pub command: ExCommand,
 }
 
-/// One line specifier: its base, the searches run from the base's line in
-/// turn, and the sum of its `+N` and `-N` offsets (a bare `+` is `+1`, and
-/// a number after the rest is added: `.2` is `.+2`). `+2` alone is `.+2`,
-/// and `/x/` alone searches from the cursor's line.
+/// One line specifier: its base, then its searches and `+N` and `-N`
+/// offsets in the order written, each applied to the line before it (a
+/// bare `+` is `+1`, and a number after the rest is `+N`: `.2` is `.+2`).
+/// `+2` alone is `.+2`, and `/x/` alone searches from the cursor's line.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Address {
     pub base: Base,
-    pub searches: Vec<LineSearch>,
-    pub offset: i64,
+    pub parts: Vec<Part>,
     /// A `;` follows it: the cursor goes to its line before the next
     /// specifier is read (a `,` leaves it).
     pub semicolon: bool,
@@ -55,6 +54,15 @@ pub enum Base {
     /// `'x`: the line of mark `x` (`'<` and `'>` are the last visual
     /// extent's ends).
     Mark(char),
+}
+
+/// A step from a line specifier's line to another.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Part {
+    Search(LineSearch),
+    /// `+N` or `-N`, signed. Each is checked against 32 bits as it's
+    /// applied, so a later one can't cancel an earlier overflow.
+    Offset(i64),
 }
 
 /// A search for the next (or previous) line that matches, from a line,
@@ -202,9 +210,10 @@ fn command(line: &str, range: &[Address], rest: &str) -> Result<ExCommand, ExErr
     }
     if name.is_empty() {
         let ignored = |address: &Address| {
-            address.base == Base::All && (address.offset != 0 || !address.searches.is_empty())
+            address.base == Base::All && address.parts.iter().any(|part| *part != Part::Offset(0))
         };
-        return match after.is_empty() && !range.iter().any(ignored) {
+        let after = after.trim_start_matches([' ', '\t']);
+        return match (after.is_empty() || after.starts_with('"')) && !range.iter().any(ignored) {
             true => Ok(ExCommand::Goto),
             false => Err(not_a_command()),
         };
@@ -220,17 +229,17 @@ fn command(line: &str, range: &[Address], rest: &str) -> Result<ExCommand, ExErr
     if !delete && !nohlsearch {
         return Err(not_a_command());
     }
+    // A `"` starts a comment, wherever it is in the arguments.
+    let after = after.find('"').map_or(after, |at| &after[..at]);
     if after.starts_with('!') {
         return Err(ExError::NoBang);
     }
     let mut args = after.trim_start_matches([' ', '\t']);
     let command = if delete {
-        // As in nvim, `"` is no register, and `#` writes `"` as `""dd`
-        // does.
+        // As in nvim, `#` writes `"` as `""dd` does.
         let register = args.chars().next().and_then(|ch| match ch {
-            '"' => Some(None),
-            '#' => Some(Some('"')),
-            _ if !ch.is_ascii_digit() && Registers::check(ch).is_ok() => Some(Some(ch)),
+            '#' => Some('"'),
+            _ if !ch.is_ascii_digit() && Registers::check(ch).is_ok() => Some(ch),
             _ => None,
         });
         if register.is_some() {
@@ -251,10 +260,7 @@ fn command(line: &str, range: &[Address], rest: &str) -> Result<ExCommand, ExErr
             return Err(ExError::ZeroCount);
         }
         args = args[digits..].trim_start_matches([' ', '\t']);
-        ExCommand::Delete {
-            register: register.flatten(),
-            count,
-        }
+        ExCommand::Delete { register, count }
     } else {
         if !range.is_empty() {
             return Err(ExError::NoRange);
@@ -405,6 +411,14 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// An offset's size: its digits, or 1 with none.
+    fn offset_by(&mut self) -> i64 {
+        match self.peek() {
+            Some(ch) if ch.is_ascii_digit() => self.digits().unwrap_or(i64::MAX),
+            _ => 1,
+        }
+    }
+
     /// One line specifier, or `None` if the line has none here.
     fn address(&mut self) -> Option<Address> {
         self.skip_blanks();
@@ -433,53 +447,41 @@ impl<'a> Parser<'a> {
             _ => {}
         }
         loop {
+            let before = self.at;
+            self.skip_blanks();
             let rest = self.rest();
-            let search = match rest.chars().next() {
+            let part = match rest.chars().next() {
                 Some(delimiter @ ('/' | '?')) => {
                     let (pattern, after) = search::split_search(&rest[1..], delimiter);
                     self.at = self.line.len() - after.map_or(0, str::len);
-                    LineSearch::Pattern {
+                    Part::Search(LineSearch::Pattern {
                         pattern,
                         forward: delimiter == '/',
-                    }
+                    })
                 }
                 _ if rest.starts_with("\\/") || rest.starts_with("\\?") => {
                     self.at += 2;
-                    LineSearch::LastSearch {
+                    Part::Search(LineSearch::LastSearch {
                         forward: rest.starts_with("\\/"),
-                    }
+                    })
                 }
                 _ if rest.starts_with("\\&") => {
                     self.at += 2;
-                    LineSearch::LastSubstitute
+                    Part::Search(LineSearch::LastSubstitute)
                 }
-                _ => break,
-            };
-            address.searches.push(search);
-        }
-        loop {
-            let before = self.at;
-            self.skip_blanks();
-            let sign = match self.peek() {
-                Some('+') => 1,
-                Some('-') => -1,
+                Some(sign @ ('+' | '-')) => {
+                    self.at += 1;
+                    let by = self.offset_by();
+                    Part::Offset(if sign == '-' { -by } else { by })
+                }
                 // A number after the rest is added to it.
-                Some(ch) if ch.is_ascii_digit() && before > start => 0,
+                Some(ch) if ch.is_ascii_digit() && before > start => Part::Offset(self.offset_by()),
                 _ => {
                     self.at = before;
                     break;
                 }
             };
-            if sign != 0 {
-                self.at += 1;
-            }
-            let by = match self.peek() {
-                Some(ch) if ch.is_ascii_digit() => self.digits().unwrap_or(i64::MAX),
-                _ => 1,
-            };
-            address.offset = address
-                .offset
-                .saturating_add(if sign < 0 { -by } else { by });
+            address.parts.push(part);
         }
         (self.at > start).then_some(address)
     }
@@ -518,7 +520,13 @@ fn execute(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Result<Hand
     target.model.sync_display();
     let last = i64::from(target.model.text().row_count());
     let lines = lines(target, &range)?;
-    Ok(match command(line, &range, rest)? {
+    let command = command(line, &range, rest)?;
+    // Only now, as in nvim: a line before the first fails the command it's
+    // for, not one that's wrong in its own way.
+    if lines.is_some_and(|(first, end)| first < 0 || end < 0) {
+        return Err(ExError::InvalidRange);
+    }
+    Ok(match command {
         ExCommand::Goto => {
             // nvim doesn't move to its largest line number.
             if let Some((_, line)) = lines.filter(|&(_, line)| line < i64::from(i32::MAX)) {
@@ -599,9 +607,6 @@ fn lines(target: &mut VimTarget<'_>, range: &[Address]) -> Result<Option<(i64, i
             current = line.clamp(0, last);
             goto(target, line.clamp(1, last));
         }
-        if line < 0 {
-            return Err(ExError::InvalidRange);
-        }
         (first, end) = match address.base {
             Base::All => (1, line),
             _ => (end, line),
@@ -633,15 +638,26 @@ fn resolve(
             i64::from(mark.position(target.model.snapshot()).0) + 1
         }
     };
-    for search in &address.searches {
-        line = search_line(target, search, line.clamp(0, last))?;
+    for part in &address.parts {
+        line = match part {
+            Part::Search(search) => search_line(target, search, line.clamp(0, last))?,
+            Part::Offset(by) => offset(line, *by)?,
+        };
     }
-    if address.offset == 0 {
-        return Ok(line);
+    Ok(line)
+}
+
+/// `line` moved by `by`, as nvim does it in 32 bits: an offset of
+/// `2^31 - 1` or more, or a sum past the last number, is E1247, but one
+/// going below the first number wraps round.
+fn offset(line: i64, by: i64) -> Result<i64, ExError> {
+    let max = i64::from(i32::MAX);
+    match by {
+        by if by <= -max || by >= max => Err(ExError::OutOfRange),
+        by if by < 0 => Ok(i64::from((line + by) as i32)),
+        by if line >= 0 && by >= max - line => Err(ExError::OutOfRange),
+        by => Ok(line + by),
     }
-    line.checked_add(address.offset)
-        .filter(|line| (i64::from(i32::MIN)..i64::from(i32::MAX)).contains(line))
-        .ok_or(ExError::OutOfRange)
 }
 
 /// The next line after `from` (or the last before it) that `search`
@@ -733,6 +749,10 @@ fn delete(
     end: i64,
     register: Option<char>,
 ) -> Handled {
+    // Nothing to delete, so nothing for the registers.
+    if target.model.text().is_empty() {
+        return Ok(Dispatched::new(Effect::Notify));
+    }
     insert::adopt_closing(target.state);
     goto(target, first);
     let last_change = (target.state.last_change.clone(), target.state.changes);
@@ -752,9 +772,9 @@ fn delete(
     let VimTarget { model, state, .. } = target;
     model.sync_display();
     let text = model.text();
-    let row = u32::try_from(first - 1)
-        .unwrap_or(u32::MAX)
-        .min(text.row_count() - 1);
+    // The operator anchored the caret to the line that took the lines'
+    // place, whatever another origin inserted meanwhile.
+    let row = text.offset_to_point(model.primary_selection().head()).row;
     let mut cursor = Cursor::at(text, text.row_start(row));
     cursor.ix = cursor.line.first_non_blank();
     let caret = cursor.offset();

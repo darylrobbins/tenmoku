@@ -569,7 +569,7 @@ pub use args::{
     SubmitArgs, SwapArgs, Target, TextObject, VisualArgs, VisualKind,
 };
 pub use commands::{VimCommands, VimTarget, registry};
-pub use ex::{Address, Base, Ex, ExCommand, ExError, HostCommand, LineSearch};
+pub use ex::{Address, Base, Ex, ExCommand, ExError, HostCommand, LineSearch, Part};
 pub use headless::{FeedError, HeadlessVim};
 pub use insert::Splits;
 pub use key::{KeyError, VimKey, parse_keys};

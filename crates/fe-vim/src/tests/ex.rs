@@ -1,7 +1,8 @@
 use serde_json::json;
 
-use super::{commit, registers};
-use crate::{Address, Base, Ex, ExCommand, ExError, HeadlessVim, LineSearch, Step, VimState};
+use super::{Measuring, commit, registers};
+use crate::{Address, Base, Ex, ExCommand, ExError, HeadlessVim, LineSearch, Part, Step, VimState};
+use fe_buffer::Origin;
 
 /// What `line` parses to.
 fn parsed(line: &str) -> Ex {
@@ -11,7 +12,10 @@ fn parsed(line: &str) -> Ex {
 fn line(base: Base, offset: i64) -> Address {
     Address {
         base,
-        offset,
+        parts: match offset {
+            0 => vec![],
+            offset => vec![Part::Offset(offset)],
+        },
         ..Address::default()
     }
 }
@@ -67,10 +71,10 @@ fn entering_parsing_and_running() {
                 ..line(Base::Line(3), 0)
             },
             Address {
-                searches: vec![LineSearch::Pattern {
+                parts: vec![Part::Search(LineSearch::Pattern {
                     pattern: "x".to_string(),
                     forward: true,
-                }],
+                })],
                 ..Address::default()
             },
         ]
@@ -150,6 +154,16 @@ fn entering_parsing_and_running() {
         // The range is read before the command is looked up.
         (":/zz/frob<CR>", "E486: Pattern not found: zz"),
         (":'<frob<CR>", "E20: Mark not set"),
+        // A line before the first fails the command, not the range.
+        (":-5<CR>", "E16: Invalid range"),
+        (":-5d<CR>", "E16: Invalid range"),
+        (":-5frob<CR>", "E492: Not an editor command: -5frob"),
+        (":-5noh<CR>", "E481: No range allowed"),
+        // Each offset is checked as it's applied.
+        (
+            ":1+2147483647-2147483647d<CR>",
+            "E1247: Line number out of range",
+        ),
     ] {
         let mut vim = HeadlessVim::new("a\nb\nc", (1, 0));
         vim.feed(keys).unwrap();
@@ -161,6 +175,62 @@ fn entering_parsing_and_running() {
         );
         assert!(registers(&vim).is_empty(), "{keys}");
     }
+    // A later line replaces a negative one, a comment ends the command,
+    // and searches and offsets chain in order.
+    let mut vim = HeadlessVim::new("a\nb\nc\nd", (0, 0));
+    vim.feed(":-2,1,2d<CR>").unwrap();
+    assert_eq!(vim.text(), "c\nd");
+    let mut vim = HeadlessVim::new("a\nb\nc\nd", (0, 0));
+    vim.feed(":d \" 3<CR>").unwrap();
+    assert_eq!(vim.text(), "b\nc\nd");
+    let mut vim = HeadlessVim::new("a\nx\nb\nc\nx\nd", (0, 0));
+    vim.feed(":/x/+1/x/d<CR>").unwrap();
+    assert_eq!(vim.text(), "a\nx\nb\nc\nd");
+    assert_eq!(
+        parsed("1 /x/+1d").range,
+        vec![Address {
+            base: Base::Line(1),
+            parts: vec![
+                Part::Search(LineSearch::Pattern {
+                    pattern: "x".to_string(),
+                    forward: true,
+                }),
+                Part::Offset(1),
+            ],
+            ..Address::default()
+        }]
+    );
+
+    // Deleting from an empty buffer leaves the registers alone.
+    let mut vim = HeadlessVim::new("a\nb", (0, 0));
+    vim.feed(":%d<CR>:d<CR>").unwrap();
+    assert_eq!(
+        registers(&vim),
+        vec![
+            ('"', "a\nb\n".to_string(), true),
+            ('1', "a\nb\n".to_string(), true),
+        ]
+    );
+
+    // The caret lands on the line that took the deleted one's place even
+    // when another origin inserts a row above while text is measured.
+    let mut vim = HeadlessVim::new("a\nb\n  c", (0, 0));
+    let mut split = vim.model().split();
+    let mut edited = false;
+    let _measuring = Measuring::new(move |after_edit| {
+        if after_edit && !edited {
+            edited = true;
+            let ai = Origin::Ai {
+                agent: "agent".into(),
+                session: "session".into(),
+            };
+            split.buffer_mut().edit([(0..0, "X\n")], ai);
+        }
+    });
+    vim.feed(":2d<CR>").unwrap();
+    assert_eq!((vim.text().as_str(), vim.cursor()), ("X\na\n  c", (2, 2)));
+    drop(_measuring);
+
     // Alone, a line past the end goes to the last.
     let mut vim = HeadlessVim::new("a\nb\nc", (0, 0));
     vim.feed(":9<CR>").unwrap();

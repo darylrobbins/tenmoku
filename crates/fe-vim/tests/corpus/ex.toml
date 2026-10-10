@@ -799,3 +799,183 @@ name = "offset_past_64_bits"
 buffer = "a\nb\nc\nd\ne"
 cursor = [1, 0]
 keys = ":-99999999999999999999<CR>"
+
+[[case]]
+name = "comment_after_delete_number"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":d \" 3<CR>"
+
+[[case]]
+name = "comment_after_delete_text"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = ":d \" hello<CR>"
+
+[[case]]
+name = "comment_after_register"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":d a \"3<CR>\"ap"
+
+[[case]]
+name = "comment_after_count"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":d 2 \"3<CR>"
+
+[[case]]
+name = "comment_after_range"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":2,3d \"4<CR>"
+
+[[case]]
+name = "comment_goto"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":3 \"x<CR>"
+
+[[case]]
+name = "comment_noh"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":noh \"x<CR>"
+
+[[case]]
+name = "offset_overflow_cancelled"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":1+2147483647-2147483647d<CR>"
+
+[[case]]
+name = "offset_overflow_then_plus"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":1+2147483647-2147483647+1d<CR>"
+
+[[case]]
+name = "offset_minus_then_plus_ok"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":3-2+1d<CR>"
+
+[[case]]
+name = "offset_minus_underflow_cancelled"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":1-2147483647-2147483647+2147483647d<CR>"
+
+[[case]]
+name = "offset_minus_underflow_cancelled_2"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":1-2147483648+2147483647d<CR>"
+
+[[case]]
+name = "search_after_blank"
+buffer = "a\nx\nb\nx\nc"
+cursor = [0, 0]
+keys = ":1 /x/d<CR>"
+
+[[case]]
+name = "search_after_offset"
+buffer = "a\nb\nx\nb\nx"
+cursor = [0, 0]
+keys = ":1+1/x/d<CR>"
+
+[[case]]
+name = "search_offset_search"
+buffer = "a\nx\nb\nc\nx\nd"
+cursor = [0, 0]
+keys = ":/x/+1/x/d<CR>"
+
+[[case]]
+name = "search_blank_offset"
+buffer = "a\nx\nb\nc\nd"
+cursor = [0, 0]
+keys = ":/x/ +1d<CR>"
+
+[[case]]
+name = "search_offset_backward"
+buffer = "a\nx\nb\nx\nc"
+cursor = [4, 0]
+keys = ":?x?-1?x?d<CR>"
+
+[[case]]
+name = "negative_replaced"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":-2,1,2d<CR>"
+
+[[case]]
+name = "negative_unknown_command"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":-2frob<CR>"
+
+[[case]]
+name = "negative_noh"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":-2noh<CR>"
+
+[[case]]
+name = "negative_delete"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":-2d<CR>"
+
+[[case]]
+name = "negative_goto"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":-2<CR>"
+
+[[case]]
+name = "negative_first_kept"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":-2,1d<CR>"
+
+[[case]]
+name = "negative_semicolon"
+buffer = "a\nb\nc\nd\ne"
+cursor = [3, 0]
+keys = ":-9;2d<CR>"
+
+[[case]]
+name = "empty_buffer_delete_keeps_registers"
+buffer = "a\nb"
+cursor = [0, 0]
+keys = ":%d<CR>:d<CR>\"1p"
+
+[[case]]
+name = "repeated_delete_empty"
+buffer = "a\nb\nc"
+cursor = [0, 0]
+keys = ":d<CR>:%d<CR>:d<CR>:d<CR>\"1p"
+
+[[case]]
+name = "empty_buffer_bad_range"
+buffer = ""
+cursor = [0, 0]
+keys = ":2d<CR>"
+
+[[case]]
+name = "offset_wraps_below_first"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":1-2147483646-2147483646d<CR>"
+
+[[case]]
+name = "offset_wrap_then_overflow"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":1-2147483646-2147483646+2147483646d<CR>"
+
+[[case]]
+name = "offset_minus_max"
+buffer = "a\nb\nc\nd\ne"
+cursor = [2, 0]
+keys = ":3-2147483647d<CR>"
