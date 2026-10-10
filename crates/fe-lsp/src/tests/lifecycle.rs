@@ -533,8 +533,11 @@ fn floods_do_not_hold_up_stop_or_deadlines() {
     wait_until("the server thread to end", || manager.thread_finished(id));
 
     // A host flooding requests from another thread doesn't hold up a stop.
+    // The clock is manual and never advanced: on the system clock, readiness's
+    // 500 ms settle can pass under load before the flood is recorded, so `Ready`
+    // would come before `Stopped`. The stop itself needs no clock time.
     let fake = FakeServer::new(Script::default());
-    let (manager, events) = super::manager(fake.launcher(), None);
+    let (manager, events) = super::manager(fake.launcher(), Some(Arc::new(ManualClock::new())));
     let manager = Arc::new(Mutex::new(manager));
     let id = manager
         .lock()
