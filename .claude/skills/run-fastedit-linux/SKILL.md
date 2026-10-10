@@ -1,10 +1,11 @@
 ---
-name: run-fastedit
-description: Build, run, and drive the fastedit editor app on Linux, headless. Use when asked to run or start fastedit, launch the app, take a screenshot of its UI, check a change works in the real window, click or type into the editor, or run its tests.
+name: run-fastedit-linux
+description: Linux only - build, run, and drive the fastedit editor app headless under Xvfb with xdotool. Use on Linux when asked to run or start fastedit, launch the app, take a screenshot of its UI, check a change works in the real window, click or type into the editor, or run its tests. Not for macOS, where the app runs on Metal and AppKit: there, use `cargo run` and the screenshot examples in TESTING.md instead.
 ---
 
-fastedit is a GPUI desktop editor (`crates/fastedit`). Agents drive it
-headless with `.claude/skills/run-fastedit/driver.sh`: Xvfb renders it
+**Linux only.** fastedit is a GPUI desktop editor (`crates/fastedit`). On
+Linux, agents drive it headless with
+`.claude/skills/run-fastedit-linux/driver.sh`: Xvfb renders it
 through Mesa's software Vulkan, tmux holds the process, xdotool sends
 real keys and clicks, and the framebuffer is converted to a PNG. All paths
 are relative to the repo root.
@@ -27,7 +28,7 @@ curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain none --profile 
 ## Build
 
 ```bash
-.claude/skills/run-fastedit/driver.sh build
+.claude/skills/run-fastedit-linux/driver.sh build
 ```
 
 A cold build takes several minutes; later ones a few seconds.
@@ -35,7 +36,7 @@ A cold build takes several minutes; later ones a few seconds.
 ## Run (agent path)
 
 ```bash
-D=.claude/skills/run-fastedit/driver.sh
+D=.claude/skills/run-fastedit-linux/driver.sh
 mkdir -p /tmp/fastedit-demo/src && printf 'fn main() {\n    println!("hi");\n}\n' > /tmp/fastedit-demo/src/main.rs
 $D start /tmp/fastedit-demo          # waits for the first frame
 $D ss /tmp/fastedit-run/01-start.png # the trust prompt for a new folder

@@ -25,6 +25,10 @@ export PATH="$HOME/.cargo/bin:$PATH"
 
 die() { echo "driver: $*" >&2; exit 1; }
 
+# Xvfb, xdotool and the X framebuffer exist only on Linux; on macOS the app
+# draws with Metal (see TESTING.md for running it there).
+[[ "$(uname -s)" == Linux ]] || die "Linux only: on macOS run the app with cargo run"
+
 shot() {
   [[ -f "$FB" ]] || die "no framebuffer: run 'driver.sh start' first"
   # Xvfb paints the X pointer into the framebuffer: park it in the empty
