@@ -1,0 +1,41 @@
+# Kiln Light: the bundled light base. A theme with `appearance = "light"` is
+# laid over it. Only the root tokens are set, and the few derived ones whose
+# rule doesn't give the colour wanted; the rest follow their rules
+# (kiln-core's src/theme/tokens.rs).
+
+kiln_theme = 1
+name = "Kiln Light"
+appearance = "light"
+
+[surface]
+background = "#ffffff"
+panel = "#f3f4f6"
+overlay = "#0000004d"
+
+[text]
+primary = "#4a4f59"
+muted = "#9aa0aa"
+on_accent = "#ffffff"
+
+[border]
+default = "#dcdfe4"
+
+[accent]
+base = "#3b6fd4"
+
+[state]
+hover = "#0000000a"
+pressed = "#00000014"
+selected_inactive = "#0000000f"
+
+[status]
+error = "#d93f4c"
+warning = "#b8760f"
+info = "#2f74d0"
+success = "#3f8f3a"
+
+[list]
+indent_guide = "#00000014"
+
+[tab]
+active_text = "#1f2329"

@@ -20,6 +20,9 @@
 //!
 //! [`TextEdit`] is the model behind a single-line text field: a selection
 //! on grapheme boundaries, word motions, IME composition and undo.
+//!
+//! [`theme`] reads theme files of semantic colour tokens, laid over a
+//! bundled dark or light base.
 
 pub mod diagnostic;
 mod keymap;
@@ -33,6 +36,7 @@ pub mod paths;
 pub mod platform;
 mod report;
 pub mod text_edit;
+pub mod theme;
 pub mod trust;
 pub mod watch;
 pub mod write;

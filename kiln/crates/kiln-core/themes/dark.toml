@@ -1,0 +1,43 @@
+# Kiln Dark: the bundled dark base. A theme with `appearance = "dark"`, or
+# none, is laid over it. Only the root tokens are set, and the few derived
+# ones whose rule doesn't give the colour wanted; the rest follow their
+# rules (kiln-core's src/theme/tokens.rs).
+
+kiln_theme = 1
+name = "Kiln Dark"
+appearance = "dark"
+
+[surface]
+background = "#16181d"
+panel = "#121418"
+overlay = "#00000080"
+
+[text]
+primary = "#8b8f98"
+muted = "#4b5160"
+on_accent = "#c8ccd4"
+
+[border]
+default = "#23262d"
+
+[accent]
+base = "#4f7cc8"
+
+[state]
+hover = "#ffffff0a"
+pressed = "#ffffff14"
+selected_inactive = "#ffffff0f"
+
+[status]
+error = "#e06c75"
+warning = "#d19a66"
+info = "#61afef"
+success = "#98c379"
+
+[list]
+indent_guide = "#ffffff14"
+chevron = "#6c717c"
+folder_icon = "#7f9fd8"
+
+[tab]
+active_text = "#c8ccd4"
