@@ -516,14 +516,15 @@ impl Finder<'_> {
 
         let mut refs = Vec::new();
         for line in &lines {
+            let mut cursor = Cursor::default();
             for hit in &line.ranges {
                 if self.cancelled() {
                     return None;
                 }
                 let start = line.line_offset as usize;
                 let raw = start + hit.start..start + hit.end;
-                let located =
-                    (loaded.as_ref()).and_then(|file| file.locate(start, hit, &self.word));
+                let located = (loaded.as_ref())
+                    .and_then(|file| file.locate(start, hit, &self.word, &mut cursor));
                 // The preview is decoded as the file is, so where a hit was
                 // found in the text, it's moved as much in the preview.
                 let in_preview = match (&loaded, &located) {
@@ -708,9 +709,10 @@ impl Loaded {
         line_offset: usize,
         hit: &Range<usize>,
         word: &str,
+        cursor: &mut Cursor,
     ) -> Option<(Range<usize>, u32)> {
         let text = self.buffer.text();
-        let range = self.decoded.place(line_offset, hit)?;
+        let range = self.decoded.place(line_offset, hit, cursor)?;
         let fits = range.len() == word.len()
             && range.end <= text.len()
             && text.is_char_boundary(range.start)
@@ -747,6 +749,30 @@ enum Kind {
         /// Each line's start in the file and in the text: ascending.
         starts: Vec<(usize, usize)>,
     },
+}
+
+/// How far the decoding of a legacy-encoded line has got, so its hits, in
+/// ascending order, are decoded once between them rather than each from the
+/// line's start.
+#[derive(Default)]
+struct Cursor {
+    /// In the line's bytes.
+    raw: usize,
+    /// The length in the text of the bytes before `raw`.
+    text: usize,
+}
+
+impl Cursor {
+    /// The length in the text of the `to` first bytes of `line`.
+    fn advance(&mut self, line: &[u8], to: usize, text_len: &TextLen) -> Option<usize> {
+        let bytes = line.get(..to)?;
+        if to < self.raw {
+            *self = Cursor::default();
+        }
+        self.text += text_len(&bytes[self.raw..]);
+        self.raw = to;
+        Some(self.text)
+    }
 }
 
 /// See [`Kind::Lines`]; a closure as `fe_text::Encoding` isn't nameable here.
@@ -844,7 +870,12 @@ impl Decoded {
 
     /// Where the hit at `hit`, a range in the line at `line_offset` of the
     /// file, is in the text.
-    fn place(&self, line_offset: usize, hit: &Range<usize>) -> Option<Range<usize>> {
+    fn place(
+        &self,
+        line_offset: usize,
+        hit: &Range<usize>,
+        cursor: &mut Cursor,
+    ) -> Option<Range<usize>> {
         match &self.kind {
             Kind::Utf8 { .. } => {
                 let (start, end) = (line_offset + hit.start, line_offset + hit.end);
@@ -865,8 +896,9 @@ impl Decoded {
                     return Some(text_at + hit.start..text_at + hit.end);
                 }
                 let line = raw.get(line_offset..)?;
-                let prefix = |to: usize| Some(text_len(line.get(..to)?));
-                Some(text_at + prefix(hit.start)?..text_at + prefix(hit.end)?)
+                let start = cursor.advance(line, hit.start, text_len)?;
+                let end = cursor.advance(line, hit.end, text_len)?;
+                Some(text_at + start..text_at + end)
             }
         }
     }
@@ -894,13 +926,16 @@ impl Decoded {
                 hit.end.checked_sub(preview_start)?,
             ),
             Kind::Lines { raw, .. } => {
+                // Only what's between the window's start and the hit is
+                // decoded, and a hit further than the window is long isn't in it.
+                let from = hit.start.checked_sub(preview_start)?;
+                if from > PREVIEW_BYTES {
+                    return None;
+                }
                 let line = raw.get(line_offset..)?;
-                let lossy = |to: usize| Some(String::from_utf8_lossy(line.get(..to)?).len());
-                let window = lossy(preview_start)?;
-                (
-                    lossy(hit.start)?.checked_sub(window)?,
-                    lossy(hit.end)?.checked_sub(window)?,
-                )
+                let lossy = |bytes: Option<&[u8]>| Some(String::from_utf8_lossy(bytes?).len());
+                let start = lossy(line.get(preview_start..hit.start))?;
+                (start, start + lossy(line.get(hit.start..hit.end))?)
             }
         };
         Some(start..end)

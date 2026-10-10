@@ -97,3 +97,33 @@ fn references_in_a_utf16_file_select_the_word() {
     let (_, refs) = check(&bytes);
     assert!(refs.iter().all(|r| r.verified), "{refs:?}");
 }
+
+/// A long line in a legacy encoding with many hits is decoded about once,
+/// not from its start for each hit.
+#[test]
+fn a_long_legacy_line_with_many_hits_is_decoded_in_bounded_work() {
+    let mut bytes = b"// caf\xE9\n".to_vec();
+    // One 3 MB line, `target` every 1.5 KB.
+    let unit = [&b"target "[..], &[b'a'; 1_500][..], b"\xE9 "].concat();
+    for _ in 0..2_000 {
+        bytes.extend(&unit);
+    }
+    bytes.push(b'\n');
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("file.rs"), &bytes).unwrap();
+    let start = std::time::Instant::now();
+    let batches = find(dir.path());
+    let elapsed = start.elapsed();
+    let buffer = Buffer::from_reader_detecting(bytes.as_slice()).unwrap();
+    assert_ne!(buffer.encoding().name(), "UTF-8");
+    let refs: Vec<_> = (batches.into_iter().flatten())
+        .filter(|file| file.rel == Path::new("file.rs"))
+        .flat_map(|file| file.refs)
+        .collect();
+    assert!(refs.len() >= 2_000, "{}", refs.len());
+    for r in &refs {
+        let text = buffer.text().slice_to_string(r.location.range.clone());
+        assert_eq!(text, "target", "{r:?}");
+    }
+    assert!(elapsed.as_secs() < 5, "{elapsed:?}");
+}
