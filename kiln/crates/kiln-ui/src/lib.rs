@@ -30,6 +30,7 @@ mod text_input;
 mod theme;
 mod toggle_button;
 mod tooltip;
+mod tree;
 mod tree_row;
 
 pub use activity_rail::{ActivityRail, RAIL_WIDTH, RailButton};
@@ -54,6 +55,7 @@ pub use theme::{
 };
 pub use toggle_button::ToggleButton;
 pub use tooltip::Tooltip;
+pub use tree::{Tree, TreeEvent, TreeModel};
 pub use tree_row::{CHEVRON_WIDTH, ICON_SIZE, TREE_INDENT, TreeRow};
 
 #[cfg(test)]

@@ -8,4 +8,5 @@ mod list;
 mod prompt;
 mod text_field;
 mod theme_tokens;
+mod tree;
 mod tree_row;

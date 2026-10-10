@@ -19,7 +19,7 @@ pub const CHEVRON_WIDTH: Pixels = px(16.);
 pub const ICON_SIZE: Pixels = px(16.);
 
 /// Left of the chevron column at depth 0.
-const PADDING: Pixels = px(6.);
+pub(crate) const PADDING: Pixels = px(6.);
 /// The selection box's inset from the list's sides.
 const BOX_INSET: Pixels = px(4.);
 const CHEVRON_GAP: Pixels = px(2.);
