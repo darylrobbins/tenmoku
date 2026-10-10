@@ -32,6 +32,7 @@ scripts/soak.sh                   # 50k cases per property, release (a few minut
                                   # run after changing undo/redo or anchor code
 scripts/check-syntax-features.sh  # fe-syntax with no languages, then each alone (CI runs it)
 scripts/lsp-real.sh               # fe-lsp against real language servers; see Real language servers
+scripts/check-framework-standalone.sh    # kiln/ builds and tests outside this repo; see Kiln on its own
 scripts/prune-build-cache.sh --dry-run   # stale incremental dirs of this lane; see Disk
 scripts/test-prune-build-cache.sh        # fixture test for the prune script
 cargo mutants -p fe-buffer -j 4   # by hand, before milestones
@@ -141,6 +142,46 @@ status bar to show the server ready. Then:
   the combining accent.
 - Press F12 on the call of `hello`. It must open the greet file with the caret
   on `hello`.
+
+## Kiln on its own
+
+`scripts/check-no-gpui.sh` checks that kiln/ names nothing of fastedit's. It
+can't show that kiln builds without our root `Cargo.toml`, `Cargo.lock`,
+patches and `vendor/`, which it must before it is split out
+(docs/decisions/app-framework.md, card K6.2).
+`scripts/check-framework-standalone.sh` builds it the way it will be split out:
+
+```zsh
+scripts/check-framework-standalone.sh            # copy, build, test, then delete the copy
+scripts/check-framework-standalone.sh --keep     # keep the scratch workspace after a pass
+scripts/check-framework-standalone.sh --dir /tmp/kiln-ws --target-dir /tmp/kiln-target
+scripts/check-framework-standalone.sh --online   # let cargo fetch what the local cache lacks
+```
+
+1. It copies kiln/'s tracked and new files (not ignored ones) into a new
+   directory under `$TMPDIR`, with `rust-toolchain.toml`. The repo has no
+   `.cargo/config.toml` for it to copy.
+2. `scripts/kiln_standalone.py` writes the scratch `Cargo.toml` from ours,
+   keeping only the `[workspace.package]` keys, `[workspace.dependencies]`
+   entries, lints, `[patch.crates-io]` entries and profile overrides that the
+   kiln crates use. A patch that points into `vendor/` is copied with it and
+   listed. kiln needs none today: `tree-sitter-yaml` is the only patch, and
+   it is fastedit's.
+3. It copies our `Cargo.lock` in and lets cargo drop the packages kiln
+   doesn't use. The helper then checks that every package left is at the
+   version and source our lock pins.
+4. It runs `cargo build --locked --offline --workspace --all-targets` and
+   `cargo test --locked --offline --workspace`, using the local registry
+   cache, in a target dir of its own (`$TMPDIR/kiln-standalone-target`,
+   reused between runs; our `CARGO_TARGET_DIR` is ignored).
+5. It prints what kiln still takes from this repo: the inherited manifest
+   entries, the toolchain pin, the nextest retries, `deny.toml`, the repo
+   paths its comments cite, and its `THIRD_PARTY.md` rows and missing
+   licence files.
+
+On a failure it names the step, keeps the scratch workspace and prints the
+command to rerun there. A cold run took 71 s with `CARGO_BUILD_JOBS=4` and left
+a 2.2 GiB target dir; a warm one takes a few seconds. It isn't in CI yet.
 
 ## Disk
 
