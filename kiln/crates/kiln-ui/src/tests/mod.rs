@@ -12,3 +12,4 @@ mod text_field;
 mod theme_tokens;
 mod tree;
 mod tree_row;
+mod ui_theme_compat;

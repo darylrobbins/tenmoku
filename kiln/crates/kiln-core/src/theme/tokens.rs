@@ -151,6 +151,12 @@ tokens! {
         active_text,
         inactive,
     }
+    /// A scrolling view's scrollbar.
+    scrollbar: Scrollbar {
+        thumb,
+        /// The thumb while it's hovered or dragged.
+        thumb_hover,
+    }
 }
 
 /// How a token follows others when a theme doesn't set it.
@@ -221,6 +227,8 @@ pub const RULES: &[(&str, Rule)] = &[
     ("list.folder_icon", Rule::Same("accent.base")),
     ("tab.active", Rule::Same("surface.background")),
     ("tab.inactive", Rule::Same("surface.panel")),
+    ("scrollbar.thumb", Rule::Alpha("text.muted", 0x80)),
+    ("scrollbar.thumb_hover", Rule::Alpha("text.primary", 0x99)),
 ];
 
 /// The rule for `key`, if it's derived.

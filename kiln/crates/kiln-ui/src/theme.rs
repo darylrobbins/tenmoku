@@ -209,6 +209,12 @@ impl Theme {
     /// A theme with the flat chrome colours of `ui`, laid over the dark or
     /// light base as its background is dark or light, the tokens it
     /// doesn't name derived as a theme file's would be.
+    ///
+    /// The widgets that drew from a `UiTheme` now read these tokens, so
+    /// each draws exactly the colour it did: every field's token is the
+    /// field's colour as given (not rounded to a theme file's 8 bits a
+    /// channel), and so are the colours they computed from it, the
+    /// scrollbar's and the prompt's scrim.
     pub fn from_ui_theme(ui: &UiTheme) -> Self {
         let appearance = if ui.background.l > 0.5 {
             Appearance::Light
@@ -216,7 +222,31 @@ impl Theme {
             Appearance::Dark
         };
         let base = ThemeData::base(appearance);
-        let set = [
+        let set = Self::ui_tokens(ui);
+        let tokens = kiln_core::theme::resolve(
+            set.iter()
+                .map(|&(key, hsla)| (key, color(hsla)))
+                .chain([("surface.overlay", UI_OVERLAY)]),
+            Some(&base.tokens),
+        );
+        let mut theme = Self::new(ThemeData {
+            tokens,
+            ..base.clone()
+        });
+        let colors = &mut theme.colors;
+        for (key, hsla) in set {
+            *colors.get_mut(key).expect("UiTheme fields are tokens") = hsla;
+        }
+        // Not 8-bit colours in general: half the muted text's alpha.
+        colors.scrollbar.thumb = ui.muted_text.opacity(0.5);
+        colors.scrollbar.thumb_hover = ui.text.opacity(0.6);
+        theme
+    }
+
+    /// Each `UiTheme` field's token, with the field's colour: the `[ui]`
+    /// alias table's pairs.
+    fn ui_tokens(ui: &UiTheme) -> [(&'static str, Hsla); 20] {
+        [
             ("surface.background", ui.background),
             ("surface.panel", ui.panel_background),
             ("border.default", ui.border),
@@ -237,17 +267,13 @@ impl Theme {
             ("state.dirty", ui.dirty_dot),
             ("state.drop_target", ui.drop_target),
             ("accent.base", ui.accent),
-        ];
-        let tokens = kiln_core::theme::resolve(
-            set.map(|(key, hsla)| (key, color(hsla))),
-            Some(&base.tokens),
-        );
-        Self::new(ThemeData {
-            tokens,
-            ..base.clone()
-        })
+        ]
     }
 }
+
+/// The scrim behind a prompt in the flat chrome, whatever its background:
+/// the dark base's `surface.overlay`.
+const UI_OVERLAY: Color = Color::rgba(0x00000080);
 
 impl Default for Theme {
     fn default() -> Self {

@@ -9,7 +9,7 @@ use gpui::{
     StatefulInteractiveElement as _, Styled as _, Window, div, prelude::FluentBuilder as _, px,
 };
 
-use crate::ui_theme;
+use crate::ActiveTheme as _;
 
 /// The border's grab area, centred on it: wider than the 1 px it draws.
 const HANDLE: Pixels = px(6.);
@@ -127,7 +127,7 @@ impl SplitPane {
 
 impl Render for SplitPane {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = ui_theme(cx);
+        let border = cx.theme().colors.border.default;
         let horizontal = self.axis == Axis::Horizontal;
         let cell = |grow: f32, view: AnyView| {
             div()
@@ -168,7 +168,7 @@ impl Render for SplitPane {
         let divider = div()
             .relative()
             .flex_none()
-            .bg(theme.border)
+            .bg(border)
             .map(|divider| {
                 if horizontal {
                     divider.w(px(1.)).h_full()

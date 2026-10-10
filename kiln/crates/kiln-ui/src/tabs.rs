@@ -7,7 +7,7 @@ use gpui::{
     SharedString, Styled as _, Window, div,
 };
 
-use crate::{Tab, TabBar, ui_theme, v_flex};
+use crate::{Tab, TabBar, UiTheme, v_flex};
 
 /// What [`Tabs`] tells its subscribers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -104,7 +104,8 @@ impl Tabs {
 
 impl Render for Tabs {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = ui_theme(cx);
+        // Tab and TabBar read cx.theme(); the UiTheme they take is ignored.
+        let theme = UiTheme::default();
         let tabs = self.tabs.iter().enumerate().map(|(ix, (label, _))| {
             Tab::new(("tab", ix), label.clone(), &theme)
                 .active(ix == self.active)

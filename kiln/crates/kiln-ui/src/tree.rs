@@ -20,10 +20,9 @@ use gpui::{
 };
 
 use crate::{
-    CHEVRON_WIDTH, Icon, TREE_INDENT, TreeRow,
+    CHEVRON_WIDTH, Icon, TREE_INDENT, TreeRow, UiTheme,
     nav::{NavKey, nav_key, page_rows},
     tree_row::PADDING,
-    ui_theme,
 };
 
 /// What a [`Tree`] shows: nodes named by an `Id`, each with its children.
@@ -308,7 +307,8 @@ impl<M: TreeModel> Tree<M> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
-        let theme = ui_theme(cx);
+        // TreeRow reads cx.theme(); the UiTheme it takes is ignored.
+        let theme = UiTheme::default();
         let focused = self.focus.is_focused(window);
         range
             .filter_map(|ix| {

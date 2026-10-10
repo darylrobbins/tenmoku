@@ -8,7 +8,7 @@ use gpui::{
     Window, div, prelude::FluentBuilder as _, px, radians, svg,
 };
 
-use crate::{ClickHandler, Icon, ROW_HEIGHT, UiTheme};
+use crate::{ActiveTheme as _, ClickHandler, Icon, ROW_HEIGHT, Tokens, UiTheme};
 
 /// How far each level of the tree is indented.
 pub const TREE_INDENT: Pixels = px(14.);
@@ -40,7 +40,6 @@ pub struct TreeRow {
     error: bool,
     selected: bool,
     focused: bool,
-    theme: UiTheme,
     on_click: Option<ClickHandler>,
 }
 
@@ -55,7 +54,9 @@ pub(crate) struct RowColors {
 }
 
 impl TreeRow {
-    pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>, theme: &UiTheme) -> Self {
+    /// Its colours come from `cx.theme()` as it renders. `_theme` is
+    /// ignored: deprecated, kept so callers that pass a [`UiTheme`] build.
+    pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>, _theme: &UiTheme) -> Self {
         Self {
             id: id.into(),
             label: label.into(),
@@ -66,7 +67,6 @@ impl TreeRow {
             error: false,
             selected: false,
             focused: false,
-            theme: *theme,
             on_click: None,
         }
     }
@@ -118,21 +118,23 @@ impl TreeRow {
         self
     }
 
-    pub(crate) fn colors(&self) -> RowColors {
-        let theme = &self.theme;
+    /// Its colours in `colors`, the active theme's tokens.
+    pub(crate) fn colors(&self, colors: &Tokens<Hsla>) -> RowColors {
+        let (list, text) = (&colors.list, &colors.text);
         let (background, border) = match (self.selected, self.focused) {
-            (true, true) => (Some(theme.row_selected), Some(theme.row_focus_border)),
-            (true, false) => (Some(theme.row_selected_inactive), None),
+            (true, true) => (Some(list.row_selected), Some(list.row_focus_border)),
+            (true, false) => (Some(list.row_selected_inactive), None),
             (false, _) => (None, None),
         };
+        let error = colors.status.error;
         let (label, icon, chevron) = if self.error {
-            (theme.error_text, theme.error_text, theme.chevron)
+            (error, error, list.chevron)
         } else if self.ignored {
-            (theme.muted_text, theme.muted_text, theme.muted_text)
+            (text.muted, text.muted, text.muted)
         } else if self.expanded.is_some() {
-            (theme.text, theme.folder_icon, theme.chevron)
+            (text.primary, list.folder_icon, list.chevron)
         } else {
-            (theme.text, theme.icon, theme.chevron)
+            (text.primary, list.icon, list.chevron)
         };
         RowColors {
             background,
@@ -145,9 +147,10 @@ impl TreeRow {
 }
 
 impl RenderOnce for TreeRow {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        let colors = self.colors();
-        let hover = self.theme.row_hover;
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let tokens = &cx.theme().colors;
+        let colors = self.colors(tokens);
+        let (hover, indent_guide) = (tokens.list.row_hover, tokens.list.indent_guide);
         let label = &self.label;
         // Hover is styled here, so the box needs an ID: GPUI keeps hover state
         // and asks for a redraw on entry and exit only for identified
@@ -175,7 +178,7 @@ impl RenderOnce for TreeRow {
                 .h(ROW_HEIGHT)
                 .left(PADDING + TREE_INDENT * level as f32 + CHEVRON_WIDTH / 2. - px(0.5))
                 .w(px(1.))
-                .bg(self.theme.indent_guide)
+                .bg(indent_guide)
                 .debug_selector(|| format!("tree-guide:{label}:{level}"))
         });
         let chevron = match self.expanded {

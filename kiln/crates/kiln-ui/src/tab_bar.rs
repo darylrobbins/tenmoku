@@ -7,7 +7,7 @@ use gpui::{
     prelude::FluentBuilder as _, px,
 };
 
-use crate::{ClickHandler, UiTheme};
+use crate::{ActiveTheme as _, ClickHandler, UiTheme};
 
 pub const TAB_HEIGHT: gpui::Pixels = px(30.);
 
@@ -16,7 +16,6 @@ pub const TAB_HEIGHT: gpui::Pixels = px(30.);
 pub struct TabBar {
     id: ElementId,
     tabs: Vec<Tab>,
-    theme: UiTheme,
     scroll: Option<ScrollHandle>,
     drag: DragHooks,
 }
@@ -31,11 +30,12 @@ fn apply(element: Stateful<Div>, hooks: DragHooks) -> Stateful<Div> {
 }
 
 impl TabBar {
-    pub fn new(id: impl Into<ElementId>, theme: &UiTheme) -> Self {
+    /// Its colours come from `cx.theme()` as it renders. `_theme` is
+    /// ignored: deprecated, kept so callers that pass a [`UiTheme`] build.
+    pub fn new(id: impl Into<ElementId>, _theme: &UiTheme) -> Self {
         Self {
             id: id.into(),
             tabs: Vec::new(),
-            theme: *theme,
             scroll: None,
             drag: Vec::new(),
         }
@@ -74,7 +74,8 @@ impl TabBar {
 }
 
 impl RenderOnce for TabBar {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let colors = &cx.theme().colors;
         div()
             .id(self.id)
             .flex()
@@ -82,9 +83,9 @@ impl RenderOnce for TabBar {
             .h(TAB_HEIGHT)
             .w_full()
             .overflow_x_scroll()
-            .bg(self.theme.panel_background)
+            .bg(colors.surface.panel)
             .border_b_1()
-            .border_color(self.theme.border)
+            .border_color(colors.border.default)
             .when_some(self.scroll, |bar, scroll| bar.track_scroll(&scroll))
             .map(|bar| apply(bar, self.drag))
             .children(self.tabs)
@@ -99,20 +100,20 @@ pub struct Tab {
     label: SharedString,
     dirty: bool,
     active: bool,
-    theme: UiTheme,
     on_click: Option<ClickHandler>,
     on_close: Option<ClickHandler>,
     drag: DragHooks,
 }
 
 impl Tab {
-    pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>, theme: &UiTheme) -> Self {
+    /// Its colours come from `cx.theme()` as it renders. `_theme` is
+    /// ignored: deprecated, kept so callers that pass a [`UiTheme`] build.
+    pub fn new(id: impl Into<ElementId>, label: impl Into<SharedString>, _theme: &UiTheme) -> Self {
         Self {
             id: id.into(),
             label: label.into(),
             dirty: false,
             active: false,
-            theme: *theme,
             on_click: None,
             on_close: None,
             drag: Vec::new(),
@@ -179,8 +180,9 @@ impl Tab {
 }
 
 impl RenderOnce for Tab {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        let theme = self.theme;
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let colors = &cx.theme().colors;
+        let (hover, muted) = (colors.list.row_hover, colors.text.muted);
         let close = div()
             .id("close")
             .size(px(14.))
@@ -189,12 +191,12 @@ impl RenderOnce for Tab {
             .items_center()
             .justify_center()
             .rounded_sm()
-            .hover(move |style| style.bg(theme.row_hover))
+            .hover(move |style| style.bg(hover))
             .map(|close| {
                 if self.dirty {
-                    close.child(div().size(px(6.)).rounded_full().bg(theme.dirty_dot))
+                    close.child(div().size(px(6.)).rounded_full().bg(colors.state.dirty))
                 } else {
-                    close.text_color(theme.muted_text).child("×")
+                    close.text_color(muted).child("×")
                 }
             })
             .when_some(self.on_close, |close, on_close| {
@@ -213,12 +215,12 @@ impl RenderOnce for Tab {
             .pl_3()
             .pr_2()
             .border_r_1()
-            .border_color(theme.border)
+            .border_color(colors.border.default)
             .map(|tab| {
                 if self.active {
-                    tab.bg(theme.tab_active).text_color(theme.tab_active_text)
+                    tab.bg(colors.tab.active).text_color(colors.tab.active_text)
                 } else {
-                    tab.bg(theme.tab_inactive).text_color(theme.text)
+                    tab.bg(colors.tab.inactive).text_color(colors.text.primary)
                 }
             })
             .child(div().whitespace_nowrap().child(self.label))

@@ -6,7 +6,7 @@ use gpui::{
     prelude::FluentBuilder as _, px, svg,
 };
 
-use crate::{ClickHandler, Icon, UiTheme};
+use crate::{ActiveTheme as _, ClickHandler, Icon, UiTheme};
 
 /// The activity rail's width, and each of its buttons' width and height.
 pub const RAIL_WIDTH: Pixels = px(36.);
@@ -24,16 +24,16 @@ type TooltipBuilder = Box<dyn Fn(&mut Window, &mut App) -> AnyView>;
 pub struct ActivityRail {
     id: ElementId,
     buttons: Vec<RailButton>,
-    theme: UiTheme,
     track: Option<ScrollHandle>,
 }
 
 impl ActivityRail {
-    pub fn new(id: impl Into<ElementId>, theme: &UiTheme) -> Self {
+    /// Its colours come from `cx.theme()` as it renders. `_theme` is
+    /// ignored: deprecated, kept so callers that pass a [`UiTheme`] build.
+    pub fn new(id: impl Into<ElementId>, _theme: &UiTheme) -> Self {
         Self {
             id: id.into(),
             buttons: Vec::new(),
-            theme: *theme,
             track: None,
         }
     }
@@ -52,7 +52,8 @@ impl ActivityRail {
 }
 
 impl RenderOnce for ActivityRail {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let colors = &cx.theme().colors;
         // Drawn under the buttons, so the highlight's bar covers it.
         let line = div()
             .absolute()
@@ -60,14 +61,14 @@ impl RenderOnce for ActivityRail {
             .left_0()
             .h_full()
             .w(px(1.))
-            .bg(self.theme.border);
+            .bg(colors.border.default);
         div()
             .id(self.id)
             .relative()
             .flex_none()
             .w(RAIL_WIDTH)
             .h_full()
-            .bg(self.theme.panel_background)
+            .bg(colors.surface.panel)
             .child(line)
             .child(
                 div()
@@ -82,25 +83,25 @@ impl RenderOnce for ActivityRail {
 }
 
 /// One of the rail's buttons: an icon centred in a square. Highlighted, its
-/// icon is in `tab_active_text` with an `accent` bar on its left; else in
-/// `icon`.
+/// icon is in `tab.active_text` with an `accent.base` bar on its left; else
+/// in `list.icon`.
 #[derive(IntoElement)]
 pub struct RailButton {
     id: ElementId,
     icon: Icon,
     highlighted: bool,
-    theme: UiTheme,
     on_click: Option<ClickHandler>,
     tooltip: Option<TooltipBuilder>,
 }
 
 impl RailButton {
-    pub fn new(id: impl Into<ElementId>, icon: Icon, theme: &UiTheme) -> Self {
+    /// Its colours come from `cx.theme()` as it renders. `_theme` is
+    /// ignored: deprecated, kept so callers that pass a [`UiTheme`] build.
+    pub fn new(id: impl Into<ElementId>, icon: Icon, _theme: &UiTheme) -> Self {
         Self {
             id: id.into(),
             icon,
             highlighted: false,
-            theme: *theme,
             on_click: None,
             tooltip: None,
         }
@@ -127,13 +128,14 @@ impl RailButton {
 }
 
 impl RenderOnce for RailButton {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        let theme = self.theme;
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let colors = &cx.theme().colors;
         let color = if self.highlighted {
-            theme.tab_active_text
+            colors.tab.active_text
         } else {
-            theme.icon
+            colors.list.icon
         };
+        let hover = colors.list.row_hover;
         let bar = self.highlighted.then(|| {
             div()
                 .absolute()
@@ -141,7 +143,7 @@ impl RenderOnce for RailButton {
                 .left_0()
                 .h_full()
                 .w(BAR_WIDTH)
-                .bg(theme.accent)
+                .bg(colors.accent.base)
         });
         div()
             .id(self.id)
@@ -152,7 +154,7 @@ impl RenderOnce for RailButton {
             .justify_center()
             .size(RAIL_WIDTH)
             .cursor_pointer()
-            .hover(move |style| style.bg(theme.row_hover))
+            .hover(move |style| style.bg(hover))
             .child(
                 svg()
                     .path(self.icon.path())

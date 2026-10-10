@@ -20,8 +20,8 @@ use std::{collections::BTreeMap, path::Path, sync::LazyLock};
 pub use color::Color;
 pub use file::{ALIAS_TABLE, ALIASES, THEME_VERSION, ThemeFile};
 pub use tokens::{
-    Accent, Border, List, RULES, Rule, State, Status, Surface, TOKEN_GROUPS, TOKEN_KEYS, Tab, Text,
-    Tokens, resolve, rule,
+    Accent, Border, List, RULES, Rule, Scrollbar, State, Status, Surface, TOKEN_GROUPS, TOKEN_KEYS,
+    Tab, Text, Tokens, resolve, rule,
 };
 use toml::Table;
 

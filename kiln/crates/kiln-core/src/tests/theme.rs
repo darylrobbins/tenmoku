@@ -110,6 +110,10 @@ fn dark_base_keeps_the_chrome_colors() {
         ("state.dirty", 0xd19a66ff),
         ("state.drop_target", 0x4f7cc8ff),
         ("accent.base", 0x4f7cc8ff),
+        // ScrollArea's thumb was the muted text at half alpha, its hover the
+        // text at 0.6.
+        ("scrollbar.thumb", 0x4b516080),
+        ("scrollbar.thumb_hover", 0x8b8f9899),
     ];
     for (key, rgba) in expected {
         assert_eq!(tokens.get(key), Some(&Color(rgba)), "{key}");

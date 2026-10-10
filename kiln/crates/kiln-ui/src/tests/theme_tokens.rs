@@ -36,10 +36,11 @@ fn default_tokens_are_the_default_dark_chrome(cx: &mut TestAppContext) {
     assert_eq!(Theme::dark().ui_theme(), UiTheme::default_dark());
     assert_eq!(cx.read(|cx| cx.theme().clone()), Theme::dark());
     assert_eq!(cx.read(|cx| cx.theme().appearance), Appearance::Dark);
-    // The flat colours back into a theme are the dark base, every token.
+    // The flat colours back into a theme are the dark base, every token but
+    // the scrollbar thumb (tests::ui_theme_compat).
     assert_eq!(
-        Theme::from_ui_theme(&UiTheme::default_dark()),
-        Theme::dark()
+        Theme::from_ui_theme(&UiTheme::default_dark()).data(),
+        Theme::dark().data()
     );
 }
 

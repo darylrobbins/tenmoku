@@ -12,7 +12,7 @@ use gpui::{
     Window, canvas, div, fill, point, px,
 };
 
-use crate::{controls::styled, ui_theme};
+use crate::{ActiveTheme as _, controls::styled};
 
 /// The scrollbar's strip, along the area's right edge, over its content.
 pub const SCROLLBAR_WIDTH: Pixels = px(8.);
@@ -85,7 +85,7 @@ struct ScrollState {
 
 impl RenderOnce for ScrollArea {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = ui_theme(cx);
+        let scrollbar = cx.theme().colors.scrollbar;
         let given = self.handle;
         let state = window.use_keyed_state(self.id, cx, |_, _| ScrollState {
             handle: given.clone().unwrap_or_default(),
@@ -95,7 +95,7 @@ impl RenderOnce for ScrollArea {
             let state = state.read(cx);
             (state.handle.clone(), state.grab.clone())
         };
-        let (thumb, thumb_hover) = (theme.muted_text.opacity(0.5), theme.text.opacity(0.6));
+        let (thumb, thumb_hover) = (scrollbar.thumb, scrollbar.thumb_hover);
         let (painted, dragged) = (handle.clone(), handle.clone());
         let bar = canvas(
             move |track, window, _| {

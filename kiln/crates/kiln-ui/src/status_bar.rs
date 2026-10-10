@@ -6,7 +6,7 @@ use gpui::{
     Window, div, prelude::FluentBuilder as _,
 };
 
-use crate::{ClickHandler, ROW_HEIGHT, UiTheme};
+use crate::{ActiveTheme as _, ClickHandler, ROW_HEIGHT, UiTheme};
 
 /// The status bar: a full-width row along the window's bottom edge, with a
 /// 1 px line on top, its left children from the left edge and its right
@@ -15,15 +15,15 @@ use crate::{ClickHandler, ROW_HEIGHT, UiTheme};
 pub struct StatusBarFrame {
     left: Vec<AnyElement>,
     right: Vec<AnyElement>,
-    theme: UiTheme,
 }
 
 impl StatusBarFrame {
-    pub fn new(theme: &UiTheme) -> Self {
+    /// Its colours come from `cx.theme()` as it renders. `_theme` is
+    /// ignored: deprecated, kept so callers that pass a [`UiTheme`] build.
+    pub fn new(_theme: &UiTheme) -> Self {
         Self {
             left: Vec::new(),
             right: Vec::new(),
-            theme: *theme,
         }
     }
 
@@ -41,7 +41,8 @@ impl StatusBarFrame {
 }
 
 impl RenderOnce for StatusBarFrame {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let colors = &cx.theme().colors;
         let side = || div().flex().items_center().h_full();
         div()
             .debug_selector(|| "status-bar".into())
@@ -52,10 +53,10 @@ impl RenderOnce for StatusBarFrame {
             .w_full()
             .h(ROW_HEIGHT)
             .overflow_hidden()
-            .bg(self.theme.panel_background)
+            .bg(colors.surface.panel)
             .border_t_1()
-            .border_color(self.theme.border)
-            .text_color(self.theme.text)
+            .border_color(colors.border.default)
+            .text_color(colors.text.primary)
             .child(side().min_w_0().overflow_hidden().children(self.left))
             .child(side().flex_none().children(self.right))
     }
@@ -67,22 +68,22 @@ impl RenderOnce for StatusBarFrame {
 pub struct StatusEntry {
     id: SharedString,
     label: SharedString,
-    theme: UiTheme,
     on_click: Option<ClickHandler>,
 }
 
 impl StatusEntry {
     /// `id` names the element; in tests its bounds are those of the debug
-    /// selector `status-item:{id}`.
+    /// selector `status-item:{id}`. Its colours come from `cx.theme()` as
+    /// it renders; `_theme` is ignored: deprecated, kept so callers that
+    /// pass a [`UiTheme`] build.
     pub fn new(
         id: impl Into<SharedString>,
         label: impl Into<SharedString>,
-        theme: &UiTheme,
+        _theme: &UiTheme,
     ) -> Self {
         Self {
             id: id.into(),
             label: label.into(),
-            theme: *theme,
             on_click: None,
         }
     }
@@ -97,8 +98,8 @@ impl StatusEntry {
 }
 
 impl RenderOnce for StatusEntry {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        let theme = self.theme;
+    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let hover = cx.theme().colors.list.row_hover;
         let id = self.id;
         div()
             .id(ElementId::Name(id.clone()))
@@ -113,7 +114,7 @@ impl RenderOnce for StatusEntry {
             .when_some(self.on_click, |entry, on_click| {
                 entry
                     .cursor_pointer()
-                    .hover(move |style| style.bg(theme.row_hover))
+                    .hover(move |style| style.bg(hover))
                     .on_click(on_click)
             })
     }
