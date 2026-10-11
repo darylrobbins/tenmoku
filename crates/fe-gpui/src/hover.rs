@@ -88,6 +88,9 @@ struct Current {
     shown: bool,
     /// The provider's answer, once it has come.
     content: Option<HoverContent>,
+    /// The offset the provider was asked about, until the pointer moves on
+    /// within what this covers: what a reply's range must hold.
+    requested: usize,
     /// The delay's timer, then the provider's request: dropped with the
     /// popover, which cancels them.
     _task: Task<()>,
@@ -297,6 +300,7 @@ impl EditorView {
             && current.covers(raw)
         {
             current.hovered.under = raw.under;
+            current.requested = raw.under.offset();
             return;
         }
         let found = under.zip(raw).and_then(|((_, position), raw)| {
@@ -394,6 +398,7 @@ impl EditorView {
                 word.start
             }
         });
+        let hovered_offset = hovered.under.offset();
         let version = hovered.version;
         let provider = self.hover_provider.clone();
         let task = cx.spawn(async move |view, cx| {
@@ -435,14 +440,19 @@ impl EditorView {
                 // One whose range leaves out where the pointer has moved to
                 // since is for an older position: the popover goes.
                 if let Some(content) = content.filter(|_| current_version == version) {
-                    let offset = current.hovered.under.offset();
+                    let offset = current.requested;
                     let covers = (content.range.as_ref())
                         .is_none_or(|range| range.contains(&offset) || range.start == offset);
                     if covers {
                         current.content = Some(content);
                         cx.notify();
-                    } else {
+                    } else if current.hovered.items.is_empty() {
                         view.hide_popover(cx);
+                    } else {
+                        // The diagnostics still stand at the pointer;
+                        // only the provider's text was for elsewhere.
+                        current.content = None;
+                        cx.notify();
                     }
                 }
             })
@@ -453,6 +463,7 @@ impl EditorView {
             at,
             shown: shown || delay.is_none(),
             content: None,
+            requested: ask.unwrap_or(hovered_offset),
             _task: task,
         });
         if delay.is_none() {

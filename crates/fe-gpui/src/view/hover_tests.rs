@@ -477,3 +477,51 @@ fn pointer_moves_within_what_it_shows(cx: &mut TestAppContext) {
     assert_eq!(painted(&view, cx), [docs("the sum")]);
     assert_eq!(calls(&provider).len(), asked + 2);
 }
+
+#[gpui::test]
+fn reply_for_the_word_at_a_caret_past_its_end(cx: &mut TestAppContext) {
+    let beta = word("beta");
+    let (view, provider, cx) = editor(beta.end, cx);
+    *provider.reply.borrow_mut() = Some(HoverContent {
+        text: "the beta".into(),
+        range: Some(beta.clone()),
+    });
+    cx.simulate_keystrokes("cmd-k cmd-i");
+    cx.run_until_parked();
+    assert_eq!(calls(&provider), [beta.start]);
+    assert_eq!(
+        painted(&view, cx),
+        [(Block::Text("the beta".into()), SharedString::from(UI_FONT))]
+    );
+}
+
+#[gpui::test]
+fn narrow_late_reply_keeps_the_diagnostics(cx: &mut TestAppContext) {
+    let (view, provider, cx) = editor(0, cx);
+    let beta = word("beta");
+    view.update(cx, |view, cx| {
+        let version = view.model().snapshot().version();
+        let items = vec![(beta.clone(), Diagnostic::new(Severity::Warning, "unused"))];
+        assert!(
+            view.model_mut()
+                .apply_diagnostics(1u32, (1, 1), version, items, Some((1, 1)))
+        );
+        cx.notify();
+    });
+    cx.run_until_parked();
+    *provider.delay.borrow_mut() = Duration::from_millis(100);
+    *provider.reply.borrow_mut() = Some(HoverContent {
+        text: "narrow".into(),
+        range: Some(beta.start..beta.start + 1),
+    });
+    move_to(at(&view, beta.start, cx), cx);
+    cx.executor().advance_clock(HOVER_DELAY);
+    cx.run_until_parked();
+    move_to(at(&view, beta.start + 2, cx), cx);
+    cx.executor().advance_clock(Duration::from_millis(100));
+    cx.run_until_parked();
+    assert_eq!(
+        painted(&view, cx),
+        [(Block::Text("unused".into()), SharedString::from(UI_FONT))]
+    );
+}
