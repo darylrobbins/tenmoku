@@ -308,3 +308,28 @@ fn cloned_states_and_returned_marks_follow_every_batch() {
     // Nor a mark handle captured before them.
     assert_eq!(handle.get(snapshot), None);
 }
+
+#[test]
+fn a_saved_snapshot_reads_the_same_after_later_edits() {
+    let mut vim = HeadlessVim::new("aa\nbb", (1, 1));
+    vim.feed("ma").unwrap();
+    let handle = vim.state().mark('a').unwrap();
+    edit_all(&mut vim, vec![(5..5, "\ncc")]);
+    vim.feed("yy").unwrap();
+    edit_all(&mut vim, vec![(3..6, "")]);
+    let saved = vim.model().snapshot().clone();
+    assert_eq!(handle.get(&saved), None);
+    edit_all(&mut vim, vec![(5..5, "x")]);
+    assert_eq!(handle.get(&saved), None);
+    assert_eq!(vim.state().mark('a').map(|m| m.get(&saved)), Some(None));
+}
+
+#[test]
+fn dropped_mark_handles_dont_pile_up_consumers() {
+    let mut vim = HeadlessVim::new("aa\nbb", (1, 1));
+    vim.feed("ma").unwrap();
+    for _ in 0..1000 {
+        drop(vim.state().mark('a').unwrap());
+    }
+    assert!(vim.state().marks_consumers() <= 2);
+}

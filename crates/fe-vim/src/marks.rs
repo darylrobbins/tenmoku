@@ -104,6 +104,9 @@ impl Eq for Feed {}
 impl Clone for Feed {
     fn clone(&self) -> Self {
         let mut state = self.lock();
+        // Dropped handles are pruned as new ones register, so reading marks
+        // in an unchanged buffer (which never clears) doesn't grow this.
+        state.consumers.retain(|seen| seen.strong_count() > 0);
         let seen = Arc::new(AtomicUsize::new(self.seen.load(Ordering::Relaxed)));
         state.consumers.push(Arc::downgrade(&seen));
         Self {
@@ -220,9 +223,18 @@ impl Life {
     /// Applies `batches`, those from its version on. One that doesn't follow
     /// on from it (events missed) leaves it behind, to fall back on anchors.
     fn advance(&mut self, batches: &[Batch]) {
+        self.advance_through(batches, None);
+    }
+
+    /// [`Life::advance`], but not past `limit`: batches that end after it
+    /// are left, so a snapshot's answer doesn't change with later edits.
+    fn advance_through(&mut self, batches: &[Batch], limit: Option<Version>) {
         for batch in batches {
             if batch.to <= self.version {
                 continue;
+            }
+            if limit.is_some_and(|limit| batch.to > limit) {
+                return;
             }
             if batch.from != self.version {
                 return;
@@ -399,6 +411,11 @@ impl Place {
     /// Caught up with `batches`.
     fn advance(&mut self, batches: &[Batch]) {
         self.life.advance(batches);
+    }
+
+    /// Caught up with `batches` through those that end by `version`.
+    fn advance_through(&mut self, batches: &[Batch], version: Version) {
+        self.life.advance_through(batches, Some(version));
     }
 
     /// Its row and byte column in `snapshot`, as nvim's `getpos()` reports
@@ -656,7 +673,7 @@ impl Mark {
             } => (ends, *end, *linewise),
             Of::Set(place, feed) => {
                 let mut place = place.clone();
-                place.advance(&feed.batches());
+                place.advance_through(&feed.batches(), snapshot.version());
                 return place.position(snapshot);
             }
         };
@@ -681,6 +698,15 @@ impl Mark {
 }
 
 impl VimState {
+    /// How many feed consumers are registered, for tests.
+    #[cfg(test)]
+    pub(crate) fn marks_consumers(&self) -> usize {
+        self.marks
+            .feed
+            .as_ref()
+            .map_or(0, |feed| feed.lock().consumers.len())
+    }
+
     /// A mark: `a` to `z` once `m` set it, `'` or `` ` `` (the jump mark)
     /// once a jump or `m'` set it, and `'<` and `'>`, the start and end of
     /// the last visual extent, once a visual mode is left by any path. A
@@ -700,9 +726,10 @@ impl VimState {
             }
             _ => None,
         };
-        let mut place = place?.clone();
+        // Not caught up here: each read replays from this baseline only as
+        // far as its snapshot, which a later one's lifetime would pass.
+        let place = place?.clone();
         let feed = self.marks.feed.as_ref()?.clone();
-        place.advance(&feed.batches());
         Some(Mark(Of::Set(place, feed)))
     }
 }
