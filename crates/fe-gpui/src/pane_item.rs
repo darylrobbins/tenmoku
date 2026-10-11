@@ -118,6 +118,19 @@ pub fn file_name(path: Option<&Path>) -> String {
     )
 }
 
+/// The buttons of the prompt before a dirty editor closes, Cancel the
+/// default: Return and Escape keep the editor. GPUI gives Return to the
+/// first button and Escape to a cancel button, which would take Return from
+/// it, so Cancel is an ok button: Escape reaches it by its title, as AppKit's
+/// alerts and kiln-ui's in-window prompt give "Cancel" Escape.
+pub const DISCARD_BUTTONS: [PromptButton; 2] = [
+    PromptButton::Ok(SharedString::new_static("Cancel")),
+    PromptButton::Other(SharedString::new_static("Discard")),
+];
+
+/// The answer to [`DISCARD_BUTTONS`] that closes the editor.
+const DISCARD: usize = 1;
+
 impl PaneItem for EditorView {
     const KIND: &'static str = "fastedit.editor";
 
@@ -144,8 +157,9 @@ impl PaneItem for EditorView {
     }
 
     /// A dirty editor asks whether to discard its changes: Discard closes
-    /// it, Cancel (or Escape) keeps it. A clean one closes. The shell
-    /// doesn't ask while another editor shows its buffer.
+    /// it, Cancel keeps it and is the default, with Return and Escape (see
+    /// [`DISCARD_BUTTONS`]). A clean one closes. The shell doesn't ask while
+    /// another editor shows its buffer.
     fn may_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> CloseAnswer {
         if !self.is_dirty(cx) {
             return CloseAnswer::Close;
@@ -154,15 +168,14 @@ impl PaneItem for EditorView {
             "Discard unsaved changes to {}?",
             file_name(self.model.path())
         );
-        let buttons = [PromptButton::new("Discard"), PromptButton::cancel("Cancel")];
         let answer = window.prompt(
             PromptLevel::Warning,
             &question,
             Some("Your changes will be lost if you close it without saving."),
-            &buttons,
+            &DISCARD_BUTTONS,
             cx,
         );
-        CloseAnswer::Ask(cx.spawn(async move |_, _| answer.await == Ok(0)))
+        CloseAnswer::Ask(cx.spawn(async move |_, _| answer.await == Ok(DISCARD)))
     }
 
     /// Changes with its dirtiness and with every edit to its buffer.

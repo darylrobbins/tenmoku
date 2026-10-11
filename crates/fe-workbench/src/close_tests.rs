@@ -132,9 +132,20 @@ fn a_window_and_a_quit_ask(cx: &mut TestAppContext) {
     assert!(!window_open(window, cx));
 }
 
+/// Cancel is the prompt's default: GPUI gives Return to the first button
+/// (macOS's alerts and kiln-ui's), and Cancel is no cancel button, which
+/// would take Return from it (Escape finds it by its title).
+#[test]
+fn cancel_is_the_default() {
+    let [first, discard] = fe_gpui::pane_item::DISCARD_BUTTONS;
+    assert_eq!(first.label().as_ref(), "Cancel");
+    assert!(!first.is_cancel());
+    assert_eq!(discard.label().as_ref(), "Discard");
+}
+
 /// The prompt drawn in the window (Linux's) takes Enter and Escape, though
 /// GPUI hangs it under the editor in the dispatch tree, whose Enter would
-/// otherwise insert a line.
+/// otherwise insert a line. Both keep the editor: Cancel is the default.
 #[gpui::test]
 fn the_in_window_prompt_takes_enter_and_escape(cx: &mut TestAppContext) {
     let (_dir, workbench, cx) = opened(cx);
@@ -148,16 +159,14 @@ fn the_in_window_prompt_takes_enter_and_escape(cx: &mut TestAppContext) {
     };
     let prompt_shows =
         |cx: &mut VisualTestContext| cx.update(|window, _| window.has_active_prompt());
-    for (key, closes) in [("escape", false), ("enter", true)] {
+    for key in ["escape", "enter"] {
         run("workbench.close_tab", cx);
         cx.update(|window, cx| window.draw(cx).clear(cx));
         assert!(prompt_shows(cx), "{key}");
         cx.simulate_keystrokes(key);
         cx.run_until_parked();
         assert!(!prompt_shows(cx), "{key}");
-        assert_eq!(tabs(&workbench, cx), [usize::from(!closes)], "{key}");
-        if !closes {
-            assert_eq!(text(cx), "xalpha\n", "{key} edits nothing");
-        }
+        assert_eq!(tabs(&workbench, cx), [1], "{key} keeps the tab");
+        assert_eq!(text(cx), "xalpha\n", "{key} edits nothing");
     }
 }

@@ -15,9 +15,11 @@ pub const PROMPT_WIDTH: gpui::Pixels = px(420.);
 
 /// Renders `window.prompt` in the window, in the active theme's colours
 /// (`cx.theme()`), where the platform has no native alert (Linux, Windows):
-/// a host passes it to `App::set_prompt_builder`. Enter answers with the
-/// default button, the first that isn't a cancel button; Escape with the
-/// cancel button, if there is one.
+/// a host passes it to `App::set_prompt_builder`. Its keys follow macOS's
+/// alerts as GPUI draws them: Enter answers with the default button, the
+/// first that isn't a cancel button; Escape with the cancel button, or
+/// without one a button titled "Cancel", as AppKit gives that title Escape.
+/// So `[ok("Cancel"), new("Discard")]` makes Cancel the default for both.
 pub fn prompt_renderer(
     level: PromptLevel,
     message: &str,
@@ -52,9 +54,13 @@ impl Prompt {
         buttons.iter().position(|button| !button.is_cancel())
     }
 
-    /// The button Escape presses.
+    /// The button Escape presses: the cancel button, or without one a button
+    /// titled "Cancel".
     pub fn cancel_button(buttons: &[PromptButton]) -> Option<usize> {
-        buttons.iter().position(PromptButton::is_cancel)
+        buttons
+            .iter()
+            .position(PromptButton::is_cancel)
+            .or_else(|| buttons.iter().position(|button| button.label() == "Cancel"))
     }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {

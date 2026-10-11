@@ -184,6 +184,11 @@ after T275 (its F4 claims and F5 close transactions), except as follows.
   a window with two split views of one dirty file asks once.
 - `PaneItem::close_revision`'s default follows `is_dirty` alone;
   `EditorView`'s also follows its buffer's version.
+- Cancel is the default on `EditorView`'s Discard/Cancel prompt, on every
+  platform (decided 2026-10-11): Return and Escape keep the editor. GPUI
+  gives Return to the first button and Escape to a cancel button, taking
+  Return from it, so Cancel comes first as an ok button and Escape finds
+  it by its title, as AppKit's alerts and kiln-ui's in-window prompt do.
 
 **Command palette (K5.8, §4.3).**
 

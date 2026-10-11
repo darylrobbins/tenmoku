@@ -46,6 +46,10 @@ fn default_and_cancel_buttons() {
     assert_eq!(Prompt::default_button(&cancel_first), Some(1));
     assert_eq!(Prompt::cancel_button(&cancel_first), Some(0));
     assert_eq!(Prompt::cancel_button(&[PromptButton::ok("OK")]), None);
+    // Cancel as the default: Enter and Escape both answer with it.
+    let cancel_default = [PromptButton::ok("Cancel"), PromptButton::new("Discard")];
+    assert_eq!(Prompt::default_button(&cancel_default), Some(0));
+    assert_eq!(Prompt::cancel_button(&cancel_default), Some(0));
 }
 
 #[gpui::test]
