@@ -176,6 +176,27 @@ pub(crate) fn replay_area(model: &EditorModel, state: &VimState, extent: &Extent
             extent: *extent,
         };
     }
+    // A block keeps the columns it had, from the caret's, whatever the
+    // rows its corners land on: built here, not from their clamped ends.
+    if let Extent::Block { rows, columns } = *extent {
+        let columns = columns.filter(|_| goal != Some(usize::MAX));
+        let left = column_of(text, head, tab);
+        let first = cursor.row;
+        let block = Block {
+            first,
+            last: first.saturating_add(rows - 1).min(text.row_count() - 1),
+            left,
+            right: columns.map(|columns| left.saturating_add(columns - 1)),
+        };
+        let rows = (block.first..=block.last)
+            .map(|row| (row, block.cut(text, row, tab, None).range))
+            .collect();
+        return Area {
+            rows,
+            start: at_column(text, first, left, tab),
+            extent: *extent,
+        };
+    }
     area(text, extent_from(text, head, goal, extent, tab), tab)
 }
 

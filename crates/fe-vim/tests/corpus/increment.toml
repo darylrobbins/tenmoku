@@ -792,3 +792,33 @@ name = "repeat_lines_clamped"
 buffer = "1\n1\n1"
 cursor = [0, 0]
 keys = "Vj<C-a>j."
+
+[[case]]
+name = "repeat_block_wide_numbers_shrinking"
+buffer = "111\n111\n1234\n1"
+cursor = [0, 0]
+keys = "<C-v>jll<C-a>jj."
+
+[[case]]
+name = "repeat_block_short_endpoint_leftward"
+buffer = "a 11\na 11\n9 12\nx"
+cursor = [0, 2]
+keys = "<C-v>jl<C-a>jj."
+
+[[case]]
+name = "repeat_block_dollar_short_endpoint"
+buffer = "a 11\na 11\n9 12\nx"
+cursor = [0, 2]
+keys = "<C-v>j$<C-a>jj."
+
+[[case]]
+name = "repeat_block_empty_endpoint"
+buffer = "1 1\n1 1\n\n1 1"
+cursor = [0, 2]
+keys = "<C-v>jl<C-a>jj."
+
+[[case]]
+name = "repeat_block_tab_endpoint_widening"
+buffer = "11\n11\n1\t1\n11"
+cursor = [0, 0]
+keys = "<C-v>j<C-a>jj."
