@@ -1,0 +1,2978 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "global_delete",
+      "buffer": "a1\nb\na2\nc\na3",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": ":g/a/d<CR>",
+      "expect": {
+        "buffer": "b\nc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a3\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "a",
+            "linewise": false
+          },
+          "1": {
+            "text": "a3\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "a2\n",
+            "linewise": true
+          },
+          "3": {
+            "text": "a1\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "global_delete_undo",
+      "buffer": "a1\nb\na2\nc\na3",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": ":g/a/d<CR>u",
+      "expect": {
+        "buffer": "a1\nb\na2\nc\na3",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a3\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "a",
+            "linewise": false
+          },
+          "1": {
+            "text": "a3\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "a2\n",
+            "linewise": true
+          },
+          "3": {
+            "text": "a1\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "global_delete_undo_redo",
+      "buffer": "  x1\n  y\n  x2\n  z",
+      "cursor": [
+        3,
+        3
+      ],
+      "keys": ":g/x/d<CR>u<C-r>",
+      "expect": {
+        "buffer": "  y\n  z",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "  x2\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "x",
+            "linewise": false
+          },
+          "1": {
+            "text": "  x2\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "  x1\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "global_bang_delete",
+      "buffer": "a1\nb\na2\nc\na3",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": ":g!/a/d<CR>",
+      "expect": {
+        "buffer": "a1\na2\na3",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "a",
+            "linewise": false
+          },
+          "1": {
+            "text": "c\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "b\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "global_bang_delete_undo",
+      "buffer": "a1\nb\na2\nc\na3",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": ":g!/a/d<CR>u",
+      "expect": {
+        "buffer": "a1\nb\na2\nc\na3",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "a",
+            "linewise": false
+          },
+          "1": {
+            "text": "c\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "b\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "vglobal_delete",
+      "buffer": "a1\nb\na2\nc\na3",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": ":v/a/d<CR>",
+      "expect": {
+        "buffer": "a1\na2\na3",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "a",
+            "linewise": false
+          },
+          "1": {
+            "text": "c\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "b\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "vglobal_delete_undo",
+      "buffer": "a1\nb\na2\nc\na3",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": ":vglobal/a/d<CR>u",
+      "expect": {
+        "buffer": "a1\nb\na2\nc\na3",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "a",
+            "linewise": false
+          },
+          "1": {
+            "text": "c\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "b\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "global_move_top_reverses",
+      "buffer": "a1\nb\na2\nc\na3",
+      "cursor": [
+        3,
+        0
+      ],
+      "keys": ":g/a/m0<CR>",
+      "expect": {
+        "buffer": "a3\na2\na1\nb\nc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_move_top_undo",
+      "buffer": "a1\nb\na2\nc\na3",
+      "cursor": [
+        3,
+        0
+      ],
+      "keys": ":g/a/m0<CR>u",
+      "expect": {
+        "buffer": "a1\nb\na2\nc\na3",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_move_top_undo_redo",
+      "buffer": "x1\nb\nx2\nb\nx3",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": ":g/x/m0<CR>u<C-r>",
+      "expect": {
+        "buffer": "x3\nx2\nx1\nb\nb",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_copy_to_end",
+      "buffer": "a1\nb\na2\nc\na3",
+      "cursor": [
+        3,
+        0
+      ],
+      "keys": ":g/a/t$<CR>",
+      "expect": {
+        "buffer": "a1\nb\na2\nc\na3\na1\na2\na3",
+        "cursor": [
+          7,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_copy_to_end_undo",
+      "buffer": "a1\nb\na2\nc\na3",
+      "cursor": [
+        3,
+        0
+      ],
+      "keys": ":g/a/t$<CR>u",
+      "expect": {
+        "buffer": "a1\nb\na2\nc\na3",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_copy_to_end_undo_redo",
+      "buffer": "x1\nb\nx2\nb\nx3",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": ":g/x/t$<CR>u<C-r>",
+      "expect": {
+        "buffer": "x1\nb\nx2\nb\nx3\nx1\nx2\nx3",
+        "cursor": [
+          5,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_copy_below_undo_redo",
+      "buffer": "x1\nb\nx2\nb\nx3",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": ":g/x/t.<CR>u<C-r>",
+      "expect": {
+        "buffer": "x1\nx1\nb\nx2\nx2\nb\nx3\nx3",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_substitute",
+      "buffer": "a1\nb\na2\nc\na3",
+      "cursor": [
+        3,
+        0
+      ],
+      "keys": ":g/a/s/\\d/X/<CR>",
+      "expect": {
+        "buffer": "aX\nb\naX\nc\naX",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\d",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_substitute_undo",
+      "buffer": "  x1\n  y\n  x2\n  z",
+      "cursor": [
+        3,
+        3
+      ],
+      "keys": ":g/x/s/x/Q/<CR>u",
+      "expect": {
+        "buffer": "  x1\n  y\n  x2\n  z",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_substitute_missing_on_some_rows",
+      "buffer": "x1\nx2\nx1\ny",
+      "cursor": [
+        3,
+        0
+      ],
+      "keys": ":g/x/s/1/Q/<CR>x",
+      "expect": {
+        "buffer": "xQ\nx2\nQ\ny",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          },
+          "/": {
+            "text": "1",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_join_consecutive",
+      "buffer": "a1\na2\na3\nb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/a/j<CR>",
+      "expect": {
+        "buffer": "a1 a2\na3 b",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_join_undo",
+      "buffer": "a1\nb\na2\nc\na3",
+      "cursor": [
+        3,
+        0
+      ],
+      "keys": ":g/a/j<CR>u",
+      "expect": {
+        "buffer": "a1\nb\na2\nc\na3",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_shift_undo",
+      "buffer": "  x1\n  y\n  x2\n  z",
+      "cursor": [
+        3,
+        3
+      ],
+      "keys": ":g/x/><CR>u",
+      "expect": {
+        "buffer": "  x1\n  y\n  x2\n  z",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_shift_undo_redo",
+      "buffer": "  x1\n  y\n  x2\n  z",
+      "cursor": [
+        3,
+        3
+      ],
+      "keys": ":g/x/><CR>u<C-r>",
+      "expect": {
+        "buffer": "      x1\n  y\n      x2\n  z",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_yank",
+      "buffer": "  x1\n  y\n  x2\n  z",
+      "cursor": [
+        3,
+        2
+      ],
+      "keys": ":g/x/y<CR>",
+      "expect": {
+        "buffer": "  x1\n  y\n  x2\n  z",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "  x2\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "x",
+            "linewise": false
+          },
+          "0": {
+            "text": "  x2\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "global_no_command",
+      "buffer": "  x1\n  y\n  x2\n  z",
+      "cursor": [
+        3,
+        2
+      ],
+      "keys": ":g/x/<CR>",
+      "expect": {
+        "buffer": "  x1\n  y\n  x2\n  z",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_no_closing_delimiter",
+      "buffer": "  x1\n  y\n  x2\n  z",
+      "cursor": [
+        3,
+        2
+      ],
+      "keys": ":g/x<CR>",
+      "expect": {
+        "buffer": "  x1\n  y\n  x2\n  z",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_comment_only",
+      "buffer": "  x1\n  y\n  x2\n  z",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": ":g/x/\"what<CR>",
+      "expect": {
+        "buffer": "  x1\n  y\n  x2\n  z",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_range",
+      "buffer": "a1\nb\na2\nc\na3",
+      "cursor": [
+        3,
+        1
+      ],
+      "keys": ":2,4g/a/d<CR>",
+      "expect": {
+        "buffer": "a1\nb\nc\na3",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a2\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "a",
+            "linewise": false
+          },
+          "1": {
+            "text": "a2\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "global_range_marks",
+      "buffer": "a1\nb\na2\nc\na3",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "jmajjmbgg:'a,'bg/./s/$/!/<CR>",
+      "expect": {
+        "buffer": "a1\nb!\na2!\nc!\na3",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "$",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "a": [
+            1,
+            0
+          ],
+          "b": [
+            3,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "global_hash_delimiter",
+      "buffer": "a1\nb\na2\nc\na3",
+      "cursor": [
+        3,
+        1
+      ],
+      "keys": ":g#a#d<CR>",
+      "expect": {
+        "buffer": "b\nc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a3\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "a",
+            "linewise": false
+          },
+          "1": {
+            "text": "a3\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "a2\n",
+            "linewise": true
+          },
+          "3": {
+            "text": "a1\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "global_pipe_delimiter",
+      "buffer": "a1\nb\na2\nc\na3",
+      "cursor": [
+        3,
+        1
+      ],
+      "keys": ":g|a|d<CR>",
+      "expect": {
+        "buffer": "b\nc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a3\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "a",
+            "linewise": false
+          },
+          "1": {
+            "text": "a3\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "a2\n",
+            "linewise": true
+          },
+          "3": {
+            "text": "a1\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "global_blank_before_delimiter",
+      "buffer": "a1\nb\na2\nc\na3",
+      "cursor": [
+        3,
+        1
+      ],
+      "keys": ":glo ,a, d<CR>",
+      "expect": {
+        "buffer": "b\nc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a3\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "a",
+            "linewise": false
+          },
+          "1": {
+            "text": "a3\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "a2\n",
+            "linewise": true
+          },
+          "3": {
+            "text": "a1\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "global_after_search_empty_pattern",
+      "buffer": "a1\nb\na2\nc\na3",
+      "cursor": [
+        3,
+        1
+      ],
+      "keys": "/a<CR>:g//d<CR>",
+      "expect": {
+        "buffer": "b\nc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a3\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "a",
+            "linewise": false
+          },
+          "1": {
+            "text": "a3\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "a2\n",
+            "linewise": true
+          },
+          "3": {
+            "text": "a1\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "global_after_search_backslash",
+      "buffer": "a1\nb\na2\nc\na3",
+      "cursor": [
+        3,
+        1
+      ],
+      "keys": "/a<CR>:g\\/d<CR>",
+      "expect": {
+        "buffer": "b\nc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a3\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "a",
+            "linewise": false
+          },
+          "1": {
+            "text": "a3\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "a2\n",
+            "linewise": true
+          },
+          "3": {
+            "text": "a1\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "global_keeps_search_direction",
+      "buffer": "c1\nb\nc2\nb\nc3",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "?b<CR>:g/c/y<CR>n",
+      "expect": {
+        "buffer": "c1\nb\nc2\nb\nc3",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c3\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "c",
+            "linewise": false
+          },
+          "0": {
+            "text": "c3\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "global_sets_last_search",
+      "buffer": "c1\nb\nc2\nb\nc3",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": ":g/b/y<CR>ggn",
+      "expect": {
+        "buffer": "c1\nb\nc2\nb\nc3",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "b",
+            "linewise": false
+          },
+          "0": {
+            "text": "b\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "global_not_found_is_no_error",
+      "buffer": "x1\nx2\nx3\ny",
+      "cursor": [
+        3,
+        0
+      ],
+      "keys": ":g/z/d<CR>x",
+      "expect": {
+        "buffer": "x1\nx2\nx3\n",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "y",
+            "linewise": false
+          },
+          "-": {
+            "text": "y",
+            "linewise": false
+          },
+          "/": {
+            "text": "z",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "vglobal_every_line_is_no_error",
+      "buffer": "x1\nx2\nx3\ny",
+      "cursor": [
+        3,
+        0
+      ],
+      "keys": ":v/./d<CR>x",
+      "expect": {
+        "buffer": "x1\nx2\nx3\n",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "y",
+            "linewise": false
+          },
+          "-": {
+            "text": "y",
+            "linewise": false
+          },
+          "/": {
+            "text": ".",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_failing_command_stops",
+      "buffer": "x1\nx2\nx3\ny",
+      "cursor": [
+        3,
+        0
+      ],
+      "keys": ":g/x/m-2<CR>",
+      "expect": {
+        "buffer": "x1\nx2\nx3\ny",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_nested_with_range",
+      "buffer": "x1\nx2\nx3\ny",
+      "cursor": [
+        3,
+        0
+      ],
+      "keys": ":g/x/.g/1/d<CR>",
+      "expect": {
+        "buffer": "x1\nx2\nx3\ny",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_moved_rows_lose_marks",
+      "buffer": "x1\nx2\ny",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/x/.1m0<CR>",
+      "expect": {
+        "buffer": "x2\nx1\ny",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_moved_ranges_lose_marks",
+      "buffer": "x1\ny\nx2\nx3",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/x/.,.1m$<CR>",
+      "expect": {
+        "buffer": "x1\ny\nx2\nx3",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_move_down",
+      "buffer": "x1\nx2\nx3\ny",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/x/m$<CR>",
+      "expect": {
+        "buffer": "y\nx1\nx2\nx3",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_jump_mark_where_it_began",
+      "buffer": "abcd\nabcd\nabcd\nabcd",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": ":g/b/s/c/X/<CR>''",
+      "expect": {
+        "buffer": "abXd\nabXd\nabXd\nabXd",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_jump_mark_moves_with_its_row",
+      "buffer": "x1\nb\nx2\nb\nx3",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": ":g/x/m0<CR>''",
+      "expect": {
+        "buffer": "x3\nx2\nx1\nb\nb",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_jump_mark_on_a_deleted_row",
+      "buffer": "x1\nb\nx2\nb\nx3",
+      "cursor": [
+        2,
+        1
+      ],
+      "keys": ":g/x/d<CR>''",
+      "expect": {
+        "buffer": "b\nb",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x3\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "x",
+            "linewise": false
+          },
+          "1": {
+            "text": "x3\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "x2\n",
+            "linewise": true
+          },
+          "3": {
+            "text": "x1\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_append",
+      "buffer": "a1\nb\na2\nc\na3",
+      "cursor": [
+        3,
+        0
+      ],
+      "keys": ":g/a/normal Ay<CR>",
+      "expect": {
+        "buffer": "a1y\nb\na2y\nc\na3y",
+        "cursor": [
+          4,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_append_undo",
+      "buffer": "a1\nb\na2\nc\na3",
+      "cursor": [
+        3,
+        0
+      ],
+      "keys": ":g/a/normal Ay<CR>u",
+      "expect": {
+        "buffer": "a1\nb\na2\nc\na3",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_append_undo_redo",
+      "buffer": "  ab cd\n  ef gh\n  ij kl",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": ":g/ /normal A;<CR>u<C-r>",
+      "expect": {
+        "buffer": "  ab cd;\n  ef gh;\n  ij kl;",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": " ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_from_row_start",
+      "buffer": "  x1\n  y\n  x2\n  z",
+      "cursor": [
+        3,
+        2
+      ],
+      "keys": ":g/x/normal x<CR>",
+      "expect": {
+        "buffer": " x1\n  y\n x2\n  z",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " ",
+            "linewise": false
+          },
+          "-": {
+            "text": " ",
+            "linewise": false
+          },
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_keeps_goal_column",
+      "buffer": "abcd\nabcd\nabcd\nabcd",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": ":g/a/normal jx<CR>",
+      "expect": {
+        "buffer": "abcd\nabc\nabd\nabd",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c",
+            "linewise": false
+          },
+          "-": {
+            "text": "c",
+            "linewise": false
+          },
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_failing_key_skips_row",
+      "buffer": "x1\nx2\nx3\ny",
+      "cursor": [
+        3,
+        0
+      ],
+      "keys": ":g/x/normal kx<CR>",
+      "expect": {
+        "buffer": "1\n2\nx3\ny",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          },
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_delete_and_put",
+      "buffer": "x1\ny\nx2\nx3",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/x/normal ddp<CR>",
+      "expect": {
+        "buffer": "y\nx1\nx2\nx3",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x3\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "x",
+            "linewise": false
+          },
+          "1": {
+            "text": "x3\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "x2\n",
+            "linewise": true
+          },
+          "3": {
+            "text": "x1\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_join_deletes_mark",
+      "buffer": "x1\ny\nx2\nx3",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/x/normal Jx<CR>",
+      "expect": {
+        "buffer": "x1y\nx2x3",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " ",
+            "linewise": false
+          },
+          "-": {
+            "text": " ",
+            "linewise": false
+          },
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_delete_below",
+      "buffer": "x1\ny\nx2\nx3",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/x/normal jdd<CR>",
+      "expect": {
+        "buffer": "x1\nx2",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x3\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "x",
+            "linewise": false
+          },
+          "1": {
+            "text": "x3\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "y\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_delete_above",
+      "buffer": "x1\ny\nx2\nx3",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/x/normal kdd<CR>",
+      "expect": {
+        "buffer": "x1\nx3",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x2\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "x",
+            "linewise": false
+          },
+          "1": {
+            "text": "x2\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "y\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_put_above_moves_mark",
+      "buffer": "x1\nx2\nx3",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/x/normal yyPAz<CR>",
+      "expect": {
+        "buffer": "x1z\nx1\nx2z\nx2\nx3z\nx3",
+        "cursor": [
+          4,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x3\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "x",
+            "linewise": false
+          },
+          "0": {
+            "text": "x3\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_open_line",
+      "buffer": "x1\ny\nx2\nx3",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/x/normal o<CR>",
+      "expect": {
+        "buffer": "x1\n\ny\nx2\n\nx3\n",
+        "cursor": [
+          6,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_open_line_above",
+      "buffer": "x1\ny\nx2\nx3",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/x/normal O<CR>",
+      "expect": {
+        "buffer": "\nx1\ny\n\nx2\n\nx3",
+        "cursor": [
+          5,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_empties_rows",
+      "buffer": "x1\ny\nx2\nx3",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/x/normal 0d$<CR>",
+      "expect": {
+        "buffer": "\ny\n\n",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x3",
+            "linewise": false
+          },
+          "-": {
+            "text": "x3",
+            "linewise": false
+          },
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "normal_delete_word",
+      "buffer": "  ab cd\n  ef gh\n  ij kl",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": ":normal dw<CR>",
+      "expect": {
+        "buffer": "  acd\n  ef gh\n  ij kl",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b ",
+            "linewise": false
+          },
+          "-": {
+            "text": "b ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "normal_delete_word_undo",
+      "buffer": "  ab cd\n  ef gh\n  ij kl",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": ":normal dw<CR>u",
+      "expect": {
+        "buffer": "  ab cd\n  ef gh\n  ij kl",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b ",
+            "linewise": false
+          },
+          "-": {
+            "text": "b ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "normal_every_line_append",
+      "buffer": "  ab cd\n  ef gh\n  ij kl",
+      "cursor": [
+        1,
+        3
+      ],
+      "keys": ":%normal A;<CR>",
+      "expect": {
+        "buffer": "  ab cd;\n  ef gh;\n  ij kl;",
+        "cursor": [
+          2,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "normal_every_line_append_undo",
+      "buffer": "  ab cd\n  ef gh\n  ij kl",
+      "cursor": [
+        1,
+        3
+      ],
+      "keys": ":%normal A;<CR>u",
+      "expect": {
+        "buffer": "  ab cd\n  ef gh\n  ij kl",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "normal_every_line_append_undo_redo",
+      "buffer": "  ab cd\n  ef gh\n  ij kl",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": ":%normal A;<CR>u<C-r>",
+      "expect": {
+        "buffer": "  ab cd;\n  ef gh;\n  ij kl;",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "normal_range_shift",
+      "buffer": "  ab cd\n  ef gh\n  ij kl",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": ":2,3norm! >><CR>",
+      "expect": {
+        "buffer": "  ab cd\n      ef gh\n      ij kl",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "normal_range_shift_undo",
+      "buffer": "  ab cd\n  ef gh\n  ij kl",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": ":2,3norm! >><CR>u",
+      "expect": {
+        "buffer": "  ab cd\n  ef gh\n  ij kl",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "normal_range_from_row_start",
+      "buffer": "  ab cd\n  ef gh\n  ij kl",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": ":2,3norm x<CR>u",
+      "expect": {
+        "buffer": "  ab cd\n  ef gh\n  ij kl",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " ",
+            "linewise": false
+          },
+          "-": {
+            "text": " ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "normal_range_insert_undo",
+      "buffer": "  ab cd\n  ef gh\n  ij kl",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": ":%normal ixy<CR>u",
+      "expect": {
+        "buffer": "  ab cd\n  ef gh\n  ij kl",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "normal_unfinished_operator",
+      "buffer": "  ab cd\n  ef gh\n  ij kl",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": ":normal d<CR>",
+      "expect": {
+        "buffer": "  ab cd\n  ef gh\n  ij kl",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "normal_unfinished_count_cancelled",
+      "buffer": "  ab cd\n  ef gh\n  ij kl",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": ":normal 2d<CR>x",
+      "expect": {
+        "buffer": "  a cd\n  ef gh\n  ij kl",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b",
+            "linewise": false
+          },
+          "-": {
+            "text": "b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "normal_unfinished_register",
+      "buffer": "  ab cd\n  ef gh\n  ij kl",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": ":normal \"a<CR>x",
+      "expect": {
+        "buffer": "  a cd\n  ef gh\n  ij kl",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b",
+            "linewise": false
+          },
+          "-": {
+            "text": "b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "normal_insert_left_open",
+      "buffer": "  ab cd\n  ef gh\n  ij kl",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": ":normal ixy<CR>",
+      "expect": {
+        "buffer": "  axyb cd\n  ef gh\n  ij kl",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "normal_insert_left_open_undo",
+      "buffer": "  ab cd\n  ef gh\n  ij kl",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": ":normal ixy<CR>u",
+      "expect": {
+        "buffer": "  ab cd\n  ef gh\n  ij kl",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "normal_replace_left_open",
+      "buffer": "  ab cd\n  ef gh\n  ij kl",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": ":normal Rxy<CR>",
+      "expect": {
+        "buffer": "  axycd\n  ef gh\n  ij kl",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "normal_visual_left_open",
+      "buffer": "  ab cd\n  ef gh\n  ij kl",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": ":normal vl<CR>",
+      "expect": {
+        "buffer": "  ab cd\n  ef gh\n  ij kl",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          3
+        ]
+      }
+    },
+    {
+      "name": "normal_visual_delete",
+      "buffer": "  ab cd\n  ef gh\n  ij kl",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": ":normal vld<CR>",
+      "expect": {
+        "buffer": "  acd\n  ef gh\n  ij kl",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b ",
+            "linewise": false
+          },
+          "-": {
+            "text": "b ",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            0,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "normal_range_visual_ends",
+      "buffer": "a\nb\nc\nd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":2,3normal! v<CR>",
+      "expect": {
+        "buffer": "a\nb\nc\nd",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "normal_command_line_unfinished",
+      "buffer": "  ab cd\n  ef gh\n  ij kl",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": ":normal :2d<CR>",
+      "expect": {
+        "buffer": "  ab cd\n  ef gh\n  ij kl",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "normal_search_unfinished",
+      "buffer": "  ab cd\n  ef gh\n  ij kl",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": ":normal /gh<CR>",
+      "expect": {
+        "buffer": "  ab cd\n  ef gh\n  ij kl",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "normal_failing_key_drops_rest",
+      "buffer": "  ab cd\n  ef gh\n  ij kl",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": ":normal fzx<CR>",
+      "expect": {
+        "buffer": "  ab cd\n  ef gh\n  ij kl",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "normal_register_yank",
+      "buffer": "  ab cd\n  ef gh\n  ij kl",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": ":normal \"ayy<CR>",
+      "expect": {
+        "buffer": "  ab cd\n  ef gh\n  ij kl",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "  ab cd\n",
+            "linewise": true
+          },
+          "a": {
+            "text": "  ab cd\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "normal_then_dot",
+      "buffer": "  ab cd\n  ef gh\n  ij kl",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": ":normal x<CR>.",
+      "expect": {
+        "buffer": "  acd\n  ef gh\n  ij kl",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " ",
+            "linewise": false
+          },
+          "-": {
+            "text": " ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "normal_dot",
+      "buffer": "  ab cd\n  ef gh\n  ij kl",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "x:normal .<CR>",
+      "expect": {
+        "buffer": "  acd\n  ef gh\n  ij kl",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " ",
+            "linewise": false
+          },
+          "-": {
+            "text": " ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "normal_each_is_an_undo_step",
+      "buffer": "a\nb\nc\nd\ne",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": ":normal ix<CR>:normal .<CR>u",
+      "expect": {
+        "buffer": "a\nb\nxc\nd\ne",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "normal_undo_inside",
+      "buffer": "a\nb\nc\nd\ne",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "ix<Esc>:normal u<CR>",
+      "expect": {
+        "buffer": "a\nb\nc\nd\ne",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "normal_plays_a_register",
+      "buffer": "  ab cd\n  ef gh\n  ij kl",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "qaxq:normal @a<CR>",
+      "expect": {
+        "buffer": "  acd\n  ef gh\n  ij kl",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " ",
+            "linewise": false
+          },
+          "-": {
+            "text": " ",
+            "linewise": false
+          },
+          "a": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "normal_range_by_line_number",
+      "buffer": "a\nb\nc\nd\ne",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":%normal dd<CR>",
+      "expect": {
+        "buffer": "",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "b\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "d\n",
+            "linewise": true
+          },
+          "3": {
+            "text": "e\n",
+            "linewise": true
+          },
+          "4": {
+            "text": "c\n",
+            "linewise": true
+          },
+          "5": {
+            "text": "a\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "normal_range_put_lines",
+      "buffer": "a\nb\nc\nd\ne",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":2,4normal yyp<CR>",
+      "expect": {
+        "buffer": "a\nb\nb\nb\nb\nc\nd\ne",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "b\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "normal_range_delete_above",
+      "buffer": "a\nb\nc\nd\ne",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":3,5normal kdd<CR>",
+      "expect": {
+        "buffer": "a\ne",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "c\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "d\n",
+            "linewise": true
+          },
+          "3": {
+            "text": "b\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "normal_range_count_past_end",
+      "buffer": "a\nb\nc\nd\ne",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":2,3normal 9dd<CR>",
+      "expect": {
+        "buffer": "a",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b\nc\nd\ne\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "b\nc\nd\ne\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "normal_keeps_goal_column",
+      "buffer": "abcd\nabcd\nabcd\nabcd",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": ":1,2normal jx<CR>",
+      "expect": {
+        "buffer": "abcd\nabc\nbcd\nabcd",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_join_from_empty_row",
+      "buffer": "\nx\ntail",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/^/normal J<CR>",
+      "expect": {
+        "buffer": "x\ntail",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "^",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_join_from_empty_row",
+      "buffer": "\nx\ntail",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/^/j<CR>",
+      "expect": {
+        "buffer": "x\ntail",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "^",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_raw_join_from_empty_row",
+      "buffer": "\nx\ntail",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/^/j!<CR>",
+      "expect": {
+        "buffer": "x\ntail",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "^",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_visual_join",
+      "buffer": "\nx\ntail\nend",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/^/normal VjJ<CR><Esc>",
+      "expect": {
+        "buffer": "x\ntail end",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "^",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            7
+          ]
+        }
+      }
+    },
+    {
+      "name": "global_normal_repeat_join",
+      "buffer": "a\n\nb\nc\nd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "J:g/^/normal .<CR>",
+      "expect": {
+        "buffer": "a b\nc d",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "^",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_delete_empty_rows",
+      "buffer": "\nx\n\ntail",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/^/normal dd<CR>",
+      "expect": {
+        "buffer": "",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "tail\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "^",
+            "linewise": false
+          },
+          "1": {
+            "text": "tail\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "\n",
+            "linewise": true
+          },
+          "3": {
+            "text": "x\n",
+            "linewise": true
+          },
+          "4": {
+            "text": "\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "global_sort_clears_marks",
+      "buffer": "x3\nx2\nx1\nz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/x/.,$sort<CR>",
+      "expect": {
+        "buffer": "x1\nx2\nx3\nz",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_sort_unique",
+      "buffer": "x1\nx1\nx2\nx2\nz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/x/.,$sort u<CR>",
+      "expect": {
+        "buffer": "x1\nx2\nz",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_sort_unchanged",
+      "buffer": "x1\nx2\nx3\nz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/x/.,$sort<CR>",
+      "expect": {
+        "buffer": "x1\nx2\nx3\nz",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_sort_reverse",
+      "buffer": "x1\nx2\nx3\nz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/x/.,$sort!<CR>",
+      "expect": {
+        "buffer": "z\nx3\nx2\nx1",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_sort_two_rows",
+      "buffer": "x2\ny\nx1\nz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/x/.,.1sort<CR>",
+      "expect": {
+        "buffer": "x2\ny\nx1\nz",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_sort_one_row",
+      "buffer": "x2\ny\nx1\nz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/x/.sort<CR>",
+      "expect": {
+        "buffer": "x2\ny\nx1\nz",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "normal_undo_then_more",
+      "buffer": "abcde",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":normal xuxx<CR>",
+      "expect": {
+        "buffer": "cde",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b",
+            "linewise": false
+          },
+          "-": {
+            "text": "b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "normal_undo_then_more_undo",
+      "buffer": "abcde",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":normal xuxx<CR>u",
+      "expect": {
+        "buffer": "abcde",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b",
+            "linewise": false
+          },
+          "-": {
+            "text": "b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "normal_undo_all_so_far",
+      "buffer": "abcde",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":normal xxu<CR>",
+      "expect": {
+        "buffer": "abcde",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b",
+            "linewise": false
+          },
+          "-": {
+            "text": "b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "normal_redo_nothing_stops",
+      "buffer": "abcde",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "x:normal xx<lt>C-r>x<CR>u",
+      "expect": {
+        "buffer": "bcde",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c",
+            "linewise": false
+          },
+          "-": {
+            "text": "c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_undo_inside",
+      "buffer": "a1\nb\na2\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/a/normal xux<CR>u",
+      "expect": {
+        "buffer": "a1\nb\na2\nc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          },
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "normal_play_then_again",
+      "buffer": "abcdef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "qaxq:normal @a<CR>@@",
+      "expect": {
+        "buffer": "def",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c",
+            "linewise": false
+          },
+          "-": {
+            "text": "c",
+            "linewise": false
+          },
+          "a": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "normal_starts_a_recording",
+      "buffer": "abcdef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":normal qa<CR>xq@a",
+      "expect": {
+        "buffer": "cdef",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b",
+            "linewise": false
+          },
+          "-": {
+            "text": "b",
+            "linewise": false
+          },
+          "a": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "normal_records_nothing",
+      "buffer": "abcdef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":normal qaxq<CR>",
+      "expect": {
+        "buffer": "bcdef",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    }
+  ]
+}

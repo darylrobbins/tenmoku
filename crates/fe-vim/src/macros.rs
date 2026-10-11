@@ -39,6 +39,18 @@ pub(crate) struct Macros {
     played: usize,
     /// The key being read is a replay's.
     replayed: bool,
+    /// How many `:normal`s are running ([`Macros::hold`]): their keys
+    /// aren't typed, so a recording doesn't get them.
+    held: u32,
+}
+
+/// A replay a `:normal` set aside while its keys run ([`Macros::hold`]).
+#[derive(Debug)]
+pub(crate) struct Held {
+    queued: Vec<VimKey>,
+    left: usize,
+    played: usize,
+    replayed: bool,
 }
 
 /// `q{a-z}` (or `q{A-Z}`, appending) under way: the keys so far, as the
@@ -71,7 +83,8 @@ impl Macros {
     /// Adds a typed key to the recording, if one is under way: a replay's
     /// keys aren't recorded, as nvim records the `@a` that played them.
     pub(crate) fn record(&mut self, key: VimKey) {
-        if let Some(recording) = self.recording.as_mut().filter(|_| !self.replayed) {
+        let typed = !self.replayed && self.held == 0;
+        if let Some(recording) = self.recording.as_mut().filter(|_| typed) {
             encode(key, &mut recording.text);
         }
     }
@@ -86,6 +99,29 @@ impl Macros {
             self.stop();
         }
         keys
+    }
+
+    /// Sets the replay under way aside while a `:normal` runs keys that
+    /// aren't typed: they're counted as a replay of their own (a `@` among
+    /// them plays), and no recording gets them, but a recording or `@`
+    /// they start stays.
+    pub(crate) fn hold(&mut self) -> Held {
+        self.held += 1;
+        Held {
+            queued: std::mem::take(&mut self.queued),
+            left: std::mem::take(&mut self.left),
+            played: std::mem::take(&mut self.played),
+            replayed: std::mem::take(&mut self.replayed),
+        }
+    }
+
+    /// Puts back the replay [`Macros::hold`] set aside.
+    pub(crate) fn release(&mut self, held: Held) {
+        self.held -= 1;
+        self.queued = held.queued;
+        self.left = held.left;
+        self.played = held.played;
+        self.replayed = held.replayed;
     }
 
     /// Ends the replay, whatever is left of it.
