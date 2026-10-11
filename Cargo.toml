@@ -40,6 +40,7 @@ fe-lsp = { path = "crates/fe-lsp" }
 fe-fileview = { path = "crates/fe-fileview" }
 fe-terminal = { path = "crates/fe-terminal" }
 fe-terminal-view = { path = "crates/fe-terminal-view" }
+fe-git = { path = "crates/fe-git" }
 
 # GPUI comes from the `gpui-pre-*` crates.io snapshots of Zed (Apache-2.0).
 # 0.3.7 is zed@1a28cff. Every snapshot crate must be bumped together; to move to
@@ -54,6 +55,11 @@ sum-tree = { package = "gpui-pre-sum-tree", version = "=0.3.7" }
 # Project tree: gitignore-aware directory listing and file watching.
 ignore = "0.4"
 notify = "8"
+# Git status and HEAD blobs (fe-git): gitoxide, pure Rust, MIT OR Apache-2.0.
+# Only `status` (which brings the index, dirwalk and blob diff), `sha1`, and
+# `parallel` (without it ThreadSafeRepository holds `Rc`s and isn't Send): no
+# network, HTTP, TLS or credential features.
+gix = { version = "0.89", default-features = false, features = ["status", "sha1", "parallel"] }
 # Cmd-P fuzzy matching of project paths (MIT; no runtime dependencies by default).
 frizbee = "0.13"
 # Project search: ripgrep's searcher and regex matcher, without the `grep`
