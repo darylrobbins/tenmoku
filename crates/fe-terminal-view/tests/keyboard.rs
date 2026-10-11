@@ -320,9 +320,25 @@ fn composition_ranges_and_selection(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn composition_scrolls_to_the_bottom_and_clears_the_selection(cx: &mut TestAppContext) {
-    let (view, cx) = open(cx);
+    // Enough output to fill the screen and leave history behind.
+    cx.executor().allow_parking();
+    let mut options = TerminalOptions::new(std::env::temp_dir());
+    options.shell = Some((
+        "/bin/sh".to_owned(),
+        vec![
+            "-c".to_owned(),
+            "stty raw -echo opost; seq 1 300; echo ready; sleep 30".to_owned(),
+        ],
+    ));
+    let (view, cx) =
+        cx.add_window_view(|window, cx| TerminalView::new(options, style(), window, cx).unwrap());
+    cx.simulate_resize(size(px(800.), px(800.)));
+    cx.update(|window, cx| window.focus(&view.focus_handle(cx), cx));
+    wait_for_line(&view, cx, "ready");
+
     view.read_with(cx, |view, _| {
         let terminal = view.terminal().unwrap();
+        terminal.scroll(-5);
         terminal.select(
             fe_terminal::SelectionKind::Simple,
             0,
@@ -330,7 +346,8 @@ fn composition_scrolls_to_the_bottom_and_clears_the_selection(cx: &mut TestAppCo
             fe_terminal::Side::Left,
         );
         terminal.extend_selection(0, 2, fe_terminal::Side::Right);
-        terminal.scroll(-1);
+        assert!(terminal.snapshot().display_offset > 0, "not in scrollback");
+        assert!(terminal.selected_text().is_some(), "nothing selected");
     });
     view.update_in(cx, |view, window, cx| {
         view.replace_and_mark_text_in_range(None, "に", Some(1..1), window, cx);
@@ -340,7 +357,24 @@ fn composition_scrolls_to_the_bottom_and_clears_the_selection(cx: &mut TestAppCo
         assert_eq!(terminal.snapshot().display_offset, 0);
         assert_eq!(terminal.selected_text(), None);
     });
-    assert!(written(&view, cx).is_empty(), "the preedit reached the pty");
+
+    // The input method sits at the visible cursor's cell.
+    let cursor = view.read_with(cx, |view, _| view.terminal().unwrap().snapshot().cursor);
+    let bounds = view
+        .update_in(cx, |view, window, cx| {
+            let element = gpui::Bounds::new(gpui::point(px(0.), px(0.)), size(px(800.), px(800.)));
+            view.bounds_for_range(0..1, element, window, cx)
+        })
+        .expect("no bounds for the composition");
+    assert_eq!(bounds.origin.x / bounds.size.width, cursor.col as f32);
+    assert_eq!(bounds.origin.y / bounds.size.height, cursor.row as f32);
+
+    settle(cx);
+    let screen = screen(&view, cx);
+    assert!(
+        !screen.contains('に'),
+        "the preedit reached the pty: {screen}"
+    );
 }
 
 #[gpui::test]
