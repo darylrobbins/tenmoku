@@ -59,14 +59,23 @@ pub struct OutlinePanel {
     behind: bool,
     scroll: UniformListScrollHandle,
     ui: UiTheme,
+    /// Never focused: the panel takes no keys, but a dock's panel is
+    /// focusable.
+    focus: gpui::FocusHandle,
     #[cfg(test)]
     counters: TestCounters,
     _observe: Option<Subscription>,
 }
 
+impl gpui::Focusable for OutlinePanel {
+    fn focus_handle(&self, _: &gpui::App) -> gpui::FocusHandle {
+        self.focus.clone()
+    }
+}
+
 impl OutlinePanel {
     /// A panel following no editor.
-    pub fn new(ui: UiTheme) -> Self {
+    pub fn new(ui: UiTheme, cx: &mut gpui::App) -> Self {
         Self {
             editor: None,
             status: Status::NoFile,
@@ -76,6 +85,7 @@ impl OutlinePanel {
             behind: false,
             scroll: UniformListScrollHandle::new(),
             ui,
+            focus: cx.focus_handle(),
             #[cfg(test)]
             counters: TestCounters::default(),
             _observe: None,

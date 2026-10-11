@@ -11,6 +11,8 @@
 //! What a pane shows in a tab is a [`PaneItem`], held through an
 //! [`ItemHandle`] ([`item`]). The active item gives the pane's breadcrumbs
 //! ([`crumbs`]) and the status bar's items ([`StatusItems::items_for`]).
+//! Beside the panes, a [`Dock`] shows one of its registered panels
+//! ([`DockItem`]) at a time ([`dock`]).
 //!
 //! The shell's leaf modules, which a host can use before it adopts the
 //! rest: the status bar's items ([`status`]), a picker palette over a
@@ -18,6 +20,7 @@
 //! ([`persist`]).
 
 pub mod crumbs;
+pub mod dock;
 pub mod item;
 pub mod menu_bar;
 pub mod persist;
@@ -32,6 +35,7 @@ use kiln_command::{CommandId, Value};
 use kiln_core::{CatalogError, CommandCatalog};
 use kiln_platform::Capabilities;
 
+pub use dock::{Dock, DockItem, DockPosition, DockState, DockView, PanelId};
 pub use item::{CloseAnswer, ItemCrumb, ItemHandle, ItemId, PaneItem};
 pub use menu_bar::MenuBarView;
 pub use picker::{Picker, PickerDelegate};

@@ -18,8 +18,8 @@ use gpui::{
 };
 
 use crate::{
-    Dock, DockPanel, KEY_CONTEXT, MenuBarView, OutlinePanel, Pane, PaneGroup, Picker, ProjectPanel,
-    QuickOpen, ReferencesPanel, SearchPanel, StatusBar,
+    Dock, KEY_CONTEXT, MenuBarView, OutlinePanel, Pane, PaneGroup, Picker, ProjectPanel, QuickOpen,
+    ReferencesPanel, SearchPanel, StatusBar,
     dock::{self, DockEvent, DockOp},
     language_picker::LanguagePicker,
     lsp::{self, Lsp},
@@ -217,12 +217,12 @@ impl Workbench {
             }
             pane
         });
-        let outline = cx.new(|_| OutlinePanel::new(ui));
+        let outline = cx.new(|cx| OutlinePanel::new(ui, cx));
         let references = cx.weak_entity();
         let references = cx.new(|cx| ReferencesPanel::new(references, ui, cx));
         let dock = cx.new(|cx| {
             let search = cx.new(|cx| SearchPanel::new(root.clone(), pane.downgrade(), ui, cx));
-            Dock::new(panel.clone(), search, outline.clone(), references, ui)
+            Dock::new(panel.clone(), search, outline.clone(), references, ui, cx)
         });
         let quick_open = Self::new_quick_open(root, pane.downgrade(), ui, cx);
         // A rail click runs the op its panel's key would, or hides the dock.
@@ -1144,32 +1144,21 @@ impl Workbench {
         });
     }
 
-    /// Focuses the active editor if the project panel or References has
-    /// focus but isn't shown, the dock being hidden or showing another
-    /// panel.
+    /// Focuses the active editor if a dock panel has focus but isn't
+    /// shown, the dock being hidden or showing another panel.
     fn leave_hidden_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let dock = self.dock.read(cx);
-        let shown = |panel| dock.is_visible() && dock.active() == panel;
-        let hidden = [
-            (DockPanel::Project, self.panel.focus_handle(cx)),
-            (DockPanel::References, dock.references().focus_handle(cx)),
-        ]
-        .into_iter()
-        .any(|(panel, focus)| !shown(panel) && focus.contains_focused(window, cx));
-        if hidden {
+        if self.dock.read(cx).hidden_panel_focused(window, cx) {
             window.focus(&self.focus_handle(cx), cx);
         }
     }
 
     /// Does a dock op, for a key or a rail click, with the active editor as
-    /// the fallback focus: showing the project panel focuses it, and
-    /// showing the outline leaves focus where it is unless on a hidden
-    /// panel. False if the op is the search panel's to do.
+    /// the fallback focus: showing the project panel focuses it, showing
+    /// search focuses its input, and showing the outline leaves focus where
+    /// it is unless on a hidden panel. False if the op is the search
+    /// panel's to do.
     fn run_dock_op(&mut self, op: DockOp, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let fallback = self.focus_handle(cx);
-        let done = self
-            .dock
-            .update(cx, |dock, cx| dock.run(op, &fallback, window, cx));
+        let done = self.dock.update(cx, |dock, cx| dock.run(op, window, cx));
         if op == DockOp::ShowProject {
             window.focus(&self.panel.focus_handle(cx), cx);
         }

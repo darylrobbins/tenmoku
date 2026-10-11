@@ -138,7 +138,16 @@ impl SearchPanel {
     pub fn input(&self) -> &Entity<TextInput> {
         &self.input
     }
+}
 
+/// The panel's focus is its input's.
+impl gpui::Focusable for SearchPanel {
+    fn focus_handle(&self, cx: &gpui::App) -> gpui::FocusHandle {
+        self.input.focus_handle(cx)
+    }
+}
+
+impl SearchPanel {
     /// Opens matches in `pane` from now on: the active one, as it changes.
     pub(crate) fn set_pane(&mut self, pane: WeakEntity<Pane>) {
         self.pane = pane;

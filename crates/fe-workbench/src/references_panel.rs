@@ -542,11 +542,9 @@ impl Workbench {
     fn find_references(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         // A go-to-definition still running would take focus from the panel.
         self.nav_state.goto.next();
-        let fallback = self.focus_handle(cx);
         let dock = self.dock().clone();
         let panel = dock.update(cx, |dock, cx| {
-            dock.show(DockPanel::References, cx);
-            dock.leave_search(&fallback, window, cx);
+            dock.show(DockPanel::References, window, cx);
             dock.references().clone()
         });
         window.focus(&panel.focus_handle(cx), cx);

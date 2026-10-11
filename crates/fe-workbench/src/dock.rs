@@ -12,24 +12,19 @@
 
 use std::rc::Rc;
 
-use fe_command::{
-    Actor, CommandId, CommandTarget, ContextFrame, ContextPredicate, ContextStack, Dispatched,
-    Effect, Registry, Value,
-};
+use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry};
 use fe_gpui::commands::RunCommand;
-use fe_ui::{ActivityRail, Icon, RailButton, TAB_HEIGHT, TextInput, Tooltip, UiTheme};
-use gpui::{
-    App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable as _, Global,
-    InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString, Styled as _,
-    Window, div,
-};
+use fe_ui::{Icon, TextInput, UiTheme};
+use gpui::{App, Context, Entity, EventEmitter, Global, IntoElement, Render, SharedString, Window};
+use kiln_shell::{DockItem, DockPosition, DockState, DockView, PanelId};
 
 use crate::{
     OutlinePanel, PANEL_WIDTH, ProjectPanel, ReferencesPanel,
     search_panel::{self, SearchPanel},
 };
 
-/// A panel the dock shows.
+/// A panel the dock shows: fastedit's name for the [`PanelId`]s it
+/// registers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DockPanel {
     Project,
@@ -50,6 +45,24 @@ impl DockPanel {
             DockPanel::Outline => "Outline",
             DockPanel::References => "References",
         }
+    }
+
+    /// Its id in the dock.
+    pub fn id(self) -> PanelId {
+        PanelId(match self {
+            DockPanel::Project => "project",
+            DockPanel::Search => "search",
+            DockPanel::Outline => "outline",
+            DockPanel::References => "references",
+        })
+    }
+
+    /// The panel registered as `id`.
+    fn of(id: PanelId) -> Option<Self> {
+        [DockPanel::References]
+            .into_iter()
+            .chain(DockPanel::ALL)
+            .find(|panel| panel.id() == id)
     }
 
     /// The command that shows it.
@@ -83,35 +96,60 @@ pub(crate) fn panel_icon(panel: DockPanel) -> Icon {
     }
 }
 
+/// fastedit's panels in kiln-shell's dock: each names itself, its icon and
+/// its show command.
+macro_rules! dock_item {
+    ($panel:ty, $which:expr, $on_rail:expr, $focus:expr) => {
+        impl DockItem for $panel {
+            fn id(&self) -> PanelId {
+                $which.id()
+            }
+
+            fn title(&self, _: &App) -> SharedString {
+                $which.name().into()
+            }
+
+            fn icon(&self, _: &App) -> Icon {
+                panel_icon($which)
+            }
+
+            fn show_command(&self) -> Option<&'static str> {
+                Some($which.show_command())
+            }
+
+            fn always_on_rail(&self) -> bool {
+                $on_rail
+            }
+
+            fn focus_on_show(&self) -> bool {
+                $focus
+            }
+        }
+    };
+}
+
+dock_item!(ProjectPanel, DockPanel::Project, true, false);
+dock_item!(SearchPanel, DockPanel::Search, true, true);
+dock_item!(OutlinePanel, DockPanel::Outline, true, false);
+// On the rail once it has shown.
+dock_item!(ReferencesPanel, DockPanel::References, false, false);
+
 /// A rail button was clicked; the workbench runs [`Dock::rail_op`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DockEvent {
     Rail(DockPanel),
 }
 
+/// The right dock: kiln-shell's [`DockState`] over fastedit's four panels,
+/// whose rail clicks run the op the panel's key would.
 pub struct Dock {
+    state: DockState,
     project: Entity<ProjectPanel>,
     search: Entity<SearchPanel>,
     outline: Entity<OutlinePanel>,
     references: Entity<ReferencesPanel>,
-    /// Whether References has shown, which puts its button on the rail.
-    references_shown: bool,
-    active: DockPanel,
-    visible: bool,
-    ui: UiTheme,
-    /// The rail's buttons' laid-out bounds.
-    #[cfg(test)]
-    rail: gpui::ScrollHandle,
-    /// The dock's column, if shown, then the rail.
-    #[cfg(test)]
-    layout: gpui::ScrollHandle,
     #[cfg(test)]
     ops: Vec<DockOp>,
-    #[cfg(test)]
-    last_tooltip: Rc<std::cell::RefCell<Option<String>>>,
-    /// The icons the last frame's rail buttons drew, top to bottom.
-    #[cfg(test)]
-    rail_icons: Vec<Icon>,
 }
 
 impl Dock {
@@ -122,26 +160,23 @@ impl Dock {
         outline: Entity<OutlinePanel>,
         references: Entity<ReferencesPanel>,
         ui: UiTheme,
+        cx: &App,
     ) -> Self {
+        let mut state = DockState::new(DockPosition::Right, ui)
+            .size(PANEL_WIDTH)
+            .shortcut_contexts([crate::KEY_CONTEXT, fe_gpui::KEY_CONTEXT]);
+        state.add_panel(project.clone(), cx);
+        state.add_panel(search.clone(), cx);
+        state.add_panel(outline.clone(), cx);
+        state.add_panel(references.clone(), cx);
         Self {
+            state,
             project,
             search,
             outline,
             references,
-            references_shown: false,
-            active: DockPanel::Project,
-            visible: true,
-            ui,
-            #[cfg(test)]
-            rail: gpui::ScrollHandle::new(),
-            #[cfg(test)]
-            layout: gpui::ScrollHandle::new(),
             #[cfg(test)]
             ops: Vec::new(),
-            #[cfg(test)]
-            last_tooltip: Rc::default(),
-            #[cfg(test)]
-            rail_icons: Vec::new(),
         }
     }
 
@@ -152,6 +187,7 @@ impl Dock {
     /// Shows `project` in the old one's place, for a new root. The dock's
     /// visibility and active panel stay.
     pub(crate) fn set_project(&mut self, project: Entity<ProjectPanel>, cx: &mut Context<Self>) {
+        self.state.add_panel(project.clone(), cx);
         self.project = project;
         cx.notify();
     }
@@ -168,19 +204,27 @@ impl Dock {
         &self.references
     }
 
+    /// The dock's state, in kiln-shell.
+    pub fn state(&self) -> &DockState {
+        &self.state
+    }
+
     /// The panel shown while the dock is visible.
     pub fn active(&self) -> DockPanel {
-        self.active
+        self.state
+            .active()
+            .and_then(DockPanel::of)
+            .unwrap_or(DockPanel::Project)
     }
 
     pub fn is_visible(&self) -> bool {
-        self.visible
+        self.state.is_visible()
     }
 
     /// The panel whose rail button is highlighted: the active one, while
     /// the dock shows.
     pub fn rail_highlighted(&self) -> Option<DockPanel> {
-        self.visible.then_some(self.active)
+        self.state.rail_highlighted().and_then(DockPanel::of)
     }
 
     /// What clicking `panel`'s rail button does: hides the dock if it's the
@@ -195,133 +239,70 @@ impl Dock {
     }
 
     /// Does a dock op, for a key or a rail click: showing search focuses its
-    /// input, and hiding the search panel moves focus from it to
-    /// `fallback`. Search options and submits, which the search panel does
-    /// when focused, go on.
-    pub(crate) fn run(
-        &mut self,
-        op: DockOp,
-        fallback: &FocusHandle,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> bool {
+    /// input. Search options and submits, which the search panel does when
+    /// focused, go on. Focus on a panel the op hides stays: the workbench
+    /// moves it.
+    pub(crate) fn run(&mut self, op: DockOp, window: &mut Window, cx: &mut Context<Self>) -> bool {
         #[cfg(test)]
         self.ops.push(op);
-        match op {
-            DockOp::ShowSearch => self.show_search(window, cx),
-            DockOp::ShowProject => {
-                self.show(DockPanel::Project, cx);
-                self.leave_search(fallback, window, cx);
-            }
-            DockOp::ShowOutline => {
-                self.show(DockPanel::Outline, cx);
-                self.leave_search(fallback, window, cx);
-            }
-            DockOp::ShowReferences => {
-                self.show(DockPanel::References, cx);
-                self.leave_search(fallback, window, cx);
-            }
+        let panel = match op {
+            DockOp::ShowSearch => DockPanel::Search,
+            DockOp::ShowProject => DockPanel::Project,
+            DockOp::ShowOutline => DockPanel::Outline,
+            DockOp::ShowReferences => DockPanel::References,
             DockOp::Toggle => {
-                self.visible = !self.visible;
-                if !self.visible {
-                    self.leave_search(fallback, window, cx);
-                }
+                self.state.toggle();
                 cx.notify();
+                return true;
             }
             DockOp::ToggleRegex | DockOp::ToggleCase | DockOp::ToggleWholeWord | DockOp::Submit => {
                 return false;
             }
-        }
+        };
+        self.show(panel, window, cx);
         true
     }
 
-    /// Shows search, focusing its input.
-    fn show_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.show(DockPanel::Search, cx);
-        let input = self.search.read(cx).input().focus_handle(cx);
-        window.focus(&input, cx);
-    }
-
-    /// Shows the dock with `panel`.
-    pub fn show(&mut self, panel: DockPanel, cx: &mut Context<Self>) {
-        self.active = panel;
-        self.visible = true;
-        self.references_shown |= panel == DockPanel::References;
+    /// Shows the dock with `panel`; search focuses its input.
+    pub fn show(&mut self, panel: DockPanel, window: &mut Window, cx: &mut Context<Self>) {
+        self.state.show(panel.id(), window, cx);
         cx.notify();
     }
 
-    /// Focuses `fallback` if the search panel, now hidden, has focus.
-    pub(crate) fn leave_search(&self, fallback: &FocusHandle, window: &mut Window, cx: &mut App) {
-        let input = self.search.read(cx).input().focus_handle(cx);
-        if input.contains_focused(window, cx) {
-            window.focus(fallback, cx);
-        }
+    /// Whether a panel that isn't shown has focus.
+    pub(crate) fn hidden_panel_focused(&self, window: &Window, cx: &App) -> bool {
+        self.state.hidden_panel_focused(window, cx)
     }
-
-    fn rail_button(&mut self, panel: DockPanel, cx: &mut Context<Self>) -> RailButton {
-        let ui = self.ui;
-        let icon = panel_icon(panel);
-        #[cfg(test)]
-        self.rail_icons.push(icon);
-        #[cfg(test)]
-        let last_tooltip = self.last_tooltip.clone();
-        RailButton::new(("dock-rail", panel as usize), icon, &self.ui)
-            .highlighted(self.rail_highlighted() == Some(panel))
-            .on_click(cx.listener(move |_, _, _, cx| cx.emit(DockEvent::Rail(panel))))
-            .tooltip(move |_, cx| {
-                let tooltip = Tooltip::new(panel.name(), shortcut(panel.show_command(), cx), &ui);
-                #[cfg(test)]
-                last_tooltip.replace(Some(tooltip.text()));
-                cx.new(|_| tooltip).into()
-            })
-    }
-
-    /// The title row's text: the active panel's name.
-    pub(crate) fn title(&self) -> SharedString {
-        self.active.name().into()
-    }
-}
-
-/// The first key sequence that runs `command` in the workbench's editor, as
-/// this platform prints it, read from the keymap now so it follows reloads.
-fn shortcut(command: &str, cx: &App) -> Option<String> {
-    let command = CommandId::parse(command).ok()?;
-    let stack: ContextStack = [crate::KEY_CONTEXT, fe_gpui::KEY_CONTEXT]
-        .into_iter()
-        .map(ContextFrame::new)
-        .collect();
-    let keymap = fe_gpui::current_keymap(cx);
-    let shortcuts = fe_keymap::shortcuts(&keymap, &command, &Value::Null, &stack);
-    shortcuts.first().map(fe_keymap::shortcut_label)
 }
 
 #[cfg(test)]
 impl Dock {
+    /// The title row's text: the active panel's name.
+    pub(crate) fn title(&self) -> SharedString {
+        self.active().name().into()
+    }
     /// Where the rail's button for `panel` was laid out in the last frame.
     pub(crate) fn rail_button_bounds(
         &self,
         panel: DockPanel,
     ) -> Option<gpui::Bounds<gpui::Pixels>> {
-        self.rail.bounds_for_item(panel as usize)
+        self.state.drawn().rail_button_bounds(panel.id())
     }
 
     /// Where the rail was laid out in the last frame.
     pub(crate) fn rail_bounds(&self) -> Option<gpui::Bounds<gpui::Pixels>> {
-        let count = self.layout.children_count();
-        self.layout.bounds_for_item(count.checked_sub(1)?)
+        self.state.drawn().rail_bounds()
     }
 
     /// Where the dock's column, its title row then its panel, was laid out
     /// in the last frame, if it showed.
     pub(crate) fn column_bounds(&self) -> Option<gpui::Bounds<gpui::Pixels>> {
-        (self.layout.children_count() == 2)
-            .then(|| self.layout.bounds_for_item(0))
-            .flatten()
+        self.state.drawn().column_bounds()
     }
 
     /// The icons the last frame's rail buttons drew, top to bottom.
-    pub(crate) fn rail_icons(&self) -> &[Icon] {
-        &self.rail_icons
+    pub(crate) fn rail_icons(&self) -> Vec<Icon> {
+        self.state.drawn().rail_icons()
     }
 
     /// Every op [`Dock::run`] was asked to do, oldest first.
@@ -331,55 +312,32 @@ impl Dock {
 
     /// The text of the last tooltip built.
     pub(crate) fn last_tooltip(&self) -> Option<String> {
-        self.last_tooltip.borrow().clone()
+        self.state.drawn().last_tooltip()
     }
 }
 
 impl EventEmitter<DockEvent> for Dock {}
 
+impl DockView for Dock {
+    fn dock(&self) -> &DockState {
+        &self.state
+    }
+
+    fn dock_mut(&mut self) -> &mut DockState {
+        &mut self.state
+    }
+
+    /// The workbench runs the op the panel's key would, or hides the dock.
+    fn rail_clicked(&mut self, panel: PanelId, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(panel) = DockPanel::of(panel) {
+            cx.emit(DockEvent::Rail(panel));
+        }
+    }
+}
+
 impl Render for Dock {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        #[cfg(test)]
-        self.rail_icons.clear();
-        let references = self.references_shown.then_some(DockPanel::References);
-        let buttons: Vec<_> = (DockPanel::ALL.into_iter().chain(references))
-            .map(|panel| self.rail_button(panel, cx))
-            .collect();
-        let rail = ActivityRail::new("dock-rail", &self.ui).children(buttons);
-        #[cfg(test)]
-        let rail = rail.track(&self.rail);
-        let column = self.visible.then(|| {
-            let body = match self.active {
-                DockPanel::Project => self.project.clone().into_any_element(),
-                DockPanel::Search => self.search.clone().into_any_element(),
-                DockPanel::Outline => self.outline.clone().into_any_element(),
-                DockPanel::References => self.references.clone().into_any_element(),
-            };
-            let title = div()
-                .flex_none()
-                .flex()
-                .items_center()
-                .h(TAB_HEIGHT)
-                .px_3()
-                .bg(self.ui.panel_background)
-                .border_l_1()
-                .border_b_1()
-                .border_color(self.ui.border)
-                .text_color(self.ui.muted_text)
-                .child(self.title());
-            div()
-                .w(PANEL_WIDTH)
-                .h_full()
-                .flex_none()
-                .flex()
-                .flex_col()
-                .child(title)
-                .child(div().flex_1().min_h_0().flex().child(body))
-        });
-        let root = div().id("dock").h_full().flex_none().flex();
-        #[cfg(test)]
-        let root = gpui::StatefulInteractiveElement::track_scroll(root, &self.layout);
-        root.children(column).child(rail)
+        self.state.render(cx)
     }
 }
 
