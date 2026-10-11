@@ -348,3 +348,130 @@ fn window_commands(cx: &mut TestAppContext) {
     assert_eq!(prompt(cx1), None);
     assert!(!window_open(first_window, cx));
 }
+
+/// Makes saving `path` fail: a directory takes the file's place.
+fn break_save(path: &Path) {
+    std::fs::remove_file(path).unwrap();
+    std::fs::create_dir(path).unwrap();
+}
+
+#[gpui::test]
+fn edit_follows_the_filesystem(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("root");
+    let outside = dir.path().join("outside");
+    std::fs::create_dir_all(root.join("sub")).unwrap();
+    std::fs::create_dir_all(outside.join("sub")).unwrap();
+    write(&root, &["a.txt", "file.txt"]);
+    std::fs::write(outside.join("file.txt"), "outside\n").unwrap();
+    std::os::unix::fs::symlink(outside.join("sub"), root.join("link")).unwrap();
+    let (workbench, mut vcx) = window(cx, &root, &["a.txt"]);
+    let cx = &mut vcx;
+
+    // `..` leaves the folder the link leads to, not the one holding it.
+    ex("e link/../file.txt", cx);
+    draw(cx);
+    let editor = active(&workbench, cx);
+    let opened = editor.read_with(cx, |editor, _| editor.model().path().map(Path::to_owned));
+    let outside = std::fs::canonicalize(&outside).unwrap();
+    assert_eq!(opened, Some(outside.join("file.txt")));
+    assert_eq!(
+        editor.read_with(cx, |editor, _| editor.model().text().to_string()),
+        "outside\n"
+    );
+
+    // A trailing slash asks for a directory: a file is an error, no tab.
+    ex("e file.txt/", cx);
+    draw(cx);
+    assert_eq!(tabs(&workbench, cx), [["a.txt", "file.txt"]]);
+    assert!(workbench.read_with(cx, |workbench, cx| workbench.active_editor(cx).is_none()));
+}
+
+#[gpui::test]
+fn failed_saves_keep_the_tab(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write(root, &["a.txt", "b.txt", "c.txt"]);
+    let (workbench, mut vcx) = window(cx, root, &["a.txt", "b.txt", "c.txt"]);
+    let cx = &mut vcx;
+    let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
+    let activate = |ix: usize, cx: &mut VisualTestContext| {
+        cx.update(|window, cx| pane.update(cx, |pane, cx| pane.activate(ix, window, cx)));
+        draw(cx);
+    };
+    let failed = |cx: &mut VisualTestContext| {
+        let shown = message(&workbench, cx).expect("a save error");
+        assert!(!shown.is_empty());
+        shown
+    };
+
+    // :w, :wq and a dirty :x each keep the dirty tab, with the error.
+    for (line, file) in [("w", "a.txt"), ("wq", "b.txt"), ("x", "c.txt")] {
+        let ix = ["a.txt", "b.txt", "c.txt"].iter().position(|f| *f == file);
+        activate(ix.unwrap(), cx);
+        let editor = active(&workbench, cx);
+        cx.simulate_keystrokes("x");
+        break_save(&root.join(file));
+        ex(line, cx);
+        let error = failed(cx);
+        assert_ne!(error.as_ref(), E37, ":{line}");
+        assert!(dirty(&editor, cx), ":{line}");
+        assert_eq!(prompt(cx), None, ":{line}");
+        assert_eq!(
+            tabs(&workbench, cx),
+            [["a.txt", "b.txt", "c.txt"]],
+            ":{line}"
+        );
+    }
+}
+
+#[gpui::test]
+fn write_all_reports_the_first_failure(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write(root, &["a.txt", "b.txt", "c.txt", "d.txt"]);
+    let (workbench, mut vcx) = window(cx, root, &["a.txt", "b.txt", "c.txt", "d.txt"]);
+    let cx = &mut vcx;
+    let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
+    for ix in 0..4 {
+        cx.update(|window, cx| pane.update(cx, |pane, cx| pane.activate(ix, window, cx)));
+        draw(cx);
+        cx.simulate_keystrokes("x");
+    }
+    // An untitled dirty buffer, after the files, in pane order.
+    cx.update(|window, cx| {
+        pane.update(cx, |pane, cx| {
+            pane.add(EditorModel::new(Buffer::new("new"), None), cx);
+            let ix = pane.tabs().len() - 1;
+            pane.activate(ix, window, cx);
+        })
+    });
+    draw(cx);
+    cx.simulate_keystrokes("x");
+    break_save(&root.join("b.txt"));
+    break_save(&root.join("c.txt"));
+
+    ex("wa", cx);
+    draw(cx);
+    // b.txt fails first in pane order; a.txt and d.txt are saved.
+    let shown = message(&workbench, cx).expect("a save error");
+    assert!(!shown.contains("E141"), "{shown}");
+    assert_eq!(on_disk(&root.join("a.txt")), "ne\n");
+    assert_eq!(on_disk(&root.join("d.txt")), "ne\n");
+    assert_eq!(prompt(cx), None);
+    let dirty_tabs = workbench.read_with(cx, |workbench, cx| {
+        (workbench.pane().read(cx).tabs().iter())
+            .filter(|tab| tab.editor.read(cx).model().is_dirty())
+            .count()
+    });
+    assert_eq!(dirty_tabs, 3);
+
+    // With only the untitled one left failing, it is the message.
+    std::fs::remove_dir(root.join("b.txt")).unwrap();
+    std::fs::remove_dir(root.join("c.txt")).unwrap();
+    ex("wa", cx);
+    let shown = message(&workbench, cx).expect("an error");
+    assert!(shown.starts_with("E141"), "{shown}");
+    assert_eq!(on_disk(&root.join("b.txt")), "ne\n");
+    assert_eq!(on_disk(&root.join("c.txt")), "ne\n");
+}

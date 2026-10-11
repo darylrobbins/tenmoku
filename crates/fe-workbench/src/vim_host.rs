@@ -240,7 +240,10 @@ fn save(
 
 /// `path` as typed after `:e`: `~` and `~/…` under the home folder, an
 /// absolute path as is, a relative one under `folder` (`None` without
-/// one). `.` and `..` are resolved by name, so an open file is found.
+/// one). `.` is dropped by name, so an open file is found, and its
+/// symlinks are kept, as its tab's path has them; but `..` follows the
+/// filesystem: it leaves the folder a symlink leads to, not the one it is
+/// in. A trailing slash stays, so a file isn't opened as a directory.
 fn resolve(path: &str, folder: Option<&Path>) -> Option<PathBuf> {
     let joined = match path.strip_prefix('~') {
         Some("") => std::env::home_dir()?,
@@ -253,10 +256,16 @@ fn resolve(path: &str, folder: Option<&Path>) -> Option<PathBuf> {
         match component {
             Component::CurDir => {}
             Component::ParentDir => {
+                if let Ok(real) = std::fs::canonicalize(&resolved) {
+                    resolved = real;
+                }
                 resolved.pop();
             }
             other => resolved.push(other),
         }
+    }
+    if path.ends_with('/') {
+        resolved.push("");
     }
     Some(resolved)
 }
