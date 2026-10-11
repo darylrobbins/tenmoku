@@ -10,8 +10,8 @@
 //!
 //! What a pane shows in a tab is a [`PaneItem`], held through an
 //! [`ItemHandle`] ([`item`]). A pane is any [`PaneView`] over a
-//! [`PaneState`], such as kiln's [`ItemPane`] ([`pane`]), whose tabs a
-//! drag moves. The active item gives the pane's breadcrumbs
+//! [`PaneState`], such as kiln's [`ItemPane`] ([`pane`]), and panes split
+//! into a [`PaneGroup`] ([`pane_group`]), between which tabs move. The active item gives the pane's breadcrumbs
 //! ([`crumbs`]) and the status bar's items ([`StatusItems::items_for`]).
 //! Beside the panes, a [`Dock`] shows one of its registered panels
 //! ([`DockItem`]) at a time ([`dock`]); over them, the [`ModalLayer`]
@@ -52,7 +52,7 @@ pub use item::{CloseAnswer, ItemCrumb, ItemHandle, ItemId, PaneItem};
 pub use menu_bar::MenuBarView;
 pub use modal::{ModalEvent, ModalId, ModalLayer, ModalView};
 pub use pane::{ItemPane, PaneEvent, PaneState, PaneView};
-pub use pane_group::{Axis, Destination, Direction};
+pub use pane_group::{Axis, Destination, Direction, Member, Members, PaneGroup};
 pub use picker::{Picker, PickerDelegate};
 pub use root::Root;
 pub use shell::Shell;
