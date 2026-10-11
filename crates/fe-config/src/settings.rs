@@ -1,12 +1,15 @@
 //! The editor's settings, layered from defaults, the user file and the
-//! project file.
+//! project file, on kiln-core's typed [`kiln_core::SettingsStore`]: a
+//! project file's `lsp` keys are narrowed ([`ProjectFilter`]), and each
+//! file is checked against the schema with its servers listed.
 
 use std::{
     collections::BTreeMap,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::{Arc, LazyLock},
 };
 
+use kiln_core::{ProjectFilter, SettingsOptions};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use toml::{
@@ -16,7 +19,7 @@ use toml::{
 
 use crate::{
     diagnostic::{Diagnostic, Severity},
-    layers::{Layer, load_layer, merge},
+    layers::Layer,
 };
 
 /// fastedit's settings, as written in `settings.toml`.
@@ -243,11 +246,11 @@ pub enum LspReadiness {
 /// The JSON schema of `settings.toml`, which `settings.schema.json` holds,
 /// with its keys sorted.
 pub fn settings_schema() -> serde_json::Value {
-    SCHEMA.clone()
+    serde_json::Value::clone(&SCHEMA)
 }
 
-static SCHEMA: LazyLock<serde_json::Value> =
-    LazyLock::new(|| sorted(schemars::schema_for!(Settings).to_value()));
+static SCHEMA: LazyLock<Arc<serde_json::Value>> =
+    LazyLock::new(|| Arc::new(sorted(schemars::schema_for!(Settings).to_value())));
 
 /// `value` with every object's keys in order, whether or not another crate
 /// turns on serde_json's `preserve_order`.
@@ -266,16 +269,8 @@ fn sorted(value: serde_json::Value) -> serde_json::Value {
     }
 }
 
-/// What a reload changed.
-#[derive(Clone, Debug)]
-pub struct SettingsEvent {
-    /// The effective settings now.
-    pub settings: Arc<Settings>,
-    /// The effective settings before the reload.
-    pub previous: Arc<Settings>,
-    /// Every layer's diagnostics now.
-    pub diagnostics: Vec<Diagnostic>,
-}
+/// What a reload changed: kiln's, for fastedit's [`Settings`].
+pub type SettingsEvent = kiln_core::SettingsEvent<Settings>;
 
 /// The effective settings: built-in defaults, then the user file, then the
 /// project file, merged key by key.
@@ -283,95 +278,72 @@ pub struct SettingsEvent {
 /// A file with an error (syntax, type or range) keeps its layer's last good
 /// table, which is empty until the file has loaded cleanly once, so a typo
 /// never resets a setting to its default. Warnings, such as unknown keys,
-/// don't reject a file.
-pub struct SettingsStore {
-    /// The user layer, then the project layer.
-    layers: Vec<LayerState>,
-    settings: Arc<Settings>,
-    diagnostics: Vec<Diagnostic>,
-}
+/// don't reject a file. A project file's `lsp` keys may only turn servers
+/// off ([`LspSettings`]).
+///
+/// kiln-core's typed store for [`Settings`], with fastedit's checks:
+/// [`SettingsStore::into_inner`] gives it to kiln's config service.
+pub struct SettingsStore(kiln_core::SettingsStore<Settings>);
 
-struct LayerState {
-    path: PathBuf,
-    /// The project's layer, whose `lsp` keys may only narrow.
-    project: bool,
-    /// The table last loaded without errors.
-    good: Table,
-    diagnostics: Vec<Diagnostic>,
-}
-
-impl LayerState {
-    fn new(path: PathBuf, project: bool) -> Self {
-        let mut layer = Self {
-            path,
+impl SettingsStore {
+    /// Loads the user and project settings files, either of which may be
+    /// absent or missing.
+    pub fn load(user: Option<PathBuf>, project: Option<PathBuf>) -> Self {
+        Self(kiln_core::SettingsStore::load_with(
+            user,
             project,
-            good: Table::new(),
-            diagnostics: Vec::new(),
-        };
-        layer.read();
-        layer
+            options(),
+        ))
     }
 
-    /// Re-reads the file, keeping the last good table if it has errors.
-    fn read(&mut self) {
-        let (table, diagnostics) = validate(&self.path, self.project);
-        if let Some(table) = table {
-            self.good = table;
-        }
-        self.diagnostics = diagnostics;
+    pub fn settings(&self) -> &Arc<Settings> {
+        self.0.settings()
+    }
+
+    /// Every layer's diagnostics, the user file's first.
+    pub fn diagnostics(&self) -> &[Diagnostic] {
+        self.0.diagnostics()
+    }
+
+    /// The settings files, for a [`crate::ConfigWatcher`].
+    pub fn paths(&self) -> Vec<PathBuf> {
+        self.0.paths()
+    }
+
+    /// Re-reads the layers whose files are in `changed`. Returns what changed
+    /// if the effective settings or the diagnostics did, and `None` if
+    /// neither did.
+    pub fn reload(&mut self, changed: &[PathBuf]) -> Option<SettingsEvent> {
+        self.0.reload(changed)
+    }
+
+    /// kiln-core's store underneath, for kiln's config service.
+    pub fn into_inner(self) -> kiln_core::SettingsStore<Settings> {
+        self.0
     }
 }
 
-/// Loads the settings file at `path`: its table if it has no errors, and
-/// its diagnostics. A `project` file's `lsp` keys are narrowed first, so a
-/// bad value in a key that's ignored anyway rejects nothing.
-fn validate(path: &Path, project: bool) -> (Option<Table>, Vec<Diagnostic>) {
-    let mut layer = load_layer(path);
-    if !layer.has_errors() {
-        if project {
-            narrow_lsp(&mut layer);
-        }
-        // Checked on the source, for the error's location, unless the
-        // error is in a key narrowing dropped: then the narrowed table
-        // decides.
-        if let Err(error) = toml::from_str::<Settings>(&layer.source) {
-            let diagnostic = layer.diagnostic_for(Severity::Error, &error);
-            let dropped = project
-                && diagnostic
-                    .key
-                    .as_deref()
-                    .is_some_and(|key| key == "lsp" || key.starts_with("lsp."));
-            if !dropped {
-                layer.diagnostics.push(diagnostic);
-            } else if let Err(error) =
-                toml::Value::Table(layer.table.clone()).try_into::<Settings>()
-            {
-                let message = error.message().trim_end().to_owned();
-                let diagnostic = layer.diagnostic_at(Severity::Error, None, 0, message);
-                layer.diagnostics.push(diagnostic);
-            }
-        }
-        if !layer.has_errors() {
-            let more = layer.check_schema(&schema_for(&layer.table));
-            layer.diagnostics.extend(more);
-        }
-    }
-    let table = (!layer.has_errors()).then_some(layer.table);
-    (table, layer.diagnostics)
+/// How fastedit's settings files are checked: against [`SCHEMA`] with each
+/// server listed ([`schema_for`]), and a project's `lsp` keys narrowed
+/// ([`narrow_lsp`]).
+fn options() -> SettingsOptions {
+    SettingsOptions::new()
+        .schema_for(schema_for)
+        .project_filter(ProjectFilter::new("lsp", narrow_lsp))
 }
 
 /// [`SCHEMA`], with each server `table` names under `lsp.servers` listed
 /// as a property, so its keys get checked like any other table's: a schema
 /// map (`additionalProperties`) isn't descended into.
-fn schema_for(table: &Table) -> std::borrow::Cow<'static, serde_json::Value> {
+fn schema_for(table: &Table) -> Arc<serde_json::Value> {
     let names: Vec<&String> = match table.get("lsp").and_then(|lsp| lsp.get("servers")) {
         Some(toml::Value::Table(servers)) => servers.keys().collect(),
         _ => Vec::new(),
     };
     if names.is_empty() {
-        return std::borrow::Cow::Borrowed(&SCHEMA);
+        return SCHEMA.clone();
     }
-    let mut schema = SCHEMA.clone();
+    let mut schema = serde_json::Value::clone(&SCHEMA);
     let server = serde_json::json!({ "$ref": "#/$defs/LspServerSettings" });
     let properties = names
         .into_iter()
@@ -379,7 +351,7 @@ fn schema_for(table: &Table) -> std::borrow::Cow<'static, serde_json::Value> {
         .collect();
     schema["$defs"]["LspSettings"]["properties"]["servers"]["properties"] =
         serde_json::Value::Object(properties);
-    std::borrow::Cow::Owned(schema)
+    Arc::new(schema)
 }
 
 /// The warning for each `lsp` key a project file sets that it may not.
@@ -466,98 +438,4 @@ fn key_offset(table: &DeTable<'_>, first: &str, rest: &[String]) -> usize {
         }
     }
     offset
-}
-
-impl SettingsStore {
-    /// Loads the user and project settings files, either of which may be
-    /// absent or missing.
-    pub fn load(user: Option<PathBuf>, project: Option<PathBuf>) -> Self {
-        let layers: Vec<_> = [(user, false), (project, true)]
-            .into_iter()
-            .filter_map(|(path, project)| Some(LayerState::new(path?, project)))
-            .collect();
-        let (settings, diagnostics) = effective(&layers);
-        Self {
-            layers,
-            settings: Arc::new(settings),
-            diagnostics,
-        }
-    }
-
-    pub fn settings(&self) -> &Arc<Settings> {
-        &self.settings
-    }
-
-    /// Every layer's diagnostics, the user file's first.
-    pub fn diagnostics(&self) -> &[Diagnostic] {
-        &self.diagnostics
-    }
-
-    /// The settings files, for a [`crate::ConfigWatcher`].
-    pub fn paths(&self) -> Vec<PathBuf> {
-        self.layers.iter().map(|layer| layer.path.clone()).collect()
-    }
-
-    /// Re-reads the layers whose files are in `changed`. Returns what changed
-    /// if the effective settings or the diagnostics did, and `None` if
-    /// neither did.
-    pub fn reload(&mut self, changed: &[PathBuf]) -> Option<SettingsEvent> {
-        let mut read = false;
-        for layer in &mut self.layers {
-            if changed.contains(&layer.path) {
-                layer.read();
-                read = true;
-            }
-        }
-        if !read {
-            return None;
-        }
-        let (settings, diagnostics) = effective(&self.layers);
-        if settings == *self.settings && diagnostics == self.diagnostics {
-            return None;
-        }
-        let previous = std::mem::replace(&mut self.settings, Arc::new(settings));
-        self.diagnostics = diagnostics;
-        Some(SettingsEvent {
-            settings: self.settings.clone(),
-            previous,
-            diagnostics: self.diagnostics.clone(),
-        })
-    }
-}
-
-/// The layers' good tables merged over the defaults, and their diagnostics.
-fn effective(layers: &[LayerState]) -> (Settings, Vec<Diagnostic>) {
-    let mut table = Table::try_from(Settings::default()).expect("the defaults serialize");
-    for layer in layers {
-        merge(&mut table, &layer.good);
-    }
-    // Each good table passed on its own, so their merge should too.
-    let mut merged = Layer::default();
-    merged.table = table;
-    let errors: Vec<_> = merged
-        .check_schema(&SCHEMA)
-        .into_iter()
-        .filter(Diagnostic::is_error)
-        .collect();
-    let settings = if errors.is_empty() {
-        toml::Value::Table(merged.table)
-            .try_into()
-            .map_err(|error| error.to_string())
-    } else {
-        Err(errors
-            .iter()
-            .map(|error| error.to_string())
-            .collect::<Vec<_>>()
-            .join("; "))
-    };
-    let settings = settings.unwrap_or_else(|error| {
-        log::error!("the merged settings are invalid, so the defaults apply: {error}");
-        Settings::default()
-    });
-    let diagnostics = layers
-        .iter()
-        .flat_map(|layer| layer.diagnostics.iter().cloned())
-        .collect();
-    (settings, diagnostics)
 }

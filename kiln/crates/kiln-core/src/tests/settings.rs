@@ -2,11 +2,11 @@
 
 //! A typed [`SettingsStore`] over an app's own settings struct.
 
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{SettingsStore, Severity};
+use crate::{Layer, ProjectFilter, SettingsOptions, SettingsStore, Severity};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default)]
@@ -178,4 +178,121 @@ fn a_schema_warns_of_unknown_keys_and_rejects_out_of_range_values() {
     assert_eq!(event.settings.view.font_size, 15.0);
     assert_eq!(event.diagnostics[0].severity, Severity::Error);
     assert_eq!(event.diagnostics[0].key.as_deref(), Some("view.font_size"));
+}
+
+/// A filter letting a project set only `view.wrap`, with a warning at each
+/// other `view` key it drops.
+fn view_wrap_only() -> ProjectFilter {
+    ProjectFilter::new("view", |layer: &mut Layer| {
+        let Some(toml::Value::Table(view)) = layer.table.remove("view") else {
+            return;
+        };
+        let mut kept = toml::Table::new();
+        for (key, value) in view {
+            if key == "wrap" {
+                kept.insert(key, value);
+            } else {
+                let warning = layer.diagnostic_at(
+                    Severity::Warning,
+                    Some(format!("view.{key}")),
+                    0,
+                    "not in a project".into(),
+                );
+                layer.diagnostics.push(warning);
+            }
+        }
+        layer.table.insert("view".into(), toml::Value::Table(kept));
+    })
+}
+
+#[test]
+fn a_project_filter_narrows_only_the_projects_file() {
+    let files = files(
+        "[view]
+font_size = 15
+",
+        "title = \"Project\"\n[view]\nfont_size = 30\nwrap = false\n",
+    );
+    let options = SettingsOptions::new().project_filter(view_wrap_only());
+    let store: SettingsStore<Notes> = SettingsStore::load_with(
+        Some(files.user.clone()),
+        Some(files.project.clone()),
+        options.clone(),
+    );
+    let settings = store.settings();
+    assert_eq!(settings.title, "Project", "keys outside the filter's apply");
+    assert_eq!(
+        settings.view.font_size, 15.0,
+        "the user's, not the project's"
+    );
+    assert!(!settings.view.wrap, "what the filter keeps applies");
+    let [warning] = store.diagnostics() else {
+        panic!("one diagnostic: {:?}", store.diagnostics());
+    };
+    assert_eq!(warning.severity, Severity::Warning);
+    assert_eq!(warning.file, files.project);
+    assert_eq!(warning.key.as_deref(), Some("view.font_size"));
+
+    // A bad value in a key the filter drops rejects nothing: the narrowed
+    // table decides.
+    fs::write(
+        &files.project,
+        "title = \"Again\"\n[view]\nfont_size = \"big\"\n",
+    )
+    .unwrap();
+    let mut store = store;
+    let event = store.reload(std::slice::from_ref(&files.project)).unwrap();
+    assert_eq!(event.settings.title, "Again");
+    assert!(
+        event.diagnostics.iter().all(|d| !d.is_error()),
+        "{:?}",
+        event.diagnostics
+    );
+
+    // One in a key it keeps is an error at the start of the file, and the
+    // last good table stays.
+    fs::write(&files.project, "title = \"Bad\"\n[view]\nwrap = 1\n").unwrap();
+    let event = store.reload(std::slice::from_ref(&files.project)).unwrap();
+    assert_eq!(event.settings.title, "Again");
+    let [error] = &event.diagnostics[..] else {
+        panic!("one diagnostic: {:?}", event.diagnostics);
+    };
+    assert!(error.is_error());
+    assert_eq!((error.line, error.key.as_deref()), (1, None));
+
+    // The user's file is never narrowed.
+    fs::write(&files.user, "[view]\nfont_size = 30\n").unwrap();
+    let store: SettingsStore<Notes> =
+        SettingsStore::load_with(Some(files.user.clone()), None, options);
+    assert_eq!(store.settings().view.font_size, 30.0);
+    assert_eq!(store.diagnostics(), []);
+}
+
+#[test]
+fn a_schema_can_follow_the_files_table() {
+    // A schema that, for a file with a `view` table, allows only a small
+    // font there.
+    let base = schemars::schema_for!(Notes).to_value();
+    let options = SettingsOptions::new().schema_for(move |table: &toml::Table| {
+        let mut schema = base.clone();
+        if table.contains_key("view") {
+            schema["$defs"]["View"]["properties"]["font_size"]["maximum"] = 20.0.into();
+        }
+        Arc::new(schema)
+    });
+    let files = files("title = \"x\"\n[view]\nfont_size = 30\n", "");
+    let store: SettingsStore<Notes> =
+        SettingsStore::load_with(Some(files.user.clone()), None, options.clone());
+    let [error] = store.diagnostics() else {
+        panic!("one diagnostic: {:?}", store.diagnostics());
+    };
+    assert!(error.is_error());
+    assert_eq!(error.key.as_deref(), Some("view.font_size"));
+    assert_eq!(store.settings().view.font_size, 20.0, "the defaults stay");
+
+    fs::write(&files.user, "[view]\nfont_size = 18\n").unwrap();
+    let store: SettingsStore<Notes> =
+        SettingsStore::load_with(Some(files.user.clone()), None, options);
+    assert_eq!(store.diagnostics(), []);
+    assert_eq!(store.settings().view.font_size, 18.0);
 }

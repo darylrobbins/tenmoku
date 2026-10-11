@@ -2,7 +2,8 @@
 
 //! An app's settings, typed: its own struct, layered from its defaults, the
 //! user's settings file and a project's, kept at its last good version
-//! while a file has errors.
+//! while a file has errors. A project's file may be narrowed to what the
+//! app lets a project set ([`ProjectFilter`]).
 
 use std::{
     fmt,
@@ -57,6 +58,107 @@ impl<S: fmt::Debug> fmt::Debug for SettingsEvent<S> {
     }
 }
 
+/// What a project's settings file may set, narrowed by the app: a
+/// project file comes with the folder, so an app may not trust it with
+/// everything the user's file sets, such as programs to run.
+///
+/// The filter governs one key (`lsp`, or a dotted one such as
+/// `tools.servers`). `narrow` is given each project file's [`Layer`], once
+/// it has parsed, and drops from its table whatever under that key the
+/// project may not set, adding a diagnostic for each (usually a warning,
+/// at the key, with [`Layer::diagnostic_at`]). An error serde finds in the
+/// file under that key is then checked on the narrowed table instead,
+/// since the key it's in may be gone: if the narrowed table is good, the
+/// file is; if not, the error is reported at the start of the file. The
+/// user's file is never narrowed.
+#[derive(Clone)]
+pub struct ProjectFilter {
+    key: String,
+    narrow: Arc<dyn Fn(&mut Layer) + Send + Sync>,
+}
+
+impl ProjectFilter {
+    pub fn new(
+        key: impl Into<String>,
+        narrow: impl Fn(&mut Layer) + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            key: key.into(),
+            narrow: Arc::new(narrow),
+        }
+    }
+
+    /// Whether `key` is the filter's key or under it.
+    fn governs(&self, key: &str) -> bool {
+        key.strip_prefix(self.key.as_str())
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
+    }
+}
+
+impl fmt::Debug for ProjectFilter {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ProjectFilter")
+            .field("key", &self.key)
+            .finish_non_exhaustive()
+    }
+}
+
+type SchemaFor = Arc<dyn Fn(&Table) -> Arc<Json> + Send + Sync>;
+
+/// How a [`SettingsStore`] checks its files, beyond serde: a JSON schema,
+/// and what a project's file may set. [`SettingsStore::load_with`] takes
+/// them.
+#[derive(Clone, Default)]
+pub struct SettingsOptions {
+    schema: Option<SchemaFor>,
+    project_filters: Vec<ProjectFilter>,
+}
+
+impl SettingsOptions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Checks each file, and the layers merged, against `schema`, a JSON
+    /// schema of `S` (`schemars::schema_for!(S)`): see [`SettingsStore`].
+    pub fn schema(self, schema: Json) -> Self {
+        let schema = Arc::new(schema);
+        self.schema_for(move |_| schema.clone())
+    }
+
+    /// Checks each file, and the layers merged, against the schema
+    /// `schema` gives for its table: for a schema that depends on what the
+    /// file sets, such as one listing a map's keys as properties so that
+    /// each entry is checked like a table.
+    pub fn schema_for(
+        mut self,
+        schema: impl Fn(&Table) -> Arc<Json> + Send + Sync + 'static,
+    ) -> Self {
+        self.schema = Some(Arc::new(schema));
+        self
+    }
+
+    /// Narrows what a project's file may set: see [`ProjectFilter`]. Each
+    /// call adds one, run in order.
+    pub fn project_filter(mut self, filter: ProjectFilter) -> Self {
+        self.project_filters.push(filter);
+        self
+    }
+
+    fn schema_of(&self, table: &Table) -> Option<Arc<Json>> {
+        self.schema.as_ref().map(|schema| schema(table))
+    }
+}
+
+impl fmt::Debug for SettingsOptions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SettingsOptions")
+            .field("schema", &self.schema.is_some())
+            .field("project_filters", &self.project_filters)
+            .finish()
+    }
+}
+
 /// The effective settings of type `S`: `S::default()`, then the user's
 /// file, then the project's, merged key by key.
 ///
@@ -66,11 +168,12 @@ impl<S: fmt::Debug> fmt::Debug for SettingsEvent<S> {
 /// to its default. Warnings don't reject a file. Without a schema
 /// ([`SettingsStore::with_schema`]), only serde checks a file, and keys `S`
 /// doesn't have are ignored silently; with one, they're warnings, as are
-/// ranges and lengths the schema sets (as schemars writes them).
+/// ranges and lengths the schema sets (as schemars writes them). A project
+/// file may be narrowed first ([`ProjectFilter`]).
 pub struct SettingsStore<S> {
     /// The user layer, then the project layer, each if given.
     layers: Vec<LayerState>,
-    schema: Option<Arc<Json>>,
+    options: SettingsOptions,
     settings: Arc<S>,
     diagnostics: Vec<Diagnostic>,
 }
@@ -88,19 +191,21 @@ impl<S: SettingsType> SettingsStore<S> {
     /// Loads the user's and the project's settings files, either of which
     /// may be absent or missing, checked by serde alone.
     pub fn load(user: Option<PathBuf>, project: Option<PathBuf>) -> Self {
-        Self::load_checked(user, project, None)
+        Self::load_with(user, project, SettingsOptions::new())
     }
 
     /// Loads them as [`SettingsStore::load`] does, also checking each file
     /// against `schema`, a JSON schema of `S` (`schemars::schema_for!(S)`).
     pub fn with_schema(user: Option<PathBuf>, project: Option<PathBuf>, schema: Json) -> Self {
-        Self::load_checked(user, project, Some(Arc::new(schema)))
+        Self::load_with(user, project, SettingsOptions::new().schema(schema))
     }
 
-    fn load_checked(
+    /// Loads them as [`SettingsStore::load`] does, checked as `options`
+    /// say: a schema, and what a project's file may set.
+    pub fn load_with(
         user: Option<PathBuf>,
         project: Option<PathBuf>,
-        schema: Option<Arc<Json>>,
+        options: SettingsOptions,
     ) -> Self {
         let mut layers: Vec<_> = [(user, true), (project, false)]
             .into_iter()
@@ -114,12 +219,12 @@ impl<S: SettingsType> SettingsStore<S> {
             })
             .collect();
         for layer in &mut layers {
-            read::<S>(layer, schema.as_deref());
+            read::<S>(layer, &options);
         }
-        let (settings, diagnostics) = effective::<S>(&layers, schema.as_deref());
+        let (settings, diagnostics) = effective::<S>(&layers, &options);
         Self {
             layers,
-            schema,
+            options,
             settings: Arc::new(settings),
             diagnostics,
         }
@@ -153,14 +258,14 @@ impl<S: SettingsType> SettingsStore<S> {
         let mut read_any = false;
         for layer in &mut self.layers {
             if changed.contains(&layer.path) {
-                read::<S>(layer, self.schema.as_deref());
+                read::<S>(layer, &self.options);
                 read_any = true;
             }
         }
         if !read_any {
             return None;
         }
-        let (settings, diagnostics) = effective::<S>(&self.layers, self.schema.as_deref());
+        let (settings, diagnostics) = effective::<S>(&self.layers, &self.options);
         if settings == *self.settings && diagnostics == self.diagnostics {
             return None;
         }
@@ -175,8 +280,13 @@ impl<S: SettingsType> SettingsStore<S> {
 }
 
 /// Re-reads `layer`'s file, keeping its last good table if it has errors.
-fn read<S: SettingsType>(layer: &mut LayerState, schema: Option<&Json>) {
-    let (table, diagnostics) = validate::<S>(&layer.path, schema);
+fn read<S: SettingsType>(layer: &mut LayerState, options: &SettingsOptions) {
+    let filters: &[ProjectFilter] = if layer.user {
+        &[]
+    } else {
+        &options.project_filters
+    };
+    let (table, diagnostics) = validate::<S>(&layer.path, filters, options);
     if let Some(table) = table {
         layer.good = table;
     }
@@ -184,19 +294,39 @@ fn read<S: SettingsType>(layer: &mut LayerState, schema: Option<&Json>) {
 }
 
 /// Loads the settings file at `path`: its table if it has no errors, and
-/// its diagnostics.
+/// its diagnostics. `filters` narrow it first, so a bad value in a key
+/// they drop anyway rejects nothing.
 fn validate<S: SettingsType>(
     path: &Path,
-    schema: Option<&Json>,
+    filters: &[ProjectFilter],
+    options: &SettingsOptions,
 ) -> (Option<Table>, Vec<Diagnostic>) {
     let mut layer = load_layer(path);
     if !layer.has_errors() {
-        // On the source, for the error's location.
+        for filter in filters {
+            (filter.narrow)(&mut layer);
+        }
+        // Checked on the source, for the error's location, unless the
+        // error is in a key a filter governs: then the narrowed table
+        // decides.
         if let Err(error) = toml::from_str::<S>(&layer.source) {
             let diagnostic = layer.diagnostic_for(Severity::Error, &error);
-            layer.diagnostics.push(diagnostic);
-        } else if let Some(schema) = schema {
-            let more = layer.check_schema(schema);
+            let narrowed = diagnostic
+                .key
+                .as_deref()
+                .is_some_and(|key| filters.iter().any(|filter| filter.governs(key)));
+            if !narrowed {
+                layer.diagnostics.push(diagnostic);
+            } else if let Err(error) = toml::Value::Table(layer.table.clone()).try_into::<S>() {
+                let message = error.message().trim_end().to_owned();
+                let diagnostic = layer.diagnostic_at(Severity::Error, None, 0, message);
+                layer.diagnostics.push(diagnostic);
+            }
+        }
+        if !layer.has_errors()
+            && let Some(schema) = options.schema_of(&layer.table)
+        {
+            let more = layer.check_schema(&schema);
             layer.diagnostics.extend(more);
         }
     }
@@ -207,7 +337,7 @@ fn validate<S: SettingsType>(
 /// The layers' good tables merged over the defaults, and their diagnostics.
 fn effective<S: SettingsType>(
     layers: &[LayerState],
-    schema: Option<&Json>,
+    options: &SettingsOptions,
 ) -> (S, Vec<Diagnostic>) {
     let defaults = Table::try_from(S::default());
     let mut table = defaults.unwrap_or_else(|error| {
@@ -220,8 +350,9 @@ fn effective<S: SettingsType>(
     // Each good table passed on its own, so their merge should too.
     let mut merged = Layer::default();
     merged.table = table;
-    let errors: Vec<_> = schema
-        .map(|schema| merged.check_schema(schema))
+    let errors: Vec<_> = options
+        .schema_of(&merged.table)
+        .map(|schema| merged.check_schema(&schema))
         .unwrap_or_default()
         .into_iter()
         .filter(Diagnostic::is_error)

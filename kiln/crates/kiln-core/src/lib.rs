@@ -61,7 +61,7 @@ pub use platform::Os;
 pub use report::KeymapIssue;
 /// serde, for an app's settings type ([`SettingsType`]).
 pub use serde;
-pub use settings::{SettingsEvent, SettingsStore, SettingsType};
+pub use settings::{ProjectFilter, SettingsEvent, SettingsOptions, SettingsStore, SettingsType};
 pub use text_edit::{Motion, Selection, TextEdit};
 pub use watch::ConfigWatcher;
 pub use write::write_setting;
