@@ -1,0 +1,20 @@
+[package]
+name = "fe-terminal"
+description = "Terminal sessions: a pty running a shell, its VT grid, scrollback and selection, and xterm key encoding, on alacritty_terminal. Must not depend on GPUI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+alacritty_terminal.workspace = true
+async-channel.workspace = true
+rustix-openpty.workspace = true
+
+[dev-dependencies]
+libc.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

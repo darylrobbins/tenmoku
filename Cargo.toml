@@ -38,6 +38,7 @@ fe-nav = { path = "crates/fe-nav" }
 fe-vim = { path = "crates/fe-vim" }
 fe-lsp = { path = "crates/fe-lsp" }
 fe-fileview = { path = "crates/fe-fileview" }
+fe-terminal = { path = "crates/fe-terminal" }
 
 # GPUI comes from the `gpui-pre-*` crates.io snapshots of Zed (Apache-2.0).
 # 0.3.7 is zed@1a28cff. Every snapshot crate must be bumped together; to move to
@@ -139,6 +140,12 @@ tree-sitter-yaml = "0.7"
 ropey = { version = "=2.0.0-beta.1", features = ["metric_chars", "metric_lines_lf", "metric_utf16"] }
 # Line diffs for proposed changes (Apache-2.0).
 imara-diff = { version = "0.2", default-features = false }
+# Terminal pane: VT parser, grid, scrollback, selection and pty (Apache-2.0;
+# docs/decisions/terminal.md).
+alacritty_terminal = { version = "0.26", default-features = false }
+# fe-terminal opens the pty itself to keep its user side open (already in the
+# lock through alacritty_terminal).
+rustix-openpty = "0.2"
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
