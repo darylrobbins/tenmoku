@@ -225,6 +225,10 @@ cargo run -p fe-gpui --example screenshots -- render out.png path/to/file [--siz
 cargo run -p fe-workbench --example screenshots                  # the workbench scene
 UPDATE_SCREENSHOTS=1 cargo run -p fe-workbench --example screenshots
 cargo run -p fe-workbench --example screenshots -- render out.png path/to/dir [--size 1000x600]
+
+cargo run -p kiln --example gallery-screenshots                  # kiln's gallery pages
+UPDATE_SCREENSHOTS=1 cargo run -p kiln --example gallery-screenshots
+cargo run -p kiln --example gallery-screenshots -- render out.png <page> [--size 1000x640]
 ```
 
 Both examples use kiln's harness, `kiln_platform::screenshots` (behind
@@ -232,6 +236,16 @@ kiln-platform's `test-support` feature, which `kiln/test-support` forwards to):
 the settling loop, the comparison, its tolerances, the golden updates and the
 failure output below are shared, and their unit tests run in kiln-platform's
 (`screenshots::…::tests`). Each example keeps its scenes and goldens.
+
+The gallery's scenes are its Controls, Lists and Theme pages, dark and light,
+each in a 1000×640 window inside `kiln::Root` as the gallery runs:
+`gallery_<page>_<theme>`, with goldens in
+`kiln/crates/kiln/examples/gallery-screenshots/golden/`. Only macOS compares
+with them; elsewhere the run prints `skipped` and exits 0. `render` draws any
+page (`controls`, `text`, `lists`, …) in the theme `KILN_GALLERY_THEME` names
+(dark unless `light`), and works on Linux too: there the harness uses GPUI's
+headless context, drawn by wgpu (it needs a Vulkan device, such as Mesa's
+lavapipe) in Linux's fonts, which is for looking at a page, not for goldens.
 
 The workbench scene lives in `crates/fe-workbench/examples/screenshots/`, with
 its golden in `golden/workbench.png`. The scene is
