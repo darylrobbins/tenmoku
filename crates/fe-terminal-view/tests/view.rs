@@ -307,6 +307,48 @@ fn paints_every_cell_on_the_grid() {
     // The cursor paints its own cell's character.
     assert_eq!(row(4), [(0, "a"), (1, "b")]);
 
+    // Each cell's glyph is reported at its text's first byte, and its
+    // origin plus offset is the cell's grid column: shaping never shifts a
+    // glyph off the grid. The combining mark adds no glyph of its own.
+    let glyph_columns = |texts: &[PaintedText]| {
+        texts
+            .iter()
+            .map(|t| {
+                let [(index, offset)] = t.glyphs[..] else {
+                    panic!("expected one glyph in {:?}: {:?}", t.text, t.glyphs);
+                };
+                let x = t.origin.x + offset;
+                (
+                    (f32::from(t.origin.y) / f32::from(cell.height)).round() as usize,
+                    (f32::from(x) / f32::from(cell.width)).round() as usize,
+                    t.text[index..].chars().next().unwrap(),
+                    x == cell.width * (f32::from(x) / f32::from(cell.width)).round(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let placed = glyph_columns(&report.text);
+    assert!(placed.iter().all(|(.., aligned)| *aligned), "{placed:?}");
+    let placed = placed
+        .iter()
+        .map(|&(row, col, ch, _)| (row, col, ch))
+        .collect::<Vec<_>>();
+    for expected in [
+        (0, 0, 'i'),
+        (0, 3, 'i'),
+        (1, 0, '-'),
+        (1, 3, '>'),
+        (2, 0, 'e'),
+        (3, 0, '漢'),
+        (4, 0, 'a'),
+        (4, 1, 'b'),
+    ] {
+        assert!(placed.contains(&expected), "{expected:?} in {placed:?}");
+    }
+    assert!(report.text.iter().all(|t| t.glyphs[0] == (0, px(0.))));
+    let cursor_glyphs = glyph_columns(&report.cursor_text);
+    assert_eq!(cursor_glyphs, [(4, 2, '漢', true)]);
+
     // The controlled shaping behaves as assumed: narrow glyphs are narrower
     // than a cell, a combining mark adds no glyph or advance, and `->` shaped
     // together is one glyph.
