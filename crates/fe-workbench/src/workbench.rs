@@ -18,12 +18,11 @@ use gpui::{
 };
 
 use crate::{
-    Dock, DockPanel, KEY_CONTEXT, OutlinePanel, Pane, PaneGroup, Picker, ProjectPanel, QuickOpen,
-    ReferencesPanel, SearchPanel, StatusBar,
+    Dock, DockPanel, KEY_CONTEXT, MenuBarView, OutlinePanel, Pane, PaneGroup, Picker, ProjectPanel,
+    QuickOpen, ReferencesPanel, SearchPanel, StatusBar,
     dock::{self, DockEvent, DockOp},
     language_picker::LanguagePicker,
     lsp::{self, Lsp},
-    menu_bar::{self, MenuBarView},
     nav::{self, Nav},
     open::{self, OpenOp},
     outline_panel,
@@ -38,7 +37,10 @@ use crate::{
     title_bar,
     toolbar_picker::ToolbarPicker,
     trust::{self, RootTrust, TrustChanged},
-    window_frame,
+};
+use kiln_shell::{
+    TitleBar,
+    window_frame::{self, TopRow},
 };
 
 /// Shown in a tab when fastedit starts with nothing to open.
@@ -294,6 +296,9 @@ impl Workbench {
             #[cfg(test)]
             commands_run: Vec::new(),
         };
+        // Under test, the chrome's window moves are recorded, not made.
+        #[cfg(test)]
+        title_bar::record_requests(cx);
         workbench.watch(&pane, window, cx);
         workbench.track_editors(cx);
         workbench.follow_trust(window, cx);
@@ -1018,14 +1023,11 @@ impl Workbench {
         cx.notify();
     }
 
-    /// Shows or hides the menu bar drawn in the window, from the menus
-    /// [`fe_gpui::menu::install`] set: for platforms with no native menu bar
-    /// (Linux). Off by default.
+    /// Shows or hides the menu bar drawn in the window (kiln-shell's), from
+    /// the menus [`fe_gpui::menu::install`] set: for platforms with no
+    /// native menu bar (Linux). Off by default.
     pub fn set_menu_bar(&mut self, shown: bool, cx: &mut Context<Self>) {
-        self.menu_bar = shown.then(|| {
-            let ui = self.ui;
-            cx.new(|cx| MenuBarView::new(ui, cx))
-        });
+        self.menu_bar = shown.then(|| cx.new(MenuBarView::new));
         cx.notify();
     }
 
@@ -1040,6 +1042,18 @@ impl Workbench {
     /// The menu bar, while it's shown.
     pub fn menu_bar(&self) -> Option<&Entity<MenuBarView>> {
         self.menu_bar.as_ref()
+    }
+
+    /// `menu_bar.open`: opens the first menu of the menu bar, if it's shown.
+    fn open_menu_bar(
+        &mut self,
+        _: &kiln_shell::menu_bar::Open,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(bar) = &self.menu_bar {
+            bar.update(cx, |bar, cx| bar.open(0, true, window, cx));
+        }
     }
 
     /// The name the title bar reads.
@@ -1245,12 +1259,6 @@ impl Workbench {
             if pane_toolbar::toggles(run, cx) {
                 return self.toggle_breadcrumbs(cx);
             }
-            if menu_bar::opens(run, cx) {
-                if let Some(bar) = &self.menu_bar {
-                    bar.update(cx, |bar, cx| bar.open(0, true, window, cx));
-                }
-                return;
-            }
             let op = if outline_panel::shows(run, cx) {
                 Some(DockOp::ShowOutline)
             } else {
@@ -1314,22 +1322,22 @@ impl Render for Workbench {
         #[cfg(test)]
         let client_tiling = self
             .client_tiling
-            .or_else(|| window_frame::client_tiling(window));
+            .or_else(|| window_frame::client_tiling(window, cx));
         #[cfg(not(test))]
-        let client_tiling = window_frame::client_tiling(window);
+        let client_tiling = window_frame::client_tiling(window, cx);
         let tiling = client_tiling.filter(|_| self.window_frame);
         let top_row = (self.menu_bar.is_some() || tiling.is_some()).then(|| {
-            window_frame::top_row(
-                self.menu_bar.clone().map(IntoElement::into_any_element),
-                title_bar::name(self.root.as_deref()),
-                tiling.is_some(),
-                &self.ui,
-                window,
-            )
+            let row = TopRow::new(title_bar::name(self.root.as_deref()), tiling.is_some())
+                .key_context(KEY_CONTEXT);
+            match &self.menu_bar {
+                Some(bar) => row.menu_bar(bar.clone()),
+                None => row,
+            }
         });
         div()
             .key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::on_run_command))
+            .on_action(cx.listener(Self::open_menu_bar))
             // So a modifier pressed while a panel has focus reaches the
             // editors, for their cmd-click hover.
             .on_modifiers_changed(EditorView::modifiers_changed)
@@ -1342,7 +1350,7 @@ impl Render for Workbench {
             .text_size(px(12.))
             .children(
                 self.title_bar
-                    .then(|| title_bar::title_bar(self.root.as_deref(), &self.ui)),
+                    .then(|| TitleBar::new(title_bar::name(self.root.as_deref()))),
             )
             .children(top_row)
             .child(main)

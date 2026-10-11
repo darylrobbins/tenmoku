@@ -2005,6 +2005,7 @@ dependencies = [
  "image",
  "kiln-command",
  "kiln-platform",
+ "kiln-shell",
  "kiln-ui",
  "libc",
  "log",

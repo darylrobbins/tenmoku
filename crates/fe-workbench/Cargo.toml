@@ -22,6 +22,8 @@ fe-project.workspace = true
 fe-syntax.workspace = true
 fe-ui.workspace = true
 kiln-platform.workspace = true
+# The window's chrome: the title bar, the frame and the menu bar.
+kiln-shell.workspace = true
 gpui.workspace = true
 libc.workspace = true
 log.workspace = true

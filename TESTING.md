@@ -322,7 +322,7 @@ What differs from macOS:
   it leaves that to the app, as GNOME on Wayland does, the menu bar's row
   becomes the title bar, with the folder's name, minimize, maximize and close,
   a drag to move and a double click to maximize, and the window's edges
-  resize it (`fe-workbench/src/window_frame.rs`). The unified title bar is
+  resize it (`kiln/crates/kiln-shell/src/window_frame.rs`). The unified title bar is
   macOS's.
 - **The menu bar is drawn in the window**, above the panes, from
   `fe-keymap/menus/default-linux.toml`: GPUI has no native menu bar on

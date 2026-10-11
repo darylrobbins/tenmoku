@@ -1,14 +1,10 @@
-//! The unified macOS title bar the standalone app draws itself: the
-//! window's traffic lights inline, the root folder's name centred, and the
-//! window draggable from the bar's empty space.
+//! The unified macOS title bar the standalone app draws itself, which is
+//! kiln-shell's [`kiln_shell::TitleBar`]: here, what it reads, the root
+//! folder's name.
 
 use std::path::Path;
 
-use fe_ui::UiTheme;
-use gpui::{
-    InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, ParentElement as _,
-    SharedString, Styled as _, Window, div,
-};
+use gpui::SharedString;
 
 // The unified title bar's metrics and window options are kiln's.
 pub use kiln_platform::window_options::{
@@ -32,24 +28,18 @@ thread_local! {
     pub(crate) static REQUESTS: std::cell::RefCell<Vec<Request>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
-fn on_mouse_down(event: &MouseDownEvent, window: &mut Window) {
-    match event.click_count {
-        1 => {
-            #[cfg(test)]
-            REQUESTS.with_borrow_mut(|requests| requests.push(Request::Move));
-            #[cfg(not(test))]
-            window.start_window_move();
-        }
-        2 => {
-            #[cfg(test)]
-            REQUESTS.with_borrow_mut(|requests| requests.push(Request::DoubleClick));
-            #[cfg(not(test))]
-            window.titlebar_double_click();
-        }
-        _ => {}
-    }
-    #[cfg(test)]
-    let _ = window;
+/// Records the title bar's requests of the window in [`REQUESTS`].
+#[cfg(test)]
+pub(crate) fn record_requests(cx: &mut gpui::App) {
+    use kiln_shell::window_frame::{WindowRequest, intercept_window_requests};
+    intercept_window_requests(cx, |request| {
+        let request = match request {
+            WindowRequest::Move => Request::Move,
+            WindowRequest::TitlebarDoubleClick => Request::DoubleClick,
+            _ => return,
+        };
+        REQUESTS.with_borrow_mut(|requests| requests.push(request));
+    });
 }
 
 /// The root folder's name, or `fastedit` with no root.
@@ -58,33 +48,4 @@ pub(crate) fn name(root: Option<&Path>) -> SharedString {
         || SharedString::from(NO_ROOT),
         |name| SharedString::from(name.to_string_lossy().into_owned()),
     )
-}
-
-/// The bar, titled with `root`'s folder name.
-pub(crate) fn title_bar(root: Option<&Path>, ui: &UiTheme) -> impl IntoElement {
-    let name = name(root);
-    div()
-        .id("title-bar")
-        .debug_selector(|| "title-bar".into())
-        .flex_none()
-        .w_full()
-        .h(TITLE_BAR_HEIGHT)
-        .px(TRAFFIC_LIGHT_INSET)
-        .flex()
-        .items_center()
-        .justify_center()
-        .bg(ui.panel_background)
-        .border_b_1()
-        .border_color(ui.border)
-        .text_color(ui.text)
-        .on_mouse_down(MouseButton::Left, |event, window, _| {
-            on_mouse_down(event, window)
-        })
-        .child(
-            div()
-                .debug_selector(|| "title-bar-label".into())
-                .min_w_0()
-                .truncate()
-                .child(name),
-        )
 }
