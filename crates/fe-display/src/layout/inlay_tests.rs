@@ -108,3 +108,97 @@ fn other_rows_and_tabs_unchanged() {
     assert!(!frame.rows[0].line.text.contains("XYZ"));
     assert_eq!(frame.inlay, None);
 }
+
+/// A long row of 9000 `x`, with "XYZ" at offset 40, laid out at `scroll_x`
+/// with the caret at `head`; `long_rows` is the frame's, to map with.
+fn lay_out_long_inlay(
+    head: usize,
+    scroll_x: f32,
+    autoscroll: bool,
+    long_rows: &mut LongRows,
+) -> (Frame<Line>, Buffer) {
+    let buffer = Buffer::new(&"x".repeat(9000));
+    let display = DisplayMap::new(buffer.current(), 4);
+    let selections = parse("|").1;
+    let input = FrameInput {
+        display: &display,
+        tab_size: 4,
+        selections: &selections,
+        primary_head: head,
+        scroll: Vec2 { x: scroll_x, y: 0. },
+        autoscroll,
+        width: WIDTH,
+        height: 100.,
+        line_height: LINE,
+        em: CELL,
+        styles: FrameStyles {
+            text: "text",
+            line_number: "number",
+            active_line_number: "active",
+        },
+    };
+    let inlay = Inlay {
+        offset: 40,
+        text: "XYZ".to_string(),
+        style: "ghost",
+    };
+    let frame = layout_frame_with_inlay(
+        &input,
+        &BlockMap::default(),
+        Some(&inlay),
+        &mut Mono,
+        long_rows,
+        &mut Mono,
+        |_| Vec::new(),
+        |_| Vec::new(),
+    );
+    (frame, buffer)
+}
+
+#[test]
+fn long_row_mappings_follow_the_inlay_past_the_slice() {
+    let mut long_rows = LongRows::default();
+    let (frame, buffer) = lay_out_long_inlay(0, 0., false, &mut long_rows);
+    let row = &frame.rows[0];
+    assert!(row.line.text.contains("XYZ"));
+    let end = row.shown().end;
+    assert!(end < 9000 - 60);
+    let cell = f64::from(CELL);
+    let mut x_at = |offset: usize| row.x_for_offset(offset, &mut long_rows, &mut Mono);
+    // Positions keep moving right across the slice's right boundary.
+    assert_eq!(x_at(end), (end + 3) as f64 * cell);
+    assert_eq!(x_at(end + 1), (end + 4) as f64 * cell);
+    assert_eq!(x_at(end + 50), (end + 53) as f64 * cell);
+
+    // A click past the slice finds the offset, not one three characters on.
+    let mut at = |offset: usize| {
+        frame.offset_at(
+            buffer.current().text(),
+            Vec2 {
+                x: GUTTER + (offset + 3) as f32 * CELL + 2.,
+                y: 5.,
+            },
+            &mut long_rows,
+            &mut Mono,
+        )
+    };
+    assert_eq!(at(end + 50), end + 50);
+    assert_eq!(at(end + 1), end + 1);
+}
+
+#[test]
+fn long_row_autoscroll_counts_the_inlay_before_the_caret() {
+    let mut long_rows = LongRows::default();
+    let (frame, _) = lay_out_long_inlay(60, 0., true, &mut long_rows);
+    // The caret is at x 630 with the inlay, 4 ems from the right edge.
+    let text_width = WIDTH - GUTTER;
+    assert_eq!(frame.scroll.x, 630. - text_width + 4. * CELL);
+    let caret = frame.cursors[0];
+    assert!(caret.x + CURSOR_WIDTH <= WIDTH - 4. * CELL + 0.5);
+
+    // An inlay outside the shown slice adds nothing: the caret is far right.
+    let mut long_rows = LongRows::default();
+    let (frame, _) = lay_out_long_inlay(8000, 0., true, &mut long_rows);
+    assert!(!frame.rows[0].line.text.contains("XYZ"));
+    assert_eq!(frame.scroll.x, 80000. - text_width + 4. * CELL);
+}

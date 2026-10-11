@@ -244,6 +244,10 @@ pub struct RowLayout<L> {
     /// The shaped text, from [`RowLayout::shown`].
     pub expanded: ExpandedRow,
     pub line: L,
+    /// The width of the inlay drawn in `line`, which the row's index doesn't
+    /// know: text of a long row past the shaped slice sits that far right of
+    /// where the index puts it.
+    pub inlay_width: f64,
 }
 
 impl<L> RowLayout<L> {
@@ -292,7 +296,12 @@ impl<L: MeasuredLine> RowLayout<L> {
         if !(shown.start..=shown.end).contains(&offset)
             && let Some(index) = self.index(long_rows)
         {
-            return index.x_for_offset(offset, widths);
+            let shift = if offset > shown.end {
+                self.inlay_width
+            } else {
+                0.
+            };
+            return index.x_for_offset(offset, widths) + shift;
         }
         let display = self
             .expanded
@@ -311,6 +320,9 @@ impl<L: MeasuredLine> RowLayout<L> {
             || line_x > f64::from(self.line.width()) && shown.end < self.end)
             && let Some(index) = self.index(long_rows)
         {
+            // Right of the slice, the index's x is short of the drawn x by
+            // the inlay.
+            let x = if line_x > 0. { x - self.inlay_width } else { x };
             let before = index.offset_for_x(x, widths);
             let after = index.next_boundary(before, widths).min(self.end);
             let past = x - index.x_for_offset(before, widths);
@@ -667,6 +679,9 @@ pub fn layout_frame_with_inlay<M: TextMeasure>(
             }
         }
         let line = measure.shape(expanded.text(), &runs);
+        let inlay_width = expanded.inlay_range().map_or(0., |range| {
+            f64::from(line.x_for_index(range.end) - line.x_for_index(range.start))
+        });
         RowLayout {
             row,
             buffer_row: display_row.buffer_row,
@@ -676,6 +691,7 @@ pub fn layout_frame_with_inlay<M: TextMeasure>(
             slice,
             expanded,
             line,
+            inlay_width,
         }
     };
     let laid_out: Vec<Pending<M::Line>> = (first_row..)
@@ -695,38 +711,106 @@ pub fn layout_frame_with_inlay<M: TextMeasure>(
     if wrapped {
         scroll.x = 0.;
     } else {
-        let mut scroll_x = f64::from(scroll.x);
         let text_width = f64::from(text_width);
         let margin = f64::from(em) * 4.;
-        let mut head_x = || {
-            laid_out.iter().find_map(|row| match row {
-                Ok(row) => row
-                    .contains(primary_head)
-                    .then(|| row.x_for_offset(primary_head, long_rows, widths)),
-                Err((_, row)) => contains(row.range.clone(), row.last, primary_head).then(|| {
-                    long_rows
-                        .index(source, text, row.buffer_row, tab_size, widths)
-                        .x_for_offset(primary_head, widths)
-                }),
-            })
+        let slice_margin = f64::from(em * SLICE_MARGIN_EMS);
+        // What the inlay adds to a long row's width: its own width, if its
+        // row is long and it's in the slice shaped for a view at `scroll_x`.
+        let inlay_text_width = inlay.map(|inlay| {
+            let runs = [StyleRun {
+                len: inlay.text.len(),
+                style: inlay.style.clone(),
+            }];
+            f64::from(measure.shape(&inlay.text, &runs).width())
+        });
+        let inlay_in_slice = |long_rows: &mut LongRows,
+                              widths: &mut dyn CharWidth,
+                              row: &DisplayRow,
+                              scroll_x: f64| {
+            let (Some(inlay), Some(width)) = (inlay, inlay_text_width) else {
+                return 0.;
+            };
+            if !contains(row.range.clone(), row.last, inlay.offset) {
+                return 0.;
+            }
+            let view = scroll_x..scroll_x + text_width;
+            let slice = long_rows
+                .index(source, text, row.buffer_row, tab_size, widths)
+                .slice(view, slice_margin, widths);
+            if (slice.range.start..=slice.range.end).contains(&inlay.offset) {
+                width
+            } else {
+                0.
+            }
         };
-        if autoscroll && let Some(x) = head_x() {
+        let long_head = laid_out.iter().find_map(|row| match row {
+            Err((_, row)) if contains(row.range.clone(), row.last, primary_head) => Some(row),
+            _ => None,
+        });
+        // The caret's x in a long row at `scroll_x`: past the inlay, the row
+        // is wider by it.
+        let long_head_x = |long_rows: &mut LongRows,
+                           widths: &mut dyn CharWidth,
+                           row: &DisplayRow,
+                           scroll_x: f64| {
+            let x = long_rows
+                .index(source, text, row.buffer_row, tab_size, widths)
+                .x_for_offset(primary_head, widths);
+            let past = inlay.is_some_and(|inlay| primary_head > inlay.offset);
+            if past {
+                x + inlay_in_slice(long_rows, widths, row, scroll_x)
+            } else {
+                x
+            }
+        };
+        let follow = |x: f64, mut scroll_x: f64| {
             if x < scroll_x + margin {
                 scroll_x = x - margin;
             }
             if x > scroll_x + text_width - margin {
                 scroll_x = x - text_width + margin;
             }
-        }
-        let widest = laid_out
-            .iter()
-            .map(|row| match row {
-                Ok(row) => f64::from(row.line.width()),
-                Err((_, row)) => long_rows
+            scroll_x
+        };
+        let mut scroll_x = f64::from(scroll.x);
+        if autoscroll {
+            if let Some(row) = long_head {
+                // Scroll to the caret as the index places it; if the inlay
+                // is in the slice there, scroll to the caret past it, and
+                // keep that if the inlay's still in the slice.
+                let plain_x = long_rows
                     .index(source, text, row.buffer_row, tab_size, widths)
-                    .width(widths),
-            })
-            .fold(0., f64::max);
+                    .x_for_offset(primary_head, widths);
+                let plain = follow(plain_x, scroll_x);
+                let shifted = follow(long_head_x(long_rows, widths, row, plain), scroll_x);
+                scroll_x =
+                    if shifted != plain && long_head_x(long_rows, widths, row, shifted) > plain_x {
+                        shifted
+                    } else {
+                        plain
+                    };
+            } else if let Some(x) = laid_out.iter().find_map(|row| match row {
+                Ok(row) if row.contains(primary_head) => {
+                    Some(row.x_for_offset(primary_head, long_rows, widths))
+                }
+                _ => None,
+            }) {
+                scroll_x = follow(x, scroll_x);
+            }
+        }
+        let mut widest = 0_f64;
+        for row in &laid_out {
+            let width = match row {
+                Ok(row) => f64::from(row.line.width()),
+                Err((_, row)) => {
+                    let width = long_rows
+                        .index(source, text, row.buffer_row, tab_size, widths)
+                        .width(widths);
+                    width + inlay_in_slice(long_rows, widths, row, scroll_x)
+                }
+            };
+            widest = widest.max(width);
+        }
         let max_scroll_x = (widest - text_width + margin).max(0.);
         scroll.x = scroll_x.clamp(0., max_scroll_x) as f32;
     }
