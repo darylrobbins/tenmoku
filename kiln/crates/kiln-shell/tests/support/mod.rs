@@ -23,6 +23,8 @@ use kiln_shell::{
     window_frame::{WindowRequest, intercept_window_requests},
 };
 
+pub(crate) mod note;
+
 pub(crate) mod pad {
     kiln_platform::commands!(
         pad,
