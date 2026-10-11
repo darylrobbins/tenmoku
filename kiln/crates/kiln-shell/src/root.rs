@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
 //! [`Root`]: the view a window opens with, around the app's own. It draws
-//! the window's chrome as the platform wants it.
+//! the window's chrome as the platform wants it, and sets up what every
+//! window needs.
 
 use gpui::{
     AnyView, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement,
     ParentElement as _, Render, SharedString, Styled as _, Window, div,
     prelude::FluentBuilder as _, px,
 };
-use kiln_platform::Capabilities;
-use kiln_ui::ActiveTheme as _;
+use kiln_platform::{Capabilities, focus};
+use kiln_ui::{ActiveTheme as _, follow_system_appearance};
 
 use crate::{
     MenuBarView, TitleBar,
@@ -38,6 +39,10 @@ use crate::{
 ///   window's buttons beside the menus, a drag to move, a double click to
 ///   maximize, a border, and edges that resize. Under server-side
 ///   decorations the window manager draws them.
+///
+/// Making it has the window keep keys working when the focused element
+/// stops being drawn ([`focus::watch`]) and the theme follow the system's
+/// appearance ([`follow_system_appearance`]).
 pub struct Root {
     content: AnyView,
     title: SharedString,
@@ -47,7 +52,9 @@ pub struct Root {
 }
 
 impl Root {
-    pub fn new(content: impl Into<AnyView>, _: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(content: impl Into<AnyView>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        focus::watch(window, cx);
+        follow_system_appearance(window, cx);
         Self {
             content: content.into(),
             title: SharedString::default(),

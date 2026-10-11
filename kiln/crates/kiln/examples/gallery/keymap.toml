@@ -21,6 +21,13 @@ command = "gallery.show_prompt"
 keys = "secondary-q"
 command = "app.quit"
 
+# Opens the menu bar drawn in the window, as F10 does in GNOME and KDE
+# apps. macOS's menus are native.
+[[bindings]]
+keys = "f10"
+command = "menu_bar.open"
+platform = "!macos"
+
 # TextInput leaves its editing keys to the app (see pages/text.rs).
 [[bindings]]
 keys = "backspace"

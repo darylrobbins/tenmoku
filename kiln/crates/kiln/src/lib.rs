@@ -25,6 +25,9 @@ pub use kiln_core::serde;
 pub use kiln_core::{SettingsType, settings::SettingsEvent};
 pub use kiln_platform::WindowSpec;
 pub use kiln_platform::config::{ConfigDiagnostics, GlobalSettings};
+/// A window's root view, around the app's: the chrome the platform wants
+/// and the per-window setup. See [`kiln_shell::Root`].
+pub use kiln_shell::Root;
 pub use setup::{AppInfo, Config, application, init, window_options};
 
 /// The extension traits that put kiln's calls on GPUI's own types:

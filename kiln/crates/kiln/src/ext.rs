@@ -4,13 +4,13 @@
 //! `use kiln::prelude::*;`, then `cx.settings::<S>()`,
 //! `cx.set_theme_mode(..)` or `window.run_command(..)`.
 
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
-use gpui::{App, Global, SharedString, Subscription, Window, WindowId};
+use gpui::{App, SharedString, Window};
 use kiln_command::{CommandId, DispatchError, Invocation};
 use kiln_core::{Keymap, Os, macos_label, pc_label};
 use kiln_platform::{command_actions::dispatch_invocation, config, keys};
-use kiln_ui::{ThemeMode, observe_system_appearance, set_theme_mode};
+use kiln_ui::{ThemeMode, set_theme_mode};
 
 /// kiln's calls on GPUI's [`App`] (and so on every `Context`).
 pub trait AppExt {
@@ -66,7 +66,7 @@ pub trait WindowExt {
     /// holds the subscription until the window closes. Calling it again
     /// for the same window does nothing more. GPUI tells only windows of
     /// appearance changes, and has no hook for a window opening, so
-    /// `kiln::init` can't do this itself.
+    /// `kiln::init` can't do this itself; [`crate::Root`] does, as it's made.
     fn follow_system_appearance(&mut self, cx: &mut App);
 }
 
@@ -76,30 +76,6 @@ impl WindowExt for Window {
     }
 
     fn follow_system_appearance(&mut self, cx: &mut App) {
-        let id = self.window_handle().window_id();
-        if !cx.has_global::<Following>() {
-            let closed = cx.on_window_closed(|cx, closed| {
-                cx.global_mut::<Following>().windows.remove(&closed);
-            });
-            cx.set_global(Following {
-                windows: HashMap::new(),
-                _closed: closed,
-            });
-        }
-        if cx.global::<Following>().windows.contains_key(&id) {
-            return;
-        }
-        let subscription = observe_system_appearance(self);
-        cx.global_mut::<Following>()
-            .windows
-            .insert(id, subscription);
+        kiln_ui::follow_system_appearance(self, cx);
     }
 }
-
-/// The windows whose appearance the theme follows.
-struct Following {
-    windows: HashMap<WindowId, Subscription>,
-    _closed: Subscription,
-}
-
-impl Global for Following {}

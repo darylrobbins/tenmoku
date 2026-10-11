@@ -18,6 +18,9 @@ pub(crate) const APP_NAME: &str = "Kiln Gallery";
 pub(crate) fn config() -> Config {
     Config::new("dev.kiln.Gallery", APP_NAME)
         .commands(commands::register)
+        // `menu_bar.open`, which F10 binds, for the menus Root draws in
+        // the window where there are no native ones.
+        .commands(kiln::shell::register)
         .keymap("keymap.toml", include_str!("keymap.toml"))
         .menus("menus.toml", include_str!("menus.toml"))
         .theme_mode(initial_mode())

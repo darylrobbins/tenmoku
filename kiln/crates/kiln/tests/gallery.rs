@@ -15,11 +15,11 @@ mod settings;
 #[path = "../examples/gallery/setup.rs"]
 mod setup;
 
-use gpui::{Entity, Focusable as _, Modifiers, TestAppContext, VisualTestContext};
+use gpui::{AppContext as _, Entity, Focusable as _, Modifiers, TestAppContext, VisualTestContext};
 use kiln::{
     command::Invocation,
     core::Os,
-    platform::commands::catalog,
+    platform::{Capabilities, commands::catalog},
     prelude::*,
     ui::{Appearance, ThemeMode},
 };
@@ -73,7 +73,9 @@ fn keymap_and_menus_load_cleanly_on_every_platform(cx: &mut TestAppContext) {
         for os in [Os::MacOs, Os::Linux, Os::Windows] {
             let (keymap, diagnostics) = config.keymap_for(os, Some(&*catalog));
             assert_eq!(diagnostics, [], "keymap on {os:?}");
-            assert_eq!(keymap.bindings().len(), 7, "keymap on {os:?}");
+            // F10 opens the menus drawn in the window, which macOS hasn't.
+            let bindings = if os == Os::MacOs { 7 } else { 8 };
+            assert_eq!(keymap.bindings().len(), bindings, "keymap on {os:?}");
             let (menus, diagnostics) = config.menu_bar_for(os, Some(&*catalog));
             assert_eq!(diagnostics, [], "menus on {os:?}");
             assert_eq!(menus.menus.len(), 3, "menus on {os:?}");
@@ -104,6 +106,31 @@ fn keys_from_the_keymap_run_the_page_commands(cx: &mut TestAppContext) {
     assert_eq!(page(&gallery, cx), Page::Text);
     cx.simulate_keystrokes(&sec("secondary-[ secondary-["));
     assert_eq!(page(&gallery, cx), Page::ALL[Page::ALL.len() - 1]);
+}
+
+/// Wrapped in a `Root` drawn as on Linux, F10 opens the gallery's menus in
+/// the window, and an item chosen with the keys runs in the gallery.
+#[gpui::test]
+fn f10_opens_the_menus_in_the_window(cx: &mut TestAppContext) {
+    cx.update(init);
+    let (root, cx) = cx.add_window_view(|window, cx| {
+        let gallery = cx.new(|cx| Gallery::new(window, cx));
+        kiln::Root::new(gallery, window, cx)
+            .capabilities(Capabilities::for_os(Os::Linux))
+            .title(setup::APP_NAME)
+    });
+    let gallery = root.read_with(cx, |root, _| {
+        root.content().clone().downcast::<Gallery>().unwrap()
+    });
+    cx.update(|window, cx| window.focus(&gallery.focus_handle(cx), cx));
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("menu:Go").is_some());
+    cx.simulate_keystrokes("f10 right");
+    let open = root.read_with(cx, |root, cx| root.menu_bar().unwrap().read(cx).open_menu());
+    assert_eq!(open, Some((1, Some(0))), "Go, Next Page");
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert_eq!(page(&gallery, cx), Page::Text);
 }
 
 #[gpui::test]

@@ -6,11 +6,14 @@
 //! the chrome's widgets once took stays, as a view of the active theme and
 //! a way to set one ([`set_ui_theme`]).
 
-use std::sync::{Arc, LazyLock};
+use std::{
+    collections::HashMap,
+    sync::{Arc, LazyLock},
+};
 
 use gpui::{
-    App, Global, Hsla, Pixels, Rgba, SharedString, Subscription, Window, WindowAppearance, px, rgb,
-    rgba,
+    App, Global, Hsla, Pixels, Rgba, SharedString, Subscription, Window, WindowAppearance,
+    WindowId, px, rgb, rgba,
 };
 pub use kiln_core::theme::{Appearance, Color, ThemeData, Tokens};
 
@@ -367,6 +370,40 @@ pub fn observe_system_appearance(window: &Window) -> Subscription {
     window
         .observe_window_appearance(|window, cx| system_appearance_changed(cx, window.appearance()))
 }
+
+/// Keeps the theme following the system's dark or light appearance, as
+/// `window` sees it, while the mode is [`ThemeMode::System`], holding the
+/// subscription ([`observe_system_appearance`]) until the window closes.
+/// Calling it again for the same window does nothing more. GPUI tells only
+/// windows of appearance changes, and has no hook for a window opening, so
+/// each window's root view calls it as it's made.
+pub fn follow_system_appearance(window: &Window, cx: &mut App) {
+    let id = window.window_handle().window_id();
+    if !cx.has_global::<Following>() {
+        let closed = cx.on_window_closed(|cx, closed| {
+            cx.global_mut::<Following>().windows.remove(&closed);
+        });
+        cx.set_global(Following {
+            windows: HashMap::new(),
+            _closed: closed,
+        });
+    }
+    if cx.global::<Following>().windows.contains_key(&id) {
+        return;
+    }
+    let subscription = observe_system_appearance(window);
+    cx.global_mut::<Following>()
+        .windows
+        .insert(id, subscription);
+}
+
+/// The windows whose appearance the theme follows.
+struct Following {
+    windows: HashMap<WindowId, Subscription>,
+    _closed: Subscription,
+}
+
+impl Global for Following {}
 
 /// Re-picks the theme for `appearance` if the mode is [`ThemeMode::System`]
 /// and that changes it.

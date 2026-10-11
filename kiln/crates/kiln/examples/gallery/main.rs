@@ -17,9 +17,9 @@ mod settings;
 mod setup;
 
 use gpui::{App, AppContext as _, Focusable as _};
-use kiln::{WindowSpec, prelude::*};
+use kiln::{GlobalSettings, WindowSpec, prelude::*};
 
-use crate::app::Gallery;
+use crate::{app::Gallery, settings::GallerySettings};
 
 fn main() {
     kiln::application().run(|cx: &mut App| {
@@ -31,14 +31,29 @@ fn main() {
         })
         .detach();
         let spec = WindowSpec::main(setup::APP_NAME);
-        cx.open_window(kiln::window_options(&spec, cx), |window, cx| {
-            window.follow_system_appearance(cx);
-            let gallery = cx.new(|cx| Gallery::new(window, cx));
-            let focus = gallery.focus_handle(cx);
-            window.focus(&focus, cx);
-            gallery
+        let window = cx
+            .open_window(kiln::window_options(&spec, cx), |window, cx| {
+                let gallery = cx.new(|cx| Gallery::new(window, cx));
+                let focus = gallery.focus_handle(cx);
+                window.focus(&focus, cx);
+                // The frame, the menus where they're drawn in the window, and
+                // the theme following the system's appearance.
+                let title = cx.settings::<GallerySettings>().title.clone();
+                cx.new(|cx| {
+                    kiln::Root::new(gallery, window, cx)
+                        .title(title)
+                        .key_context(app::KEY_CONTEXT)
+                })
+            })
+            .expect("the gallery's window opens");
+        // The frame's title follows the settings, as the header's does.
+        cx.observe_global::<GlobalSettings<GallerySettings>>(move |cx| {
+            let title = cx.settings::<GallerySettings>().title.clone();
+            window
+                .update(cx, |root, _, cx| root.set_title(title, cx))
+                .ok();
         })
-        .expect("the gallery's window opens");
+        .detach();
         cx.activate(true);
     });
 }
