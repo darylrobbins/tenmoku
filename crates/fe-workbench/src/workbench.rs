@@ -30,8 +30,7 @@ use crate::{
     pane_drag::TabDropped,
     pane_group::{self, Destination, Direction, PaneOp},
     pane_toolbar::{self, NavButtons, SymbolChain, ToolbarRequest},
-    persist,
-    picker::{self, PaletteOp},
+    persist, picker,
     project_panel::{self, PanelEvent, PanelOp},
     status_bar::{self, StatusOp},
     title_bar,
@@ -1235,7 +1234,7 @@ impl Workbench {
             if let Some(trusted) = trust::op(run, cx) {
                 return self.set_root_trust(trusted, cx);
             }
-            if picker::op(run, cx) == Some(PaletteOp::ToggleQuickOpen) {
+            if picker::toggles_quick_open(run, cx) {
                 return self.toggle_quick_open(window, cx);
             }
             if let Some(op) = nav::op(run, cx) {

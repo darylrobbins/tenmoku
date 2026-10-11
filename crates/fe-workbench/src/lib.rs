@@ -134,6 +134,7 @@ pub fn command_catalog() -> Box<dyn CommandCatalog> {
     Box::new(Catalog(vec![
         Box::new(new_registry()),
         Box::new(picker::registry()),
+        kiln_shell::picker::catalog(),
         Box::new(dock::registry()),
         Box::new(find_bar::registry()),
         Box::new(lsp::registry()),
