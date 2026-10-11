@@ -1,0 +1,384 @@
+# Jump cases for fe-vim's oracle: `gs{c1}{c2}` and `gS{c1}{c2}` as a motion
+# (counted, case folded, `<Space>` for a blank or a line end, a same-char
+# pair at a run's start), after `d` `c` `y` with and without a register, in
+# `v` `V` and `<C-v>`, undone, and repeated with `.`.
+# nvim has no jump, so each case's oracle_keys are what nvim is fed instead
+# of keys: mark z set where this spec says the jump lands
+# (`:call setpos("'z",[0,R,C,0])<CR>`, before anything else, as `:` would
+# end a visual mode), then `` `z `` for the jump (in normal or a visual mode,
+# and backward after an operator, exclusive as `gS` is) or `` v`z `` forward
+# after an operator (inclusive, as `gs` is). The `.` cases use the
+# equivalent search instead (`dv/ab<CR>` then `.`, `d?ab<CR>` for `gS`;
+# patterns with no regex specials, no upper case and no wrap), as nvim's
+# `.` repeats a mark motion to the same place where the jump finds the
+# match again. jump_matches_neovim drops mark z and register / from nvim's
+# side, which only the swap leaves.
+# Hand-written: name, buffer (rows joined with \n, no trailing newline),
+# cursor = [row, byte column], keys in vim notation (a space typed as itself)
+# and oracle_keys. What nvim does with each is recorded in jump.expected.json
+# by the ignored `record_corpus_with_neovim` test; edit a case, then
+# re-record.
+
+[[case]]
+name = "move_forward"
+buffer = "one two\nthree two"
+cursor = [0, 0]
+keys = "gstw"
+oracle_keys = ":call setpos(\"'z\",[0,1,5,0])<CR>`z"
+
+[[case]]
+name = "move_forward_next_row"
+buffer = "one two\nthree two"
+cursor = [0, 4]
+keys = "gstw"
+oracle_keys = ":call setpos(\"'z\",[0,2,7,0])<CR>`z"
+
+[[case]]
+name = "move_backward"
+buffer = "one two\nthree two"
+cursor = [1, 6]
+keys = "gStw"
+oracle_keys = ":call setpos(\"'z\",[0,1,5,0])<CR>`z"
+
+[[case]]
+name = "move_backward_prev_row"
+buffer = "one two\nthree two"
+cursor = [1, 0]
+keys = "gSon"
+oracle_keys = ":call setpos(\"'z\",[0,1,1,0])<CR>`z"
+
+[[case]]
+name = "move_counted"
+buffer = "ab x ab\ny ab z\nab"
+cursor = [0, 0]
+keys = "3gsab"
+oracle_keys = ":call setpos(\"'z\",[0,3,1,0])<CR>`z"
+
+[[case]]
+name = "move_counted_backward"
+buffer = "ab x ab\ny ab z\nab"
+cursor = [2, 1]
+keys = "2gSab"
+oracle_keys = ":call setpos(\"'z\",[0,2,3,0])<CR>`z"
+
+[[case]]
+name = "move_folds_case"
+buffer = "foo Bar\nbAR baz"
+cursor = [0, 0]
+keys = "2gsba"
+oracle_keys = ":call setpos(\"'z\",[0,2,1,0])<CR>`z"
+
+[[case]]
+name = "move_space_line_end"
+buffer = "abc\nxyc d\nc"
+cursor = [0, 0]
+keys = "gsc "
+oracle_keys = ":call setpos(\"'z\",[0,1,3,0])<CR>`z"
+
+[[case]]
+name = "move_space_empty_row"
+buffer = "abc\n\n  x\n\nend"
+cursor = [0, 1]
+keys = "2gs  "
+oracle_keys = ":call setpos(\"'z\",[0,3,1,0])<CR>`z"
+
+[[case]]
+name = "move_space_tab"
+buffer = "a\tb a b"
+cursor = [0, 4]
+keys = "gSa "
+oracle_keys = ":call setpos(\"'z\",[0,1,1,0])<CR>`z"
+
+[[case]]
+name = "move_run_start"
+buffer = "x ==== y =="
+cursor = [0, 0]
+keys = "2gs=="
+oracle_keys = ":call setpos(\"'z\",[0,1,10,0])<CR>`z"
+
+[[case]]
+name = "move_multibyte"
+buffer = "café ok\nété éx"
+cursor = [0, 0]
+keys = "2gsé "
+oracle_keys = ":call setpos(\"'z\",[0,2,4,0])<CR>`z"
+
+[[case]]
+name = "delete_forward"
+buffer = "one two three"
+cursor = [0, 0]
+keys = "dgsth"
+oracle_keys = ":call setpos(\"'z\",[0,1,9,0])<CR>dv`z"
+
+[[case]]
+name = "delete_forward_rows"
+buffer = "one two\nthree four\nfive"
+cursor = [0, 2]
+keys = "dgsfo"
+oracle_keys = ":call setpos(\"'z\",[0,2,7,0])<CR>dv`z"
+
+[[case]]
+name = "delete_backward"
+buffer = "one two three"
+cursor = [0, 10]
+keys = "dgStw"
+oracle_keys = ":call setpos(\"'z\",[0,1,5,0])<CR>d`z"
+
+[[case]]
+name = "delete_backward_rows"
+buffer = "one two\nthree four\nfive"
+cursor = [2, 2]
+keys = "dgSre"
+oracle_keys = ":call setpos(\"'z\",[0,2,3,0])<CR>d`z"
+
+[[case]]
+name = "delete_backward_column_0"
+buffer = "  one\ntwo\nthree"
+cursor = [2, 0]
+keys = "dgSon"
+oracle_keys = ":call setpos(\"'z\",[0,1,3,0])<CR>d`z"
+
+[[case]]
+name = "delete_counted"
+buffer = "x ab1 ab2 ab3"
+cursor = [0, 0]
+keys = "d3gsab"
+oracle_keys = ":call setpos(\"'z\",[0,1,11,0])<CR>dv`z"
+
+[[case]]
+name = "delete_counted_backward"
+buffer = "ab cd ab cd ab"
+cursor = [0, 13]
+keys = "d2gScd"
+oracle_keys = ":call setpos(\"'z\",[0,1,4,0])<CR>d`z"
+
+[[case]]
+name = "delete_register"
+buffer = "one two\nthree"
+cursor = [0, 0]
+keys = "\"adgsre"
+oracle_keys = ":call setpos(\"'z\",[0,2,3,0])<CR>\"adv`z"
+
+[[case]]
+name = "delete_to_empty_row"
+buffer = "abc\n\ndef"
+cursor = [0, 1]
+keys = "dgs  "
+oracle_keys = ":call setpos(\"'z\",[0,2,1,0])<CR>dv`z"
+
+[[case]]
+name = "delete_line_end"
+buffer = "ab cd\nef gh"
+cursor = [0, 0]
+keys = "dgsh "
+oracle_keys = ":call setpos(\"'z\",[0,2,5,0])<CR>dv`z"
+
+[[case]]
+name = "delete_undo"
+buffer = "one two three"
+cursor = [0, 0]
+keys = "dgsthu"
+oracle_keys = ":call setpos(\"'z\",[0,1,9,0])<CR>dv`zu"
+
+[[case]]
+name = "delete_backward_undo"
+buffer = "one\ntwo three"
+cursor = [1, 8]
+keys = "dgSneu"
+oracle_keys = ":call setpos(\"'z\",[0,1,2,0])<CR>d`zu"
+
+[[case]]
+name = "change_forward"
+buffer = "one two three"
+cursor = [0, 0]
+keys = "cgstwX<Esc>"
+oracle_keys = ":call setpos(\"'z\",[0,1,5,0])<CR>cv`zX<Esc>"
+
+[[case]]
+name = "change_backward"
+buffer = "one two three"
+cursor = [0, 12]
+keys = "cgSwoX<Esc>"
+oracle_keys = ":call setpos(\"'z\",[0,1,6,0])<CR>c`zX<Esc>"
+
+[[case]]
+name = "change_register_rows"
+buffer = "one two\nthree"
+cursor = [0, 4]
+keys = "\"bcgshrY<Esc>"
+oracle_keys = ":call setpos(\"'z\",[0,2,2,0])<CR>\"bcv`zY<Esc>"
+
+[[case]]
+name = "change_undo"
+buffer = "one two three"
+cursor = [0, 0]
+keys = "cgstwX<Esc>u"
+oracle_keys = ":call setpos(\"'z\",[0,1,5,0])<CR>cv`zX<Esc>u"
+
+[[case]]
+name = "yank_forward"
+buffer = "one two three"
+cursor = [0, 0]
+keys = "ygsth"
+oracle_keys = ":call setpos(\"'z\",[0,1,9,0])<CR>yv`z"
+
+[[case]]
+name = "yank_backward"
+buffer = "one two three"
+cursor = [0, 10]
+keys = "ygStw"
+oracle_keys = ":call setpos(\"'z\",[0,1,5,0])<CR>y`z"
+
+[[case]]
+name = "yank_register_rows"
+buffer = "one two\nthree"
+cursor = [1, 3]
+keys = "\"cygSe "
+oracle_keys = ":call setpos(\"'z\",[0,1,3,0])<CR>\"cy`z"
+
+[[case]]
+name = "yank_counted"
+buffer = "xa ya za"
+cursor = [0, 0]
+keys = "y2gsa "
+oracle_keys = ":call setpos(\"'z\",[0,1,5,0])<CR>yv`z"
+
+[[case]]
+name = "visual_forward"
+buffer = "one two\nthree"
+cursor = [0, 1]
+keys = "vgshr"
+oracle_keys = ":call setpos(\"'z\",[0,2,2,0])<CR>v`z"
+
+[[case]]
+name = "visual_backward"
+buffer = "one two\nthree"
+cursor = [1, 3]
+keys = "vgStw"
+oracle_keys = ":call setpos(\"'z\",[0,1,5,0])<CR>v`z"
+
+[[case]]
+name = "visual_counted_delete"
+buffer = "ab ab ab ab"
+cursor = [0, 0]
+keys = "v3gsabd"
+oracle_keys = ":call setpos(\"'z\",[0,1,10,0])<CR>v`zd"
+
+[[case]]
+name = "visual_line"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [0, 1]
+keys = "Vgsre"
+oracle_keys = ":call setpos(\"'z\",[0,3,3,0])<CR>V`z"
+
+[[case]]
+name = "visual_line_delete"
+buffer = "one\ntwo\nthree\nfour"
+cursor = [3, 1]
+keys = "VgSwod"
+oracle_keys = ":call setpos(\"'z\",[0,2,2,0])<CR>V`zd"
+
+[[case]]
+name = "visual_block"
+buffer = "abcd\nefgh\nijkl\nmnop"
+cursor = [0, 1]
+keys = "<C-v>gskl"
+oracle_keys = ":call setpos(\"'z\",[0,3,3,0])<CR><C-v>`z"
+
+[[case]]
+name = "visual_block_delete"
+buffer = "abcd\nefgh\nijkl\nmnop"
+cursor = [3, 2]
+keys = "<C-v>gSfgd"
+oracle_keys = ":call setpos(\"'z\",[0,2,2,0])<CR><C-v>`zd"
+
+[[case]]
+name = "visual_yank"
+buffer = "one two three"
+cursor = [0, 0]
+keys = "vgse y"
+oracle_keys = ":call setpos(\"'z\",[0,1,3,0])<CR>v`zy"
+
+[[case]]
+name = "visual_row_end_backward"
+buffer = "abc\nabc\nxc"
+cursor = [1, 0]
+keys = "v$gSc "
+oracle_keys = ":call setpos(\"'z\",[0,2,3,0])<CR>v$`z"
+
+[[case]]
+name = "visual_row_end_backward_counted"
+buffer = "abc\nabc\nxc"
+cursor = [1, 0]
+keys = "v$2gSc "
+oracle_keys = ":call setpos(\"'z\",[0,1,3,0])<CR>v$`z"
+
+[[case]]
+name = "visual_line_row_end_backward"
+buffer = "abc\nabc\nxc"
+cursor = [1, 0]
+keys = "V$gSc d"
+oracle_keys = ":call setpos(\"'z\",[0,2,3,0])<CR>V$`zd"
+
+[[case]]
+name = "visual_block_row_end_backward"
+buffer = "abc\nabc\nxc"
+cursor = [1, 0]
+keys = "<C-v>$gSc "
+oracle_keys = ":call setpos(\"'z\",[0,2,3,0])<CR><C-v>$`z"
+
+[[case]]
+name = "visual_block_row_end_forward_delete"
+buffer = "abc\nabc\nxc"
+cursor = [1, 0]
+keys = "<C-v>$gsc d"
+oracle_keys = ":call setpos(\"'z\",[0,3,2,0])<CR><C-v>$`zd"
+
+[[case]]
+name = "dot_forward"
+buffer = "1ab2ab3ab4"
+cursor = [0, 0]
+keys = "dgsab."
+oracle_keys = "dv/ab<CR>."
+
+[[case]]
+name = "dot_backward"
+buffer = "1ab2ab3ab4"
+cursor = [0, 9]
+keys = "dgSab."
+oracle_keys = "d?ab<CR>."
+
+[[case]]
+name = "dot_counted"
+buffer = "1ab2ab3ab4ab5"
+cursor = [0, 0]
+keys = "dgsab2."
+oracle_keys = "dv/ab<CR>2."
+
+[[case]]
+name = "dot_backward_rows"
+buffer = "ab x\nab y\nab z"
+cursor = [2, 3]
+keys = "dgSab."
+oracle_keys = "d?ab<CR>."
+
+[[case]]
+name = "dot_register_rows"
+buffer = "one ab\ntwo ab\nthree ab"
+cursor = [0, 0]
+keys = "\"adgsab."
+oracle_keys = "\"adv/ab<CR>."
+
+[[case]]
+name = "dot_change"
+buffer = "x ab y ab z ab"
+cursor = [0, 0]
+keys = "cgsabQ<Esc>."
+oracle_keys = "cv/ab<CR>Q<Esc>."
+
+[[case]]
+name = "dot_undo"
+buffer = "1ab2ab3ab4"
+cursor = [0, 0]
+keys = "dgsab.u"
+oracle_keys = "dv/ab<CR>.u"

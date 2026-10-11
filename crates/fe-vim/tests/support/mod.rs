@@ -33,6 +33,10 @@ pub(crate) struct Case {
     /// row too.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) window_rows: Option<u32>,
+    /// What nvim is fed instead of `keys`, for a command it doesn't have
+    /// (the jump, swapped for a mark motion to the same place).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) oracle_keys: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -60,6 +64,8 @@ pub(crate) struct Recorded {
     pub(crate) keys: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) window_rows: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) oracle_keys: Option<String>,
     pub(crate) expect: Expect,
 }
 
@@ -71,6 +77,7 @@ impl Recorded {
             cursor,
             keys,
             window_rows,
+            oracle_keys,
         } = case;
         Self {
             name,
@@ -78,6 +85,7 @@ impl Recorded {
             cursor,
             keys,
             window_rows,
+            oracle_keys,
             expect: expect.into(),
         }
     }
@@ -89,6 +97,7 @@ impl Recorded {
             cursor: self.cursor,
             keys: self.keys.clone(),
             window_rows: self.window_rows,
+            oracle_keys: self.oracle_keys.clone(),
         }
     }
 }
@@ -219,16 +228,18 @@ pub(crate) fn parse_corpus(source: &str) -> Result<Vec<Case>, String> {
                 "{name}: the buffer ends in a newline; rows are joined with \\n, as nvim holds them"
             ));
         }
-        let keys = parse_keys(&case.keys).map_err(|error| format!("{name}: {error}"))?;
-        if keys.first() == Some(&VimKey::Char('.')) {
-            return Err(format!(
-                "{name}: keys start with `.`, and nvim's last change can't be reset between cases"
-            ));
-        }
-        if names_clipboard(&keys) {
-            return Err(format!(
-                "{name}: keys name register + or *, which headless nvim would take from the real clipboard"
-            ));
+        for keys in std::iter::once(&case.keys).chain(&case.oracle_keys) {
+            let keys = parse_keys(keys).map_err(|error| format!("{name}: {error}"))?;
+            if keys.first() == Some(&VimKey::Char('.')) {
+                return Err(format!(
+                    "{name}: keys start with `.`, and nvim's last change can't be reset between cases"
+                ));
+            }
+            if names_clipboard(&keys) {
+                return Err(format!(
+                    "{name}: keys name register + or *, which headless nvim would take from the real clipboard"
+                ));
+            }
         }
     }
     Ok(file.cases)

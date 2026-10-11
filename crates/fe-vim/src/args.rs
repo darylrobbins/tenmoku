@@ -49,7 +49,8 @@ pub enum Operator {
 /// and `search_word_backward` are `*` and `#`: they resolve to a `search`
 /// before they run, so `vim.move` and `vim.operate` take them but nothing
 /// else sees them. `mark` is `'{name}` and `` `{name} `` (`exact`): `{"mark":
-/// {"name": "a", "exact": true}}`.
+/// {"name": "a", "exact": true}}`. `jump` is `gs{c1}{c2}` and `gS{c1}{c2}`:
+/// `{"jump": {"chars": "ab", "forward": true}}`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Motion {
@@ -85,6 +86,7 @@ pub enum Motion {
     SearchWordForward,
     SearchWordBackward,
     Mark(MarkMotion),
+    Jump(JumpMotion),
     /// A `mark` once resolved: the mark's offset in the text it was
     /// resolved in. Only `vim.move` and `vim.operate` make one, as they
     /// run; it's never serialized.
@@ -104,6 +106,41 @@ pub struct MarkMotion {
     pub name: char,
     #[serde(default)]
     pub exact: bool,
+}
+
+/// `gs{c1}{c2}`, or `gS{c1}{c2}` if not `forward`, as a motion: the
+/// `count`th match of the two chars after the caret, or before it, over the
+/// whole text with no wrap, landing on `{c1}` ([`crate::jump::label::targets`]
+/// says what matches).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub struct JumpMotion {
+    #[schemars(with = "String")]
+    pub chars: JumpChars,
+    pub forward: bool,
+}
+
+/// The two chars a jump matches, typed as they are. It serializes as a
+/// two-char string.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct JumpChars(pub [char; 2]);
+
+impl Serialize for JumpChars {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(&self.0.iter().collect::<String>())
+    }
+}
+
+impl<'de> Deserialize<'de> for JumpChars {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        let mut chars = text.chars();
+        match (chars.next(), chars.next(), chars.next()) {
+            (Some(c1), Some(c2), None) => Ok(Self([c1, c2])),
+            _ => Err(serde::de::Error::custom(format!(
+                "a jump takes two chars, not {text:?}"
+            ))),
+        }
+    }
 }
 
 /// `/` and `?` as a motion: the `count`th match of `pattern` (Vim's syntax,
@@ -187,6 +224,7 @@ impl Motion {
             | Self::FirstNonBlank
             | Self::FindBackward(_)
             | Self::TillBackward(_)
+            | Self::Jump(JumpMotion { forward: false, .. })
             | Self::Search(_)
             | Self::SearchWord(_)
             | Self::SearchNext
@@ -198,6 +236,7 @@ impl Motion {
             | Self::LineEnd
             | Self::FindForward(_)
             | Self::TillForward(_)
+            | Self::Jump(JumpMotion { forward: true, .. })
             | Self::RepeatFind
             | Self::RepeatFindReverse
             | Self::MatchPair => RangeClass::Inclusive,
@@ -212,7 +251,8 @@ impl Motion {
     }
 
     /// Whether it's a jump (`:help jump-motions`), which sets the jump mark
-    /// (`''`) to where it left from: `gg G % / ? n N * #`, `'` and `` ` ``.
+    /// (`''`) to where it left from: `gg G % / ? n N * #`, `'` and `` ` ``,
+    /// and `gs` and `gS`.
     pub fn is_jump(self) -> bool {
         matches!(
             self,
@@ -227,6 +267,7 @@ impl Motion {
                 | Self::SearchWordBackward
                 | Self::Mark(_)
                 | Self::MarkAt { .. }
+                | Self::Jump(_)
         )
     }
 }
@@ -268,7 +309,8 @@ pub enum Target {
 
 impl Target {
     /// Whether a delete over it writes register `1` even within a row
-    /// (`:help quote_number`): `%`, `/`, `?` and `` ` ``.
+    /// (`:help quote_number`): `%`, `/`, `?` and `` ` ``, and `gs` and `gS`
+    /// as `` ` ``.
     pub fn writes_numbered(self) -> bool {
         matches!(
             self,
@@ -282,6 +324,7 @@ impl Target {
                     | Motion::SearchWordBackward
                     | Motion::Mark(MarkMotion { exact: true, .. })
                     | Motion::MarkAt { exact: true, .. }
+                    | Motion::Jump(_)
             )
         )
     }

@@ -1,5 +1,7 @@
 //! The pending-input reducer: keys in, at most one invocation out.
 
+use std::ops::ControlFlow;
+
 use fe_command::{CommandId, Invocation, Source};
 use serde::Serialize;
 
@@ -11,6 +13,7 @@ use crate::{
         SelectArgs, SwapArgs, Target, TextObject, VisualArgs, VisualKind,
     },
     feature,
+    jump::JumpPrefix,
 };
 
 /// The whole incomplete command: counts, `"{reg}`, an operator and a prefix
@@ -62,6 +65,8 @@ enum Prefix {
     Record,
     /// `@`, awaiting the register to play.
     Play,
+    /// `gs` or `gS`, awaiting the chars to jump to.
+    Jump(JumpPrefix),
 }
 
 /// What a [`Pending`] is waiting on, for `vim.pending_kind` and which-key.
@@ -80,11 +85,13 @@ pub enum PendingKind {
     SetMark,
     /// `'` or `` ` ``.
     Mark,
+    /// `gs` or `gS`.
+    Jump,
 }
 
 impl PendingKind {
     /// Its `vim.pending_kind` value: `count`, `register`, `operator`, `g`, `z`,
-    /// `find`, `text_object`, `replace`, `set_mark` or `mark`.
+    /// `find`, `text_object`, `replace`, `set_mark`, `mark` or `jump`.
     pub fn name(self) -> &'static str {
         match self {
             Self::Count => "count",
@@ -97,6 +104,7 @@ impl PendingKind {
             Self::Replace => "replace",
             Self::SetMark => "set_mark",
             Self::Mark => "mark",
+            Self::Jump => "jump",
         }
     }
 }
@@ -160,6 +168,7 @@ impl Pending {
             Some(Prefix::Replace) => PendingKind::Replace,
             Some(Prefix::SetMark) => PendingKind::SetMark,
             Some(Prefix::Mark { .. }) => PendingKind::Mark,
+            Some(Prefix::Jump(_)) => PendingKind::Jump,
             None if self.typing.is_some() => PendingKind::Count,
             None if self.operator.is_some() => PendingKind::Operator,
             None if self.register.is_some() => PendingKind::Register,
@@ -204,6 +213,14 @@ impl Pending {
     #[allow(dead_code, reason = "for the feature modules' hooks")]
     pub(crate) fn is_block(&self) -> bool {
         self.block
+    }
+
+    /// The same pending input, awaiting a jump's chars.
+    pub(crate) fn jumping(self, jump: JumpPrefix) -> Self {
+        Self {
+            prefix: Some(Prefix::Jump(jump)),
+            ..self
+        }
     }
 
     /// A key that doesn't continue the command, unless a feature takes it
@@ -356,6 +373,10 @@ impl Pending {
                     count: self.count,
                 },
             ),
+            Prefix::Jump(jump) => match jump.then(ch) {
+                ControlFlow::Continue(jump) => Step::Wait(self.jumping(jump)),
+                ControlFlow::Break(motion) => self.commit(Target::Motion(motion)),
+            },
             _ => self.unmatched(prefix, key),
         }
     }

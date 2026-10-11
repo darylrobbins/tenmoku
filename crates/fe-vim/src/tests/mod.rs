@@ -14,6 +14,7 @@ mod find_query;
 mod folds;
 mod increment;
 mod insert;
+mod jump;
 mod macros;
 mod marks;
 mod motions;

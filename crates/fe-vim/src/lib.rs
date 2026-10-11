@@ -715,6 +715,7 @@ mod headless;
 mod history;
 pub mod increment;
 mod insert;
+pub mod jump;
 mod key;
 mod macros;
 mod marks;
@@ -732,10 +733,10 @@ mod text_object;
 mod visual;
 
 pub use args::{
-    CommandLineArgs, CommandLineKind, CountArgs, InsertArgs, InsertAt, MarkArgs, MarkMotion,
-    Motion, MoveArgs, OperateArgs, Operator, PlayArgs, PutArgs, RangeClass, RecordArgs,
-    ReplaceCharArgs, Search, SearchPattern, SelectArgs, SubmitArgs, SwapArgs, Target, TextObject,
-    VisualArgs, VisualKind,
+    CommandLineArgs, CommandLineKind, CountArgs, InsertArgs, InsertAt, JumpChars, JumpMotion,
+    MarkArgs, MarkMotion, Motion, MoveArgs, OperateArgs, Operator, PlayArgs, PutArgs, RangeClass,
+    RecordArgs, ReplaceCharArgs, Search, SearchPattern, SelectArgs, SubmitArgs, SwapArgs, Target,
+    TextObject, VisualArgs, VisualKind,
 };
 pub use commands::{VimCommands, VimTarget, registry};
 pub use ex::{Address, Base, Ex, ExCommand, ExError, HostCommand, LineSearch, Part};

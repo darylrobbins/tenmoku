@@ -17,8 +17,8 @@ use fe_editor::{EditorModel, commands::origin};
 use fe_text::Text;
 
 use crate::{
-    Change, Motion, MoveArgs, OperateArgs, Operator, PutArgs, RangeClass, Register, Registers,
-    Target, VimState, VimTarget, Write, cmdline, history, insert, marks,
+    Change, JumpMotion, Motion, MoveArgs, OperateArgs, Operator, PutArgs, RangeClass, Register,
+    Registers, Target, VimState, VimTarget, Write, cmdline, history, insert, marks,
     motion::{self, Cursor},
     text_object, visual,
 };
@@ -648,8 +648,14 @@ fn operate_unless_failing(
                 }),
                 _ => None,
             };
+            // `gs` is inclusive as a `v` makes a motion (`` dv`z ``), which
+            // `:help d`'s exception doesn't take.
+            let forced = matches!(
+                args.target,
+                Target::Motion(Motion::Jump(JumpMotion { forward: true, .. }))
+            );
             let span = match args.operator {
-                Operator::Delete if selected.is_none() => whole_rows(&text, span),
+                Operator::Delete if selected.is_none() && !forced => whole_rows(&text, span),
                 _ => span,
             };
             (span, start)

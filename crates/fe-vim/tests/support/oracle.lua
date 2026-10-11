@@ -2,7 +2,8 @@
 -- Run by the ignored `record_corpus_with_neovim` test:
 --   nvim --clean --headless -l oracle.lua <cases.json> <results.json>
 -- Each case is {name, buffer, cursor = {row, byte_col}, keys}, rows from 0,
--- and optionally window_rows: the window is then that many rows high from
+-- optionally oracle_keys, fed instead of keys (a command nvim doesn't have,
+-- swapped for one that does the same), and optionally window_rows: the window is then that many rows high from
 -- before the cursor is set, with 'scroll' half of it, and the result holds
 -- `top`, the first row it shows (line('w0') - 1). 'scrolloff' is the
 -- default, 0.
@@ -81,7 +82,7 @@ for _, case in ipairs(vim.json.decode(read(input))) do
   end
   vim.api.nvim_win_set_cursor(0, { case.cursor[1] + 1, case.cursor[2] })
   -- do_lt: `<lt>` is `<`, as fe-vim's parse_keys reads it.
-  local keys = vim.api.nvim_replace_termcodes(case.keys, true, true, true)
+  local keys = vim.api.nvim_replace_termcodes(case.oracle_keys or case.keys, true, true, true)
   vim.api.nvim_feedkeys(keys, "xt", false)
 
   local cursor = vim.api.nvim_win_get_cursor(0)

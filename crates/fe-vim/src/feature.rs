@@ -9,7 +9,7 @@
 
 use fe_command::Registry;
 
-use crate::{Pending, Step, VimCommands, VimKey, folds, increment, scroll};
+use crate::{Pending, Step, VimCommands, VimKey, folds, increment, jump, scroll};
 
 /// One feature's hooks into the reducer and the registry.
 pub(crate) struct Feature {
@@ -34,7 +34,12 @@ impl Feature {
     };
 }
 
-pub(crate) const FEATURES: [&Feature; 3] = [&increment::FEATURE, &folds::FEATURE, &scroll::FEATURE];
+pub(crate) const FEATURES: [&Feature; 4] = [
+    &increment::FEATURE,
+    &folds::FEATURE,
+    &scroll::FEATURE,
+    &jump::FEATURE,
+];
 
 /// The first feature's answer to a key the reducer would reject.
 pub(crate) fn key(pending: &Pending, key: VimKey) -> Option<Step> {

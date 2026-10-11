@@ -1,0 +1,1750 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "move_forward",
+      "buffer": "one two\nthree two",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gstw",
+      "oracle_keys": ":call setpos(\"'z\",[0,1,5,0])<CR>`z",
+      "expect": {
+        "buffer": "one two\nthree two",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "z": [
+            0,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "move_forward_next_row",
+      "buffer": "one two\nthree two",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "gstw",
+      "oracle_keys": ":call setpos(\"'z\",[0,2,7,0])<CR>`z",
+      "expect": {
+        "buffer": "one two\nthree two",
+        "cursor": [
+          1,
+          6
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "z": [
+            1,
+            6
+          ]
+        }
+      }
+    },
+    {
+      "name": "move_backward",
+      "buffer": "one two\nthree two",
+      "cursor": [
+        1,
+        6
+      ],
+      "keys": "gStw",
+      "oracle_keys": ":call setpos(\"'z\",[0,1,5,0])<CR>`z",
+      "expect": {
+        "buffer": "one two\nthree two",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "z": [
+            0,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "move_backward_prev_row",
+      "buffer": "one two\nthree two",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "gSon",
+      "oracle_keys": ":call setpos(\"'z\",[0,1,1,0])<CR>`z",
+      "expect": {
+        "buffer": "one two\nthree two",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "z": [
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "move_counted",
+      "buffer": "ab x ab\ny ab z\nab",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3gsab",
+      "oracle_keys": ":call setpos(\"'z\",[0,3,1,0])<CR>`z",
+      "expect": {
+        "buffer": "ab x ab\ny ab z\nab",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "z": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "move_counted_backward",
+      "buffer": "ab x ab\ny ab z\nab",
+      "cursor": [
+        2,
+        1
+      ],
+      "keys": "2gSab",
+      "oracle_keys": ":call setpos(\"'z\",[0,2,3,0])<CR>`z",
+      "expect": {
+        "buffer": "ab x ab\ny ab z\nab",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "z": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "move_folds_case",
+      "buffer": "foo Bar\nbAR baz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2gsba",
+      "oracle_keys": ":call setpos(\"'z\",[0,2,1,0])<CR>`z",
+      "expect": {
+        "buffer": "foo Bar\nbAR baz",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "z": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "move_space_line_end",
+      "buffer": "abc\nxyc d\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gsc ",
+      "oracle_keys": ":call setpos(\"'z\",[0,1,3,0])<CR>`z",
+      "expect": {
+        "buffer": "abc\nxyc d\nc",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "z": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "move_space_empty_row",
+      "buffer": "abc\n\n  x\n\nend",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "2gs  ",
+      "oracle_keys": ":call setpos(\"'z\",[0,3,1,0])<CR>`z",
+      "expect": {
+        "buffer": "abc\n\n  x\n\nend",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "z": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "move_space_tab",
+      "buffer": "a\tb a b",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "gSa ",
+      "oracle_keys": ":call setpos(\"'z\",[0,1,1,0])<CR>`z",
+      "expect": {
+        "buffer": "a\tb a b",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "z": [
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "move_run_start",
+      "buffer": "x ==== y ==",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2gs==",
+      "oracle_keys": ":call setpos(\"'z\",[0,1,10,0])<CR>`z",
+      "expect": {
+        "buffer": "x ==== y ==",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "z": [
+            0,
+            9
+          ]
+        }
+      }
+    },
+    {
+      "name": "move_multibyte",
+      "buffer": "café ok\nété éx",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2gsé ",
+      "oracle_keys": ":call setpos(\"'z\",[0,2,4,0])<CR>`z",
+      "expect": {
+        "buffer": "café ok\nété éx",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "z": [
+            1,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "delete_forward",
+      "buffer": "one two three",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dgsth",
+      "oracle_keys": ":call setpos(\"'z\",[0,1,9,0])<CR>dv`z",
+      "expect": {
+        "buffer": "hree",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one two t",
+            "linewise": false
+          },
+          "-": {
+            "text": "one two t",
+            "linewise": false
+          },
+          "1": {
+            "text": "one two t",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "z": [
+            0,
+            8
+          ]
+        }
+      }
+    },
+    {
+      "name": "delete_forward_rows",
+      "buffer": "one two\nthree four\nfive",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "dgsfo",
+      "oracle_keys": ":call setpos(\"'z\",[0,2,7,0])<CR>dv`z",
+      "expect": {
+        "buffer": "onour\nfive",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "e two\nthree f",
+            "linewise": false
+          },
+          "1": {
+            "text": "e two\nthree f",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "z": [
+            0,
+            8
+          ]
+        }
+      }
+    },
+    {
+      "name": "delete_backward",
+      "buffer": "one two three",
+      "cursor": [
+        0,
+        10
+      ],
+      "keys": "dgStw",
+      "oracle_keys": ":call setpos(\"'z\",[0,1,5,0])<CR>d`z",
+      "expect": {
+        "buffer": "one ree",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two th",
+            "linewise": false
+          },
+          "-": {
+            "text": "two th",
+            "linewise": false
+          },
+          "1": {
+            "text": "two th",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "z": [
+            0,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "delete_backward_rows",
+      "buffer": "one two\nthree four\nfive",
+      "cursor": [
+        2,
+        2
+      ],
+      "keys": "dgSre",
+      "oracle_keys": ":call setpos(\"'z\",[0,2,3,0])<CR>d`z",
+      "expect": {
+        "buffer": "one two\nthve",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ree four\nfi",
+            "linewise": false
+          },
+          "1": {
+            "text": "ree four\nfi",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "z": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "delete_backward_column_0",
+      "buffer": "  one\ntwo\nthree",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "dgSon",
+      "oracle_keys": ":call setpos(\"'z\",[0,1,3,0])<CR>d`z",
+      "expect": {
+        "buffer": "three",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "  one\ntwo\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "  one\ntwo\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "delete_counted",
+      "buffer": "x ab1 ab2 ab3",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d3gsab",
+      "oracle_keys": ":call setpos(\"'z\",[0,1,11,0])<CR>dv`z",
+      "expect": {
+        "buffer": "b3",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x ab1 ab2 a",
+            "linewise": false
+          },
+          "-": {
+            "text": "x ab1 ab2 a",
+            "linewise": false
+          },
+          "1": {
+            "text": "x ab1 ab2 a",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "z": [
+            0,
+            10
+          ]
+        }
+      }
+    },
+    {
+      "name": "delete_counted_backward",
+      "buffer": "ab cd ab cd ab",
+      "cursor": [
+        0,
+        13
+      ],
+      "keys": "d2gScd",
+      "oracle_keys": ":call setpos(\"'z\",[0,1,4,0])<CR>d`z",
+      "expect": {
+        "buffer": "ab b",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "cd ab cd a",
+            "linewise": false
+          },
+          "-": {
+            "text": "cd ab cd a",
+            "linewise": false
+          },
+          "1": {
+            "text": "cd ab cd a",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "z": [
+            0,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "delete_register",
+      "buffer": "one two\nthree",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\"adgsre",
+      "oracle_keys": ":call setpos(\"'z\",[0,2,3,0])<CR>\"adv`z",
+      "expect": {
+        "buffer": "ee",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one two\nthr",
+            "linewise": false
+          },
+          "1": {
+            "text": "one two\nthr",
+            "linewise": false
+          },
+          "a": {
+            "text": "one two\nthr",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "z": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "delete_to_empty_row",
+      "buffer": "abc\n\ndef",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "dgs  ",
+      "oracle_keys": ":call setpos(\"'z\",[0,2,1,0])<CR>dv`z",
+      "expect": {
+        "buffer": "a\ndef",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bc\n",
+            "linewise": false
+          },
+          "1": {
+            "text": "bc\n",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "z": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "delete_line_end",
+      "buffer": "ab cd\nef gh",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dgsh ",
+      "oracle_keys": ":call setpos(\"'z\",[0,2,5,0])<CR>dv`z",
+      "expect": {
+        "buffer": "",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab cd\nef gh",
+            "linewise": false
+          },
+          "1": {
+            "text": "ab cd\nef gh",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "z": [
+            0,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "delete_undo",
+      "buffer": "one two three",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dgsthu",
+      "oracle_keys": ":call setpos(\"'z\",[0,1,9,0])<CR>dv`zu",
+      "expect": {
+        "buffer": "one two three",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one two t",
+            "linewise": false
+          },
+          "-": {
+            "text": "one two t",
+            "linewise": false
+          },
+          "1": {
+            "text": "one two t",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "z": [
+            0,
+            8
+          ]
+        }
+      }
+    },
+    {
+      "name": "delete_backward_undo",
+      "buffer": "one\ntwo three",
+      "cursor": [
+        1,
+        8
+      ],
+      "keys": "dgSneu",
+      "oracle_keys": ":call setpos(\"'z\",[0,1,2,0])<CR>d`zu",
+      "expect": {
+        "buffer": "one\ntwo three",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ne\ntwo thre",
+            "linewise": false
+          },
+          "1": {
+            "text": "ne\ntwo thre",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "z": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "change_forward",
+      "buffer": "one two three",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "cgstwX<Esc>",
+      "oracle_keys": ":call setpos(\"'z\",[0,1,5,0])<CR>cv`zX<Esc>",
+      "expect": {
+        "buffer": "Xwo three",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one t",
+            "linewise": false
+          },
+          "-": {
+            "text": "one t",
+            "linewise": false
+          },
+          "1": {
+            "text": "one t",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "z": [
+            0,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "change_backward",
+      "buffer": "one two three",
+      "cursor": [
+        0,
+        12
+      ],
+      "keys": "cgSwoX<Esc>",
+      "oracle_keys": ":call setpos(\"'z\",[0,1,6,0])<CR>c`zX<Esc>",
+      "expect": {
+        "buffer": "one tXe",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "wo thre",
+            "linewise": false
+          },
+          "-": {
+            "text": "wo thre",
+            "linewise": false
+          },
+          "1": {
+            "text": "wo thre",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "z": [
+            0,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "change_register_rows",
+      "buffer": "one two\nthree",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "\"bcgshrY<Esc>",
+      "oracle_keys": ":call setpos(\"'z\",[0,2,2,0])<CR>\"bcv`zY<Esc>",
+      "expect": {
+        "buffer": "one Yree",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two\nth",
+            "linewise": false
+          },
+          "1": {
+            "text": "two\nth",
+            "linewise": false
+          },
+          "b": {
+            "text": "two\nth",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "z": [
+            0,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "change_undo",
+      "buffer": "one two three",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "cgstwX<Esc>u",
+      "oracle_keys": ":call setpos(\"'z\",[0,1,5,0])<CR>cv`zX<Esc>u",
+      "expect": {
+        "buffer": "one two three",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one t",
+            "linewise": false
+          },
+          "-": {
+            "text": "one t",
+            "linewise": false
+          },
+          "1": {
+            "text": "one t",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "z": [
+            0,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "yank_forward",
+      "buffer": "one two three",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "ygsth",
+      "oracle_keys": ":call setpos(\"'z\",[0,1,9,0])<CR>yv`z",
+      "expect": {
+        "buffer": "one two three",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one two t",
+            "linewise": false
+          },
+          "0": {
+            "text": "one two t",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "z": [
+            0,
+            8
+          ]
+        }
+      }
+    },
+    {
+      "name": "yank_backward",
+      "buffer": "one two three",
+      "cursor": [
+        0,
+        10
+      ],
+      "keys": "ygStw",
+      "oracle_keys": ":call setpos(\"'z\",[0,1,5,0])<CR>y`z",
+      "expect": {
+        "buffer": "one two three",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two th",
+            "linewise": false
+          },
+          "0": {
+            "text": "two th",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "z": [
+            0,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "yank_register_rows",
+      "buffer": "one two\nthree",
+      "cursor": [
+        1,
+        3
+      ],
+      "keys": "\"cygSe ",
+      "oracle_keys": ":call setpos(\"'z\",[0,1,3,0])<CR>\"cy`z",
+      "expect": {
+        "buffer": "one two\nthree",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "e two\nthr",
+            "linewise": false
+          },
+          "c": {
+            "text": "e two\nthr",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "z": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "yank_counted",
+      "buffer": "xa ya za",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "y2gsa ",
+      "oracle_keys": ":call setpos(\"'z\",[0,1,5,0])<CR>yv`z",
+      "expect": {
+        "buffer": "xa ya za",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "xa ya",
+            "linewise": false
+          },
+          "0": {
+            "text": "xa ya",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "z": [
+            0,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "visual_forward",
+      "buffer": "one two\nthree",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "vgshr",
+      "oracle_keys": ":call setpos(\"'z\",[0,2,2,0])<CR>v`z",
+      "expect": {
+        "buffer": "one two\nthree",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          1
+        ],
+        "marks": {
+          "z": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "visual_backward",
+      "buffer": "one two\nthree",
+      "cursor": [
+        1,
+        3
+      ],
+      "keys": "vgStw",
+      "oracle_keys": ":call setpos(\"'z\",[0,1,5,0])<CR>v`z",
+      "expect": {
+        "buffer": "one two\nthree",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          1,
+          3
+        ],
+        "marks": {
+          "z": [
+            0,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "visual_counted_delete",
+      "buffer": "ab ab ab ab",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v3gsabd",
+      "oracle_keys": ":call setpos(\"'z\",[0,1,10,0])<CR>v`zd",
+      "expect": {
+        "buffer": "b",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab ab ab a",
+            "linewise": false
+          },
+          "-": {
+            "text": "ab ab ab a",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            9
+          ],
+          "z": [
+            0,
+            9
+          ]
+        }
+      }
+    },
+    {
+      "name": "visual_line",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "Vgsre",
+      "oracle_keys": ":call setpos(\"'z\",[0,3,3,0])<CR>V`z",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "V",
+        "registers": {},
+        "visual": [
+          0,
+          1
+        ],
+        "marks": {
+          "z": [
+            2,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "visual_line_delete",
+      "buffer": "one\ntwo\nthree\nfour",
+      "cursor": [
+        3,
+        1
+      ],
+      "keys": "VgSwod",
+      "oracle_keys": ":call setpos(\"'z\",[0,2,2,0])<CR>V`zd",
+      "expect": {
+        "buffer": "one",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two\nthree\nfour\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "two\nthree\nfour\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "visual_block",
+      "buffer": "abcd\nefgh\nijkl\nmnop",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>gskl",
+      "oracle_keys": ":call setpos(\"'z\",[0,3,3,0])<CR><C-v>`z",
+      "expect": {
+        "buffer": "abcd\nefgh\nijkl\nmnop",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "\u0016",
+        "registers": {},
+        "visual": [
+          0,
+          1
+        ],
+        "marks": {
+          "z": [
+            2,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "visual_block_delete",
+      "buffer": "abcd\nefgh\nijkl\nmnop",
+      "cursor": [
+        3,
+        2
+      ],
+      "keys": "<C-v>gSfgd",
+      "oracle_keys": ":call setpos(\"'z\",[0,2,2,0])<CR><C-v>`zd",
+      "expect": {
+        "buffer": "abcd\neh\nil\nmp",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "fg\njk\nno",
+            "linewise": false,
+            "block_width": 2
+          },
+          "1": {
+            "text": "fg\njk\nno",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            1
+          ],
+          ">": [
+            3,
+            2
+          ],
+          "z": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "visual_yank",
+      "buffer": "one two three",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vgse y",
+      "oracle_keys": ":call setpos(\"'z\",[0,1,3,0])<CR>v`zy",
+      "expect": {
+        "buffer": "one two three",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one",
+            "linewise": false
+          },
+          "0": {
+            "text": "one",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            2
+          ],
+          "z": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "visual_row_end_backward",
+      "buffer": "abc\nabc\nxc",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "v$gSc ",
+      "oracle_keys": ":call setpos(\"'z\",[0,2,3,0])<CR>v$`z",
+      "expect": {
+        "buffer": "abc\nabc\nxc",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          1,
+          0
+        ],
+        "marks": {
+          "z": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "visual_row_end_backward_counted",
+      "buffer": "abc\nabc\nxc",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "v$2gSc ",
+      "oracle_keys": ":call setpos(\"'z\",[0,1,3,0])<CR>v$`z",
+      "expect": {
+        "buffer": "abc\nabc\nxc",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          1,
+          0
+        ],
+        "marks": {
+          "z": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "visual_line_row_end_backward",
+      "buffer": "abc\nabc\nxc",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "V$gSc d",
+      "oracle_keys": ":call setpos(\"'z\",[0,2,3,0])<CR>V$`zd",
+      "expect": {
+        "buffer": "abc\nxc",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "abc\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "visual_block_row_end_backward",
+      "buffer": "abc\nabc\nxc",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "<C-v>$gSc ",
+      "oracle_keys": ":call setpos(\"'z\",[0,2,3,0])<CR><C-v>$`z",
+      "expect": {
+        "buffer": "abc\nabc\nxc",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "\u0016",
+        "registers": {},
+        "visual": [
+          1,
+          0
+        ],
+        "marks": {
+          "z": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "visual_block_row_end_forward_delete",
+      "buffer": "abc\nabc\nxc",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "<C-v>$gsc d",
+      "oracle_keys": ":call setpos(\"'z\",[0,3,2,0])<CR><C-v>$`zd",
+      "expect": {
+        "buffer": "abc\nc\n",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab\nxc",
+            "linewise": false,
+            "block_width": 2
+          },
+          "1": {
+            "text": "ab\nxc",
+            "linewise": false,
+            "block_width": 2
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            2,
+            1
+          ],
+          "z": [
+            2,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "dot_forward",
+      "buffer": "1ab2ab3ab4",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dgsab.",
+      "oracle_keys": "dv/ab<CR>.",
+      "expect": {
+        "buffer": "b3ab4",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b2a",
+            "linewise": false
+          },
+          "-": {
+            "text": "b2a",
+            "linewise": false
+          },
+          "/": {
+            "text": "ab",
+            "linewise": false
+          },
+          "1": {
+            "text": "b2a",
+            "linewise": false
+          },
+          "2": {
+            "text": "1a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dot_backward",
+      "buffer": "1ab2ab3ab4",
+      "cursor": [
+        0,
+        9
+      ],
+      "keys": "dgSab.",
+      "oracle_keys": "d?ab<CR>.",
+      "expect": {
+        "buffer": "1ab24",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab3",
+            "linewise": false
+          },
+          "-": {
+            "text": "ab3",
+            "linewise": false
+          },
+          "/": {
+            "text": "ab",
+            "linewise": false
+          },
+          "1": {
+            "text": "ab3",
+            "linewise": false
+          },
+          "2": {
+            "text": "ab",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dot_counted",
+      "buffer": "1ab2ab3ab4ab5",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dgsab2.",
+      "oracle_keys": "dv/ab<CR>2.",
+      "expect": {
+        "buffer": "b4ab5",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b2ab3a",
+            "linewise": false
+          },
+          "-": {
+            "text": "b2ab3a",
+            "linewise": false
+          },
+          "/": {
+            "text": "ab",
+            "linewise": false
+          },
+          "1": {
+            "text": "b2ab3a",
+            "linewise": false
+          },
+          "2": {
+            "text": "1a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dot_backward_rows",
+      "buffer": "ab x\nab y\nab z",
+      "cursor": [
+        2,
+        3
+      ],
+      "keys": "dgSab.",
+      "oracle_keys": "d?ab<CR>.",
+      "expect": {
+        "buffer": "ab x\nz",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab y\n",
+            "linewise": true
+          },
+          "-": {
+            "text": "ab ",
+            "linewise": false
+          },
+          "/": {
+            "text": "ab",
+            "linewise": false
+          },
+          "1": {
+            "text": "ab y\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "ab ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dot_register_rows",
+      "buffer": "one ab\ntwo ab\nthree ab",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\"adgsab.",
+      "oracle_keys": "\"adv/ab<CR>.",
+      "expect": {
+        "buffer": "b\nthree ab",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b\ntwo a",
+            "linewise": false
+          },
+          "/": {
+            "text": "ab",
+            "linewise": false
+          },
+          "1": {
+            "text": "b\ntwo a",
+            "linewise": false
+          },
+          "2": {
+            "text": "one a",
+            "linewise": false
+          },
+          "a": {
+            "text": "b\ntwo a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dot_change",
+      "buffer": "x ab y ab z ab",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "cgsabQ<Esc>.",
+      "oracle_keys": "cv/ab<CR>Q<Esc>.",
+      "expect": {
+        "buffer": "Qb z ab",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "Qb y a",
+            "linewise": false
+          },
+          "-": {
+            "text": "Qb y a",
+            "linewise": false
+          },
+          "/": {
+            "text": "ab",
+            "linewise": false
+          },
+          "1": {
+            "text": "Qb y a",
+            "linewise": false
+          },
+          "2": {
+            "text": "x a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dot_undo",
+      "buffer": "1ab2ab3ab4",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dgsab.u",
+      "oracle_keys": "dv/ab<CR>.u",
+      "expect": {
+        "buffer": "b2ab3ab4",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b2a",
+            "linewise": false
+          },
+          "-": {
+            "text": "b2a",
+            "linewise": false
+          },
+          "/": {
+            "text": "ab",
+            "linewise": false
+          },
+          "1": {
+            "text": "b2a",
+            "linewise": false
+          },
+          "2": {
+            "text": "1a",
+            "linewise": false
+          }
+        }
+      }
+    }
+  ]
+}

@@ -15,7 +15,7 @@ use fe_text::Text;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
-    Mode, Motion, MoveArgs, VimState, VimTarget, cmdline, marks, search, state::Goals, visual,
+    Mode, Motion, MoveArgs, VimState, VimTarget, cmdline, jump, marks, search, state::Goals, visual,
 };
 
 /// `vim.move`: [`apply`], once a search motion passes
@@ -44,7 +44,9 @@ pub(crate) fn move_command(
         Ok(motion) => args.motion = motion,
         Err(message) => return target.state.fail(message),
     }
-    if let Some(from) = marks::jump(target, args.motion, args.count) {
+    if let Some(from) = marks::jump(target, args.motion, args.count)
+        && jump::lands(target, args.motion, args.count)
+    {
         target.state.marks.jumped(from);
     }
     // A search that stays put still set the last search and the highlight.
@@ -315,6 +317,10 @@ pub(crate) fn motion(
                 None => return Err(goal),
             }
         }
+        Motion::Jump(motion) => match jump::nth(cursor.text, cursor.offset(), motion, args.count) {
+            Some(offset) => cursor.goto(offset),
+            None => return Err(goal),
+        },
         // Resolved to a `Search` or `MarkAt` before they run.
         Motion::SearchNext
         | Motion::SearchPrevious
