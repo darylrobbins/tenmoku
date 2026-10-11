@@ -23,10 +23,12 @@ const MAX_GROUPS: usize = 9;
 #[derive(Clone, Debug)]
 pub struct Pattern {
     regex: Regex,
-    /// Which capture group is the whole match: 1 for a Vim pattern, which
-    /// [`Translator::pattern`] wraps in a group followed by a boundary, 0
-    /// for a find bar's.
-    offset: usize,
+    /// The `regex` capture groups behind each of a pattern's: slot 0 is the
+    /// whole match (group 1 for a Vim pattern, which [`Translator::pattern`]
+    /// wraps in a group followed by a boundary, 0 for a find bar's), slot `n`
+    /// `\(` number `n`. A group the translation had to write more than once
+    /// (see [`Translator`]) has a group for each copy, in the order written.
+    slots: Vec<Vec<usize>>,
     /// Whether the pattern begins with `\<` and ends with `\>` (and has no
     /// other), which are checked on each match by character class, as
     /// Vim does, not left to `regex`'s word boundaries.
@@ -88,9 +90,9 @@ impl Pattern {
             depth: 0,
             groups: 0,
             ignore_case,
-            bare: false,
+            budget: 0,
         };
-        let source = translator.pattern()?;
+        let source = unique_names(&translator.pattern()?);
         let regex = build(RegexBuilder::new(&source), |error| {
             // Past the nesting limit: its message's last line says so.
             PatternError::TooLarge(
@@ -103,9 +105,20 @@ impl Pattern {
                     .to_string(),
             )
         })?;
+        let mut slots = vec![vec![1]];
+        slots.resize(MAX_GROUPS + 1, Vec::new());
+        for (at, name) in regex.capture_names().enumerate() {
+            let number = name
+                .and_then(|name| name.strip_prefix('v'))
+                .and_then(|name| name.split('_').next())
+                .and_then(|number| number.parse::<usize>().ok());
+            if let Some(number) = number {
+                slots[number].push(at);
+            }
+        }
         Ok(Self {
             regex,
-            offset: 1,
+            slots,
             word,
             whole: false,
         })
@@ -131,9 +144,10 @@ impl Pattern {
             let message = error.to_string();
             PatternError::Regex(message.lines().next().unwrap_or_default().to_string())
         })?;
+        let slots = (0..regex.captures_len()).map(|at| vec![at]).collect();
         Ok(Self {
             regex,
-            offset: 0,
+            slots,
             word: (false, false),
             whole: query.whole_word,
         })
@@ -283,7 +297,7 @@ impl Pattern {
     fn matches_from<'a>(&'a self, hay: &'a str, at: usize) -> RowMatches<'a> {
         RowMatches {
             regex: &self.regex,
-            offset: self.offset,
+            slots: &self.slots,
             word: self.word,
             whole: self.whole,
             hay,
@@ -589,8 +603,8 @@ fn unit(text: &str) -> Option<usize> {
 /// See [`Pattern::matches`] and [`Pattern::substitutions`].
 pub(crate) struct RowMatches<'a> {
     regex: &'a Regex,
-    /// The capture group that is the whole match ([`Pattern`]'s `offset`).
-    offset: usize,
+    /// [`Pattern`]'s `slots`.
+    slots: &'a [Vec<usize>],
     word: (bool, bool),
     whole: bool,
     hay: &'a str,
@@ -610,7 +624,13 @@ impl RowMatches<'_> {
         if !self.groups {
             return None;
         }
-        let (start, end) = self.locs.get(n + self.offset)?;
+        // A group written twice: the copy that took part last.
+        let (start, end) = self
+            .slots
+            .get(n)?
+            .iter()
+            .rev()
+            .find_map(|&at| self.locs.get(at))?;
         Some(start..end)
     }
 }
@@ -622,7 +642,10 @@ impl Iterator for RowMatches<'_> {
         loop {
             let at = self.at.take()?;
             self.regex.captures_read_at(&mut self.locs, self.hay, at)?;
-            let (start, end) = self.locs.get(self.offset).expect("a match has its group");
+            let (start, end) = self
+                .locs
+                .get(self.slots[0][0])
+                .expect("a match has its group");
             let found = start..end;
             let next = if found.is_empty() {
                 unit(&self.hay[found.start..]).map_or(usize::MAX, |unit| found.start + unit)
@@ -1435,32 +1458,70 @@ struct Translator<'a> {
     groups: usize,
     /// Whether the pattern holds `\c`.
     ignore_case: bool,
-    /// Whether the atom last translated is a literal base written without
-    /// composing characters (`a`, not `a` and U+0301), which the next atom
-    /// may follow into the marks after it: nvim takes `a.` to match `a` and
-    /// a mark, where `.` otherwise takes a whole character.
+    /// How many pieces have been translated, each once for every way the
+    /// branch before it can end.
+    budget: usize,
+}
+
+/// A way through some of a pattern, in `regex` syntax, and how it ends:
+/// whether on a literal base written without composing characters (`a`,
+/// not `a` and U+0301), which the next atom may follow into the marks after
+/// it: nvim takes `a.` to match `a` and a mark, where `.` otherwise takes
+/// a whole character. What comes next is translated for each way, which
+/// `\%(a\|.\).` does apart (`a` then a `.` that takes the marks, or `.`
+/// then one that doesn't).
+#[derive(Clone, Debug, PartialEq)]
+struct Path {
+    text: String,
     bare: bool,
 }
+
+/// One piece of a branch, as it translates after a bare base or not.
+#[derive(Debug, PartialEq)]
+struct Piece {
+    paths: Vec<Path>,
+    /// A `^` a bare `*` follows, which is itself.
+    star_is_char: bool,
+}
+
+/// How many ways through a branch may end differently, and how many pieces
+/// to translate over all of them, before the pattern is too much.
+const MAX_PATHS: usize = 16;
+const MAX_PIECES: usize = 10_000;
+/// How many different marks may be written after one character: they match
+/// in any order, which is a permutation of each.
+const MAX_ORDERED_MARKS: usize = 5;
 
 /// What follows a base character's marks, and a `.`, class or collection's
 /// character: the composing characters after it.
 const MARKS: &str = r"\p{M}*";
 
 /// What follows a character's base when the pattern writes `marks`: each of
-/// them somewhere among its marks, in any order (nvim doesn't care), and
-/// any others. Past three marks, only in the order written.
-fn carrying(marks: &[char]) -> String {
+/// them somewhere among its marks, in any order (nvim doesn't care) and
+/// written twice no more than once, and any others.
+fn carrying(marks: &[char]) -> Result<String, PatternError> {
+    let mut distinct: Vec<char> = Vec::new();
+    for &mark in marks {
+        if !distinct.contains(&mark) {
+            distinct.push(mark);
+        }
+    }
+    if distinct.len() > MAX_ORDERED_MARKS {
+        return Err(PatternError::Unsupported(format!(
+            "more than {MAX_ORDERED_MARKS} different composing characters on one character"
+        )));
+    }
     let each = |mark: &char| format!(r"\p{{M}}*?\x{{{:x}}}", *mark as u32);
-    let mut order: Vec<usize> = (0..marks.len()).collect();
+    let mut order: Vec<usize> = (0..distinct.len()).collect();
     let mut alternatives = Vec::new();
     loop {
-        alternatives.push(order.iter().map(|&at| each(&marks[at])).collect::<String>());
-        if marks.len() > 3 || !next_permutation(&mut order) {
+        let ways = order.iter().map(|&at| each(&distinct[at]));
+        alternatives.push(ways.collect::<String>());
+        if !next_permutation(&mut order) {
             break;
         }
     }
-    alternatives.dedup();
-    format!("(?:{}){MARKS}", alternatives.join("|"))
+    Ok(format!("(?:{}){MARKS}", alternatives.join("|")))
 }
 
 /// Steps `order` to its next permutation in lexicographic order, or says
@@ -1492,7 +1553,12 @@ impl Translator<'_> {
     /// 1 is the match, and what follows it is a non-mark or the row's end,
     /// so no match ends inside a character.
     fn pattern(&mut self) -> Result<String, PatternError> {
-        let source = self.alternation(Opened::Pattern)?;
+        let paths = self.alternation(Opened::Pattern, false)?;
+        let source = paths
+            .iter()
+            .map(|path| path.text.as_str())
+            .collect::<Vec<_>>()
+            .join("|");
         Ok(format!(r"({source})(?:\P{{M}}|$)"))
     }
 
@@ -1512,7 +1578,12 @@ impl Translator<'_> {
     /// One character as a `.`, class or collection takes it: `whole` and
     /// the marks after it, or if the pattern writes marks, one that carries
     /// them. After a bare base also `lone`, the marks by themselves.
-    fn character(&mut self, whole: &str, lone: Option<&str>, carries: bool) -> String {
+    fn character(
+        &mut self,
+        whole: &str,
+        lone: Option<&str>,
+        carries: bool,
+    ) -> Result<String, PatternError> {
         // A backslash class doesn't take the marks written after it: they
         // start an atom of their own.
         let marks = if carries {
@@ -1520,11 +1591,11 @@ impl Translator<'_> {
         } else {
             Vec::new()
         };
-        match lone {
-            _ if !marks.is_empty() => format!("{whole}{}", carrying(&marks)),
+        Ok(match lone {
+            _ if !marks.is_empty() => format!("{whole}{}", carrying(&marks)?),
             Some(lone) => format!("(?:{whole}{MARKS}|{lone}{MARKS})"),
             None => format!("{whole}{MARKS}"),
-        }
+        })
     }
 
     fn peek(&self) -> Option<&Token> {
@@ -1532,33 +1603,24 @@ impl Translator<'_> {
     }
 
     /// Branches separated by `\|`, up to the `\)` closing `opened` (left
-    /// for the caller) or the end of the pattern.
-    fn alternation(&mut self, opened: Opened) -> Result<String, PatternError> {
-        // Every alternative starts where the first does; what follows may
-        // follow the end of any of them.
-        let incoming = self.bare;
-        let mut out = self.branch(opened)?;
-        let mut ends_bare = self.bare;
+    /// for the caller) or the end of the pattern. Every branch starts where
+    /// the first does, after a bare base or not (`bare`), and the ways they
+    /// end are all the paths of the alternation, in order.
+    fn alternation(&mut self, opened: Opened, bare: bool) -> Result<Vec<Path>, PatternError> {
+        let mut paths = self.branch(opened, bare)?;
         loop {
             match self.peek() {
                 Some(Token::Alt) => {
                     self.next += 1;
-                    out.push('|');
-                    self.bare = incoming;
-                    out.push_str(&self.branch(Opened::Alt)?);
-                    ends_bare |= self.bare;
+                    paths.extend(self.branch(Opened::Alt, bare)?);
                 }
-                Some(Token::Close) if opened != Opened::Pattern => {
-                    self.bare = ends_bare;
-                    return Ok(out);
-                }
+                Some(Token::Close) if opened != Opened::Pattern => return Ok(paths),
                 Some(Token::Close) => return Err(PatternError::Invalid("unmatched \\)")),
                 None => {
-                    self.bare = ends_bare;
                     return match opened {
                         Opened::Capture => Err(PatternError::Invalid("unmatched \\(")),
                         Opened::Group => Err(PatternError::Invalid("unmatched \\%(")),
-                        Opened::Pattern | Opened::Alt => Ok(out),
+                        Opened::Pattern | Opened::Alt => Ok(paths),
                     };
                 }
                 Some(_) => unreachable!("a branch ends at `\\|`, `\\)` or the end"),
@@ -1566,176 +1628,416 @@ impl Translator<'_> {
         }
     }
 
-    /// Pieces (an atom and maybe a multi) up to `\|`, `\)` or the end.
-    fn branch(&mut self, opened: Opened) -> Result<String, PatternError> {
-        let mut out = String::new();
+    /// Pieces (an atom and maybe a multi) up to `\|`, `\)` or the end, the
+    /// first after a bare base or not (`bare`). What a piece may do depends
+    /// on what comes before it, so a branch that can end in more than one
+    /// way (`\%(a\|.\)` ends after a bare base or not) goes on once for
+    /// each, until the pieces after it come out the same either way.
+    fn branch(&mut self, opened: Opened, bare: bool) -> Result<Vec<Path>, PatternError> {
+        // What every way through the branch so far begins with, and then
+        // how each differs.
+        let mut shared = String::new();
+        let mut paths = vec![Path {
+            text: String::new(),
+            bare,
+        }];
         // Nothing but flags yet.
         let mut first = true;
         // A bare `*` right after `^` is itself.
         let mut star_is_char = false;
-        while let Some(token) = self.peek().cloned() {
-            let star_here = std::mem::replace(&mut star_is_char, false);
-            let after_bare = std::mem::take(&mut self.bare);
-            self.next += 1;
-            let mut start_of_line = false;
-            let mut bare = false;
-            let atom = match token {
-                Token::Alt | Token::Close => {
-                    self.next -= 1;
-                    self.bare = after_bare;
-                    break;
-                }
-                Token::Flag => {
-                    self.bare = after_bare;
-                    continue;
-                }
-                Token::Multi {
-                    multi: Multi::Star,
-                    bare: true,
-                } if first && opened == Opened::Group => {
-                    return Err(PatternError::Unsupported("* after \\%(".into()));
-                }
-                Token::Multi {
-                    multi: Multi::Star,
-                    bare: true,
-                } if first || star_here => regex::escape("*"),
-                Token::Multi { .. } => return Err(PatternError::Invalid("misplaced multi")),
-                // A mark here follows no atom that takes characters, and
-                // one that starts a branch is the same: any character
-                // carrying it.
-                Token::Char(mark) if is_mark(mark) => {
-                    self.next -= 1;
-                    let marks = self.written_marks();
-                    format!(r"\P{{M}}{}", carrying(&marks))
-                }
-                Token::Char(ch) => {
-                    // Alone, a base matches only itself without marks: the
-                    // boundary after the pattern or the next atom sees to
-                    // it. With marks written it isn't folded, as in nvim.
-                    let marks = self.written_marks();
-                    bare = marks.is_empty();
-                    let folded = self.ignore_case.then(|| folds().group_of.get(&ch));
-                    match folded {
-                        Some(Some(&group)) if bare => {
-                            let group = &folds().groups[group];
-                            let members = group.iter().map(|ch| format!("\\x{{{:x}}}", *ch as u32));
-                            format!("[{}]", members.collect::<String>())
-                        }
-                        _ if bare => regex::escape(ch.encode_utf8(&mut [0; 4])),
-                        _ => format!(
-                            "{}{}",
-                            regex::escape(ch.encode_utf8(&mut [0; 4])),
-                            carrying(&marks)
-                        ),
-                    }
-                }
-                Token::Any => self.character(r"[^\n\p{M}]", after_bare.then_some(r"\p{M}"), true),
-                Token::Class(class) => match class.strip_prefix("[^") {
-                    Some(members) => self.character(
-                        &format!(r"[^\p{{M}}{members}"),
-                        after_bare
-                            .then(|| format!(r"[\p{{M}}&&[^{members}]"))
-                            .as_deref(),
-                        false,
-                    ),
-                    None => self.character(class, None, false),
-                },
-                Token::Set(set) => self.character(
-                    &set.syntax(self.ignore_case, false),
-                    after_bare
-                        .then(|| set.syntax(self.ignore_case, true))
-                        .as_deref(),
-                    true,
-                ),
-                Token::WordStart => r"\b{start}".into(),
-                Token::WordEnd => r"\b{end}".into(),
-                Token::Caret { anywhere } if anywhere || first => {
-                    start_of_line = true;
-                    "^".into()
-                }
-                Token::Caret { .. } => regex::escape("^"),
-                Token::Dollar { anywhere } => {
-                    let mut rest = self.tokens[self.next..].iter();
-                    let last = match rest.find(|token| **token != Token::Flag) {
-                        None | Some(Token::Alt | Token::Close) => true,
-                        Some(_) => false,
-                    };
-                    if anywhere || last {
-                        "$".into()
-                    } else {
-                        regex::escape("$")
-                    }
-                }
-                Token::Open { capture } => {
-                    // The group's first atom follows what came before it.
-                    self.bare = after_bare;
-                    let group = self.group(capture)?;
-                    bare = self.bare;
-                    group
-                }
-            };
-            first = false;
-            let multi = match self.peek() {
-                Some(&Token::Multi { multi, bare })
-                    if !(start_of_line && bare && multi == Multi::Star) =>
-                {
-                    multi
-                }
-                // After `^`, a bare `*` is itself; any other multi repeats
-                // the start-of-line.
-                Some(Token::Multi { .. }) => {
-                    star_is_char = true;
-                    out.push_str(&atom);
-                    continue;
-                }
-                _ => {
-                    self.bare = bare;
-                    out.push_str(&atom);
-                    continue;
-                }
-            };
-            self.next += 1;
-            if matches!(self.peek(), Some(Token::Multi { .. })) {
-                return Err(PatternError::Invalid("a multi can't follow a multi"));
-            }
-            // A multi that may match nothing leaves what came before it as
-            // the context too.
-            let optional = matches!(
-                multi,
-                Multi::Star | Multi::Optional | Multi::Brace { min: 0, .. }
+        while let Some(token) = self.peek() {
+            let (ends, flag) = (
+                matches!(token, Token::Alt | Token::Close),
+                matches!(token, Token::Flag),
             );
-            self.bare = bare || (after_bare && optional);
-            out.push_str(&format!("(?:{atom}){}", multi_syntax(multi)));
+            let star_here = std::mem::replace(&mut star_is_char, false);
+            if ends {
+                break;
+            }
+            if flag {
+                self.next += 1;
+                continue;
+            }
+            let (start, groups) = (self.next, self.groups);
+            // The piece after each distinct way the branch has ended.
+            let mut pieces: Vec<(bool, Piece)> = Vec::new();
+            let mut end = (start, groups);
+            for path in &paths {
+                if pieces.iter().any(|(bare, _)| *bare == path.bare) {
+                    continue;
+                }
+                (self.next, self.groups) = (start, groups);
+                let piece = self.piece(opened, first, star_here, path.bare)?;
+                end = (self.next, self.groups);
+                pieces.push((path.bare, piece));
+            }
+            (self.next, self.groups) = end;
+            first = false;
+            star_is_char = pieces[0].1.star_is_char;
+            let after = if pieces.iter().all(|(_, piece)| piece == &pieces[0].1) {
+                // The same whichever way the branch ended: they rejoin.
+                match &paths[..] {
+                    [path] => shared.push_str(&path.text),
+                    _ => {
+                        let ways: Vec<&str> = paths.iter().map(|path| path.text.as_str()).collect();
+                        shared.push_str(&format!("(?:{})", ways.join("|")));
+                    }
+                }
+                pieces.swap_remove(0).1.paths
+            } else {
+                let mut after = Vec::new();
+                for path in &paths {
+                    let piece = pieces.iter().find(|(bare, _)| *bare == path.bare);
+                    for next in &piece.expect("a piece for every way").1.paths {
+                        after.push(Path {
+                            text: format!("{}{}", path.text, next.text),
+                            bare: next.bare,
+                        });
+                    }
+                }
+                after
+            };
+            paths = join_paths(after, true);
+            if paths.len() > MAX_PATHS {
+                return Err(PatternError::TooLarge(
+                    "alternatives that end in different ways".into(),
+                ));
+            }
+            if let [path] = &mut paths[..] {
+                shared.push_str(&std::mem::take(&mut path.text));
+            }
         }
-        Ok(out)
+        for path in &mut paths {
+            path.text.insert_str(0, &shared);
+        }
+        Ok(paths)
     }
 
-    /// A group's contents after its `\(` or `\%(`, through its `\)`.
-    fn group(&mut self, capture: bool) -> Result<String, PatternError> {
+    /// One piece — an atom and the multi after it — as it translates after
+    /// a bare base or not (`bare`), leaving `self.next` after it.
+    fn piece(
+        &mut self,
+        opened: Opened,
+        first: bool,
+        star_here: bool,
+        bare: bool,
+    ) -> Result<Piece, PatternError> {
+        self.budget += 1;
+        if self.budget > MAX_PIECES {
+            return Err(PatternError::TooLarge(
+                "alternatives that end in different ways".into(),
+            ));
+        }
+        let atom_at = (self.next, self.groups);
+        let (atom, start_of_line) = self.atom(opened, first, star_here, bare)?;
+        let multi = match self.peek() {
+            Some(&Token::Multi { multi, bare: plain })
+                if !(start_of_line && plain && multi == Multi::Star) =>
+            {
+                multi
+            }
+            // After `^`, a bare `*` is itself; any other multi repeats the
+            // start-of-line.
+            Some(Token::Multi { .. }) => {
+                return Ok(Piece {
+                    paths: atom,
+                    star_is_char: true,
+                });
+            }
+            _ => {
+                return Ok(Piece {
+                    paths: atom,
+                    star_is_char: false,
+                });
+            }
+        };
+        self.next += 1;
+        if matches!(self.peek(), Some(Token::Multi { .. })) {
+            return Err(PatternError::Invalid("a multi can't follow a multi"));
+        }
+        let paths = self.repeat(atom, atom_at, (opened, first), multi, bare)?;
+        Ok(Piece {
+            paths,
+            star_is_char: false,
+        })
+    }
+
+    /// An atom `multi` times, its first time after a bare base or not
+    /// (`bare`) and the rest after how it ended: `atom` is the atom as
+    /// that first translated, which began at `at` (a token and group
+    /// count). A bare base's marks are a `.`'s first time only, not
+    /// something to split between its repeats.
+    fn repeat(
+        &mut self,
+        atom: Vec<Path>,
+        at: (usize, usize),
+        (opened, first): (Opened, bool),
+        multi: Multi,
+        bare: bool,
+    ) -> Result<Vec<Path>, PatternError> {
+        let (min, max, lazy) = match multi {
+            Multi::Star => (0, None, false),
+            Multi::Plus => (1, None, false),
+            Multi::Optional => (0, Some(1), false),
+            Multi::Brace { min, max, lazy } => (min, max, lazy),
+        };
+        let ends = (self.next, self.groups);
+        // An atom that ends in different ways goes on as if it always ended
+        // bare when it can, each time.
+        let once = match &atom[..] {
+            [path] => path.clone(),
+            _ => Path {
+                text: format!(
+                    "(?:{})",
+                    atom.iter()
+                        .map(|path| path.text.as_str())
+                        .collect::<Vec<_>>()
+                        .join("|")
+                ),
+                bare: atom.iter().any(|path| path.bare),
+            },
+        };
+        let can_skip = min == 0;
+        let can_run = max != Some(0);
+        let can_repeat = max.is_none_or(|max| max >= 2);
+        // What the second and later times are.
+        let rest = if !can_repeat || atom.len() != 1 || once.bare == bare {
+            once.text.clone()
+        } else {
+            (self.next, self.groups) = at;
+            let again = self.atom(opened, first, false, once.bare)?.0;
+            (self.next, self.groups) = ends;
+            match &again[..] {
+                [path] if path.bare == once.bare => path.text.clone(),
+                _ => {
+                    return Err(PatternError::Unsupported(
+                        "a multi after an atom that ends differently each time".into(),
+                    ));
+                }
+            }
+        };
+        if can_skip && can_run && once.bare == bare && (!can_repeat || rest == once.text) {
+            // Skipped or not, it ends the same, and every time is the same.
+            return Ok(vec![Path {
+                text: format!("(?:{}){}", once.text, multi_syntax(multi)),
+                bare: once.bare,
+            }]);
+        }
+        let times = |lo: u32, hi: Option<u32>| match (lo, hi) {
+            (lo, Some(hi)) if lo == hi => format!("{{{lo}}}"),
+            (lo, Some(hi)) => format!("{{{lo},{hi}}}{}", if lazy { "?" } else { "" }),
+            (lo, None) => format!("{{{lo},}}{}", if lazy { "?" } else { "" }),
+        };
+        // At least once.
+        let run = if !can_repeat {
+            format!("(?:{})", once.text)
+        } else if rest == once.text {
+            format!("(?:{}){}", once.text, times(min.max(1), max))
+        } else {
+            let more = times(min.max(1) - 1, max.map(|max| max - 1));
+            format!("(?:{})(?:{rest}){more}", once.text)
+        };
+        if can_skip && can_run && once.bare == bare {
+            // Skipped or not, it ends the same.
+            return Ok(vec![Path {
+                text: format!("(?:{run}){}", if lazy { "??" } else { "?" }),
+                bare,
+            }]);
+        }
+        let skip = Path {
+            text: String::new(),
+            bare,
+        };
+        let run = Path {
+            text: run,
+            bare: once.bare,
+        };
+        Ok(match (can_skip, can_run, lazy) {
+            (true, true, true) => vec![skip, run],
+            (true, true, false) => vec![run, skip],
+            (true, false, _) => vec![skip],
+            (false, ..) => vec![run],
+        })
+    }
+
+    /// One atom, which starts at `self.next`, as it translates after a bare
+    /// base or not (`after_bare`); and whether it was a `^`.
+    fn atom(
+        &mut self,
+        opened: Opened,
+        first: bool,
+        star_here: bool,
+        after_bare: bool,
+    ) -> Result<(Vec<Path>, bool), PatternError> {
+        let token = self.peek().cloned().expect("an atom to translate");
+        self.next += 1;
+        let mut start_of_line = false;
+        let mut bare = false;
+        let text = match token {
+            Token::Alt | Token::Close | Token::Flag => unreachable!("not an atom"),
+            Token::Multi {
+                multi: Multi::Star,
+                bare: true,
+            } if first && opened == Opened::Group => {
+                return Err(PatternError::Unsupported("* after \\%(".into()));
+            }
+            Token::Multi {
+                multi: Multi::Star,
+                bare: true,
+            } if first || star_here => regex::escape("*"),
+            Token::Multi { .. } => return Err(PatternError::Invalid("misplaced multi")),
+            // A mark here follows no atom that takes characters, and one
+            // that starts a branch is the same: any character carrying it.
+            Token::Char(mark) if is_mark(mark) => {
+                self.next -= 1;
+                let marks = self.written_marks();
+                format!(r"\P{{M}}{}", carrying(&marks)?)
+            }
+            Token::Char(ch) => {
+                // Alone, a base matches only itself without marks: the
+                // boundary after the pattern or the next atom sees to it.
+                // With marks written it isn't folded, as in nvim.
+                let marks = self.written_marks();
+                bare = marks.is_empty();
+                let folded = self.ignore_case.then(|| folds().group_of.get(&ch));
+                match folded {
+                    Some(Some(&group)) if bare => {
+                        let group = &folds().groups[group];
+                        let members = group.iter().map(|ch| format!("\\x{{{:x}}}", *ch as u32));
+                        format!("[{}]", members.collect::<String>())
+                    }
+                    _ if bare => regex::escape(ch.encode_utf8(&mut [0; 4])),
+                    _ => format!(
+                        "{}{}",
+                        regex::escape(ch.encode_utf8(&mut [0; 4])),
+                        carrying(&marks)?
+                    ),
+                }
+            }
+            Token::Any => self.character(r"[^\n\p{M}]", after_bare.then_some(r"\p{M}"), true)?,
+            Token::Class(class) => match class.strip_prefix("[^") {
+                Some(members) => self.character(
+                    &format!(r"[^\p{{M}}{members}"),
+                    after_bare
+                        .then(|| format!(r"[\p{{M}}&&[^{members}]"))
+                        .as_deref(),
+                    false,
+                )?,
+                None => self.character(class, None, false)?,
+            },
+            Token::Set(set) => self.character(
+                &set.syntax(self.ignore_case, false),
+                after_bare
+                    .then(|| set.syntax(self.ignore_case, true))
+                    .as_deref(),
+                true,
+            )?,
+            Token::WordStart => r"\b{start}".into(),
+            Token::WordEnd => r"\b{end}".into(),
+            Token::Caret { anywhere } if anywhere || first => {
+                start_of_line = true;
+                "^".into()
+            }
+            Token::Caret { .. } => regex::escape("^"),
+            Token::Dollar { anywhere } => {
+                let mut rest = self.tokens[self.next..].iter();
+                let last = match rest.find(|token| **token != Token::Flag) {
+                    None | Some(Token::Alt | Token::Close) => true,
+                    Some(_) => false,
+                };
+                if anywhere || last {
+                    "$".into()
+                } else {
+                    regex::escape("$")
+                }
+            }
+            Token::Open { capture } => return Ok((self.group(capture, after_bare)?, false)),
+        };
+        Ok((vec![Path { text, bare }], start_of_line))
+    }
+
+    /// A group's contents after its `\(` or `\%(`, through its `\)`, as
+    /// the ways it can end: one for each run of alternatives that end after
+    /// a bare base, or not, together.
+    fn group(&mut self, capture: bool, bare: bool) -> Result<Vec<Path>, PatternError> {
         if capture {
             self.groups += 1;
             if self.groups > MAX_GROUPS {
                 return Err(PatternError::Invalid("too many \\("));
             }
         }
+        let number = self.groups;
         self.depth += 1;
         if self.depth > MAX_DEPTH {
             return Err(PatternError::TooLarge("groups nested too deeply".into()));
         }
-        let inner = self.alternation(if capture {
-            Opened::Capture
-        } else {
-            Opened::Group
-        })?;
+        let inner = self.alternation(
+            if capture {
+                Opened::Capture
+            } else {
+                Opened::Group
+            },
+            bare,
+        )?;
         // `alternation` returned at the closing `\)`.
         self.next += 1;
         self.depth -= 1;
-        // `\(` captures, for `:s`'s `\1` to `\9`.
-        Ok(match capture {
-            true => format!("({inner})"),
-            false => format!("(?:{inner})"),
-        })
+        // `\(` captures, for `:s`'s `\1` to `\9`; the copies of its name
+        // are made unique by [`unique_names`].
+        Ok(join_paths(inner, false)
+            .into_iter()
+            .map(|path| Path {
+                text: match capture {
+                    true => format!("(?P<vimgroup{number}>{})", path.text),
+                    false => format!("(?:{})", path.text),
+                },
+                bare: path.bare,
+            })
+            .collect())
     }
+}
+
+/// `paths` with each run of neighbours that end the same way made one
+/// path, their texts alternatives (in a group of their own if `wrap`).
+fn join_paths(paths: Vec<Path>, wrap: bool) -> Vec<Path> {
+    let mut joined: Vec<(Vec<String>, bool)> = Vec::new();
+    for path in paths {
+        match joined.last_mut() {
+            Some((texts, bare)) if *bare == path.bare => texts.push(path.text),
+            _ => joined.push((vec![path.text], path.bare)),
+        }
+    }
+    joined
+        .into_iter()
+        .map(|(mut texts, bare)| Path {
+            text: match texts.len() {
+                1 => texts.remove(0),
+                _ if wrap => format!("(?:{})", texts.join("|")),
+                _ => texts.join("|"),
+            },
+            bare,
+        })
+        .collect()
+}
+
+/// `source` with each `(?P<vimgroupN>` renamed `(?P<vN_k>`, `k` counting
+/// the copies of group `N` from 0, so `regex` takes every one.
+fn unique_names(source: &str) -> String {
+    const OPEN: &str = "(?P<vimgroup";
+    let mut seen = [0usize; MAX_GROUPS + 1];
+    let mut out = String::with_capacity(source.len());
+    let mut rest = source;
+    while let Some(at) = rest.find(OPEN) {
+        out.push_str(&rest[..at]);
+        let digits = &rest[at + OPEN.len()..];
+        let len = digits.find('>').expect("a group name ends");
+        let number: usize = digits[..len].parse().expect("a group number");
+        out.push_str(&format!("(?P<v{number}_{}>", seen[number]));
+        seen[number] += 1;
+        rest = &digits[len + 1..];
+    }
+    out.push_str(rest);
+    out
 }
 
 fn multi_syntax(multi: Multi) -> String {

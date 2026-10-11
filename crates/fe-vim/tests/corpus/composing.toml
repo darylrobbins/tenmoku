@@ -266,3 +266,189 @@ name = "leading_marks_in_reverse_order"
 buffer = "xạ́b"
 cursor = [0, 0]
 keys = ":s/̣́/X/<CR>"
+
+[[case]]
+name = "alternative_unused_literal_then_dot_group_not_found"
+buffer = "x\u0301"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)./X/<CR>"
+
+[[case]]
+name = "alternative_used_literal_then_dot_group_takes_the_mark"
+buffer = "a\u0301"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)./X/<CR>"
+
+[[case]]
+name = "alternative_other_branch_then_dot_group"
+buffer = "xy\u0301"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)./X/<CR>"
+
+[[case]]
+name = "alternative_both_ends_then_dot_optional_group"
+buffer = "a\u0301b"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\).\\=/X/<CR>"
+
+[[case]]
+name = "alternative_unused_literal_then_dot_capture_not_found"
+buffer = "x\u0301"
+cursor = [0, 0]
+keys = ":s/\\(a\\|.\\)./[\\1]/<CR>"
+
+[[case]]
+name = "alternative_used_literal_then_dot_capture_takes_the_mark"
+buffer = "a\u0301"
+cursor = [0, 0]
+keys = ":s/\\(a\\|.\\)./[\\1]/<CR>"
+
+[[case]]
+name = "alternative_other_branch_then_dot_capture"
+buffer = "xy\u0301"
+cursor = [0, 0]
+keys = ":s/\\(a\\|.\\)./[\\1]/<CR>"
+
+[[case]]
+name = "alternative_both_ends_then_dot_optional_capture"
+buffer = "a\u0301b"
+cursor = [0, 0]
+keys = ":s/\\(a\\|.\\).\\=/[\\1]/<CR>"
+
+[[case]]
+name = "counted_dot_over_marks_not_found"
+buffer = "a\u0301\u0323"
+cursor = [0, 0]
+keys = ":s/a.\\{2}/X/<CR>"
+
+[[case]]
+name = "counted_dot_over_marks_then_base"
+buffer = "a\u0301\u0323b"
+cursor = [0, 0]
+keys = ":s/a.\\{2}/X/<CR>"
+
+[[case]]
+name = "counted_class_over_marks_not_found"
+buffer = "a\u0301\u0323"
+cursor = [0, 0]
+keys = ":s/a\\S\\{2}/X/<CR>"
+
+[[case]]
+name = "counted_class_over_marks_then_base"
+buffer = "a\u0301\u0323b"
+cursor = [0, 0]
+keys = ":s/a\\S\\{2}/X/<CR>"
+
+[[case]]
+name = "counted_negated_collection_over_marks_not_found"
+buffer = "a\u0301\u0323"
+cursor = [0, 0]
+keys = ":s/a[^x]\\{2}/X/<CR>"
+
+[[case]]
+name = "counted_negated_collection_over_marks_then_base"
+buffer = "a\u0301\u0323b"
+cursor = [0, 0]
+keys = ":s/a[^x]\\{2}/X/<CR>"
+
+[[case]]
+name = "counted_capture_over_marks_not_found"
+buffer = "a\u0301\u0323"
+cursor = [0, 0]
+keys = ":s/a\\(.\\)\\{2}/X/<CR>"
+
+[[case]]
+name = "counted_capture_over_marks_then_base"
+buffer = "a\u0301\u0323b"
+cursor = [0, 0]
+keys = ":s/a\\(.\\)\\{2}/X/<CR>"
+
+[[case]]
+name = "counted_noncapture_over_marks_not_found"
+buffer = "a\u0301\u0323"
+cursor = [0, 0]
+keys = ":s/a\\%(.\\)\\{2}/X/<CR>"
+
+[[case]]
+name = "counted_noncapture_over_marks_then_base"
+buffer = "a\u0301\u0323b"
+cursor = [0, 0]
+keys = ":s/a\\%(.\\)\\{2}/X/<CR>"
+
+[[case]]
+name = "counted_capture_keeps_last_repeat"
+buffer = "a\u0301\u0323b"
+cursor = [0, 0]
+keys = ":s/a\\(.\\)\\{2}/[\\1]/<CR>"
+
+[[case]]
+name = "counted_capture_range_not_enough"
+buffer = "a\u0301\u0323"
+cursor = [0, 0]
+keys = ":s/a\\(.\\)\\{2,3}/X/<CR>"
+
+[[case]]
+name = "star_then_dot_over_marks"
+buffer = "a\u0301\u0323"
+cursor = [0, 0]
+keys = ":s/a.*./X/<CR>"
+
+[[case]]
+name = "four_marks_reversed_literal_base"
+buffer = "a\u0323\u0301\u0302\u0303b"
+cursor = [0, 0]
+keys = ":s/a\u0301\u0323\u0302\u0303/X/<CR>"
+
+[[case]]
+name = "four_marks_reversed_leading"
+buffer = "a\u0323\u0301\u0302\u0303b"
+cursor = [0, 0]
+keys = ":s/\u0301\u0323\u0302\u0303/X/<CR>"
+
+[[case]]
+name = "four_marks_in_order_literal_base"
+buffer = "a\u0301\u0323\u0302\u0303b"
+cursor = [0, 0]
+keys = ":s/a\u0301\u0323\u0302\u0303/X/<CR>"
+
+[[case]]
+name = "four_marks_one_missing_literal_base"
+buffer = "a\u0323\u0301\u0302b"
+cursor = [0, 0]
+keys = ":s/a\u0301\u0323\u0302\u0303/X/<CR>"
+
+[[case]]
+name = "five_marks_reversed_dot"
+buffer = "a\u0305\u0304\u0303\u0302\u0301b"
+cursor = [0, 0]
+keys = ":s/.\u0301\u0302\u0303\u0304\u0305/X/<CR>"
+
+[[case]]
+name = "duplicate_marks_literal_base"
+buffer = "a\u0301b"
+cursor = [0, 0]
+keys = ":s/a\u0301\u0301/X/<CR>"
+
+[[case]]
+name = "duplicate_marks_leading"
+buffer = "a\u0301b"
+cursor = [0, 0]
+keys = ":s/\u0301\u0301/X/<CR>"
+
+[[case]]
+name = "duplicate_marks_dot"
+buffer = "a\u0301b"
+cursor = [0, 0]
+keys = ":s/.\u0301\u0301/X/<CR>"
+
+[[case]]
+name = "duplicate_marks_with_extra_mark"
+buffer = "a\u0323\u0301b"
+cursor = [0, 0]
+keys = ":s/a\u0301\u0323\u0301/X/<CR>"
+
+[[case]]
+name = "duplicate_marks_not_present"
+buffer = "a\u0302b"
+cursor = [0, 0]
+keys = ":s/a\u0301\u0301/X/<CR>"

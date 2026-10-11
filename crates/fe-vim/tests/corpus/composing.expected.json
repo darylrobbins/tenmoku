@@ -989,6 +989,719 @@
           }
         }
       }
+    },
+    {
+      "name": "alternative_unused_literal_then_dot_group_not_found",
+      "buffer": "x́",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\%(a\\|.\\)./X/<CR>",
+      "expect": {
+        "buffer": "x́",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\%(a\\|.\\).",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "alternative_used_literal_then_dot_group_takes_the_mark",
+      "buffer": "á",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\%(a\\|.\\)./X/<CR>",
+      "expect": {
+        "buffer": "X",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\%(a\\|.\\).",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "alternative_other_branch_then_dot_group",
+      "buffer": "xý",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\%(a\\|.\\)./X/<CR>",
+      "expect": {
+        "buffer": "X",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\%(a\\|.\\).",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "alternative_both_ends_then_dot_optional_group",
+      "buffer": "áb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\%(a\\|.\\).\\=/X/<CR>",
+      "expect": {
+        "buffer": "Xb",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\%(a\\|.\\).\\=",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "alternative_unused_literal_then_dot_capture_not_found",
+      "buffer": "x́",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\(a\\|.\\)./[\\1]/<CR>",
+      "expect": {
+        "buffer": "x́",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(a\\|.\\).",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "alternative_used_literal_then_dot_capture_takes_the_mark",
+      "buffer": "á",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\(a\\|.\\)./[\\1]/<CR>",
+      "expect": {
+        "buffer": "[a]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(a\\|.\\).",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "alternative_other_branch_then_dot_capture",
+      "buffer": "xý",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\(a\\|.\\)./[\\1]/<CR>",
+      "expect": {
+        "buffer": "[x]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(a\\|.\\).",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "alternative_both_ends_then_dot_optional_capture",
+      "buffer": "áb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\(a\\|.\\).\\=/[\\1]/<CR>",
+      "expect": {
+        "buffer": "[a]b",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(a\\|.\\).\\=",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "counted_dot_over_marks_not_found",
+      "buffer": "ạ́",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a.\\{2}/X/<CR>",
+      "expect": {
+        "buffer": "ạ́",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a.\\{2}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "counted_dot_over_marks_then_base",
+      "buffer": "ạ́b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a.\\{2}/X/<CR>",
+      "expect": {
+        "buffer": "X",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a.\\{2}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "counted_class_over_marks_not_found",
+      "buffer": "ạ́",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a\\S\\{2}/X/<CR>",
+      "expect": {
+        "buffer": "ạ́",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a\\S\\{2}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "counted_class_over_marks_then_base",
+      "buffer": "ạ́b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a\\S\\{2}/X/<CR>",
+      "expect": {
+        "buffer": "X",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a\\S\\{2}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "counted_negated_collection_over_marks_not_found",
+      "buffer": "ạ́",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a[^x]\\{2}/X/<CR>",
+      "expect": {
+        "buffer": "ạ́",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a[^x]\\{2}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "counted_negated_collection_over_marks_then_base",
+      "buffer": "ạ́b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a[^x]\\{2}/X/<CR>",
+      "expect": {
+        "buffer": "X",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a[^x]\\{2}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "counted_capture_over_marks_not_found",
+      "buffer": "ạ́",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a\\(.\\)\\{2}/X/<CR>",
+      "expect": {
+        "buffer": "ạ́",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a\\(.\\)\\{2}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "counted_capture_over_marks_then_base",
+      "buffer": "ạ́b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a\\(.\\)\\{2}/X/<CR>",
+      "expect": {
+        "buffer": "X",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a\\(.\\)\\{2}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "counted_noncapture_over_marks_not_found",
+      "buffer": "ạ́",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a\\%(.\\)\\{2}/X/<CR>",
+      "expect": {
+        "buffer": "ạ́",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a\\%(.\\)\\{2}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "counted_noncapture_over_marks_then_base",
+      "buffer": "ạ́b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a\\%(.\\)\\{2}/X/<CR>",
+      "expect": {
+        "buffer": "X",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a\\%(.\\)\\{2}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "counted_capture_keeps_last_repeat",
+      "buffer": "ạ́b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a\\(.\\)\\{2}/[\\1]/<CR>",
+      "expect": {
+        "buffer": "[b]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a\\(.\\)\\{2}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "counted_capture_range_not_enough",
+      "buffer": "ạ́",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a\\(.\\)\\{2,3}/X/<CR>",
+      "expect": {
+        "buffer": "ạ́",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a\\(.\\)\\{2,3}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "star_then_dot_over_marks",
+      "buffer": "ạ́",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a.*./X/<CR>",
+      "expect": {
+        "buffer": "X",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a.*.",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "four_marks_reversed_literal_base",
+      "buffer": "ạ́̂̃b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/ạ́̂̃/X/<CR>",
+      "expect": {
+        "buffer": "Xb",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "ạ́̂̃",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "four_marks_reversed_leading",
+      "buffer": "ạ́̂̃b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/̣́̂̃/X/<CR>",
+      "expect": {
+        "buffer": "Xb",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "̣́̂̃",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "four_marks_in_order_literal_base",
+      "buffer": "ạ́̂̃b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/ạ́̂̃/X/<CR>",
+      "expect": {
+        "buffer": "Xb",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "ạ́̂̃",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "four_marks_one_missing_literal_base",
+      "buffer": "ạ́̂b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/ạ́̂̃/X/<CR>",
+      "expect": {
+        "buffer": "ạ́̂b",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "ạ́̂̃",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "five_marks_reversed_dot",
+      "buffer": "a̅̄̃̂́b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/.́̂̃̄̅/X/<CR>",
+      "expect": {
+        "buffer": "Xb",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": ".́̂̃̄̅",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "duplicate_marks_literal_base",
+      "buffer": "áb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/á́/X/<CR>",
+      "expect": {
+        "buffer": "Xb",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "á́",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "duplicate_marks_leading",
+      "buffer": "áb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/́́/X/<CR>",
+      "expect": {
+        "buffer": "Xb",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "́́",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "duplicate_marks_dot",
+      "buffer": "áb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/.́́/X/<CR>",
+      "expect": {
+        "buffer": "Xb",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": ".́́",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "duplicate_marks_with_extra_mark",
+      "buffer": "ạ́b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/ạ́́/X/<CR>",
+      "expect": {
+        "buffer": "Xb",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "ạ́́",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "duplicate_marks_not_present",
+      "buffer": "âb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/á́/X/<CR>",
+      "expect": {
+        "buffer": "âb",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "á́",
+            "linewise": false
+          }
+        }
+      }
     }
   ]
 }
