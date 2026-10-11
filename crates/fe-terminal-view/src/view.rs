@@ -8,7 +8,7 @@ use gpui::{
 };
 
 use crate::TerminalStyle;
-use crate::element::TerminalElement;
+use crate::element::{PaintReport, TerminalElement};
 use crate::mouse::{Button, Drag, WheelTo};
 
 /// The key context a terminal view's bindings are scoped to.
@@ -52,6 +52,8 @@ pub struct TerminalView {
     pub(crate) wheel: f32,
     /// Where `wheel` was headed.
     pub(crate) wheel_to: WheelTo,
+    /// What the last prepaint laid out.
+    pub(crate) painted: PaintReport,
     _focus_reports: [Subscription; 2],
     /// Redraws the cursor when the window gains or loses focus.
     _activation: Subscription,
@@ -96,6 +98,7 @@ impl TerminalView {
             reported: None,
             wheel: 0.,
             wheel_to: WheelTo::default(),
+            painted: PaintReport::default(),
             _focus_reports: focus_reports,
             _activation: activation,
         })
@@ -105,6 +108,12 @@ impl TerminalView {
     /// or hollow cursor.
     pub fn is_focused(&self, window: &Window) -> bool {
         self.focus.is_focused(window) && window.is_window_active()
+    }
+
+    /// What the last frame laid out. For tests.
+    #[doc(hidden)]
+    pub fn painted(&self) -> &PaintReport {
+        &self.painted
     }
 
     pub fn style(&self) -> &TerminalStyle {

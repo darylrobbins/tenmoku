@@ -13,6 +13,10 @@ pub mod mouse;
 mod style;
 mod view;
 
+#[doc(hidden)]
+pub use element::cell_size;
+#[doc(hidden)]
+pub use element::{PaintReport, PaintedCursor, PaintedText};
 pub use fe_terminal::TerminalOptions;
 pub use style::TerminalStyle;
 pub use view::{KEY_CONTEXT, TerminalView, TerminalViewEvent};

@@ -38,7 +38,7 @@ impl IntoElement for TerminalElement {
 
 /// A cell's size in `style`'s font: the advance of `m` wide, and the font
 /// size times the line height, in whole pixels, high.
-pub(crate) fn cell_size(style: &TerminalStyle, window: &Window) -> Size<Pixels> {
+pub fn cell_size(style: &TerminalStyle, window: &Window) -> Size<Pixels> {
     let text_system = window.text_system();
     let font_id = text_system.resolve_font(&gpui::font(style.font_family.clone()));
     let width = text_system
@@ -91,6 +91,38 @@ enum Cursor {
     },
 }
 
+/// A shaped cell's text and where it is painted.
+#[doc(hidden)]
+#[derive(Clone, Debug, PartialEq)]
+pub struct PaintedText {
+    pub origin: Point<Pixels>,
+    pub text: String,
+}
+
+/// The cursor as last painted.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PaintedCursor {
+    Block(Bounds<Pixels>),
+    Hollow(Bounds<Pixels>),
+    Bar(Bounds<Pixels>),
+}
+
+/// What the last prepaint laid out, for tests to check the production
+/// shaping and painting path with.
+#[doc(hidden)]
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PaintReport {
+    /// Each shaped cell of the grid's text.
+    pub text: Vec<PaintedText>,
+    /// Backgrounds, selection, underlines and strikeouts.
+    pub quads: Vec<Bounds<Pixels>>,
+    pub cursor: Option<PaintedCursor>,
+    /// A block cursor's character, and its underline and strikeout.
+    pub cursor_text: Vec<PaintedText>,
+    pub cursor_quads: Vec<Bounds<Pixels>>,
+}
+
 pub(crate) struct Prepainted {
     cell: Size<Pixels>,
     hitbox: Hitbox,
@@ -102,6 +134,44 @@ pub(crate) struct Prepainted {
     cursor: Option<Cursor>,
     /// Marked text over its background, at the cursor.
     marked: Option<(Bounds<Pixels>, Text)>,
+}
+
+impl Prepainted {
+    fn report(&self) -> PaintReport {
+        let texts = |texts: &[Text]| {
+            texts
+                .iter()
+                .map(|text| PaintedText {
+                    origin: text.origin,
+                    text: text.line.text.to_string(),
+                })
+                .collect::<Vec<_>>()
+        };
+        let (cursor, cursor_text, cursor_quads) = match &self.cursor {
+            Some(Cursor::Block { bounds, glyph, .. }) => (
+                Some(PaintedCursor::Block(*bounds)),
+                glyph.as_ref().map(|g| texts(&g.text)).unwrap_or_default(),
+                glyph
+                    .as_ref()
+                    .map(|g| g.quads.iter().map(|(quad, _)| *quad).collect())
+                    .unwrap_or_default(),
+            ),
+            Some(Cursor::Hollow { bounds, .. }) => {
+                (Some(PaintedCursor::Hollow(*bounds)), Vec::new(), Vec::new())
+            }
+            Some(Cursor::Bar { bounds, .. }) => {
+                (Some(PaintedCursor::Bar(*bounds)), Vec::new(), Vec::new())
+            }
+            None => (None, Vec::new(), Vec::new()),
+        };
+        PaintReport {
+            text: texts(&self.text),
+            quads: self.quads.iter().map(|(quad, _)| *quad).collect(),
+            cursor,
+            cursor_text,
+            cursor_quads,
+        }
+    }
 }
 
 impl Element for TerminalElement {
@@ -304,6 +374,8 @@ impl Element for TerminalElement {
                 },
             ));
         }
+        let report = prepainted.report();
+        self.view.update(cx, |view, _| view.painted = report);
         prepainted
     }
 
