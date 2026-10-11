@@ -136,9 +136,20 @@ fn run(case: &Case) -> Vec<Duration> {
                     .count();
                 sent >= requests * run
             });
-            s.fake_clock.wait_for_sleep(HOLD);
-            // Let the companion's timer arm too.
-            std::thread::sleep(Duration::from_millis(50));
+            // Every reply of this run must have armed its hold before the
+            // clock moves, or a late one would arm a timer nothing advances.
+            let deadline = Instant::now() + WAIT;
+            while s
+                .fake_clock
+                .sleeping()
+                .iter()
+                .filter(|left| **left == HOLD)
+                .count()
+                < requests
+            {
+                assert!(Instant::now() < deadline, "{}: replies not held", case.name);
+                std::thread::sleep(Duration::from_millis(1));
+            }
             let released = Instant::now();
             s.fake_clock.advance(HOLD);
             let (found, done) = answer.recv_timeout(WAIT).unwrap();
