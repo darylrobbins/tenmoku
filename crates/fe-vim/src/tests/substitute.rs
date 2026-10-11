@@ -248,8 +248,11 @@ fn flags_specials_and_bounds() {
     vim.feed(":").unwrap();
     let submit = invocation("vim.command_line_submit", json!({"text": "%s/x/y/"}))
         .context(context(vim.state()));
+    // Two hundred thousand rows in a debug build can pass the default limit.
+    crate::search::set_time_limit(Duration::from_secs(600));
     ROWS_SEARCHED.set(0);
     let dispatched = vim.dispatch(&submit).unwrap();
+    crate::search::set_time_limit(crate::search::DEFAULT_TIME_LIMIT);
     assert_eq!(ROWS_SEARCHED.get(), rows);
     assert_eq!(dispatched.effect, Effect::Changed);
     assert_eq!(dispatched.transactions.len(), 1);

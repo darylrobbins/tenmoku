@@ -155,7 +155,9 @@ fn search(
 /// `vim.move`, `vim.operate`, `.`): its pattern becomes the last search, as
 /// in nvim even if nothing matches, but not one fe-vim can't translate or
 /// one that is invalid, which leave the last search and its direction. `Err` holds the error for [`VimState::message`]: the
-/// pattern's, or E486 if nothing matches from the primary caret (the vim
+/// pattern's, `Interrupted` if the search passed [`search::set_time_limit`]'s
+/// limit (the cursor stays; the pattern is still the last search), or E486 if
+/// nothing matches from the primary caret (the vim
 /// cursor in a visual mode).
 pub(crate) fn check_search(
     target: &mut VimTarget<'_>,
@@ -176,9 +178,10 @@ pub(crate) fn check_search(
     target.state.highlight = Some(parsed.clone());
     let from = caret(target);
     // Past one match, a count goes round: any match will do.
-    match parsed.find(target.model.text(), from, search.forward) {
-        Some(_) => Ok(()),
-        None => Err(format!("E486: Pattern not found: {pattern}")),
+    match parsed.try_find(target.model.text(), from, search.forward) {
+        Ok(Some(_)) => Ok(()),
+        Err(interrupted) => Err(interrupted.to_string()),
+        Ok(None) => Err(format!("E486: Pattern not found: {pattern}")),
     }
 }
 

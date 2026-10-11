@@ -5,6 +5,8 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use fe_text::{Bias, Text};
 use regex::{CaptureLocations, Regex, RegexBuilder};
@@ -22,6 +24,95 @@ const MAX_GROUPS: usize = 9;
 /// tens of kilobytes (`\p{M}` is big), so a count of ten is already past
 /// `regex`'s default.
 const MAX_MIXED_COMPILED: usize = 64 << 20;
+
+/// How long one command may spend matching a pattern by default: nvim's
+/// `'redrawtime'`.
+pub const DEFAULT_TIME_LIMIT: Duration = Duration::from_secs(2);
+
+/// The limit, in nanoseconds, for [`set_time_limit`] and [`time_limit`].
+static TIME_LIMIT: AtomicU64 = AtomicU64::new(DEFAULT_TIME_LIMIT.as_nanos() as u64);
+
+/// Sets how long a `:s` or a search may spend matching before it stops with
+/// `Interrupted`, process-wide: [`DEFAULT_TIME_LIMIT`] until a host or a test
+/// changes it. Each command reads it once, when it starts, so a change
+/// applies from the next command.
+///
+/// The limit is checked between regex calls, each of which scans at most
+/// one row, so a command can overrun it by one row's scan. A command that
+/// passes it stops: `:s` changes nothing ([`crate::substitute`]'s `run`)
+/// and a search doesn't move the cursor ([`Pattern::try_find`]); both leave
+/// the message `Interrupted`.
+pub fn set_time_limit(limit: Duration) {
+    let nanos = u64::try_from(limit.as_nanos()).unwrap_or(u64::MAX);
+    TIME_LIMIT.store(nanos, Ordering::Relaxed);
+}
+
+/// The limit [`set_time_limit`] set.
+pub fn time_limit() -> Duration {
+    Duration::from_nanos(TIME_LIMIT.load(Ordering::Relaxed))
+}
+
+/// A command that passed [`time_limit`] before it finished matching.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Interrupted;
+
+impl std::fmt::Display for Interrupted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Interrupted")
+    }
+}
+
+impl std::error::Error for Interrupted {}
+
+/// When one operation, counted from its start, must stop matching, and
+/// whether it had to. Wall-clock time: reading rows and building edits count
+/// as well as the regex calls.
+pub(crate) struct Deadline {
+    end: Instant,
+    ran_out: std::cell::Cell<bool>,
+}
+
+impl Deadline {
+    /// A deadline [`time_limit`] from now.
+    pub(crate) fn new() -> Self {
+        Self::within(time_limit())
+    }
+
+    fn within(limit: Duration) -> Self {
+        let now = Instant::now();
+        Self {
+            end: now.checked_add(limit).unwrap_or(now),
+            ran_out: std::cell::Cell::new(false),
+        }
+    }
+
+    /// Whether it is past, which it records.
+    fn passed(&self) -> bool {
+        if !self.ran_out.get() && Instant::now() >= self.end {
+            self.ran_out.set(true);
+        }
+        self.ran_out.get()
+    }
+
+    /// Whether it is past now: samples the clock, for loops that make no
+    /// regex call to do it (stepping through listed matches, reading rows).
+    pub(crate) fn expired(&self) -> bool {
+        self.passed()
+    }
+
+    /// Whether a match iteration was cut short by it.
+    pub(crate) fn ran_out(&self) -> bool {
+        self.ran_out.get()
+    }
+
+    /// `Err` if it ran out.
+    pub(crate) fn check(&self) -> Result<(), Interrupted> {
+        match self.ran_out() {
+            true => Err(Interrupted),
+            false => Ok(()),
+        }
+    }
+}
 
 /// A search pattern in Vim's syntax, translated to a [`Regex`] that matches
 /// within one row.
@@ -167,7 +258,9 @@ impl Pattern {
     /// end and round to the start, wrapping once: [`Pattern::find`] going
     /// forward, but taking a match at `from`. Each row is searched once.
     pub fn find_from(&self, text: &Text, from: usize) -> Option<Range<usize>> {
-        self.forward(text, from, true)
+        self.forward(text, from, true, &Deadline::new())
+            .ok()
+            .flatten()
     }
 
     /// The match `/` (`forward`) or `?` would go to from `from`: the first
@@ -178,9 +271,35 @@ impl Pattern {
     /// before that (at `from` itself, say) is taken only after wrapping, and
     /// so is any on `from`'s row from its last character, where the search
     /// starts at the next row. Each row is searched once.
+    ///
+    /// Past [`time_limit`] this gives up and returns `None`;
+    /// [`Pattern::try_find`] says so.
     pub fn find(&self, text: &Text, from: usize, forward: bool) -> Option<Range<usize>> {
+        self.try_find(text, from, forward).ok().flatten()
+    }
+
+    /// [`Pattern::find`], but `Err(Interrupted)` if the search passed
+    /// [`time_limit`] (counted from this call) before it could tell where
+    /// the match is, which a pattern that scans to the end of the row from
+    /// each of a long row's starts can do. `Ok(None)` is no match.
+    pub fn try_find(
+        &self,
+        text: &Text,
+        from: usize,
+        forward: bool,
+    ) -> Result<Option<Range<usize>>, Interrupted> {
+        self.try_find_by(text, from, forward, &Deadline::new())
+    }
+
+    fn try_find_by(
+        &self,
+        text: &Text,
+        from: usize,
+        forward: bool,
+        deadline: &Deadline,
+    ) -> Result<Option<Range<usize>>, Interrupted> {
         if forward {
-            return self.forward(text, from, false);
+            return self.forward(text, from, false, deadline);
         }
         let at = text.offset_to_point(text.clip_offset(from.min(text.len()), Bias::Left));
         let column = at.column as usize;
@@ -190,31 +309,40 @@ impl Pattern {
         let shift = |range: Range<usize>, start: usize| start + range.start..start + range.end;
         let mut before = None;
         let mut last = None;
-        for found in self.matches(hay) {
+        for found in self.matches(hay, deadline) {
             if found.start < column {
                 before = Some(found.clone());
             }
             last = Some(found);
         }
+        deadline.check()?;
         if let Some(found) = before {
-            return Some(shift(found, start));
+            return Ok(Some(shift(found, start)));
         }
         // What `from`'s row offers once the search wraps back to it.
         let wrapped = last.map(|found| shift(found, start));
         for row in (0..at.row).rev().chain((at.row + 1..rows).rev()) {
             let (start, hay) = row_text(text, row, &mut buf);
-            if let Some(found) = self.matches(hay).last() {
-                return Some(shift(found, start));
+            let found = self.matches(hay, deadline).last();
+            deadline.check()?;
+            if let Some(found) = found {
+                return Ok(Some(shift(found, start)));
             }
         }
-        wrapped
+        Ok(wrapped)
     }
 
     /// The forward walk of [`Pattern::find`] and [`Pattern::find_from`]:
     /// `inclusive` takes a match at `from`; otherwise, as in Vim, the search
     /// starts a whole character on from `from` (from wherever in a character
     /// it is), and from the row's last character that's the next row.
-    fn forward(&self, text: &Text, from: usize, inclusive: bool) -> Option<Range<usize>> {
+    fn forward(
+        &self,
+        text: &Text,
+        from: usize,
+        inclusive: bool,
+        deadline: &Deadline,
+    ) -> Result<Option<Range<usize>>, Interrupted> {
         let at = text.offset_to_point(text.clip_offset(from.min(text.len()), Bias::Left));
         let column = at.column as usize;
         let rows = text.row_count();
@@ -232,21 +360,21 @@ impl Pattern {
             // The row's first match: if it starts at or after `from` it is
             // the answer; else look on from `from`, and fall back to it
             // once wrapped. Each stretch of the row is searched once.
-            first = self.matches(hay).next();
+            first = self.matches(hay, deadline).next();
             if let Some(found) = &first
                 && found.start >= column
             {
-                return Some(shift(found.clone(), start));
+                return Ok(Some(shift(found.clone(), start)));
             }
             if first.is_some()
-                && let Some(found) = self.matches_from(hay, column).next()
+                && let Some(found) = self.matches_from(hay, column, deadline).next()
             {
-                return Some(shift(found, start));
+                return Ok(Some(shift(found, start)));
             }
         } else {
-            for found in self.matches(hay) {
+            for found in self.matches(hay, deadline) {
                 if found.start >= past && !on_last {
-                    return Some(shift(found, start));
+                    return Ok(Some(shift(found, start)));
                 }
                 first.get_or_insert(found);
                 if on_last {
@@ -254,15 +382,18 @@ impl Pattern {
                 }
             }
         }
+        deadline.check()?;
         // What `from`'s row offers once the search wraps back to it.
         let wrapped = first.map(|found| shift(found, start));
         for row in (at.row + 1..rows).chain(0..at.row) {
             let (start, hay) = row_text(text, row, &mut buf);
-            if let Some(found) = self.matches(hay).next() {
-                return Some(shift(found, start));
+            let found = self.matches(hay, deadline).next();
+            deadline.check()?;
+            if let Some(found) = found {
+                return Ok(Some(shift(found, start)));
             }
         }
-        wrapped
+        Ok(wrapped)
     }
 
     /// Where `count` searches from `from` land, each from the match the
@@ -271,12 +402,25 @@ impl Pattern {
     /// again, so once a match comes back the rest is counted round, not
     /// searched. After the first search, each row's matches are listed
     /// once and stepped through, so the work is bounded by the text's
-    /// matches and rows, not the count.
+    /// matches and rows, not the count. Past [`time_limit`] (counted from
+    /// this call) it gives up and returns `None`.
     pub fn nth(&self, text: &Text, from: usize, forward: bool, count: usize) -> Option<usize> {
-        let first = self.find(text, from, forward)?.start;
+        self.nth_by(text, from, forward, count, &Deadline::new())
+    }
+
+    fn nth_by(
+        &self,
+        text: &Text,
+        from: usize,
+        forward: bool,
+        count: usize,
+        deadline: &Deadline,
+    ) -> Option<usize> {
+        let first = self.try_find_by(text, from, forward, deadline).ok()??.start;
         let mut rows = Rows {
             pattern: self,
             text,
+            deadline,
             listed: HashMap::new(),
         };
         let mut seen = HashMap::from([(first, 0)]);
@@ -284,6 +428,9 @@ impl Pattern {
         for step in 1..count {
             let at = *found.last().expect("one match was found");
             let next = rows.step(at, forward);
+            if deadline.expired() {
+                return None;
+            }
             if let Some(&first) = seen.get(&next) {
                 let cycle = &found[first..];
                 return Some(cycle[(count - 1 - first) % cycle.len()]);
@@ -298,14 +445,20 @@ impl Pattern {
     /// search resuming at the end of the last match, or one whole character
     /// (an extended grapheme cluster) on from an empty one, and not at the
     /// row's end once past its start.
-    fn matches<'a>(&'a self, hay: &'a str) -> RowMatches<'a> {
-        self.matches_from(hay, 0)
+    fn matches<'a>(&'a self, hay: &'a str, deadline: &'a Deadline) -> RowMatches<'a> {
+        self.matches_from(hay, 0, deadline)
     }
 
     /// [`Pattern::matches`] with the first search starting at `at`, with the
     /// text before it still there for anchors and boundaries to see.
-    fn matches_from<'a>(&'a self, hay: &'a str, at: usize) -> RowMatches<'a> {
+    fn matches_from<'a>(
+        &'a self,
+        hay: &'a str,
+        at: usize,
+        deadline: &'a Deadline,
+    ) -> RowMatches<'a> {
         RowMatches {
+            deadline,
             regex: &self.regex,
             slots: &self.slots,
             word: self.word,
@@ -324,11 +477,16 @@ impl Pattern {
     /// empty match where the last match ended is skipped, the search going
     /// on a whole character later, as in nvim (`:s/b*/-/g` makes `abc`
     /// `-a-c`).
-    pub(crate) fn substitutions<'a>(&'a self, hay: &'a str, groups: bool) -> RowMatches<'a> {
+    pub(crate) fn substitutions<'a>(
+        &'a self,
+        hay: &'a str,
+        groups: bool,
+        deadline: &'a Deadline,
+    ) -> RowMatches<'a> {
         RowMatches {
             groups,
             last_end: Some(None),
-            ..self.matches(hay)
+            ..self.matches(hay, deadline)
         }
     }
 }
@@ -338,6 +496,7 @@ impl Pattern {
 struct Rows<'a> {
     pattern: &'a Pattern,
     text: &'a Text,
+    deadline: &'a Deadline,
     listed: HashMap<u32, Listed>,
 }
 
@@ -350,12 +509,12 @@ struct Listed {
 
 impl Rows<'_> {
     fn row(&mut self, row: u32) -> &Listed {
-        let (pattern, text) = (self.pattern, self.text);
+        let (pattern, text, deadline) = (self.pattern, self.text, self.deadline);
         self.listed.entry(row).or_insert_with(|| {
             let mut buf = String::new();
             let (start, hay) = row_text(text, row, &mut buf);
             let starts = pattern
-                .matches(hay)
+                .matches(hay, deadline)
                 .map(|found| {
                     let past = found.start + unit(&hay[found.start..]).unwrap_or(0);
                     (start + found.start, start + past)
@@ -373,7 +532,11 @@ impl Rows<'_> {
     fn step(&mut self, at: usize, forward: bool) -> usize {
         let from_row = self.text.offset_to_point(at).row;
         let rows = self.text.row_count();
+        let deadline = self.deadline;
         let here = self.row(from_row);
+        if deadline.expired() {
+            return at;
+        }
         let ix = here.starts.partition_point(|&(start, _)| start < at);
         if forward {
             let past = here.starts.get(ix).map_or(at, |&(_, past)| past);
@@ -386,6 +549,9 @@ impl Rows<'_> {
                 if let Some(&(next, _)) = self.row(row).starts.first() {
                     return next;
                 }
+                if self.deadline.expired() {
+                    return at;
+                }
             }
         } else {
             if ix > 0 {
@@ -394,6 +560,9 @@ impl Rows<'_> {
             for row in (0..from_row).rev().chain((from_row..rows).rev()) {
                 if let Some(&(next, _)) = self.row(row).starts.last() {
                     return next;
+                }
+                if self.deadline.expired() {
+                    return at;
                 }
             }
         }
@@ -538,24 +707,26 @@ pub(crate) fn word_at(text: &Text, at: usize, forward: bool) -> Option<(usize, S
 }
 
 /// Every match on `rows` (clamped to the text), in order, at most `cap`
-/// of them, for a host to paint. A zero-width match is an empty range.
+/// of them, for a host to paint; it stops at [`time_limit`] (counted from
+/// the call), with the matches so far. A zero-width match is an empty range.
 pub fn matches_in(
     text: &Text,
     rows: Range<u32>,
     pattern: &Pattern,
     cap: usize,
 ) -> Vec<Range<usize>> {
+    let deadline = Deadline::new();
     let mut found = Vec::new();
     let mut buf = String::new();
     for row in rows.start..rows.end.min(text.row_count()) {
         let room = cap - found.len();
-        if room == 0 {
+        if room == 0 || deadline.expired() {
             break;
         }
         let (start, hay) = row_text(text, row, &mut buf);
         found.extend(
             pattern
-                .matches(hay)
+                .matches(hay, &deadline)
                 .take(room)
                 .map(|range| start + range.start..start + range.end),
         );
@@ -568,7 +739,7 @@ pub fn matches_in(
 /// on the row, searched from its start: a non-empty one reaches the window
 /// if it ends after its start and starts before its end, an empty one if it
 /// is at either end or between. Stops at the first match starting past the
-/// window.
+/// window, or at [`time_limit`].
 pub fn matches_reaching(
     text: &Text,
     row: u32,
@@ -576,13 +747,26 @@ pub fn matches_reaching(
     pattern: &Pattern,
     cap: usize,
 ) -> Vec<Range<usize>> {
-    if row >= text.row_count() {
+    reaching(text, row, window, pattern, cap, &Deadline::new())
+}
+
+/// [`matches_reaching`] against `deadline`, which started before the row is
+/// read: gathering a long row's chunks is part of the budget.
+fn reaching(
+    text: &Text,
+    row: u32,
+    window: Range<usize>,
+    pattern: &Pattern,
+    cap: usize,
+    deadline: &Deadline,
+) -> Vec<Range<usize>> {
+    if row >= text.row_count() || deadline.expired() {
         return Vec::new();
     }
     let mut buf = String::new();
     let (start, hay) = row_text(text, row, &mut buf);
     pattern
-        .matches(hay)
+        .matches(hay, deadline)
         .map(|range| start + range.start..start + range.end)
         .take_while(|range| range.start <= window.end)
         .filter(|range| match range.is_empty() {
@@ -642,6 +826,7 @@ fn unit(text: &str) -> Option<usize> {
 
 /// See [`Pattern::matches`] and [`Pattern::substitutions`].
 pub(crate) struct RowMatches<'a> {
+    deadline: &'a Deadline,
     regex: &'a Regex,
     /// [`Pattern`]'s `slots`.
     slots: &'a [Vec<usize>],
@@ -684,6 +869,9 @@ impl Iterator for RowMatches<'_> {
     fn next(&mut self) -> Option<Range<usize>> {
         loop {
             let at = self.at.take()?;
+            if self.deadline.passed() {
+                return None;
+            }
             self.regex.captures_read_at(&mut self.locs, self.hay, at)?;
             let (start, end) = self
                 .locs
@@ -2500,6 +2688,73 @@ fn multi_syntax(multi: Multi) -> String {
                 Some(max) => format!("{{{min},{max}}}{lazy}"),
                 None => format!("{{{min},}}{lazy}"),
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A `Rows` whose rows are all listed already still stops at an expired
+    /// deadline, whichever way it steps.
+    #[test]
+    fn rows_step_polls_the_clock_through_listed_rows() {
+        let text = Text::new("a\na\na");
+        let pattern = Pattern::parse("a").unwrap();
+        let listed = |row: u32| Listed {
+            end: row as usize * 2 + 1,
+            starts: vec![(row as usize * 2, row as usize * 2 + 1)],
+        };
+        for (from, forward) in [(0, true), (4, false)] {
+            let deadline = Deadline::within(Duration::ZERO);
+            let mut rows = Rows {
+                pattern: &pattern,
+                text: &text,
+                deadline: &deadline,
+                listed: (0..3).map(|row| (row, listed(row))).collect(),
+            };
+            assert_eq!(rows.step(from, forward), from, "forward {forward}");
+        }
+        let deadline = Deadline::within(Duration::ZERO);
+        assert_eq!(pattern.nth_by(&text, 0, true, 3, &deadline), None);
+    }
+
+    /// A row isn't read once the budget is spent.
+    #[test]
+    fn matches_reaching_spends_its_budget_before_reading_the_row() {
+        let text = Text::new("aaa");
+        let pattern = Pattern::parse("a").unwrap();
+        ROWS_SEARCHED.set(0);
+        let found = reaching(
+            &text,
+            0,
+            0..3,
+            &pattern,
+            9,
+            &Deadline::within(Duration::ZERO),
+        );
+        assert!(found.is_empty());
+        assert_eq!(ROWS_SEARCHED.get(), 0);
+    }
+
+    /// `Rows::step` stops when listing a row ran out of time, before it
+    /// reads another, whichever way it goes.
+    #[test]
+    fn rows_step_stops_at_expiry_before_reading_another_row() {
+        let text = Text::new("a\nbbbb\nbbbb\na");
+        let pattern = Pattern::parse("a").unwrap();
+        for (from, forward) in [(0, true), (text.len(), false), (7, true), (7, false)] {
+            let deadline = Deadline::within(Duration::ZERO);
+            let mut rows = Rows {
+                pattern: &pattern,
+                text: &text,
+                deadline: &deadline,
+                listed: HashMap::new(),
+            };
+            ROWS_SEARCHED.set(0);
+            assert_eq!(rows.step(from, forward), from);
+            assert_eq!(ROWS_SEARCHED.get(), 1, "from {from}, forward {forward}");
         }
     }
 }

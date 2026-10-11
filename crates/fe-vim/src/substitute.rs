@@ -15,7 +15,7 @@ use crate::{
     insert, marks,
     motion::Cursor,
     operator,
-    search::{self, Pattern, PatternError},
+    search::{self, Deadline, Interrupted, Pattern, PatternError},
 };
 
 /// A substitute's flags (`:help s_flags`): those fe-vim supports.
@@ -317,6 +317,12 @@ type Handled = Result<Dispatched<TransactionId>, CommandError>;
 /// which leaves the caret on the first non-blank of the last line changed
 /// (the last a line break made, after `\r`); with `n` nothing changes and
 /// the caret goes to its own line's first non-blank. `.` doesn't repeat it.
+///
+/// A command that passes [`search::time_limit`] before it has matched every
+/// row (an adversarial pattern on a long row) stops with
+/// `ExError::Pattern("Interrupted")`, changing nothing in the buffer: no
+/// transaction, no jump mark, no caret move. The last search, the last
+/// substitute and the highlight are set as for any other run.
 pub(crate) fn run(
     target: &mut VimTarget<'_>,
     actor: &Actor,
@@ -377,7 +383,9 @@ pub(crate) fn run(
         target.state.highlight = Pattern::parse(&pattern).ok();
     }
     let parsed = parsed.map_err(|error| ExError::Pattern(error.to_string()))?;
-    let found = find(target, &parsed, &compiled, rows, flags);
+    let Ok(found) = find(target, &parsed, &compiled, rows, flags) else {
+        return Err(ExError::Pattern(Interrupted.to_string()));
+    };
     if found.matches == 0 {
         return match flags.quiet {
             true => Ok(Ok(Dispatched::new(Effect::Notify))),
@@ -443,14 +451,15 @@ struct Found {
 }
 
 /// The matches on `rows` (the first on each, or all with `g`) and their
-/// replacements, each row read once.
+/// replacements, each row read once; `Err` if the time limit ran out.
 fn find(
     target: &mut VimTarget<'_>,
     pattern: &Pattern,
     replacement: &Replacement,
     rows: Range<u32>,
     flags: Flags,
-) -> Found {
+) -> Result<Found, Interrupted> {
+    let deadline = Deadline::new();
     target.model.sync_display();
     let text = target.model.text();
     let mut found = Found {
@@ -465,7 +474,7 @@ fn find(
     let mut buf = String::new();
     for row in rows.start..rows.end.min(text.row_count()) {
         let (start, hay) = search::row_text(text, row, &mut buf);
-        let mut matches = pattern.substitutions(hay, replacement.groups);
+        let mut matches = pattern.substitutions(hay, replacement.groups, &deadline);
         let mut on_row = 0;
         // One edit per row, from its first match to its last, the text
         // between matches copied: a `g` over many matches is one edit.
@@ -487,6 +496,7 @@ fn find(
                 break;
             }
         }
+        deadline.check()?;
         if let Some(span) = span {
             found
                 .edits
@@ -501,7 +511,7 @@ fn find(
             found.last_row = row + u32::try_from(breaks).unwrap_or(u32::MAX);
         }
     }
-    found
+    Ok(found)
 }
 
 /// `&`: the last substitute on the cursor's line, or `count` lines from it,
