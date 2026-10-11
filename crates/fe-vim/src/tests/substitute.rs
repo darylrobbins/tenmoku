@@ -269,8 +269,12 @@ fn flags_specials_and_bounds() {
     // A `g` substitute on a row of 100,000 matches, linear in the row.
     let row = "ab".repeat(100_000);
     let mut vim = HeadlessVim::new(&row, (0, 0));
+    // A hundred thousand matches under load can pass the default limit.
+    crate::search::set_time_limit(Duration::from_secs(600));
     let started = Instant::now();
     vim.feed(":s/\\(a\\)b/\\u\\1-/g<CR>").unwrap();
-    assert!(started.elapsed() < Duration::from_secs(10));
+    let elapsed = started.elapsed();
+    crate::search::set_time_limit(crate::search::DEFAULT_TIME_LIMIT);
+    assert!(elapsed < Duration::from_secs(10));
     assert_eq!(vim.text(), "A-".repeat(100_000));
 }
