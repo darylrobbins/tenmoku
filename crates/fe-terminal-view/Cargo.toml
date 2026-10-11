@@ -1,0 +1,21 @@
+[package]
+name = "fe-terminal-view"
+description = "The GPUI view of a terminal session: paints fe-terminal's grid in the editor's font and theme colours and keeps the pty sized to the view. Depends on no fastedit editor crate, so it can move into kiln."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+async-channel.workspace = true
+fe-terminal.workspace = true
+gpui.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+tempfile.workspace = true
+
+[lints]
+workspace = true

@@ -1998,6 +1998,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "fe-terminal-view"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "fe-terminal",
+ "gpui-pre",
+ "log",
+ "tempfile",
+]
+
+[[package]]
 name = "fe-text"
 version = "0.1.0"
 dependencies = [
