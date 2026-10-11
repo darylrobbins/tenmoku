@@ -97,8 +97,8 @@ pub(crate) struct Outcome {
     /// The visual anchor (`getpos('v')`), if the keys end in a visual mode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) visual: Option<(u32, usize)>,
-    /// `'<` and `'>`, those that are set: a linewise `'>` is on its row's
-    /// last byte.
+    /// The marks among `'<`, `'>` and `'a` to `'z` that are set: a linewise
+    /// `'>` is on its row's last byte.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(crate) marks: BTreeMap<String, (u32, usize)>,
 }
@@ -364,17 +364,20 @@ fn registers(vim: &HeadlessVim) -> BTreeMap<String, Register> {
         .collect()
 }
 
-/// `vim`'s `'<` and `'>`, those that are set.
+/// The marks the oracle records: `<`, `>` and `a` to `z`.
+const MARKS: &str = "<>abcdefghijklmnopqrstuvwxyz";
+
+/// `vim`'s marks among [`MARKS`], those that are set.
 fn marks(vim: &HeadlessVim) -> BTreeMap<String, (u32, usize)> {
-    ['<', '>']
-        .into_iter()
+    MARKS
+        .chars()
         .filter_map(|name| Some((name.to_string(), vim.mark(name)?)))
         .collect()
 }
 
 /// Drives `recorded`'s keys through [`HeadlessVim`] and compares the buffer,
-/// the cursor, the mode, the registers, the visual anchor and the `'<` and
-/// `'>` marks with nvim's.
+/// the cursor, the mode, the registers, the visual anchor and the marks
+/// ([`MARKS`]) with nvim's.
 pub(crate) fn check(recorded: &Recorded) -> Result<(), String> {
     let (case, expect) = (recorded.case(), &recorded.expect);
     let mut vim = HeadlessVim::new(&case.buffer, case.cursor);

@@ -48,7 +48,8 @@ pub enum Operator {
 /// and `N` over the last search and its direction, and `search_word_forward`
 /// and `search_word_backward` are `*` and `#`: they resolve to a `search`
 /// before they run, so `vim.move` and `vim.operate` take them but nothing
-/// else sees them.
+/// else sees them. `mark` is `'{name}` and `` `{name} `` (`exact`): `{"mark":
+/// {"name": "a", "exact": true}}`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Motion {
@@ -83,6 +84,26 @@ pub enum Motion {
     SearchPrevious,
     SearchWordForward,
     SearchWordBackward,
+    Mark(MarkMotion),
+    /// A `mark` once resolved: the mark's offset in the text it was
+    /// resolved in. Only `vim.move` and `vim.operate` make one, as they
+    /// run; it's never serialized.
+    #[serde(skip)]
+    MarkAt {
+        offset: usize,
+        exact: bool,
+    },
+}
+
+/// `'{name}`, or `` `{name} `` if `exact`, as a motion: to the first
+/// non-blank of the mark's row, linewise, or to the mark itself, exclusive
+/// and charwise. The names are `a` to `z`, `'` and `` ` `` (both the
+/// position before the last jump), and `<` and `>`.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub struct MarkMotion {
+    pub name: char,
+    #[serde(default)]
+    pub exact: bool,
 }
 
 /// `/` and `?` as a motion: the `count`th match of `pattern` (Vim's syntax,
@@ -140,11 +161,12 @@ impl<'de> Deserialize<'de> for SearchPattern {
 /// How an operator takes a motion's range (`:help exclusive`).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum RangeClass {
-    /// Up to the target, not including it: `h l w b 0 ^ F T / ?`.
+    /// Up to the target, not including it: `h l w b 0 ^ F T / ?` and
+    /// `` ` ``.
     Exclusive,
     /// Up to and including the target: `e $ f t %`.
     Inclusive,
-    /// Whole rows: `j k gg G` and a doubled operator.
+    /// Whole rows: `j k gg G '` and a doubled operator.
     Linewise,
 }
 
@@ -182,7 +204,30 @@ impl Motion {
             Self::Up | Self::Down | Self::DocumentStart | Self::DocumentEnd | Self::Line => {
                 RangeClass::Linewise
             }
+            Self::Mark(MarkMotion { exact, .. }) | Self::MarkAt { exact, .. } => match exact {
+                true => RangeClass::Exclusive,
+                false => RangeClass::Linewise,
+            },
         }
+    }
+
+    /// Whether it's a jump (`:help jump-motions`), which sets the jump mark
+    /// (`''`) to where it left from: `gg G % / ? n N * #`, `'` and `` ` ``.
+    pub fn is_jump(self) -> bool {
+        matches!(
+            self,
+            Self::DocumentStart
+                | Self::DocumentEnd
+                | Self::MatchPair
+                | Self::Search(_)
+                | Self::SearchWord(_)
+                | Self::SearchNext
+                | Self::SearchPrevious
+                | Self::SearchWordForward
+                | Self::SearchWordBackward
+                | Self::Mark(_)
+                | Self::MarkAt { .. }
+        )
     }
 }
 
@@ -223,7 +268,7 @@ pub enum Target {
 
 impl Target {
     /// Whether a delete over it writes register `1` even within a row
-    /// (`:help quote_number`): `%`, `/` and `?`.
+    /// (`:help quote_number`): `%`, `/`, `?` and `` ` ``.
     pub fn writes_numbered(self) -> bool {
         matches!(
             self,
@@ -235,6 +280,8 @@ impl Target {
                     | Motion::SearchPrevious
                     | Motion::SearchWordForward
                     | Motion::SearchWordBackward
+                    | Motion::Mark(MarkMotion { exact: true, .. })
+                    | Motion::MarkAt { exact: true, .. }
             )
         )
     }
@@ -352,6 +399,13 @@ pub struct InsertArgs {
 pub struct CountArgs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub count: Option<u32>,
+}
+
+/// `vim.set_mark`'s args: `m{name}`, `a` to `z`, or `'` or `` ` `` for the
+/// jump mark.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct MarkArgs {
+    pub name: char,
 }
 
 /// `vim.replace_char`'s args: `r{char}`.

@@ -11,7 +11,7 @@
 //! vim would take.
 //!
 //! Leaving a visual mode keeps its extent for `gv`, `'<` and `'>` as
-//! [`Mark`]s, which hold a byte column on a row as nvim's do.
+//! [`Mark`](crate::Mark)s, which hold a byte column on a row as nvim's do.
 
 use std::ops::Range;
 
@@ -55,43 +55,12 @@ pub(crate) struct Visual {
 /// and moves up with a row deleted or joined to the one above; edits within
 /// the row leave the column alone.
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct Pos {
+pub(crate) struct Pos {
     row: Anchor,
     column: usize,
     /// On the row after the anchor's, past the end of the text: where nvim
     /// keeps a mark on rows a visual change deleted at the end.
     past_end: bool,
-}
-
-/// `'<` or `'>`: the start or end of the last visual extent. Like nvim's,
-/// it's whichever end of it comes first or last when it's read, as edits may
-/// have moved them past each other.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Mark {
-    ends: [Pos; 2],
-    end: bool,
-    linewise: bool,
-}
-
-impl Mark {
-    /// Its row and byte column in `snapshot` (the editor's, or a newer one),
-    /// as nvim's `getpos()` reports them: the column may lie past the row's
-    /// end, and a linewise extent's `'<` is at its row's column 0 and its
-    /// `'>` on its row's last byte.
-    pub fn position(&self, snapshot: &BufferSnapshot) -> (u32, usize) {
-        let [a, b] = [&self.ends[0], &self.ends[1]].map(|pos| pos.position(snapshot));
-        let (row, column) = if self.end { a.max(b) } else { a.min(b) };
-        let text = snapshot.text();
-        let last = |row| match row < text.row_count() {
-            true => (text.row_len(row) as usize).saturating_sub(1),
-            false => 0,
-        };
-        match (self.linewise, self.end) {
-            (true, false) => (row, 0),
-            (true, true) => (row, last(row)),
-            (false, _) => (row, column),
-        }
-    }
 }
 
 impl Pos {
@@ -105,7 +74,8 @@ impl Pos {
         }
     }
 
-    fn position(&self, snapshot: &BufferSnapshot) -> (u32, usize) {
+    /// Its row and byte column in `snapshot`.
+    pub(crate) fn position(&self, snapshot: &BufferSnapshot) -> (u32, usize) {
         let row = snapshot
             .text()
             .offset_to_point(snapshot.resolve(&self.row))
@@ -133,6 +103,14 @@ pub(crate) struct LastVisual {
     /// The cursor was the start.
     cursor_first: bool,
     goal: Option<usize>,
+}
+
+impl LastVisual {
+    /// Its start and end, for `'<` and `'>`, and whether it's linewise.
+    pub(crate) fn marks(&self) -> ([Pos; 2], bool) {
+        let ends = [self.start.clone(), self.end.clone()];
+        (ends, self.kind == VisualKind::Line)
+    }
 }
 
 /// How much text the last change over a selection took, for `.`
@@ -661,22 +639,5 @@ impl VimState {
         };
         self.pending = Default::default();
         select(model, self, ends);
-    }
-
-    /// `'<` or `'>`: the start and end of the last visual extent, set when
-    /// a visual mode is left by any path. A linewise extent's `'<` is on its
-    /// first row's column 0, and its `'>` on its last row's last byte.
-    pub fn mark(&self, name: char) -> Option<Mark> {
-        let last = self.last_visual.as_ref()?;
-        let end = match name {
-            '<' => false,
-            '>' => true,
-            _ => return None,
-        };
-        Some(Mark {
-            ends: [last.start.clone(), last.end.clone()],
-            end,
-            linewise: last.kind == VisualKind::Line,
-        })
     }
 }

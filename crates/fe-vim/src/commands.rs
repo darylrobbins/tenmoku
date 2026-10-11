@@ -7,10 +7,16 @@ use fe_command::{Actor, CommandError, CommandTarget, ContextPredicate, Registry}
 use fe_editor::{EditorModel, commands::EditorHost};
 
 use crate::{
-    CommandLineArgs, CountArgs, InsertArgs, MoveArgs, OperateArgs, PutArgs, Registers,
+    CommandLineArgs, CountArgs, InsertArgs, MarkArgs, MoveArgs, OperateArgs, PutArgs, Registers,
     ReplaceCharArgs, SelectArgs, SubmitArgs, SwapArgs, VimState, VisualArgs, cmdline, edit,
-    history, insert, motion, operator, repeat, substitute, visual,
+    history, insert, marks, motion, operator, repeat, substitute, visual,
 };
+
+/// Catches the marks up with the text before a command that may change it
+/// (see `marks::Marks::follow`).
+fn follow(target: &mut VimTarget<'_>) {
+    target.state.marks.follow(target.model.snapshot());
+}
 
 /// What vim's commands run against: an editor's model, its host, its vim
 /// state and the host's registers, borrowed for one dispatch.
@@ -55,12 +61,14 @@ pub fn registry() -> Registry<VimCommands> {
             "vim.move",
             "Vim Move",
             |target: &mut VimTarget<'_>, _: &Actor, args: MoveArgs| {
-                Ok::<_, CommandError>(motion::move_command(target, args))
+                let moved = motion::move_command(target, args);
+                marks::settle(target);
+                Ok::<_, CommandError>(moved)
             },
         )
         .expect("vim command IDs are valid and distinct")
         .description(
-            "Moves every caret by a vim motion, `count` times or to row `count`; the count is bounded by the text. In a visual mode it moves the vim cursor, keeping the anchor. A search motion's pattern becomes the last search; one that fails moves nothing and leaves a message.",
+            "Moves every caret by a vim motion, `count` times or to row `count`; the count is bounded by the text. In a visual mode it moves the vim cursor, keeping the anchor. A search motion's pattern becomes the last search; one that fails moves nothing and leaves a message, as does a mark motion whose mark isn't set. A jump sets the jump mark (`''`) to where it left from.",
         )
         .context(normal_or_visual.clone())
         .mutates_buffer(false);
@@ -70,8 +78,11 @@ pub fn registry() -> Registry<VimCommands> {
             "Vim Operate",
             |target: &mut VimTarget<'_>, actor: &Actor, args: OperateArgs| {
                 {
+                    follow(target);
                     insert::adopt_closing(target.state);
-                    operator::operate(target, actor, args)
+                    let operated = operator::operate(target, actor, args);
+                    marks::settle(target);
+                    operated
                 }
             },
         )
@@ -87,6 +98,7 @@ pub fn registry() -> Registry<VimCommands> {
             "Vim Put",
             |target: &mut VimTarget<'_>, actor: &Actor, args: PutArgs| {
                 {
+                    follow(target);
                     insert::adopt_closing(target.state);
                     operator::put(target, actor, args)
                 }
@@ -104,6 +116,7 @@ pub fn registry() -> Registry<VimCommands> {
             "Vim Insert",
             |target: &mut VimTarget<'_>, actor: &Actor, args: InsertArgs| {
                 {
+                    follow(target);
                     insert::adopt_closing(target.state);
                     insert::insert(target, actor, args)
                 }
@@ -119,7 +132,10 @@ pub fn registry() -> Registry<VimCommands> {
         .register(
             "vim.normal_mode",
             "Vim Normal Mode",
-            |target: &mut VimTarget<'_>, _: &Actor| insert::normal_mode(target),
+            |target: &mut VimTarget<'_>, _: &Actor| {
+                follow(target);
+                insert::normal_mode(target)
+            },
         )
         .expect("vim command IDs are valid and distinct")
         .description(
@@ -133,6 +149,7 @@ pub fn registry() -> Registry<VimCommands> {
             "Vim Join Lines",
             |target: &mut VimTarget<'_>, actor: &Actor, args: CountArgs| {
                 {
+                    follow(target);
                     insert::adopt_closing(target.state);
                     edit::join(target, actor, args)
                 }
@@ -150,6 +167,7 @@ pub fn registry() -> Registry<VimCommands> {
             "Vim Replace Character",
             |target: &mut VimTarget<'_>, actor: &Actor, args: ReplaceCharArgs| {
                 {
+                    follow(target);
                     insert::adopt_closing(target.state);
                     edit::replace_char(target, actor, args)
                 }
@@ -167,6 +185,7 @@ pub fn registry() -> Registry<VimCommands> {
             "Vim Toggle Case",
             |target: &mut VimTarget<'_>, actor: &Actor, args: CountArgs| {
                 {
+                    follow(target);
                     insert::adopt_closing(target.state);
                     edit::toggle_case(target, actor, args)
                 }
@@ -183,6 +202,7 @@ pub fn registry() -> Registry<VimCommands> {
             "vim.undo",
             "Vim Undo",
             |target: &mut VimTarget<'_>, actor: &Actor, args: CountArgs| {
+                follow(target);
                 history::undo(target, actor, args, false)
             },
         )
@@ -197,6 +217,7 @@ pub fn registry() -> Registry<VimCommands> {
             "vim.redo",
             "Vim Redo",
             |target: &mut VimTarget<'_>, actor: &Actor, args: CountArgs| {
+                follow(target);
                 history::undo(target, actor, args, true)
             },
         )
@@ -211,7 +232,10 @@ pub fn registry() -> Registry<VimCommands> {
             "vim.repeat",
             "Vim Repeat",
             |target: &mut VimTarget<'_>, actor: &Actor, args: CountArgs| {
-                repeat::repeat(target, actor, args)
+                follow(target);
+                let repeated = repeat::repeat(target, actor, args);
+                marks::settle(target);
+                repeated
             },
         )
         .expect("vim command IDs are valid and distinct")
@@ -225,7 +249,10 @@ pub fn registry() -> Registry<VimCommands> {
             "vim.repeat_substitute",
             "Vim Repeat Substitute",
             |target: &mut VimTarget<'_>, actor: &Actor, args: CountArgs| {
-                substitute::repeat(target, actor, args.count)
+                follow(target);
+                let repeated = substitute::repeat(target, actor, args.count);
+                marks::settle(target);
+                repeated
             },
         )
         .expect("vim command IDs are valid and distinct")
@@ -234,6 +261,18 @@ pub fn registry() -> Registry<VimCommands> {
         )
         .context(normal)
         .mutates_buffer(true);
+    registry
+        .register_with_args(
+            "vim.set_mark",
+            "Vim Set Mark",
+            |target: &mut VimTarget<'_>, _: &Actor, args: MarkArgs| marks::set(target, args),
+        )
+        .expect("vim command IDs are valid and distinct")
+        .description(
+            "Sets mark `name` (`a` to `z`, or `'` or `` ` `` for the jump mark) at the primary caret, or at the vim cursor in a visual mode.",
+        )
+        .context(normal_or_visual.clone())
+        .mutates_buffer(false);
     registry
         .register_with_args(
             "vim.visual",
@@ -274,6 +313,7 @@ pub fn registry() -> Registry<VimCommands> {
             "Vim Put Over Selection",
             |target: &mut VimTarget<'_>, actor: &Actor, args: PutArgs| {
                 {
+                    follow(target);
                     insert::adopt_closing(target.state);
                     visual::put(target, actor, args)
                 }
@@ -330,7 +370,10 @@ pub fn registry() -> Registry<VimCommands> {
             "vim.command_line_submit",
             "Vim Submit Command Line",
             |target: &mut VimTarget<'_>, actor: &Actor, args: SubmitArgs| {
-                cmdline::submit(target, actor, args)
+                follow(target);
+                let submitted = cmdline::submit(target, actor, args);
+                marks::settle(target);
+                submitted
             },
         )
         .expect("vim command IDs are valid and distinct")

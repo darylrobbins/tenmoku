@@ -1,0 +1,429 @@
+# Mark cases for fe-vim's oracle: `m{a-z}` with `'` and `` ` `` as motions,
+# after an operator and in the visual modes; `''` and `` `` `` after the
+# jumps (`:5` isn't one); a mark whose row was deleted (E20, so the case ends
+# there) or that text put in or taken out moved; `'<` and `` `> `` after a
+# visual mode; and marks in an ex range.
+# Hand-written: name, buffer (rows joined with \n, no trailing newline),
+# cursor = [row, byte column] and keys in vim notation. What nvim does with
+# each is recorded in marks.expected.json by the ignored
+# `record_corpus_with_neovim` test; edit a case, then re-record.
+
+[[case]]
+name = "quote_a"
+buffer = "one\n  two\nthree\nfour"
+cursor = [1, 4]
+keys = "majj'a"
+
+[[case]]
+name = "backtick_a"
+buffer = "one\n  two\nthree\nfour"
+cursor = [1, 4]
+keys = "majj`a"
+
+[[case]]
+name = "delete_quote_a_up"
+buffer = "one\n  two\nthree\nfour\nfive"
+cursor = [1, 4]
+keys = "majjd'a"
+
+[[case]]
+name = "delete_quote_a_down"
+buffer = "one\n  two\nthree\nfour\nfive"
+cursor = [3, 2]
+keys = "makkd'a"
+
+[[case]]
+name = "delete_backtick_a"
+buffer = "abcdef\nxyz"
+cursor = [0, 1]
+keys = "ma3ld`a"
+
+[[case]]
+name = "delete_backtick_a_rows"
+buffer = "abc\ndef\nghi"
+cursor = [0, 1]
+keys = "majjd`a"
+
+[[case]]
+name = "delete_backtick_a_column_0"
+buffer = "  abc\ndef\nghi"
+cursor = [2, 0]
+keys = "makk^d`a"
+
+[[case]]
+name = "yank_quote_a"
+buffer = "abc\n  bcd\ncde\nxyz"
+cursor = [1, 3]
+keys = "majjy'a"
+
+[[case]]
+name = "yank_quote_a_down"
+buffer = "abc\nbcd\ncde\nxyz"
+cursor = [3, 1]
+keys = "makky'a"
+
+[[case]]
+name = "yank_backtick_a"
+buffer = "abc\nbcd\ncde"
+cursor = [0, 1]
+keys = "lmajy`a"
+
+[[case]]
+name = "change_quote_a"
+buffer = "abc\ndef\nghi\njkl"
+cursor = [1, 1]
+keys = "majjc'aX<Esc>"
+
+[[case]]
+name = "visual_quote_a"
+buffer = "abc\n  def\nghi"
+cursor = [1, 3]
+keys = "majv'a"
+
+[[case]]
+name = "visual_backtick_a"
+buffer = "abc\ndef\nghi"
+cursor = [2, 1]
+keys = "makkv`a"
+
+[[case]]
+name = "visual_line_quote_a_delete"
+buffer = "abc\ndef\nghi\njkl"
+cursor = [1, 1]
+keys = "majV'ad"
+
+[[case]]
+name = "visual_block_backtick_a"
+buffer = "abcd\nefgh\nijkl"
+cursor = [2, 2]
+keys = "makk<C-v>`ay"
+
+[[case]]
+name = "visual_set_mark"
+buffer = "abc\nb\nc\nd"
+cursor = [0, 0]
+keys = "vlmbjj<Esc>`b"
+
+[[case]]
+name = "quote_quote_after_G"
+buffer = "one\n  two\nthree\nfour"
+cursor = [1, 4]
+keys = "G''"
+
+[[case]]
+name = "backtick_backtick_after_G"
+buffer = "one\n  two\nthree\nfour"
+cursor = [1, 4]
+keys = "G``"
+
+[[case]]
+name = "quote_quote_back_again"
+buffer = "one\n  two\nthree\nfour"
+cursor = [1, 4]
+keys = "G''''"
+
+[[case]]
+name = "quote_quote_after_gg"
+buffer = "one\n  two\nthree\nfour"
+cursor = [2, 3]
+keys = "gg''"
+
+[[case]]
+name = "quote_quote_after_search"
+buffer = "abc\nx\ncde\nfx"
+cursor = [0, 1]
+keys = "/x<CR>''"
+
+[[case]]
+name = "backtick_backtick_after_search"
+buffer = "abc\nx\ncde\nfx"
+cursor = [0, 1]
+keys = "/x<CR>n``"
+
+[[case]]
+name = "quote_quote_after_percent"
+buffer = "if (a\nb) {\n}"
+cursor = [0, 3]
+keys = "%''"
+
+[[case]]
+name = "backtick_backtick_after_percent"
+buffer = "if (a\nb) {\n}"
+cursor = [0, 3]
+keys = "%``"
+
+[[case]]
+name = "quote_quote_after_colon_5"
+buffer = "a\nb\nc\nd\ne\nf"
+cursor = [1, 0]
+keys = "G:5<CR>''"
+
+[[case]]
+name = "backtick_backtick_after_colon_5_alone"
+buffer = "a\nb\nc\nd\ne\nf"
+cursor = [1, 0]
+keys = ":5<CR>``"
+
+[[case]]
+name = "quote_quote_after_quote_a"
+buffer = "a\nb\nc\nd\ne\nf"
+cursor = [1, 0]
+keys = "majj'ajj''"
+
+[[case]]
+name = "set_jump_mark"
+buffer = "a\nbcd\nc\nd"
+cursor = [1, 2]
+keys = "m'jj``"
+
+[[case]]
+name = "deleted_row"
+buffer = "aa\nbb\ncc"
+cursor = [1, 1]
+keys = "maddk'a"
+
+[[case]]
+name = "deleted_last_row"
+buffer = "aa\nbb\ncc"
+cursor = [2, 1]
+keys = "maddk`a"
+
+[[case]]
+name = "deleted_rows_below"
+buffer = "a\nb\nc\nd\ne"
+cursor = [2, 0]
+keys = "makdj`a"
+
+[[case]]
+name = "deleted_by_ex"
+buffer = "a\nb\nc\nd\ne"
+cursor = [2, 0]
+keys = "mak:3d<CR>'a"
+
+[[case]]
+name = "deleted_in_visual_line"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = "majmbkVjd'b"
+
+[[case]]
+name = "jump_mark_deleted"
+buffer = "aa\nbb\ncc\ndd"
+cursor = [0, 1]
+keys = "jdGk''"
+
+[[case]]
+name = "unset"
+buffer = "a\nb\nc"
+cursor = [1, 0]
+keys = "d'b"
+
+[[case]]
+name = "row_opened_above"
+buffer = "abc\nxyz"
+cursor = [1, 1]
+keys = "maOnew<Esc>j`a"
+
+[[case]]
+name = "row_put_above"
+buffer = "a\nb\nc\nd"
+cursor = [2, 0]
+keys = "makyyjPgg'a"
+
+[[case]]
+name = "row_deleted_above"
+buffer = "a\nb\nc\nd"
+cursor = [2, 0]
+keys = "maggdd`a"
+
+[[case]]
+name = "inserted_above"
+buffer = "one\ntwo\nthree"
+cursor = [2, 3]
+keys = "makkonew<Esc>`a"
+
+[[case]]
+name = "text_inserted_before_on_its_row"
+buffer = "abcdef\nxyz"
+cursor = [0, 4]
+keys = "ma0iXY<Esc>j`a"
+
+[[case]]
+name = "text_deleted_before_on_its_row"
+buffer = "abcdef\nxyz"
+cursor = [0, 4]
+keys = "ma0xxj`a"
+
+[[case]]
+name = "joined_to_the_row_above"
+buffer = "aa\nbbb\ncc"
+cursor = [1, 2]
+keys = "makJj`a"
+
+[[case]]
+name = "line_break_typed_before"
+buffer = "abcdef\nxyz"
+cursor = [0, 4]
+keys = "ma0lli<CR><Esc>G`a"
+
+[[case]]
+name = "past_the_row_end"
+buffer = "abcdef\nb"
+cursor = [0, 5]
+keys = "ma0d$j`a"
+
+[[case]]
+name = "quote_lt_after_visual"
+buffer = "abc\n  def\nghi"
+cursor = [0, 1]
+keys = "vjl<Esc>G'<"
+
+[[case]]
+name = "backtick_gt_after_visual"
+buffer = "abc\ndef\nghi"
+cursor = [0, 1]
+keys = "vjl<Esc>gg`>"
+
+[[case]]
+name = "backtick_gt_after_visual_line"
+buffer = "abc\ndef\nghi"
+cursor = [0, 1]
+keys = "Vj<Esc>G`>"
+
+[[case]]
+name = "delete_to_quote_gt"
+buffer = "abc\ndef\nghi\njkl"
+cursor = [1, 1]
+keys = "vj<Esc>ggd'>"
+
+[[case]]
+name = "ex_range_marks"
+buffer = "a\nb\nc\nd\ne\nf"
+cursor = [1, 0]
+keys = "majjmb:'a,'bd<CR>"
+
+[[case]]
+name = "ex_range_marks_offset"
+buffer = "a\nb\nc\nd\ne\nf"
+cursor = [1, 0]
+keys = "majjmbgg:'a+1,'b+1d<CR>"
+
+[[case]]
+name = "ex_range_mark_unset"
+buffer = "a\nb\nc\nd\ne\nf"
+cursor = [1, 0]
+keys = "ma:'a,'bd<CR>"
+
+[[case]]
+name = "ex_goto_mark"
+buffer = "a\n  b\nc\nd"
+cursor = [1, 2]
+keys = "maG:'a<CR>"
+
+[[case]]
+name = "delete_backtick_a_forward"
+buffer = "abc\ndef\nghi"
+cursor = [2, 1]
+keys = "makkd`a"
+
+[[case]]
+name = "change_backtick_a_from_column_0"
+buffer = "ab\ncd\nef"
+cursor = [2, 1]
+keys = "mak0mbc`aX<Esc>"
+
+[[case]]
+name = "joined_past_the_row_end"
+buffer = "x\nabcdef"
+cursor = [1, 5]
+keys = "ma0d$0i<BS><Esc>"
+
+[[case]]
+name = "empty_row_joined_below"
+buffer = "a\n\nb"
+cursor = [1, 0]
+keys = "maJj'a"
+
+[[case]]
+name = "empty_row_joined_above"
+buffer = "a\n\nb"
+cursor = [1, 0]
+keys = "makJ`a"
+
+[[case]]
+name = "only_row_deleted"
+buffer = "abc"
+cursor = [0, 1]
+keys = "madd'a"
+
+[[case]]
+name = "row_opened_above_an_empty_row"
+buffer = "a\n\nb"
+cursor = [1, 0]
+keys = "maOx<Esc>gg'a"
+
+[[case]]
+name = "row_opened_below_an_empty_row"
+buffer = "a\n\nb"
+cursor = [1, 0]
+keys = "maox<Esc>gg'a"
+
+[[case]]
+name = "jump_that_stays_keeps_the_jump_mark"
+buffer = "a\nb\nc\nd\ne\nf"
+cursor = [4, 0]
+keys = "maggy`ajj''"
+
+[[case]]
+name = "jump_mark_after_colon_d"
+buffer = "a\nb\nc\nd\ne\nf"
+cursor = [1, 0]
+keys = ":4d<CR>''"
+
+[[case]]
+name = "jump_mark_after_substitute"
+buffer = "a\nb\nc\nd\ne\nf"
+cursor = [1, 0]
+keys = ":4s/d/x/<CR>``"
+
+[[case]]
+name = "cut_to_the_end_of_the_text"
+buffer = "abc\ndef"
+cursor = [1, 1]
+keys = "mbk2D"
+
+[[case]]
+name = "visual_cut_to_the_end_of_the_text"
+buffer = "abc\ndef\nghi"
+cursor = [2, 1]
+keys = "mbggllvG$d"
+
+[[case]]
+name = "row_changed_then_split"
+buffer = "abc\ndef\nghi"
+cursor = [1, 2]
+keys = "maccX<CR>Y<Esc>"
+
+[[case]]
+name = "text_typed_at_the_row_start_then_split"
+buffer = "abc\ndef\nghi"
+cursor = [1, 2]
+keys = "ma0iX<CR><Esc>"
+
+[[case]]
+name = "rows_put_below_onto_an_empty_row"
+buffer = "aa\n\ncc"
+cursor = [1, 0]
+keys = "makyyp"
+
+[[case]]
+name = "substitute_line_break_at_the_row_start"
+buffer = "aa\nbcd\ncc"
+cursor = [1, 2]
+keys = "ma:s/^/\\r/<CR>"
+
+[[case]]
+name = "joined_from_the_removed_indent"
+buffer = "aa\n   bbb"
+cursor = [1, 1]
+keys = "makJ"

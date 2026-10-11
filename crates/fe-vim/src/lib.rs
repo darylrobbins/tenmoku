@@ -6,16 +6,16 @@
 //! command comes out as an [`Invocation`](fe_command::Invocation) of one of
 //! vim's commands (`vim.move`, `vim.operate`, `vim.put`, `vim.insert`,
 //! `vim.join`, `vim.replace_char`, `vim.toggle_case`, `vim.undo`, `vim.redo`,
-//! `vim.repeat`, `vim.repeat_substitute`, `vim.visual`, `vim.visual_exit`, `vim.visual_swap`,
-//! `vim.visual_put`, `vim.reselect`, `vim.select` and the command line's
+//! `vim.repeat`, `vim.repeat_substitute`, `vim.set_mark`, `vim.visual`, `vim.visual_exit`,
+//! `vim.visual_swap`, `vim.visual_put`, `vim.reselect`, `vim.select` and the command line's
 //! `vim.command_line`, `vim.command_line_submit` and
 //! `vim.command_line_cancel`, for searches and ex commands), dispatched through
 //! [`registry`] against
 //! a [`VimTarget`], which carries the host's shared [`Registers`].
 //! [`VimState`] holds the mode, the pending value, the goal columns, the
 //! last character search, the open insert session, the visual selection and
-//! the last one (`gv`, `'<` and `'>`), the last change for `.` and the
-//! carets before each change for `u`, and publishes `vim.mode` (plus
+//! the last one (`gv`, `'<` and `'>`), the last change for `.`, the
+//! carets before each change for `u` and the marks, and publishes `vim.mode` (plus
 //! `vim.pending` and `vim.pending_kind` while a command is incomplete, and
 //! the flag `vim.visual` in a visual mode) on the editor's own context
 //! frame, so keymap bindings can be scoped to a mode. With vim off nothing
@@ -78,6 +78,57 @@
 //! every visual mode `p` and `P` (`vim.visual_put`) replace the selection
 //! with a register in one edit, `p` leaving what it replaced in the
 //! registers as a delete would.
+//!
+//! # Marks
+//!
+//! `m{a-z}` commits `vim.set_mark {"name": "a"}`, which sets mark `a` at the
+//! primary caret (in a visual mode, at the vim cursor, staying in the
+//! mode); `m'` and ``m` `` set the jump mark. A count before `m` is dropped,
+//! and `m` after an operator cancels. `'{name}` and `` `{name} `` are a
+//! motion, `{"mark": {"name": "a", "exact": false}}` ([`Motion::Mark`]):
+//! `'` to the first non-blank of the mark's row, linewise, and `` ` `` to
+//! the mark itself (clamped to its row's last character, as a caret is),
+//! exclusive and charwise, with `:help exclusive`'s rules. They work as
+//! `vim.move` (in a visual mode, moving the vim cursor and keeping the
+//! anchor) and as an operator's target (`d'a`, `` y`a ``; a delete to a
+//! `` ` `` mark writes register `1` even within a row, as `%` does). The
+//! names are `a` to `z`, `'` and `` ` `` (both the jump mark) and `<` and
+//! `>` (the last visual extent's ends, [`VimState::mark`]), and any other
+//! cancels; a mark that isn't set is E20 in [`VimState::message`], moving
+//! nothing. A count is ignored. Marks are per editor view, in its
+//! [`VimState`]: two views of one buffer don't share them, as Vim's buffers
+//! do.
+//!
+//! A mark is kept as nvim keeps one: a byte column on a row. The row
+//! follows rows put in or taken out above it (by any origin); edits within
+//! the row leave the column alone, so it may end up past the row's end
+//! (`'` still finds the row, and `` ` `` its last character). Joined to the
+//! row above (`J`, a backspace at a row's start), the mark goes along with
+//! its text. A charwise delete or change over rows (`` d`a ``, `vjd`)
+//! keeps its first row's marks, even if it takes all that row's text, and
+//! joins its last row's to the first with their columns counted from the
+//! text the first row keeps, as nvim's do. A row deleted deletes its marks
+//! (E20 from then on): by a linewise delete (`dd`, `d'a`, `Vd`, `:d`), or
+//! by any edit (another origin's too) taking out its text and its line
+//! break (on an empty row, the line breaks on both sides of it); a row only
+//! emptied or joined keeps them. A linewise change over several rows
+//! (`2cc`, `c'a`) keeps its first row's marks and deletes the others'.
+//! `O` and a linewise `p` or `P` move the marks of the row they put rows
+//! above down with it. Text typed at a row's start (an insert session or
+//! `c` beginning there) or put there by `:s` goes before its marks, so a
+//! line break in it leaves them on that row, as in nvim; so does any text
+//! put in at an empty row's start (`o`, another origin's).
+//!
+//! The jumps (`:help jump-motions`) are `gg`, `G` (with or without a
+//! count), `%` (and `{count}%`), `/`, `?`, `n`, `N`, `*`, `#`, `'` and
+//! `` ` ``, as a move or an operator's target, in normal or a visual mode,
+//! and `:d`, `:s` (once it finds a match) and `&`. Each that gets anywhere
+//! (`G` on the last row still does; a failed search or `%` doesn't) sets
+//! the jump mark to where the cursor was, so `''` and `` `` `` go back
+//! there, and doing it again returns. As in nvim, if the command leaves
+//! the cursor where the jump mark is (a forward `` y`a ``, `G` on the last
+//! row) or deletes its row, the jump mark before it, if any is still set,
+//! comes back. `:{range}` alone isn't a jump, as in nvim.
 //!
 //! # The command line
 //!
@@ -162,7 +213,7 @@
 //! the next is read, and leaves it there even if the line then fails. Of
 //! several, the last two count; of one, it's both ends; a separator with
 //! nothing on a side stands for `.`. A specifier is a base, `N`, `.`, `$`,
-//! `%` (`1,$`), `'<` or `'>`, then any `/pat/` and `?pat?` (the closing
+//! `%` (`1,$`), or a mark's line (`'a` to `'z`, `''`, `'<` or `'>`), then any `/pat/` and `?pat?` (the closing
 //! delimiter optional at the line's end), each searching from the line
 //! before it, then `+N` and `-N` offsets (a bare `+` or `-` is 1, a bare
 //! `N` is `+N`, and blanks may come before them: `.2` and `2 2` are `.+2`
@@ -265,8 +316,8 @@
 //! `:sort`, `:set`, `:marks`, `:reg`, `:undo`, `:!`, `|` between commands,
 //! `:s`'s `c`, `r` and print flags, `\=` in its string, `:s\/`, `:s\?`
 //! and `:s\&`, the two-letter forms (`:sg`, `:si`, …), `g&`, `:~`,
-//! the line's history and completion, marks other than `'<` and `'>`
-//! (`'a` is E20 until marks come), `*` for `'<,'>`, and a count before
+//! the line's history and completion, marks other than those above (`:'A`
+//! and `:'[` are E20 instead), `*` for `'<,'>`, and a count before
 //! `:` in a visual mode (nvim drops it too). These are E492, or, for a
 //! `|` after `:d`, E488.
 //!
@@ -410,8 +461,9 @@
 //! and a row-by-row matcher ([`search`]); its fourth, the `/` and `?`
 //! command line, search as a motion and an operator's target, and the `/`
 //! register; its fifth, `n N * #` and [`VimState::highlight`]; its sixth,
-//! the `:` line with ranges, `:{range}`, `:d` and `:noh`. Later cards add
-//! the host's ex commands and `:s`; the clipboard; marks and macros; replace mode,
+//! the `:` line with ranges, `:{range}`, `:d` and `:noh`. Later cards added
+//! the host's ex commands and `:s`, the clipboard, and marks (`m`, `'`,
+//! `` ` ``, the jump mark and marks in ex ranges). Still to come: macros; replace mode,
 //! increment and folds; scrolling; and the GPUI wiring of the visual modes
 //! (their key bindings, painting the selection and the block cursor, mouse
 //! drags and the status bar).
@@ -435,6 +487,17 @@
 //!   and text with line breaks put in at the start of a mark's row moves
 //!   the mark down, as a row opened above does, where nvim keeps it for a
 //!   charwise put.
+//! - Marks: uppercase and numbered marks, `'[ ']`, `'.`, `'^`, `'"`, the
+//!   jumplist (`<C-o>`, `<C-i>`), the changelist, `:marks` and `:delmarks`
+//!   aren't supported yet; `m<` and `m>` cancel. Undo doesn't put back a
+//!   mark its change deleted or moved (nvim's does). What other edits do to a mark
+//!   is read from the text they change, so where that's ambiguous fe-vim
+//!   can differ from nvim: a line break put in at the start of a row that
+//!   has text other than by typing begun there (a charwise put, another
+//!   origin's edit, or typing begun later in the row and backspaced to its
+//!   start) moves the row's marks down with it, as `O` would, where nvim
+//!   leaves them on the row above; and another origin taking out an empty row's line break only (which
+//!   `dd` there does too) leaves its marks on the row it joins.
 //! - A count before `.` after a visual change replaces the operator's count
 //!   (how many times `>` and `<` shift, or `I` and `A` over a block type),
 //!   not the amount of text; nvim keeps the change's own count.
@@ -551,6 +614,7 @@ mod headless;
 mod history;
 mod insert;
 mod key;
+mod marks;
 mod motion;
 mod operator;
 mod reducer;
@@ -563,21 +627,21 @@ mod text_object;
 mod visual;
 
 pub use args::{
-    CommandLineArgs, CommandLineKind, CountArgs, InsertArgs, InsertAt, Motion, MoveArgs,
-    OperateArgs, Operator, PutArgs, RangeClass, ReplaceCharArgs, Search, SearchPattern, SelectArgs,
-    SubmitArgs, SwapArgs, Target, TextObject, VisualArgs, VisualKind,
+    CommandLineArgs, CommandLineKind, CountArgs, InsertArgs, InsertAt, MarkArgs, MarkMotion,
+    Motion, MoveArgs, OperateArgs, Operator, PutArgs, RangeClass, ReplaceCharArgs, Search,
+    SearchPattern, SelectArgs, SubmitArgs, SwapArgs, Target, TextObject, VisualArgs, VisualKind,
 };
 pub use commands::{VimCommands, VimTarget, registry};
 pub use ex::{Address, Base, Ex, ExCommand, ExError, HostCommand, LineSearch, Part};
 pub use headless::{FeedError, HeadlessVim};
 pub use insert::Splits;
 pub use key::{KeyError, VimKey, parse_keys};
+pub use marks::Mark;
 pub use reducer::{Pending, PendingKind, Step, step};
 pub use register::{Register, RegisterError, Registers, Write};
 pub use repeat::{Change, LastChange};
 pub use state::{Mode, VimState, context};
 pub use substitute::{Flags, Substitute};
-pub use visual::Mark;
 
 #[cfg(test)]
 mod tests;

@@ -6,7 +6,8 @@
 -- after an error (a failed search's E486 among them), so end a case there.
 -- A result also holds `visual = {row, byte_col}`, the visual anchor
 -- (getpos('v')), only when the case ends in a visual mode (blockwise too), and
--- `marks = {"<": {row, byte_col}, ">": ...}` for the marks that are set.
+-- `marks = {"<": {row, byte_col}, ">": ..., "a": ...}` for the marks among
+-- `<`, `>` and `a` to `z` that are set.
 
 local input, output = arg[1], arg[2]
 
@@ -73,7 +74,7 @@ for _, case in ipairs(vim.json.decode(read(input))) do
     visual = { pos[2] - 1, pos[3] - 1 }
   end
   local marks = nil
-  for _, name in ipairs({ "<", ">" }) do
+  for name in ("<>abcdefghijklmnopqrstuvwxyz"):gmatch(".") do
     local pos = vim.fn.getpos("'" .. name)
     if pos[2] ~= 0 then
       local col = pos[3] - 1

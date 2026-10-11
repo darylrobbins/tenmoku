@@ -18,7 +18,7 @@ use fe_text::Text;
 
 use crate::{
     Change, Motion, MoveArgs, OperateArgs, Operator, PutArgs, RangeClass, Register, Registers,
-    Target, VimState, VimTarget, Write, cmdline, history, insert,
+    Target, VimState, VimTarget, Write, cmdline, history, insert, marks,
     motion::{self, Cursor},
     text_object, visual,
 };
@@ -482,7 +482,7 @@ fn operate_over(
 ) -> Result<Dispatched<TransactionId>, CommandError> {
     // `n N * #` are the search they run, which `.` finds again when it
     // repeats the operator: the args keep them. A search target is checked
-    // as `/` checks it.
+    // as `/` checks it, and a mark's must be set.
     if let Target::Motion(motion) = args.target {
         let checked = cmdline::resolve(target, motion).and_then(|(motion, keep)| match motion {
             Motion::Search(search) | Motion::SearchWord(search) => {
@@ -490,7 +490,7 @@ fn operate_over(
             }
             _ => Ok(()),
         });
-        if let Err(message) = checked {
+        if let Err(message) = checked.and_then(|()| marks::resolve(target, motion).map(drop)) {
             return cmdline::failed(target.state, message);
         }
     }
@@ -553,12 +553,18 @@ fn operate_unless_failing(
     if let Some(name) = args.register {
         Registers::check(name).map_err(|error| CommandError::new(error.to_string()))?;
     }
-    // The target as it's measured: `n N * #` as the search they are.
+    // The target as it's measured: `n N * #` as the search they are, and a
+    // mark's motion at the mark.
     let measured = match args.target {
-        Target::Motion(motion) => Target::Motion(
-            cmdline::resolve(target, motion).map_or(motion, |(resolved, _)| resolved),
-        ),
+        Target::Motion(motion) => {
+            let motion = cmdline::resolve(target, motion).map_or(motion, |(resolved, _)| resolved);
+            Target::Motion(marks::resolve(target, motion).unwrap_or(motion))
+        }
         other => other,
+    };
+    let jump = match measured {
+        Target::Motion(motion) => marks::jump(target, motion, args.count),
+        _ => None,
     };
     let VimTarget {
         model,
@@ -586,6 +592,15 @@ fn operate_unless_failing(
     {
         state.last_find = Some(find);
     }
+    // A `'` motion's mark, whose row's first non-blank a yank's caret goes
+    // to if it's above.
+    let mark = match measured {
+        Target::Motion(Motion::MarkAt {
+            offset,
+            exact: false,
+        }) => Some(offset),
+        _ => None,
+    };
     // Each caret's span, and where a charwise one started, for a yank's
     // caret once it's taken whole rows.
     let (spans, starts): (Vec<Span>, Vec<Option<usize>>) = before
@@ -626,6 +641,11 @@ fn operate_unless_failing(
                 (Span::Lines { .. }, Target::Motion(Motion::MatchPair)) if args.count.is_none() => {
                     motion::match_pair(&text, head).map(|found| found.offset.min(head))
                 }
+                (Span::Lines { .. }, _) => mark.map(|offset| {
+                    let mut cursor = Cursor::at(&text, offset);
+                    cursor.ix = cursor.line.first_non_blank();
+                    cursor.offset().min(head)
+                }),
                 _ => None,
             };
             let span = match args.operator {
@@ -653,6 +673,22 @@ fn operate_unless_failing(
     let resolved = spans
         .iter()
         .any(|span| matches!(span, Span::Chars(_) | Span::Lines { .. }));
+    // A jump's target sets the jump mark, which the change then follows.
+    if let Some(from) = jump.filter(|_| resolved) {
+        state.marks.jumped(from);
+    }
+    if let Operator::Delete | Operator::Change = args.operator {
+        for span in &spans {
+            match span {
+                Span::Chars(range) => state.marks.cutting(model.snapshot(), range.clone()),
+                Span::Lines { rows, .. } if args.operator == Operator::Delete => {
+                    let (first, last) = (*rows.start(), *rows.end());
+                    state.marks.deleting(model.snapshot(), first, last);
+                }
+                _ => {}
+            }
+        }
+    }
     if resolved
         && matches!(
             args.operator,
@@ -667,6 +703,16 @@ fn operate_unless_failing(
             .all(|span| matches!(span, Span::Failed | Span::Move(_)))
         {
             return Ok(move_only(model, state, &text, &before, &spans));
+        }
+        for span in &spans {
+            match span {
+                Span::Lines { rows, .. } => {
+                    let (first, last) = (*rows.start(), *rows.end());
+                    state.marks.changing(model.snapshot(), first, last);
+                }
+                Span::Chars(range) => state.marks.typing(model.snapshot(), [range.start]),
+                _ => {}
+            }
         }
         return insert::change(
             model,
@@ -1030,6 +1076,15 @@ fn put_unless_failing(
         let repeated = payload.repeat(count);
         if value.linewise {
             let row = row(head);
+            // As `O` does, the rows go above the marks of the row they go
+            // in at.
+            match args.before {
+                true => state.marks.opening(model.snapshot(), row),
+                false if row + 1 < text.row_count() => {
+                    state.marks.opening(model.snapshot(), row + 1)
+                }
+                false => {}
+            }
             // Below the last row, the rows go after a new line break.
             let (at, inserted, first) = match (args.before, row + 1 < text.row_count()) {
                 (true, _) => (text.row_start(row), repeated, 0),

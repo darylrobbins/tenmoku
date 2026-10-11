@@ -6,9 +6,9 @@ use serde::Serialize;
 use crate::{
     VimKey,
     args::{
-        CommandLineArgs, CommandLineKind, CountArgs, InsertArgs, InsertAt, Motion, MoveArgs,
-        OperateArgs, Operator, PutArgs, ReplaceCharArgs, SelectArgs, SwapArgs, Target, TextObject,
-        VisualArgs, VisualKind,
+        CommandLineArgs, CommandLineKind, CountArgs, InsertArgs, InsertAt, MarkArgs, MarkMotion,
+        Motion, MoveArgs, OperateArgs, Operator, PutArgs, ReplaceCharArgs, SelectArgs, SwapArgs,
+        Target, TextObject, VisualArgs, VisualKind,
     },
 };
 
@@ -49,6 +49,12 @@ enum Prefix {
     },
     /// `r`, awaiting the replacement.
     Replace,
+    /// `m`, awaiting the mark's name.
+    SetMark,
+    /// `'`, or `` ` `` if `exact`, awaiting the mark's name.
+    Mark {
+        exact: bool,
+    },
 }
 
 /// What a [`Pending`] is waiting on, for `vim.pending_kind` and which-key.
@@ -61,11 +67,15 @@ pub enum PendingKind {
     Find,
     TextObject,
     Replace,
+    /// `m`.
+    SetMark,
+    /// `'` or `` ` ``.
+    Mark,
 }
 
 impl PendingKind {
     /// Its `vim.pending_kind` value: `count`, `register`, `operator`, `g`,
-    /// `find`, `text_object` or `replace`.
+    /// `find`, `text_object`, `replace`, `set_mark` or `mark`.
     pub fn name(self) -> &'static str {
         match self {
             Self::Count => "count",
@@ -75,6 +85,8 @@ impl PendingKind {
             Self::Find => "find",
             Self::TextObject => "text_object",
             Self::Replace => "replace",
+            Self::SetMark => "set_mark",
+            Self::Mark => "mark",
         }
     }
 }
@@ -135,6 +147,8 @@ impl Pending {
             Some(Prefix::Find(_)) => PendingKind::Find,
             Some(Prefix::Object { .. }) => PendingKind::TextObject,
             Some(Prefix::Replace) => PendingKind::Replace,
+            Some(Prefix::SetMark) => PendingKind::SetMark,
+            Some(Prefix::Mark { .. }) => PendingKind::Mark,
             None if self.typing.is_some() => PendingKind::Count,
             None if self.operator.is_some() => PendingKind::Operator,
             None if self.register.is_some() => PendingKind::Register,
@@ -282,6 +296,13 @@ impl Pending {
                     },
                 )
             }
+            // A count is dropped.
+            Prefix::SetMark if ch.is_ascii_lowercase() || matches!(ch, '\'' | '`') => {
+                invocation("vim.set_mark", MarkArgs { name: ch })
+            }
+            Prefix::Mark { exact } if ch.is_ascii_lowercase() || "'`<>".contains(ch) => {
+                self.commit(Target::Motion(Motion::Mark(MarkMotion { name: ch, exact })))
+            }
             _ => Step::Cancel,
         }
     }
@@ -351,6 +372,8 @@ pub fn step(mut pending: Pending, key: VimKey) -> Step {
             Prefix::Object { inner: ch == 'i' }
         }
         'r' if pending.operator.is_none() => Prefix::Replace,
+        'm' if pending.operator.is_none() => Prefix::SetMark,
+        '\'' | '`' => Prefix::Mark { exact: ch == '`' },
         ':' if pending.operator.is_none() => return pending.ex_line(),
         _ if pending.visual => return pending.visual_key(ch),
         'v' | 'V' if pending.is_empty() => return visual(ch),

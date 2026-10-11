@@ -14,11 +14,14 @@ use fe_editor::EditorModel;
 use fe_text::Text;
 use unicode_segmentation::UnicodeSegmentation;
 
-use crate::{Mode, Motion, MoveArgs, VimState, VimTarget, cmdline, search, state::Goals, visual};
+use crate::{
+    Mode, Motion, MoveArgs, VimState, VimTarget, cmdline, marks, search, state::Goals, visual,
+};
 
 /// `vim.move`: [`apply`], once a search motion passes
-/// [`cmdline::check_search`] (if it doesn't, nothing moves and the error is
-/// the [`VimState::message`]).
+/// [`cmdline::check_search`] and a mark motion finds its mark (if either
+/// doesn't, nothing moves and the error is the [`VimState::message`]). A
+/// jump that gets anywhere sets the jump mark to where it left from.
 pub(crate) fn move_command(
     target: &mut VimTarget<'_>,
     args: MoveArgs,
@@ -40,6 +43,16 @@ pub(crate) fn move_command(
     {
         target.state.message = Some(message);
         return Dispatched::new(Effect::Notify);
+    }
+    match marks::resolve(target, args.motion) {
+        Ok(motion) => args.motion = motion,
+        Err(message) => {
+            target.state.message = Some(message);
+            return Dispatched::new(Effect::Notify);
+        }
+    }
+    if let Some(from) = marks::jump(target, args.motion, args.count) {
+        target.state.marks.jumped(from);
     }
     // A search that stays put still set the last search and the highlight.
     Dispatched::new(match (apply(target.model, target.state, args), searching) {
@@ -241,11 +254,19 @@ pub(crate) fn motion(
                 None => return Err(goal),
             }
         }
-        // Resolved to a `Search` before they run.
+        // Resolved to a `Search` or `MarkAt` before they run.
         Motion::SearchNext
         | Motion::SearchPrevious
         | Motion::SearchWordForward
-        | Motion::SearchWordBackward => return Err(goal),
+        | Motion::SearchWordBackward
+        | Motion::Mark(_) => return Err(goal),
+        // A mark's position is clamped as a caret is.
+        Motion::MarkAt { offset, exact } => {
+            cursor.goto(offset);
+            if !exact {
+                cursor.ix = cursor.line.first_non_blank();
+            }
+        }
         // `dd`'s target. As a move it is Vim's `_`: the first non-blank
         // `count - 1` rows down.
         Motion::Line => {

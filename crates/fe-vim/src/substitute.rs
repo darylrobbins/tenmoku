@@ -12,7 +12,7 @@ use fe_editor::commands::origin;
 use crate::{
     VimTarget, edit,
     ex::ExError,
-    insert,
+    insert, marks,
     motion::Cursor,
     operator,
     search::{self, Pattern, PatternError},
@@ -384,6 +384,10 @@ pub(crate) fn run(
             false => Err(ExError::NotFound(pattern)),
         };
     }
+    // Finding a match makes it a jump, as in nvim.
+    marks::jump_here(target);
+    let starts = found.edits.iter().map(|(range, _)| range.start);
+    target.state.marks.typing(target.model.snapshot(), starts);
     let report = |n: usize, one: &str, many: &str| match n {
         1 => format!("1 {one}"),
         n => format!("{n} {many}"),

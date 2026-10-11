@@ -624,6 +624,7 @@ fn resume(model: &mut EditorModel, state: &mut VimState, origin: Origin, block: 
         first.follow(&origin);
         first.begin(head);
     }
+    state.marks.typing(model.snapshot(), heads.iter().copied());
     start(model, state, origin.clone(), &text, heads.iter().copied());
     let opened = {
         let mut buffer = model.buffer_mut();
@@ -1183,6 +1184,12 @@ pub(crate) fn insert(
         .iter()
         .map(|selection| Cursor::at(&text, selection.head()).offset())
         .collect();
+    if args.at == InsertAt::LineAbove {
+        for &head in &heads {
+            let row = row(&text, head);
+            state.marks.opening(model.snapshot(), row);
+        }
+    }
     // Each caret's insertion point, the text opening a row there, and how
     // far into that text the caret goes.
     let mut points: Vec<(usize, String, usize)> = heads
@@ -1217,6 +1224,9 @@ pub(crate) fn insert(
         true => heads,
         false => points.iter().map(|(at, _, _)| *at).collect(),
     };
+    if !opens {
+        state.marks.typing(model.snapshot(), begins.iter().copied());
+    }
     start(model, state, origin.clone(), &text, begins);
     points.sort_by_key(|(at, _, _)| *at);
     points.dedup_by_key(|(at, _, _)| *at);

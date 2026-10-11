@@ -11,6 +11,7 @@ use crate::{
     cmdline::{self, CommandLine},
     history::Carets,
     insert::{Closing, Session},
+    marks::Marks,
     step,
     visual::{Extent, LastVisual, Visual},
 };
@@ -47,7 +48,8 @@ pub(crate) type Goals = Vec<(usize, Option<usize>)>;
 
 /// One editor's vim state: its mode, the pending input, each caret's goal
 /// column, the last character search, the open insert session, the last
-/// change for `.`, and the carets before each change for `u` and `<C-r>`.
+/// change for `.`, the carets before each change for `u` and `<C-r>`, and
+/// the marks: they're per editor view, not per buffer as in Vim.
 #[derive(Clone, Debug, Default)]
 pub struct VimState {
     pub(crate) mode: Mode,
@@ -85,6 +87,8 @@ pub struct VimState {
     pub(crate) highlight: Option<Pattern>,
     /// The file or window command the last ex line gave, for the host.
     pub(crate) host_command: Option<HostCommand>,
+    /// `a` to `z` and the jump mark.
+    pub(crate) marks: Marks,
 }
 
 impl VimState {

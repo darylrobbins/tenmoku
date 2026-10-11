@@ -6,7 +6,7 @@ use fe_buffer::TransactionId;
 use fe_command::{Actor, CommandError, Dispatched, Effect};
 
 use crate::{
-    Motion, MoveArgs, OperateArgs, Operator, Registers, Target, VimTarget, insert,
+    Motion, MoveArgs, OperateArgs, Operator, Registers, Target, VimTarget, insert, marks,
     motion::{self, Cursor},
     operator,
     search::{self, Pattern, PatternError},
@@ -51,8 +51,8 @@ pub enum Base {
     /// `%`: the whole text, `1,$`. As in nvim, searches and offsets after
     /// it are ignored, and with no command after them the line is E492.
     All,
-    /// `'x`: the line of mark `x` (`'<` and `'>` are the last visual
-    /// extent's ends).
+    /// `'x`: the line of mark `x`: `a` to `z`, `'` (the jump mark), or `<`
+    /// and `>`, the last visual extent's ends ([`crate::VimState::mark`]).
     Mark(char),
 }
 
@@ -634,8 +634,9 @@ fn resolve(
         Base::Last => last,
         Base::All => return Ok(last),
         Base::Mark(name) => {
-            let mark = target.state.mark(name).ok_or(ExError::MarkNotSet)?;
-            i64::from(mark.position(target.model.snapshot()).0) + 1
+            let snapshot = target.model.snapshot();
+            let mark = target.state.mark(name).and_then(|mark| mark.get(snapshot));
+            i64::from(mark.ok_or(ExError::MarkNotSet)?.0) + 1
         }
     };
     for part in &address.parts {
@@ -749,11 +750,14 @@ fn delete(
     end: i64,
     register: Option<char>,
 ) -> Handled {
-    // Nothing to delete, so nothing for the registers.
+    // Nothing to delete, so nothing for the registers; the row's marks go.
     if target.model.text().is_empty() {
+        target.state.marks.deleting(target.model.snapshot(), 0, 0);
         return Ok(Dispatched::new(Effect::Notify));
     }
     insert::adopt_closing(target.state);
+    // A jump, as in nvim: from the cursor, before it goes to the lines.
+    marks::jump_here(target);
     goto(target, first);
     let last_change = (target.state.last_change.clone(), target.state.changes);
     let count = u32::try_from(end - first + 1).unwrap_or(u32::MAX);

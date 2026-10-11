@@ -196,10 +196,10 @@ impl HeadlessVim {
         Some(self.point(anchor))
     }
 
-    /// `'<` or `'>` as a row and a byte column ([`VimState::mark`]).
+    /// A mark as a row and a byte column ([`VimState::mark`]): `None` if
+    /// it isn't set or its row was deleted.
     pub fn mark(&self, name: char) -> Option<(u32, usize)> {
-        let mark = self.state.mark(name)?;
-        Some(mark.position(self.model.snapshot()))
+        self.state.mark(name)?.get(self.model.snapshot())
     }
 
     fn point(&self, offset: usize) -> (u32, usize) {
