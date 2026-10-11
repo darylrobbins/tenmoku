@@ -1,0 +1,262 @@
+//! Vim's file and window commands, typed on the status bar's line (`:w`,
+//! `:q`, `:wq`, `:x`, `:e`, `:qa`, `:wa`), run as fastedit's: the bar
+//! emits each [`HostCommand`] for the editor it was typed in, and
+//! [`Workbench::run_vim_host_command`] runs it on that editor's tab, its
+//! pane and this window. Every answer, such as `E37`, is the editor's vim
+//! message, which the status bar shows.
+//!
+//! Closing a tab here never asks (no [`kiln_shell::close::confirm`], no
+//! Discard/Cancel prompt): `:q` refuses a dirty tab with `E37`, and `:q!`
+//! discards by decision. A window left with no tab closes, as does one
+//! `:qa` closes; the app quits only when its last window has gone, as
+//! fastedit does when any last window closes.
+
+use std::path::{Component, Path, PathBuf};
+
+use fe_gpui::EditorView;
+use fe_vim::HostCommand;
+use gpui::{App, Context, Entity, Task, WeakEntity, Window};
+use kiln_shell::{ItemHandle, PaneView as _};
+
+use super::Workbench;
+use crate::Pane;
+
+const E32: &str = "E32: No file name";
+const E37: &str = "E37: No write since last change (add ! to override)";
+const RELOAD: &str = "Not supported yet: reloading a file from disk";
+
+impl Workbench {
+    /// Runs `command`, typed on the line in `editor`: see the module docs.
+    /// An editor closed by now runs nothing.
+    pub(super) fn run_vim_host_command(
+        &mut self,
+        editor: &WeakEntity<EditorView>,
+        command: HostCommand,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(editor) = editor.upgrade() else {
+            return;
+        };
+        if self.tab_of(&editor, cx).is_none() {
+            return;
+        }
+        match command {
+            HostCommand::Write { .. } => self.vim_write(editor, false, window, cx),
+            HostCommand::Quit { force } => self.vim_quit(&editor, force, window, cx),
+            HostCommand::WriteQuit {
+                only_if_modified, ..
+            } => {
+                if only_if_modified && !editor.is_dirty(cx) {
+                    self.vim_quit(&editor, false, window, cx);
+                } else {
+                    self.vim_write(editor, true, window, cx);
+                }
+            }
+            HostCommand::Edit {
+                path: Some(path), ..
+            } => self.vim_edit(&editor, &path, window, cx),
+            HostCommand::Edit { path: None, .. } => message(&editor, RELOAD, cx),
+            HostCommand::QuitAll { force } => self.vim_quit_all(&editor, force, window, cx),
+            HostCommand::WriteAll => self.vim_write_all(&editor, window, cx),
+        }
+    }
+
+    /// The pane showing `editor` and its tab's index there.
+    fn tab_of(&self, editor: &Entity<EditorView>, cx: &App) -> Option<(Entity<Pane>, usize)> {
+        self.panes.panes().into_iter().find_map(|pane| {
+            let ix = (pane.read(cx).tabs().iter()).position(|tab| tab.editor == *editor)?;
+            Some((pane.clone(), ix))
+        })
+    }
+
+    /// `:w`: saves `editor`'s tab, then with `quit` closes it as `:q` does
+    /// if the save succeeded. A failure is the message.
+    fn vim_write(
+        &mut self,
+        editor: Entity<EditorView>,
+        quit: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let saved = save(&editor, E32.to_owned(), window, cx);
+        let editor = editor.downgrade();
+        cx.spawn_in(window, async move |workbench, cx| {
+            let failed = saved.await;
+            workbench
+                .update_in(cx, |workbench, window, cx| {
+                    let Some(editor) = editor.upgrade() else {
+                        return;
+                    };
+                    match failed {
+                        Some(failed) => message(&editor, failed, cx),
+                        // Still open, as nothing waited for it.
+                        None if quit && workbench.tab_of(&editor, cx).is_some() => {
+                            workbench.vim_quit(&editor, false, window, cx)
+                        }
+                        None => {}
+                    }
+                })
+                .ok();
+        })
+        .detach();
+    }
+
+    /// `:q`: closes `editor`'s tab, unless it's dirty and no other tab
+    /// shows its buffer, which gives `E37`; with `force` (`:q!`) it closes
+    /// whatever its state. A window left with no tab closes.
+    fn vim_quit(
+        &mut self,
+        editor: &Entity<EditorView>,
+        force: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((pane, ix)) = self.tab_of(editor, cx) else {
+            return;
+        };
+        if !force && editor.is_dirty(cx) && !pane.read(cx).pane().shown_elsewhere(editor, cx) {
+            return message(editor, E37, cx);
+        }
+        // Not through the close veto: it has been decided.
+        pane.update(cx, |pane, cx| {
+            pane.take_item(ix, window, cx);
+            cx.notify();
+        });
+        let empty = (self.panes.panes().iter()).all(|pane| pane.read(cx).tabs().is_empty());
+        if empty {
+            window.remove_window();
+        }
+    }
+
+    /// `:qa`: closes the window, unless a tab of it is dirty: `E37` for
+    /// `editor`'s, else `E162` naming the first in pane order. With
+    /// `force` (`:qa!`) it closes discarding them.
+    fn vim_quit_all(
+        &mut self,
+        editor: &Entity<EditorView>,
+        force: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !force {
+            if editor.is_dirty(cx) {
+                return message(editor, E37, cx);
+            }
+            let dirty = self
+                .open_editors(cx)
+                .into_iter()
+                .find(|tab| tab.is_dirty(cx));
+            if let Some(dirty) = dirty {
+                let title = dirty.tab_title(cx);
+                let error = format!("E162: No write since last change for buffer \"{title}\"");
+                return message(editor, error, cx);
+            }
+        }
+        window.remove_window();
+    }
+
+    /// `:wa`: saves every dirty tab of the window, each buffer once. The
+    /// first failure in pane order is the message, once every other tab is
+    /// saved.
+    fn vim_write_all(
+        &mut self,
+        editor: &Entity<EditorView>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut saving: Vec<Entity<EditorView>> = Vec::new();
+        for tab in self.open_editors(cx) {
+            let shared = (saving.iter()).any(|saved| saved.shares_document(&tab, cx));
+            if tab.is_dirty(cx) && !shared {
+                saving.push(tab);
+            }
+        }
+        let saves: Vec<_> = (saving.iter())
+            .map(|tab| {
+                let title = tab.tab_title(cx);
+                let untitled = format!("E141: No file name for buffer \"{title}\"");
+                save(tab, untitled, window, cx)
+            })
+            .collect();
+        let editor = editor.downgrade();
+        cx.spawn(async move |_, cx| {
+            let mut first = None;
+            for saved in saves {
+                let failed = saved.await;
+                first = first.or(failed);
+            }
+            if let Some(failed) = first {
+                editor
+                    .update(cx, |editor, cx| editor.set_vim_message(failed, cx))
+                    .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// `:e {path}`: opens `path` in `editor`'s pane, which keeps `editor`'s
+    /// tab open.
+    fn vim_edit(
+        &mut self,
+        editor: &Entity<EditorView>,
+        path: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((pane, _)) = self.tab_of(editor, cx) else {
+            return;
+        };
+        let folder = (self.root.clone()).or_else(|| editor.path(cx)?.parent().map(Path::to_owned));
+        let Some(resolved) = resolve(path, folder.as_deref()) else {
+            let error = format!("Can't open {path}: no folder to resolve it against");
+            return message(editor, error, cx);
+        };
+        pane.update(cx, |pane, cx| pane.open(resolved, window, cx));
+    }
+}
+
+/// Leaves `text` as `editor`'s vim message.
+fn message(editor: &Entity<EditorView>, text: impl Into<String>, cx: &mut App) {
+    editor.update(cx, |editor, cx| editor.set_vim_message(text, cx));
+}
+
+/// Saves `editor` through its [`kiln_shell::PaneItem::save`], resolving to
+/// the error to show, if any: `untitled` for a buffer with no file.
+fn save(
+    editor: &Entity<EditorView>,
+    untitled: String,
+    window: &mut Window,
+    cx: &mut App,
+) -> Task<Option<String>> {
+    if editor.path(cx).is_none() {
+        return Task::ready(Some(untitled));
+    }
+    match editor.save(window, cx) {
+        Some(saved) => cx.spawn(async move |_| saved.await.err().map(|error| format!("{error:#}"))),
+        None => Task::ready(None),
+    }
+}
+
+/// `path` as typed after `:e`: `~` and `~/…` under the home folder, an
+/// absolute path as is, a relative one under `folder` (`None` without
+/// one). `.` and `..` are resolved by name, so an open file is found.
+fn resolve(path: &str, folder: Option<&Path>) -> Option<PathBuf> {
+    let joined = match path.strip_prefix('~') {
+        Some("") => std::env::home_dir()?,
+        Some(rest) if rest.starts_with('/') => std::env::home_dir()?.join(&rest[1..]),
+        _ if Path::new(path).is_absolute() => PathBuf::from(path),
+        _ => folder?.join(path),
+    };
+    let mut resolved = PathBuf::new();
+    for component in joined.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                resolved.pop();
+            }
+            other => resolved.push(other),
+        }
+    }
+    Some(resolved)
+}

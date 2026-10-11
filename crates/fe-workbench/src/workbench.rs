@@ -191,8 +191,8 @@ pub struct Workbench {
     /// To the modal layer's palettes coming and going.
     _modals: Subscription,
     /// To the status bar, whose vim line shows in its place even while
-    /// it's hidden.
-    _status_bar: Subscription,
+    /// it's hidden, and gives the host commands typed on it.
+    _status_bar: [Subscription; 2],
     /// What the panes' toolbar crumbs and "…" list.
     toolbar_picker: Entity<Picker<ToolbarPicker>>,
     /// Whether the panes show their toolbars.
@@ -303,6 +303,12 @@ impl Workbench {
         let status_bar_changed = cx.observe(&status_bar, |workbench, _, cx| {
             workbench.show_status_bar(cx);
         });
+        // `:w`, `:q` and the like, typed on the vim line.
+        let vim_host_commands =
+            cx.subscribe_in(&status_bar, window, |workbench, _, event, window, cx| {
+                let command = event.command.clone();
+                workbench.run_vim_host_command(&event.editor, command, window, cx);
+            });
         // The layer hides a palette that's dismissed or left.
         let modals_changed = cx.subscribe(&modals, |workbench, _, event, cx| {
             workbench.palette = match *event {
@@ -342,7 +348,7 @@ impl Workbench {
             root_subscription,
             _rail: rail,
             _modals: modals_changed,
-            _status_bar: status_bar_changed,
+            _status_bar: [status_bar_changed, vim_host_commands],
             toolbar_picker,
             breadcrumbs: true,
             nav: NavButtons::default(),
@@ -1552,9 +1558,16 @@ pub(crate) fn open_panel_failed(error: &str) -> (&'static str, String) {
     kiln_platform::dialogs::open_panel_failed(error, kiln_platform::Os::current())
 }
 
+#[path = "vim_host.rs"]
+mod vim_host;
+
 #[cfg(test)]
 #[path = "close_tests.rs"]
 mod close_tests;
+
+#[cfg(test)]
+#[path = "vim_host_tests.rs"]
+mod vim_host_tests;
 
 #[cfg(test)]
 #[path = "palette_tests.rs"]

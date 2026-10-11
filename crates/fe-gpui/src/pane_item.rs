@@ -131,6 +131,25 @@ pub const DISCARD_BUTTONS: [PromptButton; 2] = [
 /// The answer to [`DISCARD_BUTTONS`] that closes the editor.
 const DISCARD: usize = 1;
 
+/// Vim's file and window commands, for a host to run.
+impl EditorView {
+    /// The [`fe_vim::HostCommand`] (`:w`, `:q` …) the last ex line left,
+    /// once; `None` with vim off.
+    pub fn take_vim_host_command(&mut self) -> Option<fe_vim::HostCommand> {
+        self.vim.as_mut()?.take_host_command()
+    }
+
+    /// Shows `message` as vim's ([`status::VIM_MESSAGE`]) until the next
+    /// key in the editor: the host's answer to a host command. Nothing
+    /// with vim off.
+    pub fn set_vim_message(&mut self, message: impl Into<String>, cx: &mut Context<Self>) {
+        if let Some(vim) = &mut self.vim {
+            vim.set_host_message(message);
+            cx.notify();
+        }
+    }
+}
+
 impl PaneItem for EditorView {
     const KIND: &'static str = "fastedit.editor";
 

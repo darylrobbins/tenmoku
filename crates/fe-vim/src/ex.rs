@@ -121,6 +121,15 @@ pub enum HostCommand {
     WriteAll,
 }
 
+impl crate::VimState {
+    /// Leaves the host's answer to a [`HostCommand`] (an error such as
+    /// `E37`, or a report) as [`crate::VimState::message`], cleared as any
+    /// message is. The key isn't failed: the line ran.
+    pub fn set_host_message(&mut self, message: impl Into<String>) {
+        self.message = Some(message.into());
+    }
+}
+
 /// Why an ex line didn't run, as nvim says it.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum ExError {

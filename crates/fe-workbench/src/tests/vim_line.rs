@@ -236,11 +236,11 @@ fn ex_through_the_line(cx: &mut TestAppContext) {
     let error = message(&workbench, cx).expect("an error shows");
     assert!(error.starts_with("E492"), "{error}");
 
-    // :w is the host's to run: nothing here saves, and nothing's wrong.
+    // :w is the host's to run: the workbench saves, and nothing's wrong.
     cx.simulate_keystrokes(":");
     cx.simulate_input("w");
     cx.simulate_keystrokes("enter");
-    assert!(editor.read_with(cx, |editor, _| editor.model().is_dirty()));
+    assert!(!editor.read_with(cx, |editor, _| editor.model().is_dirty()));
     assert_eq!(message(&workbench, cx), None);
 
     // In the line, j and d only type: its context carries no vim keys.

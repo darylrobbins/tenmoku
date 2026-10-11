@@ -10,15 +10,16 @@
 //! line, and focus leaving the line for anything else run
 //! `vim.command_line_cancel`. A key ending the line focuses the editor
 //! again. The [`fe_vim::HostCommand`] a submit may leave (`:w`) is for the
-//! host to run, not the line.
+//! host to run, not the line: the bar emits it as a [`VimHostCommand`].
 
 use fe_command::{Invocation, Value};
 use fe_gpui::{EditorView, commands::RunCommand};
 use fe_ui::{ROW_HEIGHT, TextInput};
-use fe_vim::{CommandLineKind, Mode, VimState};
+use fe_vim::{CommandLineKind, HostCommand, Mode, VimState};
 use gpui::{
-    AppContext as _, Context, Entity, EntityId, Focusable as _, InteractiveElement as _,
-    IntoElement, ParentElement as _, Styled as _, Subscription, WeakEntity, Window, div, px,
+    AppContext as _, Context, Entity, EntityId, EventEmitter, Focusable as _,
+    InteractiveElement as _, IntoElement, ParentElement as _, Styled as _, Subscription,
+    WeakEntity, Window, div, px,
 };
 
 use super::{StatusBar, StatusOp};
@@ -32,6 +33,15 @@ pub(crate) const KEY_CONTEXT: &str = "vim_line";
 
 /// Cancels the line, as Vim's `Esc` does.
 pub(super) const CANCEL: &str = "vim_line.cancel";
+
+/// A file or window command (`:w`, `:q` …) submitted on the line, for the
+/// workbench to run for `editor`, the line's.
+pub(crate) struct VimHostCommand {
+    pub(crate) editor: WeakEntity<EditorView>,
+    pub(crate) command: HostCommand,
+}
+
+impl EventEmitter<VimHostCommand> for StatusBar {}
 
 /// The line's state in the bar.
 #[derive(Default)]
@@ -197,6 +207,7 @@ impl StatusBar {
             return;
         };
         window.focus(&editor.focus_handle(cx), cx);
+        let submit = text.is_some();
         let invocation = match text {
             Some(text) => Invocation::of("vim.command_line_submit")
                 .expect("a valid command ID")
@@ -204,6 +215,17 @@ impl StatusBar {
             None => cancel(),
         };
         run_in(&editor, invocation, window, cx);
+        // The submit ran synchronously: a host command it left is the
+        // workbench's.
+        let command = submit
+            .then(|| editor.update(cx, |editor, _| editor.take_vim_host_command()))
+            .flatten();
+        if let Some(command) = command {
+            cx.emit(VimHostCommand {
+                editor: editor.downgrade(),
+                command,
+            });
+        }
         // The editor's dispatch set the flag GPUI's events share: the key
         // that ended the line goes no further.
         cx.stop_propagation();
