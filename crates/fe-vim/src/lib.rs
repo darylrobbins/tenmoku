@@ -6,7 +6,8 @@
 //! command comes out as an [`Invocation`](fe_command::Invocation) of one of
 //! vim's commands (`vim.move`, `vim.operate`, `vim.put`, `vim.insert`,
 //! `vim.join`, `vim.replace_char`, `vim.toggle_case`, `vim.undo`, `vim.redo`,
-//! `vim.repeat`, `vim.repeat_substitute`, `vim.set_mark`, `vim.visual`, `vim.visual_exit`,
+//! `vim.repeat`, `vim.repeat_substitute`, `vim.set_mark`, the macros'
+//! `vim.record`, `vim.record_stop` and `vim.play`, `vim.visual`, `vim.visual_exit`,
 //! `vim.visual_swap`, `vim.visual_put`, `vim.reselect`, `vim.select` and the command line's
 //! `vim.command_line`, `vim.command_line_submit` and
 //! `vim.command_line_cancel`, for searches and ex commands), dispatched through
@@ -321,6 +322,55 @@
 //! `:` in a visual mode (nvim drops it too). These are E492, or, for a
 //! `|` after `:d`, E488.
 //!
+//! # Macros
+//!
+//! `q{a-z}` commits `vim.record {"register": "a"}`, and from then on every
+//! key read, in every mode, is recorded for register `a`; `q{A-Z}`
+//! (`{"register": "A"}`) appends to it. Meanwhile `vim.recording` on the
+//! editor frame is the register's name (`a` for `qA` too,
+//! [`VimState::recording`]). `q` with nothing pending, in normal or a visual
+//! mode, commits `vim.record_stop`, which writes the keys to the register,
+//! charwise; that `q` isn't recorded, and `"` keeps reading what it read.
+//! [`VimState::feed`] records the keys it reads, and the host calls
+//! [`VimState::record_key`] for each key it takes itself: in insert mode
+//! (typed text, `<CR>`, `<BS>`, `<Esc>`) and on the command line, as
+//! `HeadlessVim` does. The register's text holds the keys as nvim stores
+//! them where it stores a byte (`<Esc>` as `\x1b`, `<CR>` as `\r`, `<Tab>`
+//! as `\t`, `<C-x>` as the control byte), and in vim notation where nvim's
+//! bytes aren't text (`<BS>`, `<Left>`, `<Right>`, `<Up>`, `<Down>`). As in
+//! nvim, `qA` onto lines appends to their last line (still lines), and onto
+//! a block leaves characters. So `"ap` puts a macro, and a yank into `a`
+//! changes what `@a` plays.
+//!
+//! `@{a-z}` commits `vim.play {"register": "a", "count": 3}`, and `@@`
+//! (`{"register": "@"}`) plays the last register played (E748 before any).
+//! Playing doesn't feed keys itself: it leaves the register's text as keys
+//! (a line break as `<C-j>`, nvim's `<NL>`: `j` in normal and the visual
+//! modes, `<CR>` in insert mode and on the command line), `count` times,
+//! for the host to take with
+//! [`VimState::take_replay`] and feed as typed keys, through its own path,
+//! ahead of any key it holds; a `@` among them leaves more, to feed first.
+//! A replay's keys aren't recorded (`qb@aq` records `@a`), and its `q`
+//! does nothing, as nvim's (after a count or register too, which it drops),
+//! neither starting nor stopping a recording. Once
+//! the host has fed them all and taken none more, the replay is over. As
+//! nvim's error
+//! does, a key that fails stops the rest of the replay: one
+//! [`VimState::failed`] says failed (by nvim's rules: a motion that
+//! couldn't move, an operator whose target didn't resolve, a visual text
+//! object that selects nothing or runs out part way, `J` on the last row,
+//! `~` on an empty row, `u` or `<C-r>` running out of changes, `.` or `gv`
+//! with nothing to act on, a command that left an error, a
+//! put or `@` of an empty register, a key that cancelled what was pending,
+//! but `<Esc>`, or that was forwarded), or one the host's dispatch rejects.
+//! The host then drops the rest and calls [`VimState::stop_replay`]. On the
+//! command line a replay's `<Esc>` runs the line, as in nvim (`:help
+//! c_<Esc>`), where a typed one cancels it. A `@` that would take a replay
+//! past 1,000,000 keys in all (counting those `@` inside it left) fails with
+//! a message, leaving none of its keys: so a recursive macro (`xj@a` in
+//! `a`) ends there if no key of it fails first, and `4294967295@a` at once.
+//! `.` after a macro repeats its last change, as in nvim.
+//!
 //! # Search patterns
 //!
 //! [`search::Pattern::parse`] translates a subset of Vim's pattern language
@@ -463,7 +513,8 @@
 //! register; its fifth, `n N * #` and [`VimState::highlight`]; its sixth,
 //! the `:` line with ranges, `:{range}`, `:d` and `:noh`. Later cards added
 //! the host's ex commands and `:s`, the clipboard, and marks (`m`, `'`,
-//! `` ` ``, the jump mark and marks in ex ranges). Still to come: macros; replace mode,
+//! `` ` ``, the jump mark and marks in ex ranges), and macros (`q`, `@`,
+//! `@@`). Still to come: replace mode,
 //! increment and folds; scrolling; and the GPUI wiring of the visual modes
 //! (their key bindings, painting the selection and the block cursor, mouse
 //! drags and the status bar).
@@ -498,6 +549,20 @@
 //!   start) moves the row's marks down with it, as `O` would, where nvim
 //!   leaves them on the row above; and another origin taking out an empty row's line break only (which
 //!   `dd` there does too) leaves its marks on the row it joins.
+//! - Macros: `u` after `@a` undoes the macro's last change, where nvim
+//!   undoes all one `@` changed. `q` starts recording in normal mode with
+//!   nothing pending only: nvim's also does in a visual mode and after a
+//!   count or register (`3qa`, `"bqa`), which cancel here. `@` is normal
+//!   mode's only (nvim maps it in a visual mode to play a macro on each
+//!   line). `q0`–`q9`, `q"`, `q:`, `@"`, `@0`–`@9`, `@:` and `Q` aren't
+//!   supported. A register's text holding `<BS>`, `<Left>`, `<Right>`,
+//!   `<Up>` or `<Down>` as characters (yanked, say) plays as that key. The
+//!   buffer holds no carriage
+//!   return (`fe_text` normalises it to a line break), so `"ap` of a macro
+//!   with `<CR>` (`\r`) breaks the line where nvim puts a `^M`; buffer text
+//!   that can hold a lone carriage return is follow-up T344. nvim drops the rest of a macro once `.` in it
+//!   repeats a put; fe-vim goes on. nvim plays until an error or `<C-c>`:
+//!   fe-vim's cap of 1,000,000 keys stands in for `<C-c>`.
 //! - A count before `.` after a visual change replaces the operator's count
 //!   (how many times `>` and `<` shift, or `I` and `A` over a block type),
 //!   not the amount of text; nvim keeps the change's own count.
@@ -614,6 +679,7 @@ mod headless;
 mod history;
 mod insert;
 mod key;
+mod macros;
 mod marks;
 mod motion;
 mod operator;
@@ -628,8 +694,9 @@ mod visual;
 
 pub use args::{
     CommandLineArgs, CommandLineKind, CountArgs, InsertArgs, InsertAt, MarkArgs, MarkMotion,
-    Motion, MoveArgs, OperateArgs, Operator, PutArgs, RangeClass, ReplaceCharArgs, Search,
-    SearchPattern, SelectArgs, SubmitArgs, SwapArgs, Target, TextObject, VisualArgs, VisualKind,
+    Motion, MoveArgs, OperateArgs, Operator, PlayArgs, PutArgs, RangeClass, RecordArgs,
+    ReplaceCharArgs, Search, SearchPattern, SelectArgs, SubmitArgs, SwapArgs, Target, TextObject,
+    VisualArgs, VisualKind,
 };
 pub use commands::{VimCommands, VimTarget, registry};
 pub use ex::{Address, Base, Ex, ExCommand, ExError, HostCommand, LineSearch, Part};

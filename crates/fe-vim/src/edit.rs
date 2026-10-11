@@ -185,12 +185,16 @@ pub(crate) fn join(
             }
             acts
         })
-        .collect();
+        .collect::<Vec<Acts>>();
     // `.` repeats the count as far as the primary caret's rows went.
     let primary = text
         .offset_to_point(target.model.primary_selection().head())
         .row;
     let count = args.count.map(|count| count.min(last_row - primary + 1));
+    // nvim fails a join on the last row (but `3J`, which moves).
+    target.state.failed |= acts
+        .iter()
+        .all(|acts| acts.edits.is_empty() && acts.land.is_none());
     apply(target, actor, acts, Change::Join(CountArgs { count }))
 }
 
@@ -236,7 +240,9 @@ pub(crate) fn replace_char(
                 land: Some(Land::Edit(0, land)),
             }
         })
-        .collect();
+        .collect::<Vec<Acts>>();
+    // nvim fails `r` with too few graphemes left.
+    target.state.failed |= acts.iter().all(|acts| acts.edits.is_empty());
     apply(target, actor, acts, Change::ReplaceChar(args))
 }
 
@@ -334,6 +340,10 @@ pub(crate) fn toggle_case(
                 land: Some(Land::Edit(0, land)),
             }
         })
-        .collect();
+        .collect::<Vec<Acts>>();
+    // nvim fails `~` on an empty row.
+    target.state.failed |= acts
+        .iter()
+        .all(|acts| acts.edits.is_empty() && acts.land.is_none());
     apply(target, actor, acts, Change::ToggleCase(args))
 }

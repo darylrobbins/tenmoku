@@ -507,7 +507,7 @@ fn operate_over(
                 true => visual::exit(target)?.effect,
                 false => Effect::Nothing,
             };
-            target.state.message = Some("register / is read-only".to_string());
+            target.state.fail("register / is read-only");
             return Ok(Dispatched::new(match exited {
                 Effect::Nothing => Effect::Notify,
                 exited => exited,
@@ -673,6 +673,7 @@ fn operate_unless_failing(
     let resolved = spans
         .iter()
         .any(|span| matches!(span, Span::Chars(_) | Span::Lines { .. }));
+    state.failed |= !resolved;
     // A jump's target sets the jump mark, which the change then follows.
     if let Some(from) = jump.filter(|_| resolved) {
         state.marks.jumped(from);
@@ -1003,8 +1004,7 @@ fn put_unless_failing(
         registers,
     } = target;
     if args.register == Some('/') && registers.last_search().is_none() {
-        state.message = Some("E35: No previous regular expression".to_string());
-        return Ok(Dispatched::new(Effect::Notify));
+        return Ok(state.fail("E35: No previous regular expression"));
     }
     let value = registers
         .read(args.register, &mut **host)
@@ -1012,6 +1012,8 @@ fn put_unless_failing(
     state.set_last_change(Change::Put(args).into());
     let Some(value) = value.filter(|value| !value.text.is_empty() || value.block_width.is_some())
     else {
+        // nvim's E353 (`_` holds nothing, without an error).
+        state.failed |= args.register != Some('_');
         return Ok(Dispatched::new(Effect::Nothing));
     };
     // What the buffer will hold: its line breaks, and lines ending in one

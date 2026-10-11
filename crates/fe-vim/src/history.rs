@@ -169,6 +169,9 @@ pub(crate) fn undo(
             Err(error) => return Err(CommandError::new(error.to_string())),
         }
     }
+    // Running out of history, even part way, fails as in nvim.
+    let count = args.count.unwrap_or(1).max(1) as usize;
+    state.failed |= reverted.len() < count;
     let Some(&last) = reverted.last() else {
         return Ok(Dispatched::new(Effect::Nothing));
     };

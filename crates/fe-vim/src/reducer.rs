@@ -7,8 +7,8 @@ use crate::{
     VimKey,
     args::{
         CommandLineArgs, CommandLineKind, CountArgs, InsertArgs, InsertAt, MarkArgs, MarkMotion,
-        Motion, MoveArgs, OperateArgs, Operator, PutArgs, ReplaceCharArgs, SelectArgs, SwapArgs,
-        Target, TextObject, VisualArgs, VisualKind,
+        Motion, MoveArgs, OperateArgs, Operator, PlayArgs, PutArgs, RecordArgs, ReplaceCharArgs,
+        SelectArgs, SwapArgs, Target, TextObject, VisualArgs, VisualKind,
     },
 };
 
@@ -55,6 +55,10 @@ enum Prefix {
     Mark {
         exact: bool,
     },
+    /// `q`, awaiting the register to record into.
+    Record,
+    /// `@`, awaiting the register to play.
+    Play,
 }
 
 /// What a [`Pending`] is waiting on, for `vim.pending_kind` and which-key.
@@ -142,7 +146,7 @@ impl Pending {
     /// pending.
     pub fn kind(&self) -> Option<PendingKind> {
         Some(match self.prefix {
-            Some(Prefix::Register) => PendingKind::Register,
+            Some(Prefix::Register | Prefix::Record | Prefix::Play) => PendingKind::Register,
             Some(Prefix::G) => PendingKind::G,
             Some(Prefix::Find(_)) => PendingKind::Find,
             Some(Prefix::Object { .. }) => PendingKind::TextObject,
@@ -155,6 +159,12 @@ impl Pending {
             None if self.count.is_some() => PendingKind::Count,
             None => return None,
         })
+    }
+
+    /// Whether at most a count and a register are pending, which a
+    /// replay's `q` drops.
+    pub(crate) fn only_count_or_register(&self) -> bool {
+        self.prefix.is_none() && self.operator.is_none()
     }
 
     /// Whether an operator waits for its target: `vim.mode` is
@@ -303,6 +313,17 @@ impl Pending {
             Prefix::Mark { exact } if ch.is_ascii_lowercase() || "'`<>".contains(ch) => {
                 self.commit(Target::Motion(Motion::Mark(MarkMotion { name: ch, exact })))
             }
+            Prefix::Record if ch.is_ascii_alphabetic() => {
+                invocation("vim.record", RecordArgs { register: ch })
+            }
+            // A register before `@` is dropped.
+            Prefix::Play if ch.is_ascii_lowercase() || ch == '@' => invocation(
+                "vim.play",
+                PlayArgs {
+                    register: ch,
+                    count: self.count,
+                },
+            ),
             _ => Step::Cancel,
         }
     }
@@ -318,6 +339,13 @@ impl Pending {
 ///
 /// `:` opens an ex command line (`vim.command_line` with `{"kind": "ex"}`)
 /// unless an operator is pending, which it cancels.
+///
+/// `<C-j>` (`<NL>`) is `j`, as in nvim.
+///
+/// `q{a-zA-Z}` with nothing pending commits `vim.record` (a count or
+/// register before `q` cancels), and `@{a-z}` or `@@`, after a count, commits
+/// `vim.play`; both in normal mode only. Only [`VimState`](crate::VimState)
+/// knows a recording is under way, so ending it with `q` is its own.
 pub fn step(mut pending: Pending, key: VimKey) -> Step {
     if let Some(prefix) = pending.prefix.take() {
         return pending.complete(prefix, key);
@@ -332,6 +360,8 @@ pub fn step(mut pending: Pending, key: VimKey) -> Step {
         VimKey::Right if continues => 'l',
         VimKey::Up if continues => 'k',
         VimKey::Down if continues => 'j',
+        // `<NL>` (a register's line break, as `@` plays it) is `j`.
+        VimKey::Ctrl('j') => 'j',
         // `<C-q>` is `<C-v>`, as in nvim.
         VimKey::Ctrl('v' | 'q') if pending.visual || pending.is_empty() => {
             return invocation(
@@ -375,6 +405,9 @@ pub fn step(mut pending: Pending, key: VimKey) -> Step {
         'm' if pending.operator.is_none() => Prefix::SetMark,
         '\'' | '`' => Prefix::Mark { exact: ch == '`' },
         ':' if pending.operator.is_none() => return pending.ex_line(),
+        // In normal mode only; a count before `q` cancels.
+        'q' if pending.is_empty() && !pending.visual => Prefix::Record,
+        '@' if pending.operator.is_none() && !pending.visual => Prefix::Play,
         _ if pending.visual => return pending.visual_key(ch),
         'v' | 'V' if pending.is_empty() => return visual(ch),
         _ => {

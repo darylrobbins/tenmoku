@@ -499,10 +499,7 @@ pub(crate) fn run(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Hand
     let before = target.model.selections();
     let mut dispatched = match execute(target, actor, line) {
         Ok(handled) => handled?,
-        Err(error) => {
-            target.state.message = Some(error.to_string());
-            Dispatched::new(Effect::Notify)
-        }
+        Err(error) => target.state.fail(error.to_string()),
     };
     if dispatched.effect != Effect::Changed && target.model.selections() != before {
         dispatched.effect = Effect::Changed;

@@ -225,6 +225,25 @@ impl Registers {
         self.search_forward = forward;
     }
 
+    /// Writes a recorded macro's `text` to `name`, `a-z` charwise, as
+    /// `q{a-z}` does; `A-Z` append, as `q{A-Z}` does: to the last line of
+    /// lines (still lines), or to a block's text (then charwise). `"` and
+    /// the clipboard are left alone.
+    pub(crate) fn record(&mut self, name: char, text: String) {
+        let slot = &mut self.named[name.to_ascii_lowercase() as usize - 'a' as usize];
+        *slot = Some(match slot.take().filter(|_| name.is_ascii_uppercase()) {
+            Some(old) if old.linewise => {
+                let mut lines = old.text;
+                if lines.ends_with('\n') {
+                    lines.pop();
+                }
+                Register::new(lines + &text + "\n", true)
+            }
+            Some(old) => Register::new(old.text + &text, false),
+            None => Register::new(text, false),
+        });
+    }
+
     fn write_clipboard(&mut self, value: &Register, host: &mut dyn EditorHost) {
         host.write_clipboard(value.text.clone());
         self.clipboard_last = Some(value.clone());

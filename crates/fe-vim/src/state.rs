@@ -1,7 +1,7 @@
 //! Vim's per-editor state and the context keys it publishes.
 
-use fe_buffer::Version;
-use fe_command::{ContextFrame, ContextStack};
+use fe_buffer::{TransactionId, Version};
+use fe_command::{ContextFrame, ContextStack, Dispatched, Effect, Invocation, Source};
 use fe_editor::{EditorModel, commands::CONTEXT};
 
 use crate::ex::HostCommand;
@@ -11,6 +11,7 @@ use crate::{
     cmdline::{self, CommandLine},
     history::Carets,
     insert::{Closing, Session},
+    macros::Macros,
     marks::Marks,
     step,
     visual::{Extent, LastVisual, Visual},
@@ -26,6 +27,8 @@ const PENDING_KIND: &str = "vim.pending_kind";
 const VISUAL: &str = "vim.visual";
 /// The command line's kind, in `cmdline` mode: [`CommandLineKind::name`].
 const CMDLINE_KIND: &str = "vim.cmdline_kind";
+/// The register being recorded into, while `q` records.
+const RECORDING: &str = "vim.recording";
 
 /// The editing mode.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash)]
@@ -89,11 +92,25 @@ pub struct VimState {
     pub(crate) host_command: Option<HostCommand>,
     /// `a` to `z` and the jump mark.
     pub(crate) marks: Marks,
+    /// The recording under way and the replay the host is feeding.
+    pub(crate) macros: Macros,
+    /// The last key read failed, as Vim's beeps and errors do: a motion
+    /// that couldn't move, an operator whose target didn't resolve, an
+    /// error message, a key that cancelled what was pending.
+    pub(crate) failed: bool,
 }
 
 impl VimState {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Leaves the error `message` for the host, failing the key: what
+    /// changed is only that.
+    pub(crate) fn fail(&mut self, message: impl Into<String>) -> Dispatched<TransactionId> {
+        self.message = Some(message.into());
+        self.failed = true;
+        Dispatched::new(Effect::Notify)
     }
 
     /// Sets what `.` repeats.
@@ -228,6 +245,23 @@ impl VimState {
     /// key is forwarded.
     pub fn feed(&mut self, key: VimKey) -> Step {
         self.message = None;
+        self.failed = false;
+        let replayed = self.macros.count();
+        // `q` with nothing pending, in normal or a visual mode, ends a
+        // recording (and isn't in it). A replay's `q` (after a count or a
+        // register too, which it drops) does nothing, as nvim doesn't record
+        // or stop recording while it plays a register.
+        if key == VimKey::Char('q') && matches!(self.mode, Mode::Normal | Mode::Visual(_)) {
+            if replayed && self.pending.only_count_or_register() {
+                self.pending = Pending::new();
+                return Step::Wait(Pending::new());
+            }
+            if !replayed && self.pending.kind().is_none() && self.macros.recording().is_some() {
+                let stop = Invocation::of("vim.record_stop").expect("vim command IDs are valid");
+                return Step::Commit(stop.source(Source::Keyboard));
+            }
+        }
+        self.macros.record(key);
         let kind = match self.mode {
             Mode::Visual(kind) => Some(kind),
             Mode::CmdLine(_) => return cmdline::fallback(key),
@@ -238,10 +272,72 @@ impl VimState {
             Ok(opened) => opened,
             Err(pending) => step(pending, key),
         };
-        if let Step::Wait(pending) = &result {
-            self.pending = pending.clone();
+        match &result {
+            Step::Wait(pending) => self.pending = pending.clone(),
+            // `<Esc>` cancelling isn't an error in Vim.
+            Step::Cancel if key == VimKey::Esc => {}
+            Step::Cancel | Step::Forward => self.failed = true,
+            Step::Commit(_) => {}
         }
         result
+    }
+
+    /// Reads a key the host takes itself rather than through
+    /// [`VimState::feed`]: in insert mode (typed text, `<CR>`, `<BS>`,
+    /// `<Esc>`) and on the command line. The host calls it for each such
+    /// key, before running what the key does: it's how a recording gets
+    /// them, and how a replay's keys are counted.
+    pub fn record_key(&mut self, key: VimKey) {
+        self.failed = false;
+        self.macros.count();
+        self.macros.record(key);
+    }
+
+    /// The register `q` is recording into (`a` for `qA` too), while it
+    /// records: `vim.recording` on the context.
+    pub fn recording(&self) -> Option<char> {
+        self.macros.recording()
+    }
+
+    /// The keys a `@` (`vim.play`) left for the host to feed, then none
+    /// until the next. The host feeds them as typed keys, through
+    /// [`VimState::feed`] or [`VimState::record_key`], before any key it
+    /// still holds, and after each takes any new ones (a `@` inside the
+    /// macro) to feed first; once it has fed them all and takes none, the
+    /// replay is over. A replay's keys aren't recorded, and its `q` does
+    /// nothing (dropping a count or register before it). A line break in the register is `<C-j>` (nvim's `<NL>`),
+    /// which the host takes as `<CR>` in insert mode and on the command
+    /// line. On the command line a replay's `<Esc>` runs the line, as in
+    /// nvim (`:help c_<Esc>`).
+    ///
+    /// If a key of the replay fails ([`VimState::failed`], a key the host
+    /// forwards or a command that returns an error), the host drops the
+    /// rest of the replay's keys and calls [`VimState::stop_replay`], as
+    /// nvim's error stops it. A `@` that would take a replay past
+    /// 1,000,000 keys in all fails with a message, so recursive macros end.
+    pub fn take_replay(&mut self) -> Vec<VimKey> {
+        self.macros.take()
+    }
+
+    /// The host dropped the rest of a replay: it's over, and the keys read
+    /// from now are typed.
+    pub fn stop_replay(&mut self) {
+        self.macros.stop();
+    }
+
+    /// Whether the last key read failed, as nvim's errors and beeps do,
+    /// which stops a replay: a motion that couldn't move (`j` on the last
+    /// row, `l` at a row's end, `w` at the text's end or a counted `w`
+    /// running out, but not `t` onto the next character), an operator whose
+    /// target didn't resolve, a visual text object that selects nothing or
+    /// runs out part way, `J` on the last row, `~` on an empty row, `r` past
+    /// a row's end, `u` or `<C-r>` running out of changes (even part way),
+    /// `.` or `gv` with nothing to act on, a put or `@` of an empty
+    /// register, a command that left an error in [`VimState::message`], or
+    /// a key that cancelled what was pending (not `<Esc>`) or was
+    /// forwarded.
+    pub fn failed(&self) -> bool {
+        self.failed
     }
 
     /// Publishes the mode on `frame`, the editor's own: `vim.mode`, the flag
@@ -268,6 +364,12 @@ impl VimState {
             Mode::CmdLine(kind) => frame = frame.set(CMDLINE_KIND, kind.name()),
             _ => {
                 frame.values.remove(CMDLINE_KIND);
+            }
+        }
+        match self.macros.recording() {
+            Some(register) => frame = frame.set(RECORDING, register.to_string()),
+            None => {
+                frame.values.remove(RECORDING);
             }
         }
         match self.pending.kind() {

@@ -1,5 +1,7 @@
 //! A vim editor without a UI, for tests and the Neovim oracle.
 
+use std::collections::VecDeque;
+
 use fe_buffer::{Buffer, Point, TransactionId};
 use fe_command::{DispatchError, Dispatched, Invocation, Registry, Source};
 use fe_editor::{EditorModel, commands::HeadlessHost};
@@ -67,27 +69,55 @@ impl HeadlessVim {
     /// on the line, `<BS>` deletes its last (or on an empty line dispatches
     /// `vim.command_line_cancel`, as `<Esc>` does), `<CR>` dispatches
     /// `vim.command_line_submit` with the line; any other key is forwarded.
+    /// In both, `<C-j>` (`<NL>`, a register's line break) is `<CR>`.
+    /// Either way the key goes to [`VimState::record_key`] first.
+    ///
+    /// The keys a `@` leaves ([`VimState::take_replay`]) are fed next, as
+    /// typed keys, before the rest of `keys`; a replay's `<Esc>` on the
+    /// command line submits it, as in nvim. A replay's key that fails (one
+    /// forwarded, an invocation that errs, or [`VimState::failed`]) drops
+    /// the rest of the replay, and feeding goes on with `keys`.
     pub fn feed(&mut self, keys: &str) -> Result<(), FeedError> {
-        for key in parse_keys(keys)? {
-            self.sync_visual();
-            match self.state.mode() {
-                Mode::Insert => {
-                    self.type_key(key)?;
-                    continue;
+        let mut queue: VecDeque<(VimKey, bool)> = parse_keys(keys)?
+            .into_iter()
+            .map(|key| (key, false))
+            .collect();
+        while let Some((key, replayed)) = queue.pop_front() {
+            let fed = self.feed_key(key, replayed);
+            if replayed && (fed.is_err() || self.state.failed()) {
+                while queue.front().is_some_and(|&(_, replayed)| replayed) {
+                    queue.pop_front();
                 }
-                Mode::CmdLine(_) => {
-                    self.line_key(key)?;
-                    continue;
-                }
-                _ => {}
+                self.state.stop_replay();
+                continue;
             }
-            match self.state.feed(key) {
-                Step::Wait(_) | Step::Cancel => {}
-                Step::Forward => return Err(FeedError::Forwarded(key)),
-                Step::Commit(invocation) => {
-                    let invocation = invocation.context(context(&self.state));
-                    self.dispatch(&invocation)?;
-                }
+            fed?;
+            for key in self.state.take_replay().into_iter().rev() {
+                queue.push_front((key, true));
+            }
+        }
+        Ok(())
+    }
+
+    fn feed_key(&mut self, key: VimKey, replayed: bool) -> Result<(), FeedError> {
+        self.sync_visual();
+        match self.state.mode() {
+            Mode::Insert => {
+                self.state.record_key(key);
+                return self.type_key(key);
+            }
+            Mode::CmdLine(_) => {
+                self.state.record_key(key);
+                return self.line_key(key, replayed);
+            }
+            _ => {}
+        }
+        match self.state.feed(key) {
+            Step::Wait(_) | Step::Cancel => {}
+            Step::Forward => return Err(FeedError::Forwarded(key)),
+            Step::Commit(invocation) => {
+                let invocation = invocation.context(context(&self.state));
+                self.dispatch(&invocation)?;
             }
         }
         Ok(())
@@ -99,7 +129,8 @@ impl HeadlessVim {
         let context = context(&self.state);
         match key {
             VimKey::Char(ch) => self.model.insert(ch.encode_utf8(&mut [0; 4])),
-            VimKey::Enter => self.state.line_break(&mut self.model),
+            // `<C-j>` (`<NL>`) is `<CR>` here.
+            VimKey::Enter | VimKey::Ctrl('j') => self.state.line_break(&mut self.model),
             VimKey::Backspace => self.model.backspace(),
             VimKey::Esc => {
                 let invocation = Invocation::of("vim.normal_mode")
@@ -113,20 +144,25 @@ impl HeadlessVim {
         Ok(())
     }
 
-    /// One key in `cmdline` mode, as the host's line takes it.
-    fn line_key(&mut self, key: VimKey) -> Result<(), FeedError> {
+    /// One key in `cmdline` mode, as the host's line takes it; a replay's
+    /// `<Esc>` submits it.
+    fn line_key(&mut self, key: VimKey, replayed: bool) -> Result<(), FeedError> {
         let invocation = match key {
             VimKey::Char(ch) => {
                 self.line.push(ch);
                 return Ok(());
             }
             VimKey::Backspace if self.line.pop().is_some() => return Ok(()),
-            VimKey::Backspace | VimKey::Esc => Invocation::of("vim.command_line_cancel"),
-            VimKey::Enter => Invocation::of("vim.command_line_submit").map(|invocation| {
-                let text = std::mem::take(&mut self.line);
-                let args = serde_json::to_value(SubmitArgs { text }).expect("vim args serialize");
-                invocation.args(args)
-            }),
+            VimKey::Esc if !replayed => Invocation::of("vim.command_line_cancel"),
+            VimKey::Backspace => Invocation::of("vim.command_line_cancel"),
+            VimKey::Enter | VimKey::Ctrl('j') | VimKey::Esc => {
+                Invocation::of("vim.command_line_submit").map(|invocation| {
+                    let text = std::mem::take(&mut self.line);
+                    let args =
+                        serde_json::to_value(SubmitArgs { text }).expect("vim args serialize");
+                    invocation.args(args)
+                })
+            }
             _ => return Err(FeedError::Forwarded(key)),
         };
         let invocation = invocation

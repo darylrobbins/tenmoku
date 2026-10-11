@@ -12,6 +12,7 @@ mod ex;
 mod ex_host;
 mod find_query;
 mod insert;
+mod macros;
 mod marks;
 mod motions;
 mod operators;

@@ -232,8 +232,7 @@ pub(crate) fn resolve(
 
 /// Leaves `message` for the host: what changed is only that.
 pub(crate) fn failed(state: &mut VimState, message: impl Into<String>) -> Handled {
-    state.message = Some(message.into());
-    Ok(Dispatched::new(Effect::Notify))
+    Ok(state.fail(message))
 }
 
 /// [`VimState::feed`] in `cmdline` mode, where the host's line should have

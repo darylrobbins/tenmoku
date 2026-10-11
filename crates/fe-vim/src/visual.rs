@@ -447,6 +447,7 @@ pub(crate) fn reselect(
     let VimTarget { model, state, .. } = target;
     model.sync_display();
     let Some(last) = state.last_visual.clone() else {
+        state.failed = true;
         return effect(false);
     };
     if let Some(ends) = ends(model, state) {
@@ -554,7 +555,10 @@ pub(crate) fn move_cursor(model: &mut EditorModel, state: &mut VimState, args: M
         }
         Ok(_) if ran_out => cursor.ix = cursor.line.len(),
         // A failed motion leaves the cursor where it was.
-        Err(_) => cursor = cursor_at(&text, ends.cursor),
+        Err(_) => {
+            state.failed |= motion::errs(&text, ends.cursor, args, state.last_find, tab);
+            cursor = cursor_at(&text, ends.cursor);
+        }
         _ => {}
     }
     if let Motion::FindForward(_)
@@ -572,6 +576,7 @@ pub(crate) fn move_cursor(model: &mut EditorModel, state: &mut VimState, args: M
             false => goal_of(&cursor, tab),
         })
     });
+    state.failed |= motion::word_fails(&text, ends.cursor, args, tab);
     let moved_to = Ends {
         cursor: cursor.offset(),
         goal,

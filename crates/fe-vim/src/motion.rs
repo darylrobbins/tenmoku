@@ -32,24 +32,17 @@ pub(crate) fn move_command(
             args.motion = motion;
             keep
         }
-        Err(message) => {
-            target.state.message = Some(message);
-            return Dispatched::new(Effect::Notify);
-        }
+        Err(message) => return target.state.fail(message),
     };
     let searching = matches!(args.motion, Motion::Search(_) | Motion::SearchWord(_));
     if let Motion::Search(search) | Motion::SearchWord(search) = args.motion
         && let Err(message) = cmdline::check_search(target, search, keep)
     {
-        target.state.message = Some(message);
-        return Dispatched::new(Effect::Notify);
+        return target.state.fail(message);
     }
     match marks::resolve(target, args.motion) {
         Ok(motion) => args.motion = motion,
-        Err(message) => {
-            target.state.message = Some(message);
-            return Dispatched::new(Effect::Notify);
-        }
+        Err(message) => return target.state.fail(message),
     }
     if let Some(from) = marks::jump(target, args.motion, args.count) {
         target.state.marks.jumped(from);
@@ -77,11 +70,21 @@ pub(crate) fn apply(model: &mut EditorModel, state: &mut VimState, args: MoveArg
     let goals = valid_goals(state, version, &before);
     let tab = model.tab_size().max(1);
     let mut moved = Vec::with_capacity(before.len());
+    let mut failed = false;
     for (ix, selection) in before.iter().enumerate() {
         let mut cursor = Cursor::at(&text, selection.head());
         let goal = goals.and_then(|(_, goals)| goals[ix].1);
-        let goal =
-            motion(&mut cursor, args, state.last_find, goal, tab).unwrap_or_else(|kept| kept);
+        let from = cursor.offset();
+        let goal = match motion(&mut cursor, args, state.last_find, goal, tab) {
+            Ok(goal) => {
+                failed |= word_fails(&text, from, args, tab);
+                goal
+            }
+            Err(kept) => {
+                failed |= errs(&text, from, args, state.last_find, tab);
+                kept
+            }
+        };
         let head = cursor.offset();
         let tail = if args.extend { selection.tail() } else { head };
         moved.push((selection_from(tail, head), goal));
@@ -101,7 +104,65 @@ pub(crate) fn apply(model: &mut EditorModel, state: &mut VimState, args: MoveArg
         (selection.head(), first.and_then(|(_, goal)| *goal))
     });
     state.goals = Some((version, goals.collect()));
+    state.failed |= failed;
     after != before
+}
+
+/// Whether a word motion (`w b e W B E`) from `from` fails as Vim's error
+/// does, stopping a macro, though it goes as far as it can and resets the
+/// goal column: `w e W E` when a step of the count can't move (so the last
+/// can't), and `b B` only when they can't move at all.
+pub(crate) fn word_fails(text: &Text, from: usize, args: MoveArgs, tab: usize) -> bool {
+    if !matches!(
+        args.motion,
+        Motion::WordForward
+            | Motion::WordBackward
+            | Motion::WordEnd
+            | Motion::BigWordForward
+            | Motion::BigWordBackward
+            | Motion::BigWordEnd
+    ) {
+        return false;
+    }
+    let after = |count: u32| {
+        let mut cursor = Cursor::at(text, from);
+        if count > 0 {
+            let args = MoveArgs {
+                count: Some(count),
+                ..args
+            };
+            let _ = motion(&mut cursor, args, None, None, tab);
+        }
+        cursor.offset()
+    };
+    let count = args.count.unwrap_or(1).max(1);
+    match args.motion {
+        // From where it is, a visual cursor at a row's end included.
+        Motion::WordBackward | Motion::BigWordBackward => after(count) == from,
+        _ => after(count) == after(count - 1),
+    }
+}
+
+/// Whether a motion from `from` that came back `Err` fails as Vim's error
+/// does, stopping a macro: all do but `t` and `T` staying put before the
+/// adjacent character they find.
+pub(crate) fn errs(
+    text: &Text,
+    from: usize,
+    args: MoveArgs,
+    last_find: Option<Motion>,
+    tab: usize,
+) -> bool {
+    let find = match args.motion {
+        Motion::TillForward(ch) => Motion::FindForward(ch),
+        Motion::TillBackward(ch) => Motion::FindBackward(ch),
+        _ => return true,
+    };
+    let args = MoveArgs {
+        motion: find,
+        ..args
+    };
+    motion(&mut Cursor::at(text, from), args, last_find, None, tab).is_err()
 }
 
 /// The goals `state` holds for `selections`, if they're still where vim left

@@ -146,6 +146,8 @@ pub(crate) fn put(
         .map_err(|error| CommandError::new(error.to_string()))?;
     // `_` holds empty characters, not nothing.
     let unset = value.is_none() && args.register != Some('_');
+    // nvim's E353, once the selection is replaced.
+    state.failed |= unset;
     let value = value.unwrap_or_default();
     model.sync_display();
     let Some(ends) = ends(model, state) else {

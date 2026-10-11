@@ -57,7 +57,7 @@ pub(crate) fn select_object(
     let VimTarget { model, state, .. } = target;
     model.sync_display();
     let Some(ends) = ends(model, state) else {
-        return effect(false);
+        return failed(state);
     };
     let text = model.text().clone();
     let count = args.count.unwrap_or(1).max(1);
@@ -72,6 +72,8 @@ pub(crate) fn select_object(
     let forward = ends.cursor > ends.anchor;
     let big = matches!(args.text_object, InnerBigWord | ABigWord);
     let mut kind = VisualKind::Char;
+    // Running out of text part way, which nvim fails, though it selects.
+    let mut ran_out = false;
     let inner = matches!(args.text_object, InnerWord | InnerBigWord);
     // A row's end, or a last row that's empty: `iw` grows back from it.
     let at_end = {
@@ -96,6 +98,7 @@ pub(crate) fn select_object(
         let end = inner_words(&text, ends.cursor, count, big, false);
         if end.is_none() {
             kind = ends.kind;
+            ran_out = true;
         }
         (
             start.offset(),
@@ -105,6 +108,7 @@ pub(crate) fn select_object(
         let (back, done) = back_inner_words(&text, ends.cursor, count, big, true);
         if !done {
             kind = ends.kind;
+            ran_out = true;
         }
         (ends.anchor, back)
     } else if ends.anchor == ends.cursor {
@@ -114,25 +118,29 @@ pub(crate) fn select_object(
                 if count > 1 && matches!(args.text_object, InnerWord | InnerBigWord) =>
             {
                 let end = inner_words(&text, ends.cursor, count, big, false);
+                ran_out = end.is_none();
                 (start, end.unwrap_or_else(|| position(&text, text.len())))
             }
             Some(_) if count > 1 => match object(ends.cursor, count) {
                 Some(found) => found,
-                None => return effect(false),
+                None => return failed(state),
             },
             Some(found) => found,
-            None => return effect(false),
+            None => return failed(state),
         }
     } else if !forward && matches!(args.text_object, AWord | ABigWord) {
-        (ends.anchor, back_a_words(&text, ends.cursor, count, big))
+        let (back, done) = back_a_words(&text, ends.cursor, count, big);
+        ran_out = !done;
+        (ends.anchor, back)
     } else if !forward && inner {
         // At the start of the text there's nothing to grow onto; running out
         // of it part way keeps the kind.
         match back_inner_words(&text, ends.cursor, count, big, false) {
-            (back, _) if back == ends.cursor => return effect(false),
+            (back, _) if back == ends.cursor => return failed(state),
             (back, done) => {
                 if !done {
                     kind = ends.kind;
+                    ran_out = true;
                 }
                 (ends.anchor, back)
             }
@@ -143,6 +151,7 @@ pub(crate) fn select_object(
             // Past the end of the text, onto the last row's end.
             None => {
                 kind = ends.kind;
+                ran_out = true;
                 (ends.anchor, position(&text, text.len()))
             }
         }
@@ -158,9 +167,10 @@ pub(crate) fn select_object(
             // Forward past the end of the text, onto the last row's end.
             None if forward => {
                 kind = ends.kind;
+                ran_out = true;
                 (ends.anchor, position(&text, text.len()))
             }
-            None => return effect(false),
+            None => return failed(state),
         }
     } else {
         // The object around the cursor, or if that's the selection, the
@@ -178,7 +188,7 @@ pub(crate) fn select_object(
             {
                 found
             }
-            _ => return effect(false),
+            _ => return failed(state),
         }
     };
     let selected = Ends {
@@ -188,6 +198,7 @@ pub(crate) fn select_object(
         goal: None,
     };
     select(model, state, selected);
+    state.failed |= ran_out;
     effect(true)
 }
 
@@ -196,6 +207,12 @@ pub(crate) fn select_object(
 /// text. An item is a run of one class on a row, or an empty row, which a
 /// selection takes up to the next row's start; each after the first (and
 /// the first, when the selection `grows`) starts one position on.
+/// A text object that selects nothing new fails, as nvim's does.
+fn failed(state: &mut VimState) -> Result<Dispatched<TransactionId>, CommandError> {
+    state.failed = true;
+    effect(false)
+}
+
 fn inner_words(text: &Text, offset: usize, count: u32, big: bool, grows: bool) -> Option<usize> {
     let mut cursor = cursor_at(text, offset);
     for item in 0..count {
@@ -251,8 +268,10 @@ fn back_inner_words(text: &Text, offset: usize, count: u32, big: bool, end: bool
 /// `aw` (`aW` if `big`) `count` times back from the cursor at `offset`, as a
 /// visual selection grows the way it faces: before it, a word and the blanks
 /// before that, or blanks and the word before them. Returns where the
-/// cursor goes.
-fn back_a_words(text: &Text, offset: usize, count: u32, big: bool) -> usize {
+/// cursor goes, and whether every item was done, as nvim judges it: an item
+/// whose first step back can't be taken or reaches the text's first
+/// position isn't, nor are those after one that ran into the text's start.
+fn back_a_words(text: &Text, offset: usize, count: u32, big: bool) -> (usize, bool) {
     let mut cursor = cursor_at(text, offset);
     let blank = |cursor: &Cursor| cursor.class_on_row(cursor.ix, big) == Some(Class::Blank);
     // Back to the start of the run holding the cursor, on its row.
@@ -262,15 +281,17 @@ fn back_a_words(text: &Text, offset: usize, count: u32, big: bool) -> usize {
             cursor.ix -= 1;
         }
     };
-    for _ in 0..count {
+    let mut done = true;
+    for item in 1..=count {
         if !cursor.backward() {
-            break;
+            return (cursor.offset(), false);
         }
+        done &= cursor.offset() > 0;
         let blanks_first = blank(&cursor);
         if blanks_first {
             run_start(&mut cursor);
             if !cursor.backward() {
-                break;
+                return (cursor.offset(), done && item == count);
             }
         }
         run_start(&mut cursor);
@@ -282,5 +303,5 @@ fn back_a_words(text: &Text, offset: usize, count: u32, big: bool) -> usize {
             run_start(&mut cursor);
         }
     }
-    cursor.offset()
+    (cursor.offset(), done)
 }

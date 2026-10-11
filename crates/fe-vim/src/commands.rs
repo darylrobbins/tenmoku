@@ -7,9 +7,9 @@ use fe_command::{Actor, CommandError, CommandTarget, ContextPredicate, Registry}
 use fe_editor::{EditorModel, commands::EditorHost};
 
 use crate::{
-    CommandLineArgs, CountArgs, InsertArgs, MarkArgs, MoveArgs, OperateArgs, PutArgs, Registers,
-    ReplaceCharArgs, SelectArgs, SubmitArgs, SwapArgs, VimState, VisualArgs, cmdline, edit,
-    history, insert, marks, motion, operator, repeat, substitute, visual,
+    CommandLineArgs, CountArgs, InsertArgs, MarkArgs, MoveArgs, OperateArgs, PlayArgs, PutArgs,
+    RecordArgs, Registers, ReplaceCharArgs, SelectArgs, SubmitArgs, SwapArgs, VimState, VisualArgs,
+    cmdline, edit, history, insert, macros, marks, motion, operator, repeat, substitute, visual,
 };
 
 /// Catches the marks up with the text before a command that may change it
@@ -38,7 +38,8 @@ impl CommandTarget for VimCommands {
 
 /// Vim's registry: `vim.move`, `vim.operate`, `vim.put`, `vim.insert`,
 /// `vim.normal_mode`, `vim.join`, `vim.replace_char`, `vim.toggle_case`,
-/// `vim.undo`, `vim.redo`, `vim.repeat`, `vim.repeat_substitute`, and for
+/// `vim.undo`, `vim.redo`, `vim.repeat`, `vim.repeat_substitute`, the
+/// macros' `vim.record`, `vim.record_stop` and `vim.play`, and for
 /// the visual modes
 /// `vim.visual`, `vim.visual_exit`, `vim.visual_swap`, `vim.visual_put`,
 /// `vim.reselect` and `vim.select`, and for the command line (searches and
@@ -259,8 +260,44 @@ pub fn registry() -> Registry<VimCommands> {
         .description(
             "Repeats the last substitute with its flags on the cursor's line, or `count` lines from it (`&`, as nvim's `:&&`): one transaction, which `.` doesn't repeat.",
         )
-        .context(normal)
+        .context(normal.clone())
         .mutates_buffer(true);
+    registry
+        .register_with_args(
+            "vim.record",
+            "Vim Record Macro",
+            |target: &mut VimTarget<'_>, _: &Actor, args: RecordArgs| {
+                macros::record(target.state, args)
+            },
+        )
+        .expect("vim command IDs are valid and distinct")
+        .description(
+            "Starts recording the keys typed, in every mode, into register `register` (`a` to `z`; `A` to `Z` append), until `q`: `vim.recording` is the register meanwhile.",
+        )
+        .context(normal.clone())
+        .mutates_buffer(false);
+    registry
+        .register(
+            "vim.record_stop",
+            "Vim Stop Recording",
+            |target: &mut VimTarget<'_>, _: &Actor| macros::stop(target),
+        )
+        .expect("vim command IDs are valid and distinct")
+        .description("Ends the recording, leaving the keys typed as the register's text, charwise.")
+        .context(normal_or_visual.clone())
+        .mutates_buffer(false);
+    registry
+        .register_with_args(
+            "vim.play",
+            "Vim Play Macro",
+            |target: &mut VimTarget<'_>, _: &Actor, args: PlayArgs| macros::play(target, args),
+        )
+        .expect("vim command IDs are valid and distinct")
+        .description(
+            "Plays register `register` (`a` to `z`, or `@` for the last one played) `count` times: its text, as keys, is left for the host to feed (`VimState::take_replay`). A replay stops at the first key that fails, or before it would feed more than 1,000,000 keys.",
+        )
+        .context(normal)
+        .mutates_buffer(false);
     registry
         .register_with_args(
             "vim.set_mark",

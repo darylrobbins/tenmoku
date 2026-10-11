@@ -408,6 +408,22 @@ pub struct MarkArgs {
     pub name: char,
 }
 
+/// `vim.record`'s args: `q{a-z}`, or `q{A-Z}` to append to the lowercase
+/// register.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct RecordArgs {
+    pub register: char,
+}
+
+/// `vim.play`'s args: `@{a-z}`, or `@@` (`register` `@`) for the last
+/// register played, `count` times.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct PlayArgs {
+    pub register: char,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<u32>,
+}
+
 /// `vim.replace_char`'s args: `r{char}`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ReplaceCharArgs {
