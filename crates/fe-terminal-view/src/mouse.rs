@@ -364,7 +364,7 @@ impl TerminalView {
     ) {
         let (row, col, side) = frame.cell_at(event.position);
         let held = event.pressed_button.and_then(button);
-        if held.is_none() {
+        if event.pressed_button.is_none() {
             // The release happened where no listener saw it: the program
             // still hears it.
             self.drag = None;

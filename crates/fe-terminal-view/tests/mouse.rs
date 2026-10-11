@@ -480,6 +480,43 @@ fn reports_keep_selection_and_scrollback(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn reports_during_output_keep_the_view_still(cx: &mut TestAppContext) {
+    let hex = "dd bs=64 count=1 2>/dev/null | od -An -tx1 -v";
+    let script = format!(
+        "stty raw -echo opost; seq 1 200; printf '\\033[?1003h\\033[?1006h'; echo ready; \
+         while :; do {hex}; done"
+    );
+    let (view, cx) = open(cx, options(&script), "ready");
+    let grid = cell(cx);
+    settle(cx);
+    wheel_lines(cx, at(grid, 5, 5, 0.5), 1., true);
+    let before = snapshot(&view, cx);
+    let offset = before.display_offset;
+    assert!(offset > 0);
+    let text = |s: &fe_terminal::Snapshot| -> Vec<String> {
+        (0..s.rows.len()).map(|row| s.row_text(row)).collect()
+    };
+    // Each movement is answered with a line of output, which grows history.
+    let moves = 5;
+    for i in 0..moves {
+        cx.simulate_mouse_move(at(grid, 2, 2 + i, 0.5), None, Modifiers::none());
+    }
+    until(cx, "the replies to grow history", |cx| {
+        snapshot(&view, cx).history_size > before.history_size
+    });
+    settle(cx);
+    let after = snapshot(&view, cx);
+    let grown = after.history_size - before.history_size;
+    assert!(grown > 0);
+    // The view stays on the same text; the offset made up for the growth.
+    assert_eq!(after.display_offset, offset + grown);
+    assert_eq!(text(&after), text(&before));
+    // Keyboard input still returns to the bottom.
+    view.read_with(cx, |view, _| view.terminal().unwrap().scroll_to_bottom());
+    assert_eq!(snapshot(&view, cx).display_offset, 0);
+}
+
+#[gpui::test]
 fn overlapping_buttons_are_each_released(cx: &mut TestAppContext) {
     let (view, cx) = open(cx, hex_reader("\\033[?1000h\\033[?1006h"), "ready");
     let grid = cell(cx);
@@ -505,6 +542,22 @@ fn missed_release_is_reported_on_movement(cx: &mut TestAppContext) {
     // Movement with no button held: the release was lost.
     cx.simulate_mouse_move(at(grid, 4, 7, 0.5), None, Modifiers::none());
     expect_written(&view, cx, b"\x1b[<0;6;3M\x1b[<0;8;5m");
+}
+
+#[gpui::test]
+fn navigation_button_movement_is_not_a_missed_release(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx, hex_reader("\\033[?1002h\\033[?1006h"), "ready");
+    let grid = cell(cx);
+    settle(cx);
+    button_down(cx, at(grid, 2, 5, 0.5), MouseButton::Left);
+    // Left is still held; the platform names a navigation button instead.
+    cx.simulate_mouse_move(
+        at(grid, 4, 7, 0.5),
+        MouseButton::Navigate(gpui::NavigationDirection::Back),
+        Modifiers::none(),
+    );
+    button_up(cx, at(grid, 4, 7, 0.5), MouseButton::Left);
+    expect_written(&view, cx, b"\x1b[<0;6;3M\x1b[<32;8;5M\x1b[<0;8;5m");
 }
 
 #[gpui::test]
@@ -681,8 +734,8 @@ fn selection_autoscroll_stops_after_release_over_a_sibling(cx: &mut TestAppConte
     wait_for_line(&terminal, cx, "ready");
     settle(cx);
     let grid = cell(cx);
-    // Well back into history, so there's room to scroll toward the bottom.
-    terminal.read_with(cx, |view, _| view.terminal().unwrap().scroll(-10));
+    // Well back into history, so there is plenty of room to scroll toward the bottom.
+    terminal.read_with(cx, |view, _| view.terminal().unwrap().scroll(-100));
     let start = snapshot(&terminal, cx).display_offset;
     assert!(start > 3);
     press(cx, at(grid, 2, 5, 0.5), 1, Modifiers::none());
@@ -692,8 +745,9 @@ fn selection_autoscroll_stops_after_release_over_a_sibling(cx: &mut TestAppConte
         snapshot(&terminal, cx).display_offset < start
     });
     release(cx, below, 1, Modifiers::none());
-    settle(cx);
     let stopped = snapshot(&terminal, cx).display_offset;
+    // Still room to scroll, so a stranded drag would show.
+    assert!(stopped > 3, "stopped at {stopped} from {start}");
     settle(cx);
     assert_eq!(snapshot(&terminal, cx).display_offset, stopped);
 }
