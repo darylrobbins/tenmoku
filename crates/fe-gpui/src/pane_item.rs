@@ -320,7 +320,7 @@ pub fn set_restore_style(cx: &mut App, theme: EditorTheme, settings: EditorSetti
     cx.set_global(RestoreStyle(theme, settings));
 }
 
-fn restore_style(cx: &App) -> (EditorTheme, EditorSettings) {
+pub(crate) fn restore_style(cx: &App) -> (EditorTheme, EditorSettings) {
     match cx.try_global::<RestoreStyle>() {
         Some(RestoreStyle(theme, settings)) => (theme.clone(), settings.clone()),
         None => (EditorTheme::default_dark(cx), EditorSettings::default()),
