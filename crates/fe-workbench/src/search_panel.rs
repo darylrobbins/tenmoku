@@ -488,6 +488,8 @@ pub(crate) fn decode_batch(
 /// The lines are read again for it, though only those whose offsets could
 /// differ: the ones whose preview has a U+FFFD, or doesn't hold the line
 /// from its start to its last match's end (which must then be valid UTF-8).
+/// In a file in a legacy encoding that's every line but those of ASCII, as
+/// their bytes decode to other text whether or not they're valid UTF-8.
 /// A line whose bytes no longer decode to its preview, the file having
 /// changed since, is left as the search gave it, as is a UTF-16 file, whose
 /// offsets are in the UTF-8 it was searched as.
@@ -500,7 +502,7 @@ fn decode_offsets(file: &mut FileMatches, cancelled: &dyn Fn() -> bool) -> Resul
     let mut lines = file
         .lines
         .iter_mut()
-        .filter(|line| may_shift(line))
+        .filter(|line| may_shift(line) || may_differ_legacy(line))
         .peekable();
     if lines.peek().is_none() {
         return Ok(());
@@ -519,6 +521,9 @@ fn decode_offsets(file: &mut FileMatches, cancelled: &dyn Fn() -> bool) -> Resul
     let bom_len = if file_encoding.bom && !legacy { 3 } else { 0 };
     for line in lines {
         check(cancelled)?;
+        if !legacy && !may_shift(line) {
+            continue;
+        }
         let end = line.ranges.iter().map(|range| range.end).max().unwrap_or(0);
         let preview_end = line.preview_start + line.preview.len();
         // A decoded unit is never smaller than its bytes, so the preview's
@@ -527,7 +532,7 @@ fn decode_offsets(file: &mut FileMatches, cancelled: &dyn Fn() -> bool) -> Resul
         let len = end.max(preview_end) + 3;
         if let Ok(bytes) = read_line(&source, line.line_offset, len, cancelled)? {
             if legacy {
-                decode_legacy_line(&bytes, line, encoding, cancelled)?;
+                decode_legacy_line(&bytes, bytes.len() < len, line, encoding, cancelled)?;
             } else {
                 let moved = decode_line(&bytes, line, cancelled)?;
                 if moved && line.line_offset == 0 && bom_len > 0 {
@@ -546,6 +551,13 @@ fn may_shift(line: &LineMatch) -> bool {
         || (line.line_offset == 0 && line.preview.starts_with('\u{FEFF}'))
         || end > line.preview.len()
         || line.preview.contains(char::REPLACEMENT_CHARACTER)
+}
+
+/// Whether `line`'s offsets could be other than its decoding's if its file
+/// is in a legacy encoding: unless its bytes up to its last match are ASCII,
+/// bar the ESC that ISO-2022-JP shifts with.
+fn may_differ_legacy(line: &LineMatch) -> bool {
+    !line.preview.is_ascii() || line.preview.contains('\u{1B}')
 }
 
 /// Opens the regular file at `path` for reading, without following a link
@@ -660,9 +672,12 @@ fn drop_bom(line: &mut LineMatch, bom_len: usize) {
 
 /// [`decode_line`] for a file in a legacy `encoding`: the offsets and the
 /// preview move to the text `encoding` decodes the bytes to, if the bytes
-/// from the preview's start still read as the preview in lossy UTF-8.
+/// from the preview's start still read as the preview in lossy UTF-8. The
+/// preview is that text over the bytes it covered, widened to whole decoded
+/// units at both ends. `complete` says `bytes` end where the line does.
 fn decode_legacy_line(
     bytes: &[u8],
+    complete: bool,
     line: &mut LineMatch,
     encoding: FileEncoding,
     cancelled: &dyn Fn() -> bool,
@@ -696,96 +711,58 @@ fn decode_legacy_line(
             break;
         }
     }
-    let mut offsets = vec![(start, false), (start, true)];
-    offsets.extend(
-        line.ranges
-            .iter()
-            .flat_map(|range| [(range.start, false), (range.end, true)]),
-    );
-    let decoded = decode_legacy_checked(bytes, &offsets, encoding, cancelled)?;
-    if decoded[0] != decoded[1] {
-        return Ok(());
-    }
-    let mut preview = String::new();
-    let mut decoder = encoding.encoding.new_decoder_without_bom_handling();
-    let window = &bytes[start..start + preview_bytes];
-    preview.reserve(
-        decoder
-            .max_utf8_buffer_length(window.len())
-            .expect("a line's worth of UTF-8 fits in usize"),
-    );
-    let _ = decoder.decode_to_string(window, &mut preview, true);
-    line.preview = preview;
-    line.preview_start = decoded[0];
-    let (ends, _) = decoded[2..].as_chunks::<2>();
-    for (range, &[start, end]) in line.ranges.iter_mut().zip(ends) {
-        *range = start..end;
-    }
-    Ok(())
-}
-
-/// [`decode_checked`] for `encoding`: `offsets` as offsets in the text it
-/// decodes `bytes` to, found by feeding the decoder a byte at a time. An
-/// offset where the last byte fed completed a unit is at a char boundary;
-/// otherwise it's inside one, and goes to its start, or to its end if it
-/// rounds up.
-fn decode_legacy_checked(
-    bytes: &[u8],
-    offsets: &[(usize, bool)],
-    encoding: FileEncoding,
-    cancelled: &dyn Fn() -> bool,
-) -> Result<Vec<usize>, Cancelled> {
+    let preview_bytes = start..start + preview_bytes;
+    let offsets: Vec<_> = line
+        .ranges
+        .iter()
+        .flat_map(|range| [(range.start, false), (range.end, true)])
+        .collect();
     let mut order: Vec<usize> = (0..offsets.len()).collect();
     order.sort_by_key(|&ix| offsets[ix].0);
     let mut order = order.into_iter().peekable();
     let mut decoded = vec![0; offsets.len()];
-    // Offsets that round up from inside a char, waiting for it to end.
-    let mut waiting = Vec::new();
-    let mut decoder = encoding.encoding.new_decoder_without_bom_handling();
-    let mut scratch = String::new();
+    let mut preview = String::new();
+    let mut preview_start = None;
     let mut out = 0;
-    let mut at = 0;
-    let mut last_grew = false;
-    loop {
-        while let Some(&ix) = order.peek() {
-            if offsets[ix].0 > at {
-                break;
-            }
-            order.next();
-            decoded[ix] = out;
-            if offsets[ix].1 && at > 0 && !last_grew {
-                waiting.push(ix);
-            }
-        }
-        if at >= bytes.len() || (order.peek().is_none() && waiting.is_empty()) {
-            break;
-        }
-        if at % CHECK_BYTES == 0 {
+    let mut block = 0;
+    encoding.for_each_unit(bytes, complete, |unit, text| {
+        if unit.start / CHECK_BYTES != block {
+            block = unit.start / CHECK_BYTES;
             check(cancelled)?;
         }
-        scratch.clear();
-        scratch.reserve(
-            decoder
-                .max_utf8_buffer_length(1)
-                .expect("one byte's worth of UTF-8 fits in usize"),
-        );
-        let _ = decoder.decode_to_string(&bytes[at..=at], &mut scratch, false);
-        at += 1;
-        out += scratch.len();
-        if !scratch.is_empty() {
-            for ix in waiting.drain(..) {
-                decoded[ix] = out;
+        let unit_out = out..out + text.len();
+        // The offsets in this unit are at its start, or inside it and go to
+        // its start, or to its end if they round up.
+        while let Some(&ix) = order.peek() {
+            let (offset, up) = offsets[ix];
+            if offset >= unit.end {
+                break;
             }
+            decoded[ix] = if up && offset > unit.start {
+                unit_out.end
+            } else {
+                unit_out.start
+            };
+            order.next();
         }
-        last_grew = !scratch.is_empty();
-    }
-    for ix in waiting {
-        decoded[ix] = out;
-    }
+        if unit.end > preview_bytes.start && unit.start < preview_bytes.end {
+            preview_start.get_or_insert(unit_out.start);
+            preview.push_str(text);
+        }
+        out = unit_out.end;
+        Ok(order.peek().is_none() && unit.end >= preview_bytes.end)
+    })?;
+    // The rest are at or past the end.
     for ix in order {
         decoded[ix] = out;
     }
-    Ok(decoded)
+    line.preview = preview;
+    line.preview_start = preview_start.unwrap_or(out);
+    let (ends, _) = decoded.as_chunks::<2>();
+    for (range, &[start, end]) in line.ranges.iter_mut().zip(ends) {
+        *range = start..end;
+    }
+    Ok(())
 }
 
 /// `offsets`, byte offsets in `bytes` and whether each rounds up, as offsets

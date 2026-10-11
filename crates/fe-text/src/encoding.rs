@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
 
-use encoding_rs::{Encoder, EncoderResult, Encoding, UTF_8, UTF_16BE, UTF_16LE};
+use encoding_rs::{DecoderResult, Encoder, EncoderResult, Encoding, UTF_8, UTF_16BE, UTF_16LE};
 
 use crate::{LineEnding, Text, decode_lossy};
 
@@ -114,6 +114,75 @@ impl FileEncoding {
         let mut head = Vec::with_capacity(SNIFF_LEN + 1);
         reader.take(SNIFF_LEN as u64 + 1).read_to_end(&mut head)?;
         Ok(detect_head(&head).0)
+    }
+}
+
+impl FileEncoding {
+    /// Decodes `bytes`, the start of a line, as [`Text::from_reader_detecting`]
+    /// would (each malformed sequence one U+FFFD), and calls `unit` with each
+    /// decoded unit's source byte range and text, in order and with no gaps.
+    /// A unit is the bytes of one char (or a few, where they decode to
+    /// several), or of one malformed sequence with the bytes dropped after
+    /// it, which is a U+FFFD.
+    ///
+    /// `complete` says `bytes` end where the line does, so a char cut short
+    /// is a malformed sequence, as the editor's decoding makes it. Otherwise
+    /// the bytes of one unit still pending at the end are not reported.
+    /// `unit` stops the walk by returning `Ok(true)`, or its error.
+    pub fn for_each_unit<E>(
+        self,
+        bytes: &[u8],
+        complete: bool,
+        mut unit: impl FnMut(std::ops::Range<usize>, &str) -> Result<bool, E>,
+    ) -> Result<(), E> {
+        let mut decoder = self.encoding.new_decoder_without_bom_handling();
+        let mut scratch = String::new();
+        // Where the bytes not yet in a unit start: fed, or pending in `decoder`.
+        let mut unit_start = 0;
+        // A byte at a time, then once more, empty, to end the stream.
+        for at in 0..=bytes.len() {
+            let last = at == bytes.len();
+            if last && !complete {
+                break;
+            }
+            let mut rest = &bytes[at..(at + 1).min(bytes.len())];
+            loop {
+                scratch.clear();
+                scratch.reserve(
+                    decoder
+                        .max_utf8_buffer_length_without_replacement(rest.len())
+                        .expect("a byte's worth of UTF-8 fits in usize"),
+                );
+                let (result, read) =
+                    decoder.decode_to_string_without_replacement(rest, &mut scratch, last);
+                rest = &rest[read..];
+                let end = at + (usize::from(!last) - rest.len());
+                match result {
+                    DecoderResult::InputEmpty | DecoderResult::OutputFull => {
+                        if !scratch.is_empty() {
+                            if unit(unit_start..end, &scratch)? {
+                                return Ok(());
+                            }
+                            unit_start = end;
+                        }
+                        if result == DecoderResult::InputEmpty {
+                            break;
+                        }
+                    }
+                    DecoderResult::Malformed(bad, extra) => {
+                        let bad_start = end - usize::from(extra) - usize::from(bad);
+                        if !scratch.is_empty() && unit(unit_start..bad_start, &scratch)? {
+                            return Ok(());
+                        }
+                        if unit(bad_start..end, "\u{FFFD}")? {
+                            return Ok(());
+                        }
+                        unit_start = end;
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 }
 
