@@ -1,9 +1,14 @@
 //! Tests of the folds feature.
 
+use std::ops::{Range, RangeInclusive};
+
+use fe_command::Effect;
+use fe_editor::commands::{EditorHost, HeadlessHost};
 use serde_json::json;
 
 use super::commit;
-use crate::HeadlessVim;
+use crate::folds::{FoldAction, FoldArgs, run};
+use crate::{HeadlessVim, VimState, context};
 
 const TEXT: &str = "a\n  b\n    c\n    d\n  e\nf\n  g\nh";
 
@@ -104,4 +109,75 @@ fn z_keys_drive_the_model() {
 
     assert_eq!(vim.text(), before);
     assert_eq!(vim.model().buffer().version(), version);
+}
+
+#[test]
+fn dispatch_reports_changes() {
+    let mut vim = HeadlessVim::new(TEXT, (3, 4));
+    let context = context(&VimState::new());
+    let effect = |vim: &mut HeadlessVim, keys: &str| {
+        vim.dispatch(&commit(keys).context(context.clone()))
+            .unwrap()
+            .effect
+    };
+    assert_eq!(effect(&mut vim, "zc"), Effect::Changed);
+    assert_eq!(effect(&mut vim, "zo"), Effect::Changed);
+    // Nothing to open: no change.
+    assert_eq!(effect(&mut vim, "zo"), Effect::Nothing);
+    assert_eq!(effect(&mut vim, "zR"), Effect::Nothing);
+    assert_eq!(effect(&mut vim, "zM"), Effect::Changed);
+    assert_eq!(effect(&mut vim, "zM"), Effect::Nothing);
+}
+
+/// A host with a syntax candidate far from the caret.
+struct Elsewhere(HeadlessHost);
+
+impl EditorHost for Elsewhere {
+    fn page_rows(&self) -> u32 {
+        self.0.page_rows()
+    }
+    fn read_clipboard(&mut self) -> Option<String> {
+        None
+    }
+    fn write_clipboard(&mut self, _: String) {}
+    fn fold_range_at(&self, _: u32) -> Option<RangeInclusive<u32>> {
+        None
+    }
+    fn fold_ranges(&self, _: Range<u32>) -> Vec<RangeInclusive<u32>> {
+        let rows = 5..=6;
+        vec![rows]
+    }
+}
+
+#[test]
+fn indentation_backs_up_a_syntax_candidate_elsewhere() {
+    let mut vim = HeadlessVim::new(TEXT, (3, 4));
+    let host = Elsewhere(HeadlessHost::new());
+    for (action, expected) in [
+        (FoldAction::Close, vec![(1, 3)]),
+        (FoldAction::Open, vec![]),
+        (FoldAction::CloseAll, vec![(0, 4), (1, 3)]),
+    ] {
+        run(
+            vim.model_mut(),
+            &host,
+            FoldArgs {
+                action,
+                count: None,
+            },
+        );
+        assert_eq!(folds(&vim), expected, "{action:?}");
+    }
+}
+
+#[test]
+fn recursive_open_reaches_every_nested_fold() {
+    let text = "a\n  b\n    c\n    d\n  e\n    f\n    g\nh";
+    for (keys, expected) in [("zA", vec![]), ("zO", vec![]), ("zo", vec![(1, 3), (4, 6)])] {
+        let mut vim = HeadlessVim::new(text, (0, 0));
+        vim.feed("zM").unwrap();
+        assert_eq!(folds(&vim), vec![(0, 6), (1, 3), (4, 6)]);
+        vim.feed(keys).unwrap();
+        assert_eq!(folds(&vim), expected, "{keys}");
+    }
 }

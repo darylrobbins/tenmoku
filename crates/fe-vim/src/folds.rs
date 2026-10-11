@@ -24,6 +24,7 @@ use std::ops::RangeInclusive;
 
 use fe_command::{Actor, CommandError, ContextPredicate, Dispatched, Effect, Registry};
 use fe_editor::EditorModel;
+use fe_editor::commands::EditorHost;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -94,8 +95,11 @@ fn register(registry: &mut Registry<VimCommands>) {
             "vim.fold",
             "Vim Fold",
             |target: &mut VimTarget<'_>, _: &Actor, args: FoldArgs| {
-                fold(target, args);
-                Ok::<_, CommandError>(Dispatched::new(Effect::Nothing))
+                let changed = fold(target, args);
+                Ok::<_, CommandError>(Dispatched::new(match changed {
+                    true => Effect::Changed,
+                    false => Effect::Nothing,
+                }))
             },
         )
         .expect("vim command IDs are valid and distinct")
@@ -106,36 +110,70 @@ fn register(registry: &mut Registry<VimCommands>) {
         .mutates_buffer(false);
 }
 
-fn fold(target: &mut VimTarget<'_>, args: FoldArgs) {
+/// Runs `args`; returns whether the folds or the selections changed.
+fn fold(target: &mut VimTarget<'_>, args: FoldArgs) -> bool {
     let model = &mut *target.model;
     model.sync_display();
+    let before = (fold_rows(model), model.selections());
+    run(model, &*target.host, args);
+    before != (fold_rows(model), model.selections())
+}
+
+fn fold_rows(model: &EditorModel) -> Vec<(u32, u32)> {
+    let mut folds: Vec<_> = model
+        .display()
+        .folds()
+        .iter()
+        .map(|fold| (fold.start, fold.end))
+        .collect();
+    folds.sort();
+    folds
+}
+
+pub(crate) fn run(model: &mut EditorModel, host: &dyn EditorHost, args: FoldArgs) {
     let row = model
         .text()
         .offset_to_point(model.primary_selection().head())
         .row;
     let levels = args.count.unwrap_or(1).max(1) as usize;
-    let candidates = candidates(model, target.host.fold_ranges(0..model.text().row_count()));
+    let host_ranges = host.fold_ranges(0..model.text().row_count());
     let closed = closed_at(model, row);
     match args.action {
         FoldAction::OpenEvery => model.unfold_all(),
-        FoldAction::CloseEvery => model.fold_all(candidates),
-        FoldAction::Open => reopen(model, row, |ix, _| ix < levels),
-        FoldAction::OpenAll => reopen(model, row, |_, _| true),
-        FoldAction::Reveal => reopen(model, row, |_, start| start < row),
-        FoldAction::Close => close(model, &candidates, row, levels),
-        FoldAction::CloseAll => close(model, &candidates, row, usize::MAX),
-        FoldAction::Toggle if closed.is_empty() => close(model, &candidates, row, levels),
-        FoldAction::Toggle => reopen(model, row, |ix, _| ix < levels),
-        FoldAction::ToggleAll if closed.is_empty() => close(model, &candidates, row, usize::MAX),
-        FoldAction::ToggleAll => reopen(model, row, |_, _| true),
+        FoldAction::CloseEvery => model.fold_all(host_ranges),
+        FoldAction::Open => reopen(model, row, false, |ix, _| ix < levels),
+        FoldAction::OpenAll => reopen(model, row, true, |_, _| true),
+        FoldAction::Reveal => reopen(model, row, false, |_, start| start < row),
+        FoldAction::Close => close(model, &host_ranges, row, levels),
+        FoldAction::CloseAll => close(model, &host_ranges, row, usize::MAX),
+        FoldAction::Toggle if closed.is_empty() => close(model, &host_ranges, row, levels),
+        FoldAction::Toggle => reopen(model, row, false, |ix, _| ix < levels),
+        FoldAction::ToggleAll if closed.is_empty() => close(model, &host_ranges, row, usize::MAX),
+        FoldAction::ToggleAll => reopen(model, row, true, |_, _| true),
     }
 }
 
-/// `host`'s candidates, or the buffer's indented blocks if it gave none.
-fn candidates(model: &EditorModel, host: Vec<RangeInclusive<u32>>) -> Vec<RangeInclusive<u32>> {
-    if !host.is_empty() {
-        return host;
+/// The candidates containing `row`: `host`'s, or if it has none there, the
+/// buffer's indented blocks, whatever the host has elsewhere.
+fn candidates_at(
+    model: &EditorModel,
+    host: &[RangeInclusive<u32>],
+    row: u32,
+) -> Vec<RangeInclusive<u32>> {
+    let mut local: Vec<_> = host
+        .iter()
+        .filter(|rows| rows.contains(&row))
+        .cloned()
+        .collect();
+    if local.is_empty() {
+        local = indented_blocks(model);
+        local.retain(|rows| rows.contains(&row));
     }
+    local
+}
+
+/// The buffer's indented blocks.
+fn indented_blocks(model: &EditorModel) -> Vec<RangeInclusive<u32>> {
     let text = model.text();
     let tab_size = model.tab_size();
     let indent = |row: u32| {
@@ -209,10 +247,15 @@ fn extend(all: &[(u32, u32)], chain: &mut Vec<(u32, u32)>) {
 }
 
 /// Opens the closed folds at `row` that `open` takes, given their level
-/// (outermost 0) and first row; the others stay closed.
-fn reopen(model: &mut EditorModel, row: u32, open: impl Fn(usize, u32) -> bool) {
+/// (outermost 0) and first row; the others stay closed. `recursive` opens
+/// every fold nested in the outermost one instead.
+fn reopen(model: &mut EditorModel, row: u32, recursive: bool, open: impl Fn(usize, u32) -> bool) {
     let closed = closed_at(model, row);
-    if closed.is_empty() {
+    let Some(&(outer_start, outer_end)) = closed.first() else {
+        return;
+    };
+    if recursive {
+        model.unfold_rows(outer_start..=outer_end);
         return;
     }
     model.unfold_rows(row..=row);
@@ -230,17 +273,15 @@ fn reopen(model: &mut EditorModel, row: u32, open: impl Fn(usize, u32) -> bool) 
 
 /// Closes the innermost `levels` candidates containing `row` that aren't
 /// closed yet.
-fn close(model: &mut EditorModel, candidates: &[RangeInclusive<u32>], row: u32, levels: usize) {
+fn close(model: &mut EditorModel, host: &[RangeInclusive<u32>], row: u32, levels: usize) {
     let closed = closed_at(model, row);
-    let mut open: Vec<_> = candidates
-        .iter()
-        .filter(|rows| rows.contains(&row))
+    let mut open: Vec<_> = candidates_at(model, host, row)
+        .into_iter()
         .filter(|rows| {
             !closed
                 .iter()
                 .any(|&(start, end)| start == *rows.start() && end == *rows.end())
         })
-        .cloned()
         .collect();
     open.sort_by_key(|rows| (std::cmp::Reverse(*rows.start()), *rows.end()));
     for rows in open.into_iter().take(levels) {
