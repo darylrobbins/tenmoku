@@ -27,17 +27,13 @@ criterion.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 # The screenshots example renders with the real Metal platform.
 gpui_platform = { workspace = true, features = ["test-support"] }
+# The keystroke bench reads the drawn scene back as an image.
 image.workspace = true
+# The screenshots example's harness: settling, comparison and goldens.
+kiln-platform = { workspace = true, features = ["test-support"] }
 # Invocations recorded in tests go through JSON, as a macro or log would.
 serde_json.workspace = true
 tempfile.workspace = true
-
-# Golden screenshots of the editor view (TESTING.md, "Screenshots"). Built as a
-# test so the gate runs the pixel-comparison unit tests; rendering only happens
-# under `cargo run`, where `main` is on the main thread as AppKit requires.
-[[example]]
-name = "screenshots"
-test = true
 
 # Keystroke-to-frame latency by stage, headless (PERF.md, "Typing latency").
 [[bench]]

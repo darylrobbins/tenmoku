@@ -25,6 +25,11 @@ log.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 gpui_platform = { workspace = true, features = ["wayland", "x11"] }
 
+[features]
+# Test support for an app's own tests and examples: the golden-screenshot
+# harness, `kiln::platform::screenshots`.
+test-support = ["kiln-platform/test-support"]
+
 # The gallery example (examples/gallery) opens a real window, and its tests
 # (tests/gallery.rs) drive it headless.
 [dev-dependencies]

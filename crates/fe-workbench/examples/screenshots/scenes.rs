@@ -1,11 +1,9 @@
 //! The scenes and their capture, with the Metal renderer: macOS only.
 
 use std::{
-    cell::Cell,
     fs,
     path::{Path, PathBuf},
     process::ExitCode,
-    rc::Rc,
     sync::Arc,
 };
 
@@ -15,17 +13,10 @@ use fe_workbench::{Launch, Workbench};
 use gpui::{
     AppContext as _, Focusable as _, Pixels, Size, VisualTestAppContext, WindowHandle, px, size,
 };
-use image::RgbaImage;
-
-use crate::compare;
-
-type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+use kiln_platform::screenshots::{Goldens, Result, RgbaImage, Settle, exit_code, render_args};
 
 /// The window size of the scene, in logical pixels.
 const SCENE_SIZE: Size<Pixels> = size(px(1000.), px(600.));
-
-/// How many frames a scene may take to settle.
-const MAX_FRAMES: usize = 10;
 
 /// Pinned so goldens don't depend on which fonts are installed (TESTING.md).
 const FONT_FAMILY: &str = "Menlo";
@@ -104,53 +95,20 @@ fn capture(
     }
     // Views notify themselves when background work lands. Draw until a frame
     // and everything it started leave the workbench, its panel and its
-    // editors quiet: that frame shows the result. Copied from fe-gpui's
-    // `capture` (crates/fe-gpui/examples/screenshots/scenes.rs), which watches
-    // one view.
-    let notifications = Rc::new(Cell::new(0));
-    let mut observers = Vec::new();
-    macro_rules! observe {
-        ($entity:expr) => {{
-            let notifications = notifications.clone();
-            observers.push(cx.update(|cx| {
-                cx.observe(&$entity, move |_, _| {
-                    notifications.set(notifications.get() + 1)
-                })
-            }));
-        }};
-    }
-    observe!(workbench);
+    // editors quiet: that frame shows the result.
+    let mut settle = Settle::new();
+    settle.observe(&workbench, cx);
     let panel = workbench.read_with(cx, |workbench, _| workbench.panel().clone());
-    observe!(panel);
+    settle.observe(&panel, cx);
     let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
-    observe!(pane);
+    settle.observe(&pane, cx);
     let editors: Vec<_> = pane.read_with(cx, |pane, _| {
         pane.tabs().iter().map(|tab| tab.editor.clone()).collect()
     });
     for editor in editors {
-        observe!(editor);
+        settle.observe(&editor, cx);
     }
-    let mut settled = false;
-    for _ in 0..MAX_FRAMES {
-        let before = notifications.get();
-        cx.update_window(window.into(), |_, window, cx| {
-            window.draw(cx).clear(cx);
-            window.simulate_next_frame(cx);
-        })?;
-        cx.run_until_parked();
-        if notifications.get() == before {
-            settled = true;
-            break;
-        }
-    }
-    let image = if settled {
-        cx.capture_screenshot(window.into()).map_err(Into::into)
-    } else {
-        Err(format!("still changing after {MAX_FRAMES} frames").into())
-    };
-    cx.update_window(window.into(), |_, window, _| window.remove_window())?;
-    cx.run_until_parked();
-    image
+    Ok(settle.capture(cx, window.into())?.0)
 }
 
 /// Opens `README.md`, then `src/main.rs` (active, focused, caret at the
@@ -179,85 +137,22 @@ fn open_files(
     Ok(())
 }
 
-/// fe-workbench's directory. `cargo run` sets it at run time; prefer that over
-/// the compile-time value, which a target directory shared between worktrees
-/// can leave pointing at another (possibly deleted) checkout.
-fn manifest_dir() -> PathBuf {
-    std::env::var_os("CARGO_MANIFEST_DIR")
-        .map_or_else(|| env!("CARGO_MANIFEST_DIR").into(), PathBuf::from)
-}
-
-fn workspace_dir() -> PathBuf {
-    let manifest_dir = manifest_dir();
-    manifest_dir
-        .ancestors()
-        .nth(2)
-        .map_or_else(|| manifest_dir.clone(), Path::to_owned)
-}
-
-fn golden_dir() -> PathBuf {
-    manifest_dir().join("examples/screenshots/golden")
-}
-
 /// Renders the scene and compares it with its golden, or rewrites the golden.
-/// Returns whether it matched.
-fn check_scene(cx: &mut VisualTestAppContext, update: bool) -> Result<bool> {
-    let out_dir = workspace_dir().join("target/screenshots");
+/// Returns whether it matched. Failures go to the output directory fe-gpui's
+/// scenes share, as `workbench.actual.png` and `workbench.diff.png`.
+fn check_scene(cx: &mut VisualTestAppContext) -> Result<bool> {
+    let goldens = Goldens::new(env!("CARGO_MANIFEST_DIR"), "examples/screenshots/golden");
     let parent = tempfile::tempdir()?;
     let root = write_project(parent.path())?;
     let image = capture(cx, &root, SCENE_SIZE, true)?;
-    let golden_path = golden_dir().join(format!("{SCENE}.png"));
-    if update {
-        image.save(&golden_path)?;
-        println!("updated {}", golden_path.display());
-        return Ok(true);
-    }
-    let golden = image::open(&golden_path)
-        .map_err(|error| format!("reading {}: {error}", golden_path.display()))?
-        .into_rgba8();
-    if compare::skip_other_scale(&golden, &image) {
-        println!(
-            "skipped {SCENE}: {:?} is the golden's {:?} at another scale ({})",
-            image.dimensions(),
-            golden.dimensions(),
-            compare::ALLOW_OTHER_SCALE
-        );
-        return Ok(true);
-    }
-    match compare::compare(&golden, &image) {
-        Ok(()) => {
-            println!("ok      {SCENE}");
-            Ok(true)
-        }
-        Err(mismatch) => {
-            // The `workbench` prefix keeps these apart from fe-gpui's
-            // scenes in the shared output directory.
-            let (actual_path, diff_path) =
-                compare::save_failure(&out_dir, SCENE, &image, &mismatch)?;
-            println!("FAILED  {SCENE}: {mismatch}");
-            println!("        actual: {}", actual_path.display());
-            println!("        diff:   {}", diff_path.display());
-            Ok(false)
-        }
-    }
+    goldens.check(SCENE, &image)
 }
 
 /// `render <out.png> <dir> [--size WxH]`: the folder in a workbench, with
 /// nothing opened.
 fn render(cx: &mut VisualTestAppContext, args: &[String]) -> Result<()> {
     let usage = "usage: screenshots render <out.png> <dir> [--size WxH]";
-    let (out, dir, rest) = match args {
-        [out, dir, rest @ ..] => (out, dir, rest),
-        _ => return Err(usage.into()),
-    };
-    let size = match rest {
-        [] => SCENE_SIZE,
-        [flag, value] if flag == "--size" => {
-            let (w, h) = value.split_once('x').ok_or(usage)?;
-            size(px(w.parse()?), px(h.parse()?))
-        }
-        _ => return Err(usage.into()),
-    };
+    let (out, dir, size) = render_args(args, SCENE_SIZE, usage)?;
     let root = std::path::absolute(dir)?;
     capture(cx, &root, size, false)?.save(out)?;
     println!("wrote {out}");
@@ -274,17 +169,9 @@ pub(crate) fn main() -> ExitCode {
         fe_gpui::init(cx);
         fe_workbench::init(cx);
     });
-    let result = match args.first().map(String::as_str) {
+    exit_code(match args.first().map(String::as_str) {
         Some("render") => render(&mut cx, &args[1..]).map(|()| true),
-        None => check_scene(&mut cx, std::env::var_os("UPDATE_SCREENSHOTS").is_some()),
+        None => check_scene(&mut cx),
         Some(_) => Err("usage: screenshots [render <out.png> <dir> [--size WxH]]".into()),
-    };
-    match result {
-        Ok(true) => ExitCode::SUCCESS,
-        Ok(false) => ExitCode::FAILURE,
-        Err(error) => {
-            eprintln!("error: {error}");
-            ExitCode::FAILURE
-        }
-    }
+    })
 }

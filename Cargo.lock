@@ -2002,7 +2002,6 @@ dependencies = [
  "futures",
  "gpui-pre",
  "gpui-pre-platform",
- "image",
  "kiln-command",
  "kiln-platform",
  "kiln-shell",
@@ -3547,6 +3546,8 @@ name = "kiln-platform"
 version = "0.1.0"
 dependencies = [
  "gpui-pre",
+ "gpui-pre-platform",
+ "image",
  "kiln-command",
  "kiln-core",
  "log",

@@ -16,7 +16,8 @@
 //! files (settings, keymap, theme) and applies each change to every
 //! window. [`Capabilities`] says what a
 //! platform does natively, and [`window_options`], [`fonts`] and
-//! [`dialogs`] act on it.
+//! [`dialogs`] act on it. With the `test-support` feature, `screenshots`
+//! is the golden-screenshot harness for an app's examples.
 
 pub mod action_dispatch;
 mod capabilities;
@@ -28,6 +29,8 @@ pub mod focus;
 pub mod fonts;
 pub mod keys;
 pub mod menus;
+#[cfg(feature = "test-support")]
+pub mod screenshots;
 pub mod window_options;
 
 pub use capabilities::Capabilities;

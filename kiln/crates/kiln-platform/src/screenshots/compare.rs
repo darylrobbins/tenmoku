@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 //! Pixel comparison of a capture against its golden.
 
 use std::path::{Path, PathBuf};
@@ -5,22 +7,23 @@ use std::path::{Path, PathBuf};
 use image::{Rgba, RgbaImage};
 
 /// How far each channel of a pixel may drift and still match (out of 255).
-pub(crate) const CHANNEL_TOLERANCE: u8 = 2;
+pub const CHANNEL_TOLERANCE: u8 = 2;
 
 /// The share of pixels that may differ before a scene fails.
-pub(crate) const MAX_DIFFERING: f64 = 0.001;
+pub const MAX_DIFFERING: f64 = 0.001;
 
 const MAGENTA: Rgba<u8> = Rgba([255, 0, 255, 255]);
 
 /// Why a capture failed, with a diff image: the capture, dimmed, with
 /// differing pixels in magenta. When the sizes differ the diff covers both
 /// images, and the area only one of them has is magenta too.
-pub(crate) struct Mismatch {
-    pub(crate) kind: MismatchKind,
-    pub(crate) diff: RgbaImage,
+pub struct Mismatch {
+    pub kind: MismatchKind,
+    pub diff: RgbaImage,
 }
 
-pub(crate) enum MismatchKind {
+/// How a capture differs from its golden.
+pub enum MismatchKind {
     Size {
         golden: (u32, u32),
         actual: (u32, u32),
@@ -49,7 +52,7 @@ impl std::fmt::Display for Mismatch {
 
 /// Compares `actual` with `golden`, within [`CHANNEL_TOLERANCE`] and
 /// [`MAX_DIFFERING`]. Images of different sizes never match.
-pub(crate) fn compare(golden: &RgbaImage, actual: &RgbaImage) -> Result<(), Mismatch> {
+pub fn compare(golden: &RgbaImage, actual: &RgbaImage) -> Result<(), Mismatch> {
     let width = golden.width().max(actual.width());
     let height = golden.height().max(actual.height());
     let mut differing = 0;
@@ -92,12 +95,12 @@ pub(crate) fn compare(golden: &RgbaImage, actual: &RgbaImage) -> Result<(), Mism
 /// golden skip the pixel comparison instead of failing on size. CI sets it:
 /// GitHub's macos-15 runners have a 1× display and the goldens are 2×. The
 /// scene must still render and settle.
-pub(crate) const ALLOW_OTHER_SCALE: &str = "SCREENSHOTS_ALLOW_OTHER_SCALE";
+pub const ALLOW_OTHER_SCALE: &str = "SCREENSHOTS_ALLOW_OTHER_SCALE";
 
 /// Whether `actual` should skip comparison with `golden`: it's another
 /// size with the same aspect ratio, as at another scale, and
 /// [`ALLOW_OTHER_SCALE`] is set.
-pub(crate) fn skip_other_scale(golden: &RgbaImage, actual: &RgbaImage) -> bool {
+pub fn skip_other_scale(golden: &RgbaImage, actual: &RgbaImage) -> bool {
     std::env::var_os(ALLOW_OTHER_SCALE).is_some() && other_scale(golden, actual)
 }
 
@@ -109,7 +112,7 @@ fn other_scale(golden: &RgbaImage, actual: &RgbaImage) -> bool {
 
 /// Writes `<name>.actual.png` and `<name>.diff.png` to `dir`, returning
 /// their paths.
-pub(crate) fn save_failure(
+pub fn save_failure(
     dir: &Path,
     name: &str,
     actual: &RgbaImage,
@@ -200,7 +203,7 @@ mod tests {
 
     #[test]
     fn failures_save_actual_and_diff() {
-        let dir = std::env::temp_dir().join(format!("fe-gpui-screenshots-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("kiln-screenshots-{}", std::process::id()));
         let black = RgbaImage::from_pixel(40, 30, Rgba([0, 0, 0, 255]));
         for (name, actual) in [("size", image(40, 31)), ("pixels", black)] {
             let mismatch = compare(&image(40, 30), &actual).expect_err("a mismatch");

@@ -227,10 +227,14 @@ UPDATE_SCREENSHOTS=1 cargo run -p fe-workbench --example screenshots
 cargo run -p fe-workbench --example screenshots -- render out.png path/to/dir [--size 1000x600]
 ```
 
+Both examples use kiln's harness, `kiln_platform::screenshots` (behind
+kiln-platform's `test-support` feature, which `kiln/test-support` forwards to):
+the settling loop, the comparison, its tolerances, the golden updates and the
+failure output below are shared, and their unit tests run in kiln-platform's
+(`screenshots::…::tests`). Each example keeps its scenes and goldens.
+
 The workbench scene lives in `crates/fe-workbench/examples/screenshots/`, with
-its golden in `golden/workbench.png`. It includes fe-gpui's `compare.rs` by
-`#[path]`, so the comparison, its tolerances and the failure output below are
-shared, and its `compare::tests` run for it as well. The scene is
+its golden in `golden/workbench.png`. The scene is
 `workbench`, 1000×600 logical pixels: a demo project written into
 `<tempdir>/demo` with `src/` expanded, `README.md` and `src/main.rs` open
 (`main.rs` active, a caret at its start, Rust highlighted), `main.rs` selected
@@ -253,9 +257,9 @@ first to load their languages, and their highlights must land from a second
 round of background work, an injected language or a parse too long for a
 frame. The run fails if either check doesn't hold, so they keep covering
 highlights that land late. AppKit has to run on the main thread,
-so scenes render only under `cargo run`. The example is built as a test
-(`test = true`), so `cargo test` and the gate run the comparison's unit
-tests (`compare::tests`) but never render.
+so scenes render only under `cargo run`; `cargo test` and the gate run the
+harness's unit tests but never render. Off macOS the examples print `skipped`
+and exit 0.
 
 A pixel matches when each RGBA channel is within ±2/255 of the golden's. A
 scene passes when at most 0.1% of its pixels differ. On failure the run

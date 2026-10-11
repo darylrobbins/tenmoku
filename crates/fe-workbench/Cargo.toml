@@ -36,16 +36,9 @@ lsp-types.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 # The screenshots example renders with the real Metal platform.
 gpui_platform = { workspace = true, features = ["test-support"] }
-image.workspace = true
+# The screenshots example's harness: settling, comparison and goldens.
+kiln-platform = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
-
-# Golden screenshot of the workbench (TESTING.md, "Screenshots"). Built as a
-# test so the gate runs the shared pixel-comparison unit tests; rendering only
-# happens under `cargo run`, where `main` is on the main thread as AppKit
-# requires.
-[[example]]
-name = "screenshots"
-test = true
 
 [lints]
 workspace = true

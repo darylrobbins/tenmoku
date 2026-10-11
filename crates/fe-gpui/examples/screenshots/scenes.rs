@@ -1,27 +1,15 @@
 //! The scenes and their capture, with the Metal renderer: macOS only.
 
-use std::{
-    cell::Cell,
-    path::{Path, PathBuf},
-    process::ExitCode,
-    rc::Rc,
-};
+use std::process::ExitCode;
 
 use fe_buffer::{Buffer, ResolvedSelection};
 use fe_editor::EditorModel;
 use fe_gpui::{EditorTheme, EditorView};
 use gpui::{AppContext as _, Focusable as _, Pixels, Size, VisualTestAppContext, px, size};
-use image::RgbaImage;
-
-use crate::compare;
-
-type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+use kiln_platform::screenshots::{Goldens, Result, RgbaImage, Settle, exit_code, render_args};
 
 /// The window size of every scene, in logical pixels.
 const SCENE_SIZE: Size<Pixels> = size(px(800.), px(480.));
-
-/// How many frames a scene may take to settle. Each takes two today.
-const MAX_FRAMES: usize = 10;
 
 /// Pinned so goldens don't depend on which fonts are installed (TESTING.md).
 const FONT_FAMILY: &str = "Menlo";
@@ -196,66 +184,16 @@ fn capture(
         view
     })?;
     // The view notifies itself when background work lands or a frame asks
-    // for another (as while soft wrap catches up). Draw until a frame and
-    // everything it started leave it quiet: that frame shows the result.
-    // (A test-mode app also redraws a window whenever it's notified, so the
-    // work can land over fewer frames than it has rounds.)
-    let notifications = Rc::new(Cell::new(0));
-    let _observer = cx.update(|cx| {
-        let notifications = notifications.clone();
-        cx.observe(&view, move |_, _| {
-            notifications.set(notifications.get() + 1)
-        })
-    });
-    let mut settled = false;
-    for _ in 0..MAX_FRAMES {
-        let before = notifications.get();
-        cx.update_window(window.into(), |_, window, cx| {
-            window.draw(cx).clear(cx);
-            window.simulate_next_frame(cx);
-        })?;
-        cx.run_until_parked();
-        if notifications.get() == before {
-            settled = true;
-            break;
-        }
-    }
-    let image = if settled {
-        cx.capture_screenshot(window.into())
-            .map(|image| (image, notifications.get()))
-            .map_err(Into::into)
-    } else {
-        Err(format!("still changing after {MAX_FRAMES} frames").into())
-    };
-    cx.update_window(window.into(), |_, window, _| window.remove_window())?;
-    cx.run_until_parked();
-    image
-}
-
-/// fe-gpui's directory. `cargo run` sets it at run time; prefer that over the
-/// compile-time value, which a target directory shared between worktrees can
-/// leave pointing at another (possibly deleted) checkout.
-fn manifest_dir() -> PathBuf {
-    std::env::var_os("CARGO_MANIFEST_DIR")
-        .map_or_else(|| env!("CARGO_MANIFEST_DIR").into(), PathBuf::from)
-}
-
-fn workspace_dir() -> PathBuf {
-    let manifest_dir = manifest_dir();
-    manifest_dir
-        .ancestors()
-        .nth(2)
-        .map_or_else(|| manifest_dir.clone(), Path::to_owned)
-}
-
-fn golden_dir() -> PathBuf {
-    manifest_dir().join("examples/screenshots/golden")
+    // for another (as while soft wrap catches up): draw until it's quiet.
+    let mut settle = Settle::new();
+    settle.observe(&view, cx);
+    settle.capture(cx, window.into())
 }
 
 /// Renders every scene and compares it with its golden, or rewrites the
 /// goldens. Returns whether all scenes matched.
-fn check_scenes(cx: &mut VisualTestAppContext, update: bool) -> Result<bool> {
-    let out_dir = workspace_dir().join("target/screenshots");
+fn check_scenes(cx: &mut VisualTestAppContext) -> Result<bool> {
+    let goldens = Goldens::new(env!("CARGO_MANIFEST_DIR"), "examples/screenshots/golden");
     let mut passed = true;
     for scene in scenes() {
         if let Some(loaded) = scene
@@ -276,36 +214,7 @@ fn check_scenes(cx: &mut VisualTestAppContext, update: bool) -> Result<bool> {
             )
             .into());
         }
-        let golden_path = golden_dir().join(format!("{}.png", scene.name));
-        if update {
-            image.save(&golden_path)?;
-            println!("updated {}", golden_path.display());
-            continue;
-        }
-        let golden = image::open(&golden_path)
-            .map_err(|error| format!("reading {}: {error}", golden_path.display()))?
-            .into_rgba8();
-        if compare::skip_other_scale(&golden, &image) {
-            println!(
-                "skipped {}: {:?} is the golden's {:?} at another scale ({})",
-                scene.name,
-                image.dimensions(),
-                golden.dimensions(),
-                compare::ALLOW_OTHER_SCALE
-            );
-            continue;
-        }
-        match compare::compare(&golden, &image) {
-            Ok(()) => println!("ok      {}", scene.name),
-            Err(mismatch) => {
-                passed = false;
-                let (actual_path, diff_path) =
-                    compare::save_failure(&out_dir, scene.name, &image, &mismatch)?;
-                println!("FAILED  {}: {mismatch}", scene.name);
-                println!("        actual: {}", actual_path.display());
-                println!("        diff:   {}", diff_path.display());
-            }
-        }
+        passed &= goldens.check(scene.name, &image)?;
     }
     Ok(passed)
 }
@@ -313,18 +222,7 @@ fn check_scenes(cx: &mut VisualTestAppContext, update: bool) -> Result<bool> {
 /// `render <out.png> <file> [--size WxH]`
 fn render(cx: &mut VisualTestAppContext, args: &[String]) -> Result<()> {
     let usage = "usage: screenshots render <out.png> <file> [--size WxH]";
-    let (out, file, rest) = match args {
-        [out, file, rest @ ..] => (out, file, rest),
-        _ => return Err(usage.into()),
-    };
-    let size = match rest {
-        [] => SCENE_SIZE,
-        [flag, value] if flag == "--size" => {
-            let (w, h) = value.split_once('x').ok_or(usage)?;
-            size(px(w.parse()?), px(h.parse()?))
-        }
-        _ => return Err(usage.into()),
-    };
+    let (out, file, size) = render_args(args, SCENE_SIZE, usage)?;
     let model = EditorModel::open(file).map_err(|error| format!("opening {file}: {error}"))?;
     capture(cx, model, size)?.0.save(out)?;
     println!("wrote {out}");
@@ -335,17 +233,9 @@ pub(crate) fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut cx = VisualTestAppContext::new(gpui_platform::current_platform(false));
     cx.update(fe_gpui::init);
-    let result = match args.first().map(String::as_str) {
+    exit_code(match args.first().map(String::as_str) {
         Some("render") => render(&mut cx, &args[1..]).map(|()| true),
-        None => check_scenes(&mut cx, std::env::var_os("UPDATE_SCREENSHOTS").is_some()),
+        None => check_scenes(&mut cx),
         Some(_) => Err("usage: screenshots [render <out.png> <file> [--size WxH]]".into()),
-    };
-    match result {
-        Ok(true) => ExitCode::SUCCESS,
-        Ok(false) => ExitCode::FAILURE,
-        Err(error) => {
-            eprintln!("error: {error}");
-            ExitCode::FAILURE
-        }
-    }
+    })
 }

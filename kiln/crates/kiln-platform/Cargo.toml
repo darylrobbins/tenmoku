@@ -15,6 +15,14 @@ kiln-command.workspace = true
 kiln-core.workspace = true
 log.workspace = true
 serde_json.workspace = true
+# The screenshot harness (`test-support`): this platform's real renderer
+# off screen, and PNGs for the goldens.
+gpui_platform = { workspace = true, optional = true }
+image = { workspace = true, optional = true }
+
+[features]
+# `kiln_platform::screenshots`, the golden-screenshot harness for examples.
+test-support = ["dep:gpui_platform", "dep:image", "gpui/test-support", "gpui_platform/test-support"]
 
 [dev-dependencies]
 schemars.workspace = true

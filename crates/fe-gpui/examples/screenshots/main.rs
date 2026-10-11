@@ -7,15 +7,12 @@
 //! cargo run -p fe-gpui --example screenshots -- render out.png <file> [--size WxH]
 //! ```
 //!
-//! AppKit must run on the main thread, which `main` is but test threads
-//! aren't, so `cargo test` only runs the comparison's unit tests. The
-//! scenes render only on macOS; elsewhere `main` says so and fails.
+//! The harness is kiln's (`kiln_platform::screenshots`, behind its
+//! `test-support` feature). AppKit must run on the main thread, which
+//! `main` is but test threads aren't, so the scenes render only under
+//! `cargo run`, and only on macOS: elsewhere `main` says so and exits
+//! cleanly, as the goldens are Metal's.
 
-// Under `cargo test` the harness replaces `main`, leaving the rest unused,
-// as it is off macOS, where there are no scenes.
-#![cfg_attr(any(test, not(target_os = "macos")), allow(dead_code))]
-
-mod compare;
 #[cfg(target_os = "macos")]
 mod scenes;
 
@@ -28,6 +25,6 @@ fn main() -> ExitCode {
 
 #[cfg(not(target_os = "macos"))]
 fn main() -> ExitCode {
-    eprintln!("error: screenshots render with Metal, on macOS only");
-    ExitCode::FAILURE
+    println!("skipped: the goldens are rendered with Metal, on macOS only");
+    ExitCode::SUCCESS
 }
