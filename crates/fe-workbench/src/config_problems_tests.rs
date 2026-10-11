@@ -11,11 +11,13 @@ use std::{
 use fe_command::{ContextFrame, ContextStack, Invocation};
 use fe_config::{Diagnostic, Settings, Severity};
 use fe_gpui::{EditorSettings, EditorTheme, commands::RunCommand};
-use gpui::{Entity, Focusable as _, Modifiers, MouseButton, TestAppContext, VisualTestContext};
+use gpui::{
+    App, Entity, Focusable as _, Modifiers, MouseButton, TestAppContext, VisualTestContext, Window,
+};
 use kiln_platform::config::{self, ConfigDiagnostics, ConfigService};
 
 use super::ITEM;
-use crate::{Launch, StatusSide, Workbench};
+use crate::{Launch, Pane, StatusSide, Workbench};
 
 /// A workbench rooted at `root` in a window of its own, focused, drawn.
 fn open(root: &Path, cx: &mut TestAppContext) -> (Entity<Workbench>, VisualTestContext) {
@@ -634,4 +636,71 @@ fn a_pick_for_a_closed_pane_opens_nothing(cx: &mut TestAppContext) {
         editor.focus_handle(cx).is_focused(window)
     });
     assert!(focused);
+}
+
+/// Holds a pick's read across `navigate` on a pane with two tabs, `keymap`
+/// shown; the pick must not take the focus back from it.
+fn pick_then_navigate(
+    navigate: impl FnOnce(&Entity<Pane>, &mut Window, &mut App),
+    expect: impl Fn(&Path, &Path) -> PathBuf,
+    cx: &mut TestAppContext,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let settings = dir.path().join("settings.toml");
+    let keymap = dir.path().join("keymap.toml");
+    let notes = dir.path().join("notes.toml");
+    fs::write(&settings, "a = 1\n").unwrap();
+    fs::write(&keymap, "b = 2\n").unwrap();
+    fs::write(&notes, "c = 3\n").unwrap();
+    init(cx);
+    let (workbench, mut cx_) = open(dir.path(), cx);
+    let cx_ = &mut cx_;
+    let pane = workbench.read_with(cx_, |workbench, _| workbench.pane().clone());
+    for path in [&keymap, &notes] {
+        cx_.update(|window, cx| pane.update(cx, |pane, cx| pane.open(path.clone(), window, cx)));
+        draw(cx_);
+    }
+    set_problems(vec![problem(Severity::Error, &settings, 1, 1, "bad")], cx);
+    dispatch(super::SHOW, cx_);
+    confirm(&workbench, 0, cx_);
+    cx_.update(|window, cx| navigate(&pane, window, cx));
+    let want = expect(&keymap, &notes);
+    draw(cx_);
+    assert_eq!(shown(&workbench, cx_), Some(want));
+}
+
+#[gpui::test]
+fn a_pick_doesnt_undo_a_tab_clicked(cx: &mut TestAppContext) {
+    pick_then_navigate(
+        |pane, window, cx| pane.update(cx, |pane, cx| pane.activate(0, window, cx)),
+        |keymap, _| keymap.to_owned(),
+        cx,
+    );
+}
+
+#[gpui::test]
+fn a_pick_doesnt_undo_tabs_cycled(cx: &mut TestAppContext) {
+    pick_then_navigate(
+        |pane, window, cx| pane.update(cx, |pane, cx| pane.cycle(true, window, cx)),
+        |keymap, _| keymap.to_owned(),
+        cx,
+    );
+}
+
+#[gpui::test]
+fn a_pick_doesnt_undo_a_tab_closed(cx: &mut TestAppContext) {
+    pick_then_navigate(
+        |pane, window, cx| pane.update(cx, |pane, cx| pane.close_active(window, cx)),
+        |keymap, _| keymap.to_owned(),
+        cx,
+    );
+}
+
+#[gpui::test]
+fn a_pick_doesnt_undo_tabs_reordered(cx: &mut TestAppContext) {
+    pick_then_navigate(
+        |pane, window, cx| pane.update(cx, |pane, cx| pane.reorder(0, None, window, cx)),
+        |keymap, _| keymap.to_owned(),
+        cx,
+    );
 }

@@ -227,7 +227,8 @@ impl ConfigProblemsPicker {
 
     /// Opens `problem`'s file in `pane`, now it's `read`, unless pick
     /// `pick` was superseded: by another pick, by the pane closing, or by
-    /// another open in it (`opens`, its open serial then). The pane is
+    /// another open or tab navigation in it (`opens`, its open and
+    /// navigation serials then). The pane is
     /// handed the buffer read, as a host hands it a file it read
     /// ([`Pane::opening`], [`Pane::file_read`]), so it never reads the path
     /// itself; if the file is open already, its tab shows instead. A file
@@ -239,7 +240,7 @@ impl ConfigProblemsPicker {
         problem: &Diagnostic,
         read: io::Result<Buffer>,
         pane: &WeakEntity<Pane>,
-        opens: u64,
+        opens: (u64, u64),
         window: &mut Window,
         cx: &mut Context<Picker<Self>>,
     ) {
@@ -253,7 +254,8 @@ impl ConfigProblemsPicker {
         let Some(pane) = pane else {
             return;
         };
-        if pick != self.picks || pane.read(cx).open_serial() != opens {
+        if pick != self.picks || (pane.read(cx).open_serial(), pane.read(cx).navigations()) != opens
+        {
             return;
         }
         let buffer = match read {
@@ -388,7 +390,8 @@ impl PickerDelegate for ConfigProblemsPicker {
         self.picks += 1;
         let pick = self.picks;
         let pane = workbench.read(cx).pane();
-        let (opens, pane) = (pane.read(cx).open_serial(), pane.downgrade());
+        let opens = (pane.read(cx).open_serial(), pane.read(cx).navigations());
+        let pane = pane.downgrade();
         // Meanwhile the active editor has the keys, not the closed list.
         window.focus(&workbench.focus_handle(cx), cx);
         let path = problem.file.clone();

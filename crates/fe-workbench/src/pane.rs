@@ -94,6 +94,11 @@ pub struct Pane {
     /// Bumped by every [`Pane::open_at`], so the open last made can be told
     /// from the ones it superseded.
     open_serial: u64,
+    /// Bumped by every tab shown or closed other than by a file's read
+    /// landing: the user's navigation, which a pending open mustn't undo.
+    navigations: u64,
+    /// Set while a file's read lands, whose tab shown isn't a navigation.
+    landing: bool,
     /// The editor shown in the active tab's place, as [`Pane::note_shown`]
     /// last saw it, and how many times it has changed: see
     /// [`Revealed::shown`].
@@ -133,6 +138,8 @@ impl Pane {
             error: None,
             reveal: None,
             open_serial: 0,
+            navigations: 0,
+            landing: false,
             shown: None,
             shown_serial: 0,
             revealed: None,
@@ -382,6 +389,18 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.landing = true;
+        self.file_landed(path, result, window, cx);
+        self.landing = false;
+    }
+
+    fn file_landed(
+        &mut self,
+        path: PathBuf,
+        result: io::Result<Option<Buffer>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.reads.remove(&path);
         let last = self.opening.as_ref() == Some(&path);
         if last {
@@ -438,6 +457,13 @@ impl Pane {
     /// The serial of the open last made: see [`Pane::revealed`].
     pub(crate) fn open_serial(&self) -> u64 {
         self.open_serial
+    }
+
+    /// How many times the user has navigated the tabs: a tab shown by
+    /// click, cycling, an open or a reorder, or a tab closed. Not counted:
+    /// a file's read landing ([`Pane::file_read`]).
+    pub(crate) fn navigations(&self) -> u64 {
+        self.navigations
     }
 
     /// What [`Revealed::shown`] is compared with.
@@ -684,6 +710,9 @@ impl PaneView for Pane {
     }
 
     fn activated(&mut self, _: usize, _: &mut Window, cx: &mut App) {
+        if !self.landing {
+            self.navigations += 1;
+        }
         self.opening = None;
         // A read this replaces opens without its reveal.
         self.reveal = None;
@@ -692,7 +721,11 @@ impl PaneView for Pane {
     }
 
     fn items_changed(&mut self, cx: &mut App) {
+        let before = self.tabs.len();
         self.sync_tabs(cx);
+        if self.tabs.len() < before {
+            self.navigations += 1;
+        }
         if self.tabs.is_empty() {
             self.error = None;
         }
