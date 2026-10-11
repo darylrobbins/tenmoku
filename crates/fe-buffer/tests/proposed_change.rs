@@ -348,6 +348,8 @@ fn accept_keeps_the_callers_transaction_past_the_history_limit() {
     for open in open_origins() {
         for all in [false, true] {
             let (mut buffer, mut proposal, outer) = with_open_transaction(open.clone());
+            // A nested caller transaction: depth must survive the acceptance.
+            assert_eq!(buffer.start_transaction(open.clone()), outer);
             buffer.set_history_limit(0);
             let id = proposal.hunks(buffer.current())[0].id;
             let accepted = if all {
@@ -357,13 +359,28 @@ fn accept_keeps_the_callers_transaction_past_the_history_limit() {
             };
             assert_ne!(accepted, outer, "{open:?} all={all}");
 
-            buffer.edit([(0..0, "// more\n")], open.clone());
+            // Subsequent edits still join the caller's transaction.
+            assert_eq!(
+                buffer.edit([(0..0, "// more\n")], open.clone()),
+                Some(outer),
+                "{open:?} all={all}"
+            );
+            // The inner close leaves it open; no history trim has run yet.
+            assert_eq!(buffer.end_transaction(), None, "{open:?} all={all}");
+            buffer.set_history_limit(Buffer::DEFAULT_HISTORY_LIMIT);
             assert_eq!(buffer.end_transaction(), Some(outer), "{open:?} all={all}");
 
-            // Closing it was the first chance to trim it, and the acceptance
-            // is the newest entry: undo reaches the acceptance, as it did
-            // before the caller's transaction closed.
+            // Undo reverts the acceptance, then the caller's transaction
+            // with both of its edits.
             assert_eq!(buffer.undo(|o| *o == open).unwrap(), Some(accepted));
+            let text = buffer.text().to_string();
+            assert!(
+                !text.contains("let x = 1;") && !text.contains("    30\n"),
+                "{open:?} all={all}"
+            );
+            assert!(text.starts_with("// more\n// top\n"), "{open:?} all={all}");
+            assert_eq!(buffer.undo(|o| *o == open).unwrap(), Some(outer));
+            assert_eq!(buffer.text().to_string(), THREE_FNS, "{open:?} all={all}");
         }
     }
 }
