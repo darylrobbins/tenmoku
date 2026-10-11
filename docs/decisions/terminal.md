@@ -72,6 +72,9 @@ Apache-2.0 source, xterm's documentation (ctlseqs) and by running terminals.
   drain after a child exit reads past alacritty's 65,535-byte per-call limit
   (capped, in case a writer inherited the pty). The loop relies on alacritty's
   pty tokens (0 for data, 1 for child events), which `tty` does not export.
+  `PtyLoop` is generic over the pty so its unit tests drive it with a scripted
+  fake: shutdown, an I/O error and a capped final drain with a writer that
+  never stops each leave the held text in the grid.
 - Empty `input` is dropped: alacritty's writer treats a zero-byte write as
   "would block" and never moves past it.
 - The child's environment adds `TERM=xterm-256color`, `COLORTERM=truecolor`

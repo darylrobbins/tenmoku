@@ -62,20 +62,24 @@ impl LoopSender {
     }
 }
 
-pub(crate) struct PtyLoop<U: EventListener> {
+pub(crate) struct PtyLoop<P, U: EventListener> {
     poll: Arc<polling::Poller>,
-    pty: tty::Pty,
+    pty: P,
     rx: Receiver<Msg>,
     terminal: Arc<FairMutex<Term<U>>>,
     events: U,
 }
 
-impl<U: EventListener + Send + 'static> PtyLoop<U> {
+impl<P, U> PtyLoop<P, U>
+where
+    P: EventedPty + OnResize + Send + 'static,
+    U: EventListener + Send + 'static,
+{
     pub(crate) fn new(
         terminal: Arc<FairMutex<Term<U>>>,
         events: U,
-        pty: tty::Pty,
-    ) -> io::Result<(PtyLoop<U>, LoopSender)> {
+        pty: P,
+    ) -> io::Result<(PtyLoop<P, U>, LoopSender)> {
         let (tx, rx) = mpsc::channel();
         let poll = Arc::new(polling::Poller::new()?);
         let sender = LoopSender {
@@ -95,13 +99,13 @@ impl<U: EventListener + Send + 'static> PtyLoop<U> {
     /// Runs the loop on its own thread. The pty comes back through the join
     /// handle so the caller drops it (hangs up and reaps the child) off the
     /// app's thread.
-    pub(crate) fn spawn(self) -> io::Result<JoinHandle<tty::Pty>> {
+    pub(crate) fn spawn(self) -> io::Result<JoinHandle<P>> {
         std::thread::Builder::new()
             .name("fe-terminal pty reader".to_owned())
             .spawn(move || self.run())
     }
 
-    fn run(mut self) -> tty::Pty {
+    fn run(mut self) -> P {
         let mut parser: Processor = Processor::default();
         let mut writes = Writes::default();
         let mut buf = vec![0u8; READ_BUFFER_SIZE];
@@ -290,7 +294,7 @@ impl Writes {
         self.current.is_some() || !self.queue.is_empty()
     }
 
-    fn flush(&mut self, pty: &mut tty::Pty) -> io::Result<()> {
+    fn flush<P: EventedReadWrite>(&mut self, pty: &mut P) -> io::Result<()> {
         loop {
             if self.current.is_none() {
                 self.current = self.queue.pop_front().map(|bytes| (bytes, 0));
@@ -312,5 +316,251 @@ impl Writes {
                 },
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alacritty_terminal::event::Event;
+    use alacritty_terminal::grid::Dimensions;
+    use alacritty_terminal::term::Config;
+    use alacritty_terminal::tty::ChildEvent;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::net::UnixStream;
+    use std::sync::Mutex;
+
+    struct Size;
+
+    impl Dimensions for Size {
+        fn total_lines(&self) -> usize {
+            10
+        }
+        fn screen_lines(&self) -> usize {
+            10
+        }
+        fn columns(&self) -> usize {
+            80
+        }
+    }
+
+    /// Records the events the loop publishes.
+    #[derive(Clone, Default)]
+    struct Recorder(Arc<Mutex<Vec<String>>>);
+
+    impl EventListener for Recorder {
+        fn send_event(&self, event: Event) {
+            self.0.lock().unwrap().push(format!("{event:?}"));
+        }
+    }
+
+    /// What a read returns once the scripted chunks are used up.
+    enum Then {
+        /// Nothing more for now.
+        Idle,
+        /// The same byte, as fast as it is read: a writer that never stops.
+        Endless(u8),
+        /// A failing pty.
+        Fail,
+    }
+
+    struct Script {
+        chunks: VecDeque<Vec<u8>>,
+        then: Then,
+        /// Sent after the chunks are read, like a shutdown racing the output.
+        shutdown_after: Option<LoopSender>,
+        served: usize,
+    }
+
+    impl Read for Script {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if let Some(chunk) = self.chunks.pop_front() {
+                let n = chunk.len().min(buf.len());
+                buf[..n].copy_from_slice(&chunk[..n]);
+                self.served += n;
+                return Ok(n);
+            }
+            if let Some(sender) = self.shutdown_after.take() {
+                sender.send(Msg::Shutdown).unwrap();
+            }
+            match self.then {
+                Then::Idle => Err(ErrorKind::WouldBlock.into()),
+                Then::Endless(byte) => {
+                    let n = buf.len().min(4096);
+                    buf[..n].fill(byte);
+                    self.served += n;
+                    Ok(n)
+                }
+                Then::Fail => Err(io::Error::other("injected")),
+            }
+        }
+    }
+
+    /// A pty whose wake-ups are a socket that is always readable, under the
+    /// data token or (for a child that exited) the child token.
+    struct FakePty {
+        script: Script,
+        wake: UnixStream,
+        _peer: UnixStream,
+        token: usize,
+        child_exited: bool,
+    }
+
+    impl FakePty {
+        fn new(script: Script, token: usize) -> FakePty {
+            let (wake, peer) = UnixStream::pair().unwrap();
+            (&peer).write_all(b"x").unwrap();
+            FakePty {
+                script,
+                wake,
+                _peer: peer,
+                token,
+                child_exited: token == PTY_CHILD_EVENT_TOKEN,
+            }
+        }
+    }
+
+    impl EventedReadWrite for FakePty {
+        type Reader = Script;
+        type Writer = io::Sink;
+
+        unsafe fn register(
+            &mut self,
+            poll: &Arc<polling::Poller>,
+            _: polling::Event,
+            mode: polling::PollMode,
+        ) -> io::Result<()> {
+            unsafe {
+                poll.add_with_mode(
+                    self.wake.as_raw_fd(),
+                    polling::Event::readable(self.token),
+                    mode,
+                )
+            }
+        }
+
+        fn reregister(
+            &mut self,
+            poll: &Arc<polling::Poller>,
+            _: polling::Event,
+            mode: polling::PollMode,
+        ) -> io::Result<()> {
+            poll.modify_with_mode(&self.wake, polling::Event::readable(self.token), mode)
+        }
+
+        fn deregister(&mut self, poll: &Arc<polling::Poller>) -> io::Result<()> {
+            poll.delete(&self.wake)
+        }
+
+        fn reader(&mut self) -> &mut Script {
+            &mut self.script
+        }
+
+        fn writer(&mut self) -> &mut io::Sink {
+            unreachable!("no input is sent")
+        }
+    }
+
+    impl EventedPty for FakePty {
+        fn next_child_event(&mut self) -> Option<ChildEvent> {
+            std::mem::take(&mut self.child_exited).then_some(ChildEvent::Exited(None))
+        }
+    }
+
+    impl OnResize for FakePty {
+        fn on_resize(&mut self, _: WindowSize) {}
+    }
+
+    struct Run {
+        text: String,
+        events: Vec<String>,
+        pty: FakePty,
+    }
+
+    /// Runs the loop to its end on `script`, which `make` may wire to the
+    /// loop's sender.
+    fn run(token: usize, chunks: &[&[u8]], then: Then, shutdown: bool) -> Run {
+        let events = Recorder::default();
+        let term = Arc::new(FairMutex::new(Term::new(
+            Config {
+                // Room for everything an endless writer is read for.
+                scrolling_history: 100_000,
+                ..Config::default()
+            },
+            &Size,
+            events.clone(),
+        )));
+        let script = Script {
+            chunks: chunks.iter().map(|chunk| chunk.to_vec()).collect(),
+            then,
+            shutdown_after: None,
+            served: 0,
+        };
+        let (mut pty_loop, sender) =
+            PtyLoop::new(term.clone(), events.clone(), FakePty::new(script, token)).unwrap();
+        if shutdown {
+            pty_loop.pty.script.shutdown_after = Some(sender);
+        }
+        let pty = pty_loop.run();
+        let terminal = term.lock();
+        let text = (terminal.topmost_line().0..=terminal.bottommost_line().0)
+            .map(|line| {
+                (0..80)
+                    .map(|col| {
+                        terminal.grid()[alacritty_terminal::index::Line(line)]
+                            [alacritty_terminal::index::Column(col)]
+                        .c
+                    })
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        Run {
+            text,
+            events: events.0.lock().unwrap().clone(),
+            pty,
+        }
+    }
+
+    const HELD: &[u8] = b"\x1b[?2026hhello";
+
+    #[test]
+    fn shutdown_flushes_an_unfinished_synchronized_update() {
+        // Run returns long before the parser's 150 ms synchronization timeout.
+        let start = Instant::now();
+        let run = run(PTY_READ_WRITE_TOKEN, &[HELD], Then::Idle, true);
+        assert!(start.elapsed() < std::time::Duration::from_millis(150));
+        assert!(run.text.contains("hello"), "{}", run.text);
+        assert!(!run.events.iter().any(|event| event == "Exit"));
+    }
+
+    #[test]
+    fn an_io_error_flushes_an_unfinished_synchronized_update() {
+        let start = Instant::now();
+        let run = run(PTY_READ_WRITE_TOKEN, &[HELD], Then::Fail, false);
+        assert!(start.elapsed() < std::time::Duration::from_millis(150));
+        assert!(run.text.contains("hello"), "{}", run.text);
+        assert!(!run.events.iter().any(|event| event == "Exit"));
+    }
+
+    #[test]
+    fn the_final_drain_stops_at_its_cap_when_the_writer_continues() {
+        // Only the child-exit event is registered, so every byte is read by
+        // the final drain.
+        let run = run(PTY_CHILD_EVENT_TOKEN, &[HELD], Then::Endless(b'x'), false);
+        assert!(run.text.contains("hello"), "{}", run.text);
+        let served = run.pty.script.served;
+        assert!(served >= MAX_LOCKED_READ, "drain stopped early: {served}");
+        // One read per `MAX_LOCKED_READ`, at most `MAX_FINAL_DRAIN_READS`.
+        assert!(
+            served <= (MAX_FINAL_DRAIN_READS + 1) * (MAX_LOCKED_READ + 4096),
+            "drain did not stop: {served}"
+        );
+        // Completion is published, after the held text reached the grid.
+        assert!(
+            run.events.iter().any(|event| event == "Exit"),
+            "{:?}",
+            run.events
+        );
     }
 }
