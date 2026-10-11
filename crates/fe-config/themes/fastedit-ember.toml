@@ -1,0 +1,90 @@
+# fastedit Ember: a warm dark theme. Brown-black surfaces, an amber accent
+# and warm syntax hues, as a complete kiln theme file.
+#
+# To try it, copy it to ~/.config/fastedit/theme.toml (or
+# $XDG_CONFIG_HOME/fastedit/theme.toml) with `mode = "dark"` (the default)
+# in settings. It reloads live. Delete the file to go back to fastedit Dark.
+# Colours are "#rgb", "#rrggbb" or "#rrggbbaa".
+
+kiln_theme = 1
+name = "fastedit Ember"
+appearance = "dark"
+
+[surface]
+background = "#1c1814"
+panel = "#16120f"
+overlay = "#00000080"
+
+[text]
+primary = "#a8998a"
+muted = "#5e544a"
+on_accent = "#1c1814"
+
+[border]
+default = "#2e2722"
+
+[accent]
+base = "#d08b3e"
+
+[state]
+hover = "#ffffff0a"
+pressed = "#ffffff14"
+selected_inactive = "#ffffff0f"
+
+[status]
+error = "#e0705f"
+warning = "#e0a84e"
+info = "#7fa6b8"
+success = "#a3b56f"
+
+[list]
+indent_guide = "#ffffff14"
+chevron = "#85766a"
+folder_icon = "#d6a066"
+
+[tab]
+active_text = "#e3d6c3"
+
+[editor]
+background = "#1c1814"
+foreground = "#e3d6c3"
+gutter_foreground = "#5e544a"
+gutter_active_foreground = "#b0a08e"
+active_line = "#ffffff08"
+selection = "#d08b3e40"
+cursor = "#f0a050"
+error = "#e0705f"
+warning = "#e0a84e"
+information = "#7fa6b8"
+hint = "#85766a"
+popover_background = "#26201b"
+popover_border = "#3a312a"
+
+# Highlight captures by dotted name. A capture without its own colour takes
+# the colour of its longest listed prefix: "function.method" uses "function".
+[syntax]
+"attribute" = "#d4a15a"
+"comment" = "#665a4e"
+"constant" = "#d9965a"
+"constructor" = "#e6c27a"
+"escape" = "#8fb5a8"
+"function" = "#e5b45c"
+"function.macro" = "#8fb5a8"
+"keyword" = "#d9694a"
+"label" = "#e0705f"
+"markup.heading" = "#e0705f"
+"markup.link" = "#e5b45c"
+"markup.link.url" = "#8fb5a8"
+"markup.raw" = "#a3b56f"
+"module" = "#e6c27a"
+"number" = "#d98a8a"
+"operator" = "#c9a98a"
+"property" = "#d4856a"
+"punctuation" = "#85766a"
+"punctuation.special" = "#c9a98a"
+"string" = "#a3b56f"
+"string.special" = "#8fb5a8"
+"string.special.key" = "#d4856a"
+"tag" = "#d9694a"
+"type" = "#d9b36c"
+"variable.builtin" = "#e0705f"
