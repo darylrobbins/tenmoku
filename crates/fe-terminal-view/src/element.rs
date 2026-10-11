@@ -8,8 +8,7 @@ use gpui::{
     App, BorderStyle, Bounds, ContentMask, CursorStyle, Element, ElementId, ElementInputHandler,
     Entity, Font, FontStyle, FontWeight, GlobalElementId, Hitbox, HitboxBehavior, Hsla,
     InspectorElementId, IntoElement, LayoutId, Pixels, Point, ShapedLine, SharedString, Size,
-    StrikethroughStyle, Style, TextAlign, TextRun, UnderlineStyle, Window, fill, outline, point,
-    px, relative, size,
+    Style, TextAlign, TextRun, UnderlineStyle, Window, fill, outline, point, px, relative, size,
 };
 
 use crate::layout::{self, CursorLayout, Run};
@@ -70,11 +69,17 @@ struct Text {
     line: ShapedLine,
 }
 
+/// The cursor cell's character, shaped, and its decoration quads.
+struct Glyph {
+    text: Vec<Text>,
+    quads: Vec<(Bounds<Pixels>, Hsla)>,
+}
+
 enum Cursor {
     Block {
         bounds: Bounds<Pixels>,
         color: Hsla,
-        glyph: Option<Box<Text>>,
+        glyph: Option<Glyph>,
     },
     Hollow {
         bounds: Bounds<Pixels>,
@@ -136,7 +141,8 @@ impl Element for TerminalElement {
         let style = self.view.read(cx).style.clone();
         let cell = cell_size(&style, window);
         let grid = grid_size(bounds.size, cell);
-        let focused = self.view.read(cx).focus.is_focused(window);
+        // A window that's lost focus to another app keeps its focus handle.
+        let focused = self.view.read(cx).is_focused(window);
         let marked = self.view.read(cx).marked.clone();
         let mut frame = Frame {
             bounds,
@@ -187,9 +193,33 @@ impl Element for TerminalElement {
             Bounds::new(at(row, col), size(cell.width * cells as f32, cell.height))
         };
         let font = gpui::font(style.font_family.clone());
-        let shape = |row: usize, run: &Run, window: &mut Window| Text {
-            origin: at(row, run.col),
-            line: shape_run(run, &font, &style, cell.width, window),
+        // One shaped line per cell, at its column: no glyph's advance moves
+        // the next, and no ligature spans two cells.
+        let shape = |row: usize, run: &Run, window: &mut Window| -> Vec<Text> {
+            run.clusters()
+                .filter(|(_, text, _)| !text.trim_start_matches(' ').is_empty())
+                .map(|(col, text, _)| Text {
+                    origin: at(row, col),
+                    line: shape_cluster(text, run, &font, &style, window),
+                })
+                .collect()
+        };
+        // Underline and strikeout span the cells the run occupies, not the
+        // glyphs' natural width.
+        let decorations = |row: usize, run: &Run, quads: &mut Vec<(Bounds<Pixels>, Hsla)>| {
+            let line = |offset: f32| {
+                let top = at(row, run.col).y + (cell.height * offset).floor();
+                Bounds::new(
+                    point(at(row, run.col).x, top),
+                    size(cell.width * run.cells as f32, px(1.)),
+                )
+            };
+            if run.underline {
+                quads.push((line(0.9), run.fg));
+            }
+            if run.strikeout {
+                quads.push((line(0.5), run.fg));
+            }
         };
 
         let rows = layout::rows(&snapshot, &style, focused);
@@ -208,7 +238,8 @@ impl Element for TerminalElement {
         }
         for (row, layout) in rows.iter().enumerate() {
             for run in &layout.runs {
-                prepainted.text.push(shape(row, run, window));
+                prepainted.text.extend(shape(row, run, window));
+                decorations(row, run, &mut prepainted.quads);
             }
         }
         prepainted.cursor = match layout::cursor(&snapshot, &style, focused) {
@@ -221,7 +252,14 @@ impl Element for TerminalElement {
             } => Some(Cursor::Block {
                 bounds: cells(row, col, width),
                 color,
-                glyph: glyph.map(|glyph| Box::new(shape(row, &glyph, window))),
+                glyph: glyph.map(|glyph| {
+                    let mut quads = Vec::new();
+                    decorations(row, &glyph, &mut quads);
+                    Glyph {
+                        text: shape(row, &glyph, window),
+                        quads,
+                    }
+                }),
             }),
             CursorLayout::Hollow {
                 row,
@@ -295,8 +333,13 @@ impl Element for TerminalElement {
                     glyph,
                 }) => {
                     window.paint_quad(fill(*bounds, *color));
-                    if let Some(glyph) = glyph {
-                        paint_text(glyph, line_height, window, cx);
+                    if let Some(Glyph { text, quads }) = glyph {
+                        for text in text {
+                            paint_text(text, line_height, window, cx);
+                        }
+                        for &(quad, colour) in quads {
+                            window.paint_quad(fill(quad, colour));
+                        }
                     }
                 }
                 Some(Cursor::Hollow { bounds, color }) => {
@@ -353,13 +396,13 @@ fn shape_marked(
         .shape_line(SharedString::from(text), style.font_size, &[run], None)
 }
 
-/// Shapes `run` with every glyph a cell wide, so they stay on the grid
-/// whatever font they fall back to.
-fn shape_run(
+/// Shapes one cell's `text` in `run`'s style, at its natural width. The
+/// decorations are painted by the caller across the cells.
+fn shape_cluster(
+    text: &str,
     run: &Run,
     font: &Font,
     style: &TerminalStyle,
-    cell_width: Pixels,
     window: &mut Window,
 ) -> ShapedLine {
     let mut font = font.clone();
@@ -370,25 +413,18 @@ fn shape_run(
         font.style = FontStyle::Italic;
     }
     let text_run = TextRun {
-        len: run.text.len(),
+        len: text.len(),
         font,
         color: run.fg,
         background_color: None,
-        underline: run.underline.then_some(UnderlineStyle {
-            thickness: px(1.),
-            color: Some(run.fg),
-            wavy: false,
-        }),
-        strikethrough: run.strikeout.then_some(StrikethroughStyle {
-            thickness: px(1.),
-            color: Some(run.fg),
-        }),
+        underline: None,
+        strikethrough: None,
     };
     window.text_system().shape_line(
-        SharedString::from(run.text.clone()),
+        SharedString::from(text.to_owned()),
         style.font_size,
         &[text_run],
-        Some(cell_width),
+        None,
     )
 }
 

@@ -6,7 +6,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use fe_terminal_view::{TerminalOptions, TerminalStyle, TerminalView, TerminalViewEvent};
-use gpui::{Entity, Hsla, Pixels, Size, TestAppContext, VisualTestContext, px, rgb, size};
+use gpui::{
+    Entity, Focusable, Hsla, Pixels, Size, TestAppContext, VisualTestContext, px, rgb, size,
+};
 
 fn style() -> TerminalStyle {
     let background: Hsla = rgb(0x101010).into();
@@ -119,4 +121,25 @@ done"#;
     std::fs::write(dir.path().join("done"), "").unwrap();
     until(cx, "the shell to exit", |_| !events.borrow().is_empty());
     assert_eq!(*events.borrow(), [TerminalViewEvent::Exited(Some(3))]);
+}
+
+#[gpui::test]
+fn unfocused_while_the_window_is_inactive(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let options = TerminalOptions::new(dir.path());
+    let (view, cx) =
+        cx.add_window_view(|window, cx| TerminalView::new(options, style(), window, cx).unwrap());
+    let focused =
+        |cx: &mut VisualTestContext| cx.update(|window, cx| view.read(cx).is_focused(window));
+    cx.update(|window, cx| {
+        window.activate_window();
+        window.focus(&view.read(cx).focus_handle(cx), cx)
+    });
+    cx.run_until_parked();
+    assert!(focused(cx));
+    cx.deactivate_window();
+    assert!(!focused(cx));
+    cx.update(|window, _| window.activate_window());
+    cx.run_until_parked();
+    assert!(focused(cx));
 }

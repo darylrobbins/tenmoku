@@ -46,6 +46,8 @@ pub struct TerminalView {
     /// Wheel motion, in lines, not yet scrolled or reported.
     pub(crate) wheel: f32,
     _focus_reports: [Subscription; 2],
+    /// Redraws the cursor when the window gains or loses focus.
+    _activation: Subscription,
 }
 
 impl EventEmitter<TerminalViewEvent> for TerminalView {}
@@ -70,6 +72,7 @@ impl TerminalView {
             cx.on_focus_in(&focus, window, |view, _, _| view.report_focus(true)),
             cx.on_focus_out(&focus, window, |view, _, _, _| view.report_focus(false)),
         ];
+        let activation = cx.observe_window_activation(window, |_, _, cx| cx.notify());
         Ok(Self {
             options: Some(options),
             terminal: None,
@@ -84,7 +87,14 @@ impl TerminalView {
             reported: None,
             wheel: 0.,
             _focus_reports: focus_reports,
+            _activation: activation,
         })
+    }
+
+    /// Whether the view has focus in an active window: what decides a filled
+    /// or hollow cursor.
+    pub fn is_focused(&self, window: &Window) -> bool {
+        self.focus.is_focused(window) && window.is_window_active()
     }
 
     pub fn style(&self) -> &TerminalStyle {

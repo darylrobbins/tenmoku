@@ -27,6 +27,10 @@ pub struct Run {
     /// The columns it covers: two for a wide character.
     pub cells: usize,
     pub text: String,
+    /// The byte offset in `text` where each cell's characters start: a
+    /// combining mark belongs to the cell before it. One per cell, except
+    /// that a wide character has one for its two.
+    pub starts: Vec<usize>,
     pub fg: Hsla,
     pub bold: bool,
     pub italic: bool,
@@ -137,18 +141,38 @@ impl Paint {
             col,
             cells,
             text: String::new(),
+            starts: Vec::new(),
             fg: self.fg,
             bold: self.bold,
             italic: self.italic,
             underline: self.underline,
             strikeout: self.strikeout,
         };
-        push_text(&mut run.text, cell);
+        push_text(&mut run, cell);
         run
     }
 }
 
 impl Run {
+    /// The text of each cell, with its column and the columns it covers.
+    /// Shaping them one by one keeps every glyph on the grid, whatever its
+    /// advance, and keeps ligatures from spanning cells.
+    pub fn clusters(&self) -> impl Iterator<Item = (usize, &str, usize)> {
+        let ends = self.starts.iter().skip(1).copied().chain([self.text.len()]);
+        let wide = self.starts.len() == 1 && self.cells == 2;
+        self.starts
+            .iter()
+            .zip(ends)
+            .enumerate()
+            .map(move |(i, (&start, end))| {
+                (
+                    self.col + i,
+                    &self.text[start..end],
+                    if wide { 2 } else { 1 },
+                )
+            })
+    }
+
     fn has_style(&self, paint: &Paint) -> bool {
         self.fg == paint.fg
             && self.bold == paint.bold
@@ -158,10 +182,11 @@ impl Run {
     }
 }
 
-fn push_text(text: &mut String, cell: &Cell) {
-    text.push(cell.ch);
+fn push_text(run: &mut Run, cell: &Cell) {
+    run.starts.push(run.text.len());
+    run.text.push(cell.ch);
     if let Some(extra) = &cell.extra {
-        text.push_str(extra);
+        run.text.push_str(extra);
     }
 }
 
@@ -199,7 +224,7 @@ fn row_layout(cells: &[Cell], style: &TerminalStyle, skip: Option<usize>) -> Row
         let wide = cell.flags.contains(CellFlags::WIDE);
         match &mut run {
             Some(current) if !wide && current.has_style(&paint) => {
-                push_text(&mut current.text, cell);
+                push_text(current, cell);
                 current.cells += 1;
             }
             _ => {
@@ -236,6 +261,7 @@ fn finish(run: &mut Option<Run>, runs: &mut Vec<Run>) {
     if !run.underline && !run.strikeout {
         while run.text.ends_with(' ') {
             run.text.pop();
+            run.starts.pop();
             run.cells -= 1;
         }
     }

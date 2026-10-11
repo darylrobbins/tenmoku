@@ -75,10 +75,17 @@ fn hsla(r: u8, g: u8, b: u8) -> Hsla {
 }
 
 fn run(col: usize, cells: usize, text: &str, fg: Hsla) -> Run {
+    // A cell per character, but for combining marks, which join the one before.
+    let starts = text
+        .char_indices()
+        .filter(|(_, ch)| !('\u{300}'..='\u{36f}').contains(ch))
+        .map(|(i, _)| i)
+        .collect();
     Run {
         col,
         cells,
         text: text.to_owned(),
+        starts,
         fg,
         bold: false,
         italic: false,
@@ -378,4 +385,28 @@ fn cursor() {
             CursorLayout::Hidden
         );
     }
+}
+
+#[test]
+fn run_clusters_map_cells_to_columns() {
+    let fg = style().foreground;
+    let clusters = |run: Run| {
+        run.clusters()
+            .map(|(col, text, cells)| (col, text.to_owned(), cells))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        clusters(run(12, 2, "xe\u{301}", fg)),
+        vec![(12, "x".to_owned(), 1), (13, "e\u{301}".to_owned(), 1)],
+    );
+    assert_eq!(
+        clusters(run(2, 4, "iiii", fg)),
+        (2..6)
+            .map(|col| (col, "i".to_owned(), 1))
+            .collect::<Vec<_>>(),
+    );
+    assert_eq!(
+        clusters(run(10, 2, "漢", fg)),
+        vec![(10, "漢".to_owned(), 2)]
+    );
 }
