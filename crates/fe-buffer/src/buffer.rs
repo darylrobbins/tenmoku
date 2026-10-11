@@ -69,6 +69,9 @@ pub enum EditError {
     /// The text an edit was meant to replace has changed since the snapshot.
     #[error("edit {index} conflicts with changes made since the snapshot")]
     Conflict { index: usize },
+    /// [`Buffer::edit_in`] named a transaction that can't take more edits.
+    #[error("the transaction was undone, or is no longer in the history")]
+    NoSuchTransaction(TransactionId),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -387,7 +390,7 @@ impl Buffer {
         self.history_limit = bytes;
         let origins: Vec<Origin> = self.history_bytes.keys().cloned().collect();
         for origin in origins {
-            self.trim_history(&origin);
+            self.trim_history(&origin, None);
         }
     }
 
@@ -468,6 +471,55 @@ impl Buffer {
         self.refresh_dirty();
         self.emit_batch(id, &origin, EditKind::Edit, &batch, text);
         Some(id)
+    }
+
+    /// Applies `edits` as one more batch of the history entry `transaction`,
+    /// open or closed, under that entry's origin. Undo and redo then treat the
+    /// entry's batches as one unit. This is how a long-running edit (an AI
+    /// stream) keeps one undo group while other origins edit, and hold their
+    /// own open transactions, in between. The open transaction, of any origin,
+    /// is left as it was: later edits of its origin still join it.
+    ///
+    /// Ranges are in the current coordinates, clipped as in [`Buffer::edit`].
+    /// Returns `Ok(None)` if nothing changed. Fails with
+    /// [`EditError::NoSuchTransaction`], changing nothing, if the entry is
+    /// undone or no longer in the history.
+    pub fn edit_in<I, S>(
+        &mut self,
+        transaction: TransactionId,
+        edits: I,
+    ) -> Result<Option<TransactionId>, EditError>
+    where
+        I: IntoIterator<Item = (Range<usize>, S)>,
+        S: Into<Arc<str>>,
+    {
+        let origin = self
+            .history
+            .iter()
+            .rfind(|entry| entry.id == transaction && entry.undone.is_none())
+            .map(|entry| entry.origin.clone())
+            .ok_or(EditError::NoSuchTransaction(transaction))?;
+        let text = &self.snapshot.text;
+        let edits = edits
+            .into_iter()
+            .map(|(range, new_text)| (clip_range(text, range), normalize_newlines(new_text.into())))
+            .collect();
+        let Some(batch) = apply(&mut self.snapshot, edits, None) else {
+            return Ok(None);
+        };
+        self.charge_batch(&origin, &batch);
+        self.history
+            .iter_mut()
+            .rfind(|entry| entry.id == transaction)
+            .expect("entry checked above; charging only drops undone entries")
+            .batches
+            .push(batch.clone());
+        self.trim_history(&origin, Some(transaction));
+        let text = self.snapshot.text.clone();
+        self.note_batch(&batch.edits);
+        self.refresh_dirty();
+        self.emit_batch(transaction, &origin, EditKind::Edit, &batch, text);
+        Ok(Some(transaction))
     }
 
     /// Applies edits computed against an older snapshot of this buffer, such
@@ -577,7 +629,7 @@ impl Buffer {
             None
         } else {
             let origin = self.history[ix].origin.clone();
-            self.trim_history(&origin);
+            self.trim_history(&origin, None);
             Some(id)
         }
     }
@@ -675,22 +727,28 @@ impl Buffer {
         TransactionId(self.next_transaction)
     }
 
-    fn record(&mut self, origin: Origin, batch: AppliedBatch) -> TransactionId {
+    /// Bookkeeping for a fresh batch from `origin`: discards the origin's
+    /// redo history and counts the batch's bytes.
+    fn charge_batch(&mut self, origin: &Origin, batch: &AppliedBatch) {
         // A fresh edit discards this origin's redo history.
-        if self.redoable.remove(&origin).is_some_and(|count| count > 0) {
+        if self.redoable.remove(origin).is_some_and(|count| count > 0) {
             let mut freed = 0;
             self.history.retain(|entry| {
-                let keep = entry.undone.is_none() || entry.origin != origin;
+                let keep = entry.undone.is_none() || entry.origin != *origin;
                 if !keep {
                     freed += entry_bytes(entry);
                 }
                 keep
             });
-            if let Some(held) = self.history_bytes.get_mut(&origin) {
+            if let Some(held) = self.history_bytes.get_mut(origin) {
                 *held -= freed;
             }
         }
-        *self.history_bytes.entry(origin.clone()).or_default() += batch_bytes(&batch);
+        *self.history_bytes.entry(origin.clone()).or_default() += batch_bytes(batch);
+    }
+
+    fn record(&mut self, origin: Origin, batch: AppliedBatch) -> TransactionId {
+        self.charge_batch(&origin, &batch);
 
         if let Some(open) = &self.open
             && open.origin == origin
@@ -711,13 +769,13 @@ impl Buffer {
             batches: vec![batch],
             undone: None,
         });
-        self.trim_history(&origin);
+        self.trim_history(&origin, None);
         id
     }
 
     /// Drops `origin`'s oldest closed transactions until its history is
-    /// under the limit, always keeping its newest.
-    fn trim_history(&mut self, origin: &Origin) {
+    /// under the limit, always keeping its newest, and `keep` if given.
+    fn trim_history(&mut self, origin: &Origin, keep: Option<TransactionId>) {
         let Some(&held) = self.history_bytes.get(origin) else {
             return;
         };
@@ -733,7 +791,10 @@ impl Buffer {
             .iter()
             .enumerate()
             .filter(|(_, entry)| {
-                entry.origin == *origin && Some(entry.id) != open && Some(entry.id) != aside
+                entry.origin == *origin
+                    && Some(entry.id) != open
+                    && Some(entry.id) != aside
+                    && Some(entry.id) != keep
             })
             .map(|(ix, _)| ix)
             .collect();
