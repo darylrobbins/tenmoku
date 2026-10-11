@@ -36,7 +36,7 @@ use crate::{
     status_bar::{self, StatusOp},
     title_bar,
     toolbar_picker::ToolbarPicker,
-    trust::{self, RootTrust, TrustChanged},
+    trust::{self, TrustChanged},
 };
 use kiln_shell::{
     ItemHandle, ModalEvent, ModalId, ModalLayer, TitleBar,
@@ -180,7 +180,7 @@ pub struct Workbench {
     /// another isn't shown until it's answered.
     prompting: bool,
     /// The root's workspace trust.
-    pub(crate) trust: RootTrust,
+    pub(crate) trust: kiln_shell::trust::RootTrust,
     /// The root's language servers.
     pub(crate) lsp: Lsp,
     ui: UiTheme,
@@ -306,7 +306,7 @@ impl Workbench {
             revealed: None,
             launch_read: launch_read.map(|path| (path, pane.downgrade())),
             prompting: false,
-            trust: RootTrust::default(),
+            trust: kiln_shell::trust::RootTrust::new(trust::prompt()),
             lsp: Lsp::new(),
             ui,
             root_subscription,

@@ -15,6 +15,8 @@
 //! ([`DockItem`]) at a time ([`dock`]); over them, the [`ModalLayer`]
 //! shows one modal view, such as a [`Picker`] ([`modal`]).
 //!
+//! A host's root folder's workspace trust is [`trust`]'s.
+//!
 //! The shell's leaf modules, which a host can use before it adopts the
 //! rest: the status bar's items ([`status`]), a picker palette over a
 //! delegate ([`picker`]), and a background writer for saved state
@@ -30,6 +32,7 @@ pub mod picker;
 mod root;
 pub mod status;
 mod title_bar;
+pub mod trust;
 pub mod window_frame;
 
 use gpui::App;
