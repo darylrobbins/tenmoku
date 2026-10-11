@@ -166,3 +166,26 @@ fn a_view_propagates_with_its_context(cx: &mut TestAppContext) {
         "the app ran the view's stamped copy, not GPUI's original"
     );
 }
+
+/// A window command acts on the window it was dispatched in, though
+/// another is the active one (or none is: an X server without a window
+/// manager has none).
+#[gpui::test]
+fn window_commands_act_on_the_window_they_ran_in(cx: &mut TestAppContext) {
+    notes_app(cx);
+    let first = cx.add_window(|_, _| Plain);
+    let second = cx.add_window(|_, _| Plain);
+    first
+        .update(cx, |_, window, _| window.activate_window())
+        .unwrap();
+    cx.run_until_parked();
+    let close = Invocation::of("window.close").unwrap();
+    second
+        .update(cx, |_, window, cx| {
+            kiln_platform::command_actions::dispatch_invocation(close, window, cx).unwrap()
+        })
+        .unwrap();
+    cx.run_until_parked();
+    let open = cx.update(|cx| cx.windows());
+    assert_eq!(open, [first.into()]);
+}

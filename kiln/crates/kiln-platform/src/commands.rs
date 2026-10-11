@@ -122,16 +122,23 @@ fn close_window(cx: &mut App) {
     let Some(handlers) = cx.try_global::<CloseHandlers>().cloned() else {
         return on_active_window(cx, |window| window.remove_window());
     };
-    if let Some(handle) = cx.active_window() {
+    if let Some(handle) = target_window(cx) {
         cx.defer(move |cx| (handlers.close_window)(handle, cx));
     }
 }
 
-/// Runs `f` on the active window, if any, once the current dispatch is
-/// over: a key or menu item runs its command while GPUI has that window
-/// out for the dispatch, so it can't be updated until then.
+/// The window a window command acts on: the one it was dispatched in, else
+/// the active one.
+fn target_window(cx: &App) -> Option<AnyWindowHandle> {
+    crate::command_actions::dispatch_window(cx).or_else(|| cx.active_window())
+}
+
+/// Runs `f` on the window the command was dispatched in, else the active
+/// window, if any, once the current dispatch is over: a key or menu item
+/// runs its command while GPUI has that window out for the dispatch, so it
+/// can't be updated until then.
 fn on_active_window(cx: &mut App, f: fn(&mut Window)) {
-    if let Some(handle) = cx.active_window() {
+    if let Some(handle) = target_window(cx) {
         cx.defer(move |cx| {
             handle.update(cx, |_, window, _| f(window)).ok();
         });

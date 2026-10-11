@@ -39,7 +39,7 @@ views, layout and forms).
 | Crate | GPUI | Holds |
 |---|---|---|
 | `kiln-command` | no | command IDs, invocations, context predicates, registries |
-| `kiln-core` | no | config layers and settings stores, app paths, platform conventions, keymaps and menu tables resolved per platform, theme data, the trust store, a headless text-edit model |
+| `kiln-core` | no | config layers and settings stores, app paths, platform conventions, keymaps and menu tables resolved per platform, theme data, the trust store, the saved-layout store, a headless text-edit model |
 | `kiln-platform` | yes | platform capabilities, window options, prompts, fonts, dialogs, the key interceptor and its `KeyOwner` hook, command dispatch, native menus, the config service |
 | `kiln-ui` | yes | theme resolution, icons and the widget kit |
 | `kiln-shell` | yes | the `Root` view (window frame, in-window menu bar, modal layer) and the shell: panes, docks, palette, status, persistence, windows |
@@ -123,7 +123,11 @@ an app's AI backend can load the same commands, config and keymaps.
   splits with their own state, so restored views share a document again.
   A `WindowLayout` saves as the layout's shape changes and in full at
   quit, keeps its entry when the last window closes, deletes it when
-  others stay open, and releases its claim after its last write.
+  others stay open, and releases its claim after its last write. A
+  launch on a folder opens a window per entry no live window holds
+  (`layout::launch`), and a new window on it takes the newest such entry
+  (`layout::new_window`); a launch on a root another process has open
+  gets fresh windows.
 - **Widgets.** Stateless ones are `RenderOnce` builders over a `Div`, so
   GPUI's `Styled`, `InteractiveElement` and `FluentBuilder` methods work on
   them; values are controlled. Stateful ones are `Entity<T>` views that emit

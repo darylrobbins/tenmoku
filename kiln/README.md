@@ -31,10 +31,10 @@ system (see [Boundary rules](#boundary-rules)).
 | Crate | GPUI | Holds |
 |---|---|---|
 | `kiln-command` | no | command IDs, invocation records, context predicates, headless command registries |
-| `kiln-core` | no | config layers and typed settings stores, app paths, platform conventions, keymaps and menu tables resolved per platform, theme data, the trust store, a headless text-edit model |
+| `kiln-core` | no | config layers and typed settings stores, app paths, platform conventions, keymaps and menu tables resolved per platform, theme data, the trust store, the saved-layout store, a headless text-edit model |
 | `kiln-platform` | yes | platform capabilities, window options, prompts, fonts, dialogs, key input and its `KeyOwner` hook, command dispatch, native menus, the config service |
 | `kiln-ui` | yes | theme resolution (`cx.theme()`), icons (bundled Lucide plus an app's own) and the widget kit |
-| `kiln-shell` | yes | the app shell: `Root` (title bar, window frame, in-window menu bar), the in-window prompt, `Shell` (a window's chrome, docks, status bar and modal layer under the app's root context), panes of `PaneItem`s (`ItemHandle`) split in a `PaneGroup` with tab drag and drop, docks of `DockItem` panels, the modal layer, workspace trust, status items, the picker, breadcrumbs and a background settings writer; close vetoes, the command palette, layout persistence and multiple windows are moving in |
+| `kiln-shell` | yes | the app shell: `Root` (title bar, window frame, in-window menu bar), the in-window prompt, `Shell` (a window's chrome, docks, status bar and modal layer under the app's root context), panes of `PaneItem`s (`ItemHandle`) split in a `PaneGroup` with tab drag and drop, docks of `DockItem` panels, the modal layer, close vetoes on every close path (`close`, one revalidating transaction at a time), the command palette, saved window layouts (`layout`, over kiln-core's per-root store with one claimed id per window, so several windows and processes share a root), workspace trust, status items, the picker, breadcrumbs and a background settings writer |
 | `kiln` | facade | re-exports of the above, `kiln::prelude`, `kiln::gpui`, `application()`, `init()` and `Config` |
 
 An app depends on `kiln` alone: it re-exports GPUI as `kiln::gpui`, brings
@@ -130,8 +130,11 @@ fn main() {
 `kiln::Root` wraps the app's content view in what the platform leaves to
 the app: macOS's unified title bar, an in-window menu bar where there are
 no native menus (F10 opens it), and a window frame drawn by the app where
-the compositor draws none (GNOME on Wayland). A modal layer is still to
-come.
+the compositor draws none (GNOME on Wayland). An app with panes, docks
+and palettes uses `kiln::shell::Shell` instead, which draws the same
+chrome around them, with a modal layer, a command palette
+(`command_palette.toggle`), close vetoes on every close path and saved
+window layouts.
 
 ## The gallery
 

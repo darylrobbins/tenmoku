@@ -236,3 +236,29 @@ after T275 (its F4 claims and F5 close transactions), except as follows.
   editor settings.
 - A file launch restores nothing, as Q4 says, but its window still gets
   a fresh claimed id and saves its layout under the file's folder.
+
+**Multiple windows (K5.10, §4.1).**
+
+- kiln-shell's `layout::launch` (a launch's windows: every entry no live
+  window holds, else one fresh id) and `layout::new_window` (the newest
+  unclaimed entry, else a fresh id) are what a host opens windows with;
+  `layout::mark_quitting` marks a quit that GPUI's quit observers don't
+  start (and tests' quits, as GPUI's test platform can't quit with a
+  window open).
+- `window.new` is fastedit's command (in fe-workbench's open registry,
+  bound to secondary-shift-n), not a kiln app command, and so is
+  `workbench.open_folder_in_new_window` (Open Folder in New Window…), a
+  command of its own rather than a choice in the open panel. Both open
+  through the host's `fe_workbench::set_window_opener`. Neither is in the
+  File menu yet, as fastedit's menu tests pin the File menu's items; the
+  command palette lists both.
+- Settings reloads fan out to every workbench window. Each window's
+  settings are the user's file under its root's project file: the config
+  service loads and watches the launch root's; another root's is read off
+  the main thread when its window opens, when it's re-rooted, and when
+  the user's file reloads, but its own project file isn't watched (its
+  edits apply at the next of those).
+- Window commands (`window.close` and the rest) act on the window they
+  were dispatched in (kiln-platform's `command_actions::dispatch_window`),
+  falling back to the platform's active window: an X server without a
+  window manager has none, and `window.close` did nothing there.

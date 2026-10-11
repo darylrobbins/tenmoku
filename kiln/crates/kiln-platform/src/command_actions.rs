@@ -28,7 +28,7 @@
 
 use std::collections::HashMap;
 
-use gpui::{Action, App, Global, Window};
+use gpui::{Action, AnyWindowHandle, App, Global, Window};
 use kiln_command::{CommandId, ContextPredicate, DispatchError, Invocation, Value};
 
 use crate::commands::{RunCommand, notify_observers};
@@ -86,6 +86,8 @@ struct TypedCommands {
     by_id: HashMap<CommandId, TypedCommand>,
     /// The invocation being dispatched, while its handler runs.
     current: Option<Invocation>,
+    /// The window it's dispatched in.
+    window: Option<AnyWindowHandle>,
 }
 
 impl Global for TypedCommands {}
@@ -205,10 +207,12 @@ pub fn dispatch_invocation(
     {
         Some(focus) => {
             let previous = set_current(Some(invocation), cx);
+            let previous_window = set_window(Some(window.window_handle()), cx);
             focus.dispatch_action(action.as_ref(), window, cx);
             // A nested dispatch puts back the invocation it replaced, so
             // this is the one set above.
             let invocation = set_current(previous, cx);
+            set_window(previous_window, cx);
             if handled && let Some(invocation) = invocation {
                 notify_observers(&invocation, cx);
             }
@@ -217,12 +221,15 @@ pub fn dispatch_invocation(
         // that: deferred work runs in order.
         None => {
             let observed = handled.then(|| invocation.clone());
+            let handle = window.window_handle();
             cx.defer(move |cx| {
                 set_current(Some(invocation), cx);
+                set_window(Some(handle), cx);
             });
             window.dispatch_action(action, cx);
             cx.defer(|cx| {
                 set_current(None, cx);
+                set_window(None, cx);
             });
             if let Some(invocation) = observed {
                 notify_observers(&invocation, cx);
@@ -241,6 +248,19 @@ fn typed_action(invocation: &Invocation, cx: &App) -> Option<Result<Box<dyn Acti
         .by_id
         .get(&invocation.command)?;
     Some(command.build(&invocation.args))
+}
+
+/// Sets the window a dispatch is in, returning the one it replaces.
+fn set_window(window: Option<AnyWindowHandle>, cx: &mut App) -> Option<AnyWindowHandle> {
+    std::mem::replace(&mut cx.default_global::<TypedCommands>().window, window)
+}
+
+/// The window the command being dispatched was dispatched in, from a key
+/// or [`dispatch_invocation`]: the one a window command acts on, which may
+/// not be the platform's active window (an X server without a window
+/// manager has none).
+pub fn dispatch_window(cx: &App) -> Option<AnyWindowHandle> {
+    cx.try_global::<TypedCommands>()?.window
 }
 
 /// Sets the invocation handlers see, returning the one it replaces.

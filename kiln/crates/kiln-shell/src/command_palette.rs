@@ -228,8 +228,8 @@ impl PickerDelegate for CommandPalette {
                 .child(key)
         });
         div()
-            .w_full()
             .flex()
+            .flex_1()
             .items_center()
             .child(label)
             .children(key)

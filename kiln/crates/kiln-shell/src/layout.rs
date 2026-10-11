@@ -437,6 +437,49 @@ fn writer(cx: &mut App) -> Writer<(PathBuf, u64), Job> {
     writer
 }
 
+/// The windows a launch on `store`'s root opens, each with its layout and
+/// the entry it restores, if any. With `restore` (a launch on the folder
+/// itself), every entry no live window holds, newest first; failing that,
+/// or without `restore`, one window with a fresh id. Empty only if no id
+/// can be claimed (the state directory can't be written, say).
+pub fn launch(store: &LayoutStore, restore: bool) -> Vec<(WindowLayout, Option<Value>)> {
+    let mut windows: Vec<_> = match restore {
+        true => (store.restorable().into_iter())
+            .map(|(claim, entry)| (WindowLayout::new(store.clone(), claim), Some(entry)))
+            .collect(),
+        false => Vec::new(),
+    };
+    if windows.is_empty() {
+        match store.claim_new() {
+            Ok(claim) => windows.push((WindowLayout::new(store.clone(), claim), None)),
+            Err(error) => log::error!("can't keep this window's layout: {error}"),
+        }
+    }
+    windows
+}
+
+/// A new window on `store`'s root (not the launch's): the newest entry no
+/// live window holds, claimed, or else a fresh id.
+pub fn new_window(store: &LayoutStore) -> Option<(WindowLayout, Option<Value>)> {
+    if let Some((claim, entry)) = store.newest_restorable() {
+        return Some((WindowLayout::new(store.clone(), claim), Some(entry)));
+    }
+    match store.claim_new() {
+        Ok(claim) => Some((WindowLayout::new(store.clone(), claim), None)),
+        Err(error) => {
+            log::error!("can't keep this window's layout: {error}");
+            None
+        }
+    }
+}
+
+/// Marks the app as quitting, so the windows closing as it does keep their
+/// entries: for a host that quits without GPUI's quit observers running
+/// first, and for tests. [`WindowLayout::save_at_quit`] marks it too.
+pub fn mark_quitting(cx: &mut App) {
+    cx.default_global::<Layouts>().quitting = true;
+}
+
 /// Whether the app is quitting: windows closing as it does keep their
 /// entries.
 pub fn quitting(cx: &App) -> bool {
