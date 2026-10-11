@@ -25,7 +25,7 @@ use crate::{
     nav::{self, Nav},
     open::{self, OpenOp},
     outline_panel,
-    pane::{PaneEvent, Peers, TabId, file_name},
+    pane::{PaneEvent, Peers, TabId},
     pane_drag::TabDropped,
     pane_group::{self, Destination, Direction, PaneOp},
     pane_toolbar::{self, NavButtons, SymbolChain, ToolbarRequest},
@@ -36,7 +36,7 @@ use crate::{
     toolbar_picker::ToolbarPicker,
     trust::{self, TrustChanged},
 };
-use kiln_shell::{DockPosition, ItemHandle, ModalEvent, ModalId, ModalLayer, Shell};
+use kiln_shell::{DockPosition, ItemHandle, ModalEvent, ModalId, ModalLayer, PaneView as _, Shell};
 
 /// Shown in a tab when fastedit starts with nothing to open.
 pub const WELCOME: &str = "\
@@ -608,7 +608,7 @@ impl Workbench {
                 let Some(source) = dropped.dragged.pane.upgrade() else {
                     return;
                 };
-                let (tab, destination) = (dropped.dragged.tab, dropped.destination.clone());
+                let (tab, destination) = (dropped.dragged.item, dropped.destination.clone());
                 workbench.move_tab_to(&source, tab, destination, window, cx);
             },
         );
@@ -674,14 +674,11 @@ impl Workbench {
     /// the active pane shows a tab, the new pane gets one for the same file,
     /// sharing its buffer.
     fn split(&mut self, direction: Direction, window: &mut Window, cx: &mut Context<Self>) {
-        let model = self
-            .active
-            .read(cx)
-            .active_editor()
-            .map(|editor| editor.read(cx).model().split());
+        let item = (self.active.read(cx).active_item()).map(ItemHandle::boxed_clone);
+        let split = item.and_then(|item| item.split(window, cx));
         let new = self.new_pane(direction, window, cx);
-        if let Some(model) = model {
-            new.update(cx, |pane, cx| pane.add(model, cx));
+        if let Some(split) = split {
+            new.update(cx, |pane, cx| pane.add_item(split, cx));
         }
         self.activate(new, window, cx);
         self.track_editors(cx);
@@ -752,17 +749,14 @@ impl Workbench {
     fn close_active_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let pane = self.active.clone();
         let unsaved = {
-            let pane = pane.read(cx);
-            pane.tabs().iter().find_map(|tab| {
-                let model = tab.editor.read(cx).model();
-                (model.is_dirty() && !pane.shown_in_peers(model, cx)).then(|| model.path())
+            let state = pane.read(cx).pane();
+            state.items().iter().find_map(|item| {
+                (item.is_dirty(cx) && !state.shown_in_peers(&**item, cx))
+                    .then(|| item.tab_title(cx))
             })
         };
-        if let Some(path) = unsaved {
-            log::warn!(
-                "not closing the pane: {} has unsaved changes",
-                file_name(path)
-            );
+        if let Some(title) = unsaved {
+            log::warn!("not closing the pane: {title} has unsaved changes");
             return;
         }
         self.close_pane(&pane, window, cx);

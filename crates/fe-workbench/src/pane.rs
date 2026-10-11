@@ -1,7 +1,10 @@
 //! The editor pane: a tab per open file, the active one's editor below.
+//! Its tabs, their strip and their drag and drop are kiln-shell's
+//! ([`PaneState`], whose items are the editors); opening files, revealing
+//! a place in them, and what shows while a file is read or failed to be,
+//! are fastedit's. [`Pane::tabs`] keeps a [`Tab`] per item in step.
 
 use std::{
-    cell::{Cell, RefCell},
     collections::HashMap,
     io,
     ops::Range,
@@ -20,15 +23,16 @@ use fe_ui::{
 use gpui::{
     App, AppContext as _, Bounds, Context, DragMoveEvent, Entity, EntityId, EventEmitter,
     FocusHandle, Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Pixels,
-    Point, Render, ScrollHandle, Styled as _, Subscription, Task, WeakEntity, Window, canvas, div,
+    Render, Styled as _, Task, Window, div,
 };
-use kiln_shell::{ItemHandle, ItemId};
+pub use kiln_shell::PaneEvent;
+use kiln_shell::{ItemHandle, ItemId, PaneState, PaneView};
 
 use crate::{
     find_bar::{self, FindBar, FindOp},
     loader,
     nav::Place,
-    pane_drag::{self, DraggedTab, DropTarget, DropZone, TabDropped, TabGhost},
+    pane_drag::{DraggedTab, TabDropped},
     pane_toolbar::{self, NavButtons, Toolbar, ToolbarRequest},
 };
 
@@ -36,18 +40,26 @@ use crate::{
 /// item's, the editor's.
 pub(crate) type TabId = ItemId;
 
-/// An open file. Its editor is the tab's [`PaneItem`](kiln_shell::PaneItem)
-/// ([`Tab::item`]), which the tab bar and the window's title read.
+/// An open file: the pane's item, its editor, as fastedit reads it. The
+/// editor is the tab's [`PaneItem`](kiln_shell::PaneItem) ([`Tab::item`]),
+/// which the tab strip and the window's title read.
+#[derive(Clone)]
 pub struct Tab {
     /// `None` for a buffer that was never saved, such as the welcome text.
     pub path: Option<PathBuf>,
     pub editor: Entity<EditorView>,
-    /// Re-renders (and retitles) the pane holding the tab whenever its
-    /// editor changes.
-    _changed: Subscription,
 }
 
 impl Tab {
+    /// The tab for `item`, an editor, its path as it is now.
+    fn of(item: &dyn ItemHandle, cx: &App) -> Self {
+        let editor = item
+            .downcast::<EditorView>()
+            .expect("fastedit's pane items are editors");
+        let path = editor.read(cx).model().path().map(Path::to_owned);
+        Self { path, editor }
+    }
+
     pub(crate) fn id(&self) -> TabId {
         self.item().id()
     }
@@ -60,19 +72,14 @@ impl Tab {
 
 /// Every pane of a workbench, each pane included, so a pane can see what
 /// the others show.
-pub(crate) type Peers = Rc<RefCell<Vec<WeakEntity<Pane>>>>;
-
-/// What a pane tells the workbench.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PaneEvent {
-    /// A mouse button went down in the pane, or a file it was reading
-    /// landed and took focus, so it's the active pane now.
-    Activated,
-}
+pub(crate) type Peers = kiln_shell::pane::Peers<Pane>;
 
 pub struct Pane {
+    /// The tabs' items, the active one, focus and layout: kiln-shell's.
+    state: PaneState<Pane>,
+    /// A tab per item, in the same order, kept in step as items come, go
+    /// and move.
     tabs: Vec<Tab>,
-    active: usize,
     /// The file opened last, while it's read: shown in the active tab's
     /// place until it lands.
     opening: Option<PathBuf>,
@@ -98,35 +105,17 @@ pub struct Pane {
     /// For editors yet to open.
     settings: EditorSettings,
     ui: UiTheme,
-    /// Focused when there's no editor, so the pane's commands still apply.
-    focus: FocusHandle,
-    tab_scroll: ScrollHandle,
-    /// Where the last frame laid the pane out.
-    bounds: Rc<Cell<Bounds<Pixels>>>,
-    /// Where it laid out the content below the tab bar.
-    content_bounds: Rc<Cell<Bounds<Pixels>>>,
-    /// Where it laid out the tab bar, left of its buttons.
-    tab_bar_bounds: Rc<Cell<Bounds<Pixels>>>,
-    /// Where a tab dragged over the pane would drop.
-    hover: Option<DropTarget>,
-    /// Where the last frame laid out the drop marker or overlay.
-    hint_bounds: Rc<Cell<Bounds<Pixels>>>,
-    /// The workbench's panes; a lone pane's has nothing in it.
-    peers: Peers,
-    id: EntityId,
-    /// Whether the pane's last tab closed: see [`Pane::take_emptied`].
-    emptied: bool,
     toolbar: Toolbar,
     /// Made by the first `find.show`.
     find: Option<FindBar>,
     /// The tab bar's buttons' laid-out bounds.
     #[cfg(test)]
-    actions: ScrollHandle,
+    actions: gpui::ScrollHandle,
     /// The crumbs the last frame drew: label, kind and icon.
     #[cfg(test)]
     drawn_crumbs: Vec<(String, CrumbKind, Option<Icon>)>,
     #[cfg(test)]
-    last_tooltip: Rc<RefCell<Option<String>>>,
+    last_tooltip: Rc<std::cell::RefCell<Option<String>>>,
 }
 
 impl Pane {
@@ -137,8 +126,8 @@ impl Pane {
         cx: &mut Context<Self>,
     ) -> Self {
         Self {
+            state: PaneState::new(ui, cx),
             tabs: Vec::new(),
-            active: 0,
             opening: None,
             reads: HashMap::new(),
             error: None,
@@ -150,20 +139,10 @@ impl Pane {
             theme,
             settings,
             ui,
-            focus: cx.focus_handle(),
-            tab_scroll: ScrollHandle::new(),
-            bounds: Rc::default(),
-            content_bounds: Rc::default(),
-            tab_bar_bounds: Rc::default(),
-            hover: None,
-            hint_bounds: Rc::default(),
-            peers: Peers::default(),
-            id: cx.entity_id(),
-            emptied: false,
             toolbar: Toolbar::default(),
             find: None,
             #[cfg(test)]
-            actions: ScrollHandle::new(),
+            actions: gpui::ScrollHandle::new(),
             #[cfg(test)]
             drawn_crumbs: Vec::new(),
             #[cfg(test)]
@@ -174,7 +153,7 @@ impl Pane {
     /// A pane like this one, empty, opening editors as it does.
     pub(crate) fn new_peer(&self, cx: &mut Context<Self>) -> Self {
         let mut pane = Self::new(self.theme.clone(), self.settings.clone(), self.ui, cx);
-        pane.peers = self.peers.clone();
+        pane.state.set_peers(self.state.peers().clone());
         pane
     }
 
@@ -194,25 +173,21 @@ impl Pane {
 
     /// Joins the workbench's panes, `peers`.
     pub(crate) fn set_peers(&mut self, peers: Peers) {
-        self.peers = peers;
+        self.state.set_peers(peers);
     }
 
     /// Where the last frame laid the pane out; zero-sized before that.
     pub fn bounds(&self) -> Bounds<Pixels> {
-        self.bounds.get()
+        self.state.bounds()
     }
 
     /// Whether the pane's last tab closed, and no file has opened in it
     /// since or is being read into it. Asking clears it once it's true.
     pub(crate) fn take_emptied(&mut self) -> bool {
-        if !self.tabs.is_empty() {
-            self.emptied = false;
+        if self.opening.is_some() && self.state.items().is_empty() {
+            return false;
         }
-        let emptied = self.emptied && self.opening.is_none();
-        if emptied {
-            self.emptied = false;
-        }
-        emptied
+        self.state.take_emptied()
     }
 
     /// Whether the pane is reading `path` to show it.
@@ -255,7 +230,7 @@ impl Pane {
 
     /// The active tab's index; `None` with no tabs.
     pub fn active(&self) -> Option<usize> {
-        (self.active < self.tabs.len()).then_some(self.active)
+        self.state.active()
     }
 
     /// The active tab's editor, unless a file being opened or a read error
@@ -264,7 +239,7 @@ impl Pane {
         if self.opening.is_some() || self.error.is_some() {
             return None;
         }
-        self.tabs.get(self.active).map(|tab| &tab.editor)
+        self.state.active_item()?.downcast_ref::<EditorView>()
     }
 
     /// The active tab's item, its editor, unless a file being opened or a
@@ -278,7 +253,7 @@ impl Pane {
     pub(crate) fn focus_target(&self, cx: &App) -> FocusHandle {
         match self.active_editor() {
             Some(editor) => editor.focus_handle(cx),
-            None => self.focus.clone(),
+            None => self.state.focus().clone(),
         }
     }
 
@@ -288,8 +263,8 @@ impl Pane {
         if let Some(path) = &self.opening {
             return format!("{} — loading", file_name(Some(path)));
         }
-        match self.tabs.get(self.active) {
-            Some(tab) => tab.item().window_title(cx).into(),
+        match self.state.active_item() {
+            Some(item) => item.window_title(cx).into(),
             None => "fastedit".into(),
         }
     }
@@ -297,11 +272,32 @@ impl Pane {
     /// Opens `model` in a new tab and shows it, without focusing it.
     pub fn add(&mut self, model: EditorModel, cx: &mut Context<Self>) {
         let editor = self.new_editor(model, cx);
-        self.push_tab(editor, cx);
-        self.active = self.tabs.len() - 1;
+        self.add_item(Box::new(editor), cx);
+    }
+
+    /// Opens `item`, an editor, in a new tab and shows it, without
+    /// focusing it.
+    pub(crate) fn add_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut Context<Self>) {
+        let ix = self.state.push(item, cx);
+        self.state.set_active(ix);
         self.error = None;
+        self.sync_tabs(cx);
         self.note_shown(cx);
         cx.notify();
+    }
+
+    /// A tab per item, reusing the tab of an item still open.
+    fn sync_tabs(&mut self, cx: &App) {
+        let old = std::mem::take(&mut self.tabs);
+        self.tabs = (self.state.items().iter())
+            .map(|item| {
+                let id = item.id();
+                old.iter()
+                    .find(|tab| tab.id() == id)
+                    .cloned()
+                    .unwrap_or_else(|| Tab::of(&**item, cx))
+            })
+            .collect();
     }
 
     /// Shows the tab for `path` if it's open; otherwise reads the file in the
@@ -331,9 +327,10 @@ impl Pane {
         }
         if let Some(model) = self.peer_model(&path, cx) {
             self.add(model, cx);
-            self.activate(self.tabs.len() - 1, window, cx);
+            let ix = self.tabs.len() - 1;
+            self.activate(ix, window, cx);
             if let Some(reveal) = reveal {
-                self.apply(&reveal, self.active, cx);
+                self.apply(&reveal, ix, cx);
             }
             return;
         }
@@ -341,7 +338,7 @@ impl Pane {
         self.opening = Some(path.clone());
         self.error = None;
         self.note_shown(cx);
-        window.focus(&self.focus, cx);
+        window.focus(self.state.focus(), cx);
         cx.notify();
         if self.reads.contains_key(&path) {
             return;
@@ -400,8 +397,9 @@ impl Pane {
                         EditorModel::new(buffer.unwrap_or_else(|| Buffer::new("")), Some(path))
                     });
                     let editor = self.new_editor(model, cx);
-                    self.push_tab(editor, cx);
-                    self.tabs.len() - 1
+                    let ix = self.state.push(Box::new(editor), cx);
+                    self.sync_tabs(cx);
+                    ix
                 });
                 if last || empty {
                     self.activate(ix, window, cx);
@@ -416,7 +414,7 @@ impl Pane {
                 if last {
                     let message = format!("Cannot open {}: {error}", path.display());
                     self.error = Some((path.clone(), message));
-                    window.focus(&self.focus, cx);
+                    window.focus(self.state.focus(), cx);
                     cx.emit(PaneEvent::Activated);
                 }
             }
@@ -470,31 +468,14 @@ impl Pane {
     /// Shows tab `ix` and focuses its editor. A file still being read then
     /// opens in a tab without being shown.
     pub fn activate(&mut self, ix: usize, window: &mut Window, cx: &mut App) {
-        let Some(tab) = self.tabs.get(ix) else {
-            return;
-        };
-        self.active = ix;
-        self.opening = None;
-        // A read this replaces opens without its reveal.
-        self.reveal = None;
-        self.error = None;
-        window.focus(&tab.editor.focus_handle(cx), cx);
-        self.note_shown(cx);
+        self.activate_item(ix, window, cx);
     }
 
     /// Activates the next tab, or with `back` the previous one, wrapping. A
     /// sole tab activates itself, so it too replaces a file being read or a
     /// read error.
     pub fn cycle(&mut self, back: bool, window: &mut Window, cx: &mut App) {
-        let count = self.tabs.len();
-        if count > 0 {
-            let ix = if back {
-                self.active + count - 1
-            } else {
-                self.active + 1
-            } % count;
-            self.activate(ix, window, cx);
-        }
+        self.cycle_items(back, window, cx);
     }
 
     /// Closes the active tab and activates its right neighbour, or the left
@@ -502,63 +483,12 @@ impl Pane {
     /// there are save prompts), unless another tab, in this pane or
     /// another, shows its buffer: the changes live on there.
     pub fn close_active(&mut self, window: &mut Window, cx: &mut App) {
-        let Some(tab) = self.tabs.get(self.active) else {
-            return;
-        };
-        let model = tab.editor.read(cx).model();
-        if model.is_dirty() && !self.shown_elsewhere(&tab.editor, cx) {
-            log::warn!(
-                "not closing {}: it has unsaved changes",
-                file_name(model.path())
-            );
-            return;
-        }
-        self.take(self.active, window, cx);
-    }
-
-    /// Removes tab `ix`, for a close or a move. If it was active, its right
-    /// neighbour is activated, or the left one if it was last. With none
-    /// left, the pane is focused and, unless a file is being read into it,
-    /// emptied.
-    pub(crate) fn take(&mut self, ix: usize, window: &mut Window, cx: &mut App) -> Option<Tab> {
-        if ix >= self.tabs.len() {
-            return None;
-        }
-        let tab = self.tabs.remove(ix);
-        if self.tabs.is_empty() {
-            self.active = 0;
-            self.error = None;
-            self.emptied = true;
-            window.focus(&self.focus, cx);
-        } else if ix == self.active {
-            self.error = None;
-            self.activate(self.active.min(self.tabs.len() - 1), window, cx);
-        } else if ix < self.active {
-            self.active -= 1;
-        }
-        self.note_shown(cx);
-        Some(tab)
-    }
-
-    /// Adds `tab`, moved from another pane, at `index` or else at the end,
-    /// and shows and focuses it.
-    pub(crate) fn insert(
-        &mut self,
-        tab: Tab,
-        index: Option<usize>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.push_tab(tab.editor, cx);
-        let tab = self.tabs.pop().expect("just pushed");
-        let ix = index.map_or(self.tabs.len(), |index| index.min(self.tabs.len()));
-        self.tabs.insert(ix, tab);
-        self.activate(ix, window, cx);
-        cx.notify();
+        self.close_active_item(window, cx);
     }
 
     /// Moves tab `ix` to before the tab now at `index`, or else to the end,
     /// and shows and focuses it.
+    #[cfg(test)]
     pub(crate) fn reorder(
         &mut self,
         ix: usize,
@@ -566,134 +496,18 @@ impl Pane {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let to = match index {
-            Some(index) if index > ix => index - 1,
-            Some(index) => index,
-            None => self.tabs.len() - 1,
-        };
-        let tab = self.tabs.remove(ix);
-        let to = to.min(self.tabs.len());
-        self.tabs.insert(to, tab);
-        self.activate(to, window, cx);
+        self.reorder_item(ix, index, window, cx);
         cx.notify();
-    }
-
-    /// Where a tab dragged to `at` would drop: in the tab bar, or on the
-    /// content area, by the last frame's layout.
-    fn drop_target(&self, at: Point<Pixels>) -> Option<DropTarget> {
-        if !self.bounds().contains(&at) {
-            return None;
-        }
-        let content = self.content_bounds.get();
-        if content.contains(&at) {
-            return Some(DropTarget::Content(DropZone::at(content, at)));
-        }
-        Some(DropTarget::TabBar(pane_drag::insertion(
-            &self.tab_layout(),
-            at.x,
-        )))
-    }
-
-    /// Where the last frame laid out each tab, scrolled as it shows.
-    fn tab_layout(&self) -> Vec<Bounds<Pixels>> {
-        let scrolled = self.tab_scroll.offset();
-        (0..self.tabs.len())
-            .map_while(|ix| self.tab_scroll.bounds_for_item(ix))
-            .map(|tab| Bounds::new(tab.origin + scrolled, tab.size))
-            .collect()
-    }
-
-    /// A tab dropped on the pane at `at`: the workbench moves it.
-    fn dropped(&mut self, dragged: &DraggedTab, at: Point<Pixels>, cx: &mut Context<Self>) {
-        self.hover = None;
-        cx.notify();
-        let Some(target) = self.drop_target(at) else {
-            return;
-        };
-        // A pane's only tab dropped on its own pane stays as it is.
-        let own = dragged.pane.entity_id() == self.id;
-        if own && self.tabs.len() == 1 && self.tabs[0].id() == dragged.tab {
-            return;
-        }
-        cx.emit(TabDropped {
-            dragged: dragged.clone(),
-            destination: target.destination(cx.entity()),
-        });
-    }
-
-    /// The drop marker in the tab bar, or the overlay on the content, for
-    /// where a hovering tab would drop.
-    fn drop_hint(&self) -> Option<gpui::AnyElement> {
-        let origin = self.bounds().origin;
-        let (hint, fill) = match self.hover? {
-            DropTarget::TabBar(index) => {
-                let bar = self.tab_bar_bounds.get();
-                let marker = pane_drag::marker(&self.tab_layout(), index, bar);
-                (marker, self.ui.drop_target)
-            }
-            DropTarget::Content(zone) => {
-                let overlay = zone.overlay(self.bounds(), self.content_bounds.get());
-                (overlay, self.ui.drop_target.opacity(0.2))
-            }
-        };
-        let element = div()
-            .absolute()
-            .left(hint.left() - origin.x)
-            .top(hint.top() - origin.y)
-            .w(hint.size.width)
-            .h(hint.size.height)
-            .bg(fill)
-            .child(record(&self.hint_bounds));
-        if !matches!(self.hover?, DropTarget::TabBar(_)) {
-            return Some(element.into_any_element());
-        }
-        // The marker is clipped to the tab bar, left of its buttons.
-        let clip = div()
-            .absolute()
-            .top_0()
-            .left_0()
-            .w(self.tab_bar_bounds.get().size.width)
-            .h(TAB_HEIGHT)
-            .overflow_hidden()
-            .child(element);
-        Some(clip.into_any_element())
-    }
-
-    /// Whether a tab other than `editor`'s, in this pane or another, shows
-    /// its buffer.
-    pub(crate) fn shown_elsewhere(&self, editor: &Entity<EditorView>, cx: &App) -> bool {
-        let model = editor.read(cx).model();
-        self.tabs.iter().any(|tab| {
-            tab.editor != *editor && tab.editor.read(cx).model().shares_buffer_with(model)
-        }) || self.shown_in_peers(model, cx)
-    }
-
-    /// Whether a tab in another pane shows `model`'s buffer.
-    pub(crate) fn shown_in_peers(&self, model: &EditorModel, cx: &App) -> bool {
-        self.peer_tabs(cx, |tab| {
-            tab.editor.read(cx).model().shares_buffer_with(model)
-        })
-        .is_some()
     }
 
     /// A model over the buffer of another pane's tab for `path`, if one has
     /// it open.
     fn peer_model(&self, path: &Path, cx: &App) -> Option<EditorModel> {
-        let editor = self.peer_tabs(cx, |tab| tab.path.as_deref() == Some(path))?;
+        let item = self
+            .state
+            .peer_item(cx, |item| item.path(cx).as_deref() == Some(path))?;
+        let editor = item.downcast::<EditorView>()?;
         Some(editor.read(cx).model().split())
-    }
-
-    /// The editor of the first tab in another pane that `pick`s it.
-    fn peer_tabs(&self, cx: &App, pick: impl Fn(&Tab) -> bool) -> Option<Entity<EditorView>> {
-        let peers = self.peers.borrow();
-        peers
-            .iter()
-            .filter(|peer| peer.entity_id() != self.id)
-            .filter_map(WeakEntity::upgrade)
-            .find_map(|peer| {
-                let tab = peer.read(cx).tabs.iter().find(|tab| pick(tab))?;
-                Some(tab.editor.clone())
-            })
     }
 
     /// Applies reloaded settings to the open editors and to editors yet to
@@ -723,16 +537,6 @@ impl Pane {
         }
         let theme = self.theme.clone();
         cx.new(|cx| EditorView::new(model, theme, cx))
-    }
-
-    fn push_tab(&mut self, editor: Entity<EditorView>, cx: &mut Context<Self>) {
-        let path = editor.read(cx).model().path().map(Path::to_owned);
-        let changed = cx.observe(&editor, |_, _, cx| cx.notify());
-        self.tabs.push(Tab {
-            path,
-            editor,
-            _changed: changed,
-        });
     }
 
     fn message(&self, text: String) -> gpui::AnyElement {
@@ -804,23 +608,23 @@ pub(crate) fn file_name(path: Option<&Path>) -> String {
 impl Pane {
     /// Where tab `ix` was laid out in the last frame.
     pub(crate) fn tab_bounds(&self, ix: usize) -> Option<gpui::Bounds<gpui::Pixels>> {
-        self.tab_scroll.bounds_for_item(ix)
+        self.state.tab_bounds(ix)
     }
 
     /// Scrolls the tab bar left by `by`.
     pub(crate) fn scroll_tabs(&self, by: Pixels) {
-        self.tab_scroll.set_offset(gpui::point(-by, gpui::px(0.)));
+        self.state.scroll_tabs(by);
     }
 
     /// Where the tab bar, left of its buttons, was laid out in the last
     /// frame.
     pub(crate) fn tab_bar_bounds(&self) -> Bounds<Pixels> {
-        self.tab_bar_bounds.get()
+        self.state.tab_bar_bounds()
     }
 
     /// Where the content below the tab bar was laid out in the last frame.
     pub(crate) fn content_bounds(&self) -> Bounds<Pixels> {
-        self.content_bounds.get()
+        self.state.content_bounds()
     }
 
     /// Where the tab bar's button `ix` (Split Right, Split Down, then "…")
@@ -840,14 +644,14 @@ impl Pane {
     }
 
     /// Where a hovering tab would drop.
-    pub(crate) fn hovered_drop(&self) -> Option<DropTarget> {
-        self.hover
+    pub(crate) fn hovered_drop(&self) -> Option<crate::pane_drag::DropTarget> {
+        self.state.hovered_drop()
     }
 
     /// Where the last frame laid out the drop marker or overlay, if one
     /// showed.
     pub(crate) fn drop_hint_bounds(&self) -> Option<Bounds<Pixels>> {
-        self.hover.map(|_| self.hint_bounds.get())
+        self.state.drop_hint_bounds()
     }
 }
 
@@ -859,73 +663,63 @@ impl EventEmitter<ToolbarRequest> for Pane {}
 
 impl Focusable for Pane {
     fn focus_handle(&self, _: &App) -> FocusHandle {
-        self.focus.clone()
+        self.state.focus().clone()
+    }
+}
+
+/// kiln-shell's pane operations, with fastedit's state kept in step: a
+/// tab shown replaces a file being read or a read error, and the tabs
+/// follow the items.
+impl PaneView for Pane {
+    fn pane(&self) -> &PaneState<Self> {
+        &self.state
+    }
+
+    fn pane_mut(&mut self) -> &mut PaneState<Self> {
+        &mut self.state
+    }
+
+    fn new_peer(&self, cx: &mut Context<Self>) -> Self {
+        Pane::new_peer(self, cx)
+    }
+
+    fn activated(&mut self, _: usize, _: &mut Window, cx: &mut App) {
+        self.opening = None;
+        // A read this replaces opens without its reveal.
+        self.reveal = None;
+        self.error = None;
+        self.note_shown(cx);
+    }
+
+    fn items_changed(&mut self, cx: &mut App) {
+        self.sync_tabs(cx);
+        if self.tabs.is_empty() {
+            self.error = None;
+        }
+        self.note_shown(cx);
     }
 }
 
 impl Render for Pane {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let dragging = cx.has_active_drag();
-        if !dragging {
-            self.hover = None;
-        }
-        let pane = cx.entity().downgrade();
-        let ui = self.ui;
-        let tabs = self.tabs.iter().enumerate().map(|(ix, tab)| {
-            let dirty = tab.item().is_dirty(cx);
-            let label = tab.item().tab_title(cx);
-            let dragged = DraggedTab {
-                pane: pane.clone(),
-                tab: tab.id(),
-            };
-            fe_ui::Tab::new(("tab", ix), label.clone(), &self.ui)
-                .dirty(dirty)
-                .on_drag(dragged, move |_, _, _, cx| {
-                    cx.new(|_| TabGhost(label.clone(), ui))
-                })
-                .on_drop(cx.listener(Self::on_drop))
-                .active(ix == self.active)
-                .on_click(cx.listener(move |pane, _, window, cx| {
-                    pane.activate(ix, window, cx);
-                    cx.notify();
-                }))
-                .on_close(cx.listener(move |pane, _, window, cx| {
-                    pane.activate(ix, window, cx);
-                    pane.close_active(window, cx);
-                    cx.notify();
-                }))
-        });
-        let tab_bar = TabBar::new("tabs", &self.ui)
-            .track_scroll(&self.tab_scroll)
-            .on_drop(cx.listener(Self::on_drop))
-            .children(tabs);
+        self.state.end_hover(cx);
+        let tab_bar = self.state.tab_bar(cx);
         let body = if let Some(path) = &self.opening {
             self.message(format!("Loading {}…", file_name(Some(path))))
         } else if let Some((_, error)) = &self.error {
             self.message(error.clone())
-        } else if let Some(tab) = self.tabs.get(self.active) {
+        } else if let Some(tab) = self.tabs.get(self.state.active().unwrap_or(usize::MAX)) {
             tab.editor.clone().into_any_element()
         } else {
             self.message("No open files".into())
         };
-        // Over the editor while dragging, so it takes drops before the
-        // editor's mouse handlers see them.
-        let drop_layer = dragging.then(|| {
-            div()
-                .absolute()
-                .top_0()
-                .left_0()
-                .size_full()
-                .on_drop(cx.listener(Self::on_drop))
-        });
+        let drop_layer = self.state.drop_layer(cx);
         div()
-            .track_focus(&self.focus)
+            .track_focus(self.state.focus())
             .capture_any_mouse_down(cx.listener(|_, _, _, cx| cx.emit(PaneEvent::Activated)))
             .on_drag_move(
                 cx.listener(|pane, event: &DragMoveEvent<DraggedTab>, _, cx| {
-                    let target = pane.drop_target(event.event.position);
-                    if target != pane.hover {
-                        pane.hover = target;
+                    if pane.state.drag_moved(event) {
                         cx.notify();
                     }
                 }),
@@ -937,7 +731,7 @@ impl Render for Pane {
             .flex()
             .flex_col()
             .bg(self.ui.background)
-            .child(record(&self.bounds))
+            .child(self.state.record_bounds())
             .on_action(cx.listener(Self::on_run_command))
             .child(self.tab_row(tab_bar, cx))
             .children(self.toolbar_row(cx))
@@ -947,11 +741,11 @@ impl Render for Pane {
                     .relative()
                     .flex_1()
                     .min_h_0()
-                    .child(record(&self.content_bounds))
+                    .child(self.state.record_content_bounds())
                     .child(body)
                     .children(drop_layer),
             )
-            .children(self.drop_hint())
+            .children(self.state.drop_hint())
     }
 }
 
@@ -1003,13 +797,14 @@ impl Pane {
 }
 
 impl Pane {
+    /// A tab dropped on one of the pane's rows: the workbench moves it.
     pub(crate) fn on_drop(
         &mut self,
         dragged: &DraggedTab,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.dropped(dragged, window.mouse_position(), cx);
+        self.state.dropped(dragged, window.mouse_position(), cx);
     }
 }
 
@@ -1057,14 +852,14 @@ impl Pane {
             .flex_none()
             .w_full()
             .h(TAB_HEIGHT)
-            .on_drop(cx.listener(Self::on_drop))
+            .on_drop(self.state.on_drop(cx))
             .child(
                 div()
                     .relative()
                     .flex_1()
                     .min_w_0()
                     .child(tab_bar)
-                    .child(record(&self.tab_bar_bounds)),
+                    .child(self.state.record_tab_bar_bounds()),
             )
             .child(strip)
     }
@@ -1111,7 +906,7 @@ impl Pane {
             .border_color(self.ui.border)
             .debug_selector(|| "pane-toolbar".into())
             // A tab dropped here goes where the marker in the tab bar says.
-            .on_drop(cx.listener(Self::on_drop))
+            .on_drop(self.state.on_drop(cx))
             .child(nav(back_button, back, "nav.back"))
             .child(nav(forward_button, forward, "nav.forward"))
             .child(Breadcrumbs::new(crumbs, &self.ui));
@@ -1145,7 +940,7 @@ impl Pane {
     fn crumbs(&self, cx: &mut Context<Self>) -> Vec<Crumb> {
         let path = match (&self.opening, &self.error) {
             (Some(path), _) | (None, Some((path, _))) => Some(Some(path.clone())),
-            (None, None) => self.tabs.get(self.active).map(|tab| tab.item().path(cx)),
+            (None, None) => self.state.active_item().map(|item| item.path(cx)),
         };
         let Some(path) = path else {
             return Vec::new();
@@ -1178,12 +973,12 @@ impl Pane {
                     }))
                 })
                 .collect();
-        if let Some(tab) = self.tabs.get(self.active)
+        if let Some(item) = self.state.active_item()
             && self.opening.is_none()
             && self.error.is_none()
         {
             let pane = cx.entity().downgrade();
-            crumbs.extend(tab.item().breadcrumbs(cx).into_iter().map(|mut crumb| {
+            crumbs.extend(item.breadcrumbs(cx).into_iter().map(|mut crumb| {
                 // Focus the item first, so focus goes back to it once a
                 // picker the click opens is dismissed.
                 crumb.on_click = crumb.on_click.map(|on_click| {
@@ -1230,14 +1025,4 @@ impl Pane {
         window.focus(&self.focus_target(cx), cx);
         cx.emit(request);
     }
-}
-
-/// Fills its parent, recording where it's laid out in `bounds`.
-fn record(bounds: &Rc<Cell<Bounds<Pixels>>>) -> impl IntoElement {
-    let bounds = bounds.clone();
-    canvas(move |laid_out, _, _| bounds.set(laid_out), |_, _, _, _| {})
-        .absolute()
-        .top_0()
-        .left_0()
-        .size_full()
 }
