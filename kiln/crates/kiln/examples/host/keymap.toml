@@ -1,0 +1,81 @@
+# The chat's keymap: one file for every platform. `secondary` is cmd on
+# macOS and ctrl elsewhere. The window's commands apply anywhere in its
+# root context, `chat`; sending only in a conversation.
+
+[[bindings]]
+keys = "secondary-n"
+command = "chat.new_conversation"
+context = "chat"
+
+[[bindings]]
+keys = "secondary-enter"
+command = "chat.send_message"
+context = "conversation"
+
+[[bindings]]
+keys = "secondary-w"
+command = "chat.close_conversation"
+context = "chat"
+
+[[bindings]]
+keys = "secondary-\\"
+command = "chat.split_right"
+context = "chat"
+
+[[bindings]]
+keys = "secondary-b"
+command = "chat.toggle_conversations"
+context = "chat"
+
+[[bindings]]
+keys = "secondary-shift-t"
+command = "chat.toggle_theme"
+context = "chat"
+
+# kiln-shell's command palette, which the shell handles.
+[[bindings]]
+keys = "secondary-shift-p"
+command = "command_palette.toggle"
+context = "chat"
+
+[[bindings]]
+keys = "secondary-q"
+command = "app.quit"
+
+# Opens the menu bar drawn in the window, as F10 does in GNOME and KDE
+# apps. macOS's menus are native.
+[[bindings]]
+keys = "f10"
+command = "menu_bar.open"
+platform = "!macos"
+
+# The palette's keys: kiln-shell's picker leaves them to the app.
+[[bindings]]
+keys = "up"
+command = "picker.select_prev"
+context = "picker"
+
+[[bindings]]
+keys = "down"
+command = "picker.select_next"
+context = "picker"
+
+[[bindings]]
+keys = "enter"
+command = "picker.confirm"
+context = "picker"
+
+[[bindings]]
+keys = "escape"
+command = "picker.dismiss"
+context = "picker"
+
+[[bindings]]
+keys = "backspace"
+command = "text_input.backspace"
+context = "text_input"
+
+[[bindings]]
+keys = { macos = "alt-backspace", default = "ctrl-backspace" }
+command = "text_input.delete_word_left"
+context = "text_input"

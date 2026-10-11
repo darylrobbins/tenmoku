@@ -1,0 +1,68 @@
+# The chat's menus: one table for every platform. The first menu is the
+# app menu on macOS; elsewhere it's the chat's own.
+
+[[menus]]
+name = "Kiln Chat"
+
+[[menus.items]]
+title = "Toggle Theme"
+command = "chat.toggle_theme"
+
+[[menus.items]]
+separator = true
+
+[[menus.items]]
+title = "Quit Kiln Chat"
+command = "app.quit"
+
+[[menus]]
+name = "Conversation"
+
+[[menus.items]]
+title = "New Conversation"
+command = "chat.new_conversation"
+
+[[menus.items]]
+title = "Send Message"
+command = "chat.send_message"
+
+[[menus.items]]
+separator = true
+
+[[menus.items]]
+title = "Close Conversation"
+command = "chat.close_conversation"
+
+[[menus]]
+name = "View"
+
+[[menus.items]]
+title = "Command Palette"
+command = "command_palette.toggle"
+
+[[menus.items]]
+title = "Conversations"
+command = "chat.toggle_conversations"
+
+[[menus.items]]
+separator = true
+
+[[menus.items]]
+title = "Split Right"
+command = "chat.split_right"
+
+[[menus.items]]
+title = "Split Down"
+command = "chat.split_down"
+
+[[menus]]
+name = "Window"
+
+[[menus.items]]
+title = "Minimize"
+command = "window.minimize"
+platform = "macos"
+
+[[menus.items]]
+title = "Close Window"
+command = "window.close"

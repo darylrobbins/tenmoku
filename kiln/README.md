@@ -154,6 +154,40 @@ its config directory (`~/.config/kiln-gallery` on Linux, or
 `$KILN_GALLERY_CONFIG_DIR`) and applies them as they're saved.
 `tests/gallery.rs` drives it headless.
 
+## The host example
+
+`crates/kiln/examples/host` is Kiln Chat, a small chat-like app that uses
+kiln-shell end to end, again with no code but kiln's. Its window is a
+`Shell` under the app's own root key context (`chat`): panes of
+conversations (a `PaneItem` with a message list and a `TextField`) that
+split and take tabs, a dock panel listing the conversations, a status bar
+with the app's item and the conversation's, the command palette, its own
+commands in its keymap and menus, and a close that asks while a message is
+unsent. Its layout and conversations are saved as they change and come
+back when it's opened again, and the message bubbles take their colour
+from a `[chat]` table in the user's theme file
+(`Config::theme_extensions`), or the accent's tint without one.
+
+```sh
+cargo run -p kiln --example host
+KILN_CHAT_THEME=dark cargo run -p kiln --example host   # or light, system
+```
+
+It reads `keymap.toml` and `theme.toml` from its config directory
+(`~/.config/kiln-chat` on Linux, or `$KILN_CHAT_CONFIG_DIR`) and keeps its
+layout in its state directory (`~/.local/state/kiln-chat`, or
+`$KILN_CHAT_STATE_DIR`). A theme file with its table:
+
+```toml
+kiln_theme = 1
+appearance = "dark"
+
+[chat]
+bubble = "#7a3e9d"
+```
+
+`tests/host.rs` drives it headless.
+
 ## Building and testing
 
 kiln is a Cargo workspace (`crates/*`), in edition 2024 with a minimum
