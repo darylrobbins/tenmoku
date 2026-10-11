@@ -11,7 +11,7 @@ use std::rc::Rc;
 
 use gpui::{Action, AnyWindowHandle, App, Global, SharedString, Window};
 use kiln_command::{
-    Actor, CommandId, CommandTarget, Dispatched, Effect, Invocation, Registry, Value,
+    Actor, CommandId, CommandMeta, CommandTarget, Dispatched, Effect, Invocation, Registry, Value,
 };
 use kiln_core::{CatalogError, CommandCatalog};
 
@@ -168,6 +168,14 @@ pub fn register_app_commands(cx: &mut App, f: impl FnOnce(&mut Registry<AppComma
     let mut registry = std::mem::take(&mut commands.app);
     f(Rc::get_mut(&mut registry).expect("the app registry isn't shared while registering"));
     commands.app = registry;
+}
+
+/// The app registry's commands (`app.quit` and the rest, and a host's own),
+/// for a palette to list.
+pub fn app_command_list(cx: &App) -> Vec<CommandMeta> {
+    cx.try_global::<Commands>()
+        .map(|commands| commands.app.commands().cloned().collect())
+        .unwrap_or_default()
 }
 
 /// The app's commands, to check bindings and menu items against: the app

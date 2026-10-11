@@ -184,3 +184,21 @@ after T275 (its F4 claims and F5 close transactions), except as follows.
   a window with two split views of one dirty file asks once.
 - `PaneItem::close_revision`'s default follows `is_dirty` alone;
   `EditorView`'s also follows its buffer's version.
+
+**Command palette (K5.8, §4.3).**
+
+- It's kiln-shell's `command_palette`: `Shell` handles
+  `command_palette.toggle` (a typed command) and shows a
+  `Picker<CommandPalette>` as the modal `command_palette`. Registries
+  aren't enumerable from a global, so it lists the app registry's commands
+  (`app.*`, `window.*`), every typed command, and what an app adds with
+  `command_palette::add_commands` (fastedit adds each of its registries'
+  `commands()`, the editor's and vim's), each once, by title. Commands
+  with args, and `command_palette.toggle` itself, are left out.
+- Keys are labelled with `kiln_core::shortcuts` and `shortcut_label`
+  (this platform's label rather than `macos_label` everywhere), looked up
+  as each row first draws.
+- fastedit binds it to secondary-shift-p in the `workbench` context, the
+  last binding of `fastedit.toml` (and of the per-platform files kept in
+  step with it), so the old table's order, which fe-gpui's keymap tests
+  zip against, is unchanged.

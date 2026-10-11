@@ -18,6 +18,7 @@ use kiln_ui::{ROW_HEIGHT, UiTheme};
 
 use crate::{
     Closing, DockPosition, MenuBarView, ModalId, ModalLayer, ModalView, TitleBar, close,
+    command_palette,
     menu_bar::Open,
     window_frame::{self, TopRow},
 };
@@ -43,7 +44,8 @@ type CenterFocus = Rc<dyn Fn(&App) -> FocusHandle>;
 /// Its root element sets the app's root key context, which the frame's
 /// buttons run their commands in as well: kiln names none of an app's
 /// contexts itself. It handles `menu_bar.open`, opening the in-window menu
-/// bar if it shows.
+/// bar if it shows, and `command_palette.toggle`, showing the command
+/// palette ([`command_palette`]) in its modal layer.
 ///
 /// Its modal layer gives focus to the centre when a modal that has it
 /// hides. The status bar is the host's own view, drawn in a row of
@@ -288,6 +290,20 @@ impl Shell {
         (self.modals.clone()).update(cx, |layer, cx| layer.dismiss_modal(window, cx));
     }
 
+    /// The colours it draws in.
+    pub fn ui(&self) -> &UiTheme {
+        &self.ui
+    }
+
+    fn toggle_command_palette(
+        &mut self,
+        _: &command_palette::Toggle,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        command_palette::toggle(self, window, cx);
+    }
+
     fn open_menu_bar(&mut self, _: &Open, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(bar) = &self.menu_bar {
             bar.update(cx, |bar, cx| bar.open(0, true, window, cx));
@@ -344,6 +360,7 @@ impl Render for Shell {
         div()
             .key_context(self.context.as_ref())
             .on_action(cx.listener(Self::open_menu_bar))
+            .on_action(cx.listener(Self::toggle_command_palette))
             .relative()
             .size_full()
             .flex()

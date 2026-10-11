@@ -105,6 +105,13 @@ an app's AI backend can load the same commands, config and keymaps.
   asked again before anything closes. Hosts give each window's items with
   `close::set_window_items`; `app.quit` and `window.close` go through the
   same transactions.
+- **The command palette** (`command_palette.toggle`, which `Shell`
+  handles) lists the commands that apply in the context stack focus was
+  in when it opened, with their keys: the app registry's, the typed ones,
+  and those an app adds from its own registries
+  (`command_palette::add_commands`), leaving out those with args. A pick
+  gives focus back and dispatches the command there, from
+  `Source::Palette`, in that context stack.
 - **Widgets.** Stateless ones are `RenderOnce` builders over a `Div`, so
   GPUI's `Styled`, `InteractiveElement` and `FluentBuilder` methods work on
   them; values are controlled. Stateful ones are `Entity<T>` views that emit

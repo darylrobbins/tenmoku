@@ -166,7 +166,9 @@ impl ModalLayer {
         let Some(active) = self.active.as_ref() else {
             return;
         };
-        let dismiss = active.dismiss.clone();
+        // Held while it's dismissed: the layer may have been all that
+        // kept it.
+        let (dismiss, _view) = (active.dismiss.clone(), active.view.clone());
         self.hide(cx);
         dismiss(window, cx);
     }

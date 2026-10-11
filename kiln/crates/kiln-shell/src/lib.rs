@@ -28,6 +28,7 @@
 //! ([`persist`]).
 
 pub mod close;
+pub mod command_palette;
 pub mod crumbs;
 pub mod dock;
 pub mod item;
@@ -73,21 +74,26 @@ pub fn init(cx: &mut App) {
     }
 }
 
-/// Records the shell's commands, such as `menu_bar.open`, so keymaps can
-/// bind them: `kiln::init` calls it before it checks the app's keymap. An
-/// app not set up through `kiln::init` calls it itself, before its keymap
-/// is checked. It also installs the picker's commands (`picker.*` and
+/// Records the shell's commands, such as `menu_bar.open` and
+/// `command_palette.toggle`, so keymaps can bind them: `kiln::init` calls
+/// it before it checks the app's keymap. An app not set up through
+/// `kiln::init` calls it itself, before its keymap is checked. It also installs the picker's commands (`picker.*` and
 /// `text_input.*`), which keymaps are checked against through
 /// [`catalog`].
 pub fn register(cx: &mut App) {
     menu_bar::register(cx);
+    command_palette::register(cx);
     picker::init(cx);
 }
 
 /// The shell's commands, to check keymap bindings against without an app:
-/// `menu_bar.open`, and the picker's.
+/// `menu_bar.open`, `command_palette.toggle`, and the picker's.
 pub fn catalog() -> Box<dyn CommandCatalog> {
-    Box::new(Catalog(vec![menu_bar::catalog(), picker::catalog()]))
+    Box::new(Catalog(vec![
+        menu_bar::catalog(),
+        command_palette::catalog(),
+        picker::catalog(),
+    ]))
 }
 
 /// Each catalog in turn, until one knows the command.
