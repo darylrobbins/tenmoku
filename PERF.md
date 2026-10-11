@@ -648,6 +648,30 @@ files, as project search is. The 6-char symbol query
 is four times the shorter ones because fuzzy matching a longer needle
 scores more candidates.
 
+### Language server answers: locations in unopened files
+
+`cargo test --release -p fe-lsp decode_cost -- --ignored --nocapture`. The
+fake server holds its reply on its own clock; each run's timer starts as the
+clock releases it and stops when the answer reaches the caller. The interval
+is the reply's serialisation, transport and parsing, then the decoding on the
+calling thread (a read of each file and the offset conversions); decoding
+dominates at these sizes. The references cases also wait on the companion
+definitions request, answered empty. Fastest and median of 10 runs, all files
+unopened in a temp dir. Measured on neon (Linux 7.0, Intel Xeon E-2386G
+@ 3.50 GHz), at commit `e8bf10c` plus the test; the other Navigation numbers
+are from the Mac, so compare orders of magnitude, not digits.
+
+| Case | Fastest | Median | Target |
+|---|---|---|---|
+| definitions: 50 locations in 50 files of 4 KB | 1.74 ms | 2.97 ms | 100 ms (go-to-def) |
+| references: 1,000 locations in 500 files of 4 KB | 23.9 ms | 37.0 ms | 703 ms (search references, complete) |
+| references: 1,000 locations in one 10 MB file | 21.4 ms | 31.1 ms | 703 ms |
+| references: 1,000 locations in one 10 MB non-ASCII file (UTF-16) | 24.9 ms | 40.5 ms | 703 ms |
+
+No case is over target: definitions are over 30 times inside 100 ms, and
+the references cases are over 15 times inside search's completion. No
+follow-up to file.
+
 ## M3 Browse sign-off
 
 The plan's M3 done-when is "Tree handles a 100k-file repo; finder and

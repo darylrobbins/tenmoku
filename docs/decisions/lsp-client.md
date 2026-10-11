@@ -2037,8 +2037,9 @@ would run its code once the workbench drives fe-lsp (T143).
 - **Whether async-lsp upstream would take a cancel-on-drop or
   request-id change** (§2.1, option b). Not asked.
 - **Cost of the cross-file offset conversion** for references in unopened
-  files. Each referenced file is loaded once per answer (§5). Not measured
-  against T108's budgets.
+  files. Each referenced file is loaded once per answer (§5). Measured
+  against T108's budgets: PERF.md, "Language server answers: locations in
+  unopened files". All cases are well inside them.
 - **The finished `PATH` resolution for Finder-launched apps** (§3.3). Noted,
   not designed.
 - **Windows and Linux.** Process groups, `SIGCHLD` chaining and `PATH`

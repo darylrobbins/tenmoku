@@ -4,6 +4,7 @@
 mod admission;
 mod cancel;
 mod completion;
+mod decode_cost;
 mod diagnostics;
 mod encoding;
 mod hover;

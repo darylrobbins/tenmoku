@@ -89,19 +89,19 @@ impl NavigationProvider for Counted {
 
 /// A project with [`MAIN`] open on the fake, and a [`Navigation`] holding
 /// search at 0 and the manager's [`LspNavigation`] at 100.
-struct Nav {
-    fake: FakeServer,
+pub(super) struct Nav {
+    pub(super) fake: FakeServer,
     clock: Arc<ManualClock>,
     /// The fake's clock, for its scripted delays.
-    fake_clock: Arc<ManualClock>,
+    pub(super) fake_clock: Arc<ManualClock>,
     manager: Arc<Mutex<LspManager>>,
-    events: Events,
-    server: ServerId,
-    navigation: Navigation,
-    lsp: Arc<LspNavigation>,
+    pub(super) events: Events,
+    pub(super) server: ServerId,
+    pub(super) navigation: Navigation,
+    pub(super) lsp: Arc<LspNavigation>,
     /// How often search was asked.
     searched: Arc<AtomicUsize>,
-    root: PathBuf,
+    pub(super) root: PathBuf,
     main: Buffer,
     _dir: TempDir,
 }
@@ -113,7 +113,7 @@ impl Nav {
 
     /// With the fake's `script`, and documents over `max_bytes` (if any)
     /// left unsynced.
-    fn with(readiness: ReadinessMode, script: Script, max_bytes: Option<usize>) -> Self {
+    pub(super) fn with(readiness: ReadinessMode, script: Script, max_bytes: Option<usize>) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let root = std::fs::canonicalize(dir.path()).unwrap();
         std::fs::create_dir(root.join("src")).unwrap();
@@ -185,7 +185,7 @@ impl Nav {
     }
 
     /// Sends a `serverStatus`, and returns once the client has read it.
-    fn status(&self, quiescent: bool) {
+    pub(super) fn status(&self, quiescent: bool) {
         self.fake
             .notify::<ServerStatusNotification>(ServerStatusParams {
                 health: "ok".into(),
@@ -211,17 +211,17 @@ impl Nav {
         }
     }
 
-    fn uri(&self, rel: &str) -> Url {
+    pub(super) fn uri(&self, rel: &str) -> Url {
         Url::from_file_path(self.root.join(rel)).unwrap()
     }
 
     /// A request with the caret on `helper` in `main`'s row 3, at its
     /// current version.
-    fn request(&self) -> NavRequest {
+    pub(super) fn request(&self) -> NavRequest {
         request(&self.root, &self.main)
     }
 
-    fn reply(&self, method: &str, value: Value) {
+    pub(super) fn reply(&self, method: &str, value: Value) {
         self.fake
             .set_reply(method, Scripted::now(Reply::Result(value)));
     }
@@ -277,14 +277,14 @@ fn request(root: &Path, main: &Buffer) -> NavRequest {
 }
 
 /// An LSP range on one row.
-fn range(row: u32, start: usize, end: usize) -> Value {
+pub(super) fn range(row: u32, start: usize, end: usize) -> Value {
     json!({
         "start": { "line": row, "character": start },
         "end": { "line": row, "character": end },
     })
 }
 
-fn location(uri: &Url, range: Value) -> Value {
+pub(super) fn location(uri: &Url, range: Value) -> Value {
     json!({ "uri": uri, "range": range })
 }
 
