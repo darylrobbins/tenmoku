@@ -13,14 +13,12 @@ use std::{
 use perf::Startup;
 
 use fe_buffer::Buffer;
-use fe_config::{Diagnostic, Settings, SettingsStore};
-use fe_gpui::{
-    EditorTheme,
-    fe_keymap::{self, KeymapStore},
-};
+use fe_config::{Settings, SettingsEvent, SettingsStore};
+use fe_gpui::{EditorTheme, fe_keymap};
 use fe_workbench::{Workbench, loader};
 use gpui::{App, AppContext as _, Focusable as _, WindowHandle};
-use kiln_platform::{Capabilities, WindowSpec, config::ConfigService, window_options};
+use kiln::{Config, GlobalSettings, ui::ThemeMode};
+use kiln_platform::{Capabilities, WindowSpec, window_options};
 
 /// The buffer a finished read produced: a missing file is a new one, which
 /// saving creates. The workbench shows an error in the tab's place.
@@ -61,41 +59,43 @@ fn open_in_background(
 /// the project's.
 fn load_settings(root: Option<&Path>) -> SettingsStore {
     let project = root.map(fe_config::project_settings_path);
-    let store = SettingsStore::load(fe_config::user_settings_path(), project);
-    log_diagnostics(store.diagnostics());
-    store
+    SettingsStore::load(fe_config::user_settings_path(), project)
 }
 
-fn log_diagnostics(diagnostics: &[Diagnostic]) {
-    for diagnostic in diagnostics {
-        if diagnostic.is_error() {
-            log::error!("{diagnostic}");
-        } else {
-            log::warn!("{diagnostic}");
-        }
-    }
-}
-
-/// The keymap store: the built-in keymap and the user's `keymap.toml`,
-/// checked against the workbench's, the editor's and the app's commands.
-fn load_keymap() -> KeymapStore {
-    let store = KeymapStore::load(
-        fe_keymap::DEFAULT,
-        fe_keymap::user_keymap_path(),
-        Some(fe_workbench::command_catalog()),
-    );
-    log_diagnostics(store.diagnostics());
-    store
-}
-
-/// Sets the built-in menu bar, checked against every command. Its
-/// shortcuts follow the keymap: hot reload reinstalls it.
-fn install_menus(cx: &mut App) {
-    let catalog = fe_workbench::command_catalog();
-    let (menus, diagnostics) = fe_keymap::default_menus(Some(&*catalog));
-    log_diagnostics(&diagnostics);
-    if let Some(menus) = menus {
-        fe_gpui::menu::install(cx, menus);
+/// What [`kiln::init`] sets up for fastedit, from its config paths (in the
+/// XDG layout, as they've always been):
+///
+/// - the editor's, vim's and the workbench's commands, with vim as the key
+///   owner ([`fe_gpui::init_with_keymap`]);
+/// - the built-in keymap with the user's `keymap.toml` over it, and the
+///   built-in menus, checked against those commands
+///   ([`fe_workbench::command_catalog`]), the menus' shortcuts resolved
+///   with an editor focused in the workbench;
+/// - `settings`, from the user's file and the project's (which may only
+///   turn language servers off), and the user's keymap, each watched and
+///   reloaded when it changes, the keymap's issues logged after a reload;
+/// - kiln's dark theme, which fastedit's chrome has always had.
+///
+/// Diagnostics and reloads are logged as fastedit's own.
+fn config(settings: SettingsStore) -> Config {
+    let app = fe_config::paths::app_id();
+    let config = Config::new(app.reverse_dns, app.display)
+        .log_target("fastedit")
+        .commands(|cx| {
+            // The keymap comes after, once every command is registered.
+            fe_gpui::init_with_keymap(cx, fe_keymap::Keymap::default());
+            fe_workbench::init(cx);
+        })
+        .catalog(fe_workbench::command_catalog())
+        .keymap(fe_keymap::DEFAULT_KEYMAP_PATH, fe_keymap::DEFAULT)
+        .on_keymap_reload(|cx| log_keymap_report(cx))
+        .menus(fe_keymap::menu::DEFAULT_MENUS_PATH, fe_keymap::MENUS)
+        .menu_shortcut_context(fe_keymap::MENU_SHORTCUT_CONTEXT)
+        .settings_store(settings.into_inner())
+        .theme_mode(ThemeMode::Dark);
+    match fe_keymap::user_keymap_path() {
+        Some(path) => config.user_keymap(path),
+        None => config,
     }
 }
 
@@ -106,48 +106,22 @@ fn log_keymap_report(cx: &App) {
     }
 }
 
-/// Watches the settings and keymap files with kiln's config service,
-/// applying each change on the main thread: settings to the window's
-/// editors, the keymap to key input. Diagnostics are logged when they
-/// change. The watcher's first batch names every file, so a save made since
-/// the stores loaded applies too.
-fn watch_config(
-    mut settings: SettingsStore,
-    mut keymap: KeymapStore,
-    window: WindowHandle<Workbench>,
-    cx: &mut App,
-) {
-    // The watcher skips a directory that's missing, so Settings… creating
-    // the user's file in a config directory made after launch wouldn't be
-    // seen until a restart.
-    if let Some(dir) = fe_config::config_dir()
-        && let Err(error) = std::fs::create_dir_all(&dir)
-    {
-        log::warn!("can't create {}: {error}", dir.display());
-    }
-    let paths = settings.paths().into_iter().chain(keymap.paths()).collect();
-    let service = ConfigService::new().on_change(paths, move |batch, cx| {
-        let previous = keymap.diagnostics().to_vec();
-        if let Some(event) = keymap.reload(batch) {
-            if event.diagnostics != previous {
-                log_diagnostics(&event.diagnostics);
-            }
-            if event.keymap != event.previous {
-                log::info!("keymap reloaded");
-                fe_gpui::set_user_keymap(cx, event.keymap);
-                log_keymap_report(cx);
-            }
-        }
-        let previous = settings.diagnostics().to_vec();
-        let Some(event) = settings.reload(batch) else {
+/// Applies each settings reload of kiln's config service to `window`: vim
+/// when the file changed it, then the workbench's editors, status bar and
+/// language servers. The service has logged the reload and its
+/// diagnostics.
+fn follow_settings(window: WindowHandle<Workbench>, cx: &mut App) {
+    cx.observe_global::<GlobalSettings<Settings>>(move |cx| {
+        let global = cx.global::<GlobalSettings<Settings>>();
+        // The settings as loaded, before any reload: nothing to apply.
+        if Arc::ptr_eq(global.settings(), global.previous()) {
             return;
+        }
+        let event = SettingsEvent {
+            settings: global.settings().clone(),
+            previous: global.previous().clone(),
+            diagnostics: global.diagnostics().to_vec(),
         };
-        if event.diagnostics != previous {
-            log_diagnostics(&event.diagnostics);
-        }
-        if *event.settings != *event.previous {
-            log::info!("settings reloaded");
-        }
         // Only when the file changed it, so that reloading anything else
         // keeps a Toggle Vim Mode.
         let vim = event.settings.vim.enabled;
@@ -158,12 +132,8 @@ fn watch_config(
         window
             .update(cx, |workbench, _, cx| workbench.reload_settings(&event, cx))
             .ok();
-    });
-    // Watching for as long as the app runs.
-    match service.start(cx) {
-        Ok(task) => task.detach(),
-        Err(error) => log::warn!("settings and keymap won't reload when changed: {error}"),
-    }
+    })
+    .detach();
 }
 
 /// Logs to stderr: warnings and errors, and fastedit's own info. `RUST_LOG`
@@ -215,14 +185,14 @@ fn main() {
     let reading = launch.file.take().map(|(path, _)| loader::start(path));
     let store = load_settings(launch.root.as_deref());
     let settings: Arc<Settings> = store.settings().clone();
-    let keymap = load_keymap();
 
-    let application = gpui_platform::application().with_assets(fe_ui::Assets);
+    let application = kiln::application();
     startup.platform = Some(Instant::now());
     application.run(move |cx: &mut App| {
         startup.app = Some(Instant::now());
-        fe_gpui::init_with_keymap(cx, keymap.keymap().clone());
-        fe_workbench::init(cx);
+        // Commands, keys, menus, in-window prompts where there are no
+        // native alerts, and the config files watched from here on.
+        kiln::init(cx, config(store));
         fe_gpui::set_vim_enabled(cx, settings.vim.enabled);
         fe_workbench::set_lsp_settings(cx, settings.lsp.clone());
         // Toggle Vim Mode and Toggle Status Bar save to the user's file,
@@ -235,10 +205,7 @@ fn main() {
         if let Some(path) = fe_config::paths::trust_path() {
             fe_workbench::set_trust_file(cx, path);
         }
-        install_menus(cx);
         log_keymap_report(cx);
-        // Prompts are drawn in the window where there are no native alerts.
-        kiln_shell::init(cx);
         let capabilities = Capabilities::current();
         cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {
@@ -312,9 +279,7 @@ fn main() {
                 None => {}
             }
         }
-        // Not before the window opens: watching isn't needed for the first
-        // frame.
-        watch_config(store, keymap, window, cx);
+        follow_settings(window, cx);
         cx.activate(true);
     });
 }

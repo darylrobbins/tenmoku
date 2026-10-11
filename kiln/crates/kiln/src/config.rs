@@ -10,7 +10,7 @@ use kiln_core::{
     Diagnostic,
     theme::{Appearance, ThemeData, ThemeFile},
 };
-use kiln_platform::config::ConfigSource;
+use kiln_platform::config::{ConfigSource, log_target};
 use kiln_ui::{GlobalTheme, Theme, ThemeMode, set_themes};
 
 /// The user's theme file ([`crate::Config::user_theme`]). Laid over the
@@ -108,7 +108,7 @@ impl ConfigSource for UserTheme {
 
     fn reload(&mut self, changed: &[PathBuf], cx: &mut App) {
         if changed.contains(&self.path) && self.read() {
-            log::info!("theme reloaded");
+            log::info!(target: log_target(cx), "theme reloaded");
             self.apply(cx);
         }
     }

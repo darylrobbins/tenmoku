@@ -1726,10 +1726,8 @@ dependencies = [
  "fe-gpui",
  "fe-workbench",
  "gpui-pre",
- "gpui-pre-platform",
+ "kiln",
  "kiln-platform",
- "kiln-shell",
- "kiln-ui",
  "libc",
  "log",
 ]

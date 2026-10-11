@@ -13,6 +13,7 @@ use std::{
 use gpui::TestAppContext;
 use kiln::{
     Config, GlobalSettings,
+    core::{Layer, ProjectFilter, SettingsOptions, SettingsStore},
     core::{Os, Severity},
     platform::{
         config::{self, BatchSender, batch_channel},
@@ -341,4 +342,70 @@ fn init_creates_the_user_config_directory(cx: &mut TestAppContext) {
         )
     });
     assert!(config_dir.is_dir());
+}
+
+#[gpui::test]
+fn a_settings_store_with_options_reloads_through_init(cx: &mut TestAppContext) {
+    let dir = TempDir::new();
+    let user = dir.path("settings.toml");
+    let project = dir.path("project.toml");
+    fs::write(&user, "font_size = 15\n").unwrap();
+    fs::write(&project, "font_size = 30\nwrap = false\n").unwrap();
+    // A project may set wrap, but not the font size.
+    let only_wrap = ProjectFilter::new("font_size", |layer: &mut Layer| {
+        layer.table.remove("font_size");
+    });
+    let options = SettingsOptions::new().project_filter(only_wrap);
+    let store = SettingsStore::<NotesSettings>::load_with(
+        Some(user.clone()),
+        Some(project.clone()),
+        options,
+    );
+    let reports = std::rc::Rc::new(std::cell::Cell::new(0));
+    let config = config()
+        .settings_store(store)
+        .log_target("notes")
+        .on_keymap_reload({
+            let reports = reports.clone();
+            move |_| reports.set(reports.get() + 1)
+        });
+    let sender = init(config, cx);
+    assert_eq!(
+        *cx.update(|cx| cx.settings::<NotesSettings>()),
+        NotesSettings {
+            font_size: 15.0,
+            wrap: false,
+        }
+    );
+    assert_eq!(cx.update(|cx| config::log_target(cx)), "notes");
+
+    save(&project, "font_size = 40\nwrap = true\n", &sender, cx);
+    assert_eq!(font_size(cx), 15.0, "still narrowed");
+    assert!(cx.update(|cx| cx.settings::<NotesSettings>().wrap));
+    assert_eq!(reports.get(), 0, "no keymap given, none reloaded");
+}
+
+#[gpui::test]
+fn on_keymap_reload_follows_each_keymap_change(cx: &mut TestAppContext) {
+    let dir = TempDir::new();
+    let user = dir.path("keymap.toml");
+    let reports = std::rc::Rc::new(std::cell::Cell::new(0));
+    let config = config().user_keymap(&user).on_keymap_reload({
+        let reports = reports.clone();
+        move |cx| {
+            // Once the keymap is in use.
+            let bound = keys::current_keymap(cx)
+                .bindings_for(&notes::NewNote::id())
+                .len();
+            reports.set(reports.get() + bound);
+        }
+    });
+    let sender = init(config, cx);
+    assert_eq!(reports.get(), 0);
+    let binding = "[[bindings]]\nkeys = \"secondary-shift-n\"\ncommand = \"notes.new_note\"\n";
+    save(&user, binding, &sender, cx);
+    assert_eq!(reports.get(), 2, "called once, with both bindings in use");
+    // The same file again swaps nothing.
+    save(&user, binding, &sender, cx);
+    assert_eq!(reports.get(), 2);
 }

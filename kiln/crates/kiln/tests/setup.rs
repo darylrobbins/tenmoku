@@ -318,3 +318,59 @@ fn window_options_carry_the_app_id(cx: &mut TestAppContext) {
         assert_eq!(options.app_id.as_deref(), Some("com.example.Other"));
     });
 }
+
+/// Commands a view runs from its own registry, which kiln doesn't hold.
+struct ViewCommands;
+
+impl kiln::core::CommandCatalog for ViewCommands {
+    fn check(
+        &self,
+        command: &CommandId,
+        _: &kiln::command::Value,
+    ) -> Result<(), kiln::core::CatalogError> {
+        if command.as_str() == "notes.edit" {
+            Ok(())
+        } else {
+            Err(kiln::core::CatalogError::UnknownCommand)
+        }
+    }
+}
+
+#[gpui::test]
+fn init_checks_the_apps_own_catalogs_and_resolves_menu_shortcuts_in_its_context(
+    cx: &mut TestAppContext,
+) {
+    let keymap = format!(
+        "{KEYMAP}\n[[bindings]]\nkeys = \"secondary-e\"\ncommand = \"notes.edit\"\ncontext = \"notes\"\n"
+    );
+    let menus = format!("{MENUS}\n[[menus.items]]\ntitle = \"Edit\"\ncommand = \"notes.edit\"\n");
+    let config = Config::new("com.example.Notes", "Notes")
+        .commands(notes::register)
+        .catalog(ViewCommands)
+        .keymap("keymap.toml", keymap.clone())
+        .menus("menus.toml", menus.clone())
+        .menu_shortcut_context(["notes"]);
+    let diagnostics = cx.update(|cx| kiln::init(cx, config));
+    assert_eq!(diagnostics, [], "the catalog knows notes.edit");
+    cx.update(|cx| {
+        let keymap = keys::current_keymap(cx);
+        assert_eq!(keymap.bindings_for(&id("notes.edit")).len(), 1);
+        let installed = menus::installed(cx).unwrap();
+        let shortcuts: Vec<_> = installed.menus[0]
+            .items
+            .iter()
+            .filter_map(|item| item.command())
+            .map(|item| item.shortcut(&keymap).is_some())
+            .collect();
+        assert_eq!(shortcuts, [true, true], "notes.edit's, in [notes]");
+    });
+
+    // Without them, the binding and the item are dropped as unknown.
+    let config = Config::new("com.example.Notes", "Notes")
+        .commands(notes::register)
+        .keymap("keymap.toml", keymap)
+        .menus("menus.toml", menus);
+    let diagnostics = cx.update(|cx| kiln::init(cx, config));
+    assert_eq!(diagnostics.len(), 2, "{diagnostics:?}");
+    assert!(diagnostics.iter().all(|d| d.message.contains("notes.edit")));
+}

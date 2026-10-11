@@ -24,7 +24,9 @@
 //! theme file, is the app's own source ([`ConfigService::source`],
 //! [`ConfigService::on_change`]). Every source's diagnostics are logged
 //! when they change, errors at `error` and the rest at `warn`, and the app
-//! reads them all with [`diagnostics`].
+//! reads them all with [`diagnostics`]. They and the reloads' `info` lines
+//! go under this module's log target, or the app's
+//! ([`ConfigService::log_target`]).
 
 use std::{
     collections::VecDeque,
@@ -37,6 +39,24 @@ use std::{
 
 use gpui::{App, Global, Task};
 use kiln_core::{ConfigWatcher, Diagnostic, KeymapStore, SettingsStore, SettingsType};
+
+/// The log target the service logs under unless the app names its own:
+/// `kiln_platform::config`.
+pub const DEFAULT_LOG_TARGET: &str = module_path!();
+
+/// The target the service logs under, as a GPUI global.
+struct LogTarget(&'static str);
+
+impl Global for LogTarget {}
+
+/// The log target the config service logs its diagnostics and reloads
+/// under: the app's, if it named one ([`ConfigService::log_target`]),
+/// once the service has started. A [`ConfigSource`] logging what it
+/// reloaded logs under it too.
+pub fn log_target(cx: &App) -> &'static str {
+    cx.try_global::<LogTarget>()
+        .map_or(DEFAULT_LOG_TARGET, |target| target.0)
+}
 
 use crate::keys;
 
@@ -120,11 +140,16 @@ pub fn diagnostics(cx: &App) -> &[Diagnostic] {
 
 /// Logs `diagnostics`: errors at `error`, the rest at `warn`.
 pub fn log_diagnostics(diagnostics: &[Diagnostic]) {
+    log_diagnostics_as(DEFAULT_LOG_TARGET, diagnostics);
+}
+
+/// Logs `diagnostics` as [`log_diagnostics`] does, under `target`.
+pub fn log_diagnostics_as(target: &str, diagnostics: &[Diagnostic]) {
     for diagnostic in diagnostics {
         if diagnostic.is_error() {
-            log::error!("{diagnostic}");
+            log::error!(target: target, "{diagnostic}");
         } else {
-            log::warn!("{diagnostic}");
+            log::warn!(target: target, "{diagnostic}");
         }
     }
 }
@@ -134,6 +159,7 @@ pub fn log_diagnostics(diagnostics: &[Diagnostic]) {
 pub struct ConfigService {
     sources: Vec<Box<dyn ConfigSource>>,
     dirs: Vec<PathBuf>,
+    log_target: Option<&'static str>,
 }
 
 impl ConfigService {
@@ -153,7 +179,25 @@ impl ConfigService {
     /// reload that changes it goes to [`keys::set_keymap`], which also
     /// reinstalls the menus with their new shortcuts.
     pub fn keymap(self, store: KeymapStore) -> Self {
-        self.source(KeymapSource { store })
+        self.keymap_with(store, |_| {})
+    }
+
+    /// [`ConfigService::keymap`], calling `reloaded` after each reload
+    /// that swaps the keymap, once it's in use: to report on the new
+    /// keymap, say.
+    pub fn keymap_with(self, store: KeymapStore, reloaded: impl FnMut(&mut App) + 'static) -> Self {
+        self.source(KeymapSource {
+            store,
+            reloaded: Box::new(reloaded),
+        })
+    }
+
+    /// Logs diagnostics and reloads under `target`, such as the app's
+    /// crate name, instead of this module's, so the app's logger treats
+    /// them as its own: see [`log_target`].
+    pub fn log_target(mut self, target: &'static str) -> Self {
+        self.log_target = Some(target);
+        self
     }
 
     /// Any other kind of file.
@@ -241,6 +285,9 @@ impl ConfigService {
     }
 
     fn install(&mut self, cx: &mut App) {
+        if let Some(target) = self.log_target {
+            cx.set_global(LogTarget(target));
+        }
         for source in &mut self.sources {
             source.install(cx);
         }
@@ -269,7 +316,7 @@ fn apply(sources: &mut [Box<dyn ConfigSource>], batch: &[PathBuf], cx: &mut App)
         source.reload(batch, cx);
         let diagnostics = source.diagnostics();
         if diagnostics != previous {
-            log_diagnostics(&diagnostics);
+            log_diagnostics_as(log_target(cx), &diagnostics);
             changed = true;
         }
     }
@@ -311,7 +358,7 @@ impl<S: SettingsType> ConfigSource for SettingsSource<S> {
         };
         let refresh = event.settings != event.previous;
         if refresh {
-            log::info!("settings reloaded");
+            log::info!(target: log_target(cx), "settings reloaded");
         }
         cx.set_global(GlobalSettings {
             settings: event.settings,
@@ -330,6 +377,7 @@ impl<S: SettingsType> ConfigSource for SettingsSource<S> {
 
 struct KeymapSource {
     store: KeymapStore,
+    reloaded: Box<dyn FnMut(&mut App)>,
 }
 
 impl ConfigSource for KeymapSource {
@@ -350,8 +398,9 @@ impl ConfigSource for KeymapSource {
             return;
         };
         if event.keymap != event.previous {
-            log::info!("keymap reloaded");
+            log::info!(target: log_target(cx), "keymap reloaded");
             keys::set_keymap(cx, event.keymap);
+            (self.reloaded)(cx);
         }
     }
 

@@ -38,13 +38,17 @@
 use std::{borrow::Cow, path::PathBuf, rc::Rc};
 
 use gpui::{App, Global, SharedString, Task, WindowOptions};
+use kiln_command::{CommandId, Value};
 use kiln_core::{
-    CommandCatalog, Diagnostic, Keymap, KeymapLayer, KeymapStore, MenuBar, Os, SettingsStore,
-    SettingsType, load_keymap_layer,
+    CatalogError, CommandCatalog, Diagnostic, Keymap, KeymapLayer, KeymapStore, MenuBar, Os,
+    SettingsStore, SettingsType, load_keymap_layer,
 };
 use kiln_platform::{
     Capabilities, WindowSpec, commands,
-    config::{Batches, ConfigService, ConfigSource as _, batch_channel, log_diagnostics},
+    config::{
+        Batches, ConfigService, ConfigSource as _, DEFAULT_LOG_TARGET, batch_channel,
+        log_diagnostics_as,
+    },
     keys, menus,
 };
 use kiln_ui::{Assets, TextField, Theme, ThemeMode, set_themes};
@@ -66,8 +70,26 @@ struct Source {
 
 type Register = Box<dyn FnOnce(&mut App)>;
 
+/// Called with the app after something changed.
+type Hook = Box<dyn FnMut(&mut App)>;
+
 /// Adds a settings store to the service, returning its diagnostics.
 type AddSettings = Box<dyn FnOnce(ConfigService) -> (ConfigService, Vec<Diagnostic>)>;
+
+/// Each catalog in turn, until one knows the command.
+struct Catalogs(Vec<Rc<dyn CommandCatalog>>);
+
+impl CommandCatalog for Catalogs {
+    fn check(&self, command: &CommandId, args: &Value) -> Result<(), CatalogError> {
+        for catalog in &self.0 {
+            match catalog.check(command, args) {
+                Err(CatalogError::UnknownCommand) => {}
+                result => return result,
+            }
+        }
+        Err(CatalogError::UnknownCommand)
+    }
+}
 
 /// What [`init`] sets up: the app's identity, its typed commands, its one
 /// keymap and one menu table, the theme mode it starts in, and the user's
@@ -76,13 +98,17 @@ pub struct Config {
     app_id: String,
     app_name: SharedString,
     commands: Vec<Register>,
+    catalogs: Vec<Rc<dyn CommandCatalog>>,
     keymap: Option<Source>,
     user_keymap: Option<PathBuf>,
+    keymap_reloaded: Option<Hook>,
     menus: Option<Source>,
+    menu_shortcut_context: Vec<String>,
     theme_mode: ThemeMode,
     settings: Vec<AddSettings>,
     user_theme: Option<PathBuf>,
     batches: Option<Batches>,
+    log_target: Option<&'static str>,
 }
 
 impl Config {
@@ -96,13 +122,17 @@ impl Config {
             app_id: app_id.into(),
             app_name: app_name.into(),
             commands: Vec::new(),
+            catalogs: Vec::new(),
             keymap: None,
             user_keymap: None,
+            keymap_reloaded: None,
             menus: None,
+            menu_shortcut_context: Vec::new(),
             theme_mode: ThemeMode::System,
             settings: Vec::new(),
             user_theme: None,
             batches: None,
+            log_target: None,
         }
     }
 
@@ -111,6 +141,16 @@ impl Config {
     /// Each call adds one, run in order.
     pub fn commands(mut self, register: impl FnOnce(&mut App) + 'static) -> Self {
         self.commands.push(Box::new(register));
+        self
+    }
+
+    /// Commands kiln's registries don't hold, that the keymap and menus may
+    /// name too: those an app's views run from their own registries when a
+    /// [`kiln_platform::commands::RunCommand`] reaches them. [`init`]
+    /// checks bindings and menu items against kiln's commands and the
+    /// app's typed ones first, then each of these in turn.
+    pub fn catalog(mut self, catalog: impl CommandCatalog + 'static) -> Self {
+        self.catalogs.push(Rc::new(catalog));
         self
     }
 
@@ -137,6 +177,14 @@ impl Config {
         self
     }
 
+    /// Calls `reloaded` after each reload of the user's keymap that
+    /// changes the keymap in use, once it's installed and the menus show
+    /// its shortcuts: to report on it, say.
+    pub fn on_keymap_reload(mut self, reloaded: impl FnMut(&mut App) + 'static) -> Self {
+        self.keymap_reloaded = Some(Box::new(reloaded));
+        self
+    }
+
     /// The app's settings, of its own type `S`: the user's file, then the
     /// project's, over `S::default()`, either file absent or missing, and
     /// reloaded when they change. Read them with `cx.settings::<S>()`
@@ -145,12 +193,19 @@ impl Config {
     /// keeps its last good version. Each type is its own store: call it
     /// once for each.
     pub fn settings<S: SettingsType>(
-        mut self,
+        self,
         user: Option<PathBuf>,
         project: Option<PathBuf>,
     ) -> Self {
+        self.settings_store(SettingsStore::<S>::load(user, project))
+    }
+
+    /// The app's settings, of its own type `S`, as [`Config::settings`]
+    /// has them, from a store the app has loaded: one with a schema or a
+    /// project filter ([`kiln_core::SettingsStore::load_with`]), or whose
+    /// settings it read before `init`.
+    pub fn settings_store<S: SettingsType>(mut self, store: SettingsStore<S>) -> Self {
         self.settings.push(Box::new(move |service| {
-            let store = SettingsStore::<S>::load(user, project);
             let diagnostics = store.diagnostics().to_vec();
             (service.settings(store), diagnostics)
         }));
@@ -175,6 +230,15 @@ impl Config {
         self
     }
 
+    /// Logs the config's diagnostics and reloads under `target`, such as
+    /// the app's crate name, so the app's logger treats them as its own:
+    /// see [`kiln_platform::config::log_target`]. Unset, they're logged
+    /// under `kiln_platform::config`.
+    pub fn log_target(mut self, target: &'static str) -> Self {
+        self.log_target = Some(target);
+        self
+    }
+
     /// The app's menus: `source` is its TOML table, one for every platform
     /// (see [`MenuBar::parse_for`]), and `path` the name its diagnostics
     /// give it.
@@ -183,6 +247,18 @@ impl Config {
             path: path.into(),
             text: source.into(),
         });
+        self
+    }
+
+    /// The frames a menu item's shortcut is resolved in when it names no
+    /// `shortcut_context` of its own: those the app's main view usually
+    /// has, such as `["main", "editor"]`, so a binding limited to them
+    /// shows in the menus (see [`MenuBar::parse_in`]). None unless set.
+    pub fn menu_shortcut_context<T: Into<String>>(
+        mut self,
+        frames: impl IntoIterator<Item = T>,
+    ) -> Self {
+        self.menu_shortcut_context = frames.into_iter().map(Into::into).collect();
         self
     }
 
@@ -231,7 +307,8 @@ impl Config {
     }
 
     /// The menu bar as on `os`, its items checked against `catalog` if
-    /// given; empty without a table, or with errors in it.
+    /// given, their shortcuts resolved in [`Config::menu_shortcut_context`];
+    /// empty without a table, or with errors in it.
     pub fn menu_bar_for(
         &self,
         os: Os,
@@ -240,7 +317,13 @@ impl Config {
         let Some(source) = &self.menus else {
             return (MenuBar::default(), Vec::new());
         };
-        let (bar, diagnostics) = MenuBar::parse_for(&source.path, &source.text, catalog, os);
+        let frames: Vec<&str> = self
+            .menu_shortcut_context
+            .iter()
+            .map(String::as_str)
+            .collect();
+        let (bar, diagnostics) =
+            MenuBar::parse_in(&source.path, &source.text, catalog, os, &frames);
         (bar.unwrap_or_default(), diagnostics)
     }
 }
@@ -267,7 +350,8 @@ impl Global for Watching {}
 ///    [`crate::window`];
 /// 2. the app's own commands, from [`Config::commands`];
 /// 3. the keymap and menus, parsed for this platform and checked against
-///    every command registered so far, then installed;
+///    every command registered so far, and the app's own catalogs
+///    ([`Config::catalog`]), then installed;
 /// 4. in-window prompts where the platform has no native ones, and
 ///    `TextField`'s editing keys for this platform;
 /// 5. kiln's dark and light themes, in [`Config::theme_mode`];
@@ -290,7 +374,11 @@ pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
     });
 
     let os = Os::current();
-    let catalog = commands::catalog(cx);
+    let mut catalog = commands::catalog(cx);
+    let more = std::mem::take(&mut config.catalogs);
+    if !more.is_empty() {
+        catalog = Rc::new(Catalogs(std::iter::once(catalog).chain(more).collect()));
+    }
     let keymap = config.keymap_store(os, catalog.clone());
     let mut diagnostics = keymap.diagnostics().to_vec();
     keys::init(cx, keymap.keymap().clone());
@@ -302,7 +390,13 @@ pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
     cx.bind_keys(TextField::key_bindings(os == Os::MacOs));
     set_themes(cx, config.theme_mode, Theme::dark(), Theme::light());
 
-    let mut service = ConfigService::new().keymap(keymap);
+    let mut service = match config.keymap_reloaded.take() {
+        Some(reloaded) => ConfigService::new().keymap_with(keymap, reloaded),
+        None => ConfigService::new().keymap(keymap),
+    };
+    if let Some(target) = config.log_target {
+        service = service.log_target(target);
+    }
     for add in std::mem::take(&mut config.settings) {
         let found;
         (service, found) = add(service);
@@ -313,7 +407,8 @@ pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
         diagnostics.extend(theme.diagnostics());
         service = service.source(theme);
     }
-    log_diagnostics(&diagnostics);
+    let target = config.log_target.unwrap_or(DEFAULT_LOG_TARGET);
+    log_diagnostics_as(target, &diagnostics);
     let task = match config.batches.take() {
         Some(batches) => service.start_with(batches, cx),
         None if service.paths().is_empty() => {
