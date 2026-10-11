@@ -128,28 +128,29 @@ fn next_star_and_highlight() {
     vim.feed("#").unwrap();
     assert_eq!(vim.cursor(), (0, 0));
 
-    // An invalid pattern replaces the last search and its highlight; a
+    // An invalid pattern leaves the last search and its highlight; a
     // search that stays put still notifies the host.
     let mut vim = HeadlessVim::new("foo bar", (0, 0));
     vim.feed("/foo<CR>/a\\(<CR>").unwrap();
-    assert_eq!(vim.registers().last_search(), Some(("a\\(", true)));
-    assert!(vim.state().highlight().is_none());
+    assert_eq!(vim.registers().last_search(), Some(("foo", true)));
+    assert!(vim.state().highlight().is_some());
     let mut vim = HeadlessVim::new("foo bar", (0, 0));
     vim.feed("*").unwrap();
     assert!(vim.state().highlight().is_some());
 
     // A failed repeat keeps the direction too: `N` doesn't flip it.
     let mut vim = HeadlessVim::new("foo bar foo", (0, 0));
-    vim.feed("?a\\(<CR>").unwrap();
+    vim.feed("?zzz<CR>").unwrap();
     vim.feed("N").unwrap();
     vim.feed("NdN").unwrap();
-    assert_eq!(vim.registers().last_search(), Some(("a\\(", false)));
+    assert_eq!(vim.registers().last_search(), Some(("zzz", false)));
     vim.feed("v").unwrap();
     vim.feed("N<Esc>").unwrap();
-    assert_eq!(vim.registers().last_search(), Some(("a\\(", false)));
+    assert_eq!(vim.registers().last_search(), Some(("zzz", false)));
+    // With only an invalid pattern, there's no last search to repeat.
     let mut vim = HeadlessVim::new("foo bar foo", (0, 0));
     vim.feed("/a\\(<CR>NN").unwrap();
-    assert_eq!(vim.registers().last_search(), Some(("a\\(", true)));
+    assert_eq!(vim.registers().last_search(), None);
 
     // A yank that stays put still notifies the host.
     let mut vim = HeadlessVim::new("foo x", (0, 0));

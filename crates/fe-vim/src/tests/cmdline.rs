@@ -126,3 +126,51 @@ fn line_mode_and_routing() {
         Err(DispatchError::NotInContext { .. })
     ));
 }
+
+/// Opening the line through the command leaves nothing pending: only the
+/// line's args own the count and register.
+#[test]
+fn opening_the_line_clears_pending_input() {
+    let open = |vim: &HeadlessVim, args: serde_json::Value| {
+        Invocation::of("vim.command_line")
+            .unwrap()
+            .args(args)
+            .context(context(vim.state()))
+    };
+    for submit in [false, true] {
+        let mut vim = HeadlessVim::new("abcdef\nxyz", (0, 0));
+        vim.feed("2\"a").unwrap();
+        vim.dispatch(&open(
+            &vim,
+            json!({"kind": "search_forward", "count": 2, "register": "a"}),
+        ))
+        .unwrap();
+        assert!(vim.state().pending().kind().is_none());
+        assert!(vim.state().pending().only_count_or_register());
+        if submit {
+            vim.feed("zzz<CR>").unwrap();
+        } else {
+            vim.feed("<Esc>").unwrap();
+        }
+        assert_eq!(vim.mode(), "normal");
+        vim.feed("x").unwrap();
+        assert_eq!(vim.text(), "bcdef\nxyz", "submit: {submit}");
+        assert!(vim.registers().get('a').is_none(), "submit: {submit}");
+    }
+}
+
+/// A line over a visual mode keeps its cursor and anchor readable.
+#[test]
+fn a_line_over_visual_keeps_its_ends() {
+    let mut vim = HeadlessVim::new("abc xyz", (0, 1));
+    vim.feed("vl").unwrap();
+    assert_eq!((vim.cursor(), vim.visual_anchor()), ((0, 2), Some((0, 1))));
+    vim.feed("/").unwrap();
+    assert_eq!(vim.mode(), "cmdline");
+    assert_eq!((vim.cursor(), vim.visual_anchor()), ((0, 2), Some((0, 1))));
+    vim.sync_visual();
+    assert_eq!(vim.mode(), "cmdline");
+    vim.feed("<Esc>").unwrap();
+    assert_eq!(vim.mode(), "visual");
+    assert_eq!((vim.cursor(), vim.visual_anchor()), ((0, 2), Some((0, 1))));
+}

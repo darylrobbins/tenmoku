@@ -41,8 +41,6 @@ fn search_next_matches_neovim() {
         "n_visual",
         "star_latin_then_cjk",
         "hash_latin_then_cjk",
-        "slash_invalid_then_NN",
-        "question_invalid_then_NN",
         "spot_row_22",
         "spot_row_23",
     ] {

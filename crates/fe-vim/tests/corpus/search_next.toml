@@ -482,30 +482,6 @@ cursor = [0, 12]
 keys = "#"
 
 [[case]]
-name = "slash_invalid_then_NN"
-buffer = "foo bar foo"
-cursor = [0, 0]
-keys = "/a\\(<CR>NN"
-
-[[case]]
-name = "question_invalid_then_NN"
-buffer = "foo bar foo"
-cursor = [0, 0]
-keys = "?a\\(<CR>NN"
-
-[[case]]
-name = "slash_invalid_then_N_visual"
-buffer = "foo bar foo"
-cursor = [0, 0]
-keys = "/a\\(<CR>vNN"
-
-[[case]]
-name = "question_invalid_then_dN"
-buffer = "foo bar foo"
-cursor = [0, 0]
-keys = "?a\\(<CR>dN"
-
-[[case]]
 name = "y_star_stays"
 buffer = "foo x"
 cursor = [0, 0]

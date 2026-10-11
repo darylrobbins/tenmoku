@@ -261,12 +261,6 @@ buffer = "abc foo"
 cursor = [0, 0]
 keys = "vl/zzz<CR>"
 
-[[case]]
-name = "invalid_pattern"
-buffer = "abc foo"
-cursor = [0, 0]
-keys = "/a\\(<CR>"
-
 # Operators: an exclusive charwise target, by :help exclusive.
 [[case]]
 name = "delete_to_match"

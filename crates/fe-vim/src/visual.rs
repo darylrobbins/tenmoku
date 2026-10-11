@@ -228,6 +228,24 @@ fn ends(model: &EditorModel, state: &VimState) -> Option<Ends> {
     let Mode::Visual(kind) = state.mode else {
         return None;
     };
+    resolve_ends(model, state, kind)
+}
+
+/// [`ends`], also while a command line suspends a visual mode: for what
+/// only reports or paints them, never a visual command.
+fn held_ends(model: &EditorModel, state: &VimState) -> Option<Ends> {
+    let kind = match (state.mode, &state.cmdline) {
+        (Mode::Visual(kind), _) => kind,
+        (Mode::CmdLine(_), Some(line)) => match line.from {
+            Mode::Visual(kind) => kind,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    resolve_ends(model, state, kind)
+}
+
+fn resolve_ends(model: &EditorModel, state: &VimState, kind: VisualKind) -> Option<Ends> {
     let visual = state.visual.as_ref()?;
     let snapshot = model.snapshot();
     let text = model.text();
@@ -592,7 +610,7 @@ impl VimState {
     /// head (a charwise selection takes the cursor's grapheme too). It may
     /// be a row's end, after `$`.
     pub fn visual_cursor(&self, model: &EditorModel) -> Option<usize> {
-        ends(model, self).map(|ends| ends.cursor)
+        held_ends(model, self).map(|ends| ends.cursor)
     }
 
     /// Paints the visual selection again from the vim cursor and anchor,
@@ -606,17 +624,25 @@ impl VimState {
     /// nothing.
     pub fn sync_visual(&mut self, model: &mut EditorModel) {
         model.sync_display();
-        if let Some(ends) = ends(model, self)
-            && model.selections() != ends.selections(model.text(), model.tab_size().max(1))
-        {
+        let Some(ends) = held_ends(model, self) else {
+            return;
+        };
+        let selections = ends.selections(model.text(), model.tab_size().max(1));
+        if model.selections() == selections {
+            return;
+        }
+        if matches!(self.mode, Mode::Visual(_)) {
             select(model, self, ends);
+        } else {
+            // A command line over the selection: repaint it, keeping the mode.
+            model.set_selections(selections);
         }
     }
 
     /// In a visual mode, the anchor's offset: the end the cursor didn't
     /// move.
     pub fn visual_anchor(&self, model: &EditorModel) -> Option<usize> {
-        ends(model, self).map(|ends| ends.anchor)
+        held_ends(model, self).map(|ends| ends.anchor)
     }
 
     /// Enters the visual mode of `kind` over `anchor` and `cursor`, or moves

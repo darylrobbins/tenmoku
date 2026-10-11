@@ -154,7 +154,7 @@ fn search_commands_check_their_pattern() {
     for (pattern, message, last) in [
         ("\\zs", "pattern not supported: \\zs", "x"),
         ("zzz", "E486: Pattern not found: zzz", "zzz"),
-        ("a\\(", "invalid pattern: unmatched \\(", "a\\("),
+        ("a\\(", "invalid pattern: unmatched \\(", "zzz"),
     ] {
         let dispatched = vim.dispatch(&moving(pattern)).unwrap();
         assert_eq!(dispatched.effect, Effect::Notify, "{pattern}");
@@ -312,4 +312,32 @@ fn split_search_reads_collections_by_magic() {
             "{line}"
         );
     }
+}
+
+/// A pattern Vim rejects keeps the last search and its direction, whether
+/// the line is submitted or the motion dispatched directly.
+#[test]
+fn invalid_patterns_keep_the_last_search() {
+    let mut vim = HeadlessVim::new("foo abc foo", (0, 0));
+    vim.feed("/foo<CR>?a\\(<CR>").unwrap();
+    assert_eq!(
+        vim.state().message(),
+        Some("invalid pattern: unmatched \\(")
+    );
+    assert_eq!(vim.registers().last_search(), Some(("foo", true)));
+    assert_eq!(vim.cursor(), (0, 8));
+    vim.feed("?<CR>").unwrap();
+    assert_eq!(vim.cursor(), (0, 0));
+
+    let backward = Motion::Search(Search {
+        pattern: SearchPattern::new("a\\("),
+        forward: false,
+    });
+    let args = crate::MoveArgs {
+        motion: backward,
+        extend: false,
+        count: None,
+    };
+    vim.dispatch(&invocation("vim.move", args)).unwrap();
+    assert_eq!(vim.registers().last_search(), Some(("foo", false)));
 }

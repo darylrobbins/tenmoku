@@ -6,11 +6,11 @@ use fe_buffer::TransactionId;
 use fe_command::{CommandError, Dispatched, Effect, Invocation, Source};
 
 use crate::{
-    CommandLineArgs, CommandLineKind, Mode, Motion, MoveArgs, OperateArgs, Step, SubmitArgs,
-    Target, VimKey, VimState, VimTarget,
+    CommandLineArgs, CommandLineKind, Mode, Motion, MoveArgs, OperateArgs, Pending, Step,
+    SubmitArgs, Target, VimKey, VimState, VimTarget,
     args::{Search, SearchPattern},
     ex, insert, motion, operator,
-    search::{self, Pattern, PatternError},
+    search::{self, Pattern},
     visual,
 };
 
@@ -50,6 +50,8 @@ pub(crate) fn open(target: &mut VimTarget<'_>, args: CommandLineArgs) -> Handled
     }
     let state = &mut *target.state;
     state.message = None;
+    // The line's `args` carry the prefix now; nothing of it stays pending.
+    state.pending = Pending::new();
     state.cmdline = Some(CommandLine {
         args,
         from: state.mode,
@@ -151,8 +153,8 @@ fn search(
 
 /// Checks a search motion before it runs, wherever it comes from (`/`,
 /// `vim.move`, `vim.operate`, `.`): its pattern becomes the last search, as
-/// in nvim even if nothing matches or Vim rejects it, but not one fe-vim
-/// can't translate. `Err` holds the error for [`VimState::message`]: the
+/// in nvim even if nothing matches, but not one fe-vim can't translate or
+/// one that is invalid, which leave the last search and its direction. `Err` holds the error for [`VimState::message`]: the
 /// pattern's, or E486 if nothing matches from the primary caret (the vim
 /// cursor in a visual mode).
 pub(crate) fn check_search(
@@ -168,13 +170,7 @@ pub(crate) fn check_search(
     let pattern = search.pattern.as_str();
     let parsed = match Pattern::parse(pattern) {
         Ok(parsed) => parsed,
-        Err(error) => {
-            if let PatternError::Invalid(_) = error {
-                target.registers.set_search(pattern, forward);
-                target.state.highlight = None;
-            }
-            return Err(error.to_string());
-        }
+        Err(error) => return Err(error.to_string()),
     };
     target.registers.set_search(pattern, forward);
     target.state.highlight = Some(parsed.clone());

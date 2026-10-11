@@ -166,8 +166,9 @@
 //! starts, or `\[` after `\V`); an empty one is the last search's. A
 //! search motion is checked however it comes (`/`, `vim.move` or
 //! `vim.operate` dispatched directly, `.`): like nvim, its pattern becomes
-//! the last search, with its direction, even when nothing matches or Vim
-//! rejects it; one fe-vim can't search (a translation error) isn't kept. A
+//! the last search, with its direction, even when nothing matches; one fe-vim
+//! can't search (a translation error) or Vim rejects (an invalid pattern)
+//! isn't kept, and leaves the last search and its direction alone. A
 //! search that fails (E35 with no last pattern, E486 with no match, a
 //! pattern error, or a search offset) changes nothing else and leaves the
 //! error in [`VimState::message`] for the host to show, until the next key.

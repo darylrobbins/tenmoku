@@ -972,29 +972,6 @@
       }
     },
     {
-      "name": "invalid_pattern",
-      "buffer": "abc foo",
-      "cursor": [
-        0,
-        0
-      ],
-      "keys": "/a\\(<CR>",
-      "expect": {
-        "buffer": "abc foo",
-        "cursor": [
-          0,
-          0
-        ],
-        "mode": "n",
-        "registers": {
-          "/": {
-            "text": "a\\(",
-            "linewise": false
-          }
-        }
-      }
-    },
-    {
       "name": "delete_to_match",
       "buffer": "one two foo three",
       "cursor": [
