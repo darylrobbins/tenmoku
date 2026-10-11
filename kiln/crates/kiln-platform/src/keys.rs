@@ -121,11 +121,11 @@ pub fn set_key_owner(cx: &mut App, owner: impl KeyOwner) {
     cx.default_global::<KeyHooks>().owner = Some(Rc::new(owner));
 }
 
-/// The owner to call, cloned out so it can be given the app.
-fn owner(cx: &App) -> Rc<dyn KeyOwner> {
+/// The owner to call, cloned out so it can be given the app; `None` for
+/// the plain behaviour, [`NoOwner`].
+fn owner(cx: &App) -> Option<Rc<dyn KeyOwner>> {
     cx.try_global::<KeyHooks>()
         .and_then(|hooks| hooks.owner.clone())
-        .unwrap_or_else(|| Rc::new(NoOwner))
 }
 
 /// Has [`context_stack`] read GPUI keys starting `{namespace}_` as starting
@@ -303,6 +303,7 @@ fn on_keystroke(event: &KeystrokeEvent, window: &mut Window, cx: &mut App) {
         input.abandon();
     }
     let owner = owner(cx);
+    let owner = owner.as_deref().unwrap_or(&NoOwner);
     let gpui_stack = context_stack(&event.context_stack, cx);
     let (stack, held) = owner.live_stack(gpui_stack.clone(), window, cx);
     if held {
@@ -317,7 +318,7 @@ fn on_keystroke(event: &KeystrokeEvent, window: &mut Window, cx: &mut App) {
         if !is_modifier(&event.keystroke) {
             let failed_chord = input.pending.take().map(|chord| chord.swallowed);
             input.matcher.flush();
-            replay(&*owner, failed_chord.unwrap_or_default(), window, cx);
+            replay(owner, failed_chord.unwrap_or_default(), window, cx);
         } else {
             owner.modifiers_released(&window.modifiers(), window, cx);
         }
@@ -336,7 +337,7 @@ fn on_keystroke(event: &KeystrokeEvent, window: &mut Window, cx: &mut App) {
         // keystrokes go first, then this one is matched again, as a fresh
         // one, in the context they leave: they may have started one of the
         // owner's commands, which then holds it.
-        replay(&*owner, std::mem::take(&mut swallowed), window, cx);
+        replay(owner, std::mem::take(&mut swallowed), window, cx);
         let (stack, held) = owner.live_stack(gpui_stack, window, cx);
         if held {
             return;
@@ -347,7 +348,7 @@ fn on_keystroke(event: &KeystrokeEvent, window: &mut Window, cx: &mut App) {
         // The owner's: the chord's keystrokes go to it, and this one on to
         // its key listener, so each is fed once, in order.
         KeyOutcome::Dispatch(invocation) if owner.owns(&invocation) => {
-            replay(&*owner, swallowed, window, cx);
+            replay(owner, swallowed, window, cx);
         }
         KeyOutcome::Dispatch(invocation) => {
             dispatch(invocation, window, cx);
@@ -380,13 +381,14 @@ fn on_timeout(handle: AnyWindowHandle, cx: &mut App) {
                 return;
             }
             let owner = owner(cx);
+            let owner = owner.as_deref().unwrap_or(&NoOwner);
             match outcome {
                 // The owner's: the keys go to it.
                 KeyOutcome::Dispatch(invocation) if owner.owns(&invocation) => {
-                    replay(&*owner, chord.swallowed, window, cx)
+                    replay(owner, chord.swallowed, window, cx)
                 }
                 KeyOutcome::Dispatch(invocation) => dispatch(invocation, window, cx),
-                KeyOutcome::Unmatched(_) => replay(&*owner, chord.swallowed, window, cx),
+                KeyOutcome::Unmatched(_) => replay(owner, chord.swallowed, window, cx),
                 KeyOutcome::Pending => unreachable!("flush ends the chord"),
             }
         })

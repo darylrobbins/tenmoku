@@ -15,12 +15,14 @@
 //! dispatch watch each window they see; a window's builder can call
 //! [`watch`] itself to cover input that came before either. And
 //! [`is_drawn`] lets dispatch notice focus left on an undrawn element
-//! before that frame, or with no ancestor to move to.
+//! before that frame, or with no ancestor to move to; [`is_drawn_for`]
+//! answers the same, most often without its probe.
 
 use std::collections::HashMap;
 
 use gpui::{
-    Action, App, AppContext as _, Entity, FocusHandle, Global, Subscription, Window, WindowId,
+    Action, App, AppContext as _, Entity, FocusHandle, Global, IntoElement, Render, Subscription,
+    Window, WindowId,
 };
 
 /// Has `window` move focus off an element that stops being drawn, to its
@@ -75,9 +77,52 @@ pub fn is_drawn(focus: &FocusHandle, window: &mut Window, cx: &mut App) -> bool 
     std::mem::take(&mut cx.global_mut::<Probe>().reached)
 }
 
+/// Whether `focus`'s element was drawn in `window`'s last frame, as
+/// [`is_drawn`] says, for dispatching `action` to it: cheaper when an
+/// element on its path handles `action`, as one usually does.
+///
+/// GPUI looks up a focus handle that wasn't drawn as the frame's root, so
+/// a handle that was never drawn gives the root's path alone. If `action`
+/// has a listener on `focus`'s path and not on the root's, the two paths
+/// differ, so `focus` was drawn: that's two walks of the dispatch tree,
+/// with no dispatch. Otherwise, or before a window's first frame, which
+/// has no root yet, [`is_drawn`]'s probe decides.
+pub fn is_drawn_for(
+    focus: &FocusHandle,
+    action: &dyn Action,
+    window: &mut Window,
+    cx: &mut App,
+) -> bool {
+    // A window's first frame is drawn as soon as its root view is set.
+    if window.root::<Keeper>().is_some() {
+        if cx
+            .try_global::<Probe>()
+            .is_none_or(|probe| probe.undrawn.is_none())
+        {
+            let undrawn = cx.focus_handle();
+            cx.default_global::<Probe>().undrawn = Some(undrawn);
+        }
+        let undrawn = cx.global::<Probe>().undrawn.as_ref();
+        if undrawn.is_some_and(|undrawn| {
+            window.is_action_available_in(action, focus)
+                && !window.is_action_available_in(action, undrawn)
+        }) {
+            return true;
+        }
+    }
+    is_drawn(focus, window, cx)
+}
+
 /// The entity a window's focus-lost listener belongs to: GPUI registers
-/// one only for a view.
+/// one only for a view. A view only so [`is_drawn_for`] can ask whether a
+/// window has a root: no window's root is one.
 struct Keeper;
+
+impl Render for Keeper {
+    fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+        gpui::Empty
+    }
+}
 
 /// The windows [`watch`]ed, each with its listener.
 struct Watched {
@@ -94,11 +139,13 @@ impl Global for Watched {}
 struct FocusProbe;
 
 /// Whether [`FocusProbe`] reached its global listener, and whether that
-/// listener is installed.
+/// listener is installed; and a focus handle no element tracks, for
+/// [`is_drawn_for`].
 #[derive(Default)]
 struct Probe {
     installed: bool,
     reached: bool,
+    undrawn: Option<FocusHandle>,
 }
 
 impl Global for Probe {}

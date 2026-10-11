@@ -182,15 +182,18 @@ pub fn dispatch_invocation(
     window: &mut Window,
     cx: &mut App,
 ) -> Result<(), DispatchError> {
-    let action: Box<dyn Action> = match typed_command(&invocation.command, cx) {
+    // Run for every key a binding matches, so it clones no more than it
+    // must: the invocation once for a `RunCommand` (the action and the
+    // handlers' current invocation each hold one) and not at all for a
+    // typed command, unless deferred.
+    let action: Box<dyn Action> = match typed_action(&invocation, cx) {
         None => Box::new(RunCommand(invocation.clone())),
-        Some(command) => {
-            command
-                .build(&invocation.args)
-                .map_err(|message| DispatchError::BadArgs {
-                    command: invocation.command.clone(),
-                    message,
-                })?
+        Some(Ok(action)) => action,
+        Some(Err(message)) => {
+            return Err(DispatchError::BadArgs {
+                command: invocation.command,
+                message,
+            });
         }
     };
     let typed = !action.as_any().is::<RunCommand>();
@@ -198,30 +201,46 @@ pub fn dispatch_invocation(
     crate::focus::watch(window, cx);
     match window
         .focused(cx)
-        .filter(|focus| crate::focus::is_drawn(focus, window, cx))
+        .filter(|focus| crate::focus::is_drawn_for(focus, action.as_ref(), window, cx))
     {
         Some(focus) => {
-            let previous = set_current(Some(invocation.clone()), cx);
+            let previous = set_current(Some(invocation), cx);
             focus.dispatch_action(action.as_ref(), window, cx);
-            set_current(previous, cx);
+            // A nested dispatch puts back the invocation it replaced, so
+            // this is the one set above.
+            let invocation = set_current(previous, cx);
+            if handled && let Some(invocation) = invocation {
+                notify_observers(&invocation, cx);
+            }
         }
         // The window dispatches later, so the invocation is set around
         // that: deferred work runs in order.
         None => {
-            let current = invocation.clone();
+            let observed = handled.then(|| invocation.clone());
             cx.defer(move |cx| {
-                set_current(Some(current), cx);
+                set_current(Some(invocation), cx);
             });
             window.dispatch_action(action, cx);
             cx.defer(|cx| {
                 set_current(None, cx);
             });
+            if let Some(invocation) = observed {
+                notify_observers(&invocation, cx);
+            }
         }
     }
-    if handled {
-        notify_observers(&invocation, cx);
-    }
     Ok(())
+}
+
+/// The action for `invocation`'s typed command, built from its args, or
+/// why they don't fit it; `None` if no typed command has its ID. Unlike
+/// [`typed_command`], it clones nothing but the args.
+fn typed_action(invocation: &Invocation, cx: &App) -> Option<Result<Box<dyn Action>, String>> {
+    let command = cx
+        .try_global::<TypedCommands>()?
+        .by_id
+        .get(&invocation.command)?;
+    Some(command.build(&invocation.args))
 }
 
 /// Sets the invocation handlers see, returning the one it replaces.

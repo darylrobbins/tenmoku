@@ -18,6 +18,7 @@ use kiln_platform::{
         register_command, typed_command,
     },
     commands::{self, RunCommand, observe_invocations},
+    focus,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -417,4 +418,23 @@ fn an_action_for_an_undrawn_element_goes_to_the_window(cx: &mut TestAppContext) 
     dispatch(new_note(), cx).unwrap();
     assert_eq!(*global.borrow(), 1, "the app's global handler runs it");
     assert!(log.borrow().is_empty(), "no element was reached");
+}
+
+#[gpui::test]
+fn is_drawn_for_answers_as_the_probe_does(cx: &mut TestAppContext) {
+    let (page, _, _, cx) = page_window(cx);
+    // For an action with a listener on the child's path, and one without.
+    let answers = |cx: &mut VisualTestContext| {
+        cx.update(|window, cx| {
+            let child = page.read(cx).child.clone();
+            (
+                focus::is_drawn_for(&child, &notes::NewNote, window, cx),
+                focus::is_drawn_for(&child, &notes::DeleteNote, window, cx),
+                focus::is_drawn(&child, window, cx),
+            )
+        })
+    };
+    assert_eq!(answers(cx), (true, true, true), "drawn");
+    hide_child(&page, cx);
+    assert_eq!(answers(cx), (false, false, false), "no longer drawn");
 }
