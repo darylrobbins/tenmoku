@@ -47,6 +47,12 @@ thread_local! {
 /// it copied taken out again.
 const BACKSPACE: char = '\u{8}';
 
+/// How many characters of the grapheme a copy is typed after
+/// ([`Typing::context`]) it keeps: enough to pair a regional indicator or
+/// join an emoji sequence, few enough that a grapheme the copies keep
+/// growing ends the same after a few of them.
+const CONTEXT: usize = 16;
+
 /// What a replace session's typing did, for `<BS>`, the count's copies and
 /// `.`. Shared by clones of the state, as [`VimState::line_break`] takes it
 /// by reference.
@@ -835,9 +841,14 @@ struct Typing {
     /// How many graphemes of the row's rest (after the caret) are
     /// overwritten or dropped.
     over: usize,
+    /// With [`Typing::led`], the last grapheme of the row before this copy
+    /// (its last [`CONTEXT`] characters), which the characters typed after
+    /// it may join, as a regional indicator pairs with a lone one before
+    /// it. A `<BS>` doesn't take it back.
+    context: String,
 }
 
-type Shape<'a> = (&'a str, bool, usize);
+type Shape<'a> = (&'a str, bool, usize, &'a str);
 
 /// What a copy typed that a `<BS>` in it takes back, last first.
 enum Typed {
@@ -937,6 +948,10 @@ impl Typing {
                 None => {}
             }
         }
+        self.context = match self.led {
+            true => last_grapheme(&self.row(&typed)),
+            false => String::new(),
+        };
         (cut, piece)
     }
 
@@ -986,8 +1001,7 @@ impl Typing {
     /// the last blank of the indentation before that if the grapheme holds
     /// it (right after a line break, this copy's or the one before's). The
     /// grapheme is found in the row up to the caret as far as this copy
-    /// knows it: that indentation, then the characters typed since.
-    // Pairing regional indicators across counted copies is tracked in T359.
+    /// knows it ([`Typing::row`]).
     fn grapheme_back(
         &mut self,
         tail: String,
@@ -995,24 +1009,7 @@ impl Typing {
         cut: &mut usize,
         piece: &mut String,
     ) {
-        let below = typed.len()
-            - typed
-                .iter()
-                .rev()
-                .take_while(|typed| matches!(typed, Typed::Char { .. }))
-                .count();
-        // The indentation before the characters, if nothing else is.
-        let (lead, led) = match typed.get(below) {
-            Some(&Typed::Char { lead, led, .. }) => (lead, led),
-            _ => (self.lead.len(), self.led),
-        };
-        let lead = if led { 0 } else { lead };
-        let mut row = self.lead[..lead].to_string();
-        for typed in &typed[below..] {
-            if let Typed::Char { key, .. } = typed {
-                row.push(*key);
-            }
-        }
+        let mut row = self.row(typed);
         let known = row.len();
         row.push_str(&tail);
         let start = row
@@ -1038,10 +1035,70 @@ impl Typing {
         }
     }
 
+    /// The row up to the caret as far as this copy knows it: the
+    /// indentation before the characters typed since its last line break
+    /// (all of it if only white space is before them, the copy's
+    /// [`Typing::context`] if more is), then those characters.
+    fn row(&self, typed: &[Typed]) -> String {
+        let below = typed.len()
+            - typed
+                .iter()
+                .rev()
+                .take_while(|typed| matches!(typed, Typed::Char { .. }))
+                .count();
+        let (lead, led) = match typed.get(below) {
+            Some(&Typed::Char { lead, led, .. }) => (lead, led),
+            _ => (self.lead.len(), self.led),
+        };
+        // Only the copy's start has more than white space before it on its
+        // row: a line break's indentation is all blank.
+        let mut row = match led {
+            true => self.context.clone(),
+            false => self.lead[..lead].to_string(),
+        };
+        for typed in &typed[below..] {
+            if let Typed::Char { key, .. } = typed {
+                row.push(*key);
+            }
+        }
+        row
+    }
+
     /// What decides the next copy, but for how far into the rest it is.
     fn shape(&self) -> Shape<'_> {
-        (&self.lead, self.led, self.unused)
+        (&self.lead, self.led, self.unused, &self.context)
     }
+}
+
+/// The last grapheme of `row`, its last [`CONTEXT`] characters.
+fn last_grapheme(row: &str) -> String {
+    let last = row.graphemes(true).next_back().unwrap_or("");
+    let skip = last.chars().count().saturating_sub(CONTEXT);
+    last.chars().skip(skip).collect()
+}
+
+/// Whether the last copies (see [`copies`]) repeat: the last one or two
+/// typed what the one or two before them typed, ending the same, and leave
+/// the rest as it was or used up. If so, how many copies repeat and what
+/// they cut and typed between them.
+fn steady(last: &[(usize, String, Typing)], rest: usize) -> Option<(usize, usize, String)> {
+    // Two when a copy leaves a regional indicator unpaired, for the next
+    // to pair.
+    (1..=2).find_map(|period| {
+        let from = last.len().checked_sub(2 * period)?;
+        let [before, after] = [from, from + period].map(|at| {
+            let (mut cut, mut piece) = (0, String::new());
+            for (more, typed, _) in &last[at..at + period] {
+                take(&mut cut, &mut piece, *more);
+                piece.push_str(typed);
+            }
+            (cut, piece, &last[at + period - 1].2)
+        });
+        let settled = after.2.over == before.2.over || after.2.over == rest;
+        let steady =
+            (before.0, &before.1, before.2.shape()) == (after.0, &after.1, after.2.shape());
+        (settled && steady).then_some((period, after.0, after.1))
+    })
 }
 
 /// `count` copies of `keys` typed after `before` (the caret's row up to it)
@@ -1052,7 +1109,9 @@ impl Typing {
 /// at the end if nothing follows it, and drops the blanks it moves to the
 /// new row; a [`BACKSPACE`] after characters takes them back
 /// ([`Typing::bite`]), and after a line break takes out what's left of its
-/// indentation, or with none the line break itself. Once a copy types what
+/// indentation, or with none the line break itself. A copy's characters
+/// join the grapheme before it on the row as they would in the buffer
+/// ([`Typing::context`]). Once a copy (or two, see [`steady`]) types what
 /// the one before typed, ending the same, and leaves the rest as it was or
 /// used up, the rest of the count go in at once ([`again`]), whether they
 /// grow the text, leave it as it is or shrink it, so a large count takes no
@@ -1070,14 +1129,20 @@ pub(crate) fn copies(
         return (keys.repeat(copies), over);
     }
     let lead: String = before.chars().take_while(|ch| ch.is_whitespace()).collect();
+    let led = lead.len() < before.len();
     let mut typing = Typing {
-        led: lead.len() < before.len(),
+        context: match led {
+            true => last_grapheme(before),
+            false => String::new(),
+        },
+        led,
         lead,
         unused: 0,
         over: 0,
     };
     let mut out = String::new();
-    let mut last: Option<(usize, String, Typing)> = None;
+    // The last few copies: what each cut and typed, and where it left off.
+    let mut last: Vec<(usize, String, Typing)> = Vec::new();
     let mut done = 0;
     while done < count {
         let mut after = typing.clone();
@@ -1092,17 +1157,14 @@ pub(crate) fn copies(
         out.truncate(out.len() - cut);
         out.push_str(&piece);
         done += 1;
-        let settled = after.over == typing.over || after.over == rest.len();
-        let steady = last
-            .as_ref()
-            .is_some_and(|(last_cut, last_piece, last_typing)| {
-                (*last_cut, last_piece, last_typing.shape()) == (cut, &piece, after.shape())
-            });
-        if steady && settled {
-            done += again(&mut out, &piece, cut, budget, count - done);
+        if last.len() == 4 {
+            last.remove(0);
         }
-        last = Some((cut, piece, after.clone()));
+        last.push((cut, piece, after.clone()));
         typing = after;
+        if let Some((copies, cut, piece)) = steady(&last, rest.len()) {
+            done += copies * again(&mut out, &piece, cut, budget, (count - done) / copies);
+        }
     }
     // Indentation left at the end with nothing after it goes, as at `Esc`.
     if typing.over == rest.len() {

@@ -1994,6 +1994,150 @@
         "mode": "n",
         "registers": {}
       }
+    },
+    {
+      "name": "count_regional_after_pair_cr_bs_bs",
+      "buffer": "abcdefghijk",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2R🇦<CR><BS>🇧<BS>🇨<Esc>",
+      "expect": {
+        "buffer": "🇨🇦🇨efghijk",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_regional_after_pair_cr_bs_bs_three",
+      "buffer": "abcdefghijk",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3R🇦<CR><BS>🇧<BS>🇨<Esc>",
+      "expect": {
+        "buffer": "🇨🇦🇨🇦🇨ghijk",
+        "cursor": [
+          0,
+          16
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_count_regional_after_pair_cr_bs_bs",
+      "buffer": "abcdefghijk\nabcdefghijk",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "R🇦<CR><BS>🇧<BS>🇨<Esc>j02.",
+      "expect": {
+        "buffer": "🇨cdefghijk\n🇨🇦🇨efghijk",
+        "cursor": [
+          1,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_regional_empty_tail",
+      "buffer": "abcdefghijklmno",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2R🇦🇧🇨<CR><BS><BS>🇦<Esc>",
+      "expect": {
+        "buffer": "🇦🇧🇦🇦🇦ghijklmno",
+        "cursor": [
+          0,
+          16
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_regional_empty_tail_three",
+      "buffer": "abcdefghijklmno",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3R🇦🇧🇨<CR><BS><BS>🇦<Esc>",
+      "expect": {
+        "buffer": "🇦🇧🇦🇦🇦🇦🇦jklmno",
+        "cursor": [
+          0,
+          24
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_count_regional_empty_tail",
+      "buffer": "abcdefghijklmno\nabcdefghijklmno",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "R🇦🇧🇨<CR><BS><BS>🇦<Esc>j02.",
+      "expect": {
+        "buffer": "🇦🇧🇦defghijklmno\n🇦🇧🇦🇦🇦ghijklmno",
+        "cursor": [
+          1,
+          16
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_regional_alternating_pairs",
+      "buffer": "abcdefghijk",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "5R🇦<CR><BS><Esc>",
+      "expect": {
+        "buffer": "🇦🇦🇦🇦🇦fghijk",
+        "cursor": [
+          0,
+          16
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_regional_after_lone_indicator",
+      "buffer": "🇨abcdefghijk",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "3R🇦🇧<CR><BS><BS><Esc>",
+      "expect": {
+        "buffer": "🇨🇦defghijk",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
     }
   ]
 }

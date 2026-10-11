@@ -669,3 +669,51 @@ name = "count_regional_pair_cr_bs_bs"
 buffer = "abcdefghijk"
 cursor = [0, 0]
 keys = "2R\U0001F1E6\U0001F1E7<CR><BS><BS><Esc>"
+
+[[case]]
+name = "count_regional_after_pair_cr_bs_bs"
+buffer = "abcdefghijk"
+cursor = [0, 0]
+keys = "2R\U0001F1E6<CR><BS>\U0001F1E7<BS>\U0001F1E8<Esc>"
+
+[[case]]
+name = "count_regional_after_pair_cr_bs_bs_three"
+buffer = "abcdefghijk"
+cursor = [0, 0]
+keys = "3R\U0001F1E6<CR><BS>\U0001F1E7<BS>\U0001F1E8<Esc>"
+
+[[case]]
+name = "dot_count_regional_after_pair_cr_bs_bs"
+buffer = "abcdefghijk\nabcdefghijk"
+cursor = [0, 0]
+keys = "R\U0001F1E6<CR><BS>\U0001F1E7<BS>\U0001F1E8<Esc>j02."
+
+[[case]]
+name = "count_regional_empty_tail"
+buffer = "abcdefghijklmno"
+cursor = [0, 0]
+keys = "2R\U0001F1E6\U0001F1E7\U0001F1E8<CR><BS><BS>\U0001F1E6<Esc>"
+
+[[case]]
+name = "count_regional_empty_tail_three"
+buffer = "abcdefghijklmno"
+cursor = [0, 0]
+keys = "3R\U0001F1E6\U0001F1E7\U0001F1E8<CR><BS><BS>\U0001F1E6<Esc>"
+
+[[case]]
+name = "dot_count_regional_empty_tail"
+buffer = "abcdefghijklmno\nabcdefghijklmno"
+cursor = [0, 0]
+keys = "R\U0001F1E6\U0001F1E7\U0001F1E8<CR><BS><BS>\U0001F1E6<Esc>j02."
+
+[[case]]
+name = "count_regional_alternating_pairs"
+buffer = "abcdefghijk"
+cursor = [0, 0]
+keys = "5R\U0001F1E6<CR><BS><Esc>"
+
+[[case]]
+name = "count_regional_after_lone_indicator"
+buffer = "\U0001F1E8abcdefghijk"
+cursor = [0, 4]
+keys = "3R\U0001F1E6\U0001F1E7<CR><BS><BS><Esc>"
