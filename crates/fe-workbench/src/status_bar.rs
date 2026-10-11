@@ -3,7 +3,10 @@
 //! encoding, line endings and language on the right; and whatever items a
 //! host sets.
 //!
-//! Items are data ([`StatusItem`]). The built-in ones are computed from the
+//! Items are data ([`StatusItem`], fastedit's name for kiln-shell's
+//! [`kiln_shell::StatusItem`], with the built-in items' ids), kept and
+//! drawn by kiln-shell's [`kiln_shell::status`]: the host's over the
+//! built-in ones, sorted. The built-in ones are computed from the
 //! active editor each time the bar renders, so nothing new is tracked: the
 //! bar observes the editor the workbench says is active
 //! ([`StatusBar::set_editor`]), and re-renders when it notifies, as it does
@@ -21,27 +24,24 @@
 use std::rc::Rc;
 
 use fe_command::{
-    Actor, CommandTarget, ContextFrame, ContextPredicate, ContextStack, Dispatched, Effect,
-    Invocation, Registry,
+    Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Invocation, Registry,
 };
 use fe_gpui::{EditorView, commands::RunCommand};
-use fe_ui::{StatusBarFrame, StatusEntry, UiTheme};
+use fe_ui::UiTheme;
 use fe_vim::VimState;
 use gpui::{
     App, Context, Entity, EntityId, Global, IntoElement, Render, SharedString, Subscription,
     WeakEntity, Window,
 };
+use kiln_shell::status::{self, StatusItems};
 
-/// Which end of the bar an item sits at.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum StatusSide {
-    Left,
-    Right,
-}
+pub use kiln_shell::StatusSide;
 
-/// One item on the bar. Items sort by side, then by `priority`, lower
-/// first, so left to right; then in the order they were set, the built-in
-/// ones first.
+/// One item on the bar: kiln-shell's [`kiln_shell::StatusItem`] by
+/// fastedit's name, which holds the built-in items' ids
+/// ([`StatusItem::CURSOR`] …). Items sort by side, then by `priority`,
+/// lower first, so left to right; then in the order they were set, the
+/// built-in ones first.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StatusItem {
     /// Distinct among the bar's items. The built-in ones' are
@@ -54,6 +54,25 @@ pub struct StatusItem {
     /// the focused element, and up to the workbench. An invocation with no
     /// context gets the focused element's then.
     pub command: Option<Invocation>,
+}
+
+impl From<StatusItem> for kiln_shell::StatusItem {
+    fn from(item: StatusItem) -> Self {
+        let StatusItem {
+            id,
+            side,
+            priority,
+            text,
+            command,
+        } = item;
+        Self {
+            id,
+            side,
+            priority,
+            text,
+            command,
+        }
+    }
 }
 
 /// The built-in items' ids: the vim mode on the left, the others on the
@@ -129,8 +148,8 @@ pub(crate) const PLAIN_TEXT: &str = "Plain Text";
 
 pub struct StatusBar {
     editor: Option<WeakEntity<EditorView>>,
-    /// The host's items, in the order first set.
-    items: Vec<StatusItem>,
+    /// The host's items.
+    items: StatusItems,
     ui: UiTheme,
     line: vim_line::VimLine,
     _observe: Option<Subscription>,
@@ -145,7 +164,7 @@ impl StatusBar {
     pub fn new(ui: UiTheme) -> Self {
         Self {
             editor: None,
-            items: Vec::new(),
+            items: StatusItems::default(),
             ui,
             line: vim_line::VimLine::default(),
             _observe: None,
@@ -158,17 +177,14 @@ impl StatusBar {
 
     /// Adds `item`, or replaces the item with its id where it was. An item
     /// with a built-in item's id shows in its place.
-    pub fn set_item(&mut self, item: StatusItem, cx: &mut Context<Self>) {
-        match self.items.iter_mut().find(|old| old.id == item.id) {
-            Some(old) => *old = item,
-            None => self.items.push(item),
-        }
+    pub fn set_item(&mut self, item: impl Into<kiln_shell::StatusItem>, cx: &mut Context<Self>) {
+        self.items.set(item.into());
         cx.notify();
     }
 
     /// Removes the host's item `id`; a built-in item it replaced comes back.
     pub fn remove_item(&mut self, id: &str, cx: &mut Context<Self>) {
-        self.items.retain(|item| item.id != id);
+        self.items.remove(id);
         cx.notify();
     }
 
@@ -204,37 +220,15 @@ impl StatusBar {
     }
 
     /// Every item to draw, sorted.
-    fn items(&self, cx: &App) -> Vec<StatusItem> {
+    fn items(&self, cx: &App) -> Vec<kiln_shell::StatusItem> {
         let editor = self.editor.as_ref().and_then(WeakEntity::upgrade);
         let built_in = editor.map(|editor| built_in_items(editor.read(cx)));
-        let mut items: Vec<_> = built_in
-            .into_iter()
-            .flatten()
-            .filter(|item| !self.items.iter().any(|host| host.id == item.id))
-            .chain(self.items.iter().cloned())
-            .collect();
-        // Stable, so ties keep the order set.
-        items.sort_by_key(|item| (item.side, item.priority));
-        items
-    }
-
-    fn entry(&self, item: StatusItem) -> StatusEntry {
-        let entry = StatusEntry::new(item.id, item.text, &self.ui);
-        match item.command {
-            Some(command) => entry.on_click(move |_, window, cx| {
-                let mut command = command.clone();
-                if command.context.is_empty() {
-                    command.context = focused_context(window);
-                }
-                window.dispatch_action(Box::new(RunCommand(command)), cx);
-            }),
-            None => entry,
-        }
+        self.items.merged(built_in.into_iter().flatten())
     }
 }
 
 /// The active editor's items.
-fn built_in_items(editor: &EditorView) -> Vec<StatusItem> {
+fn built_in_items(editor: &EditorView) -> Vec<kiln_shell::StatusItem> {
     let model = editor.model();
     let text = model.text();
     let selections = model.selections();
@@ -264,22 +258,24 @@ fn built_in_items(editor: &EditorView) -> Vec<StatusItem> {
         None if editor.is_loading_language() => "…".into(),
         None => PLAIN_TEXT.into(),
     };
-    let vim_mode = editor.vim_mode().map(|mode| StatusItem {
-        id: StatusItem::VIM_MODE.into(),
-        side: StatusSide::Left,
-        priority: 0,
-        text: vim_mode_label(mode),
-        command: None,
+    let vim_mode = editor.vim_mode().map(|mode| {
+        kiln_shell::StatusItem::new(
+            StatusItem::VIM_MODE,
+            StatusSide::Left,
+            0,
+            vim_mode_label(mode),
+        )
     });
     let vim_message = editor
         .vim_state()
         .and_then(VimState::message)
-        .map(|message| StatusItem {
-            id: StatusItem::VIM_MESSAGE.into(),
-            side: StatusSide::Left,
-            priority: 10,
-            text: message.to_owned().into(),
-            command: None,
+        .map(|message| {
+            kiln_shell::StatusItem::new(
+                StatusItem::VIM_MESSAGE,
+                StatusSide::Left,
+                10,
+                message.to_owned(),
+            )
         });
     let language_command = Invocation::of("language.select").expect("a valid command ID");
     let texts: [(SharedString, Option<Invocation>); 5] = [
@@ -293,7 +289,7 @@ fn built_in_items(editor: &EditorView) -> Vec<StatusItem> {
         BUILT_IN_PRIORITIES
             .into_iter()
             .zip(texts)
-            .map(|((id, priority), (text, command))| StatusItem {
+            .map(|((id, priority), (text, command))| kiln_shell::StatusItem {
                 id: id.into(),
                 side: StatusSide::Right,
                 priority,
@@ -320,30 +316,6 @@ fn vim_mode_label(mode: &str) -> SharedString {
     }
 }
 
-/// The focused element's key contexts, outermost first, as a context
-/// stack, as a key's invocation is stamped with: each one's primary
-/// identifier names its frame, its other identifiers are flags, and its
-/// `key=value` pairs carry over. GPUI's `vim_mode` is `vim.mode`, and so on.
-fn focused_context(window: &Window) -> ContextStack {
-    let key = |key: &str| match key.strip_prefix("vim_") {
-        Some(rest) => format!("vim.{rest}"),
-        None => key.to_owned(),
-    };
-    window
-        .context_stack()
-        .iter()
-        .map(|context| {
-            let name = context.primary().map_or("", |entry| entry.key.as_ref());
-            context
-                .secondary()
-                .fold(ContextFrame::new(name), |frame, entry| match &entry.value {
-                    None => frame.flag(key(&entry.key)),
-                    Some(value) => frame.set(key(&entry.key), value.as_ref()),
-                })
-        })
-        .collect()
-}
-
 impl Render for StatusBar {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(line) = self.render_line(cx) {
@@ -363,13 +335,7 @@ impl Render for StatusBar {
                 .map(|item| (item.side, item.id.clone(), item.text.clone()))
                 .collect();
         }
-        let (left, right): (Vec<_>, Vec<_>) = items
-            .into_iter()
-            .partition(|item| item.side == StatusSide::Left);
-        StatusBarFrame::new(&self.ui)
-            .left(left.into_iter().map(|item| self.entry(item)))
-            .right(right.into_iter().map(|item| self.entry(item)))
-            .into_any_element()
+        status::status_bar(items, cx).into_any_element()
     }
 }
 

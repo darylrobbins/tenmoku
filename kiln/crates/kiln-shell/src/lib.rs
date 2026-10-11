@@ -7,9 +7,15 @@
 //! ([`window_frame`]). Each reads what the platform does natively from
 //! [`Capabilities`], or GPUI's window decorations, and its colours from
 //! the active theme.
+//!
+//! The shell's leaf modules, which a host can use before it adopts the
+//! rest: the status bar's items ([`status`]) and a background writer for
+//! saved state ([`persist`]).
 
 pub mod menu_bar;
+pub mod persist;
 mod root;
+pub mod status;
 mod title_bar;
 pub mod window_frame;
 
@@ -18,6 +24,7 @@ use kiln_platform::Capabilities;
 
 pub use menu_bar::MenuBarView;
 pub use root::Root;
+pub use status::{StatusItem, StatusItems, StatusSide};
 pub use title_bar::TitleBar;
 
 /// Sets up what the shell draws for the platform: where it has no native

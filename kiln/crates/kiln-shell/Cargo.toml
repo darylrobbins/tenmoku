@@ -15,6 +15,7 @@ kiln-command.workspace = true
 kiln-core.workspace = true
 kiln-platform.workspace = true
 kiln-ui.workspace = true
+log.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

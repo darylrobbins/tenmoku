@@ -3565,6 +3565,7 @@ dependencies = [
  "kiln-core",
  "kiln-platform",
  "kiln-ui",
+ "log",
 ]
 
 [[package]]

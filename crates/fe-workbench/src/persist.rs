@@ -15,20 +15,16 @@
 //! whole, through a temporary file, so neither reads the other's half
 //! written, and a creation that fails removes only its temporary file.
 
-use std::{
-    cell::{Cell, RefCell},
-    path::PathBuf,
-    rc::Rc,
-    sync::{Arc, Mutex, MutexGuard},
-};
+use std::{cell::Cell, path::PathBuf, rc::Rc};
 
 use fe_gpui::{commands::RunCommand, menu::MenuCommand};
-use gpui::{App, BackgroundExecutor, Global, Task};
+use gpui::{App, Global};
+use kiln_shell::persist::{SettingKey, SettingsPath, Writer, setting_writer};
 
 /// The setting View > Toggle Vim Mode saves.
-const VIM: &[&str] = &["vim", "enabled"];
+const VIM: SettingKey = &["vim", "enabled"];
 /// The setting View > Toggle Status Bar saves.
-const STATUS_BAR: &[&str] = &["status_bar", "visible"];
+const STATUS_BAR: SettingKey = &["status_bar", "visible"];
 
 /// The command whose successful runs save [`VIM`].
 const VIM_TOGGLE: &str = "vim.toggle";
@@ -38,24 +34,15 @@ struct Saver(Writes);
 
 impl Global for Saver {}
 
-/// Where toggles are saved, and the writes waiting. Used on the main
-/// thread; only the queue goes to the writer.
-#[derive(Clone)]
-struct Writes {
-    queue: Arc<Mutex<Queue>>,
-    executor: BackgroundExecutor,
-    /// The task writing, or that last wrote, for quitting to wait on.
-    writer: Rc<RefCell<Option<Task<()>>>>,
-}
+/// The settings file the writes go to.
+struct SaveTarget(SettingsPath);
 
-struct Queue {
-    path: PathBuf,
-    /// Each key's latest value, oldest first.
-    pending: Vec<(&'static [&'static str], bool)>,
-    /// Whether a background task is writing; it writes whatever is pending
-    /// before it stops.
-    writing: bool,
-}
+impl Global for SaveTarget {}
+
+/// The writes waiting, through kiln-shell's writer
+/// ([`kiln_shell::persist`]), which takes them to the writer one at a
+/// time, each key's last value winning.
+type Writes = Writer<SettingKey, bool>;
 
 /// From now on, saves each toggle of vim mode and of the status bar to the
 /// settings file at `path`, editing it in place, or creating it from the
@@ -68,31 +55,20 @@ struct Queue {
 /// `RunCommand` handler, and before or after the menu's, whichever
 /// installed first.
 pub fn save_toggles_to(cx: &mut App, path: PathBuf) {
-    if let Some(Saver(writes)) = cx.try_global::<Saver>() {
-        lock(&writes.queue).path = path;
+    if let Some(SaveTarget(target)) = cx.try_global::<SaveTarget>() {
+        target.set(path);
         return;
     }
-    let writes = Writes {
-        queue: Arc::new(Mutex::new(Queue {
-            path,
-            pending: Vec::new(),
-            writing: false,
-        })),
-        executor: cx.background_executor().clone(),
-        writer: Rc::default(),
-    };
+    let target = SettingsPath::new(path);
+    let writes = setting_writer(target.clone(), fe_config::USER_SETTINGS_TEMPLATE, cx);
     cx.set_global(Saver(writes.clone()));
+    cx.set_global(SaveTarget(target));
     let vim = Rc::new(VimToggle::default());
     cx.on_app_quit({
         let (writes, vim) = (writes.clone(), vim.clone());
         move |cx| {
             vim.save_unread(&writes, cx);
-            let writer = writes.writer.take();
-            async move {
-                if let Some(writer) = writer {
-                    writer.await;
-                }
-            }
+            writes.finish()
         }
     })
     .detach();
@@ -167,53 +143,6 @@ pub(crate) fn save_status_bar(visible: bool, cx: &App) {
     if let Some(Saver(writes)) = cx.try_global::<Saver>() {
         writes.save(STATUS_BAR, visible);
     }
-}
-
-impl Writes {
-    /// Queues `key` to be written as `value`, starting a writer if none is.
-    fn save(&self, key: &'static [&'static str], value: bool) {
-        {
-            let mut queue = lock(&self.queue);
-            queue.pending.retain(|(pending, _)| *pending != key);
-            queue.pending.push((key, value));
-            if queue.writing {
-                return;
-            }
-            queue.writing = true;
-        }
-        // The last writer has set `writing` false, so it's done, or
-        // returning.
-        let queue = self.queue.clone();
-        let writer = self.executor.spawn(async move { write_pending(&queue) });
-        self.writer.replace(Some(writer));
-    }
-}
-
-/// Writes what's pending until nothing is.
-fn write_pending(queue: &Mutex<Queue>) {
-    loop {
-        let (path, pending) = {
-            let mut queue = lock(queue);
-            if queue.pending.is_empty() {
-                queue.writing = false;
-                return;
-            }
-            (queue.path.clone(), std::mem::take(&mut queue.pending))
-        };
-        for (key, value) in pending {
-            if let Err(error) = fe_config::write_setting(&path, key, value) {
-                log::error!(
-                    "can't save {} to {}: {error}",
-                    key.join("."),
-                    path.display()
-                );
-            }
-        }
-    }
-}
-
-fn lock(queue: &Mutex<Queue>) -> MutexGuard<'_, Queue> {
-    queue.lock().unwrap_or_else(|error| error.into_inner())
 }
 
 #[cfg(test)]
