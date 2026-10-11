@@ -4,12 +4,18 @@
 //! splitting and saved state, from its
 //! [`EditorModel`](fe_editor::EditorModel).
 
-use std::path::Path;
+use std::{
+    hash::{DefaultHasher, Hash as _, Hasher as _},
+    path::Path,
+};
 
 use fe_command::{Invocation, Value};
 use fe_vim::VimState;
-use gpui::{AnyView, App, AppContext as _, Context, Entity, SharedString, Task, Window};
-use kiln_shell::{PaneItem, StatusItem, StatusSide};
+use gpui::{
+    AnyView, App, AppContext as _, Context, Entity, PromptButton, PromptLevel, SharedString, Task,
+    Window,
+};
+use kiln_shell::{CloseAnswer, PaneItem, StatusItem, StatusSide};
 
 use crate::EditorView;
 
@@ -134,7 +140,35 @@ impl PaneItem for EditorView {
             .is_ok_and(|other| other.read(cx).model.shares_buffer_with(&self.model))
     }
 
-    // `may_close` keeps the default: a dirty editor stays open.
+    /// A dirty editor asks whether to discard its changes: Discard closes
+    /// it, Cancel (or Escape) keeps it. A clean one closes. The shell
+    /// doesn't ask while another editor shows its buffer.
+    fn may_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> CloseAnswer {
+        if !self.is_dirty(cx) {
+            return CloseAnswer::Close;
+        }
+        let question = format!(
+            "Discard unsaved changes to {}?",
+            file_name(self.model.path())
+        );
+        let buttons = [PromptButton::new("Discard"), PromptButton::cancel("Cancel")];
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            &question,
+            Some("Your changes will be lost if you close it without saving."),
+            &buttons,
+            cx,
+        );
+        CloseAnswer::Ask(cx.spawn(async move |_, _| answer.await == Ok(0)))
+    }
+
+    /// Changes with its dirtiness and with every edit to its buffer.
+    fn close_revision(&self, _: &App) -> u64 {
+        let buffer = self.model.buffer();
+        let mut hasher = DefaultHasher::new();
+        (self.model.is_dirty(), buffer.id(), buffer.version()).hash(&mut hasher);
+        hasher.finish()
+    }
 
     /// What `editor.save` does: [`EditorModel::save`](fe_editor::EditorModel::save),
     /// which is synchronous, so the task is ready at once.

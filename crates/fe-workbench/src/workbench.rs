@@ -4,6 +4,7 @@
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
+    rc::Rc,
 };
 
 use fe_buffer::Buffer;
@@ -36,7 +37,11 @@ use crate::{
     toolbar_picker::ToolbarPicker,
     trust::{self, TrustChanged},
 };
-use kiln_shell::{DockPosition, ItemHandle, ModalEvent, ModalId, ModalLayer, PaneView as _, Shell};
+use kiln_shell::{
+    CloseKind, CloseRequest, Closing, DockPosition, ItemHandle, ModalEvent, ModalId, ModalLayer,
+    PaneView as _, Shell,
+    close::{self, Items, LiveItems},
+};
 
 /// Shown in a tab when fastedit starts with nothing to open.
 pub const WELCOME: &str = "\
@@ -349,6 +354,7 @@ impl Workbench {
         title_bar::record_requests(cx);
         workbench.watch(&pane, window, cx);
         workbench.track_editors(cx);
+        Self::follow_window_items(window, cx);
         workbench.follow_trust(window, cx);
         workbench.resolve_trust(workbench.root.clone(), as_folder, window, cx);
         workbench.start_lsp(window, cx);
@@ -744,22 +750,57 @@ impl Workbench {
         self.track_editors(cx);
     }
 
-    /// Closes the active pane with its tabs, unless it's the last, or one of
-    /// its tabs has unsaved changes no other pane shows.
+    /// Closes the active pane with its tabs, unless it's the last, once its
+    /// tabs agree ([`kiln_shell::close`]): each is asked unless another
+    /// pane shows its file, and a dirty one asks whether to discard its
+    /// changes.
     fn close_active_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let pane = self.active.clone();
-        let unsaved = {
-            let state = pane.read(cx).pane();
-            state.items().iter().find_map(|item| {
-                (item.is_dirty(cx) && !state.shown_in_peers(&**item, cx))
-                    .then(|| item.tab_title(cx))
-            })
-        };
-        if let Some(title) = unsaved {
-            log::warn!("not closing the pane: {title} has unsaved changes");
+        if self.panes.panes().len() < 2 {
             return;
         }
-        self.close_pane(&pane, window, cx);
+        let pane = self.active.clone();
+        let now = Items {
+            closing: pane.read(cx).pane().items().to_vec(),
+            open: self.panes.items(cx),
+        };
+        let (weak, workbench) = (pane.downgrade(), cx.weak_entity());
+        let live: LiveItems = Rc::new(move |cx| {
+            let pane = weak.upgrade()?;
+            let workbench = workbench.upgrade()?;
+            Some(Items {
+                closing: pane.read(cx).pane().items().to_vec(),
+                open: workbench.read(cx).panes.items(cx),
+            })
+        });
+        let request =
+            CloseRequest::new(CloseKind::Pane).scope(window.window_handle(), Some(now), live);
+        let (closed, workbench) = (pane.clone(), cx.weak_entity());
+        let commit = move |window: Option<&mut Window>, cx: &mut App| {
+            if let Some(window) = window {
+                (workbench.update(cx, |workbench, cx| {
+                    workbench.close_pane(&closed, window, cx)
+                }))
+                .ok();
+            }
+        };
+        match close::confirm(request, commit, Some(window), cx) {
+            Closing::Now => self.close_pane(&pane, window, cx),
+            Closing::Refused => {}
+            Closing::Later(closing) => closing.detach(),
+        }
+    }
+
+    /// Every editor of every pane, for the window's close and quitting to
+    /// ask.
+    fn follow_window_items(window: &mut Window, cx: &mut Context<Self>) {
+        let workbench = cx.weak_entity();
+        let items: kiln_shell::close::WindowItems = Rc::new(move |cx| {
+            workbench
+                .upgrade()
+                .map(|workbench| workbench.read(cx).panes.items(cx))
+                .unwrap_or_default()
+        });
+        close::set_window_items(window, items, cx);
     }
 
     /// Closes `pane`, unless it's the last, activating the nearest pane if it
@@ -1341,3 +1382,7 @@ impl Focusable for PaneArea {
 pub(crate) fn open_panel_failed(error: &str) -> (&'static str, String) {
     kiln_platform::dialogs::open_panel_failed(error, kiln_platform::Os::current())
 }
+
+#[cfg(test)]
+#[path = "close_tests.rs"]
+mod close_tests;

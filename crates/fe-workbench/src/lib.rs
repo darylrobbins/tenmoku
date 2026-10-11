@@ -84,6 +84,8 @@ pub fn init(cx: &mut App) {
     dock::init(cx);
     lsp::init(cx);
     kiln_shell::menu_bar::register(cx);
+    // `app.quit` and `window.close` ask the windows' editors first.
+    kiln_shell::close::init(cx);
     nav::init(cx);
     open::init(cx);
     outline_panel::init(cx);
