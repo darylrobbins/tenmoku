@@ -106,13 +106,11 @@ fn a_change_amid_unrelated_events_is_reported() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("settings.toml");
     fs::write(&path, "editor.font_size = 13\n").unwrap();
-    // Declared before the watcher, so dropped after it: the thread reads
-    // until its sender is gone.
-    let (_events, rx) = mpsc::channel();
+    let (events, rx) = mpsc::channel();
     for _ in 0..BACKLOG {
         let event =
             Event::new(EventKind::Modify(ModifyKind::Any)).add_path(dir.path().join("unrelated"));
-        _events.send(Ok(event)).unwrap();
+        events.send(Ok(event)).unwrap();
     }
     let clock = Arc::new(FakeClock {
         base: Instant::now(),
@@ -135,6 +133,9 @@ fn a_change_amid_unrelated_events_is_reported() {
         }
     })
     .unwrap();
+    // Rebound after the watcher, so dropped before it, on a panic too: the
+    // thread reads until its sender is gone, and the watcher joins it.
+    let _events = events;
     let (first, _) = batches.recv_timeout(TIMEOUT).expect("a batch in time");
     assert_eq!(first, std::slice::from_ref(&path));
 
