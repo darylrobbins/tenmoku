@@ -39,26 +39,10 @@
 //!   goes to the first line's first non-blank. `n` twice is E474, a second
 //!   pattern E475; `x`, `o`, `b`, `f` and `l` are refused, unsupported. Of
 //!   one line, it does nothing, whatever its arguments.
-//! - `:g[lobal][!]/{pattern}/[cmd]` and `:v[global]/{pattern}/[cmd]`: `cmd`
-//!   (any of these; by default `:p`, which only moves the cursor to the
-//!   last row's first non-blank) run with the cursor at the start of each
-//!   row of the range (by default all) that matches (with `!` and `:v`,
-//!   doesn't) and still exists, in order (`global.rs`). The delimiter is any
-//!   character but a letter (E146); `\/`, `\?` and `\&` stand for the last
-//!   search's and substitute's patterns, and an empty pattern is the last
-//!   search's. The pattern becomes the last search, its direction kept. A
-//!   `:g` inside it is E147, even without a range (nvim runs one on the one
-//!   row). A command that fails stops it there with its error; `:s` finding
-//!   nothing on a row doesn't. Nothing matching (or with `:v`, everything)
-//!   is a message, not an error. The jump mark goes where the cursor was
-//!   before (the commands it runs don't set it).
-//! - `:norm[al][!] {keys}`: `keys` run as typed keys on the cursor's row, or
-//!   on each line of the range, from its start (`normal.rs`).
 //!
 //! `:j`, `:>` and `:<` take the print flags `l`, `p` and `#` after their
 //! count, and ignore them. Each command but `:y` (and a `:m` to where its
-//! lines are, or a `:sort` of one line) is one transaction (a `:g` or
-//! `:normal`, with what it runs, if it changes anything), even one that
+//! lines are, or a `:sort` of one line) is one transaction, even one that
 //! leaves the text as it was, as in nvim; one `u` undoes it and `<C-r>`
 //! redoes it, putting the caret where nvim's do (for `:m` and `:t`, redo's
 //! place is noted apart from undo's). `.` doesn't repeat it. Only `:y` writes
@@ -74,17 +58,14 @@ use fe_buffer::TransactionId;
 use fe_command::{Actor, CommandError, Dispatched, Effect};
 
 use crate::{
-    KeyError, Mode, Motion, MoveArgs, OperateArgs, Operator, Registers, Target, VimKey, VimTarget,
-    insert, marks,
+    Motion, MoveArgs, OperateArgs, Operator, Registers, Target, VimTarget, insert, marks,
     motion::{self, Cursor},
     operator,
     search::{self, Pattern, PatternError},
     substitute::{self, Substitute},
 };
 
-mod global;
 mod lines;
-mod normal;
 
 /// A parsed ex line.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -205,18 +186,6 @@ pub enum ExCommand {
         by_match: bool,
         pattern: Option<String>,
     },
-    /// `:g[lobal][!]/{pattern}/[cmd]` and `:v[global]/{pattern}/[cmd]`:
-    /// `command` run on each row of the range (by default all) that
-    /// `pattern` matches (with `invert`, as `!` and `:v` make it, doesn't).
-    /// A [`LineSearch::Pattern`]'s direction means nothing here.
-    Global {
-        invert: bool,
-        pattern: LineSearch,
-        command: String,
-    },
-    /// `:norm[al][!] {keys}`: `keys` run on the cursor's row, or on each
-    /// line of the range.
-    Normal { keys: Vec<VimKey> },
     /// `:noh[lsearch]`: no highlight until the next search.
     NoHighlight,
     /// `:s[ubstitute]`, `:&` and `:&&`: see [`Substitute`].
@@ -307,22 +276,6 @@ pub enum ExError {
     ValueTooLarge(String),
     #[error("E146: Regular expressions can't be delimited by letters")]
     LetterDelimiter,
-    /// `:g` with a backslash before anything but `/`, `?` or `&`.
-    #[error("E10: \\ should be followed by /, ? or &")]
-    BackslashDelimiter,
-    #[error("E148: Regular expression missing from global")]
-    NoGlobalPattern,
-    /// A `:g` inside a `:g`.
-    #[error("E147: Cannot do :global recursive with a range")]
-    Recursive,
-    #[error("E471: Argument required")]
-    ArgumentRequired,
-    /// `:normal`s running inside each other past a limit.
-    #[error("E192: Recursive use of :normal too deep")]
-    NormalTooDeep,
-    /// `:normal`'s keys name a key there isn't.
-    #[error(transparent)]
-    Keys(#[from] KeyError),
     /// `\n` in a replacement, which in Vim puts in a NUL.
     #[error("\\n in a replacement (a NUL): not supported")]
     NulInReplacement,
@@ -347,12 +300,6 @@ impl Ex {
     pub fn parse(line: &str) -> Result<Self, ExError> {
         let (line, range, rest) = split(line);
         let command = command(line, &range, rest, |_| Ok(()))?;
-        // Run, a `:g` inside one fails there (as nvim's does with a range).
-        if let ExCommand::Global { command, .. } = &command
-            && global::nested(command)
-        {
-            return Err(ExError::Recursive);
-        }
         Ok(Self { range, command })
     }
 }
@@ -406,12 +353,6 @@ fn command(
     }
     if let Some(command) = host(name) {
         return host_command(command, range, after);
-    }
-    if let Some(vglobal) = global::kind(name) {
-        return global::parse(vglobal, after, check);
-    }
-    if normal::is_normal(name) {
-        return normal::parse(after, check);
     }
     if "substitute".starts_with(name) {
         check(true)?;
@@ -801,11 +742,7 @@ fn execute(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Result<Hand
                 true => (end + 1).min(last),
                 false => end,
             };
-            let from = target.model.buffer().version();
-            let joined = lines::join(target, actor, row(first)..=row(end), raw);
-            let until = target.model.buffer().version();
-            global::noted(from, until, global::Change::Joined);
-            joined
+            lines::join(target, actor, row(first)..=row(end), raw)
         }
         ExCommand::Move { to: to_address } => {
             let (first, end) = counted_lines(target, lines, None, last)?;
@@ -814,12 +751,7 @@ fn execute(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Result<Hand
                 return Err(ExError::IntoItself);
             }
             let searched = searched(range.iter().chain([&to_address]));
-            let from = target.model.buffer().version();
-            let moved = lines::move_rows(target, actor, row(first)..=row(end), to, searched);
-            let until = target.model.buffer().version();
-            let rows = row(first)..=row(end);
-            global::noted(from, until, global::Change::Moved { rows, to });
-            moved
+            lines::move_rows(target, actor, row(first)..=row(end), to, searched)
         }
         ExCommand::Copy { to: to_address } => {
             let (first, end) = counted_lines(target, lines, None, last)?;
@@ -832,46 +764,12 @@ fn execute(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Result<Hand
             let rows = row(first)..=row(end);
             lines::shift_rows(target, actor, rows, left, times, searched(&range))
         }
-        ExCommand::Global {
-            invert,
-            pattern,
-            command,
-        } => {
-            let (first, end) = match lines {
-                Some(_) => counted_lines(target, lines, None, last)?,
-                None => (1, last),
-            };
-            return global::run(
-                target,
-                actor,
-                row(first)..=row(end),
-                invert,
-                &pattern,
-                &command,
-            );
-        }
-        ExCommand::Normal { keys } => {
-            let rows = match lines {
-                Some(_) => {
-                    let (first, end) = counted_lines(target, lines, None, last)?;
-                    Some(row(first)..=row(end))
-                }
-                None => None,
-            };
-            return normal::run(target, actor, rows, &keys);
-        }
         ExCommand::Sort { .. } => {
             let (first, end) = match lines {
                 Some(_) => counted_lines(target, lines, None, last)?,
                 None => (1, last),
             };
-            let (from, rows_before) = (target.model.buffer().version(), last);
-            let sorted = lines::sort(target, actor, row(first)..=row(end), &command);
-            let buffer = target.model.buffer();
-            let by = i64::from(buffer.text().row_count()) - rows_before;
-            let rows = row(first)..=row(end);
-            global::noted(from, buffer.version(), global::Change::Sorted { rows, by });
-            return sorted;
+            return lines::sort(target, actor, row(first)..=row(end), &command);
         }
     })
 }
@@ -1065,43 +963,6 @@ fn search_line(target: &mut VimTarget<'_>, search: &LineSearch, from: i64) -> Re
     found
         .map(|row| i64::from(row) + 1)
         .ok_or(ExError::NotFound(pattern))
-}
-
-/// One caret at the start of `row` (or the last, past it), as nvim's `:g`
-/// and `:normal` move the cursor: in a visual mode, the vim cursor. It
-/// keeps the primary caret's goal column, as nvim keeps its own, unless a
-/// change left that to be taken from where the caret is (fe-vim keeps none
-/// then) and `settle` is false: then it's taken at the row's start.
-fn to_row_start(target: &mut VimTarget<'_>, row: u32, settle: bool) {
-    target.model.sync_display();
-    let VimTarget { model, state, .. } = target;
-    let text = model.text();
-    let start = text.row_start(row.min(text.row_count() - 1));
-    if let Mode::Visual(kind) = state.mode() {
-        let anchor = state.visual_anchor(model).unwrap_or(start);
-        state.select_visual(model, kind, anchor, start);
-        return;
-    }
-    let head = model.primary_selection().head();
-    let goals = motion::valid_goals(state, model.snapshot().version(), &model.selections());
-    let kept = goals.and_then(|(_, goals)| goals.iter().find(|(at, _)| *at == head));
-    let goal = match kept {
-        Some(&(_, Some(goal))) => Some(goal),
-        _ if kept.is_none() && !settle => None,
-        _ => {
-            let cursor = Cursor::at(model.text(), head);
-            Some(cursor.line.goal_column(cursor.ix, model.tab_size().max(1)))
-        }
-    };
-    model.set_selections([operator::caret(start)]);
-    state.goals = goal.map(|goal| (model.snapshot().version(), vec![(start, Some(goal))]));
-}
-
-/// The first non-blank on `row` of `text`, as an offset.
-fn first_non_blank(text: &fe_text::Text, row: u32) -> usize {
-    let mut cursor = Cursor::at(text, text.row_start(row));
-    cursor.ix = cursor.line.first_non_blank();
-    cursor.offset()
 }
 
 /// One caret on `line` (from 1), as `{line}G` puts it: at the goal column
