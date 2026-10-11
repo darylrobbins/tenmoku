@@ -185,6 +185,18 @@ pub struct Frame<L> {
     pub fold_toggles: Vec<FoldToggle>,
     /// [`FOLD_MARKER`]s after rows with folded rows below.
     pub fold_markers: Vec<FoldMarker<L>>,
+    /// Where the inlay was laid out, if its row is in the frame.
+    pub inlay: Option<Rect>,
+}
+
+/// Text drawn inside a row at a buffer offset, with the rest of the row and
+/// every position on it shifted past it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Inlay<S> {
+    pub offset: usize,
+    /// One line.
+    pub text: String,
+    pub style: S,
 }
 
 /// Where a chevron that folds or unfolds a buffer row goes: in the gutter
@@ -534,6 +546,32 @@ pub fn layout_frame_with_blocks<M: TextMeasure>(
     measure: &mut M,
     long_rows: &mut LongRows,
     widths: &mut dyn CharWidth,
+    highlights: impl FnMut(Range<usize>) -> Vec<StyledSpan<M::Style>>,
+    fold_candidates: impl FnOnce(Range<u32>) -> Vec<u32>,
+) -> Frame<M::Line> {
+    layout_frame_with_inlay(
+        input,
+        blocks,
+        None,
+        measure,
+        long_rows,
+        widths,
+        highlights,
+        fold_candidates,
+    )
+}
+
+/// Lays out like [`layout_frame_with_blocks`], with `inlay` drawn inside the
+/// display row that holds its offset, if the offset is in what's shaped of
+/// the row. The row isn't wrapped for it, so it may run past the wrap width.
+#[allow(clippy::too_many_arguments)]
+pub fn layout_frame_with_inlay<M: TextMeasure>(
+    input: &FrameInput<M::Style>,
+    blocks: &BlockMap,
+    inlay: Option<&Inlay<M::Style>>,
+    measure: &mut M,
+    long_rows: &mut LongRows,
+    widths: &mut dyn CharWidth,
     mut highlights: impl FnMut(Range<usize>) -> Vec<StyledSpan<M::Style>>,
     fold_candidates: impl FnOnce(Range<u32>) -> Vec<u32>,
 ) -> Frame<M::Line> {
@@ -617,7 +655,17 @@ pub fn layout_frame_with_blocks<M: TextMeasure>(
             tab_size,
         );
         let first_span = spans.partition_point(|span| span.range.end <= shown.start);
-        let runs = row_runs(&expanded, shown.start, &spans[first_span..], &styles.text);
+        let mut expanded = expanded;
+        let mut runs = row_runs(&expanded, shown.start, &spans[first_span..], &styles.text);
+        if let Some(inlay) = inlay
+            && contains(display_row.range.clone(), display_row.last, inlay.offset)
+            && (shown.start..=shown.end).contains(&inlay.offset)
+        {
+            expanded.insert_inlay(inlay.offset - shown.start, &inlay.text);
+            if let Some(range) = expanded.inlay_range() {
+                insert_run(&mut runs, range.start, inlay.text.len(), &inlay.style);
+            }
+        }
         let line = measure.shape(expanded.text(), &runs);
         RowLayout {
             row,
@@ -858,6 +906,17 @@ pub fn layout_frame_with_blocks<M: TextMeasure>(
         })
         .collect();
 
+    let inlay_rect = rows.iter().find_map(|row| {
+        let range = row.expanded.inlay_range()?;
+        let x = |index: usize| row.start_x() + f64::from(row.line.x_for_index(index));
+        Some(Rect {
+            x: text_left + (x(range.start) - scroll_x) as f32,
+            y: row_top(row.row),
+            width: (x(range.end) - x(range.start)) as f32,
+            height: line_height,
+        })
+    });
+
     let visible_buffer_rows = match (rows.first(), rows.last()) {
         (Some(first), Some(last)) => first.buffer_row..last.buffer_row + 1,
         _ => 0..0,
@@ -940,6 +999,32 @@ pub fn layout_frame_with_blocks<M: TextMeasure>(
         fold_chevron: (em * FOLD_CHEVRON_EMS).min(line_height * FOLD_CHEVRON_LINE_FRACTION),
         fold_toggles,
         fold_markers,
+        inlay: inlay_rect,
+    }
+}
+
+/// Puts a run of `len` bytes in `style` at `at`, splitting the run it's in.
+fn insert_run<S: Clone>(runs: &mut Vec<StyleRun<S>>, at: usize, len: usize, style: &S) {
+    let mut start = 0;
+    let mut ix = 0;
+    while ix < runs.len() && start + runs[ix].len <= at {
+        start += runs[ix].len;
+        ix += 1;
+    }
+    let new = StyleRun {
+        len,
+        style: style.clone(),
+    };
+    if ix < runs.len() && start < at {
+        let tail = StyleRun {
+            len: start + runs[ix].len - at,
+            style: runs[ix].style.clone(),
+        };
+        runs[ix].len = at - start;
+        runs.insert(ix + 1, new);
+        runs.insert(ix + 2, tail);
+    } else {
+        runs.insert(ix, new);
     }
 }
 
@@ -1031,6 +1116,8 @@ mod cluster_row_tests;
 mod fold_column_tests;
 #[cfg(test)]
 mod fold_gutter_tests;
+#[cfg(test)]
+mod inlay_tests;
 #[cfg(test)]
 mod long_row_tests;
 #[cfg(test)]

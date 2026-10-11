@@ -1,6 +1,7 @@
 //! Maps buffer text to what's displayed: tabs expand within a row, long rows
 //! soft wrap and folds hide rows ([`DisplayMap`]), and blocks of rows go
-//! between display rows ([`BlockMap`]); inlays come later. [`layout`] lays
+//! between display rows ([`BlockMap`]); one inlay per frame goes inside a row
+//! ([`ExpandedRow::insert_inlay`]). [`layout`] lays
 //! out a frame of an editor from that. Must never depend on GPUI.
 //!
 //! Columns are byte offsets within a row, in buffer or display coordinates.
@@ -48,6 +49,16 @@ impl CharWidth for Monospace {
 pub struct ExpandedRow {
     text: String,
     tabs: Vec<Tab>,
+    inlay: Option<InlaySpan>,
+}
+
+/// Where an inlay sits in an [`ExpandedRow`].
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+struct InlaySpan {
+    buffer_col: usize,
+    /// The display column the inlay starts at, before it was inserted.
+    display_col: usize,
+    len: usize,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -73,6 +84,7 @@ impl ExpandedRow {
             return Self {
                 text: row.to_string(),
                 tabs: Vec::new(),
+                inlay: None,
             };
         }
         let mut text = String::with_capacity(row.len() + 16);
@@ -93,22 +105,59 @@ impl ExpandedRow {
                 column += 1;
             }
         }
-        Self { text, tabs }
+        Self {
+            text,
+            tabs,
+            inlay: None,
+        }
     }
 
     pub fn text(&self) -> &str {
         &self.text
     }
 
+    /// Inserts `text`, one line, at the display column of `buffer_col`. The
+    /// row's later columns shift right by its length; `to_display` of
+    /// `buffer_col` stays before it.
+    pub fn insert_inlay(&mut self, buffer_col: usize, text: &str) {
+        debug_assert!(self.inlay.is_none(), "a row takes one inlay");
+        debug_assert!(!text.contains('\n'), "an inlay is one line");
+        let display_col = self.to_display(buffer_col);
+        self.text.insert_str(display_col, text);
+        self.inlay = Some(InlaySpan {
+            buffer_col,
+            display_col,
+            len: text.len(),
+        });
+    }
+
+    /// The display columns the inlay covers, if the row has one.
+    pub fn inlay_range(&self) -> Option<std::ops::Range<usize>> {
+        let inlay = self.inlay?;
+        Some(inlay.display_col..inlay.display_col + inlay.len)
+    }
+
     pub fn to_display(&self, buffer_col: usize) -> usize {
         let before = self.tabs.partition_point(|tab| tab.buffer_col < buffer_col);
         let extra: usize = self.tabs[..before].iter().map(|tab| tab.width - 1).sum();
-        buffer_col + extra
+        let inlay = self
+            .inlay
+            .filter(|inlay| buffer_col > inlay.buffer_col)
+            .map_or(0, |inlay| inlay.len);
+        buffer_col + extra + inlay
     }
 
     /// The buffer column for a display column. Columns inside an expanded tab
     /// snap to before (`Left`) or after (`Right`) it.
-    pub fn to_buffer(&self, display_col: usize, bias: Bias) -> usize {
+    pub fn to_buffer(&self, mut display_col: usize, bias: Bias) -> usize {
+        if let Some(inlay) = self.inlay {
+            if display_col <= inlay.display_col + inlay.len && display_col >= inlay.display_col {
+                return inlay.buffer_col;
+            }
+            if display_col > inlay.display_col {
+                display_col -= inlay.len;
+            }
+        }
         let mut extra = 0;
         for tab in &self.tabs {
             if display_col <= tab.display_col {
