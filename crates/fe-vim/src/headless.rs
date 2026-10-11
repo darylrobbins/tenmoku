@@ -237,6 +237,11 @@ impl HeadlessVim {
         &mut self.registers
     }
 
+    /// `clipboard=unnamedplus` for the registers ([`Registers::set_clipboard_unnamed`]).
+    pub fn set_clipboard_unnamed(&mut self, on: bool) {
+        self.registers.set_clipboard_unnamed(on);
+    }
+
     /// The host, whose `clipboard` is `+` and `*`.
     pub fn host(&self) -> &HeadlessHost {
         &self.host

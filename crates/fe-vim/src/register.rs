@@ -71,6 +71,11 @@ pub struct Registers {
     search_forward: bool,
     /// The last `:s`, which `:&` repeats; shared like the last search.
     pub(crate) substitute: LastSubstitute,
+    /// `clipboard=unnamedplus`: registers named by no command are `+`.
+    clipboard_unnamed: bool,
+    /// What was last written to the clipboard, with its kind, so a read of
+    /// the same text keeps it.
+    clipboard_last: Option<Register>,
 }
 
 /// The clipboard's name in [`Registers::unnamed`].
@@ -79,6 +84,13 @@ const CLIPBOARD: char = '+';
 impl Registers {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Sets `clipboard=unnamedplus`: a yank, delete or change that names no
+    /// register also writes the clipboard, and a put that names none reads
+    /// it (`:help clipboard-unnamedplus`).
+    pub fn set_clipboard_unnamed(&mut self, on: bool) {
+        self.clipboard_unnamed = on;
     }
 
     /// Whether `name` is a register a command may write: `" 0-9 - a-z A-Z _
@@ -120,7 +132,7 @@ impl Registers {
         name: Option<char>,
         host: &mut dyn EditorHost,
     ) -> Result<Option<Register>, RegisterError> {
-        let name = name.unwrap_or('"');
+        let name = name.unwrap_or(if self.clipboard_unnamed { '+' } else { '"' });
         if name == '/' {
             return self.search.clone().map(Some).ok_or(RegisterError(name));
         }
@@ -133,6 +145,15 @@ impl Registers {
         if clipboard {
             let text = host.read_clipboard().unwrap_or_default();
             let text = text.replace("\r\n", "\n").replace('\r', "\n");
+            // Text fe-vim wrote keeps its kind; another app's is linewise
+            // when it ends in a line break.
+            if let Some(last) = self
+                .clipboard_last
+                .as_ref()
+                .filter(|last| last.text == text)
+            {
+                return Ok(Some(last.clone()));
+            }
             let linewise = text.ends_with('\n');
             return Ok(Some(Register::new(text, linewise)));
         }
@@ -156,12 +177,15 @@ impl Registers {
         let unnamed = match name {
             Some('_') => return Ok(()),
             Some('+' | '*') => {
-                host.write_clipboard(value.text.clone());
+                self.write_clipboard(&value, host);
                 Some(CLIPBOARD)
             }
             Some(name) => Some(self.store(name, value.clone())),
             None => None,
         };
+        if name.is_none() && self.clipboard_unnamed {
+            self.write_clipboard(&value, host);
+        }
         self.unnamed = match write {
             Write::Yank => {
                 if name.is_none() {
@@ -199,6 +223,11 @@ impl Registers {
     pub(crate) fn set_search(&mut self, pattern: &str, forward: bool) {
         self.search = Some(Register::new(pattern, false));
         self.search_forward = forward;
+    }
+
+    fn write_clipboard(&mut self, value: &Register, host: &mut dyn EditorHost) {
+        host.write_clipboard(value.text.clone());
+        self.clipboard_last = Some(value.clone());
     }
 
     /// Writes register `name` itself, `A-Z` appending; returns the name

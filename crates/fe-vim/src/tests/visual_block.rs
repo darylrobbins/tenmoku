@@ -137,13 +137,13 @@ fn operators_registers_and_put() {
     assert_eq!(vim.text(), "xy xy cd");
     assert_eq!(vim.registers().get('"'), Some(&Register::new("xy ", false)));
 
-    // `"+y` of a block puts its rows, joined, on the clipboard, which never
-    // reads back as a block.
+    // `"+y` of a block puts its rows, joined, on the clipboard, and reading
+    // that text back gives the block again.
     let mut vim = HeadlessVim::new("abcd\nab\nabcd", (0, 1));
     vim.feed("<C-v>jjl\"+y").unwrap();
     assert_eq!(vim.host().clipboard.as_deref(), Some("bc\nb\nbc"));
     vim.feed("\"+P").unwrap();
-    assert_eq!(vim.text(), "abc\nb\nbcbcd\nab\nabcd");
+    assert_eq!(vim.text(), "abcbcd\nab b\nabcbcd");
 }
 
 #[test]
