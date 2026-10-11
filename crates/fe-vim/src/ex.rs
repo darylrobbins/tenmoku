@@ -334,15 +334,18 @@ fn trim_unescaped_end(args: &str) -> &str {
     &args[..end]
 }
 
-/// A file name as nvim reads it: a backslash before a blank, another
-/// backslash or a character the shell or ex line treats specially is
-/// dropped, and any other stays.
+/// A file name as nvim reads it: a backslash escapes the character after
+/// it (a blank, another backslash or any other) and is itself dropped; a
+/// lone backslash at the end stays.
 fn unescape(args: &str) -> String {
     let mut name = String::with_capacity(args.len());
-    let mut chars = args.chars().peekable();
+    let mut chars = args.chars();
     while let Some(ch) = chars.next() {
-        match chars.peek() {
-            Some(next) if ch == '\\' && " \t\\|\"*?[{}$%#`'".contains(*next) => {}
+        match (ch, chars.clone().next()) {
+            ('\\', Some(escaped)) => {
+                name.push(escaped);
+                chars.next();
+            }
             _ => name.push(ch),
         }
     }
