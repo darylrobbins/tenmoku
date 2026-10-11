@@ -39,10 +39,10 @@
 //! frame before matching ([`live_stack`]), not the context the last frame
 //! drew, which can trail the keys typed since.
 
-use std::rc::Rc;
+use std::{collections::VecDeque, rc::Rc};
 
 use fe_buffer::TransactionId;
-use fe_command::{ContextStack, DispatchError, Dispatched, Effect, Invocation, Registry};
+use fe_command::{ContextStack, DispatchError, Dispatched, Effect, Invocation, Registry, Source};
 use fe_editor::EditorModel;
 use fe_vim::{Registers, Step, VimCommands, VimKey, VimState, VimTarget};
 use gpui::{
@@ -470,20 +470,127 @@ impl EditorView {
         }
     }
 
+    /// Feeds the keys a `@` left ([`VimState::take_replay`]), synchronously
+    /// and in order, each where a typed key would go by the mode at that
+    /// moment: no keystroke is dispatched, which could leave GPUI's
+    /// propagation flag stopped. A `@` inside the macro leaves keys that
+    /// are fed before the rest. A key that fails drops the rest of the
+    /// replay ([`VimState::stop_replay`]).
+    fn replay_vim(&mut self, cx: &mut Context<Self>) {
+        let Some(state) = &mut self.vim else {
+            return;
+        };
+        let mut queue: VecDeque<VimKey> = state.take_replay().into();
+        if queue.is_empty() {
+            return;
+        }
+        while let Some(key) = queue.pop_front() {
+            let in_cmdline = self.replay_key(key, cx).then(|| {
+                self.vim
+                    .as_ref()
+                    .is_some_and(|state| matches!(state.mode(), fe_vim::Mode::CmdLine(_)))
+            });
+            if in_cmdline != Some(false) {
+                if in_cmdline == Some(true) {
+                    log::warn!(
+                        "a macro replay stops at the command line: its keys can't be replayed"
+                    );
+                }
+                queue.clear();
+                if let Some(state) = &mut self.vim {
+                    state.stop_replay();
+                }
+                break;
+            }
+            let Some(state) = &mut self.vim else {
+                break;
+            };
+            for key in state.take_replay().into_iter().rev() {
+                queue.push_front(key);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Feeds one replayed `key`. Returns whether it worked.
+    fn replay_key(&mut self, key: VimKey, cx: &mut Context<Self>) -> bool {
+        self.sync_visual();
+        let Some(state) = &mut self.vim else {
+            return false;
+        };
+        match state.mode() {
+            fe_vim::Mode::Insert => {
+                state.record_key(key);
+                match key {
+                    VimKey::Char(ch) => self.type_text(ch.encode_utf8(&mut [0; 4]), cx),
+                    // `<C-j>` (`<NL>`) is `<CR>` here.
+                    VimKey::Enter | VimKey::Ctrl('j') => {
+                        let newline = Invocation::of(NEWLINE)
+                            .expect("a valid command ID")
+                            .source(Source::Keyboard);
+                        if let Some(state) = &self.vim {
+                            let result = line_break(state, &mut self.model, &newline);
+                            if self.dispatched(result, &newline, true, cx).is_err() {
+                                return false;
+                            }
+                        }
+                    }
+                    VimKey::Backspace => {
+                        self.model.backspace();
+                        self.changed(cx);
+                    }
+                    VimKey::Esc => {
+                        let normal = Invocation::of("vim.normal_mode")
+                            .expect("a valid command ID")
+                            .source(Source::Keyboard);
+                        let context = stamp(fe_editor::commands::context(), self.vim.as_ref());
+                        return self.run_vim_once(&normal.context(context), cx);
+                    }
+                    _ => return false,
+                }
+                true
+            }
+            fe_vim::Mode::CmdLine(_) => false,
+            _ => match state.feed(key) {
+                Step::Wait(_) | Step::Cancel => self.vim.as_ref().is_some_and(|s| !s.failed()),
+                Step::Forward => false,
+                Step::Commit(invocation) => {
+                    let stack = fe_editor::commands::context();
+                    let invocation = invocation.context(stamp(stack, self.vim.as_ref()));
+                    self.run_vim_once(&invocation, cx)
+                        && self.vim.as_ref().is_some_and(|s| !s.failed())
+                }
+            },
+        }
+    }
+
     /// Runs `invocation` through `fe-vim`'s registry, as `run_command` runs
     /// the editor's. Its context is used as given.
-    pub(crate) fn run_vim(&mut self, invocation: &Invocation, cx: &mut Context<Self>) {
+    /// Returns whether it ran without an error. The keys a `@` leaves are
+    /// then replayed ([`EditorView::replay_vim`]), whichever way the
+    /// invocation came.
+    pub(crate) fn run_vim(&mut self, invocation: &Invocation, cx: &mut Context<Self>) -> bool {
+        let ok = self.run_vim_once(invocation, cx);
+        self.replay_vim(cx);
+        ok
+    }
+
+    /// [`EditorView::run_vim`] without the replay: for the replay's own keys.
+    fn run_vim_once(&mut self, invocation: &Invocation, cx: &mut Context<Self>) -> bool {
         let registry = registry();
         let Some(result) = self.dispatch_vim(&registry, invocation, cx) else {
             log::warn!("{} needs vim on", invocation.command);
-            return;
+            return false;
         };
+        let mut ok = result.is_ok();
         let mutates = registry
             .get(&invocation.command)
             .is_some_and(|meta| meta.mutates_buffer);
         if let Err(error) = self.dispatched(result, invocation, mutates, cx) {
             log::warn!("{error}");
+            ok = false;
         }
+        ok
     }
 
     /// Builds the [`VimTarget`] and dispatches; `None` with vim off.

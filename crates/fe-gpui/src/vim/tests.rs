@@ -600,3 +600,5 @@ fn block_cursor_before_a_soft_wrap(cx: &mut TestAppContext) {
         "{last:?} {before:?}"
     );
 }
+
+mod macro_replay;
