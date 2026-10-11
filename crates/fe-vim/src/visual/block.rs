@@ -73,7 +73,13 @@ impl Block {
 
     /// What it takes on `row`, pushing what a yank takes there onto `taken`
     /// if given (but a short row's spaces).
-    fn cut(&self, text: &Text, row: u32, tab: usize, mut taken: Option<&mut String>) -> Cut {
+    pub(super) fn cut(
+        &self,
+        text: &Text,
+        row: u32,
+        tab: usize,
+        mut taken: Option<&mut String>,
+    ) -> Cut {
         let line = Line::new(text, row);
         let end = self.right.map_or(usize::MAX, |right| right + 1);
         let row_end = line.start + line.text.len();

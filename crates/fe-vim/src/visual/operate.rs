@@ -91,6 +91,94 @@ fn extent_from(text: &Text, head: usize, goal: Option<usize>, extent: &Extent, t
     }
 }
 
+/// What a visual selection covers, for a change that reads the text of each
+/// row.
+pub(crate) struct Area {
+    /// The bytes it covers on each row it spans, as offsets (empty where it
+    /// covers none).
+    pub(crate) rows: Vec<(u32, Range<usize>)>,
+    /// Where nvim leaves the caret after a change: a linewise selection's
+    /// first row start, a block's top-left corner, a charwise one's start.
+    pub(crate) start: usize,
+    /// What `.` repeats it by.
+    pub(crate) extent: Extent,
+}
+
+/// The area `ends` select. Charwise, the last row ends after the grapheme at
+/// the end (or at the row's end after `$`); a block's rows are its columns.
+fn area(text: &Text, ends: Ends, tab: usize) -> Area {
+    let (first, last) = ends.rows(text);
+    let block = (ends.kind == VisualKind::Block).then(|| Block::of(text, &ends, tab));
+    let hi = cursor_at(text, ends.hi());
+    // `$` takes the end of the row its cursor is on, if that is the last.
+    let to_end =
+        (ends.goal == Some(usize::MAX) && ends.cursor >= ends.anchor) || hi.ix >= hi.line.len();
+    let hi_end = hi.line.starts.get(hi.ix + 1).copied();
+    let rows = (first..=last)
+        .map(|row| {
+            let start = text.row_start(row);
+            let end = start + text.row_len(row) as usize;
+            let range = match (&block, ends.kind) {
+                (Some(block), _) => block.cut(text, row, tab, None).range,
+                (None, VisualKind::Line) => start..end,
+                (None, _) => {
+                    let from = if row == first { ends.lo() } else { start };
+                    let to = match (row == last, to_end, hi_end) {
+                        (true, false, Some(next)) => hi.line.start + next,
+                        _ => end,
+                    };
+                    from..to.max(from)
+                }
+            };
+            (row, range)
+        })
+        .collect();
+    let start = match (&block, ends.kind) {
+        (Some(block), _) => at_column(text, first, block.left, tab),
+        (None, VisualKind::Line) => text.row_start(first),
+        (None, _) => ends.lo(),
+    };
+    Area {
+        rows,
+        start,
+        extent: extent(text, ends, ends.kind == VisualKind::Line, tab),
+    }
+}
+
+/// The area of the live visual mode, if one is on.
+pub(crate) fn live_area(model: &EditorModel, state: &VimState) -> Option<Area> {
+    let ends = ends(model, state)?;
+    Some(area(model.text(), ends, model.tab_size().max(1)))
+}
+
+/// The area `extent` takes from the primary caret, as `.` lays it.
+pub(crate) fn replay_area(model: &EditorModel, state: &VimState, extent: &Extent) -> Area {
+    let text = model.text();
+    let tab = model.tab_size().max(1);
+    let head = Cursor::at(text, model.primary_selection().head()).offset();
+    let goal = held_goal(model, state);
+    // Unlike a delete's, a one-row `$` change from display column 2 on
+    // takes its whole row (nvim 0.12.4).
+    let cursor = cursor_at(text, head);
+    if matches!(
+        extent,
+        Extent::Chars {
+            rows: 1,
+            last: None
+        }
+    ) && cursor.line.goal_column(cursor.ix, tab) >= 2
+    {
+        let start = text.row_start(cursor.row);
+        let end = start + text.row_len(cursor.row) as usize;
+        return Area {
+            rows: vec![(cursor.row, start..end)],
+            start,
+            extent: *extent,
+        };
+    }
+    area(text, extent_from(text, head, goal, extent, tab), tab)
+}
+
 /// `.` after a change over a selection: the same operator over as much
 /// text from the primary caret (`:help visual-repeat`). As in nvim, `'<`
 /// and `'>` stay where they were.
@@ -99,7 +187,7 @@ pub(crate) fn repeat(
     actor: &Actor,
     args: OperateArgs,
 ) -> Result<Dispatched<TransactionId>, CommandError> {
-    let Some(extent) = target.state.visual_extent.clone() else {
+    let Some(extent) = target.state.visual_extent else {
         return effect(false);
     };
     target.model.sync_display();

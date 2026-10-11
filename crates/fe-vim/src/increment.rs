@@ -27,14 +27,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Change, Mode, Pending, Step, VimCommands, VimKey, VimTarget, VisualKind,
-    commands::follow,
-    feature::Feature,
-    history, insert,
-    motion::{Cursor, Line},
-    operator,
-    reducer::invocation,
-    visual,
+    Change, Mode, Pending, Step, VimCommands, VimKey, VimTarget, VisualKind, commands::follow,
+    feature::Feature, history, insert, motion::Cursor, operator, reducer::invocation, visual,
 };
 
 pub(crate) const FEATURE: Feature = Feature {
@@ -60,14 +54,50 @@ pub struct IncrementArgs {
     pub replay: Option<Extent>,
 }
 
-/// The size of a visual selection.
+/// The size of a visual selection, as `.` lays it over the caret.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Extent {
     pub kind: VisualKind,
+    /// At least 1.
     pub rows: u32,
-    /// Graphemes in the last row (the only row, if `rows` is 1) of a
-    /// charwise selection, display columns across a block.
-    pub cols: usize,
+    /// Display columns, at least 1: those of the last row (the only row, if
+    /// `rows` is 1) of a charwise selection, counted from the start of the
+    /// selection (from the row's start across several rows), and a block's
+    /// width. `None` after `$`, to each row's end, and for a linewise one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cols: Option<usize>,
+}
+
+/// Wider than any row: what `cols` is cut to, so sums with a column don't
+/// overflow.
+const MAX_COLS: usize = 1 << 32;
+
+impl Extent {
+    fn of(extent: visual::Extent) -> Self {
+        let (kind, rows, cols) = match extent {
+            visual::Extent::Lines(rows) => (VisualKind::Line, rows, None),
+            visual::Extent::Chars { rows, last } => (VisualKind::Char, rows, last),
+            visual::Extent::Block { rows, columns } => (VisualKind::Block, rows, columns),
+        };
+        Self { kind, rows, cols }
+    }
+
+    /// The extent it names, or why it names none.
+    fn visual(self) -> Result<visual::Extent, CommandError> {
+        let Self { kind, rows, cols } = self;
+        if rows == 0 || cols == Some(0) {
+            return Err(CommandError::new("an increment's extent is empty"));
+        }
+        let cols = cols.map(|cols| cols.min(MAX_COLS));
+        Ok(match kind {
+            VisualKind::Line => visual::Extent::Lines(rows),
+            VisualKind::Char => visual::Extent::Chars { rows, last: cols },
+            VisualKind::Block => visual::Extent::Block {
+                rows,
+                columns: cols,
+            },
+        })
+    }
 }
 
 fn key(pending: &Pending, key: VimKey) -> Option<Step> {
@@ -283,10 +313,9 @@ fn rewrite(
         text.push('0');
         text.push(letter as char);
     }
-    // The old width, if it began with a zero.
+    // The old width of its digits (not its sign), if it began with a zero.
     if first == b'0' {
-        let width = end - start;
-        let zeros = width.saturating_sub(text.len() + digits.len());
+        let zeros = (end - col).saturating_sub(text.len() - usize::from(sign) + digits.len());
         text.push_str(&"0".repeat(zeros));
     }
     text.push_str(&digits);
@@ -303,169 +332,83 @@ struct Window {
     to: usize,
 }
 
-/// The windows a visual selection or its `extent` laid over `at` covers.
-fn windows(
-    target: &VimTarget<'_>,
-    kind: VisualKind,
-    ends: (usize, usize),
-    extent: Option<Extent>,
-) -> (Vec<Window>, Extent) {
-    let text = target.model.text();
-    let tab = target.model.tab_size().max(1);
-    let last_row = text.row_count() - 1;
-    let (lo, hi) = (ends.0.min(ends.1), ends.0.max(ends.1));
-    let (first, last) = match extent {
-        Some(extent) => {
-            let first = text.offset_to_point(lo).row;
-            (first, (first + extent.rows - 1).min(last_row))
-        }
-        None => (text.offset_to_point(lo).row, text.offset_to_point(hi).row),
-    };
-    // The grapheme at a byte of `line`, or the row's end.
-    let ix_at = |line: &Line, byte: usize| line.starts.partition_point(|&start| start < byte);
-    let end_of =
-        |line: &Line, ix: usize| line.starts.get(ix + 1).copied().unwrap_or(line.text.len());
-    let (lo_line, hi_line) = (Cursor::at(text, lo).line, Cursor::at(text, hi).line);
-    let (lo_ix, hi_ix) = (Cursor::at(text, lo).ix, Cursor::at(text, hi).ix);
-    // A block's display columns.
-    let columns = match (kind, extent) {
-        (VisualKind::Block, Some(extent)) => {
-            let left = lo_line.start_column(lo_ix, tab);
-            (left, left + extent.cols.max(1) - 1)
-        }
-        _ => {
-            let (a, b) = (
-                lo_line.start_column(lo_ix, tab),
-                hi_line.start_column(hi_ix, tab),
-            );
-            (a.min(b), a.max(b))
-        }
-    };
-    let mut cols = 0;
-    let windows = (first..=last)
-        .map(|row| {
-            let line = Line::new(text, row);
-            let len = line.text.len();
-            let (from, to) = match kind {
-                VisualKind::Line => (0, len),
-                VisualKind::Char => {
-                    let from = if row == first { lo - line.start } else { 0 };
-                    let to = match (extent, row == last) {
-                        (Some(extent), true) => {
-                            let ix = match first == last {
-                                true => ix_at(&line, from) + extent.cols,
-                                false => extent.cols,
-                            };
-                            line.starts.get(ix).copied().unwrap_or(len)
-                        }
-                        (None, true) => match line.len() {
-                            0 => 0,
-                            n => end_of(&line, hi_ix.min(n - 1)),
-                        },
-                        _ => len,
-                    };
-                    (from, to)
-                }
-                VisualKind::Block => {
-                    let inside: Vec<usize> = (0..line.len())
-                        .filter(|&ix| {
-                            let column = line.start_column(ix, tab);
-                            columns.0 <= column && column <= columns.1
-                        })
-                        .collect();
-                    match (inside.first(), inside.last()) {
-                        (Some(&a), Some(&z)) => (line.starts[a], end_of(&line, z)),
-                        _ => (0, 0),
-                    }
-                }
-            };
-            if row == last {
-                cols = match kind {
-                    VisualKind::Block => columns.1 - columns.0 + 1,
-                    _ => {
-                        let (a, z) = (
-                            ix_at(&line, if first == last { from } else { 0 }),
-                            ix_at(&line, to),
-                        );
-                        z - a
-                    }
-                };
-            }
-            Window { row, from, to }
-        })
-        .collect();
-    let rows = last - first + 1;
-    (windows, Extent { kind, rows, cols })
-}
-
 pub(crate) fn increment(
     target: &mut VimTarget<'_>,
     actor: &Actor,
     args: IncrementArgs,
 ) -> Result<Dispatched<TransactionId>, CommandError> {
+    // Checked before anything changes.
+    let replay = args.replay.map(Extent::visual).transpose()?;
     target.model.sync_display();
     let before = target.model.selections();
     let mut carets_before = history::pairs(target.model);
     let live = match target.state.mode() {
-        Mode::Visual(kind) => {
-            let ends = (
-                target.state.visual_anchor(target.model),
-                target.state.visual_cursor(target.model),
-            );
-            ends.0.zip(ends.1).map(|ends| (kind, ends))
-        }
+        Mode::Visual(_) => visual::live_area(target.model, target.state),
         _ => None,
     };
-    // Where each search starts: (row, caret byte or window).
+    let ended = live.is_some();
+    let area = live
+        .or_else(|| replay.map(|extent| visual::replay_area(target.model, target.state, &extent)));
     let text = target.model.text().clone();
-    let (searches, extent, start) = match (live, args.replay) {
-        (Some((kind, ends)), _) => {
-            let (windows, extent) = windows(target, kind, ends, None);
-            let start = ends.0.min(ends.1);
-            (windows, Some(extent), start)
-        }
-        (None, Some(extent)) => {
-            let head = target.model.primary_selection().head();
-            let (windows, _) = windows(target, extent.kind, (head, head), Some(extent));
-            (windows, Some(extent), head)
-        }
-        (None, None) => {
-            let mut rows = Vec::new();
-            for selection in &before {
-                let cursor = Cursor::at(&text, selection.head());
-                if rows.last().is_none_or(|w: &Window| w.row != cursor.row) {
-                    let from = selection.head() - cursor.line.start;
-                    rows.push(Window {
-                        row: cursor.row,
-                        from,
-                        to: cursor.line.text.len(),
-                    });
+    // Where each search runs: a row's bytes in the area, or from each caret.
+    let windows: Vec<Window> = match &area {
+        Some(area) => area
+            .rows
+            .iter()
+            .map(|(row, range)| {
+                let row_start = text.row_start(*row);
+                Window {
+                    row: *row,
+                    from: range.start - row_start,
+                    to: range.end - row_start,
                 }
-            }
-            (rows, None, 0)
-        }
+            })
+            .collect(),
+        None => before
+            .iter()
+            .map(|selection| {
+                let cursor = Cursor::at(&text, selection.head());
+                Window {
+                    row: cursor.row,
+                    from: selection.head() - cursor.line.start,
+                    to: cursor.line.text.len(),
+                }
+            })
+            .collect(),
     };
-    let visual = extent.is_some();
-    if live.is_some() {
+    let visual = area.is_some();
+    if let Some(area) = area.as_ref().filter(|_| ended) {
         // Ends the mode first, so its marks keep the columns they had.
-        carets_before = vec![history::pair(&text, start)];
+        carets_before = vec![history::pair(&text, area.start)];
         visual::exit(target)?;
     }
     // nvim takes counts only to 999999999.
     let count = u64::from(args.count.unwrap_or(1).clamp(1, 999_999_999));
     let mut amount = count;
     let mut edits: Vec<(Range<usize>, String)> = Vec::new();
-    let mut heads = Vec::new();
-    for window in &searches {
+    // Which edit each window's number is, if it has one.
+    let mut edit_of: Vec<Option<usize>> = Vec::new();
+    for window in &windows {
         let line = text.row_to_string(window.row);
         let row_start = text.row_start(window.row);
         let subtract = args.delta < 0;
         let found = rewrite(&line, window.from, window.to, visual, subtract, amount);
-        if let Some(Rewrite { range, text: new }) = found {
-            heads.push(window.row);
-            edits.push((row_start + range.start..row_start + range.end, new));
-            if args.progressive {
-                amount = amount.saturating_add(count);
+        let Some(Rewrite { range, text: new }) = found else {
+            edit_of.push(None);
+            continue;
+        };
+        let range = row_start + range.start..row_start + range.end;
+        // A number that several carets found changes once.
+        match edits.last() {
+            Some((last, _)) if last.start < range.end && range.start < last.end => {
+                edit_of.push(Some(edits.len() - 1));
+            }
+            _ => {
+                edit_of.push(Some(edits.len()));
+                edits.push((range, new));
+                if args.progressive {
+                    amount = amount.saturating_add(count);
+                }
             }
         }
     }
@@ -474,9 +417,9 @@ pub(crate) fn increment(
     let mut shift = 0isize;
     let mut landed = Vec::new();
     let mut shifts = Vec::new();
-    for (ix, (range, new)) in edits.iter().enumerate() {
+    for (range, new) in &edits {
         let start = range.start.checked_add_signed(shift).expect("sorted edits");
-        landed.push((heads[ix], start + new.len() - 1));
+        landed.push(start + new.len() - 1);
         shift += new.len() as isize - range.len() as isize;
         shifts.push((range.end, shift));
     }
@@ -496,31 +439,31 @@ pub(crate) fn increment(
     };
     if let Some(id) = transaction {
         target.state.carets.record(id, carets_before);
-        let args = IncrementArgs {
-            replay: extent,
-            ..args
+        let replay = match (&area, ended) {
+            (Some(area), true) => Some(Extent::of(area.extent)),
+            _ => args.replay,
         };
+        let args = IncrementArgs { replay, ..args };
         target.state.set_last_change(Change::Increment(args).into());
         target.state.goals = None;
     }
-    let carets: Vec<usize> = match live {
-        Some(_) => vec![after(start)],
+    // A selection leaves the caret at its start; a number's last digit
+    // otherwise.
+    let carets: Vec<usize> = match &area {
+        Some(area) => vec![after(area.start)],
         None => before
             .iter()
-            .map(|selection| {
-                let head = selection.head();
-                let row = text.offset_to_point(head).row;
-                match landed.iter().find(|(edited, _)| *edited == row) {
-                    Some(&(_, caret)) => caret,
-                    None => after(head),
-                }
+            .zip(&edit_of)
+            .map(|(selection, edit)| match edit {
+                Some(ix) => landed[*ix],
+                None => after(selection.head()),
             })
             .collect(),
     };
     // nvim fails a change that finds no number.
     target.state.failed |= transaction.is_none();
     operator::land(target.model, &snapshot, carets);
-    let effect = match transaction.is_some() || live.is_some() {
+    let effect = match transaction.is_some() || ended {
         true => Effect::Changed,
         false => Effect::Nothing,
     };

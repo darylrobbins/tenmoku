@@ -540,3 +540,255 @@ name = "over64_hex"
 buffer = "0x1ffffffffffffffff"
 cursor = [0, 0]
 keys = "<C-a>"
+
+[[case]]
+name = "pad_neg_zero_up"
+buffer = "-001"
+cursor = [0, 0]
+keys = "<C-a>"
+
+[[case]]
+name = "pad_zero_neg_down"
+buffer = "000"
+cursor = [0, 0]
+keys = "<C-x>"
+
+[[case]]
+name = "pad_neg_grow"
+buffer = "-009"
+cursor = [0, 0]
+keys = "<C-x>"
+
+[[case]]
+name = "pad_hex_zero"
+buffer = "0x00f"
+cursor = [0, 0]
+keys = "<C-a>"
+
+[[case]]
+name = "pad_neg_zero_visual_up"
+buffer = "-001"
+cursor = [0, 0]
+keys = "V<C-a>"
+
+[[case]]
+name = "pad_zero_neg_visual_down"
+buffer = "000"
+cursor = [0, 0]
+keys = "V<C-x>"
+
+[[case]]
+name = "pad_cross_zero_progressive"
+buffer = "001\n001\n001"
+cursor = [0, 0]
+keys = "Vjjg<C-x>"
+
+[[case]]
+name = "pad_cross_zero_progressive_up"
+buffer = "-02\n-02\n-02"
+cursor = [0, 0]
+keys = "Vjjg<C-a>"
+
+[[case]]
+name = "pad_block_cross_zero"
+buffer = "x -01\nx 000"
+cursor = [0, 2]
+keys = "<C-v>j$<C-a>"
+
+[[case]]
+name = "block_eol_goal"
+buffer = "a 1\nb 222\nc 3"
+cursor = [0, 2]
+keys = "<C-v>jj$<C-a>"
+
+[[case]]
+name = "block_eol_goal_progressive"
+buffer = "a 1\nb 222\nc 3"
+cursor = [0, 2]
+keys = "<C-v>jj$g<C-a>"
+
+[[case]]
+name = "block_eol_goal_up_first"
+buffer = "a 1\nb 222\nc 3"
+cursor = [2, 2]
+keys = "<C-v>kk$<C-a>"
+
+[[case]]
+name = "block_tab_endpoint"
+buffer = "\t1\n   3\n  2"
+cursor = [2, 2]
+keys = "<C-v>kk<C-a>"
+
+[[case]]
+name = "block_tab_endpoint_down"
+buffer = "\t1\n   3\n  2"
+cursor = [2, 2]
+keys = "<C-v>kk<C-x>"
+
+[[case]]
+name = "block_tab_endpoint_g"
+buffer = "\t1\n   3\n  2"
+cursor = [2, 2]
+keys = "<C-v>kkg<C-a>"
+
+[[case]]
+name = "block_wide_endpoint"
+buffer = "界 1\n 2 3"
+cursor = [1, 0]
+keys = "<C-v>k<C-a>"
+
+[[case]]
+name = "block_wide_endpoint_right"
+buffer = "a1 5\n界 7"
+cursor = [0, 0]
+keys = "<C-v>jl<C-a>"
+
+[[case]]
+name = "line_start_caret"
+buffer = "x 1\nx 2"
+cursor = [0, 2]
+keys = "Vj<C-a>"
+
+[[case]]
+name = "line_start_caret_up"
+buffer = "x 1\nx 2"
+cursor = [1, 2]
+keys = "Vk<C-a>"
+
+[[case]]
+name = "line_start_undo"
+buffer = "x 1\nx 2"
+cursor = [0, 2]
+keys = "Vj<C-a>u"
+
+[[case]]
+name = "block_start_caret"
+buffer = "a 1\nb 2"
+cursor = [0, 2]
+keys = "<C-v>jh<C-a>"
+
+[[case]]
+name = "block_start_caret_undo"
+buffer = "a 1\nb 2"
+cursor = [0, 2]
+keys = "<C-v>jh<C-a>u"
+
+[[case]]
+name = "block_start_caret_up"
+buffer = "a 1\nb 2"
+cursor = [1, 2]
+keys = "<C-v>kh<C-a>"
+
+[[case]]
+name = "char_start_caret_back"
+buffer = "a 1 2\nb 3"
+cursor = [1, 0]
+keys = "vk$<C-a>"
+
+[[case]]
+name = "repeat_visual_lines_multidigit"
+buffer = "19\n19\n19\n19"
+cursor = [0, 0]
+keys = "Vj<C-a>jj."
+
+[[case]]
+name = "repeat_visual_lines_after_caret"
+buffer = "x 19\nx 19\nx 19\nx 19"
+cursor = [0, 2]
+keys = "Vj<C-a>jj."
+
+[[case]]
+name = "repeat_visual_lines_after_caret_col3"
+buffer = "x 19\nx 19\nx 19\nx 19"
+cursor = [0, 3]
+keys = "Vj<C-a>jj."
+
+[[case]]
+name = "repeat_visual_char_multidigit"
+buffer = "x 19 y\nx 19 y\nx 19 y"
+cursor = [0, 0]
+keys = "v$<C-a>j."
+
+[[case]]
+name = "repeat_visual_block_multidigit"
+buffer = "a 19\nb 19\nc 19\nd 19"
+cursor = [0, 2]
+keys = "<C-v>j<C-a>jj."
+
+[[case]]
+name = "repeat_char_eol"
+buffer = "1\n12345"
+cursor = [0, 0]
+keys = "v$<C-a>j."
+
+[[case]]
+name = "repeat_char_eol_far_caret"
+buffer = "12 1\n12 12345"
+cursor = [0, 3]
+keys = "v$<C-a>j."
+
+[[case]]
+name = "repeat_char_eol_col2"
+buffer = "a 1\nb 12345"
+cursor = [0, 2]
+keys = "v$<C-a>j."
+
+[[case]]
+name = "repeat_char_eol_col2_from2"
+buffer = "a 1\nb 12345"
+cursor = [0, 2]
+keys = "v$<C-a>jl."
+
+[[case]]
+name = "repeat_char_wide"
+buffer = "界1\n  2"
+cursor = [0, 0]
+keys = "vl<C-a>j."
+
+[[case]]
+name = "repeat_char_finite_eol"
+buffer = "12\n12345"
+cursor = [0, 0]
+keys = "vl<C-a>j."
+
+[[case]]
+name = "repeat_char_multirow"
+buffer = "1 2\n3 4\n5 6\n7 8"
+cursor = [0, 0]
+keys = "vjl<C-a>jj."
+
+[[case]]
+name = "repeat_char_multirow_wide"
+buffer = "1\n界 2\n3 4\n5 6\n界 7 8"
+cursor = [0, 0]
+keys = "vjjl<C-a>j."
+
+[[case]]
+name = "repeat_block_eol"
+buffer = "a 1 2\nb 3 4\nc 5 6\nd 7 8"
+cursor = [0, 2]
+keys = "<C-v>j$<C-a>jj."
+
+[[case]]
+name = "repeat_block_wide"
+buffer = "a 1 9\nb 3 9\nc 5 9\nd 7 9"
+cursor = [0, 2]
+keys = "<C-v>jl<C-a>jj."
+
+[[case]]
+name = "repeat_progressive"
+buffer = "1\n1\n1\n1\n1"
+cursor = [0, 0]
+keys = "Vjg<C-a>jj."
+
+[[case]]
+name = "repeat_block_short_last"
+buffer = "1 1\n1 1\n1\n1"
+cursor = [0, 0]
+keys = "<C-v>jl<C-a>jj."
+
+[[case]]
+name = "repeat_lines_clamped"
+buffer = "1\n1\n1"
+cursor = [0, 0]
+keys = "Vj<C-a>j."

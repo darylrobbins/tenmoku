@@ -1,5 +1,11 @@
 //! Tests of the increment feature.
-use crate::HeadlessVim;
+use fe_buffer::ResolvedSelection;
+use fe_command::{CommandId, Invocation};
+
+use crate::{
+    HeadlessVim, VimState, VisualKind, context,
+    increment::{Extent, IncrementArgs},
+};
 
 /// `keys` over `text` from `cursor`: the text and the caret.
 fn run(text: &str, cursor: (u32, usize), keys: &str) -> (String, (u32, usize)) {
@@ -43,4 +49,99 @@ fn numbers() {
     let mut vim = HeadlessVim::new("1\n1", (0, 0));
     vim.feed("Vj<C-a>").unwrap();
     assert_eq!(vim.mode(), "normal");
+}
+
+/// A buffer with carets at `offsets`.
+fn with_carets(text: &str, offsets: &[usize]) -> HeadlessVim {
+    let mut vim = HeadlessVim::new(text, (0, 0));
+    vim.model_mut()
+        .set_selections(offsets.iter().map(|&offset| ResolvedSelection {
+            range: offset..offset,
+            reversed: false,
+        }));
+    vim
+}
+
+fn heads(vim: &HeadlessVim) -> Vec<usize> {
+    vim.model().selections().iter().map(|s| s.head()).collect()
+}
+
+#[test]
+fn each_caret_changes_its_own_number() {
+    let mut vim = with_carets("1 2", &[0, 2]);
+    vim.feed("<C-a>").unwrap();
+    assert_eq!(vim.text(), "2 3");
+    assert_eq!(heads(&vim), [0, 2]);
+
+    // Two carets in one number change it once, and share its landing.
+    let mut vim = with_carets("1 20", &[2, 3]);
+    vim.feed("<C-a>").unwrap();
+    assert_eq!(vim.text(), "1 21");
+    assert_eq!(heads(&vim), [3]);
+
+    // One before a number, one on a row without.
+    let mut vim = with_carets("a 9 b\nx", &[0, 6]);
+    vim.feed("<C-a>").unwrap();
+    assert_eq!(vim.text(), "a 10 b\nx");
+    assert_eq!(heads(&vim), [3, 7]);
+}
+
+fn replay(args: IncrementArgs) -> Invocation {
+    let command = CommandId::parse("vim.increment").unwrap();
+    Invocation::new(command)
+        .args(serde_json::to_value(args).unwrap())
+        .context(context(&VimState::new()))
+}
+
+#[test]
+fn replay_extents_are_checked() {
+    for (kind, rows, cols) in [
+        (VisualKind::Line, 0, None),
+        (VisualKind::Char, 0, Some(1)),
+        (VisualKind::Char, 1, Some(0)),
+        (VisualKind::Block, 1, Some(0)),
+    ] {
+        let mut vim = HeadlessVim::new("1\n1", (0, 0));
+        let args = IncrementArgs {
+            delta: 1,
+            count: None,
+            progressive: false,
+            replay: Some(Extent { kind, rows, cols }),
+        };
+        let invocation = replay(args);
+        assert!(
+            vim.dispatch(&invocation).is_err(),
+            "{kind:?} {rows} {cols:?}"
+        );
+        assert_eq!(vim.text(), "1\n1");
+    }
+
+    // Huge ones are cut to the text.
+    for kind in [VisualKind::Line, VisualKind::Char, VisualKind::Block] {
+        let mut vim = HeadlessVim::new("1\n1", (0, 0));
+        let args = IncrementArgs {
+            delta: 1,
+            count: None,
+            progressive: false,
+            replay: Some(Extent {
+                kind,
+                rows: u32::MAX,
+                cols: Some(usize::MAX),
+            }),
+        };
+        let invocation = replay(args);
+        vim.dispatch(&invocation).unwrap();
+        assert_eq!(vim.text(), "2\n2");
+    }
+}
+
+#[test]
+fn a_block_over_a_long_row_is_quick() {
+    let row = format!("{}7", "x".repeat(100_000));
+    let text = format!("{row}\n{row}");
+    let mut vim = HeadlessVim::new(&text, (0, 0));
+    let started = std::time::Instant::now();
+    vim.feed("<C-v>j<C-a>").unwrap();
+    assert_eq!(vim.text(), text);
+    assert!(started.elapsed().as_secs() < 5);
 }

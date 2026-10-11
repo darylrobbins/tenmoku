@@ -38,7 +38,7 @@ use block::{Block, at_column, column_of, operate_block, recased_text};
 pub(crate) use block::{insertion, spaced, width_from};
 pub(crate) use object::select_object;
 use operate::{extent, recased};
-pub(crate) use operate::{operate, repeat};
+pub(crate) use operate::{live_area, operate, repeat, replay_area};
 pub(crate) use put::{put, put_block, put_size};
 
 /// A visual mode's ends, as anchors (see [`Ends`]).
@@ -115,7 +115,7 @@ impl LastVisual {
 
 /// How much text the last change over a selection took, for `.`
 /// (`:help visual-repeat`).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Extent {
     /// This many whole rows.
     Lines(u32),

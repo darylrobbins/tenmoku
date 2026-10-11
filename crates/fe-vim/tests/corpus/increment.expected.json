@@ -1882,6 +1882,1142 @@
         "mode": "n",
         "registers": {}
       }
+    },
+    {
+      "name": "pad_neg_zero_up",
+      "buffer": "-001",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-a>",
+      "expect": {
+        "buffer": "000",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "pad_zero_neg_down",
+      "buffer": "000",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-x>",
+      "expect": {
+        "buffer": "-001",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "pad_neg_grow",
+      "buffer": "-009",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-x>",
+      "expect": {
+        "buffer": "-010",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "pad_hex_zero",
+      "buffer": "0x00f",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-a>",
+      "expect": {
+        "buffer": "0x010",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "pad_neg_zero_visual_up",
+      "buffer": "-001",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "V<C-a>",
+      "expect": {
+        "buffer": "000",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "pad_zero_neg_visual_down",
+      "buffer": "000",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "V<C-x>",
+      "expect": {
+        "buffer": "-001",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "pad_cross_zero_progressive",
+      "buffer": "001\n001\n001",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "Vjjg<C-x>",
+      "expect": {
+        "buffer": "000\n-001\n-002",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            2,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "pad_cross_zero_progressive_up",
+      "buffer": "-02\n-02\n-02",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "Vjjg<C-a>",
+      "expect": {
+        "buffer": "-01\n00\n01",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            2,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "pad_block_cross_zero",
+      "buffer": "x -01\nx 000",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "<C-v>j$<C-a>",
+      "expect": {
+        "buffer": "x 00\nx 001",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            1,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_eol_goal",
+      "buffer": "a 1\nb 222\nc 3",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "<C-v>jj$<C-a>",
+      "expect": {
+        "buffer": "a 2\nb 223\nc 4",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            2,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_eol_goal_progressive",
+      "buffer": "a 1\nb 222\nc 3",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "<C-v>jj$g<C-a>",
+      "expect": {
+        "buffer": "a 2\nb 224\nc 6",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            2,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_eol_goal_up_first",
+      "buffer": "a 1\nb 222\nc 3",
+      "cursor": [
+        2,
+        2
+      ],
+      "keys": "<C-v>kk$<C-a>",
+      "expect": {
+        "buffer": "a 2\nb 223\nc 4",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            2,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_tab_endpoint",
+      "buffer": "\t1\n   3\n  2",
+      "cursor": [
+        2,
+        2
+      ],
+      "keys": "<C-v>kk<C-a>",
+      "expect": {
+        "buffer": "\t1\n   4\n  3",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            2,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_tab_endpoint_down",
+      "buffer": "\t1\n   3\n  2",
+      "cursor": [
+        2,
+        2
+      ],
+      "keys": "<C-v>kk<C-x>",
+      "expect": {
+        "buffer": "\t1\n   2\n  1",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            2,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_tab_endpoint_g",
+      "buffer": "\t1\n   3\n  2",
+      "cursor": [
+        2,
+        2
+      ],
+      "keys": "<C-v>kkg<C-a>",
+      "expect": {
+        "buffer": "\t1\n   4\n  4",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            2,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_wide_endpoint",
+      "buffer": "界 1\n 2 3",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "<C-v>k<C-a>",
+      "expect": {
+        "buffer": "界 1\n 3 3",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_wide_endpoint_right",
+      "buffer": "a1 5\n界 7",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>jl<C-a>",
+      "expect": {
+        "buffer": "a2 5\n界 7",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "line_start_caret",
+      "buffer": "x 1\nx 2",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "Vj<C-a>",
+      "expect": {
+        "buffer": "x 2\nx 3",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "line_start_caret_up",
+      "buffer": "x 1\nx 2",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "Vk<C-a>",
+      "expect": {
+        "buffer": "x 2\nx 3",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "line_start_undo",
+      "buffer": "x 1\nx 2",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "Vj<C-a>u",
+      "expect": {
+        "buffer": "x 1\nx 2",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_start_caret",
+      "buffer": "a 1\nb 2",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "<C-v>jh<C-a>",
+      "expect": {
+        "buffer": "a 2\nb 3",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_start_caret_undo",
+      "buffer": "a 1\nb 2",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "<C-v>jh<C-a>u",
+      "expect": {
+        "buffer": "a 1\nb 2",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_start_caret_up",
+      "buffer": "a 1\nb 2",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "<C-v>kh<C-a>",
+      "expect": {
+        "buffer": "a 2\nb 3",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "char_start_caret_back",
+      "buffer": "a 1 2\nb 3",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "vk$<C-a>",
+      "expect": {
+        "buffer": "a 1 2\nb 3",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            5
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "repeat_visual_lines_multidigit",
+      "buffer": "19\n19\n19\n19",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "Vj<C-a>jj.",
+      "expect": {
+        "buffer": "20\n20\n20\n20",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "repeat_visual_lines_after_caret",
+      "buffer": "x 19\nx 19\nx 19\nx 19",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "Vj<C-a>jj.",
+      "expect": {
+        "buffer": "x 20\nx 20\nx 20\nx 20",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "repeat_visual_lines_after_caret_col3",
+      "buffer": "x 19\nx 19\nx 19\nx 19",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "Vj<C-a>jj.",
+      "expect": {
+        "buffer": "x 20\nx 20\nx 20\nx 20",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "repeat_visual_char_multidigit",
+      "buffer": "x 19 y\nx 19 y\nx 19 y",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v$<C-a>j.",
+      "expect": {
+        "buffer": "x 20 y\nx 20 y\nx 19 y",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            6
+          ]
+        }
+      }
+    },
+    {
+      "name": "repeat_visual_block_multidigit",
+      "buffer": "a 19\nb 19\nc 19\nd 19",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "<C-v>j<C-a>jj.",
+      "expect": {
+        "buffer": "a 29\nb 29\nc 29\nd 29",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "repeat_char_eol",
+      "buffer": "1\n12345",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v$<C-a>j.",
+      "expect": {
+        "buffer": "2\n12346",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "repeat_char_eol_far_caret",
+      "buffer": "12 1\n12 12345",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "v$<C-a>j.",
+      "expect": {
+        "buffer": "12 2\n13 12345",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            0,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "repeat_char_eol_col2",
+      "buffer": "a 1\nb 12345",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "v$<C-a>j.",
+      "expect": {
+        "buffer": "a 2\nb 12346",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            0,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "repeat_char_eol_col2_from2",
+      "buffer": "a 1\nb 12345",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "v$<C-a>jl.",
+      "expect": {
+        "buffer": "a 2\nb 12346",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            0,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "repeat_char_wide",
+      "buffer": "界1\n  2",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vl<C-a>j.",
+      "expect": {
+        "buffer": "界2\n  3",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "repeat_char_finite_eol",
+      "buffer": "12\n12345",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vl<C-a>j.",
+      "expect": {
+        "buffer": "13\n13345",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "repeat_char_multirow",
+      "buffer": "1 2\n3 4\n5 6\n7 8",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vjl<C-a>jj.",
+      "expect": {
+        "buffer": "2 2\n4 4\n6 6\n8 8",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "repeat_char_multirow_wide",
+      "buffer": "1\n界 2\n3 4\n5 6\n界 7 8",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vjjl<C-a>j.",
+      "expect": {
+        "buffer": "2\n界 4\n5 4\n6 6\n界 7 8",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            2,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "repeat_block_eol",
+      "buffer": "a 1 2\nb 3 4\nc 5 6\nd 7 8",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "<C-v>j$<C-a>jj.",
+      "expect": {
+        "buffer": "a 2 2\nb 4 4\nc 6 6\nd 8 8",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            1,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "repeat_block_wide",
+      "buffer": "a 1 9\nb 3 9\nc 5 9\nd 7 9",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "<C-v>jl<C-a>jj.",
+      "expect": {
+        "buffer": "a 2 9\nb 4 9\nc 6 9\nd 8 9",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            1,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "repeat_progressive",
+      "buffer": "1\n1\n1\n1\n1",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "Vjg<C-a>jj.",
+      "expect": {
+        "buffer": "2\n3\n2\n3\n1",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "repeat_block_short_last",
+      "buffer": "1 1\n1 1\n1\n1",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>jl<C-a>jj.",
+      "expect": {
+        "buffer": "2 1\n2 1\n2\n2",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "repeat_lines_clamped",
+      "buffer": "1\n1\n1",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "Vj<C-a>j.",
+      "expect": {
+        "buffer": "2\n3\n2",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
     }
   ]
 }
