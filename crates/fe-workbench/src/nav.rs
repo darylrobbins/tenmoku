@@ -724,13 +724,18 @@ impl Workbench {
             word,
             items,
             unambiguous,
-            ..
+            partial,
         } = answer.value;
         if unambiguous && let Some(first) = items.first() {
             return self.jump_from(from, &first.location, window, cx);
         }
         let status = match (word, items.len()) {
             (None, _) => format!("No symbol at the caret{by}"),
+            (Some(word), 0) if partial => {
+                format!(
+                    "No definition found for `{word}` yet: the project is still being indexed{by}"
+                )
+            }
             (Some(word), 0) => format!("No definition found for `{word}`{by}"),
             (Some(word), count) => format!("{count} definitions of `{word}`{by}"),
         };

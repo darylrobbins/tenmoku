@@ -23,6 +23,7 @@ mod m3_signoff;
 mod menu_bar;
 mod nav;
 mod nav_click;
+mod nav_partial;
 mod nav_pending;
 mod open_folder;
 mod open_settings;
