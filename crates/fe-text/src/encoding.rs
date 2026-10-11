@@ -182,7 +182,9 @@ impl FileEncoding {
                             }
                             unit_start = end;
                         }
-                        if result == DecoderResult::InputEmpty && !replaying {
+                        // A decoder that got the last call has finished, and
+                        // can't be used again, whether or not it replayed.
+                        if result == DecoderResult::InputEmpty && (!replaying || last) {
                             break;
                         }
                     }
@@ -594,6 +596,18 @@ mod unit_tests {
                 unit(6..8, "\u{3078}"),
                 unit(8..10, "\u{2606}"),
             ]
+        );
+    }
+
+    #[test]
+    fn an_escape_cut_short_by_the_end_of_the_stream_is_walked_to_its_end() {
+        assert_eq!(
+            units(ISO_2022_JP, b"\x1B$", true),
+            [unit(0..1, "\u{FFFD}"), unit(1..2, "$")]
+        );
+        assert_eq!(
+            units(ISO_2022_JP, b"a\x1B(", true),
+            [unit(0..1, "a"), unit(1..2, "\u{FFFD}"), unit(2..3, "(")]
         );
     }
 
