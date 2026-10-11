@@ -335,12 +335,12 @@ fn host_command(build: Build, range: &[Address], after: &str) -> Result<ExComman
     }
 }
 
-/// `args` without trailing blanks that aren't escaped by a backslash.
+/// `args` without trailing blanks, except one right after a backslash
+/// (whatever the backslash's parity, as nvim does).
 fn trim_unescaped_end(args: &str) -> &str {
     let mut end = args.len();
     while let Some(blank) = args[..end].strip_suffix([' ', '\t']) {
-        let slashes = blank.bytes().rev().take_while(|&b| b == b'\\').count();
-        if slashes % 2 == 1 {
+        if blank.ends_with('\\') {
             break;
         }
         end = blank.len();
