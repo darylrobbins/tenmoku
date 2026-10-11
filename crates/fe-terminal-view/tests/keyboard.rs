@@ -286,3 +286,88 @@ fn copy_and_paste(cx: &mut TestAppContext) {
     want.extend_from_slice(b"\x1b[200~a\nb\x1b[201~");
     expect_written(&view, cx, &want);
 }
+
+#[gpui::test]
+fn composition_ranges_and_selection(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx);
+    view.update_in(cx, |view, window, cx| {
+        view.replace_and_mark_text_in_range(None, "a😀b", Some(1..3), window, cx);
+    });
+    let selected = view.update_in(cx, |view, window, cx| {
+        view.selected_text_range(false, window, cx)
+    });
+    assert_eq!(selected.map(|s| s.range), Some(1..3));
+    view.update_in(cx, |view, window, cx| {
+        view.replace_and_mark_text_in_range(Some(1..3), "c", None, window, cx);
+    });
+    assert_eq!(
+        view.read_with(cx, |view, _| view.marked_text().map(str::to_owned)),
+        Some("acb".to_owned())
+    );
+    let selected = view.update_in(cx, |view, window, cx| {
+        view.selected_text_range(false, window, cx)
+    });
+    assert_eq!(selected.map(|s| s.range), Some(2..2));
+    assert_eq!(
+        written(&view, cx),
+        b"ready\r\n"
+            .to_vec()
+            .into_iter()
+            .take(0)
+            .collect::<Vec<u8>>()
+    );
+}
+
+#[gpui::test]
+fn composition_scrolls_to_the_bottom_and_clears_the_selection(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx);
+    view.read_with(cx, |view, _| {
+        let terminal = view.terminal().unwrap();
+        terminal.select(
+            fe_terminal::SelectionKind::Simple,
+            0,
+            0,
+            fe_terminal::Side::Left,
+        );
+        terminal.extend_selection(0, 2, fe_terminal::Side::Right);
+        terminal.scroll(-1);
+    });
+    view.update_in(cx, |view, window, cx| {
+        view.replace_and_mark_text_in_range(None, "に", Some(1..1), window, cx);
+    });
+    view.read_with(cx, |view, _| {
+        let terminal = view.terminal().unwrap();
+        assert_eq!(terminal.snapshot().display_offset, 0);
+        assert_eq!(terminal.selected_text(), None);
+    });
+    assert!(written(&view, cx).is_empty(), "the preedit reached the pty");
+}
+
+#[gpui::test]
+fn paste_cancels_composition(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx);
+    let marked = |view: &Entity<TerminalView>, cx: &mut VisualTestContext| {
+        view.read_with(cx, |view, _| view.marked_text().map(str::to_owned))
+    };
+    view.update_in(cx, |view, window, cx| {
+        view.replace_and_mark_text_in_range(None, "に", Some(1..1), window, cx);
+        view.paste(ClipboardItem::new_string("x".to_owned()), window, cx);
+    });
+    assert_eq!(marked(&view, cx), None);
+    expect_written(&view, cx, b"x");
+    // The program has turned bracketed paste on by now.
+    let mut want = b"x".to_vec();
+
+    view.update_in(cx, |view, window, cx| {
+        view.replace_and_mark_text_in_range(None, "に", Some(1..1), window, cx);
+    });
+    cx.write_to_clipboard(ClipboardItem::new_string("y".to_owned()));
+    cx.simulate_keystrokes(PASTE);
+    assert_eq!(marked(&view, cx), None);
+    want.extend_from_slice(b"\x1b[200~y\x1b[201~");
+    expect_written(&view, cx, &want);
+    assert_eq!(
+        view.update_in(cx, |v, w, c| v.marked_text_range(w, c)),
+        None
+    );
+}

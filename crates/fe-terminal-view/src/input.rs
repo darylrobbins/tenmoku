@@ -158,6 +158,30 @@ fn byte_range(text: &str, range: Range<usize>) -> Range<usize> {
     start..end.max(start)
 }
 
+/// `marked` with `range` (UTF-16 units; all of it when `None`) replaced by
+/// `new_text`, and the selection (relative to `new_text`; a caret at its end
+/// when `None`) in the result's units.
+fn compose(
+    marked: &str,
+    range: Option<Range<usize>>,
+    new_text: &str,
+    new_selected: Option<Range<usize>>,
+) -> (String, Range<usize>) {
+    let range = range.unwrap_or(0..utf16_len(marked));
+    let bytes = byte_range(marked, range);
+    let start = utf16_len(&marked[..bytes.start]);
+    let mut text = String::with_capacity(marked.len() + new_text.len());
+    text.push_str(&marked[..bytes.start]);
+    text.push_str(new_text);
+    text.push_str(&marked[bytes.end..]);
+    let inserted = utf16_len(new_text);
+    let selected = new_selected.unwrap_or(inserted..inserted);
+    let total = utf16_len(&text);
+    let from = (start + selected.start.min(inserted)).min(total);
+    let to = (start + selected.end.min(inserted)).min(total).max(from);
+    (text, from..to)
+}
+
 fn utf16_len(text: &str) -> usize {
     text.encode_utf16().count()
 }
@@ -208,7 +232,13 @@ impl TerminalView {
             return;
         };
         let bracketed = terminal.snapshot().modes.bracketed_paste;
-        self.write(keys::encode_paste(text, bracketed), cx);
+        let bytes = keys::encode_paste(text, bracketed);
+        // A paste cancels the composition it lands in, so a later commit
+        // can't send stale text after it.
+        if !bytes.is_empty() && self.marked.take().is_some() {
+            cx.notify();
+        }
+        self.write(bytes, cx);
     }
 
     /// Writes typed or pasted `bytes` to the pty, which scrolls to the
@@ -256,9 +286,12 @@ impl EntityInputHandler for TerminalView {
         _: &mut Window,
         _: &mut Context<Self>,
     ) -> Option<UTF16Selection> {
-        let end = self.marked.as_deref().map_or(0, utf16_len);
+        let range = match self.marked.as_deref() {
+            Some(_) => self.marked_selection.clone(),
+            None => 0..0,
+        };
         Some(UTF16Selection {
-            range: end..end,
+            range,
             reversed: false,
         })
     }
@@ -294,13 +327,28 @@ impl EntityInputHandler for TerminalView {
 
     fn replace_and_mark_text_in_range(
         &mut self,
-        _: Option<Range<usize>>,
+        range: Option<Range<usize>>,
         new_text: &str,
-        _: Option<Range<usize>>,
+        new_selected: Option<Range<usize>>,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.marked = (!new_text.is_empty()).then(|| new_text.to_owned());
+        let (text, selection) = compose(
+            self.marked.as_deref().unwrap_or(""),
+            range,
+            new_text,
+            new_selected,
+        );
+        if !text.is_empty() {
+            // Composing is input: it shows the cursor at the bottom, with
+            // nothing selected, without writing the preedit.
+            if let Some(terminal) = &self.terminal {
+                terminal.scroll_to_bottom();
+                terminal.clear_selection();
+            }
+        }
+        self.marked = (!text.is_empty()).then_some(text);
+        self.marked_selection = selection;
         cx.notify();
     }
 
@@ -396,6 +444,24 @@ mod tests {
         };
         assert_eq!(input(copy), KeyInput::Copy);
         assert_eq!(input(paste), KeyInput::Paste);
+    }
+
+    #[test]
+    fn composition_replaces_ranges_and_keeps_the_selection() {
+        let compose = |marked, range, new: &str, sel| compose(marked, range, new, sel);
+        assert_eq!(compose("ab", Some(1..2), "c", None), ("ac".into(), 2..2));
+        assert_eq!(compose("ab", None, "xyz", Some(1..2)), ("xyz".into(), 1..2));
+        assert_eq!(
+            compose("ab", Some(1..1), "xy", Some(0..1)),
+            ("axyb".into(), 1..2)
+        );
+        // A supplementary character is two units.
+        assert_eq!(compose("a😀b", Some(1..3), "c", None), ("acb".into(), 2..2));
+        assert_eq!(
+            compose("a😀b", Some(3..4), "😀😀", Some(2..4)),
+            ("a😀😀😀".into(), 5..7)
+        );
+        assert_eq!(compose("", Some(4..9), "x", Some(5..9)), ("x".into(), 1..1));
     }
 
     #[test]

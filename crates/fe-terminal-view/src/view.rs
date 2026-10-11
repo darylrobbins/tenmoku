@@ -1,4 +1,5 @@
 use std::io;
+use std::ops::Range;
 
 use fe_terminal::{GridSize, Terminal, TerminalEvent, TerminalOptions};
 use gpui::{
@@ -39,6 +40,8 @@ pub struct TerminalView {
     notified: bool,
     /// The text an input method is composing, not yet written to the pty.
     pub(crate) marked: Option<String>,
+    /// The input method's selection within `marked`, in UTF-16 units.
+    pub(crate) marked_selection: Range<usize>,
     /// What a held mouse button is doing.
     pub(crate) drag: Option<Drag>,
     /// The cell a press, drag or motion was last reported at.
@@ -83,6 +86,7 @@ impl TerminalView {
             events: None,
             notified: false,
             marked: None,
+            marked_selection: 0..0,
             drag: None,
             reported: None,
             wheel: 0.,
