@@ -348,6 +348,56 @@ impl DockState {
         })
     }
 
+    /// The panels not always on the rail that have joined it, by having
+    /// shown, in rail order.
+    pub fn joined(&self) -> Vec<PanelId> {
+        (self.panels.iter())
+            .map(|panel| panel.id())
+            .filter(|id| self.joined.contains(id))
+            .collect()
+    }
+
+    /// The dock's state, for a saved layout: whether it shows, its active
+    /// panel and the panels that have joined the rail.
+    pub fn save(&self) -> Value {
+        let ids = |ids: Vec<PanelId>| Value::from_iter(ids.into_iter().map(|id| id.0));
+        Value::from_iter([
+            ("visible", Value::from(self.visible)),
+            ("active", self.active.map_or(Value::Null, |id| id.0.into())),
+            ("joined", ids(self.joined())),
+        ])
+    }
+
+    /// Puts back what [`DockState::save`] saved, as far as its panels are
+    /// registered: whether it shows, its active panel (without focusing
+    /// it) and the panels that had joined the rail.
+    pub fn restore(&mut self, saved: &Value) {
+        let registered = |name: &str| {
+            (self.panels.iter())
+                .map(|panel| panel.id())
+                .find(|id| id.0 == name)
+        };
+        if let Some(visible) = saved.get("visible").and_then(Value::as_bool) {
+            self.visible = visible;
+        }
+        if let Some(active) = saved
+            .get("active")
+            .and_then(Value::as_str)
+            .and_then(registered)
+        {
+            self.active = Some(active);
+        }
+        let joined: Vec<PanelId> = (saved.get("joined").and_then(Value::as_array))
+            .into_iter()
+            .flatten()
+            .filter_map(|id| registered(id.as_str()?))
+            .collect();
+        self.joined.extend(joined);
+        if let Some(active) = self.active {
+            self.joined.insert(active);
+        }
+    }
+
     /// What the last frame drew.
     pub fn drawn(&self) -> &DrawnDock {
         &self.drawn

@@ -138,6 +138,25 @@ impl<V> DerefMut for Members<V> {
     }
 }
 
+impl<V> Member<V> {
+    /// An axis of `members` sharing it by `ratios`, scaled to sum to 1;
+    /// equally if they don't fit (a ratio for each, all positive). One
+    /// member is that member.
+    pub fn axis(axis: Axis, members: Vec<Member<V>>, ratios: Vec<f32>) -> Self {
+        let mut members = Members::new(members);
+        let sum: f32 = ratios.iter().sum();
+        let fits = ratios.len() == members.len()
+            && ratios.iter().all(|ratio| ratio.is_finite() && *ratio > 0.);
+        if fits {
+            members.ratios = ratios.iter().map(|ratio| ratio / sum).collect();
+        }
+        if members.len() == 1 {
+            return members.members.remove(0);
+        }
+        Member::Axis { axis, members }
+    }
+}
+
 impl<V: PaneView> Member<V> {
     fn panes<'a>(&'a self, out: &mut Vec<&'a Entity<V>>) {
         match self {
@@ -481,6 +500,33 @@ impl<V: PaneView> PaneGroup<V> {
 
     pub fn root(&self) -> &Member<V> {
         &self.root
+    }
+
+    /// Replaces the tree with `root`, as a saved layout is restored. It
+    /// must have a pane.
+    pub fn set_root(&mut self, root: Member<V>) {
+        self.generation += 1;
+        self.press = None;
+        self.root = root;
+    }
+
+    /// Where `pane` is in the tree: member indices from the root.
+    pub fn path_of(&self, pane: &Entity<V>) -> Option<Vec<usize>> {
+        fn find<V>(member: &Member<V>, pane: &Entity<V>, path: &mut Vec<usize>) -> bool {
+            match member {
+                Member::Pane(member) => member == pane,
+                Member::Axis { members, .. } => members.iter().enumerate().any(|(ix, member)| {
+                    path.push(ix);
+                    let found = find(member, pane, path);
+                    if !found {
+                        path.pop();
+                    }
+                    found
+                }),
+            }
+        }
+        let mut path = Vec::new();
+        find(&self.root, pane, &mut path).then_some(path)
     }
 
     /// The panes, left to right and top to bottom as the tree nests them.

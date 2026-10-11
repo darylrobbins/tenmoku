@@ -112,6 +112,18 @@ an app's AI backend can load the same commands, config and keymaps.
   (`command_palette::add_commands`), leaving out those with args. A pick
   gives focus back and dispatches the command there, from
   `Source::Palette`, in that context stack.
+- **Saved layouts.** kiln-core's `layout::LayoutStore` keeps a file per
+  root folder under the app's state directory, an entry per window, each
+  window id claimed by one live window at a time with an OS file lock
+  (released if the process dies), and every write a locked
+  read-merge-write of the window's own entry. kiln-shell's `layout`
+  saves a window's pane tree (ratios, items as `{kind, document, state}`,
+  the active pane), its dock and bounds, and restores them: each
+  document's first item through its registered kind, the others as its
+  splits with their own state, so restored views share a document again.
+  A `WindowLayout` saves as the layout's shape changes and in full at
+  quit, keeps its entry when the last window closes, deletes it when
+  others stay open, and releases its claim after its last write.
 - **Widgets.** Stateless ones are `RenderOnce` builders over a `Div`, so
   GPUI's `Styled`, `InteractiveElement` and `FluentBuilder` methods work on
   them; values are controlled. Stateful ones are `Entity<T>` views that emit

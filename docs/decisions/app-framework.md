@@ -202,3 +202,37 @@ after T275 (its F4 claims and F5 close transactions), except as follows.
   last binding of `fastedit.toml` (and of the per-platform files kept in
   step with it), so the old table's order, which fe-gpui's keymap tests
   zip against, is unchanged.
+
+**Layout persistence (K5.9, §4.6 and F4).**
+
+- The file, its merging writes and the claims are kiln-core's
+  `layout::LayoutStore` (GPUI-free, so two stores stand in for two
+  processes in its tests); `AppPaths::layouts_dir` is
+  `<state>/layouts`. Claims lock `<key>.<id>.lock` with std's
+  `File::try_lock` (`flock` on Unix, `LockFileEx` on Windows), so kiln
+  branches on no OS for them. A claim whose entry was deleted also
+  removes its lock file as it's released; others leave theirs, as the
+  trust store leaves its lock.
+- The GPUI side is kiln-shell's `layout`: `register_item::<T>` (and
+  `register_kind`, a restore closure, for a host that restores a kind its
+  own way), `save_panes`/`restore_panes`, `DockState::save`/`restore`
+  (and `joined`), `save_bounds`/`restore_bounds`, and `WindowLayout`, the
+  window's claim and its saves through one background `persist::Writer`.
+  The entry is `{bounds, panes: {tree, active}, dock, …}` plus the host's
+  own keys (fastedit's `breadcrumbs`).
+- "After each layout change" is when the entry's shape changes: the
+  entry without the items' states (carets) and the bounds, compared as
+  the window draws. The full entry is saved at quit and as the window
+  closes, which also catches carets and bounds. Nothing is saved while a
+  restore is still reading files.
+- A restored window's items land together, once its documents are read,
+  rather than each tab showing the pane's placeholder until its own does;
+  the panes are empty until then.
+- The window's close is heard both through `on_window_closed` and the
+  host view's release, whichever comes first: fastedit's workbench can
+  outlive its window (its language servers retire the same way).
+- `PaneItem::restore` can't reach a host's theme, so fe-gpui's
+  `set_restore_style` gives restored editors the workbench's theme and
+  editor settings.
+- A file launch restores nothing, as Q4 says, but its window still gets
+  a fresh claimed id and saves its layout under the file's folder.

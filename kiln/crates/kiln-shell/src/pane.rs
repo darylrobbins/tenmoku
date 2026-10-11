@@ -686,6 +686,23 @@ pub trait PaneView:
         cx.notify(self.pane().id);
     }
 
+    /// Adds `items` after the others and makes the one at `active` among
+    /// them the active item, without focusing it: for a restored layout.
+    fn add_items(&mut self, items: Vec<Box<dyn ItemHandle>>, active: usize, cx: &mut App) {
+        if items.is_empty() {
+            return;
+        }
+        let state = self.pane_mut();
+        let first = state.items.len();
+        let count = items.len();
+        for item in items {
+            state.push(item, cx);
+        }
+        state.active = first + active.min(count - 1);
+        self.items_changed(cx);
+        cx.notify(self.pane().id);
+    }
+
     /// Moves item `ix` to before the item now at `index`, or else to the
     /// end, and shows and focuses it.
     fn reorder_item(&mut self, ix: usize, index: Option<usize>, window: &mut Window, cx: &mut App) {
