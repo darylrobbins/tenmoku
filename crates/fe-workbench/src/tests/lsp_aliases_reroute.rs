@@ -65,6 +65,14 @@ fn open_counts(records: &[Record], uri: &Url) -> (usize, usize) {
 /// Asserts no launch of `server` ever had `uri` open twice at once, and
 /// that its last launch has it open once.
 fn assert_one_document(server: &FakeServer, uri: &Url) {
+    // The fake records on its own thread: wait up to ten seconds for the
+    // last launch's `didOpen`, and assert on what it has if none comes.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while open_counts(&server.records_of(server.launches()), uri).0 != 1
+        && std::time::Instant::now() < deadline
+    {
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
     let launches = server.launches();
     assert!(launches > 0, "the server was launched");
     for launch in 1..=launches {
