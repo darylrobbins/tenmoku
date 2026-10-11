@@ -7,17 +7,18 @@ use serde::Serialize;
 
 use crate::{
     CountArgs, InsertArgs, Mode, OperateArgs, PutArgs, ReplaceCharArgs, VimTarget, edit, insert,
-    operator, visual,
+    operator, replace, visual,
 };
 
 /// A change `.` can repeat: a committed `vim.operate` (not a yank),
-/// `vim.put`, `vim.insert`, `vim.join`, `vim.replace_char` or
-/// `vim.toggle_case`, by its args.
+/// `vim.put`, `vim.insert`, `vim.replace_mode`, `vim.join`,
+/// `vim.replace_char` or `vim.toggle_case`, by its args.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Change {
     Operate(OperateArgs),
     Put(PutArgs),
     Insert(InsertArgs),
+    Replace(CountArgs),
     Join(CountArgs),
     ReplaceChar(ReplaceCharArgs),
     ToggleCase(CountArgs),
@@ -34,6 +35,7 @@ impl Change {
             Self::Operate(args) => of("vim.operate", args),
             Self::Put(args) => of("vim.put", args),
             Self::Insert(args) => of("vim.insert", args),
+            Self::Replace(args) => of("vim.replace_mode", args),
             Self::Join(args) => of("vim.join", args),
             Self::ReplaceChar(args) => of("vim.replace_char", args),
             Self::ToggleCase(args) => of("vim.toggle_case", args),
@@ -46,7 +48,7 @@ impl Change {
             Self::Operate(args) => args.count = count,
             Self::Put(args) => args.count = count,
             Self::Insert(args) => args.count = count,
-            Self::Join(args) | Self::ToggleCase(args) => args.count = count,
+            Self::Join(args) | Self::ToggleCase(args) | Self::Replace(args) => args.count = count,
             Self::ReplaceChar(args) => args.count = count,
         }
         self
@@ -135,13 +137,17 @@ fn replay(
         Change::Operate(args) => operator::operate(target, actor, args)?,
         Change::Put(args) => operator::put(target, actor, args)?,
         Change::Insert(args) => insert::insert(target, actor, args)?,
+        Change::Replace(args) => replace::replace(target, actor, args)?,
         Change::Join(args) => edit::join(target, actor, args)?,
         Change::ReplaceChar(args) => edit::replace_char(target, actor, args)?,
         Change::ToggleCase(args) => edit::toggle_case(target, actor, args)?,
     };
-    if target.state.mode == Mode::Insert {
+    if matches!(target.state.mode, Mode::Insert | Mode::Replace) {
         if let Some(text) = last.inserted.as_deref().filter(|text| !text.is_empty()) {
-            insert::type_at_carets(target.model, text, origin(actor));
+            match target.state.mode {
+                Mode::Replace => replace::retype(target.state, target.model, text),
+                _ => insert::type_at_carets(target.model, text, origin(actor)),
+            }
         }
         if let Some(session) = target.state.session.as_ref().filter(|_| last.typed_first) {
             session.typed_on_first_rows();

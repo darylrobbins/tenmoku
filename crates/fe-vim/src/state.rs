@@ -13,6 +13,7 @@ use crate::{
     insert::{Closing, Session},
     macros::Macros,
     marks::Marks,
+    replace::Replace,
     step,
     visual::{Extent, LastVisual, Visual},
 };
@@ -38,6 +39,9 @@ pub enum Mode {
     /// An insert session is open: typed text goes to the editor, not
     /// [`step`].
     Insert,
+    /// `R`: an insert session is open whose typing overwrites the row
+    /// ([`VimState::replace_text`]).
+    Replace,
     /// `v`, `V` or `<C-v>`: keys go to [`step`], which reads operators as
     /// acting on the selection.
     Visual(VisualKind),
@@ -64,6 +68,8 @@ pub struct VimState {
     pub(crate) last_find: Option<Motion>,
     /// Set in insert mode: the session `vim.normal_mode` ends.
     pub(crate) session: Option<Session>,
+    /// Set in replace mode: what typing overwrote, for `<BS>`.
+    pub(crate) replace: Option<Replace>,
     /// A session this state left while a clone was ending it: the outcome
     /// is adopted once it's published (see `insert::adopt_closing`).
     pub(crate) closing: Option<Closing>,
@@ -178,7 +184,10 @@ impl VimState {
     /// is typed after it on its row. Any other input, `EditorModel::newline`
     /// called directly included, is typed text, whatever it holds: only the
     /// host knows which keys typed what, so it calls this for `Enter` while
-    /// the mode is insert.
+    /// the mode is insert or replace. In replace mode the line break
+    /// overwrites nothing and drops the blanks it moves to the new row, as
+    /// nvim's 'autoindent' does, and [`VimState::replace_backspace`] takes
+    /// it out again, putting them back.
     ///
     /// It catches the model up first, so `newline`'s edit is the batch from
     /// the version it then reads, whatever measuring text edits around it
@@ -186,6 +195,9 @@ impl VimState {
     /// `newline` runs, since measuring may stamp the context through a clone
     /// of this state while it does, which follows the batch.
     pub fn line_break(&self, model: &mut EditorModel) {
+        if self.mode == Mode::Replace {
+            return crate::replace::line_break(self, model);
+        }
         self.line_break_with(model, EditorModel::newline);
     }
 
@@ -217,7 +229,7 @@ impl VimState {
         self.last_change.as_ref()
     }
 
-    /// `vim.mode`: `normal`, `insert`, `visual`, `visual_line`,
+    /// `vim.mode`: `normal`, `insert`, `replace`, `visual`, `visual_line`,
     /// `visual_block`, `cmdline`, or
     /// `operator_pending` while an operator waits for its target.
     pub fn mode_name(&self) -> &'static str {
@@ -225,6 +237,7 @@ impl VimState {
             Mode::Normal if self.pending.has_operator() => "operator_pending",
             Mode::Normal => "normal",
             Mode::Insert => "insert",
+            Mode::Replace => "replace",
             Mode::Visual(VisualKind::Char) => "visual",
             Mode::Visual(VisualKind::Line) => "visual_line",
             Mode::Visual(VisualKind::Block) => "visual_block",

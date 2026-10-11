@@ -673,7 +673,8 @@ impl VimState {
     /// Enters the visual mode of `kind` over `anchor` and `cursor`, or moves
     /// the current one there, as a host does for a mouse drag. Each offset
     /// is taken at the grapheme holding it (or a row's end). Pending input
-    /// is dropped. In insert mode it does nothing: end the session first.
+    /// is dropped. In insert or replace mode it does nothing: end the
+    /// session first.
     pub fn select_visual(
         &mut self,
         model: &mut EditorModel,
@@ -681,7 +682,7 @@ impl VimState {
         anchor: usize,
         cursor: usize,
     ) {
-        if self.mode == Mode::Insert {
+        if matches!(self.mode, Mode::Insert | Mode::Replace) {
             return;
         }
         model.sync_display();

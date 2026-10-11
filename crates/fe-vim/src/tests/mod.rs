@@ -19,6 +19,7 @@ mod operators;
 mod reducer;
 mod registers;
 mod repeat;
+mod replace;
 mod search;
 mod search_next;
 mod search_pattern;

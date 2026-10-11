@@ -447,6 +447,7 @@ pub fn step(mut pending: Pending, key: VimKey) -> Step {
             }
             let counted = match ch {
                 'J' => Some("vim.join"),
+                'R' => Some("vim.replace_mode"),
                 '~' => Some("vim.toggle_case"),
                 'u' => Some("vim.undo"),
                 '.' => Some("vim.repeat"),

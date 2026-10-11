@@ -5,7 +5,8 @@
 //! or `r`) in one [`Pending`] value and never sees the buffer. A complete
 //! command comes out as an [`Invocation`](fe_command::Invocation) of one of
 //! vim's commands (`vim.move`, `vim.operate`, `vim.put`, `vim.insert`,
-//! `vim.join`, `vim.replace_char`, `vim.toggle_case`, `vim.undo`, `vim.redo`,
+//! `vim.replace_mode`, `vim.join`, `vim.replace_char`, `vim.toggle_case`,
+//! `vim.undo`, `vim.redo`,
 //! `vim.repeat`, `vim.repeat_substitute`, `vim.set_mark`, the macros'
 //! `vim.record`, `vim.record_stop` and `vim.play`, `vim.visual`, `vim.visual_exit`,
 //! `vim.visual_swap`, `vim.visual_put`, `vim.reselect`, `vim.select` and the command line's
@@ -30,6 +31,31 @@
 //! the transaction, and `vim.normal_mode` (bound to `Esc` and `ctrl-[`)
 //! ends it. `.` replays the last change, and the text its session typed, as
 //! one transaction.
+//!
+//! Replace mode (`R`, `:help Replace-mode`) is such a session too:
+//! `vim.replace_mode {"count"}` opens it at the caret as `i` does, and
+//! `vim.mode` is `replace`. Typed text doesn't go in as ordinary input
+//! there: the host types it through [`VimState::replace_text`], each
+//! character overwriting the grapheme under the caret (going in past the
+//! row's end) and any line ending typed as `Enter`; `Enter` goes through
+//! [`VimState::line_break`], which splits the row, overwriting nothing,
+//! copying its indentation and dropping the blanks it moves to the new row,
+//! as nvim's 'autoindent' does; `<BS>` goes through
+//! [`VimState::replace_backspace`], which takes out the last character
+//! typed (and the rest of the grapheme before the caret, if the session
+//! typed all of it) and puts back what it overwrote, or takes out a line
+//! break's indentation, then the break, putting back the blanks it dropped.
+//! It takes back only what the session typed that's still just before the
+//! caret and no other origin touched: at the session's start, or past such
+//! text, it does nothing. `Esc` there is `vim.replace_normal_mode` (context
+//! `editor && vim.mode == replace`; `vim.normal_mode` is insert mode's): it
+//! types the session's keys `count - 1` more times (`3Rab<Esc>`),
+//! overwriting, ends the session and steps the caret back. `.` repeats it,
+//! typing the keys again (a `<BS>` that took out a line break's indentation
+//! among them), and `u` undoes it in one step. The cursor keys split it
+//! ([`VimState::split_session`]) as an insert session, and it resumes in
+//! replace mode, with nothing to put back. Not here: the underline cursor
+//! and routing the keys in the GPUI host, and `gR`.
 //!
 //! In the visual modes (`v` charwise, `V` linewise; `vim.mode` is `visual`
 //! or `visual_line`) keys still go to [`step`], which [`VimState`] tells the
@@ -515,7 +541,7 @@
 //! the `:` line with ranges, `:{range}`, `:d` and `:noh`. Later cards added
 //! the host's ex commands and `:s`, the clipboard, and marks (`m`, `'`,
 //! `` ` ``, the jump mark and marks in ex ranges), and macros (`q`, `@`,
-//! `@@`). Still to come: replace mode,
+//! `@@`), and replace mode (`R`). Still to come:
 //! increment and folds; scrolling; and the GPUI wiring of the visual modes
 //! (their key bindings, painting the selection and the block cursor, mouse
 //! drags and the status bar).
@@ -687,6 +713,7 @@ mod operator;
 mod reducer;
 mod register;
 mod repeat;
+mod replace;
 pub mod search;
 mod state;
 mod substitute;

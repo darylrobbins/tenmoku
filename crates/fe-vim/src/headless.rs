@@ -65,7 +65,10 @@ impl HeadlessVim {
     /// [`EditorModel::insert`], `<CR>` to [`EditorModel::newline`] (through
     /// [`VimState::line_break`], as the host's `Enter` does), `<BS>` to
     /// [`EditorModel::backspace`], and `<Esc>` dispatches `vim.normal_mode`;
-    /// any other key is forwarded. Nor in `cmdline` mode: a character goes
+    /// any other key is forwarded. In replace mode the same, but a character
+    /// goes to [`VimState::replace_text`], `<BS>` to
+    /// [`VimState::replace_backspace`] and `<Esc>` dispatches
+    /// `vim.replace_normal_mode`. Nor in `cmdline` mode: a character goes
     /// on the line, `<BS>` deletes its last (or on an empty line dispatches
     /// `vim.command_line_cancel`, as `<Esc>` does), `<CR>` dispatches
     /// `vim.command_line_submit` with the line; any other key is forwarded.
@@ -106,6 +109,10 @@ impl HeadlessVim {
                 self.state.record_key(key);
                 return self.type_key(key);
             }
+            Mode::Replace => {
+                self.state.record_key(key);
+                return self.replace_key(key);
+            }
             Mode::CmdLine(_) => {
                 self.state.record_key(key);
                 return self.line_key(key, replayed);
@@ -134,6 +141,30 @@ impl HeadlessVim {
             VimKey::Backspace => self.model.backspace(),
             VimKey::Esc => {
                 let invocation = Invocation::of("vim.normal_mode")
+                    .expect("vim command IDs are valid")
+                    .source(Source::Keyboard)
+                    .context(context);
+                self.dispatch(&invocation)?;
+            }
+            _ => return Err(FeedError::Forwarded(key)),
+        }
+        Ok(())
+    }
+
+    /// One key in replace mode, as [`HeadlessVim::type_key`] takes one in
+    /// insert mode, but through [`VimState::replace_text`] and
+    /// [`VimState::replace_backspace`], with `<Esc>` dispatching
+    /// `vim.replace_normal_mode`.
+    fn replace_key(&mut self, key: VimKey) -> Result<(), FeedError> {
+        let context = context(&self.state);
+        match key {
+            VimKey::Char(ch) => self
+                .state
+                .replace_text(&mut self.model, ch.encode_utf8(&mut [0; 4])),
+            VimKey::Enter | VimKey::Ctrl('j') => self.state.line_break(&mut self.model),
+            VimKey::Backspace => self.state.replace_backspace(&mut self.model),
+            VimKey::Esc => {
+                let invocation = Invocation::of("vim.replace_normal_mode")
                     .expect("vim command IDs are valid")
                     .source(Source::Keyboard)
                     .context(context);

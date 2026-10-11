@@ -336,6 +336,7 @@ fn mode_name(nvim: &str) -> &str {
         "n" => "normal",
         "no" => "operator_pending",
         "i" => "insert",
+        "R" => "replace",
         "v" => "visual",
         "V" => "visual_line",
         "\u{16}" => "visual_block",

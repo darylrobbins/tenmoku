@@ -53,11 +53,11 @@ pub(crate) struct Session {
     regions: Vec<Region>,
     /// Shared by clones of the state, so they agree.
     ledger: Arc<Mutex<Ledger>>,
-    origin: Origin,
+    pub(crate) origin: Origin,
     /// How many times the typed text goes in.
     count: u32,
     /// The change that opened it, kept for `.` with the typed text.
-    change: Change,
+    pub(crate) change: Change,
     /// `o` and `O`: a count opens more rows.
     opens: bool,
     /// It continues a session a split ended ([`VimState::split_session`]).
@@ -586,10 +586,15 @@ impl VimState {
         else {
             return command(model);
         };
+        // A replace session resumes as one.
+        let replacing = self.mode == Mode::Replace;
         if splits == Splits::Edits {
             end(model, self, Ending::Split);
             let result = command(model);
             resume(model, self, origin, block);
+            if replacing {
+                crate::replace::resumed(self, model);
+            }
             return result;
         }
         sync(model);
@@ -601,6 +606,9 @@ impl VimState {
         if splits == Splits::Other || model.selections() != before {
             end(model, self, Ending::Moved(primary));
             resume(model, self, origin, block);
+            if replacing {
+                crate::replace::resumed(self, model);
+            }
         }
         result
     }
@@ -681,6 +689,14 @@ impl Session {
         for indent in &mut self.ledger().indents.0 {
             indent.used = true;
         }
+    }
+
+    /// Notes `offset`'s row in `text`, the model's, as typed on: a replace
+    /// session's copies type there what they then take back.
+    pub(crate) fn typed_on_row(&self, text: &Text, offset: usize) {
+        let mut ledger = self.ledger();
+        ledger.follow(&self.origin);
+        ledger.indents.typed_on_row(text, offset);
     }
 
     /// How many of the buffer's events wait to be followed (taking them).
@@ -1013,7 +1029,7 @@ fn is_blank(ch: char) -> bool {
 
 /// Puts a caret at each of `heads`, offsets in `snapshot`, which the
 /// model's text may have moved on from since (see [`apply`]).
-fn place(model: &mut EditorModel, snapshot: &BufferSnapshot, heads: &[usize]) {
+pub(crate) fn place(model: &mut EditorModel, snapshot: &BufferSnapshot, heads: &[usize]) {
     let anchors: Vec<Anchor> = heads
         .iter()
         .map(|&head| snapshot.anchor_before(head))
@@ -1560,6 +1576,8 @@ fn end(model: &mut EditorModel, state: &mut VimState, how: Ending) -> Option<Tra
     let esc = matches!(how, Ending::Esc);
     state.mode = Mode::Normal;
     state.goals = None;
+    // A replace session's copies and `.` type its keys again.
+    let replace = state.replace.take();
     let mut session = state.session.take()?;
     let replaying = state.replaying;
     sync(model);
@@ -1627,6 +1645,7 @@ fn end(model: &mut EditorModel, state: &mut VimState, how: Ending) -> Option<Tra
         Ending::Moved(primary) => snapshot.resolve(&primary),
         _ => model.primary_selection().head(),
     };
+    let keys = replace.map(|replace| replace.keys(model, primary));
     let ended: Vec<Ended> = session
         .regions
         .iter()
@@ -1671,7 +1690,10 @@ fn end(model: &mut EditorModel, state: &mut VimState, how: Ending) -> Option<Tra
             let fit = u32::try_from((room / each).max(1)).unwrap_or(u32::MAX);
             session.count = session.count.min(fit);
         }
-        repeat_typed(model, &session, &ended);
+        match &keys {
+            Some((keys, _)) => crate::replace::repeat_typed(model, &session, session.count, keys),
+            None => repeat_typed(model, &session, &ended),
+        }
     }
     drop_unused_indent(model, &session, matches!(how, Ending::Moved(_)));
     // Over a block, `Esc` types that on the others too, once the carets
@@ -1687,10 +1709,13 @@ fn end(model: &mut EditorModel, state: &mut VimState, how: Ending) -> Option<Tra
     };
 
     let snapshot = model.snapshot();
-    let typed = kept.map_or_else(String::new, |(start, end)| {
-        let (start, end) = (snapshot.resolve(&start), snapshot.resolve(&end));
-        model.text().slice_to_string(start..end.max(start))
-    });
+    let typed = match keys {
+        Some((_, typed)) => typed,
+        None => kept.map_or_else(String::new, |(start, end)| {
+            let (start, end) = (snapshot.resolve(&start), snapshot.resolve(&end));
+            model.text().slice_to_string(start..end.max(start))
+        }),
+    };
     let ended = model.buffer_mut().end_transaction();
     // An empty transaction isn't kept, so neither are its carets; inside
     // `.`, the transaction is `.`'s, which closes it.

@@ -1,0 +1,671 @@
+# Replace-mode cases for fe-vim's oracle: `R` over a row and past its end,
+# with a count, with `<CR>` (and `<C-j>`) splitting the row, `<BS>` putting
+# back what was overwritten and taking out what was appended or a line break,
+# over multibyte, combining and tab graphemes (a combining mark after a line
+# break joining its indentation's last blank, which `<BS>` takes with it),
+# `.` after `R`, `u` after it,
+# and a macro recording it. Every case ends in normal mode. Hand-written:
+# name, buffer (rows joined with \n, no trailing newline), cursor = [row,
+# byte column] and keys in vim notation. What nvim does with each is
+# recorded in replace.expected.json by the ignored
+# `record_corpus_with_neovim` test; edit a case, then re-record.
+
+[[case]]
+name = "over_row_start"
+buffer = "abcd"
+cursor = [0, 0]
+keys = "Rxy<Esc>"
+
+[[case]]
+name = "over_row_middle"
+buffer = "abcdef\nghi"
+cursor = [0, 2]
+keys = "Rxy<Esc>"
+
+[[case]]
+name = "past_row_end"
+buffer = "ab\ncd"
+cursor = [0, 1]
+keys = "Rxyz<Esc>"
+
+[[case]]
+name = "on_empty_row"
+buffer = "x\n\ny"
+cursor = [1, 0]
+keys = "Rab<Esc>"
+
+[[case]]
+name = "nothing_typed"
+buffer = "abc"
+cursor = [0, 2]
+keys = "R<Esc>"
+
+[[case]]
+name = "nothing_typed_count"
+buffer = "abc"
+cursor = [0, 2]
+keys = "5R<Esc>"
+
+[[case]]
+name = "count_over_row"
+buffer = "123456789"
+cursor = [0, 0]
+keys = "3Rab<Esc>"
+
+[[case]]
+name = "count_past_end"
+buffer = "ab"
+cursor = [0, 0]
+keys = "3Rxyz<Esc>"
+
+[[case]]
+name = "count_runs_off_row"
+buffer = "abc\ndef"
+cursor = [0, 1]
+keys = "2Rxy<Esc>"
+
+[[case]]
+name = "cr_splits_row"
+buffer = "abcd"
+cursor = [0, 1]
+keys = "Rx<CR>y<Esc>"
+
+[[case]]
+name = "cr_past_end"
+buffer = "ab\ncd"
+cursor = [0, 0]
+keys = "Rxyz<CR>w<Esc>"
+
+[[case]]
+name = "cr_only"
+buffer = "ab\ncd"
+cursor = [0, 1]
+keys = "R<CR><Esc>"
+
+[[case]]
+name = "ctrl_j_splits_row"
+buffer = "abc"
+cursor = [0, 1]
+keys = "Rx<C-j>y<Esc>"
+
+[[case]]
+name = "cr_count"
+buffer = "abcdef"
+cursor = [0, 0]
+keys = "3Rx<CR><Esc>"
+
+[[case]]
+name = "cr_count_typed_after"
+buffer = "abcdef"
+cursor = [0, 0]
+keys = "2Rx<CR>y<Esc>"
+
+[[case]]
+name = "cr_indented"
+buffer = "  abcd"
+cursor = [0, 3]
+keys = "Rx<CR>y<Esc>"
+
+[[case]]
+name = "cr_indented_count"
+buffer = "  abcdefgh"
+cursor = [0, 3]
+keys = "2Rx<CR>y<Esc>"
+
+[[case]]
+name = "bs_restores"
+buffer = "abcd"
+cursor = [0, 0]
+keys = "Rxy<BS><BS><Esc>"
+
+[[case]]
+name = "bs_then_type"
+buffer = "abcd"
+cursor = [0, 0]
+keys = "Rxyz<BS>w<Esc>"
+
+[[case]]
+name = "bs_appended"
+buffer = "ab"
+cursor = [0, 1]
+keys = "Rxyz<BS><BS><Esc>"
+
+[[case]]
+name = "bs_appended_and_restored"
+buffer = "ab"
+cursor = [0, 1]
+keys = "Rxyz<BS><BS><BS><Esc>"
+
+[[case]]
+name = "bs_over_cr"
+buffer = "abcd"
+cursor = [0, 1]
+keys = "Rx<CR>y<BS><BS><Esc>"
+
+[[case]]
+name = "bs_over_cr_restores"
+buffer = "abcd"
+cursor = [0, 1]
+keys = "Rx<CR>y<BS><BS><BS><Esc>"
+
+[[case]]
+name = "bs_over_autoindent"
+buffer = "  abcd"
+cursor = [0, 3]
+keys = "Rx<CR><BS><Esc>"
+
+[[case]]
+name = "bs_over_autoindent_and_cr"
+buffer = "  abcd"
+cursor = [0, 3]
+keys = "Rx<CR>y<BS><BS><BS><Esc>"
+
+[[case]]
+name = "bs_count"
+buffer = "123456789"
+cursor = [0, 0]
+keys = "3Rab<BS>c<Esc>"
+
+[[case]]
+name = "over_multibyte"
+buffer = "aé日c"
+cursor = [0, 1]
+keys = "Rxyz<Esc>"
+
+[[case]]
+name = "bs_multibyte"
+buffer = "aé日c"
+cursor = [0, 1]
+keys = "Rxyz<BS><BS><Esc>"
+
+[[case]]
+name = "over_combining"
+buffer = "ébc"
+cursor = [0, 0]
+keys = "Rxy<Esc>"
+
+[[case]]
+name = "bs_combining"
+buffer = "ébc"
+cursor = [0, 0]
+keys = "Rxy<BS><BS><Esc>"
+
+[[case]]
+name = "typed_multibyte"
+buffer = "abc"
+cursor = [0, 0]
+keys = "R日本<Esc>"
+
+[[case]]
+name = "bs_typed_multibyte"
+buffer = "abc"
+cursor = [0, 0]
+keys = "R日本<BS><Esc>"
+
+[[case]]
+name = "over_tab"
+buffer = "a\tb"
+cursor = [0, 0]
+keys = "Rxyz<Esc>"
+
+[[case]]
+name = "dot"
+buffer = "abcdefgh"
+cursor = [0, 0]
+keys = "Rxy<Esc>ll."
+
+[[case]]
+name = "dot_keeps_count"
+buffer = "abcdefgh"
+cursor = [0, 0]
+keys = "2Rxy<Esc>0."
+
+[[case]]
+name = "dot_new_count"
+buffer = "abcdefgh"
+cursor = [0, 0]
+keys = "2Rxy<Esc>03."
+
+[[case]]
+name = "dot_next_row"
+buffer = "abc\nd"
+cursor = [0, 0]
+keys = "Rxyz<Esc>j."
+
+[[case]]
+name = "dot_with_cr"
+buffer = "  abcdefgh"
+cursor = [0, 3]
+keys = "Rx<CR>y<Esc>."
+
+[[case]]
+name = "undo"
+buffer = "abcdefgh"
+cursor = [0, 3]
+keys = "Rxy<Esc>lu"
+
+[[case]]
+name = "undo_count"
+buffer = "123456789"
+cursor = [0, 0]
+keys = "3Rab<BS>c<Esc>u"
+
+[[case]]
+name = "undo_after_dot"
+buffer = "abcdefgh"
+cursor = [0, 0]
+keys = "Rxy<Esc>ll.u"
+
+[[case]]
+name = "registers_untouched"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "yiwwRxy<Esc>0p"
+
+[[case]]
+name = "recorded_in_macro"
+buffer = "ab\ncd\nef"
+cursor = [0, 0]
+keys = "qaRxy<Esc>jq@a"
+
+[[case]]
+name = "typed_combining"
+buffer = "abcdef"
+cursor = [0, 0]
+keys = "Réx<Esc>"
+
+[[case]]
+name = "bs_typed_combining"
+buffer = "abcdef"
+cursor = [0, 0]
+keys = "Réx<BS><BS><Esc>"
+
+[[case]]
+name = "bs_appended_combining"
+buffer = "ab"
+cursor = [0, 1]
+keys = "Rxé<BS><Esc>"
+
+[[case]]
+name = "count_typed_combining"
+buffer = "abcdef"
+cursor = [0, 0]
+keys = "2Réx<Esc>"
+
+[[case]]
+name = "dot_typed_combining"
+buffer = "abcdef"
+cursor = [0, 0]
+keys = "Réx<Esc>0."
+
+[[case]]
+name = "cr_on_indent"
+buffer = "  abc"
+cursor = [0, 2]
+keys = "R<CR><Esc>"
+
+[[case]]
+name = "cr_count_unused_indent"
+buffer = "  abc"
+cursor = [0, 2]
+keys = "3R<CR><Esc>"
+
+[[case]]
+name = "cr_count_indent_kept"
+buffer = "  abcdef"
+cursor = [0, 2]
+keys = "2Rx<CR><Esc>"
+
+[[case]]
+name = "cr_count_indent_at_end"
+buffer = "  ab"
+cursor = [0, 3]
+keys = "3Rx<CR><Esc>"
+
+[[case]]
+name = "cr_count_typed_blank"
+buffer = "abcdefghi"
+cursor = [0, 0]
+keys = "2Rx<CR> y<Esc>"
+
+[[case]]
+name = "dot_typed_blank"
+buffer = "abcdefghi\nabcdefghi"
+cursor = [0, 0]
+keys = "Rx<CR> y<Esc>j0."
+
+[[case]]
+name = "dot_unused_indent"
+buffer = "  abc\n  def"
+cursor = [0, 2]
+keys = "R<CR><Esc>j^."
+
+[[case]]
+name = "dot_after_indent_bs"
+buffer = "  abcd\n  efgh"
+cursor = [0, 3]
+keys = "Rx<CR><BS><Esc>j^."
+
+[[case]]
+name = "count_after_indent_bs"
+buffer = "  abcdef"
+cursor = [0, 3]
+keys = "2Rx<CR><BS><Esc>"
+
+[[case]]
+name = "count_indent_bs_then_typed"
+buffer = "    abcdefgh"
+cursor = [0, 4]
+keys = "2Rx<CR><BS>y<Esc>"
+
+[[case]]
+name = "cr_inside_indent"
+buffer = "    abc"
+cursor = [0, 2]
+keys = "R<CR><Esc>"
+
+[[case]]
+name = "cr_drops_blanks"
+buffer = "ab  cd"
+cursor = [0, 1]
+keys = "Rx<CR><Esc>"
+
+[[case]]
+name = "cr_drops_blanks_then_typed"
+buffer = "ab  cd"
+cursor = [0, 1]
+keys = "Rx<CR>y<Esc>"
+
+[[case]]
+name = "bs_puts_dropped_blanks_back"
+buffer = "    abc"
+cursor = [0, 2]
+keys = "R<CR><BS><BS><Esc>"
+
+[[case]]
+name = "dot_cr_inside_indent"
+buffer = "    abc\n    def"
+cursor = [0, 2]
+keys = "R<CR><Esc>j0ll."
+
+[[case]]
+name = "count_cr_drops_blanks"
+buffer = "a  b  c"
+cursor = [0, 0]
+keys = "3Rx<CR><Esc>"
+
+[[case]]
+name = "bs_combining_into_indent"
+buffer = "  abc"
+cursor = [0, 2]
+keys = "R<CR>\u0301<BS><Esc>"
+
+[[case]]
+name = "bs_combining_into_indent_then_trim"
+buffer = "    abc"
+cursor = [0, 4]
+keys = "R<CR>\u0301<BS><BS><Esc>"
+
+[[case]]
+name = "bs_combining_into_indent_then_join"
+buffer = "    abc"
+cursor = [0, 4]
+keys = "R<CR>\u0301<BS><BS><BS><Esc>"
+
+[[case]]
+name = "bs_combining_takes_whole_indent"
+buffer = " abc"
+cursor = [0, 1]
+keys = "R<CR>\u0301<BS><BS><Esc>"
+
+[[case]]
+name = "bs_combining_twice_into_indent"
+buffer = "    abc"
+cursor = [0, 4]
+keys = "R<CR>\u0301<BS>\u0301<BS><Esc>"
+
+[[case]]
+name = "bs_two_combining_into_indent"
+buffer = "    abc"
+cursor = [0, 4]
+keys = "R<CR>\u0301\u0302<BS><Esc>"
+
+[[case]]
+name = "bs_combining_into_indent_then_typed"
+buffer = "  abc"
+cursor = [0, 2]
+keys = "R<CR>\u0301<BS>x<Esc>"
+
+[[case]]
+name = "bs_combining_into_indent_then_cr"
+buffer = "  abc"
+cursor = [0, 2]
+keys = "R<CR>\u0301<BS><CR><Esc>"
+
+[[case]]
+name = "bs_combining_appended_into_indent"
+buffer = "  "
+cursor = [0, 1]
+keys = "A<Esc>R<CR>\u0301<BS><Esc>"
+
+[[case]]
+name = "count_combining_into_indent"
+buffer = "  abcdefgh"
+cursor = [0, 2]
+keys = "3R<CR>\u0301<BS><Esc>"
+
+[[case]]
+name = "count_combining_into_indent_then_typed"
+buffer = "  abcdefgh"
+cursor = [0, 2]
+keys = "3R<CR>\u0301<BS>x<Esc>"
+
+[[case]]
+name = "count_combining_into_indent_then_trim"
+buffer = "  abcdefgh"
+cursor = [0, 2]
+keys = "3R<CR>\u0301<BS><BS><Esc>"
+
+[[case]]
+name = "count_combining_deep_indent"
+buffer = "      abcdefgh"
+cursor = [0, 6]
+keys = "4R<CR>\u0301<BS>x<Esc>"
+
+[[case]]
+name = "dot_combining_into_indent"
+buffer = "  abc\n    def"
+cursor = [0, 2]
+keys = "R<CR>\u0301<BS><Esc>j^."
+
+[[case]]
+name = "dot_combining_unindented_onto_indent"
+buffer = "abc\n  def"
+cursor = [0, 0]
+keys = "R<CR>\u0301<BS><Esc>j^."
+
+[[case]]
+name = "dot_combining_into_indent_onto_unindented"
+buffer = "  abc\ndef"
+cursor = [0, 2]
+keys = "R<CR>\u0301<BS><Esc>j0."
+
+[[case]]
+name = "dot_combining_join_onto_deeper"
+buffer = " abc\n  def"
+cursor = [0, 1]
+keys = "R<CR>\u0301<BS><BS><Esc>j^."
+
+[[case]]
+name = "dot_combining_trim_onto_deeper"
+buffer = "    abc\n  def"
+cursor = [0, 4]
+keys = "R<CR>\u0301<BS><BS><Esc>j^."
+
+[[case]]
+name = "dot_count_combining_into_indent"
+buffer = "  abc\n    defghi"
+cursor = [0, 2]
+keys = "R<CR>\u0301<BS>x<Esc>j^3."
+
+[[case]]
+name = "undo_combining_into_indent"
+buffer = "  abc"
+cursor = [0, 2]
+keys = "R<CR>\u0301<BS><Esc>u"
+
+[[case]]
+name = "typed_bs_keeps_indent"
+buffer = "  abc"
+cursor = [0, 2]
+keys = "R<CR>x<BS><Esc>"
+
+[[case]]
+name = "dot_typed_bs_keeps_indent"
+buffer = "  abc\n  def"
+cursor = [0, 2]
+keys = "R<CR>x<BS><Esc>j^."
+
+[[case]]
+name = "count_typed_bs_keeps_indent"
+buffer = "  abcdef"
+cursor = [0, 2]
+keys = "2R<CR>x<BS><Esc>"
+
+[[case]]
+name = "dot_join_onto_indented"
+buffer = "abcd\n  efgh"
+cursor = [0, 0]
+keys = "Rx<CR><BS><Esc>j^."
+
+[[case]]
+name = "dot_typed_join_onto_indented"
+buffer = "abcd\n  efgh"
+cursor = [0, 0]
+keys = "Rx<CR>y<BS><BS><Esc>j^."
+
+[[case]]
+name = "count_indent_bs_no_growth"
+buffer = "  abc"
+cursor = [0, 2]
+keys = "5R<CR><BS><Esc>"
+
+[[case]]
+name = "count_indent_bs_join"
+buffer = "  abc"
+cursor = [0, 2]
+keys = "3R<CR><BS><BS><Esc>"
+
+[[case]]
+name = "dot_count_indent_bs_no_growth"
+buffer = "  abc\n  def"
+cursor = [0, 2]
+keys = "R<CR><BS><Esc>j^4."
+
+[[case]]
+name = "count_two_breaks_joined"
+buffer = "f\nfb"
+cursor = [0, 0]
+keys = "3R<CR><CR><BS><BS><Esc>"
+
+[[case]]
+name = "count_break_mark_break_joined"
+buffer = "dca\n   hach"
+cursor = [0, 2]
+keys = "3R<CR>\u0301<CR><BS><BS><Esc>"
+
+[[case]]
+name = "count_typed_bs_then_cr"
+buffer = "   c ffaa"
+cursor = [0, 3]
+keys = "3Rx<BS><CR><Esc>"
+
+[[case]]
+name = "dot_count_typed_bs_then_cr"
+buffer = "fa\n a"
+cursor = [0, 0]
+keys = "2Rx<BS><CR><Esc>j^9."
+
+[[case]]
+name = "dot_count_typed_bs_then_two_crs"
+buffer = "gf\n   f"
+cursor = [0, 0]
+keys = "Rx<BS><CR><CR><Esc>j^5."
+
+[[case]]
+name = "count_mark_cr_bs_mark_bs"
+buffer = "abcdefgh"
+cursor = [0, 0]
+keys = "2Re\u0301<CR><BS>\u0302<BS><Esc>"
+
+[[case]]
+name = "count_mark_cr_bs_bs"
+buffer = "abcdefgh"
+cursor = [0, 0]
+keys = "2Re\u0301<CR><BS><BS><Esc>"
+
+[[case]]
+name = "count3_mark_cr_bs_bs"
+buffer = "abcdefghijk"
+cursor = [0, 0]
+keys = "3Re\u0301<CR><BS><BS><Esc>"
+
+[[case]]
+name = "dot_count_mark_cr_bs_mark_bs"
+buffer = "abcdefgh\nabcdefghijkl"
+cursor = [0, 0]
+keys = "Re\u0301<CR><BS>\u0302<BS><Esc>j03."
+
+[[case]]
+name = "dot_count_mark_cr_bs_bs"
+buffer = "abcdefgh\nabcdefghijkl"
+cursor = [0, 0]
+keys = "Re\u0301<CR><BS><BS><Esc>j03."
+
+[[case]]
+name = "count_indent_mark_cr_bs_bs"
+buffer = "  abcdefgh"
+cursor = [0, 2]
+keys = "3R\u0301<CR><BS><BS><Esc>"
+
+[[case]]
+name = "count_cr_mark_cr_bs_bs"
+buffer = "  abcdefgh"
+cursor = [0, 2]
+keys = "3R<CR>\u0301<CR><BS><BS><Esc>"
+
+[[case]]
+name = "count_zwj_cr_bs_bs"
+buffer = "abcdefghijk"
+cursor = [0, 0]
+keys = "2R\U0001F469\u200D\U0001F680<CR><BS><BS><Esc>"
+
+[[case]]
+name = "count_zwj_cr_bs_mark_bs"
+buffer = "abcdefghijk"
+cursor = [0, 0]
+keys = "2R\U0001F469\u200D\U0001F680<CR><BS>\u0301<BS><Esc>"
+
+[[case]]
+name = "dot_count_zwj_cr_bs_bs"
+buffer = "abcdefghijk\nabcdefghijklmnop"
+cursor = [0, 0]
+keys = "R\U0001F469\u200D\U0001F680<CR><BS><BS><Esc>j03."
+
+[[case]]
+name = "count_regional_cr_bs_bs"
+buffer = "abcdefghijk"
+cursor = [0, 0]
+keys = "2R\U0001F1E6\U0001F1E7\U0001F1E8<CR><BS><BS><Esc>"
+
+[[case]]
+name = "dot_count_regional_cr_bs_bs"
+buffer = "abcdefghijk\nabcdefghijklmnop"
+cursor = [0, 0]
+keys = "R\U0001F1E6\U0001F1E7\U0001F1E8<CR><BS><BS><Esc>j03."
+
+[[case]]
+name = "count_regional_pair_cr_bs_bs"
+buffer = "abcdefghijk"
+cursor = [0, 0]
+keys = "2R\U0001F1E6\U0001F1E7<CR><BS><BS><Esc>"

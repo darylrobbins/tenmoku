@@ -9,7 +9,8 @@ use fe_editor::{EditorModel, commands::EditorHost};
 use crate::{
     CommandLineArgs, CountArgs, InsertArgs, MarkArgs, MoveArgs, OperateArgs, PlayArgs, PutArgs,
     RecordArgs, Registers, ReplaceCharArgs, SelectArgs, SubmitArgs, SwapArgs, VimState, VisualArgs,
-    cmdline, edit, history, insert, macros, marks, motion, operator, repeat, substitute, visual,
+    cmdline, edit, history, insert, macros, marks, motion, operator, repeat, replace, substitute,
+    visual,
 };
 
 /// Catches the marks up with the text before a command that may change it
@@ -37,7 +38,7 @@ impl CommandTarget for VimCommands {
 }
 
 /// Vim's registry: `vim.move`, `vim.operate`, `vim.put`, `vim.insert`,
-/// `vim.normal_mode`, `vim.join`, `vim.replace_char`, `vim.toggle_case`,
+/// `vim.normal_mode`, `vim.replace_mode`, `vim.replace_normal_mode`, `vim.join`, `vim.replace_char`, `vim.toggle_case`,
 /// `vim.undo`, `vim.redo`, `vim.repeat`, `vim.repeat_substitute`, the
 /// macros' `vim.record`, `vim.record_stop` and `vim.play`, and for
 /// the visual modes
@@ -53,6 +54,8 @@ pub fn registry() -> Registry<VimCommands> {
     let normal_or_visual = ContextPredicate::parse("editor && (vim.mode == normal || vim.visual)")
         .expect("vim's context predicate parses");
     let insert_mode = ContextPredicate::parse("editor && vim.mode == insert")
+        .expect("vim's context predicate parses");
+    let replace_mode = ContextPredicate::parse("editor && vim.mode == replace")
         .expect("vim's context predicate parses");
     let cmdline_mode = ContextPredicate::parse("editor && vim.mode == cmdline")
         .expect("vim's context predicate parses");
@@ -143,6 +146,37 @@ pub fn registry() -> Registry<VimCommands> {
             "Leaves insert mode: repeats the typed text for the count, ends the session's transaction and steps the caret back one grapheme.",
         )
         .context(insert_mode)
+        .mutates_buffer(true);
+    registry
+        .register_with_args(
+            "vim.replace_mode",
+            "Vim Replace Mode",
+            |target: &mut VimTarget<'_>, actor: &Actor, args: CountArgs| {
+                follow(target);
+                insert::adopt_closing(target.state);
+                replace::replace(target, actor, args)
+            },
+        )
+        .expect("vim command IDs are valid and distinct")
+        .description(
+            "Enters replace mode at the caret: typed text overwrites the row and goes on past its end, backspace puts back what it overwrote; one transaction until normal mode, typed text going in `count` times.",
+        )
+        .context(normal.clone())
+        .mutates_buffer(true);
+    registry
+        .register(
+            "vim.replace_normal_mode",
+            "Vim Normal Mode from Replace",
+            |target: &mut VimTarget<'_>, _: &Actor| {
+                follow(target);
+                insert::normal_mode(target)
+            },
+        )
+        .expect("vim command IDs are valid and distinct")
+        .description(
+            "Leaves replace mode: overwrites with the typed text again for the count, ends the session's transaction and steps the caret back one grapheme.",
+        )
+        .context(replace_mode)
         .mutates_buffer(true);
     registry
         .register_with_args(
