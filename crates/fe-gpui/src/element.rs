@@ -640,6 +640,16 @@ impl Element for EditorElement {
                     frame = scrolled;
                 } else {
                     kept_scroll = Some(frame.scroll);
+                    // The other long rows' slices were shaped for the scroll
+                    // this frame leaves; take theirs from the frame laid out
+                    // for where it ends up, which is `past` further on.
+                    let others = frame.rows.iter_mut().zip(scrolled.rows);
+                    for (row, shaped) in others {
+                        let long = row.slice.is_some() && row.expanded.inlay_range().is_none();
+                        if long && row.row == shaped.row && row.start == shaped.start {
+                            *row = shaped;
+                        }
+                    }
                 }
             }
             if let Some(past) = past_edge(&frame) {

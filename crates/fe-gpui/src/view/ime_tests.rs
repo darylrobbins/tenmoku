@@ -6,7 +6,7 @@ use std::{cell::RefCell, ops::Range, rc::Rc};
 
 use fe_buffer::{Buffer, Origin, ResolvedSelection};
 use fe_command::{ContextFrame, Invocation, Value};
-use fe_display::layout::MAX_SHAPED_ROW_BYTES;
+use fe_display::layout::{MAX_SHAPED_ROW_BYTES, MeasuredLine};
 use fe_editor::EditorModel;
 use gpui::{
     Bounds, Entity, EntityInputHandler as _, Focusable as _, Modifiers, Pixels, TestAppContext,
@@ -492,7 +492,7 @@ fn cancelling_an_overflowing_composition_shows_the_caret(cx: &mut TestAppContext
     draw(cx);
     let long = "あいうえおかきくけこさしすせそ".repeat(30);
     let end = long.chars().count();
-    for how in 0..3 {
+    for how in 0..2 {
         // Composed and drawn, so the frame scrolls to its caret.
         mark(&view, cx, &long, end..end);
         draw(cx);
@@ -503,18 +503,7 @@ fn cancelling_an_overflowing_composition_shows_the_caret(cx: &mut TestAppContext
             1 => ime(&view, cx, |view, window, cx| {
                 view.replace_text_in_range(None, "", window, cx)
             }),
-            _ => {
-                // A command that moves nothing, on a caret at the start.
-                view.update(cx, |view, _| view.model_mut().set_cursor(0));
-                mark(&view, cx, &long, end..end);
-                draw(cx);
-                draw(cx);
-                view.update(cx, |view, _| view.model_mut().set_cursor(100));
-                let command = Invocation::of("editor.move_right").unwrap();
-                view.update(cx, |view, cx| {
-                    view.end_composition_for(&command, cx);
-                });
-            }
+            _ => unreachable!(),
         }
         draw(cx);
         draw(cx);
@@ -526,6 +515,64 @@ fn cancelling_an_overflowing_composition_shows_the_caret(cx: &mut TestAppContext
         let caret = caret_at(&view, cx, 100);
         assert!(caret.origin.x >= text_bounds.origin.x, "{how}");
         assert!(caret.right() <= text_bounds.right(), "{how}");
+    }
+}
+
+#[gpui::test]
+fn a_movement_that_goes_nowhere_ends_the_composition_and_shows_the_caret(cx: &mut TestAppContext) {
+    let row = "x".repeat(2000);
+    let (view, cx, _) = editor(cx, &row, &[(2000, 2000)]);
+    view.update(cx, |view, _| view.model_mut().set_soft_wrap(false));
+    draw(cx);
+    let long = "あいうえおかきくけこさしすせそ".repeat(30);
+    let end = long.chars().count();
+    mark(&view, cx, &long, end..end);
+    draw(cx);
+    draw(cx);
+    let scrolled = view.read_with(cx, |view, _| view.scroll.x);
+    // Right of the row's end, a move right goes nowhere.
+    run(Invocation::of("editor.move_right").unwrap(), cx);
+    assert_eq!(marked(&view, cx), None);
+    assert_eq!(heads(&view, cx), [2000]);
+    draw(cx);
+    draw(cx);
+    assert!(view.read_with(cx, |view, _| view.scroll.x) <= scrolled);
+    let text_bounds = view.read_with(cx, |view, _| {
+        let layout = view.layout.as_ref().unwrap();
+        layout.bounds(layout.frame.text_bounds())
+    });
+    let caret = caret_at(&view, cx, 2000);
+    assert!(caret.origin.x >= text_bounds.origin.x);
+    assert!(caret.right() <= text_bounds.right());
+}
+
+#[gpui::test]
+fn another_long_row_stays_drawn_beside_a_wide_composition(cx: &mut TestAppContext) {
+    let len = MAX_SHAPED_ROW_BYTES + 100;
+    let text = format!("{}\n{}", "x".repeat(len), "y".repeat(len));
+    let (view, cx, _) = editor(cx, &text, &[(100, 100)]);
+    view.update(cx, |view, _| view.model_mut().set_soft_wrap(false));
+    draw(cx);
+    let long = "あいうえおかきくけこさしすせそ".repeat(60);
+    let end = long.chars().count();
+    mark(&view, cx, &long, end..end);
+    for _ in 0..3 {
+        draw(cx);
+        view.read_with(cx, |view, _| {
+            let layout = view.layout.as_ref().unwrap();
+            let frame = &layout.frame;
+            assert!(frame.inlay.is_some());
+            assert_eq!(frame.rows.len(), 2);
+            let (left, right) = (
+                frame.scroll.x as f64,
+                (frame.scroll.x + frame.text_bounds().width) as f64,
+            );
+            let other = &frame.rows[1];
+            let slice = other.slice.as_ref().expect("a long row");
+            let shaped_end = other.start_x() + f64::from(other.line.width());
+            assert!(slice.start_x <= left, "{slice:?} vs {left}");
+            assert!(shaped_end >= right, "{shaped_end} vs {right}");
+        });
     }
 }
 
