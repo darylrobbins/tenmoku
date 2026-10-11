@@ -1,6 +1,6 @@
 use std::{ops::Range, time::Duration};
 
-use fe_buffer::{Anchor, Bias, BufferSnapshot, Version};
+use fe_buffer::{Bias, BufferSnapshot, Version};
 use fe_command::{ContextFrame, ContextStack, Invocation, Source};
 use fe_display::layout::RowLayout;
 use fe_editor::EditorModel;
@@ -8,11 +8,14 @@ use fe_keymap::{Key, Keystroke};
 use fe_syntax::{Language, ParseJob, Spawner, Syntax, SyntaxDriver};
 use fe_vim::VisualKind;
 use gpui::{
-    App, AppContext as _, Bounds, Context, CursorStyle, EntityInputHandler, FocusHandle, Focusable,
-    InteractiveElement as _, IntoElement, KeyContext, Modifiers, ModifiersChangedEvent,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _, Pixels, Point,
-    Render, ScrollWheelEvent, Styled as _, Subscription, Task, UTF16Selection, Window, div, px,
+    App, AppContext as _, Context, CursorStyle, FocusHandle, Focusable, InteractiveElement as _,
+    IntoElement, KeyContext, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement as _, Pixels, Point, Render, ScrollWheelEvent,
+    Styled as _, Subscription, Task, Window, div, px,
 };
+
+#[cfg(test)]
+use gpui::Bounds;
 
 use crate::{
     commands::RunCommand,
@@ -48,8 +51,8 @@ pub struct EditorView {
     /// What the last frame laid out, for hit testing and IME.
     pub(crate) layout: Option<crate::element::FrameLayout>,
     drag: Option<Drag>,
-    /// Text being composed by an input method.
-    marked: Option<Range<Anchor>>,
+    /// Text being composed by an input method ([`ime`]).
+    composition: Option<ime::Composition>,
     /// The buffer's syntax tree, once its language is loaded.
     pub(crate) syntax: Option<SyntaxDriver<Task<()>>>,
     /// The language loading in the background.
@@ -72,7 +75,8 @@ pub struct EditorView {
     /// to a command, such as `cmd-click`: underlined, with a pointing hand.
     hover: Option<Hover>,
     /// Clears the hover range when the view loses focus, even if it's no
-    /// longer painted then, as when navigating to another tab.
+    /// longer painted then, as when navigating to another tab, and drops a
+    /// composition.
     hover_blur: Option<Subscription>,
     /// The popover for what's under the pointer ([`crate::hover`]).
     pub(crate) popover: crate::hover::HoverPopover,
@@ -111,6 +115,10 @@ pub struct EditorView {
     /// coordinates, and their colours.
     #[cfg(test)]
     pub(crate) painted_squiggles: Vec<(Bounds<Pixels>, gpui::UnderlineStyle)>,
+    /// The underline under composed text the last frame painted, in window
+    /// coordinates.
+    #[cfg(test)]
+    pub(crate) painted_composition: Option<Bounds<Pixels>>,
     /// The gutter marks the last frame painted: buffer row and colour.
     #[cfg(test)]
     pub(crate) painted_marks: Vec<(u32, gpui::Hsla)>,
@@ -157,7 +165,7 @@ impl EditorView {
             scrolled_top: None,
             layout: None,
             drag: None,
-            marked: None,
+            composition: None,
             syntax: None,
             language_task: None,
             injected_task: None,
@@ -188,6 +196,8 @@ impl EditorView {
             painted_hover: (Vec::new(), false),
             #[cfg(test)]
             painted_squiggles: Vec::new(),
+            #[cfg(test)]
+            painted_composition: None,
             #[cfg(test)]
             painted_marks: Vec::new(),
             #[cfg(test)]
@@ -319,8 +329,9 @@ impl EditorView {
     /// pending vim command.
     pub fn select_and_reveal(&mut self, range: Range<usize>, cx: &mut Context<Self>) {
         // As a click does, a jump drops a pending vim command and leaves
-        // vim's visual mode.
+        // vim's visual mode, and ends a composition, typing nothing.
         self.cancel_vim(cx);
+        self.composition = None;
         let text = self.model.text();
         let start = text.clip_offset(range.start, Bias::Left);
         let end = text.clip_offset(range.end, Bias::Left);
@@ -396,13 +407,14 @@ impl EditorView {
         cx: &mut Context<Self>,
     ) {
         window.focus(&self.focus, cx);
+        // A click ends a composition, typing nothing.
+        self.composition = None;
         if self.toggle_fold_at(event.position, cx) {
             self.drag = None;
             self.changed(cx);
             return;
         }
         let offset = self.offset_for_position(event.position);
-        self.marked = None;
         if event.click_count == 1
             && let Some(invocation) = self.click_command(&event.modifiers, window, cx)
         {
@@ -834,16 +846,6 @@ impl EditorView {
         cx.notify();
     }
 
-    fn utf16_range(&self, range: &Range<usize>) -> Range<usize> {
-        let text = self.model.text();
-        text.offset_to_utf16(range.start)..text.offset_to_utf16(range.end)
-    }
-
-    fn range_from_utf16(&self, range: &Range<usize>) -> Range<usize> {
-        let text = self.model.text();
-        text.utf16_to_offset(range.start)..text.utf16_to_offset(range.end)
-    }
-
     /// Brings the syntax tree up to date with the text: within this frame if
     /// the reparse is quick, otherwise on a background thread while the stale
     /// tree keeps highlighting. A file too big to parse whole gets a window
@@ -892,12 +894,6 @@ impl EditorView {
             })
             .ok();
         }));
-    }
-
-    fn marked_range(&self) -> Option<Range<usize>> {
-        self.marked
-            .as_ref()
-            .map(|range| self.model.snapshot().resolve_range(range))
     }
 }
 
@@ -991,12 +987,16 @@ impl Render for EditorView {
             cx.defer_in(window, |view, _, cx| view.sync_syntax(cx));
         }
         self.sync_vim(cx);
+        // Vim left insert mode, or came on or went off, while composing.
+        self.drop_stale_composition();
         self.sync_find(cx);
         if self.hover_blur.is_none() {
             // Blur listeners run at the end of a draw, which asks for no
-            // frame after it: the notify waits until it's over.
+            // frame after it: the notify waits until it's over. Losing focus
+            // drops a composition too.
             let blur = cx.on_blur(&self.focus, window, |view, window, cx| {
-                if view.hover.take().is_some() {
+                let composing = view.composition.take().is_some();
+                if view.hover.take().is_some() || composing {
                     cx.defer_in(window, |_, _, cx| cx.notify());
                 }
             });
@@ -1026,7 +1026,10 @@ impl Render for EditorView {
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_scroll_wheel(cx.listener(Self::on_scroll))
             .on_modifiers_changed(crate::element::modifiers_changed)
-            .on_action(cx.listener(Self::on_run_command))
+            .on_action(cx.listener(|view, run: &RunCommand, window, cx| {
+                view.end_composition_for(&run.0, cx);
+                view.on_run_command(run, window, cx)
+            }))
             .on_key_down(cx.listener(Self::on_vim_key))
             .child(EditorElement::new(cx.entity()))
             .child(crate::hover::popover_layer(cx))
@@ -1040,117 +1043,11 @@ impl Focusable for EditorView {
     }
 }
 
-impl EntityInputHandler for EditorView {
-    fn text_for_range(
-        &mut self,
-        range_utf16: Range<usize>,
-        actual_range: &mut Option<Range<usize>>,
-        _: &mut Window,
-        _: &mut Context<Self>,
-    ) -> Option<String> {
-        let range = self.range_from_utf16(&range_utf16);
-        actual_range.replace(self.utf16_range(&range));
-        Some(self.model.text().slice_to_string(range))
-    }
-
-    fn selected_text_range(
-        &mut self,
-        _ignore_disabled_input: bool,
-        _: &mut Window,
-        _: &mut Context<Self>,
-    ) -> Option<UTF16Selection> {
-        let selection = self.model.primary_selection();
-        Some(UTF16Selection {
-            range: self.utf16_range(&selection.range),
-            reversed: selection.reversed,
-        })
-    }
-
-    fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
-        self.marked_range().map(|range| self.utf16_range(&range))
-    }
-
-    fn unmark_text(&mut self, _: &mut Window, _: &mut Context<Self>) {
-        self.marked = None;
-    }
-
-    fn replace_text_in_range(
-        &mut self,
-        range_utf16: Option<Range<usize>>,
-        text: &str,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if !self.accepts_text() {
-            return;
-        }
-        let range = range_utf16
-            .map(|range| self.range_from_utf16(&range))
-            .or_else(|| self.marked_range());
-        let Some(range) = range else {
-            // Typing, at every cursor: recorded like any key binding.
-            self.type_text(text, cx);
-            return;
-        };
-        self.model.select_range(range, false);
-        self.model.insert(text);
-        self.marked = None;
-        self.changed(cx);
-    }
-
-    fn replace_and_mark_text_in_range(
-        &mut self,
-        range_utf16: Option<Range<usize>>,
-        text: &str,
-        new_selected_range_utf16: Option<Range<usize>>,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if !self.accepts_text() {
-            return;
-        }
-        let range = range_utf16
-            .map(|range| self.range_from_utf16(&range))
-            .or_else(|| self.marked_range())
-            .unwrap_or_else(|| self.model.primary_selection().range);
-        self.model.select_range(range.clone(), false);
-        self.model.insert(text);
-        let start = range.start;
-        let snapshot = self.model.snapshot();
-        self.marked = (!text.is_empty())
-            .then(|| snapshot.anchor_before(start)..snapshot.anchor_after(start + text.len()));
-        if let Some(selected) = new_selected_range_utf16 {
-            // Relative to the composed text, in UTF-16.
-            let base = self.model.text().offset_to_utf16(start);
-            let selected = self.range_from_utf16(&(base + selected.start..base + selected.end));
-            self.model.select_range(selected, false);
-        }
-        self.changed(cx);
-    }
-
-    fn bounds_for_range(
-        &mut self,
-        range_utf16: Range<usize>,
-        _element_bounds: Bounds<Pixels>,
-        _: &mut Window,
-        _: &mut Context<Self>,
-    ) -> Option<Bounds<Pixels>> {
-        let range = self.range_from_utf16(&range_utf16);
-        self.layout.as_mut()?.caret_bounds(range.start)
-    }
-
-    fn character_index_for_point(
-        &mut self,
-        position: Point<Pixels>,
-        _: &mut Window,
-        _: &mut Context<Self>,
-    ) -> Option<usize> {
-        let offset = self.offset_for_position(position);
-        Some(self.model.text().offset_to_utf16(offset))
-    }
-}
-
 mod find;
+mod ime;
+
+#[cfg(test)]
+mod ime_tests;
 
 #[cfg(test)]
 mod language_tests;

@@ -580,7 +580,7 @@ fn input_method_composition(cx: &mut TestAppContext) {
             view.replace_and_mark_text_in_range(None, "k", Some(1..1), window, cx);
             assert_eq!(view.marked_text_range(window, cx), Some(2..3));
             view.replace_and_mark_text_in_range(None, "か", Some(0..1), window, cx);
-            assert_eq!(view.model().text().to_string(), "abか");
+            assert_eq!(view.model().text().to_string(), "ab");
             assert_eq!(view.marked_text_range(window, cx), Some(2..3));
             // The selection goes where the input method asked, relative to the composition.
             let selection = view.selected_text_range(false, window, cx).unwrap();

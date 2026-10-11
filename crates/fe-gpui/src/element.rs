@@ -9,7 +9,7 @@ use std::{
 
 use fe_buffer::Text;
 use fe_display::{
-    CharWidth, LongRows, MAX_CLUSTER_BYTES,
+    BlockMap, CharWidth, LongRows, MAX_CLUSTER_BYTES,
     layout::{
         self, Frame, FrameInput, FrameStyles, MeasuredLine, Rect, StyleRun, StyledSpan,
         TextMeasure, Vec2,
@@ -55,6 +55,9 @@ pub(crate) struct FrameLayout {
     matches: Vec<Rect>,
     /// A pending vim jump's backdrop and labels ([`jump_layout`]).
     pub(crate) jump: Option<JumpLayout>,
+    /// What an input method was composing, and the buffer offset it was
+    /// drawn at, as the frame's inlay.
+    composition: Option<(usize, String)>,
     /// When prepaint started and how long it took, for [`FrameTiming`].
     prepaint_started: Instant,
     prepaint_took: Duration,
@@ -128,6 +131,44 @@ impl FrameLayout {
         Some(self.bounds(caret))
     }
 
+    /// Whether this frame drew `text` composing at `offset` as its inlay,
+    /// so the inlay's geometry is the composition's.
+    pub(crate) fn shows_composition(&self, offset: usize, text: &str) -> bool {
+        self.frame.inlay.is_some()
+            && self
+                .composition
+                .as_ref()
+                .is_some_and(|(at, shown)| *at == offset && shown == text)
+    }
+
+    /// The window bounds of `range`, bytes of the inlay's text, if this
+    /// frame laid the inlay out.
+    pub(crate) fn inlay_bounds(&self, range: Range<usize>) -> Option<Bounds<Pixels>> {
+        let inlay = self.frame.inlay?;
+        let start = inlay_x(&self.frame, range.start)?;
+        let end = inlay_x(&self.frame, range.end)?;
+        Some(self.bounds(Rect {
+            x: start,
+            width: end - start,
+            ..inlay
+        }))
+    }
+
+    /// The byte of the inlay's text nearest a window position on the
+    /// inlay's row, from its start to its end, if this frame laid it out.
+    /// `None` nearer the text before or after it.
+    pub(crate) fn inlay_index_at(&self, position: Point<Pixels>) -> Option<usize> {
+        let at = self.to_frame(position);
+        let inlay = self.frame.inlay?;
+        if !(inlay.y..inlay.y + inlay.height).contains(&at.y) {
+            return None;
+        }
+        let (row, shown) = inlay_row(&self.frame)?;
+        let line_x = at.x - self.frame.line_origin(row).x;
+        let index = row.line.index_for_x(line_x);
+        (line_x >= 0. && (shown.start..=shown.end).contains(&index)).then(|| index - shown.start)
+    }
+
     pub(crate) fn bounds(&self, rect: Rect) -> Bounds<Pixels> {
         Bounds::new(
             self.to_window(Vec2 {
@@ -137,6 +178,32 @@ impl FrameLayout {
             size(px(rect.width), px(rect.height)),
         )
     }
+}
+
+/// The row the inlay is laid out in, and its columns there.
+fn inlay_row(frame: &Frame<Line>) -> Option<(&layout::RowLayout<Line>, Range<usize>)> {
+    (frame.rows.iter()).find_map(|row| Some((row, row.expanded.inlay_range()?)))
+}
+
+/// Scrolls `frame` `dx` further right than its layout did.
+fn shift_frame(frame: &mut Frame<Line>, dx: f32) {
+    frame.scroll.x += dx;
+    let markers = frame.fold_markers.iter_mut().map(|marker| &mut marker.rect);
+    let rects = (frame.selections.iter_mut())
+        .chain(&mut frame.cursors)
+        .chain(&mut frame.inlay)
+        .chain(markers);
+    for rect in rects {
+        rect.x -= dx;
+    }
+}
+
+/// The x, in the frame, of byte `index` of the inlay's text.
+fn inlay_x(frame: &Frame<Line>, index: usize) -> Option<f32> {
+    let inlay = frame.inlay?;
+    let (row, shown) = inlay_row(frame)?;
+    let x = |index: usize| row.line.x_for_index(shown.start + index.min(shown.len()));
+    Some(inlay.x + x(index) - x(0))
 }
 
 /// A row or line number shaped by GPUI in one font run, with its colours
@@ -514,14 +581,60 @@ impl Element for EditorElement {
             font,
             font_size,
         };
-        let frame = layout::layout_frame(
-            &input,
-            &mut shaper,
-            &mut long_rows,
-            &mut glyph_widths,
-            |range| styled_highlights(syntax, theme, range),
-            |rows| fold_headers(syntax, rows),
-        );
+        // What an input method is composing, drawn at its caret.
+        let composition = view.composition();
+        let inlay = composition.map(|(offset, composition)| layout::Inlay {
+            offset,
+            // An inlay is one line.
+            text: composition.text.replace(['\n', '\r'], " "),
+            style: theme.foreground,
+        });
+        let mut lay_out = |input: &FrameInput<Hsla>| {
+            layout::layout_frame_with_inlay(
+                input,
+                &BlockMap::default(),
+                inlay.as_ref(),
+                &mut shaper,
+                &mut long_rows,
+                &mut glyph_widths,
+                |range| styled_highlights(syntax, theme, range),
+                |rows| fold_headers(syntax, rows),
+            )
+        };
+        let mut frame = lay_out(&input);
+        // Autoscroll keeps the buffer caret in view, which is before the
+        // inlay. While composing, the composition's caret inside it stays in
+        // view too, as far inside the edge as autoscroll keeps a caret: the
+        // frame scrolls further, then shifts the rest of the way where layout
+        // doesn't scroll so far. Wrapped rows don't scroll, and a long row's
+        // limit leaves the inlay out.
+        let caret = composition.map(|(_, composition)| composition.selected.end);
+        let past_edge = |frame: &Frame<Line>| {
+            // A text area narrower than the margin keeps the whole caret in
+            // it.
+            let text = frame.text_bounds();
+            let caret_width = frame.cursors.first().map_or(2., |caret| caret.width);
+            let margin = (em * 4.).clamp(caret_width, text.width.max(caret_width));
+            let edge = text.x + text.width - margin;
+            let x = inlay_x(frame, caret?)?;
+            (x > edge).then_some(x - edge)
+        };
+        if let Some(past) = past_edge(&frame) {
+            if model.display().wrap_width().is_none() {
+                frame = lay_out(&FrameInput {
+                    scroll: Vec2 {
+                        x: frame.scroll.x + past,
+                        y: frame.scroll.y,
+                    },
+                    autoscroll: false,
+                    ..input
+                });
+            }
+            if let Some(past) = past_edge(&frame) {
+                shift_frame(&mut frame, past);
+            }
+        }
+        let composed = composition.map(|(offset, composition)| (offset, composition.text.clone()));
         let to_window = |rect: Rect| {
             Bounds::new(
                 bounds.origin + point(px(rect.x), px(rect.y)),
@@ -561,6 +674,7 @@ impl Element for EditorElement {
             text,
             matches: Vec::new(),
             jump: None,
+            composition: composed,
             prepaint_started: started,
             prepaint_took: Duration::ZERO,
         };
@@ -626,13 +740,36 @@ impl Element for EditorElement {
                 };
                 block_carets(&mut layout, text, heads.into_iter())
             }
-            true => layout
-                .frame
-                .cursors
-                .iter()
-                .map(|&cursor| layout.bounds(cursor))
-                .collect(),
+            true => {
+                let mut carets: Vec<_> = (layout.frame.cursors.iter())
+                    .map(|&cursor| layout.bounds(cursor))
+                    .collect();
+                // Composing, the primary caret is the composition's.
+                if let Some((at, composition)) = view.composition()
+                    && let Some(primary) = layout.caret_bounds(at)
+                    && let end = composition.selected.end
+                    && let Some(caret) = layout.inlay_bounds(end..end)
+                {
+                    // A frame shifted for the composition may round it.
+                    let near = |caret: &Bounds<Pixels>| {
+                        caret.origin.y == primary.origin.y
+                            && (caret.origin.x - primary.origin.x).abs() < px(0.5)
+                    };
+                    carets.retain(|caret| !near(caret));
+                    carets.push(Bounds::new(caret.origin, primary.size));
+                }
+                carets
+            }
         };
+        // Composed text is underlined in the text colour.
+        let composition_underline = layout.frame.inlay.map(|inlay| {
+            let thickness = COMPOSITION_UNDERLINE;
+            layout.bounds(Rect {
+                y: inlay.y + inlay.height - thickness,
+                height: thickness,
+                ..inlay
+            })
+        });
         let selections = selection_rects(&mut layout, view);
         let matches = mem::take(&mut layout.matches);
         let (squiggles, marks) = {
@@ -716,6 +853,9 @@ impl Element for EditorElement {
                     }
                     for &(underline, color) in &underlines {
                         window.paint_quad(fill(underline, color));
+                    }
+                    if let Some(underline) = composition_underline {
+                        window.paint_quad(fill(underline, theme.foreground));
                     }
                     if let Some((backdrop, labels)) = &jump {
                         paint_jump(*backdrop, labels, &theme, window, cx);
@@ -834,6 +974,7 @@ impl Element for EditorElement {
                 let underlines = underlines.iter().map(|&(bounds, _)| bounds).collect();
                 view.painted_hover = (underlines, hover.is_some());
                 view.painted_squiggles = squiggles;
+                view.painted_composition = composition_underline;
                 view.painted_marks = marks.iter().map(|&(row, _, color)| (row, color)).collect();
             }
         });
@@ -1145,6 +1286,9 @@ fn paint_chevron(chevron: Bounds<Pixels>, folded: bool, color: Hsla, window: &mu
 
 /// How opaque a block cursor is, over the cursor colour.
 const BLOCK_ALPHA: f32 = 0.6;
+
+/// How thick the underline under composed text is.
+const COMPOSITION_UNDERLINE: f32 = 1.;
 
 /// Vim's normal-mode cursor at each of `heads` on screen: a block over the
 /// grapheme after it ([`block_rect`]).
