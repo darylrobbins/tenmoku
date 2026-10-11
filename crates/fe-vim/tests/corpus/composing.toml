@@ -452,3 +452,156 @@ name = "duplicate_marks_not_present"
 buffer = "a\u0302b"
 cursor = [0, 0]
 keys = ":s/a\u0301\u0301/X/<CR>"
+
+# Mixed-ending groups under every multi, and a group written twice whose
+# last copy matched isn't the last in the pattern.
+
+[[case]]
+name = "mixed_group_exact1_neg"
+buffer = "x\u0301"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)\\{1}./[&]/<CR>"
+
+[[case]]
+name = "mixed_group_exact1_pos"
+buffer = "xy"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)\\{1}./[&]/<CR>"
+
+[[case]]
+name = "mixed_group_exact2_mark"
+buffer = "a\u0301"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)\\{2}/[&]/<CR>"
+
+[[case]]
+name = "mixed_group_exact2_plain"
+buffer = "aab"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)\\{2}/[&]/<CR>"
+
+[[case]]
+name = "mixed_group_optional_then_dot"
+buffer = "a\u0301b"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)\\?./[&]/<CR>"
+
+[[case]]
+name = "mixed_group_star_then_dot"
+buffer = "ax\u0301a"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\){0,}./[&]/g<CR>"
+
+[[case]]
+name = "mixed_group_plus_marked"
+buffer = "a\u0301x\u0301"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)\\{1,}/[&]/<CR>"
+
+[[case]]
+name = "mixed_group_range_neg"
+buffer = "x\u0301"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)\\{1,3}./[&]/<CR>"
+
+[[case]]
+name = "mixed_group_open_range"
+buffer = "aaxy"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)\\{2,}/[&]/<CR>"
+
+[[case]]
+name = "mixed_group_lazy"
+buffer = "aaxy"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)\\{-1,}x/[&]/<CR>"
+
+[[case]]
+name = "mixed_capture_exact1_neg"
+buffer = "x\u0301"
+cursor = [0, 0]
+keys = ":s/\\(a\\|.\\)\\{1}./[\\1]/<CR>"
+
+[[case]]
+name = "mixed_capture_exact1_pos"
+buffer = "xy"
+cursor = [0, 0]
+keys = ":s/\\(a\\|.\\)\\{1}./[\\1]/<CR>"
+
+[[case]]
+name = "mixed_capture_exact2_mark"
+buffer = "a\u0301"
+cursor = [0, 0]
+keys = ":s/\\(a\\|.\\)\\{2}/[\\1]/<CR>"
+
+[[case]]
+name = "mixed_capture_exact2_plain"
+buffer = "aab"
+cursor = [0, 0]
+keys = ":s/\\(a\\|.\\)\\{2}/[\\1]/<CR>"
+
+[[case]]
+name = "mixed_capture_optional_then_dot"
+buffer = "a\u0301b"
+cursor = [0, 0]
+keys = ":s/\\(a\\|.\\)\\?./[\\1]/<CR>"
+
+[[case]]
+name = "mixed_capture_star_then_dot"
+buffer = "ax\u0301a"
+cursor = [0, 0]
+keys = ":s/\\(a\\|.\\){0,}./[\\1]/g<CR>"
+
+[[case]]
+name = "mixed_capture_plus_marked"
+buffer = "a\u0301x\u0301"
+cursor = [0, 0]
+keys = ":s/\\(a\\|.\\)\\{1,}/[\\1]/<CR>"
+
+[[case]]
+name = "mixed_capture_range_neg"
+buffer = "x\u0301"
+cursor = [0, 0]
+keys = ":s/\\(a\\|.\\)\\{1,3}./[\\1]/<CR>"
+
+[[case]]
+name = "mixed_capture_open_range"
+buffer = "aaxy"
+cursor = [0, 0]
+keys = ":s/\\(a\\|.\\)\\{2,}/[\\1]/<CR>"
+
+[[case]]
+name = "mixed_capture_lazy"
+buffer = "aaxy"
+cursor = [0, 0]
+keys = ":s/\\(a\\|.\\)\\{-1,}x/[\\1]/<CR>"
+
+[[case]]
+name = "mixed_prefix_split"
+buffer = "a\u0301\u0323"
+cursor = [0, 0]
+keys = ":s/a\\%(.\\|a\\)\\{2}/[&]/<CR>"
+
+[[case]]
+name = "dup_capture_forward"
+buffer = "xa"
+cursor = [0, 0]
+keys = ":s/\\(a\\|.\\)\\{1,}/[\\1]/<CR>"
+
+[[case]]
+name = "dup_capture_backward"
+buffer = "ax"
+cursor = [0, 0]
+keys = ":s/\\(a\\|.\\)\\{1,}/[\\1]/<CR>"
+
+[[case]]
+name = "dup_capture_alternating"
+buffer = "xaxa"
+cursor = [0, 0]
+keys = ":s/\\(a\\|.\\)\\{1,}/[\\1]/<CR>"
+
+[[case]]
+name = "dup_capture_star_global"
+buffer = "xa ya"
+cursor = [0, 0]
+keys = ":s/\\(a\\|.\\)\\{0,}/[\\1]/g<CR>"

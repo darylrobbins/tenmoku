@@ -624,13 +624,16 @@ impl RowMatches<'_> {
         if !self.groups {
             return None;
         }
-        // A group written twice: the copy that took part last.
+        // A group written twice: the copy that took part last in the text,
+        // which isn't the last one written (`\(a\|.\)\+` on "xa" ends on
+        // the first copy). Of copies that end together, the later starting
+        // one (an empty one) came last.
         let (start, end) = self
             .slots
             .get(n)?
             .iter()
-            .rev()
-            .find_map(|&at| self.locs.get(at))?;
+            .filter_map(|&at| self.locs.get(at))
+            .max_by_key(|&(start, end)| (end, start))?;
         Some(start..end)
     }
 }
@@ -1782,6 +1785,15 @@ impl Translator<'_> {
             Multi::Brace { min, max, lazy } => (min, max, lazy),
         };
         let ends = (self.next, self.groups);
+        if atom.len() > 1 {
+            (self.next, self.groups) = at;
+            let again = self.atom(opened, first, false, !bare)?.0;
+            (self.next, self.groups) = ends;
+            let mut trans = [Vec::new(), Vec::new()];
+            trans[usize::from(bare)] = by_end(atom);
+            trans[usize::from(!bare)] = by_end(again);
+            return repeat_mixed(&trans, bare, (min, max, lazy));
+        }
         // An atom that ends in different ways goes on as if it always ended
         // bare when it can, each time.
         let once = match &atom[..] {
@@ -1995,6 +2007,152 @@ impl Translator<'_> {
             })
             .collect())
     }
+}
+
+/// How many times an atom that ends in different ways is written out for
+/// its repeats, before the pattern is too much.
+const MAX_UNROLL: u32 = 8;
+/// The longest a repeat's translation may get.
+const MAX_REPEAT_TEXT: usize = 100_000;
+
+/// `paths` with those that end the same way made one, their texts
+/// alternatives, in the order the ways first appear.
+fn by_end(paths: Vec<Path>) -> Vec<Path> {
+    let mut joined: Vec<(Vec<String>, bool)> = Vec::new();
+    for path in paths {
+        match joined.iter_mut().find(|(_, bare)| *bare == path.bare) {
+            Some((texts, _)) => texts.push(path.text),
+            None => joined.push((vec![path.text], path.bare)),
+        }
+    }
+    joined
+        .into_iter()
+        .map(|(texts, bare)| Path {
+            text: format!("(?:{})", texts.join("|")),
+            bare,
+        })
+        .collect()
+}
+
+/// Every way of `first` followed by one of `then` for how it ended.
+fn compose(first: &[Path], then: impl Fn(bool) -> Vec<Path>) -> Vec<Path> {
+    let mut all = Vec::new();
+    for head in first {
+        for tail in then(head.bare) {
+            all.push(Path {
+                text: format!("{}{}", head.text, tail.text),
+                bare: tail.bare,
+            });
+        }
+    }
+    by_end(all)
+}
+
+fn nothing(bare: bool) -> Path {
+    Path {
+        text: String::new(),
+        bare,
+    }
+}
+
+/// `trans[c]`, an atom's ways through after a bare base (`c`) or not, each
+/// for how it ends, repeated `min` to `max` times, the first time after
+/// `bare` and each later one after how the one before ended. The ways
+/// through come out for how the last time ended, as an atom's do.
+fn repeat_mixed(
+    trans: &[Vec<Path>; 2],
+    bare: bool,
+    (min, max, lazy): (u32, Option<u32>, bool),
+) -> Result<Vec<Path>, PatternError> {
+    fn exact(trans: &[Vec<Path>; 2], from: bool, times: u32) -> Vec<Path> {
+        match times {
+            0 => vec![nothing(from)],
+            _ => compose(&trans[usize::from(from)], |end| {
+                exact(trans, end, times - 1)
+            }),
+        }
+    }
+    fn within(trans: &[Vec<Path>; 2], from: bool, times: u32, lazy: bool) -> Vec<Path> {
+        if times == 0 {
+            return vec![nothing(from)];
+        }
+        let more = compose(&trans[usize::from(from)], |end| {
+            within(trans, end, times - 1, lazy)
+        });
+        by_end(if lazy {
+            std::iter::once(nothing(from)).chain(more).collect()
+        } else {
+            more.into_iter().chain([nothing(from)]).collect()
+        })
+    }
+    // Any number of times: the one-time ways between the two kinds of end
+    // are `ways[from][to]`, and what loops back where it began is each way
+    // that does, or goes across and back.
+    fn any(trans: &[Vec<Path>; 2], from: bool, lazy: bool) -> Vec<Path> {
+        let ways = |from: bool, to: bool| {
+            trans[usize::from(from)]
+                .iter()
+                .find(|path| path.bare == to)
+                .map(|path| path.text.clone())
+        };
+        let star = |text: &Option<String>| match text {
+            Some(text) => format!("(?:{text}){}", if lazy { "*?" } else { "*" }),
+            None => String::new(),
+        };
+        let other = !from;
+        let stay = ways(from, from);
+        let (across, back, stay_there) = (ways(from, other), ways(other, from), ways(other, other));
+        let across_back = across
+            .as_ref()
+            .zip(back.as_ref())
+            .map(|(across, back)| format!("{across}{}{back}", star(&stay_there)));
+        let looped: Vec<String> = stay.into_iter().chain(across_back).collect();
+        let looped = (!looped.is_empty()).then(|| looped.join("|"));
+        // Ending on the other kind takes another time: the way that does is
+        // tried first, as a greedy repeat tries another time before stopping.
+        let mut paths = Vec::new();
+        if let Some(across) = across {
+            paths.push(Path {
+                text: format!("{}{across}{}", star(&looped), star(&stay_there)),
+                bare: other,
+            });
+        }
+        paths.push(Path {
+            text: star(&looped),
+            bare: from,
+        });
+        paths
+    }
+    let (then, unbounded) = match max {
+        Some(max) => (max.saturating_sub(min), false),
+        None => (0, true),
+    };
+    if min > MAX_UNROLL || then > MAX_UNROLL {
+        return Err(PatternError::TooLarge(
+            "a multi after alternatives that end in different ways".into(),
+        ));
+    }
+    let mut all = Vec::new();
+    for head in exact(trans, bare, min) {
+        let tail = if unbounded {
+            any(trans, head.bare, lazy)
+        } else {
+            within(trans, head.bare, then, lazy)
+        };
+        for tail in tail {
+            all.push(Path {
+                text: format!("{}{}", head.text, tail.text),
+                bare: tail.bare,
+            });
+        }
+    }
+    let all = by_end(all);
+    if all.iter().any(|path| path.text.len() > MAX_REPEAT_TEXT) {
+        return Err(PatternError::TooLarge(
+            "a multi after alternatives that end in different ways".into(),
+        ));
+    }
+    Ok(all)
 }
 
 /// `paths` with each run of neighbours that end the same way made one
