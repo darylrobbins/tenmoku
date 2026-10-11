@@ -1,0 +1,994 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "dot_global",
+      "buffer": "áb é",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/./X/g<CR>",
+      "expect": {
+        "buffer": "XXXX",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": ".",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "literal_base_not_found",
+      "buffer": "áb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a/X/<CR>",
+      "expect": {
+        "buffer": "áb",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "literal_base_beside_plain",
+      "buffer": "áb a",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a/X/g<CR>",
+      "expect": {
+        "buffer": "áb X",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "capture_whole_character",
+      "buffer": "áb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\(.\\)/[\\1]/g<CR>",
+      "expect": {
+        "buffer": "[á][b]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(.\\)",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "whole_match_ampersand",
+      "buffer": "áb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/./<&>/g<CR>",
+      "expect": {
+        "buffer": "<á><b>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": ".",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "class_alpha",
+      "buffer": "á ḅ́ 1",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\a/X/g<CR>",
+      "expect": {
+        "buffer": "X X 1",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "class_nonblank",
+      "buffer": "á ḅ́ 1",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\S/X/g<CR>",
+      "expect": {
+        "buffer": "X X X",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\S",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "class_word_run",
+      "buffer": "áb̂ c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\w\\{1,}/X/<CR>",
+      "expect": {
+        "buffer": "X c",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\w\\{1,}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "collection_range",
+      "buffer": "áb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/[a-z]/X/g<CR>",
+      "expect": {
+        "buffer": "XX",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "[a-z]",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "collection_negated",
+      "buffer": "á b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/[^ ]/X/g<CR>",
+      "expect": {
+        "buffer": "X X",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "[^ ]",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "collection_of_marks",
+      "buffer": "áb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/[\\u0301]/X/g<CR>",
+      "expect": {
+        "buffer": "áb",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "[\\u0301]",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "stacked_marks_dot",
+      "buffer": "ẹ́âb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/./X/g<CR>",
+      "expect": {
+        "buffer": "XXX",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": ".",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "literal_with_mark",
+      "buffer": "áb a",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/á/X/g<CR>",
+      "expect": {
+        "buffer": "Xb a",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "á",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "literal_with_mark_takes_extra_marks",
+      "buffer": "á̂b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/á/X/<CR>",
+      "expect": {
+        "buffer": "Xb",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "á",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "literal_with_other_mark",
+      "buffer": "áb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/â/X/<CR>",
+      "expect": {
+        "buffer": "áb",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "â",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "leading_mark",
+      "buffer": "ab́c á",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/́/X/g<CR>",
+      "expect": {
+        "buffer": "aXc X",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "́",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "mark_then_dot",
+      "buffer": "ab́c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/́./X/<CR>",
+      "expect": {
+        "buffer": "aX",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "́.",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "literal_star_with_mark",
+      "buffer": "ááb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/á*/X/<CR>",
+      "expect": {
+        "buffer": "Xb",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "á*",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "counted_dots",
+      "buffer": "áb́c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/.\\{2}/X/g<CR>",
+      "expect": {
+        "buffer": "Xc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": ".\\{2}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dot_star",
+      "buffer": "áb̂",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/.*/X/<CR>",
+      "expect": {
+        "buffer": "X",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": ".*",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "alternation_literal_or_dot",
+      "buffer": "áb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a\\|a./X/g<CR>",
+      "expect": {
+        "buffer": "Xb",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a\\|a.",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "empty_match_global",
+      "buffer": "áb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/x*/-/g<CR>",
+      "expect": {
+        "buffer": "-á-b",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x*",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ignore_case_composed",
+      "buffer": "áB b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\cb/X/g<CR>",
+      "expect": {
+        "buffer": "áX X",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\cb",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ignore_case_base_with_mark",
+      "buffer": "Áb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\cá/X/<CR>",
+      "expect": {
+        "buffer": "Áb",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\cá",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "search_slash_skips_composed",
+      "buffer": "áb a",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/a<CR>",
+      "expect": {
+        "buffer": "áb a",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "search_slash_with_mark",
+      "buffer": "a b á a",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/á<CR>",
+      "expect": {
+        "buffer": "a b á a",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "á",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "search_question_backward",
+      "buffer": "a á b a",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "?a<CR>",
+      "expect": {
+        "buffer": "a á b a",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "search_n_whole_characters",
+      "buffer": "x́y x́ .\nx́",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/.<CR>nn",
+      "expect": {
+        "buffer": "x́y x́ .\nx́",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": ".",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "search_n_letters",
+      "buffer": "á b́ ć d",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/\\a<CR>nn",
+      "expect": {
+        "buffer": "á b́ ć d",
+        "cursor": [
+          0,
+          12
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dot_after_literal_takes_the_mark",
+      "buffer": "ábc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a\\(.\\)/[\\1]/<CR>",
+      "expect": {
+        "buffer": "[́]bc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a\\(.\\)",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "negated_collection_after_literal_takes_the_mark",
+      "buffer": "ábc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a[^x]/X/<CR>",
+      "expect": {
+        "buffer": "Xbc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a[^x]",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "alpha_after_literal_misses_the_mark",
+      "buffer": "ábc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a\\a/X/<CR>",
+      "expect": {
+        "buffer": "ábc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a\\a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "mark_after_dot_needs_the_mark",
+      "buffer": "abc á",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/.́/X/g<CR>",
+      "expect": {
+        "buffer": "abc X",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": ".́",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "mark_after_dot_star",
+      "buffer": "ááb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/.́*/X/<CR>",
+      "expect": {
+        "buffer": "Xb",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": ".́*",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "mark_after_caret",
+      "buffer": "ab́ c\náb",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": ":s/^́/X/<CR>",
+      "expect": {
+        "buffer": "ab́ c\nXb",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "^́",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "mark_after_class",
+      "buffer": "ab́ b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\á/X/g<CR>",
+      "expect": {
+        "buffer": "X b",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\á",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "group_then_dot_takes_the_mark",
+      "buffer": "ábc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\(a\\)\\(.\\)/[\\2]/<CR>",
+      "expect": {
+        "buffer": "[́]bc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(a\\)\\(.\\)",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "multi_then_dot_takes_the_mark",
+      "buffer": "ábc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a\\{1,}./X/<CR>",
+      "expect": {
+        "buffer": "Xbc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a\\{1,}.",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "alternative_then_dot_takes_the_mark",
+      "buffer": "ábc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a\\%(x\\|.\\)/X/<CR>",
+      "expect": {
+        "buffer": "Xbc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a\\%(x\\|.\\)",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "stacked_marks_after_literal_take_them_whole",
+      "buffer": "ạ́bc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a[^x]/X/<CR>",
+      "expect": {
+        "buffer": "Xbc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a[^x]",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "stacked_marks_counted_dots",
+      "buffer": "ạ́bc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a.\\{2}/X/<CR>",
+      "expect": {
+        "buffer": "Xc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a.\\{2}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "marks_in_reverse_order",
+      "buffer": "ạ́b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/ạ́/X/<CR>",
+      "expect": {
+        "buffer": "Xb",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "ạ́",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "leading_marks_in_reverse_order",
+      "buffer": "xạ́b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/̣́/X/<CR>",
+      "expect": {
+        "buffer": "xXb",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "̣́",
+            "linewise": false
+          }
+        }
+      }
+    }
+  ]
+}

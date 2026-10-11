@@ -1,0 +1,268 @@
+# Cases for fe-vim's oracle of / ? n and :s over decomposed text: a base
+# character and the composing characters after it (U+0301, U+0323, U+0302)
+# are one character to nvim, for `.`, classes, collections, literals and
+# every match's start and end. A case that fails with E486 must be last: nvim
+# flushes the keys after an error, and its last substitute leaks between
+# cases, so a case that uses `~` or `&` makes its own first. Hand-written:
+# name, buffer (rows joined with \n, no trailing newline), cursor = [row, byte
+# column] and keys in vim notation. What nvim does with each is recorded in
+# composing.expected.json by the ignored `record_corpus_with_neovim` test;
+# edit a case, then re-record.
+
+[[case]]
+name = "dot_global"
+buffer = "áb é"
+cursor = [0, 0]
+keys = ":s/./X/g<CR>"
+
+[[case]]
+name = "literal_base_not_found"
+buffer = "áb"
+cursor = [0, 0]
+keys = ":s/a/X/<CR>"
+
+[[case]]
+name = "literal_base_beside_plain"
+buffer = "áb a"
+cursor = [0, 0]
+keys = ":s/a/X/g<CR>"
+
+[[case]]
+name = "capture_whole_character"
+buffer = "áb"
+cursor = [0, 0]
+keys = ":s/\\(.\\)/[\\1]/g<CR>"
+
+[[case]]
+name = "whole_match_ampersand"
+buffer = "áb"
+cursor = [0, 0]
+keys = ":s/./<&>/g<CR>"
+
+[[case]]
+name = "class_alpha"
+buffer = "á ḅ́ 1"
+cursor = [0, 0]
+keys = ":s/\\a/X/g<CR>"
+
+[[case]]
+name = "class_nonblank"
+buffer = "á ḅ́ 1"
+cursor = [0, 0]
+keys = ":s/\\S/X/g<CR>"
+
+[[case]]
+name = "class_word_run"
+buffer = "áb̂ c"
+cursor = [0, 0]
+keys = ":s/\\w\\{1,}/X/<CR>"
+
+[[case]]
+name = "collection_range"
+buffer = "áb"
+cursor = [0, 0]
+keys = ":s/[a-z]/X/g<CR>"
+
+[[case]]
+name = "collection_negated"
+buffer = "á b"
+cursor = [0, 0]
+keys = ":s/[^ ]/X/g<CR>"
+
+[[case]]
+name = "collection_of_marks"
+buffer = "áb"
+cursor = [0, 0]
+keys = ":s/[\\u0301]/X/g<CR>"
+
+[[case]]
+name = "stacked_marks_dot"
+buffer = "ẹ́âb"
+cursor = [0, 0]
+keys = ":s/./X/g<CR>"
+
+[[case]]
+name = "literal_with_mark"
+buffer = "áb a"
+cursor = [0, 0]
+keys = ":s/á/X/g<CR>"
+
+[[case]]
+name = "literal_with_mark_takes_extra_marks"
+buffer = "á̂b"
+cursor = [0, 0]
+keys = ":s/á/X/<CR>"
+
+[[case]]
+name = "literal_with_other_mark"
+buffer = "áb"
+cursor = [0, 0]
+keys = ":s/â/X/<CR>"
+
+[[case]]
+name = "leading_mark"
+buffer = "ab́c á"
+cursor = [0, 0]
+keys = ":s/́/X/g<CR>"
+
+[[case]]
+name = "mark_then_dot"
+buffer = "ab́c"
+cursor = [0, 0]
+keys = ":s/́./X/<CR>"
+
+[[case]]
+name = "literal_star_with_mark"
+buffer = "ááb"
+cursor = [0, 0]
+keys = ":s/á*/X/<CR>"
+
+[[case]]
+name = "counted_dots"
+buffer = "áb́c"
+cursor = [0, 0]
+keys = ":s/.\\{2}/X/g<CR>"
+
+[[case]]
+name = "dot_star"
+buffer = "áb̂"
+cursor = [0, 0]
+keys = ":s/.*/X/<CR>"
+
+[[case]]
+name = "alternation_literal_or_dot"
+buffer = "áb"
+cursor = [0, 0]
+keys = ":s/a\\|a./X/g<CR>"
+
+[[case]]
+name = "empty_match_global"
+buffer = "áb"
+cursor = [0, 0]
+keys = ":s/x*/-/g<CR>"
+
+[[case]]
+name = "ignore_case_composed"
+buffer = "áB b"
+cursor = [0, 0]
+keys = ":s/\\cb/X/g<CR>"
+
+[[case]]
+name = "ignore_case_base_with_mark"
+buffer = "Áb"
+cursor = [0, 0]
+keys = ":s/\\cá/X/<CR>"
+
+[[case]]
+name = "search_slash_skips_composed"
+buffer = "áb a"
+cursor = [0, 0]
+keys = "/a<CR>"
+
+[[case]]
+name = "search_slash_with_mark"
+buffer = "a b á a"
+cursor = [0, 0]
+keys = "/á<CR>"
+
+[[case]]
+name = "search_question_backward"
+buffer = "a á b a"
+cursor = [0, 8]
+keys = "?a<CR>"
+
+[[case]]
+name = "search_n_whole_characters"
+buffer = "x́y x́ .\nx́"
+cursor = [0, 0]
+keys = "/.<CR>nn"
+
+[[case]]
+name = "search_n_letters"
+buffer = "á b́ ć d"
+cursor = [0, 0]
+keys = "/\\a<CR>nn"
+
+[[case]]
+name = "dot_after_literal_takes_the_mark"
+buffer = "ábc"
+cursor = [0, 0]
+keys = ":s/a\\(.\\)/[\\1]/<CR>"
+
+[[case]]
+name = "negated_collection_after_literal_takes_the_mark"
+buffer = "ábc"
+cursor = [0, 0]
+keys = ":s/a[^x]/X/<CR>"
+
+[[case]]
+name = "alpha_after_literal_misses_the_mark"
+buffer = "ábc"
+cursor = [0, 0]
+keys = ":s/a\\a/X/<CR>"
+
+[[case]]
+name = "mark_after_dot_needs_the_mark"
+buffer = "abc á"
+cursor = [0, 0]
+keys = ":s/.́/X/g<CR>"
+
+[[case]]
+name = "mark_after_dot_star"
+buffer = "ááb"
+cursor = [0, 0]
+keys = ":s/.́*/X/<CR>"
+
+[[case]]
+name = "mark_after_caret"
+buffer = "ab́ c\náb"
+cursor = [1, 0]
+keys = ":s/^́/X/<CR>"
+
+[[case]]
+name = "mark_after_class"
+buffer = "ab́ b"
+cursor = [0, 0]
+keys = ":s/\\á/X/g<CR>"
+
+[[case]]
+name = "group_then_dot_takes_the_mark"
+buffer = "ábc"
+cursor = [0, 0]
+keys = ":s/\\(a\\)\\(.\\)/[\\2]/<CR>"
+
+[[case]]
+name = "multi_then_dot_takes_the_mark"
+buffer = "ábc"
+cursor = [0, 0]
+keys = ":s/a\\{1,}./X/<CR>"
+
+[[case]]
+name = "alternative_then_dot_takes_the_mark"
+buffer = "ábc"
+cursor = [0, 0]
+keys = ":s/a\\%(x\\|.\\)/X/<CR>"
+
+[[case]]
+name = "stacked_marks_after_literal_take_them_whole"
+buffer = "ạ́bc"
+cursor = [0, 0]
+keys = ":s/a[^x]/X/<CR>"
+
+[[case]]
+name = "stacked_marks_counted_dots"
+buffer = "ạ́bc"
+cursor = [0, 0]
+keys = ":s/a.\\{2}/X/<CR>"
+
+[[case]]
+name = "marks_in_reverse_order"
+buffer = "ạ́b"
+cursor = [0, 0]
+keys = ":s/ạ́/X/<CR>"
+
+[[case]]
+name = "leading_marks_in_reverse_order"
+buffer = "xạ́b"
+cursor = [0, 0]
+keys = ":s/̣́/X/<CR>"

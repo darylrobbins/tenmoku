@@ -23,6 +23,10 @@ const MAX_GROUPS: usize = 9;
 #[derive(Clone, Debug)]
 pub struct Pattern {
     regex: Regex,
+    /// Which capture group is the whole match: 1 for a Vim pattern, which
+    /// [`Translator::pattern`] wraps in a group followed by a boundary, 0
+    /// for a find bar's.
+    offset: usize,
     /// Whether the pattern begins with `\<` and ends with `\>` (and has no
     /// other), which are checked on each match by character class, as
     /// Vim does, not left to `regex`'s word boundaries.
@@ -84,8 +88,9 @@ impl Pattern {
             depth: 0,
             groups: 0,
             ignore_case,
+            bare: false,
         };
-        let source = translator.alternation(Opened::Pattern)?;
+        let source = translator.pattern()?;
         let regex = build(RegexBuilder::new(&source), |error| {
             // Past the nesting limit: its message's last line says so.
             PatternError::TooLarge(
@@ -100,6 +105,7 @@ impl Pattern {
         })?;
         Ok(Self {
             regex,
+            offset: 1,
             word,
             whole: false,
         })
@@ -127,6 +133,7 @@ impl Pattern {
         })?;
         Ok(Self {
             regex,
+            offset: 0,
             word: (false, false),
             whole: query.whole_word,
         })
@@ -276,11 +283,13 @@ impl Pattern {
     fn matches_from<'a>(&'a self, hay: &'a str, at: usize) -> RowMatches<'a> {
         RowMatches {
             regex: &self.regex,
+            offset: self.offset,
             word: self.word,
             whole: self.whole,
             hay,
             at: Some(at),
-            groups: None,
+            locs: self.regex.capture_locations(),
+            groups: false,
             last_end: None,
         }
     }
@@ -293,7 +302,7 @@ impl Pattern {
     /// `-a-c`).
     pub(crate) fn substitutions<'a>(&'a self, hay: &'a str, groups: bool) -> RowMatches<'a> {
         RowMatches {
-            groups: groups.then(|| self.regex.capture_locations()),
+            groups,
             last_end: Some(None),
             ..self.matches(hay)
         }
@@ -580,12 +589,16 @@ fn unit(text: &str) -> Option<usize> {
 /// See [`Pattern::matches`] and [`Pattern::substitutions`].
 pub(crate) struct RowMatches<'a> {
     regex: &'a Regex,
+    /// The capture group that is the whole match ([`Pattern`]'s `offset`).
+    offset: usize,
     word: (bool, bool),
     whole: bool,
     hay: &'a str,
     at: Option<usize>,
-    /// The last match's groups, if they're wanted.
-    groups: Option<CaptureLocations>,
+    /// The last match's groups, read through [`RowMatches::group`] if
+    /// `groups`.
+    locs: CaptureLocations,
+    groups: bool,
     /// For `:s`: where the last non-empty match ended, if one did.
     last_end: Option<Option<usize>>,
 }
@@ -594,7 +607,10 @@ impl RowMatches<'_> {
     /// Group `n`'s range in the last match (0 is the whole match), if it
     /// took part; `None` if the groups weren't wanted.
     pub(crate) fn group(&self, n: usize) -> Option<Range<usize>> {
-        let (start, end) = self.groups.as_ref()?.get(n)?;
+        if !self.groups {
+            return None;
+        }
+        let (start, end) = self.locs.get(n + self.offset)?;
         Some(start..end)
     }
 }
@@ -605,14 +621,9 @@ impl Iterator for RowMatches<'_> {
     fn next(&mut self) -> Option<Range<usize>> {
         loop {
             let at = self.at.take()?;
-            let found = match &mut self.groups {
-                Some(groups) => {
-                    self.regex.captures_read_at(groups, self.hay, at)?;
-                    let (start, end) = groups.get(0).expect("a match has group 0");
-                    start..end
-                }
-                None => self.regex.find_at(self.hay, at)?.range(),
-            };
+            self.regex.captures_read_at(&mut self.locs, self.hay, at)?;
+            let (start, end) = self.locs.get(self.offset).expect("a match has its group");
+            let found = start..end;
             let next = if found.is_empty() {
                 unit(&self.hay[found.start..]).map_or(usize::MAX, |unit| found.start + unit)
             } else {
@@ -1212,8 +1223,10 @@ struct Collection {
 }
 
 impl Collection {
-    /// As a `regex` class.
-    fn syntax(&self, ignore_case: bool) -> String {
+    /// As a `regex` class, without the marks in it (a character carries
+    /// them, and isn't one); or, if `marks`, only those, for a mark after a
+    /// bare base.
+    fn syntax(&self, ignore_case: bool, marks: bool) -> String {
         let mut ranges: Vec<(char, char)> =
             self.ascii.iter().chain(&self.folded).copied().collect();
         if ignore_case {
@@ -1248,14 +1261,23 @@ impl Collection {
                 _ => merged.push((low, high)),
             }
         }
-        let mut class = String::from(if self.negated { "[^" } else { "[" });
+        let mut class = String::from(match (self.negated, marks) {
+            (true, false) => r"[^\p{M}",
+            (true, true) => r"[\p{M}&&[^",
+            (false, _) => "[[",
+        });
         for (low, high) in merged {
             class.push_str(&format!("\\x{{{:x}}}", low as u32));
             if high != low {
                 class.push_str(&format!("-\\x{{{:x}}}", high as u32));
             }
         }
-        class.push(']');
+        class.push_str(match (self.negated, marks) {
+            (true, false) => "]",
+            (true, true) => "]]",
+            (false, false) => r"]--\p{M}]",
+            (false, true) => r"]&&\p{M}]",
+        });
         class
     }
 }
@@ -1405,9 +1427,98 @@ struct Translator<'a> {
     groups: usize,
     /// Whether the pattern holds `\c`.
     ignore_case: bool,
+    /// Whether the atom last translated is a literal base written without
+    /// composing characters (`a`, not `a` and U+0301), which the next atom
+    /// may follow into the marks after it: nvim takes `a.` to match `a` and
+    /// a mark, where `.` otherwise takes a whole character.
+    bare: bool,
+}
+
+/// What follows a base character's marks, and a `.`, class or collection's
+/// character: the composing characters after it.
+const MARKS: &str = r"\p{M}*";
+
+/// What follows a character's base when the pattern writes `marks`: each of
+/// them somewhere among its marks, in any order (nvim doesn't care), and
+/// any others. Past three marks, only in the order written.
+fn carrying(marks: &[char]) -> String {
+    let each = |mark: &char| format!(r"\p{{M}}*?\x{{{:x}}}", *mark as u32);
+    let mut order: Vec<usize> = (0..marks.len()).collect();
+    let mut alternatives = Vec::new();
+    loop {
+        alternatives.push(order.iter().map(|&at| each(&marks[at])).collect::<String>());
+        if marks.len() > 3 || !next_permutation(&mut order) {
+            break;
+        }
+    }
+    alternatives.dedup();
+    format!("(?:{}){MARKS}", alternatives.join("|"))
+}
+
+/// Steps `order` to its next permutation in lexicographic order, or says
+/// there is none.
+fn next_permutation(order: &mut [usize]) -> bool {
+    let Some(pivot) = order.windows(2).rposition(|pair| pair[0] < pair[1]) else {
+        return false;
+    };
+    let swap = order
+        .iter()
+        .rposition(|&at| at > order[pivot])
+        .unwrap_or(pivot + 1);
+    order.swap(pivot, swap);
+    order[pivot + 1..].reverse();
+    true
+}
+
+/// Whether `ch` is a composing character: a Unicode mark.
+fn is_mark(ch: char) -> bool {
+    static MARK: OnceLock<Regex> = OnceLock::new();
+    !ch.is_ascii()
+        && MARK
+            .get_or_init(|| Regex::new(r"^\p{M}$").expect("a valid regex"))
+            .is_match(ch.encode_utf8(&mut [0; 4]))
 }
 
 impl Translator<'_> {
+    /// The whole pattern, as the `regex` syntax [`Pattern`] compiles: group
+    /// 1 is the match, and what follows it is a non-mark or the row's end,
+    /// so no match ends inside a character.
+    fn pattern(&mut self) -> Result<String, PatternError> {
+        let source = self.alternation(Opened::Pattern)?;
+        Ok(format!(r"({source})(?:\P{{M}}|$)"))
+    }
+
+    /// The composing characters written after an atom, taken off the tokens.
+    fn written_marks(&mut self) -> Vec<char> {
+        let mut marks = Vec::new();
+        while let Some(&Token::Char(mark)) = self.peek() {
+            if !is_mark(mark) {
+                break;
+            }
+            self.next += 1;
+            marks.push(mark);
+        }
+        marks
+    }
+
+    /// One character as a `.`, class or collection takes it: `whole` and
+    /// the marks after it, or if the pattern writes marks, one that carries
+    /// them. After a bare base also `lone`, the marks by themselves.
+    fn character(&mut self, whole: &str, lone: Option<&str>, carries: bool) -> String {
+        // A backslash class doesn't take the marks written after it: they
+        // start an atom of their own.
+        let marks = if carries {
+            self.written_marks()
+        } else {
+            Vec::new()
+        };
+        match lone {
+            _ if !marks.is_empty() => format!("{whole}{}", carrying(&marks)),
+            Some(lone) => format!("(?:{whole}{MARKS}|{lone}{MARKS})"),
+            None => format!("{whole}{MARKS}"),
+        }
+    }
+
     fn peek(&self) -> Option<&Token> {
         self.tokens.get(self.next)
     }
@@ -1415,17 +1526,27 @@ impl Translator<'_> {
     /// Branches separated by `\|`, up to the `\)` closing `opened` (left
     /// for the caller) or the end of the pattern.
     fn alternation(&mut self, opened: Opened) -> Result<String, PatternError> {
+        // Every alternative starts where the first does; what follows may
+        // follow the end of any of them.
+        let incoming = self.bare;
         let mut out = self.branch(opened)?;
+        let mut ends_bare = self.bare;
         loop {
             match self.peek() {
                 Some(Token::Alt) => {
                     self.next += 1;
                     out.push('|');
+                    self.bare = incoming;
                     out.push_str(&self.branch(Opened::Alt)?);
+                    ends_bare |= self.bare;
                 }
-                Some(Token::Close) if opened != Opened::Pattern => return Ok(out),
+                Some(Token::Close) if opened != Opened::Pattern => {
+                    self.bare = ends_bare;
+                    return Ok(out);
+                }
                 Some(Token::Close) => return Err(PatternError::Invalid("unmatched \\)")),
                 None => {
+                    self.bare = ends_bare;
                     return match opened {
                         Opened::Capture => Err(PatternError::Invalid("unmatched \\(")),
                         Opened::Group => Err(PatternError::Invalid("unmatched \\%(")),
@@ -1446,14 +1567,20 @@ impl Translator<'_> {
         let mut star_is_char = false;
         while let Some(token) = self.peek().cloned() {
             let star_here = std::mem::replace(&mut star_is_char, false);
+            let after_bare = std::mem::take(&mut self.bare);
             self.next += 1;
             let mut start_of_line = false;
+            let mut bare = false;
             let atom = match token {
                 Token::Alt | Token::Close => {
                     self.next -= 1;
+                    self.bare = after_bare;
                     break;
                 }
-                Token::Flag => continue,
+                Token::Flag => {
+                    self.bare = after_bare;
+                    continue;
+                }
                 Token::Multi {
                     multi: Multi::Star,
                     bare: true,
@@ -1465,17 +1592,53 @@ impl Translator<'_> {
                     bare: true,
                 } if first || star_here => regex::escape("*"),
                 Token::Multi { .. } => return Err(PatternError::Invalid("misplaced multi")),
-                Token::Char(ch) => match self.ignore_case.then(|| folds().group_of.get(&ch)) {
-                    Some(Some(&group)) => {
-                        let group = &folds().groups[group];
-                        let members = group.iter().map(|ch| format!("\\x{{{:x}}}", *ch as u32));
-                        format!("[{}]", members.collect::<String>())
+                // A mark here follows no atom that takes characters, and
+                // one that starts a branch is the same: any character
+                // carrying it.
+                Token::Char(mark) if is_mark(mark) => {
+                    self.next -= 1;
+                    let marks = self.written_marks();
+                    format!(r"\P{{M}}{}", carrying(&marks))
+                }
+                Token::Char(ch) => {
+                    // Alone, a base matches only itself without marks: the
+                    // boundary after the pattern or the next atom sees to
+                    // it. With marks written it isn't folded, as in nvim.
+                    let marks = self.written_marks();
+                    bare = marks.is_empty();
+                    let folded = self.ignore_case.then(|| folds().group_of.get(&ch));
+                    match folded {
+                        Some(Some(&group)) if bare => {
+                            let group = &folds().groups[group];
+                            let members = group.iter().map(|ch| format!("\\x{{{:x}}}", *ch as u32));
+                            format!("[{}]", members.collect::<String>())
+                        }
+                        _ if bare => regex::escape(ch.encode_utf8(&mut [0; 4])),
+                        _ => format!(
+                            "{}{}",
+                            regex::escape(ch.encode_utf8(&mut [0; 4])),
+                            carrying(&marks)
+                        ),
                     }
-                    _ => regex::escape(ch.encode_utf8(&mut [0; 4])),
+                }
+                Token::Any => self.character(r"[^\n\p{M}]", after_bare.then_some(r"\p{M}"), true),
+                Token::Class(class) => match class.strip_prefix("[^") {
+                    Some(members) => self.character(
+                        &format!(r"[^\p{{M}}{members}"),
+                        after_bare
+                            .then(|| format!(r"[\p{{M}}&&[^{members}]"))
+                            .as_deref(),
+                        false,
+                    ),
+                    None => self.character(class, None, false),
                 },
-                Token::Any => ".".into(),
-                Token::Class(class) => class.into(),
-                Token::Set(set) => set.syntax(self.ignore_case),
+                Token::Set(set) => self.character(
+                    &set.syntax(self.ignore_case, false),
+                    after_bare
+                        .then(|| set.syntax(self.ignore_case, true))
+                        .as_deref(),
+                    true,
+                ),
                 Token::WordStart => r"\b{start}".into(),
                 Token::WordEnd => r"\b{end}".into(),
                 Token::Caret { anywhere } if anywhere || first => {
@@ -1495,7 +1658,13 @@ impl Translator<'_> {
                         regex::escape("$")
                     }
                 }
-                Token::Open { capture } => self.group(capture)?,
+                Token::Open { capture } => {
+                    // The group's first atom follows what came before it.
+                    self.bare = after_bare;
+                    let group = self.group(capture)?;
+                    bare = self.bare;
+                    group
+                }
             };
             first = false;
             let multi = match self.peek() {
@@ -1512,6 +1681,7 @@ impl Translator<'_> {
                     continue;
                 }
                 _ => {
+                    self.bare = bare;
                     out.push_str(&atom);
                     continue;
                 }
@@ -1520,6 +1690,13 @@ impl Translator<'_> {
             if matches!(self.peek(), Some(Token::Multi { .. })) {
                 return Err(PatternError::Invalid("a multi can't follow a multi"));
             }
+            // A multi that may match nothing leaves what came before it as
+            // the context too.
+            let optional = matches!(
+                multi,
+                Multi::Star | Multi::Optional | Multi::Brace { min: 0, .. }
+            );
+            self.bare = bare || (after_bare && optional);
             out.push_str(&format!("(?:{atom}){}", multi_syntax(multi)));
         }
         Ok(out)

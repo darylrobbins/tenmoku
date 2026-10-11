@@ -359,12 +359,11 @@
 //!   text. Elsewhere Vim also starts a word where the character class
 //!   changes (CJK after Latin, say), and counts `×` and `÷` as word
 //!   characters and `ª` `µ` `º` as not.
-//! - Composing characters under literals, `.`, character classes and
-//!   collections: there a composing character (or the rest of an emoji
-//!   sequence) is a character of its own, where Vim matches a character
-//!   and its composing characters as one: `e` matches in `e` followed by
-//!   U+0301, `.` and `\s` take the base alone, `[\u0300-\u036f]` matches
-//!   the mark, and the next search on the row resumes inside the character.
+//! - Emoji ZWJ sequences, regional-indicator flags and Hangul jamo: `.`,
+//!   classes and collections still take them by scalar (a composing
+//!   character, a base and the marks after it, are matched whole, as nvim
+//!   does), apart from the step past an empty match, which goes by grapheme
+//!   cluster.
 //! - nvim 0.12.4 misses two folds when the pattern starts with the literal
 //!   (`\cã` doesn't match `Ã`, nor `\c` and U+0345 an `ι`), though it folds
 //!   them anywhere else (`\cxã`, `\c[ã]`); fe-vim folds them everywhere.
