@@ -608,7 +608,8 @@ fn pushed_and_pulled_merge() {
     let uc = s.open(&mut c, "c.rs");
     s.wait_pulls(&uc, 1);
     let raced = s.identity(&c);
-    let raced_id = (pulls_ids(&s.fake.records(), &uc))
+    let launch = s.fake.launches();
+    let raced_id = (pulls_ids(&s.fake.records_of(launch), &uc))
         .pop()
         .expect("the raced pull's request");
     s.fake.set_writes(Writes::Stepped);
@@ -631,10 +632,24 @@ fn pushed_and_pulled_merge() {
             version: Some(0),
         });
     s.release();
-    s.fake.wait_for("the raced pull answered", |records| {
-        (records.iter()).any(|r| matches!(r, Record::Replied { id, .. } if *id == raced_id))
-            && pulls_in(records, &uc).len() == 1
-    });
+    s.fake
+        .wait_for_at(launch, "the raced pull answered", |records| {
+            (records.iter()).any(|r| matches!(r, Record::Replied { id, .. } if *id == raced_id))
+                && pulls_in(records, &uc).len() == 1
+        });
+    // `Replied` is recorded before the answer is written, and a
+    // notification only queued: wait until both are on the wire, so the
+    // client has them to read once its write goes through.
+    let raced_json = json!(raced_id);
+    s.fake
+        .wait_sent(launch, "the raced reply and the publication", |sent| {
+            let on_wire = |pred: &dyn Fn(&Value) -> bool| sent.iter().any(pred);
+            on_wire(&|m| m.get("method").is_none() && m.get("id") == Some(&raced_json))
+                && on_wire(&|m| {
+                    m["method"] == "textDocument/publishDiagnostics"
+                        && m["params"]["uri"] == json!(uc)
+                })
+        });
     s.fake.set_writes(Writes::Open);
     answer(echo).unwrap();
     let got = next(&s.events);

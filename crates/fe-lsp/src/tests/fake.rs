@@ -300,6 +300,9 @@ struct State {
     /// Answers `RequestCancelled` to the client's requests being answered,
     /// by launch and id, while `answer_cancels` is set.
     cancels: HashMap<(usize, String), oneshot::Sender<()>>,
+    /// Every message the fake has put on the wire to the client, in order,
+    /// each with its launch.
+    sent: Vec<(usize, Value)>,
 }
 
 /// Ends the fake's main loop.
@@ -365,6 +368,7 @@ impl FakeServer {
                     documents: HashMap::new(),
                     sync_errors: Vec::new(),
                     cancels: HashMap::new(),
+                    sent: Vec::new(),
                 }),
                 changed: Condvar::new(),
                 clock,
@@ -414,6 +418,36 @@ impl FakeServer {
         done: impl Fn(&[Record]) -> bool,
     ) -> Vec<Record> {
         self.wait_for_in(Some(launch), what, done)
+    }
+
+    /// Blocks until `done` holds for what launch `launch` has put on the
+    /// wire to the client, as JSON messages in order. Unlike a
+    /// [`Record::Replied`], which the fake makes before the answer is
+    /// handed on to be written, a message here is already queued for the
+    /// client to read. Panics after 10 s, naming `what`.
+    pub fn wait_sent(&self, launch: usize, what: &str, done: impl Fn(&[Value]) -> bool) {
+        let deadline = Instant::now() + WAIT;
+        let mut state = self.lock();
+        loop {
+            let sent: Vec<Value> = (state.sent.iter())
+                .filter(|(l, _)| *l == launch)
+                .map(|(_, message)| message.clone())
+                .collect();
+            if done(&sent) {
+                return;
+            }
+            let now = Instant::now();
+            assert!(
+                now < deadline,
+                "fake: timed out waiting for {what} on the wire: {sent:#?}"
+            );
+            state = self
+                .shared
+                .changed
+                .wait_timeout(state, deadline - now)
+                .unwrap_or_else(PoisonError::into_inner)
+                .0;
+        }
     }
 
     fn wait_for_in(
@@ -935,6 +969,7 @@ impl ServerLauncher for FakeLauncher {
         state.sessions.push(session.clone());
         drop(state);
         let ended = session.exit.clone();
+        let fake_sent = self.fake.clone();
         let server_reads = Tap {
             pipe: server_reads,
             fake: self.fake.clone(),
@@ -944,6 +979,12 @@ impl ServerLauncher for FakeLauncher {
         thread::Builder::new()
             .name(format!("fake {}", spec.name))
             .spawn(move || {
+                let server_writes = Sent {
+                    pipe: server_writes,
+                    fake: fake_sent,
+                    launch,
+                    written: Vec::new(),
+                };
                 let ran = async_io::block_on(main_loop.run_buffered(server_reads, server_writes));
                 // The client hung up (EOF) rather than the fake ending the
                 // session: exit as a real server would.
@@ -1201,6 +1242,46 @@ impl AsyncRead for Tap {
             }
         }
         Poll::Ready(Ok(n))
+    }
+}
+
+/// The fake's output, written through: records each message once it is
+/// queued for the client.
+struct Sent {
+    pipe: PipeWriter,
+    fake: FakeServer,
+    launch: usize,
+    /// Bytes written and not yet parsed into whole messages.
+    written: Vec<u8>,
+}
+
+impl AsyncWrite for Sent {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        let this = &mut *self;
+        let n = ready!(Pin::new(&mut this.pipe).poll_write(cx, buf))?;
+        this.written.extend_from_slice(&buf[..n]);
+        let mut messages = Vec::new();
+        while let Some((message, used)) = frame(&this.written) {
+            this.written.drain(..used);
+            messages.push((this.launch, message));
+        }
+        if !messages.is_empty() {
+            this.fake.lock().sent.extend(messages);
+            this.fake.shared.changed.notify_all();
+        }
+        Poll::Ready(Ok(n))
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.pipe).poll_flush(cx)
+    }
+
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.pipe).poll_close(cx)
     }
 }
 
