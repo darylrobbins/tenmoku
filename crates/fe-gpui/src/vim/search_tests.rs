@@ -4,7 +4,7 @@
 use fe_buffer::Buffer;
 use fe_command::Invocation;
 use fe_editor::EditorModel;
-use gpui::{Bounds, Entity, Focusable as _, Pixels, TestAppContext, VisualTestContext, px};
+use gpui::{Bounds, Entity, Focusable as _, Pixels, TestAppContext, VisualTestContext, px, size};
 
 use super::*;
 use crate::{EditorTheme, EditorView, commands::RunCommand, init};
@@ -126,7 +126,11 @@ fn visible_ranges(
                 let start = layout.caret_bounds(range.start)?;
                 let end = layout.caret_bounds(range.end)?;
                 let reaches = start.origin.x < text.right() && end.origin.x > text.left();
-                reaches.then_some((range, start))
+                let bounds = Bounds::new(
+                    start.origin,
+                    size(end.origin.x - start.origin.x, start.size.height),
+                );
+                reaches.then_some((range, bounds))
             })
             .collect()
     })
@@ -187,13 +191,15 @@ fn zero_width_match_at_a_wrap_point_is_not_on_the_row_before(cx: &mut TestAppCon
 
 /// A match right after the first character of a long row's displayed slice,
 /// a character with a combining mark, is painted as `matches_in` finds it.
+/// The match is long enough to reach the text area from the shaped slice's
+/// start, which lies some way off to its left.
 #[gpui::test]
 fn long_row_matches_follow_enumeration_after_a_grapheme(cx: &mut TestAppContext) {
     // "a\u{301}b " is 5 bytes; shift the text until the slice starts on an "a".
     for pad in 0..5 {
         let text = format!("{}{}", "x".repeat(pad), "a\u{301}b ".repeat(6_000));
         let (view, cx) = editor(cx, &text, true);
-        submit("/", "\u{301}b", cx);
+        submit("/", "\u{301}b.\\{200}", cx);
         view.update(cx, |view, _| {
             view.scroll.x = px(25_000.);
             view.autoscroll = false;
@@ -205,18 +211,43 @@ fn long_row_matches_follow_enumeration_after_a_grapheme(cx: &mut TestAppContext)
         if (start - pad) % 5 != 0 {
             continue;
         }
+        // The match spanning the slice's first grapheme, which reaches the
+        // text area, is among them; one found from the slice's start would
+        // begin after it.
+        assert!(
+            expected
+                .iter()
+                .any(|(range, _)| range.start <= start && range.end > start + 1),
+            "{start}: {:?}",
+            expected.iter().map(|(range, _)| range).collect::<Vec<_>>()
+        );
         let painted = matches(&view, cx);
-        assert!(!expected.is_empty());
         assert_eq!(painted.len(), expected.len());
         for ((_, bar), found) in expected.iter().zip(&painted) {
-            assert_eq!(
-                (found.origin.x, found.origin.y),
-                (bar.origin.x, bar.origin.y)
-            );
+            for (got, want) in [
+                (found.origin.x, bar.origin.x),
+                (found.origin.y, bar.origin.y),
+                (found.size.width, bar.size.width),
+                (found.size.height, bar.size.height),
+            ] {
+                assert!((got - want).abs() < px(0.01), "{found:?} vs {bar:?}");
+            }
         }
         return;
     }
     panic!("no padding put the slice start on an \"a\"");
+}
+
+/// A huge line's matches are enumerated as far as what's shown, not to the
+/// end of the line, with vim's search as with find's.
+#[gpui::test]
+fn enumeration_stops_after_what_is_shown(cx: &mut TestAppContext) {
+    let (view, cx) = editor(cx, &"x ".repeat(200_000), true);
+    submit("/", "x", cx);
+    let painted = matches(&view, cx).len();
+    assert!(painted > 0);
+    let found = crate::element::FOUND.with(|n| n.get());
+    assert!(found < 10_000, "{found} enumerated for {painted} painted");
 }
 
 /// Scrolled down a soft-wrapped huge line, the matches looked at are the

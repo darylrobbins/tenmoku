@@ -1225,8 +1225,36 @@ fn search_match_color(theme: &EditorTheme) -> Hsla {
 thread_local! {
     /// How many matches the last [`match_rects`] on this thread looked at.
     pub(crate) static CANDIDATES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many match ranges the last [`match_rects`] on this thread found.
+    /// How many match ranges the last [`match_rects`] on this thread
+    /// enumerated, those off the displayed part of a row included.
     pub(crate) static FOUND: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The matches on buffer row `row` that reach `window` (ending at or after
+/// its start, starting at or before its end), in order, and how many were
+/// enumerated to find them, at most `cap`. The row is searched from its
+/// start, for its context, as far as `window`'s end: the enumeration's cap
+/// doubles until a match starts past it, so a huge row costs what lies
+/// before the window and the rest is never built.
+fn matches_reaching(
+    text: &Text,
+    row: u32,
+    window: Range<usize>,
+    pattern: &fe_vim::search::Pattern,
+    cap: usize,
+) -> (Vec<Range<usize>>, usize) {
+    let mut room = 256.min(cap);
+    loop {
+        let mut all = fe_vim::search::matches_in(text, row..row + 1, pattern, room);
+        let done =
+            all.len() < room || room >= cap || all.last().is_some_and(|m| m.start > window.end);
+        if done {
+            let looked_at = all.len();
+            all.retain(|range| range.end >= window.start && range.start <= window.end);
+            return (all, looked_at);
+        }
+        room = room.saturating_mul(2).min(cap);
+    }
 }
 
 /// The rects of the search matches in the frame's displayed rows, at most
@@ -1266,16 +1294,24 @@ fn match_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
     let space = glyph_widths.char_width(' ');
     let visible = frame.text_bounds();
     let mut rects = Vec::new();
-    // A buffer row's matches, kept for its other wrapped rows: found once a
-    // frame, with the whole row as context, however long the row is.
+    // A buffer row's matches that reach its displayed rows, kept for its
+    // other wrapped rows: found once a frame, searched from the row's start
+    // for its context but only as far as the last displayed part.
     let mut whole: Option<(u32, Vec<Range<usize>>)> = None;
-    for row in &frame.rows {
-        if whole.as_ref().is_none_or(|(at, _)| *at != row.buffer_row) {
-            let rows = row.buffer_row..row.buffer_row + 1;
-            let all = fe_vim::search::matches_in(text, rows, pattern, budget);
-            budget = budget.saturating_sub(all.len());
+    for (at, row) in frame.rows.iter().enumerate() {
+        if whole.as_ref().is_none_or(|(of, _)| *of != row.buffer_row) {
+            let same = frame.rows[at..]
+                .iter()
+                .take_while(|next| next.buffer_row == row.buffer_row);
+            let (from, to) = same.fold((usize::MAX, 0), |(from, to), next| {
+                let shown = next.shown();
+                (from.min(shown.start), to.max(shown.end))
+            });
+            let (all, looked_at) =
+                matches_reaching(text, row.buffer_row, from..to, pattern, budget);
+            budget = budget.saturating_sub(looked_at);
             #[cfg(test)]
-            FOUND.with(|n| n.set(n.get() + all.len()));
+            FOUND.with(|n| n.set(n.get() + looked_at));
             whole = Some((row.buffer_row, all));
         }
         let found = whole.as_ref().map_or(&[][..], |(_, all)| all.as_slice());

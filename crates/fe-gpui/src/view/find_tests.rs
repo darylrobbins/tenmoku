@@ -127,14 +127,14 @@ fn highlights_visible_rows(cx: &mut TestAppContext) {
     assert!(shown_rows(&view, cx).len() * 50 > crate::element::MAX_MATCHES);
     assert_eq!(shown.len(), crate::element::MAX_MATCHES);
     assert!(looked_at <= crate::element::MAX_MATCHES, "{looked_at}");
-    assert_eq!(found(), crate::element::MAX_MATCHES);
+    assert!(found() <= crate::element::MAX_MATCHES, "{}", found());
 
     // One row dense with matches: no more than the cap are found.
     replace(&view, &"foo ".repeat(20_000), cx);
     let (shown, _) = painted(&view, cx);
     assert!(!shown.is_empty());
     assert!(shown.len() <= crate::element::MAX_MATCHES);
-    assert_eq!(found(), crate::element::MAX_MATCHES);
+    assert!(found() <= crate::element::MAX_MATCHES, "{}", found());
 }
 
 /// Rows `r0`… with `foo` on rows 5 and 400.
