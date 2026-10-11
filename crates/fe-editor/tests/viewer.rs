@@ -19,9 +19,11 @@ use fe_text::TextSource;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use serde_json::{Value, json};
 
-/// The moves a viewer runs, by ID; word moves aren't among them yet.
-const MOVES: [&str; 20] = [
+/// The moves a viewer runs, by ID.
+const MOVES: [&str; 24] = [
     "editor.move_left",
+    "editor.move_word_left",
+    "editor.move_word_right",
     "editor.move_right",
     "editor.move_up",
     "editor.move_down",
@@ -32,6 +34,8 @@ const MOVES: [&str; 20] = [
     "editor.page_up",
     "editor.page_down",
     "editor.select_left",
+    "editor.select_word_left",
+    "editor.select_word_right",
     "editor.select_right",
     "editor.select_up",
     "editor.select_down",
@@ -43,9 +47,11 @@ const MOVES: [&str; 20] = [
     "editor.select_page_down",
 ];
 
-const MOTIONS: [&str; 8] = [
+const MOTIONS: [&str; 10] = [
     "left",
     "right",
+    "word_left",
+    "word_right",
     "up",
     "down",
     "line_start",
@@ -220,10 +226,6 @@ fn refuses_edits() {
 
     // Everything else the registry has either runs or is unsupported.
     let unsupported = [
-        "editor.move_word_left",
-        "editor.move_word_right",
-        "editor.select_word_left",
-        "editor.select_word_right",
         "editor.fold",
         "editor.unfold",
         "editor.fold_all",
@@ -236,8 +238,6 @@ fn refuses_edits() {
         assert_eq!(viewer.run(id, &Value::Null), Outcome::Unsupported, "{id}");
         assert_eq!(snapshot(&viewer), before, "{id}");
     }
-    let word = json!({ "motion": "word_left" });
-    assert_eq!(viewer.run("editor.move", &word), Outcome::Unsupported);
     assert!(matches!(
         viewer.run("editor.move", &Value::Null),
         Outcome::BadArgs(_)

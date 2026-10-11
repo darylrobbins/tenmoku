@@ -14,8 +14,8 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::{
-    Movement,
-    commands::{self, Motion, MoveArgs},
+    CharClass, Movement,
+    commands::{self, MoveArgs},
 };
 
 /// The most a copy reads: 64 MiB.
@@ -141,12 +141,8 @@ impl ViewerModel {
     }
 
     /// Moves the head as [`crate::EditorModel::move_cursors`] does, but by
-    /// char rather than grapheme. Word moves aren't supported yet and leave
-    /// the selection as it is.
+    /// char rather than grapheme.
     pub fn move_cursor(&mut self, movement: Movement, extend: bool) {
-        if matches!(movement, Movement::WordLeft | Movement::WordRight) {
-            return;
-        }
         if !movement.is_vertical() {
             self.goal = None;
         }
@@ -178,7 +174,7 @@ impl ViewerModel {
     }
 
     /// Runs the editor command `id`, with `args` (`Null` for none), if a
-    /// viewer supports it: the moves but word moves, `editor.move`,
+    /// viewer supports it: the moves, `editor.move`,
     /// `editor.select_all` and `editor.copy`. Commands that edit and
     /// `editor.save` are [`Outcome::ReadOnly`].
     pub fn run(&mut self, id: &str, args: &Value) -> Outcome {
@@ -194,9 +190,6 @@ impl ViewerModel {
                     Ok(args) => args,
                     Err(error) => return Outcome::BadArgs(error.to_string()),
                 };
-                if matches!(args.motion, Motion::WordLeft | Motion::WordRight) {
-                    return Outcome::Unsupported;
-                }
                 for _ in 0..args.count {
                     let before = (self.anchor, self.head);
                     self.move_cursor(args.motion.into(), args.extend);
@@ -208,9 +201,7 @@ impl ViewerModel {
                 }
             }
             _ => match movement_command(id, self.page_rows) {
-                Some((Movement::WordLeft | Movement::WordRight, _)) | None => {
-                    return Outcome::Unsupported;
-                }
+                None => return Outcome::Unsupported,
                 Some((movement, extend)) => self.move_cursor(movement, extend),
             },
         }
@@ -228,7 +219,8 @@ impl ViewerModel {
             Movement::Left => text.clip_offset(offset - 1, Bias::Left),
             Movement::Right if offset >= text.len() => text.len(),
             Movement::Right => text.clip_offset(offset + 1, Bias::Right),
-            Movement::WordLeft | Movement::WordRight => offset,
+            Movement::WordLeft => self.prev_word(offset),
+            Movement::WordRight => self.next_word(offset),
             Movement::LineStart => {
                 let row = text.offset_to_point(offset).row;
                 let start = text.row_start(row);
@@ -247,6 +239,49 @@ impl ViewerModel {
             Movement::PageUp(rows) => self.vertical(offset, -(rows.max(1) as i64), goal),
             Movement::PageDown(rows) => self.vertical(offset, rows.max(1) as i64, goal),
         }
+    }
+
+    /// As `EditorModel::next_word`, reading from `offset` towards the row's
+    /// end only as far as the move goes.
+    fn next_word(&self, offset: usize) -> usize {
+        let text = self.text();
+        let row = text.offset_to_point(offset).row;
+        let end = text.row_start(row) + text.row_len(row) as usize;
+        if offset >= end {
+            return text.clip_offset((offset + 1).min(text.len()), Bias::Right);
+        }
+        let mut scan = WordScan::default();
+        'chunks: for chunk in text.chunks_in_range(offset..end) {
+            for ch in chunk.chars() {
+                if !scan.feed(ch) {
+                    break 'chunks;
+                }
+            }
+        }
+        offset + scan.len
+    }
+
+    /// As `EditorModel::prev_word`, reading windows of the row before
+    /// `offset`, nearest first, until the run ends.
+    fn prev_word(&self, offset: usize) -> usize {
+        let text = self.text();
+        let start = text.row_start(text.offset_to_point(offset).row);
+        if offset <= start {
+            return text.clip_offset(offset.saturating_sub(1), Bias::Left);
+        }
+        let mut scan = WordScan::default();
+        let mut hi = offset;
+        while hi > start {
+            let lo = text.clip_offset(hi.saturating_sub(WORD_WINDOW).max(start), Bias::Left);
+            let chunks: Vec<_> = text.chunks_in_range(lo..hi).collect();
+            for ch in chunks.iter().rev().flat_map(|chunk| chunk.chars().rev()) {
+                if !scan.feed(ch) {
+                    return offset - scan.len;
+                }
+            }
+            hi = lo;
+        }
+        offset - scan.len
     }
 
     /// Moves `delta` display rows, keeping the goal column. A read-only map
@@ -303,6 +338,32 @@ impl ViewerModel {
         } else {
             1
         }
+    }
+}
+
+/// The most bytes a backward word move reads, and holds, at once.
+const WORD_WINDOW: usize = 64 * 1024;
+
+/// A word move's walk over the chars from the caret: whitespace, then a run
+/// of one [`CharClass`].
+#[derive(Default)]
+struct WordScan {
+    class: Option<CharClass>,
+    /// The bytes walked so far.
+    len: usize,
+}
+
+impl WordScan {
+    /// Takes the next char; false if it's past the move's end.
+    fn feed(&mut self, ch: char) -> bool {
+        match self.class {
+            None if ch.is_whitespace() => {}
+            None => self.class = Some(CharClass::of(ch)),
+            Some(class) if CharClass::of(ch) != class => return false,
+            Some(_) => {}
+        }
+        self.len += ch.len_utf8();
+        true
     }
 }
 
