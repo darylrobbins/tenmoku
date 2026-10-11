@@ -11,6 +11,8 @@ publish = false
 
 [dependencies]
 gpui.workspace = true
+kiln-command.workspace = true
+kiln-core.workspace = true
 kiln-platform.workspace = true
 kiln-ui.workspace = true
 
