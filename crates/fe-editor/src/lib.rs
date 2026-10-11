@@ -10,6 +10,7 @@ use std::{
     path::{Path, PathBuf},
     rc::{Rc, Weak},
     sync::Arc,
+    time::Instant,
 };
 
 use fe_buffer::{
@@ -25,13 +26,16 @@ pub mod decorations;
 pub mod diagnostics;
 pub mod ghost_text;
 pub mod row_changes;
+mod typing;
 mod viewer;
 
+pub use typing::TYPING_PAUSE;
 pub use viewer::{COPY_LIMIT, CopyError, Outcome, ViewerModel};
 
 use decorations::{Decoration, DecorationProvider, ProviderId};
 use diagnostics::{AnyDiagnosticSet, Diagnostic, DiagnosticEntry, DiagnosticSet};
 use row_changes::RowChange;
+use typing::{Typed, TypingGroup};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Movement {
@@ -123,6 +127,10 @@ pub struct EditorModel {
     row_changes: RefCell<Option<(Version, Arc<[RowChange]>)>>,
     /// Decoration providers, in registration order; shared with splits.
     decorations: Vec<(ProviderId, Rc<RefCell<dyn DecorationProvider>>)>,
+    /// The run of typing the next keystroke may join, as one undo step.
+    typing: Option<TypingGroup>,
+    /// What typing pauses are measured on; shared with splits.
+    clock: Rc<dyn Fn() -> Instant>,
 }
 
 impl EditorModel {
@@ -153,6 +161,8 @@ impl EditorModel {
             diff_base: None,
             row_changes: RefCell::new(None),
             decorations: Vec::new(),
+            typing: None,
+            clock: Rc::new(Instant::now),
         }
     }
 
@@ -198,6 +208,8 @@ impl EditorModel {
             diff_base: self.diff_base.clone(),
             row_changes: RefCell::new(None),
             decorations: self.decorations.clone(),
+            typing: None,
+            clock: Rc::clone(&self.clock),
         };
         model.apply_wrap();
         model
@@ -317,6 +329,7 @@ impl EditorModel {
         // Nothing reads events outside undo and redo, which drain them
         // first; this keeps them from piling up while others edit.
         self.events.drain();
+        self.poll_typing();
     }
 
     /// The buffer's diagnostics in the text as of the last catch-up (see
@@ -677,7 +690,9 @@ impl EditorModel {
 
     /// Replaces all selections, given in [`EditorModel::text`]'s offsets.
     /// They're sorted and overlapping ones merged.
+    /// Ends any run of typing, even if they're where they were.
     pub fn set_selections(&mut self, selections: impl IntoIterator<Item = ResolvedSelection>) {
+        self.end_typing();
         self.goals.clear();
         self.selections = SelectionSet::from_resolved(&self.snapshot, selections);
     }
@@ -943,14 +958,23 @@ impl EditorModel {
         row_start + col
     }
 
-    /// Replaces every selection with `text` and leaves a caret after each.
+    /// Replaces every selection with `text` and leaves a caret after each,
+    /// as typing does: consecutive typing is one undo step (see
+    /// [`TYPING_PAUSE`]).
     pub fn insert(&mut self, text: &str) {
+        self.insert_typed(text, Typed::insert(text));
+    }
+
+    /// [`EditorModel::insert`], joining the run of typing only if `typed`
+    /// says to; `None` makes it a step of its own (a paste, an accepted
+    /// suggestion).
+    pub(crate) fn insert_typed(&mut self, text: &str, typed: Option<Typed>) {
         self.sync_display();
         let selections = self.selections();
         let edits = selections
             .iter()
             .map(|selection| (selection.range.clone(), text.to_string()));
-        self.apply_with_carets(edits.collect());
+        self.apply_typed(edits.collect(), typed);
     }
 
     /// Like [`EditorModel::insert`], but if `text` has one line per selection,
@@ -967,7 +991,7 @@ impl EditorModel {
                 .collect();
             self.apply_with_carets(edits);
         } else {
-            self.insert(text);
+            self.insert_typed(text, None);
         }
     }
 
@@ -1002,23 +1026,34 @@ impl EditorModel {
                 (selection.range, " ".repeat(width))
             })
             .collect();
-        self.apply_with_carets(edits);
+        self.apply_typed(edits, Typed::insert(" "));
     }
 
     pub fn backspace(&mut self) {
-        self.delete_with(|model, offset| model.prev_grapheme(offset)..offset);
+        self.delete_typed(|model, offset| model.prev_grapheme(offset)..offset);
     }
 
     pub fn delete_forward(&mut self) {
-        self.delete_with(|model, offset| offset..model.next_grapheme(offset));
+        self.delete_typed(|model, offset| offset..model.next_grapheme(offset));
     }
 
     pub fn delete_word_left(&mut self) {
-        self.delete_with(|model, offset| model.prev_word(offset)..offset);
+        self.delete_typed(|model, offset| model.prev_word(offset)..offset);
+    }
+
+    /// [`EditorModel::delete_with`] as typed: with only carets, consecutive
+    /// deletes are one undo step.
+    fn delete_typed(&mut self, around: impl Fn(&Self, usize) -> Range<usize>) {
+        self.sync_display();
+        let carets = self
+            .selections()
+            .iter()
+            .all(|selection| selection.range.is_empty());
+        self.delete_with(around, carets.then(Typed::delete));
     }
 
     /// Deletes each selection, or for carets the range `around` gives.
-    fn delete_with(&mut self, around: impl Fn(&Self, usize) -> Range<usize>) {
+    fn delete_with(&mut self, around: impl Fn(&Self, usize) -> Range<usize>, typed: Option<Typed>) {
         self.sync_display();
         let edits = self
             .selections()
@@ -1032,7 +1067,7 @@ impl EditorModel {
                 (range, String::new())
             })
             .collect();
-        self.apply_with_carets(edits);
+        self.apply_typed(edits, typed);
     }
 
     /// The text to copy: each selection, one per line. With only carets, the
@@ -1073,13 +1108,14 @@ impl EditorModel {
                 .collect();
             self.apply_with_carets(edits);
         } else {
-            self.delete_with(|_, offset| offset..offset);
+            self.delete_with(|_, offset| offset..offset, None);
         }
         copied
     }
 
     pub fn undo(&mut self) -> Result<Option<TransactionId>, UndoError> {
         self.sync_display();
+        self.end_typing();
         let ours = &self.origin;
         let result = self.buffer.borrow_mut().undo(|origin| origin == ours);
         let pick = self.caret_pick(&result).and_then(|pick| pick.undo);
@@ -1089,6 +1125,7 @@ impl EditorModel {
 
     pub fn redo(&mut self) -> Result<Option<TransactionId>, UndoError> {
         self.sync_display();
+        self.end_typing();
         let ours = &self.origin;
         let result = self.buffer.borrow_mut().redo(|origin| origin == ours);
         let pick = self.caret_pick(&result).and_then(|pick| pick.redo);
@@ -1199,8 +1236,14 @@ impl EditorModel {
 
     /// Applies one edit per selection (as a single transaction, from the
     /// user unless a command runs as someone else) and puts
-    /// a caret at the end of each edit's new text.
-    fn apply_with_carets(&mut self, mut edits: Vec<(Range<usize>, String)>) {
+    /// a caret at the end of each edit's new text. Ends any run of typing.
+    fn apply_with_carets(&mut self, edits: Vec<(Range<usize>, String)>) {
+        self.apply_typed(edits, None);
+    }
+
+    /// [`EditorModel::apply_with_carets`], joining the run of typing if
+    /// `typed` continues it.
+    fn apply_typed(&mut self, mut edits: Vec<(Range<usize>, String)>, typed: Option<Typed>) {
         edits.sort_by_key(|(range, _)| range.start);
         // Overlapping ranges (e.g. two carets deleting the same char) merge.
         let mut merged: Vec<(Range<usize>, String)> = Vec::with_capacity(edits.len());
@@ -1223,12 +1266,15 @@ impl EditorModel {
         // Anchored before catching up, whose measuring may edit the buffer
         // through another model.
         let carets = {
-            let mut buffer = self.buffer.borrow_mut();
-            let id = buffer.edit(merged, self.origin.clone());
+            let shared = Rc::clone(&self.buffer);
+            let mut buffer = shared.borrow_mut();
+            let id = self.edit_typed(&mut buffer, merged, typed);
             if let (Some(id), Some(transactions)) = (id, &mut self.transactions) {
                 transactions.push(id);
             }
-            SelectionSet::from_resolved(&buffer.snapshot(), carets)
+            let carets = SelectionSet::from_resolved(&buffer.snapshot(), carets);
+            self.typing_left(&carets);
+            carets
         };
         self.sync_display();
         self.goals.clear();

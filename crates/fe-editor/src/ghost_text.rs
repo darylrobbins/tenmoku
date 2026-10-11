@@ -134,7 +134,7 @@ impl GhostText {
     }
 
     /// Inserts the first `len(remaining)` bytes of what remains at the
-    /// caret, as the user, as typing does.
+    /// caret, as the user, as typing does, but as an undo step of its own.
     fn accept_with(
         &self,
         model: &mut EditorModel,
@@ -143,7 +143,7 @@ impl GhostText {
         model.sync_display();
         let rest = self.remaining(model)?;
         let piece = rest[..len(rest)].to_owned();
-        let (_, produced) = model.run_as(Origin::User, |model| model.insert(&piece));
+        let (_, produced) = model.run_as(Origin::User, |model| model.insert_typed(&piece, None));
         let id = produced.first().copied();
         // A command accepting it produced this transaction too.
         if let (Some(id), Some(transactions)) = (id, &mut model.transactions) {

@@ -123,9 +123,9 @@ fn accept_is_one_user_undo_step() {
         g.remaining(&model),
         Some("t x = 1;\n    let y = 2;\n    x + y")
     );
-    // Then the typing, one char at a time.
+    // Then the typing, as one step.
     model.undo().unwrap();
-    assert_eq!(render(&model), "fn main() {\n    l|\n}\n");
+    assert_eq!(render(&model), "fn main() {\n    |\n}\n");
     // Redo puts it back, the caret after it.
     model.redo().unwrap();
     model.redo().unwrap();

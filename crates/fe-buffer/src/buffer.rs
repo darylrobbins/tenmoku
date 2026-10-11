@@ -590,6 +590,12 @@ impl Buffer {
         id
     }
 
+    /// The transaction [`Buffer::start_transaction`] opened, until its
+    /// matching [`Buffer::end_transaction`] (or an undo or redo) closes it.
+    pub fn open_transaction(&self) -> Option<TransactionId> {
+        self.open.as_ref().map(|open| open.id)
+    }
+
     /// Runs `f` with any open transaction set aside, so its edits start
     /// transactions of their own even under the open one's origin, then
     /// restores it. The set-aside transaction is protected from history
