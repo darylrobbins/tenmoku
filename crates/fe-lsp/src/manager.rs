@@ -170,6 +170,8 @@ enum Kind {
 
 struct Route {
     root: PathBuf,
+    /// The document's URI: a server has one document per URI.
+    uri: Url,
     /// fe-syntax's name.
     language: String,
 }
@@ -285,6 +287,29 @@ impl LspManager {
         match self.documents.get(&buffer)?.kind {
             Kind::On(server) => Some(server),
             Kind::Routed(_) => self.place_of(buffer),
+        }
+    }
+
+    /// The name of the server `language` is routed to under the current
+    /// settings, trusted root or not: the server a document of it opened
+    /// now would wait for or go to.
+    pub fn route_for(&self, language: &str) -> Option<String> {
+        let specs = self.registry.specs();
+        Some(server_for(&specs, language)?.name.clone())
+    }
+
+    /// The name of the server `buffer`'s document is on, or, while it
+    /// waits (under an untrusted root, or for a server), the one it's
+    /// routed to. Unlike [`route_for`](Self::route_for), a document kept on
+    /// a running server after settings changed is where it actually is.
+    pub fn route_of(&self, buffer: BufferId) -> Option<String> {
+        let placed = self.documents.get(&buffer)?;
+        if let Some(server) = self.server_of(buffer) {
+            return self.servers.get(&server).map(|handle| handle.name.clone());
+        }
+        match &placed.kind {
+            Kind::Routed(route) => self.route_for(&route.language),
+            Kind::On(_) => None,
         }
     }
 
@@ -877,6 +902,7 @@ impl LspManager {
                 subscribed,
                 kind: Kind::Routed(Route {
                     root: root.to_owned(),
+                    uri: opening.uri.clone(),
                     language: language.to_owned(),
                 }),
             },
@@ -921,11 +947,29 @@ impl LspManager {
     /// place, or none and [`Place::Waiting`].
     fn place_for(&mut self, buffer: BufferId, specs: &[ServerSpec]) -> (Option<ServerId>, Place) {
         self.target(buffer, specs)
+            // A server has one document per URI, however documents came to
+            // be routed to it (settings or trust moving several there): the
+            // others wait until it closes.
+            .filter(|&server| !self.holds_uri(buffer, server))
             .and_then(|server| {
                 let commands = self.servers.get(&server)?.commands.clone();
                 Some((Some(server), Place::Server(server, commands)))
             })
             .unwrap_or((None, Place::Waiting))
+    }
+
+    /// Whether a routed document other than `buffer`, of the same URI, is
+    /// placed on `server`.
+    fn holds_uri(&self, buffer: BufferId, server: ServerId) -> bool {
+        let Some(Kind::Routed(route)) = self.documents.get(&buffer).map(|placed| &placed.kind)
+        else {
+            return false;
+        };
+        self.documents.iter().any(|(&other, placed)| {
+            other != buffer
+                && matches!(&placed.kind, Kind::Routed(r) if r.uri == route.uri)
+                && self.place_of(other) == Some(server)
+        })
     }
 
     /// The server `buffer`'s route gives it under `specs`, started if it
@@ -1069,6 +1113,7 @@ impl LspManager {
         self.servers
             .iter()
             .find(|(_, handle)| handle.name == spec.name && handle.root == route.root)
+            .filter(|(id, _)| !self.holds_uri(buffer, **id))
             .map(|(&id, handle)| Place::Server(id, handle.commands.clone()))
     }
 
@@ -1168,8 +1213,30 @@ impl LspManager {
     /// after this returns send nothing, and its identity is retired here
     /// too, before `didClose` is sent.
     pub fn close(&mut self, buffer: BufferId) {
+        let uri = match self.documents.get(&buffer).map(|placed| &placed.kind) {
+            Some(Kind::Routed(route)) => Some(route.uri.clone()),
+            _ => None,
+        };
         if let Some(server) = self.forget(buffer) {
             self.send(server, Command::Close(buffer));
+            // A document of the same URI held back for it opens now.
+            let specs = self.registry.specs();
+            let held: Vec<BufferId> = self
+                .waiting_for(&specs, None)
+                .into_iter()
+                .filter(|other| {
+                    matches!(
+                        self.documents.get(other).map(|placed| &placed.kind),
+                        Some(Kind::Routed(route)) if Some(&route.uri) == uri.as_ref()
+                    )
+                })
+                .collect();
+            for other in held {
+                let (server, place) = self.place_for(other, &specs);
+                if server.is_some() {
+                    self.set_place(other, place);
+                }
+            }
         }
     }
 

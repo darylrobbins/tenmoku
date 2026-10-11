@@ -10,6 +10,7 @@ mod launch;
 pub(crate) mod lsp;
 mod lsp_aliases;
 mod lsp_aliases_language;
+mod lsp_aliases_reroute;
 mod lsp_completion;
 mod lsp_diagnostics;
 mod lsp_hover;

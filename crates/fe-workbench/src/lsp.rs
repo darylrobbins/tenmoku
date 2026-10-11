@@ -311,13 +311,13 @@ pub(crate) struct Lsp {
     sender: async_channel::Sender<(u64, LspEvent)>,
     events: async_channel::Receiver<(u64, LspEvent)>,
     documents: HashMap<BufferId, Document>,
-    /// The buffer holding each resolved path's document, kept in step with
-    /// `documents`: path aliases of a file are separate buffers, but the
-    /// server has one document for it.
-    owners: HashMap<PathBuf, BufferId>,
-    /// An alias a path is kept for after its owner changed language, until
-    /// it opens the path.
-    reserved: HashMap<PathBuf, BufferId>,
+    /// The buffer holding each resolved path's document on each server
+    /// (`None`: no server), kept in step with `documents`: path aliases of a
+    /// file are separate buffers, but a server has one document for it.
+    owners: HashMap<Route, BufferId>,
+    /// An alias a path on a server is kept for after its owner changed
+    /// language, until it opens the path.
+    reserved: HashMap<Route, BufferId>,
     /// Each server's name and latest status.
     servers: HashMap<ServerId, (String, ServerStatus)>,
     /// Each server's latest `window/showMessage`, shown in place of its
@@ -365,10 +365,23 @@ pub(crate) struct Lsp {
     _subscriptions: Vec<Subscription>,
 }
 
+/// A server (by name, if the language has one) and a resolved path: what
+/// one document is of.
+type Route = (Option<String>, PathBuf);
+
+/// The name of the server `language` is routed to, if any, trusted root or
+/// not: documents wait for it while the root isn't trusted, so it holds the
+/// path's document from then on.
+fn server_name(manager: &LspManager, language: Option<&str>) -> Option<String> {
+    manager.route_for(language?)
+}
+
 /// A buffer opened on the manager.
 struct Document {
     /// Its file, resolved.
     path: PathBuf,
+    /// The name of the server its language is handled by, if any.
+    server_name: Option<String>,
     /// fe-syntax's name for it.
     language: &'static str,
     /// The server it went to, kept after the server stops.
@@ -378,6 +391,67 @@ struct Document {
 }
 
 impl Lsp {
+    /// Whether owners are the documents the manager serves: each served
+    /// document owns its path on its server, and one parked owns it only
+    /// where none is served.
+    #[cfg(test)]
+    pub(crate) fn owners_match_manager(&self) -> bool {
+        let Some(manager) = &self.manager else {
+            return true;
+        };
+        let manager = lock(manager);
+        let served = self.documents.iter().all(|(&buffer, document)| {
+            manager.server_of(buffer).is_none()
+                || self
+                    .owners
+                    .get(&(manager.route_of(buffer), document.path.clone()))
+                    == Some(&buffer)
+        });
+        let parked = self.owners.iter().all(|(route, &buffer)| {
+            manager.server_of(buffer).is_some()
+                || !self.documents.iter().any(|(&other, document)| {
+                    manager.server_of(other).is_some()
+                        && (manager.route_of(other), document.path.clone()) == *route
+                })
+        });
+        served && parked
+    }
+
+    /// The server each owned path is held on, by name, sorted.
+    #[cfg(test)]
+    pub(crate) fn owner_servers(&self) -> Vec<Option<String>> {
+        let mut servers: Vec<_> = self
+            .owners
+            .keys()
+            .map(|(server, _)| server.clone())
+            .collect();
+        servers.sort();
+        servers
+    }
+
+    /// Each owner's server by the manager's own account, sorted, to compare
+    /// with [`owner_servers`](Self::owner_servers).
+    #[cfg(test)]
+    pub(crate) fn actual_owner_servers(&self) -> Vec<Option<String>> {
+        let Some(manager) = &self.manager else {
+            return Vec::new();
+        };
+        let manager = lock(manager);
+        let mut servers: Vec<_> = self
+            .owners
+            .values()
+            .map(|&buffer| manager.route_of(buffer))
+            .collect();
+        servers.sort();
+        servers
+    }
+
+    /// The aliases paths are kept for after their owners changed language.
+    #[cfg(test)]
+    pub(crate) fn reserved_buffers(&self) -> Vec<BufferId> {
+        self.reserved.values().copied().collect()
+    }
+
     pub(crate) fn new() -> Self {
         let (sender, events) = async_channel::unbounded();
         Self {
@@ -679,17 +753,50 @@ impl Workbench {
         let mut shown = HashSet::new();
         let mut to_resolve = Vec::new();
         let mut to_follow = Vec::new();
-        // Each shown buffer's language, by its first view, for finding an
-        // alias that can take over a released path.
-        let mut languages: HashMap<BufferId, &'static str> = HashMap::new();
+        // Each shown buffer's language, by its first view (the one that
+        // opens it), for finding an alias that can take over a released
+        // path.
+        let mut languages: HashMap<BufferId, Option<&'static str>> = HashMap::new();
         for editor in &editors {
             let view = editor.read(cx);
-            if let Some(language) = view.syntax().map(|syntax| syntax.language().name()) {
-                languages
-                    .entry(view.model().buffer().id())
-                    .or_insert(language);
+            languages
+                .entry(view.model().buffer().id())
+                .or_insert_with(|| view.syntax().map(|syntax| syntax.language().name()));
+        }
+        // Whether `alias` can open `route`'s path: shown, resolved to it,
+        // not open, and in a language that server handles.
+        let eligible = |alias: BufferId,
+                        route: &Route,
+                        resolved: &HashMap<BufferId, Option<PathBuf>>,
+                        documents: &HashMap<BufferId, Document>,
+                        manager: &LspManager| {
+            route.0.is_some()
+                && !documents.contains_key(&alias)
+                && resolved.get(&alias).and_then(Option::as_ref) == Some(&route.1)
+                && languages
+                    .get(&alias)
+                    .is_some_and(|&language| server_name(manager, language) == route.0)
+        };
+        // Trust grants, settings reloads and a server's closing documents
+        // move them on the manager by themselves: owners are taken anew
+        // from where the manager has each document, those it serves first,
+        // then those parked (by a document of the URI there, or a root not
+        // trusted) where none is served.
+        for (&buffer, document) in documents.iter_mut() {
+            document.server_name = manager.route_of(buffer);
+        }
+        owners.clear();
+        for served in [true, false] {
+            for (&buffer, document) in documents.iter() {
+                if manager.server_of(buffer).is_some() == served {
+                    owners
+                        .entry((document.server_name.clone(), document.path.clone()))
+                        .or_insert(buffer);
+                }
             }
         }
+        reserved
+            .retain(|route, &mut alias| eligible(alias, route, &lsp.resolved, documents, &manager));
         for editor in editors {
             let view = editor.read(cx);
             let model = view.model();
@@ -715,8 +822,23 @@ impl Workbench {
                 _ => {}
             }
             if let Some(document) = documents.remove(&buffer) {
-                owners.remove(&document.path);
-                released.push(document.path);
+                let route = (document.server_name, document.path);
+                if owners.get(&route) == Some(&buffer) {
+                    owners.remove(&route);
+                }
+                // Handed to a waiting alias the server handles, which opens
+                // it at the next frame. The owner itself opens under its new
+                // server regardless.
+                if !reserved.contains_key(&route) {
+                    let alias = lsp.resolved.keys().find(|&&other| {
+                        other != buffer
+                            && eligible(other, &route, &lsp.resolved, documents, &manager)
+                    });
+                    if let Some(&alias) = alias {
+                        reserved.insert(route.clone(), alias);
+                    }
+                }
+                released.push(route);
             }
             manager.close(buffer);
             let Some(language) = language else {
@@ -730,36 +852,24 @@ impl Workbench {
                 continue;
             };
             let path = path.clone();
-            // The server has one document per path: a buffer that is an
-            // alias of an owned file waits for its owner to close.
-            if owners.contains_key(&path) {
+            let server_name = server_name(&manager, Some(language));
+            let route: Route = (server_name.clone(), path.clone());
+            // A server has one document per path: a buffer that is an alias
+            // of a file owned there waits for its owner to close.
+            if owners.contains_key(&route) {
                 continue;
             }
-            // An owner whose language changed hands the path to a waiting
-            // alias a server handles, which opens it at the next frame.
-            if released.contains(&path) && !reserved.contains_key(&path) {
-                let alias = lsp.resolved.iter().find(|&(&other, resolved)| {
-                    other != buffer
-                        && resolved.as_ref() == Some(&path)
-                        && !documents.contains_key(&other)
-                        && languages.get(&other).is_some_and(|language| {
-                            manager.language_server(root, language).is_some()
-                        })
-                });
-                if let Some((&alias, _)) = alias {
-                    reserved.insert(path, alias);
-                    continue;
-                }
-            }
-            match reserved.get(&path) {
+            // A reservation holds only while its alias can still open the
+            // path; otherwise it's dropped, and this buffer takes it.
+            match reserved.get(&route) {
                 Some(&alias) if alias == buffer => {
-                    reserved.remove(&path);
+                    reserved.remove(&route);
                 }
-                Some(alias) if languages.contains_key(alias) && !documents.contains_key(alias) => {
+                Some(&alias) if eligible(alias, &route, &lsp.resolved, documents, &manager) => {
                     continue;
                 }
                 Some(_) => {
-                    reserved.remove(&path);
+                    reserved.remove(&route);
                 }
                 None => {}
             }
@@ -781,11 +891,12 @@ impl Workbench {
             if let (Some(server), Some(watch)) = (server, watch) {
                 watch.started(server);
             }
-            owners.insert(path.clone(), buffer);
+            owners.insert(route, buffer);
             documents.insert(
                 buffer,
                 Document {
                     path,
+                    server_name,
                     language,
                     server,
                     moved,
@@ -795,17 +906,22 @@ impl Workbench {
         documents.retain(|&buffer, document| {
             shown.contains(&buffer) || {
                 manager.close(buffer);
-                owners.remove(&document.path);
-                released.push(document.path.clone());
+                let route = (document.server_name.clone(), document.path.clone());
+                if owners.get(&route) == Some(&buffer) {
+                    owners.remove(&route);
+                }
+                released.push(route);
                 false
             }
         });
         // A path freed while another shown buffer resolves to it: that
         // buffer is opened at the next frame.
-        let handed_over = released.iter().any(|path| {
-            !owners.contains_key(path)
+        let handed_over = released.iter().any(|route| {
+            !owners.contains_key(route)
                 && lsp.resolved.iter().any(|(buffer, resolved)| {
-                    shown.contains(buffer) && resolved.as_ref() == Some(path)
+                    shown.contains(buffer)
+                        && !documents.contains_key(buffer)
+                        && resolved.as_ref() == Some(&route.1)
                 })
         });
         lsp.resolved.retain(|buffer, _| shown.contains(buffer));
