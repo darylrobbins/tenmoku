@@ -1,0 +1,51 @@
+# fastedit Light: the editor's colours in the bundled light theme, and
+# where any editor or syntax colour a light theme leaves out comes from. The
+# rest of the window's colours are Kiln Light's. Colours are "#rgb",
+# "#rrggbb" or "#rrggbbaa".
+
+name = "fastedit Light"
+appearance = "light"
+
+[editor]
+background = "#ffffff"
+foreground = "#383a42"
+gutter_foreground = "#a0a1a7"
+gutter_active_foreground = "#383a42"
+active_line = "#0000000a"
+selection = "#3b6fd433"
+cursor = "#3b6fd4"
+error = "#d93f4c"
+warning = "#b8760f"
+information = "#2f74d0"
+hint = "#9aa0aa"
+popover_background = "#f3f4f6"
+popover_border = "#dcdfe4"
+
+# Highlight captures by dotted name. A capture without its own colour takes
+# the colour of its longest listed prefix: "function.method" uses "function".
+[syntax]
+"attribute" = "#986801"
+"comment" = "#a0a1a7"
+"constant" = "#986801"
+"constructor" = "#c18401"
+"escape" = "#0184bc"
+"function" = "#4078f2"
+"function.macro" = "#0184bc"
+"keyword" = "#a626a4"
+"label" = "#e45649"
+"markup.heading" = "#e45649"
+"markup.link" = "#4078f2"
+"markup.link.url" = "#0184bc"
+"markup.raw" = "#50a14f"
+"module" = "#c18401"
+"number" = "#986801"
+"operator" = "#0184bc"
+"property" = "#e45649"
+"punctuation" = "#696c77"
+"punctuation.special" = "#0184bc"
+"string" = "#50a14f"
+"string.special" = "#0184bc"
+"string.special.key" = "#e45649"
+"tag" = "#e45649"
+"type" = "#c18401"
+"variable.builtin" = "#e45649"

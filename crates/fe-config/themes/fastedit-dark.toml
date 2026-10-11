@@ -1,31 +1,10 @@
-# fastedit Dark: the bundled theme, and where any colour a user theme leaves
-# out comes from. Colours are "#rgb", "#rrggbb" or "#rrggbbaa".
+# fastedit Dark: the editor's colours in the bundled dark theme, and
+# where any editor or syntax colour a dark theme leaves out comes from. The
+# rest of the window's colours are Kiln Dark's. Colours are "#rgb",
+# "#rrggbb" or "#rrggbbaa".
 
 name = "fastedit Dark"
 appearance = "dark"
-
-# The workbench chrome: panels, rows and tabs.
-[ui]
-background = "#16181d"
-panel_background = "#121418"
-border = "#23262d"
-text = "#8b8f98"
-muted_text = "#4b5160"
-error_text = "#e06c75"
-row_hover = "#ffffff0a"
-row_selected = "#4f7cc833"
-row_selected_inactive = "#ffffff0f"
-row_focus_border = "#4f7cc8aa"
-icon = "#8b8f98"
-folder_icon = "#7f9fd8"
-chevron = "#6c717c"
-indent_guide = "#ffffff14"
-tab_active = "#16181d"
-tab_active_text = "#c8ccd4"
-tab_inactive = "#121418"
-dirty_dot = "#d19a66"
-drop_target = "#4f7cc8"
-accent = "#4f7cc8"
 
 [editor]
 background = "#16181d"
@@ -35,6 +14,12 @@ gutter_active_foreground = "#a0a7b4"
 active_line = "#ffffff08"
 selection = "#4f7cc855"
 cursor = "#7aa2f7"
+error = "#e06c75"
+warning = "#e5c07b"
+information = "#61afef"
+hint = "#7f848e"
+popover_background = "#21252b"
+popover_border = "#3e4452"
 
 # Highlight captures by dotted name. A capture without its own colour takes
 # the colour of its longest listed prefix: "function.method" uses "function".

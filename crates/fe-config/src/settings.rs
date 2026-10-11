@@ -1,6 +1,7 @@
 //! The editor's settings, layered from defaults, the user file and the
 //! project file, on kiln-core's typed [`kiln_core::SettingsStore`]: a
-//! project file's `lsp` keys are narrowed ([`ProjectFilter`]), and each
+//! project file's `lsp` keys are narrowed and its `theme` dropped
+//! ([`ProjectFilter`]), and each
 //! file is checked against the schema with its servers listed.
 
 use std::{
@@ -36,6 +37,33 @@ pub struct Settings {
     pub status_bar: StatusBarSettings,
     /// Language servers. A project file may only turn them off.
     pub lsp: LspSettings,
+    /// The colour theme.
+    #[serde(default)]
+    pub theme: ThemeSettings,
+}
+
+/// Settings for the colour theme. The theme is the app's, not a window's,
+/// so a project file may not set them.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ThemeSettings {
+    /// dark, light, or system to follow the system's appearance. Your own
+    /// colours go in theme.toml beside this file; its appearance says whether
+    /// it replaces the dark or the light theme.
+    pub mode: ThemeModeSetting,
+}
+
+/// `theme.mode`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeModeSetting {
+    /// The dark theme.
+    #[default]
+    Dark,
+    /// The light theme.
+    Light,
+    /// The dark or light theme as the system's appearance is.
+    System,
 }
 
 /// Settings for vim mode.
@@ -341,12 +369,13 @@ impl SettingsStore {
 }
 
 /// How fastedit's settings files are checked: against [`SCHEMA`] with each
-/// server listed ([`schema_for`]), and a project's `lsp` keys narrowed
-/// ([`narrow_lsp`]).
+/// server listed ([`schema_for`]), a project's `lsp` keys narrowed
+/// ([`narrow_lsp`]) and its `theme` dropped ([`drop_theme`]).
 fn options() -> SettingsOptions {
     SettingsOptions::new()
         .schema_for(schema_for)
         .project_filter(ProjectFilter::new("lsp", narrow_lsp))
+        .project_filter(ProjectFilter::new("theme", drop_theme))
 }
 
 /// [`SCHEMA`], with each server `table` names under `lsp.servers` listed
@@ -435,6 +464,33 @@ fn narrow_lsp(layer: &mut Layer) {
             .join(".");
         let warning =
             layer.diagnostic_at(Severity::Warning, Some(key), offset, UNTRUSTED_LSP.into());
+        layer.diagnostics.push(warning);
+    }
+}
+
+/// The warning for each `theme` key a project file sets.
+pub const PROJECT_THEME: &str =
+    "theme settings in project files are ignored: the theme is the same in every window";
+
+/// Drops a project layer's `theme` table, with a [`PROJECT_THEME`] warning
+/// at each key it set (at `theme` itself if it isn't a table).
+fn drop_theme(layer: &mut Layer) {
+    let dropped: Vec<Vec<String>> = match layer.table.remove("theme") {
+        None => return,
+        Some(toml::Value::Table(theme)) => theme.into_iter().map(|(key, _)| vec![key]).collect(),
+        Some(_) => vec![Vec::new()],
+    };
+    let document = DeTable::parse(&layer.source).ok();
+    for path in dropped {
+        let offset = document
+            .as_ref()
+            .map_or(0, |document| key_offset(document.get_ref(), "theme", &path));
+        let key = std::iter::once("theme")
+            .chain(path.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join(".");
+        let warning =
+            layer.diagnostic_at(Severity::Warning, Some(key), offset, PROJECT_THEME.into());
         layer.diagnostics.push(warning);
     }
 }

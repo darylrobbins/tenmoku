@@ -267,3 +267,24 @@ after T275 (its F4 claims and F5 close transactions), except as follows.
   were dispatched in (kiln-platform's `command_actions::dispatch_window`),
   falling back to the platform's active window: an X server without a
   window manager has none, and `window.close` did nothing there.
+
+## 8. Theming in fastedit
+
+**Decided** (user, 2026-10-11): "Use kiln's theme service". Theme selection
+and hot reload in fastedit go through kiln, not fe-config's T238/T244
+`ThemeStore`, which T245 removed. This supersedes `app-shell.md` §4.4.
+
+- **kiln owns** theme files (tokens, the `[ui]` alias table, an app's
+  extension tables), the bundled dark and light pair, the `ThemeMode`
+  (Dark, Light, System) choosing between them in kiln-ui's `GlobalTheme`,
+  and the user's one theme file (`kiln::Config::user_theme`), hot-reloaded
+  by kiln's config service and laid over the dark or the light base as its
+  `appearance` says.
+- **fastedit owns** its `[theme] mode` setting (`fe_config::ThemeSettings`,
+  user file only: the theme is the app's, so a project file's is ignored
+  with a warning), the user theme's path (`<config_dir>/theme.toml`,
+  `fe_config::user_theme_path`), its `editor` and `syntax` extension tables
+  (`fe_config::theme::EXTENSIONS`) with the bundled fastedit Dark and Light
+  palettes they're laid over (`fe_config::EditorPalette`), and building
+  fe-gpui's `EditorTheme` from them.
+- There's no themes directory or picker by name: one user file and a mode.

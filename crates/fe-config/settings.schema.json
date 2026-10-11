@@ -238,6 +238,37 @@
       },
       "type": "object"
     },
+    "ThemeModeSetting": {
+      "description": "`theme.mode`.",
+      "oneOf": [
+        {
+          "const": "dark",
+          "description": "The dark theme.",
+          "type": "string"
+        },
+        {
+          "const": "light",
+          "description": "The light theme.",
+          "type": "string"
+        },
+        {
+          "const": "system",
+          "description": "The dark or light theme as the system's appearance is.",
+          "type": "string"
+        }
+      ]
+    },
+    "ThemeSettings": {
+      "description": "Settings for the colour theme. The theme is the app's, not a window's,\nso a project file may not set them.",
+      "properties": {
+        "mode": {
+          "$ref": "#/$defs/ThemeModeSetting",
+          "default": "dark",
+          "description": "dark, light, or system to follow the system's appearance. Your own\ncolours go in theme.toml beside this file; its appearance says whether\nit replaces the dark or the light theme."
+        }
+      },
+      "type": "object"
+    },
     "TypescriptServer": {
       "description": "The built-in server for TypeScript and JavaScript.",
       "oneOf": [
@@ -322,6 +353,13 @@
         "visible": true
       },
       "description": "The status bar."
+    },
+    "theme": {
+      "$ref": "#/$defs/ThemeSettings",
+      "default": {
+        "mode": "dark"
+      },
+      "description": "The colour theme."
     },
     "vim": {
       "$ref": "#/$defs/VimSettings",

@@ -29,3 +29,9 @@
 [status_bar]
 # Whether the status bar shows at the bottom of the window.
 # visible = true
+
+[theme]
+# dark, light, or system to follow the system's appearance. Your own colours
+# go in theme.toml beside this file; its appearance says whether it replaces
+# the dark or the light theme.
+# mode = "dark"

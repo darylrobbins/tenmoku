@@ -6,14 +6,13 @@
 //!
 //! [`SettingsStore`] holds the effective [`Settings`]; [`ConfigWatcher`]
 //! says which files changed, for [`SettingsStore::reload`]; [`write_setting`]
-//! changes one setting in a file, keeping its comments. [`load_themes`]
-//! reads the colour themes, and [`ThemeStore`] holds the selected one
-//! across reloads.
+//! changes one setting in a file, keeping its comments. [`EditorPalette`]
+//! reads the editor's colours from a kiln theme; kiln's config service
+//! selects and hot-reloads the theme itself.
 
 pub mod paths;
 pub mod settings;
 pub mod theme;
-pub mod theme_store;
 pub mod write;
 
 // The generic config machinery is kiln's (docs/decisions/app-framework.md);
@@ -23,12 +22,13 @@ pub use kiln_core::{diagnostic, layers, trust, watch};
 pub use diagnostic::{Diagnostic, Severity};
 pub use layers::{Layer, load_layer, merge, parse_layer};
 pub use paths::{
-    config_dir, config_dir_from, project_settings_path, themes_dir, themes_dir_from,
-    user_settings_path,
+    config_dir, config_dir_from, project_settings_path, user_settings_path, user_theme_path,
 };
-pub use settings::{EditorSettings, Settings, SettingsEvent, SettingsStore, settings_schema};
-pub use theme::{Appearance, Color, EditorColors, Theme, ThemeSet, UiColors, load_themes};
-pub use theme_store::{ThemeEvent, ThemeStore};
+pub use settings::{
+    EditorSettings, Settings, SettingsEvent, SettingsStore, ThemeModeSetting, ThemeSettings,
+    settings_schema,
+};
+pub use theme::{Color, EditorColors, EditorPalette};
 pub use watch::ConfigWatcher;
 pub use write::write_setting;
 

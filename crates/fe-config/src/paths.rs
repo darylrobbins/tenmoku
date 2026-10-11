@@ -9,7 +9,10 @@ use std::{
 
 use kiln_core::{AppId, AppPaths, Os, PathStyle};
 
-pub use kiln_core::paths::{SETTINGS_FILE, THEMES_DIR, TRUST_FILE};
+pub use kiln_core::paths::{SETTINGS_FILE, TRUST_FILE};
+
+/// The user's theme file's name, beside [`SETTINGS_FILE`].
+pub const THEME_FILE: &str = "theme.toml";
 
 /// fastedit, as kiln knows it.
 pub fn app_id() -> AppId {
@@ -49,16 +52,11 @@ pub fn user_settings_path() -> Option<PathBuf> {
     app_paths().settings_file()
 }
 
-/// `<config_dir>/themes`, from the process environment: see
-/// [`crate::theme::load_themes`].
-pub fn themes_dir() -> Option<PathBuf> {
-    themes_dir_from(|name| std::env::var_os(name))
-}
-
-/// `<config_dir>/themes`, reading variables through `env` as
-/// [`config_dir_from`] does.
-pub fn themes_dir_from(env: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
-    app_paths_from(env).themes_dir()
+/// `<config_dir>/theme.toml`, beside `settings.toml`: the user's own
+/// colours, which kiln's config service hot-reloads and lays over the dark
+/// or the light theme as its `appearance` says.
+pub fn user_theme_path() -> Option<PathBuf> {
+    Some(config_dir()?.join(THEME_FILE))
 }
 
 /// `<root>/.fastedit/settings.toml`.
