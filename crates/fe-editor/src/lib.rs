@@ -23,11 +23,13 @@ pub mod commands;
 pub mod completion;
 pub mod diagnostics;
 pub mod ghost_text;
+pub mod row_changes;
 mod viewer;
 
 pub use viewer::{COPY_LIMIT, CopyError, Outcome, ViewerModel};
 
 use diagnostics::{AnyDiagnosticSet, Diagnostic, DiagnosticEntry, DiagnosticSet};
+use row_changes::RowChange;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Movement {
@@ -113,6 +115,10 @@ pub struct EditorModel {
     /// [`DiagnosticSet`] keyed by the host's types, once it has applied
     /// one.
     diagnostics: Option<Box<dyn AnyDiagnosticSet>>,
+    /// The text [`EditorModel::row_changes`] compares against.
+    diff_base: Option<Arc<str>>,
+    /// The changes against `diff_base` for the snapshot at this version.
+    row_changes: RefCell<Option<(Version, Arc<[RowChange]>)>>,
 }
 
 impl EditorModel {
@@ -140,6 +146,8 @@ impl EditorModel {
             origin: Origin::User,
             transactions: None,
             diagnostics: None,
+            diff_base: None,
+            row_changes: RefCell::new(None),
         }
     }
 
@@ -181,6 +189,8 @@ impl EditorModel {
             origin: Origin::User,
             transactions: None,
             diagnostics: self.diagnostics.as_ref().map(|set| set.boxed_clone()),
+            diff_base: self.diff_base.clone(),
+            row_changes: RefCell::new(None),
         };
         model.apply_wrap();
         model
@@ -305,6 +315,41 @@ impl EditorModel {
         self.diagnostics
             .as_ref()
             .map_or_else(Vec::new, |set| set.entries(&self.snapshot))
+    }
+
+    /// Sets the text [`EditorModel::row_changes`] compares against (the
+    /// file's text in git, say); `None` turns row changes off. Setting the
+    /// same text again changes nothing.
+    pub fn set_diff_base(&mut self, base: Option<Arc<str>>) {
+        if self.diff_base != base {
+            self.diff_base = base;
+            *self.row_changes.get_mut() = None;
+        }
+    }
+
+    /// The text as of the last catch-up against the diff base, as changed
+    /// rows sorted by row; empty without a base, when the text equals it, or
+    /// when the base or the text is over 5 MiB. Diffed lazily, once per
+    /// buffer version.
+    pub fn row_changes(&self) -> Arc<[RowChange]> {
+        let Some(base) = &self.diff_base else {
+            return Arc::new([]);
+        };
+        let version = self.snapshot.version();
+        let mut cache = self.row_changes.borrow_mut();
+        if let Some((cached, changes)) = &*cache
+            && *cached == version
+        {
+            return changes.clone();
+        }
+        let text = self.text();
+        let changes = if text.len() > row_changes::MAX_DIFF_BYTES {
+            Arc::new([])
+        } else {
+            row_changes::diff_rows(base, &text.to_string())
+        };
+        *cache = Some((version, changes.clone()));
+        changes
     }
 
     /// The diagnostics as the host applied them, if it keyed them by `S`

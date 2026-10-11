@@ -1929,6 +1929,7 @@ dependencies = [
  "fe-display",
  "fe-fileview",
  "fe-text",
+ "imara-diff",
  "kiln-command",
  "proptest",
  "rand 0.9.5",
