@@ -9,7 +9,7 @@ use gpui::{
 
 use crate::TerminalStyle;
 use crate::element::TerminalElement;
-use crate::mouse::Drag;
+use crate::mouse::{Button, Drag, WheelTo};
 
 /// The key context a terminal view's bindings are scoped to.
 pub const KEY_CONTEXT: &str = "terminal";
@@ -42,12 +42,16 @@ pub struct TerminalView {
     pub(crate) marked: Option<String>,
     /// The input method's selection within `marked`, in UTF-16 units.
     pub(crate) marked_selection: Range<usize>,
-    /// What a held mouse button is doing.
+    /// The selecting drag, while the left button holds it.
     pub(crate) drag: Option<Drag>,
+    /// Buttons the program heard pressed and not yet released, oldest first.
+    pub(crate) reported_buttons: Vec<Button>,
     /// The cell a press, drag or motion was last reported at.
     pub(crate) reported: Option<(usize, usize)>,
     /// Wheel motion, in lines, not yet scrolled or reported.
     pub(crate) wheel: f32,
+    /// Where `wheel` was headed.
+    pub(crate) wheel_to: WheelTo,
     _focus_reports: [Subscription; 2],
     /// Redraws the cursor when the window gains or loses focus.
     _activation: Subscription,
@@ -88,8 +92,10 @@ impl TerminalView {
             marked: None,
             marked_selection: 0..0,
             drag: None,
+            reported_buttons: Vec::new(),
             reported: None,
             wheel: 0.,
+            wheel_to: WheelTo::default(),
             _focus_reports: focus_reports,
             _activation: activation,
         })

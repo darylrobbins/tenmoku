@@ -186,13 +186,17 @@ impl Frame {
     }
 }
 
-/// What a held button is doing.
+/// A selecting drag: the left button is held, and the pointer was last here.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum Drag {
-    /// The left button is selecting; the pointer was last here.
-    Select(Point<Pixels>),
-    /// The program heard this button pressed.
-    Report(Button),
+pub(crate) struct Drag(pub Point<Pixels>);
+
+/// Where wheel motion is going, which decides the units it adds up in.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum WheelTo {
+    #[default]
+    Scrollback,
+    Arrows,
+    Report,
 }
 
 /// Registers this frame's mouse listeners: presses and the wheel over
@@ -216,8 +220,9 @@ pub(crate) fn listen(
     }
     {
         let (view, hitbox) = (view.clone(), hitbox.clone());
+        // Captured, so a control that stops the event can't strand a gesture.
         window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
-            if phase == DispatchPhase::Bubble {
+            if phase == DispatchPhase::Capture {
                 let hovered = hitbox.is_hovered(window);
                 view.update(cx, |view, cx| view.mouse_move(event, hovered, &frame, cx));
             }
@@ -226,7 +231,7 @@ pub(crate) fn listen(
     {
         let view = view.clone();
         window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
-            if phase == DispatchPhase::Bubble {
+            if phase == DispatchPhase::Capture {
                 view.update(cx, |view, cx| view.mouse_up(event, &frame, cx));
             }
         });
@@ -262,7 +267,44 @@ impl TerminalView {
             mods: mods(modifiers),
         };
         if let Some(bytes) = encode(event, &frame.modes) {
-            self.write(bytes, cx);
+            self.write_report(bytes, cx);
+        }
+    }
+
+    /// Writes mouse report `bytes`, leaving the selection and how far back
+    /// the view is scrolled as they were: unlike typing, it isn't the user
+    /// coming back to the prompt.
+    fn write_report(&mut self, bytes: Vec<u8>, _cx: &mut Context<Self>) {
+        let Some(terminal) = &self.terminal else {
+            return;
+        };
+        if bytes.is_empty() {
+            return;
+        }
+        let offset = terminal.snapshot().display_offset;
+        terminal.input(bytes);
+        if offset > 0 {
+            terminal.scroll(-(offset as i32));
+        }
+    }
+
+    /// Releases every button the program heard pressed, except `keep`, at
+    /// `(row, col)`.
+    fn release_reported(
+        &mut self,
+        keep: Option<Button>,
+        (row, col): (usize, usize),
+        modifiers: &Modifiers,
+        frame: &Frame,
+        cx: &mut Context<Self>,
+    ) {
+        let held = std::mem::take(&mut self.reported_buttons);
+        for button in held {
+            if Some(button) == keep {
+                self.reported_buttons.push(button);
+            } else {
+                self.report(Action::Release(button), (row, col), modifiers, frame, cx);
+            }
         }
     }
 
@@ -282,7 +324,8 @@ impl TerminalView {
         let (row, col, side) = frame.cell_at(event.position);
         // Shift is the user's way past a program's reporting, to select.
         if frame.reporting() && !event.modifiers.shift {
-            self.drag = Some(Drag::Report(pressed));
+            self.reported_buttons.retain(|&held| held != pressed);
+            self.reported_buttons.push(pressed);
             self.reported = Some((row, col));
             self.report(
                 Action::Press(pressed),
@@ -309,7 +352,7 @@ impl TerminalView {
             };
             terminal.select(kind, row, col, side);
         }
-        self.drag = Some(Drag::Select(event.position));
+        self.drag = Some(Drag(event.position));
         cx.notify();
         true
     }
@@ -322,25 +365,40 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) {
         let (row, col, side) = frame.cell_at(event.position);
-        match self.drag {
-            // The release happened where no listener saw it.
-            Some(_) if event.pressed_button.is_none() => self.drag = None,
-            Some(Drag::Select(_)) => {
-                if let Some(terminal) = &self.terminal {
-                    terminal.extend_selection(row, col, side);
-                }
-                self.drag = Some(Drag::Select(event.position));
-                cx.notify();
-                return;
+        let held = event.pressed_button.and_then(button);
+        if held.is_none() {
+            // The release happened where no listener saw it: the program
+            // still hears it.
+            self.drag = None;
+            self.release_reported(None, (row, col), &event.modifiers, frame, cx);
+        } else if !self.reported_buttons.is_empty() {
+            // Only the button still down is.
+            self.release_reported(held, (row, col), &event.modifiers, frame, cx);
+        }
+        if let Some(&reported) = self.reported_buttons.last() {
+            if event.modifiers.shift {
+                // Shift takes the gesture back from the program, which is
+                // told the buttons are up.
+                let modifiers = Modifiers {
+                    shift: false,
+                    ..event.modifiers
+                };
+                self.release_reported(None, (row, col), &modifiers, frame, cx);
+            } else if self.reported != Some((row, col)) {
+                self.reported = Some((row, col));
+                let drag = held.filter(|b| self.reported_buttons.contains(b));
+                let drag = drag.unwrap_or(reported);
+                self.report(Action::Drag(drag), (row, col), &event.modifiers, frame, cx);
             }
-            Some(Drag::Report(held)) => {
-                if self.reported != Some((row, col)) {
-                    self.reported = Some((row, col));
-                    self.report(Action::Drag(held), (row, col), &event.modifiers, frame, cx);
-                }
-                return;
+            return;
+        }
+        if self.drag.is_some() {
+            if let Some(terminal) = &self.terminal {
+                terminal.extend_selection(row, col, side);
             }
-            None => {}
+            self.drag = Some(Drag(event.position));
+            cx.notify();
+            return;
         }
         if hovered
             && frame.modes.mouse_motion
@@ -353,20 +411,20 @@ impl TerminalView {
     }
 
     fn mouse_up(&mut self, event: &MouseUpEvent, frame: &Frame, cx: &mut Context<Self>) {
-        match self.drag {
-            Some(Drag::Report(held)) if button(event.button) == Some(held) => {
-                self.drag = None;
-                let (row, col, _) = frame.cell_at(event.position);
-                self.report(
-                    Action::Release(held),
-                    (row, col),
-                    &event.modifiers,
-                    frame,
-                    cx,
-                );
-            }
-            Some(Drag::Select(_)) if event.button == MouseButton::Left => self.drag = None,
-            _ => {}
+        let released = button(event.button);
+        if let Some(released) = released.filter(|b| self.reported_buttons.contains(b)) {
+            self.reported_buttons.retain(|&held| held != released);
+            let (row, col, _) = frame.cell_at(event.position);
+            self.report(
+                Action::Release(released),
+                (row, col),
+                &event.modifiers,
+                frame,
+                cx,
+            );
+        }
+        if event.button == MouseButton::Left {
+            self.drag = None;
         }
     }
 
@@ -379,13 +437,22 @@ impl TerminalView {
             ScrollDelta::Lines(delta) => delta.y * WHEEL_LINES,
             ScrollDelta::Pixels(delta) => f32::from(delta.y) / f32::from(frame.cell.height).max(1.),
         };
-        // Turning the wheel back drops what was left over going the other way.
-        if self.wheel * lines < 0. {
-            self.wheel = 0.;
-        }
-        self.wheel += lines;
         let modes = &frame.modes;
         let report = frame.reporting() && !event.modifiers.shift;
+        let to = if report {
+            WheelTo::Report
+        } else if modes.alt_screen && modes.alternate_scroll && !frame.reporting() {
+            WheelTo::Arrows
+        } else {
+            WheelTo::Scrollback
+        };
+        // What was left over is in another destination's units, or going the
+        // other way: drop it.
+        if self.wheel_to != to || self.wheel * lines < 0. {
+            self.wheel = 0.;
+        }
+        self.wheel_to = to;
+        self.wheel += lines;
         let unit = if report { WHEEL_LINES } else { 1. };
         let steps = (self.wheel / unit).trunc();
         if steps == 0. {
@@ -408,8 +475,8 @@ impl TerminalView {
                 mods: mods(&event.modifiers),
             };
             let bytes = encode(event, modes).unwrap_or_default();
-            self.write(bytes.repeat(count), cx);
-        } else if modes.alt_screen && modes.alternate_scroll {
+            self.write_report(bytes.repeat(count), cx);
+        } else if to == WheelTo::Arrows {
             let key = if up { Key::Up } else { Key::Down };
             let bytes = keys::encode(key, Mods::NONE, modes).unwrap_or_default();
             self.write(bytes.repeat(count), cx);
@@ -425,7 +492,7 @@ impl TerminalView {
     /// Called once a frame, from the element's prepaint; returns which way it
     /// scrolled, if it did.
     pub(crate) fn drag_scroll(&mut self, frame: &Frame) -> i32 {
-        let (Some(Drag::Select(position)), Some(terminal)) = (self.drag, &self.terminal) else {
+        let (Some(Drag(position)), Some(terminal)) = (self.drag, &self.terminal) else {
             return 0;
         };
         let direction = frame.drag_scroll(position);

@@ -407,3 +407,215 @@ fn reporting(cx: &mut TestAppContext) {
     assert_eq!(selected(&view, cx).as_deref(), Some("ready"));
     expect_written(&view, cx, b"\x1b[<0;6;3M\x1b[<0;6;3m");
 }
+
+fn button_down(cx: &mut VisualTestContext, position: Point<Pixels>, button: MouseButton) {
+    cx.simulate_event(MouseDownEvent {
+        position,
+        button,
+        modifiers: Modifiers::none(),
+        click_count: 1,
+        first_mouse: false,
+    });
+}
+
+fn button_up(cx: &mut VisualTestContext, position: Point<Pixels>, button: MouseButton) {
+    cx.simulate_event(MouseUpEvent {
+        position,
+        button,
+        modifiers: Modifiers::none(),
+        click_count: 1,
+    });
+}
+
+fn wheel_lines(cx: &mut VisualTestContext, position: Point<Pixels>, lines: f32, shift: bool) {
+    cx.simulate_event(ScrollWheelEvent {
+        position,
+        delta: ScrollDelta::Lines(point(0., lines)),
+        modifiers: if shift {
+            Modifiers::shift()
+        } else {
+            Modifiers::none()
+        },
+        ..Default::default()
+    });
+}
+
+#[gpui::test]
+fn reports_keep_selection_and_scrollback(cx: &mut TestAppContext) {
+    // Any-motion reporting, SGR, with history to scroll into.
+    let hex = "dd bs=64 count=1 2>/dev/null | od -An -tx1 -v";
+    let script = format!(
+        "stty raw -echo opost; seq 1 200; printf '\\033[?1003h\\033[?1006h'; echo ready; \
+         while :; do {hex}; done"
+    );
+    let (view, cx) = open(cx, options(&script), "ready");
+    let grid = cell(cx);
+    settle(cx);
+    let row = row_of(&view, cx, "ready");
+
+    // Shift selects and scrolls back past the program.
+    drag(
+        cx,
+        at(grid, row, 0, 0.2),
+        at(grid, row, 4, 0.8),
+        Modifiers::shift(),
+    );
+    assert_eq!(selected(&view, cx).as_deref(), Some("ready"));
+    wheel_lines(cx, at(grid, 5, 5, 0.5), 1., true);
+    let offset = snapshot(&view, cx).display_offset;
+    assert!(offset > 0);
+    // The selection scrolled with the text; it's still there after.
+    assert!(selected(&view, cx).is_some());
+
+    // An ordinary movement reports to the program, and disturbs neither.
+    cx.simulate_mouse_move(at(grid, 2, 2, 0.5), None, Modifiers::none());
+    settle(cx);
+    assert!(selected(&view, cx).is_some());
+    // The program's reply scrolls history, which holds a held-back view in
+    // place; it isn't sent to the bottom.
+    assert!(snapshot(&view, cx).display_offset >= offset);
+    // The program's reading is off screen; look at it.
+    view.read_with(cx, |view, _| view.terminal().unwrap().scroll_to_bottom());
+    expect_written(&view, cx, b"\x1b[<35;3;3M");
+}
+
+#[gpui::test]
+fn overlapping_buttons_are_each_released(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx, hex_reader("\\033[?1000h\\033[?1006h"), "ready");
+    let grid = cell(cx);
+    settle(cx);
+    let position = at(grid, 2, 5, 0.5);
+    button_down(cx, position, MouseButton::Left);
+    button_down(cx, position, MouseButton::Right);
+    button_up(cx, position, MouseButton::Left);
+    button_up(cx, position, MouseButton::Right);
+    expect_written(
+        &view,
+        cx,
+        b"\x1b[<0;6;3M\x1b[<2;6;3M\x1b[<0;6;3m\x1b[<2;6;3m",
+    );
+}
+
+#[gpui::test]
+fn missed_release_is_reported_on_movement(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx, hex_reader("\\033[?1002h\\033[?1006h"), "ready");
+    let grid = cell(cx);
+    settle(cx);
+    button_down(cx, at(grid, 2, 5, 0.5), MouseButton::Left);
+    // Movement with no button held: the release was lost.
+    cx.simulate_mouse_move(at(grid, 4, 7, 0.5), None, Modifiers::none());
+    expect_written(&view, cx, b"\x1b[<0;6;3M\x1b[<0;8;5m");
+}
+
+#[gpui::test]
+fn shift_mid_drag_releases_to_the_program(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx, hex_reader("\\033[?1002h\\033[?1006h"), "ready");
+    let grid = cell(cx);
+    settle(cx);
+    button_down(cx, at(grid, 2, 5, 0.5), MouseButton::Left);
+    cx.simulate_mouse_move(at(grid, 2, 6, 0.5), MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_move(at(grid, 2, 7, 0.5), MouseButton::Left, Modifiers::shift());
+    cx.simulate_mouse_move(at(grid, 2, 8, 0.5), MouseButton::Left, Modifiers::shift());
+    button_up(cx, at(grid, 2, 8, 0.5), MouseButton::Left);
+    expect_written(&view, cx, b"\x1b[<0;6;3M\x1b[<32;7;3M\x1b[<0;8;3m");
+}
+
+#[gpui::test]
+fn shift_wheel_with_alternate_scroll_and_reporting_writes_nothing(cx: &mut TestAppContext) {
+    let (view, cx) = open(
+        cx,
+        hex_reader("\\033[?1049h\\033[?1007h\\033[?1000h\\033[?1006h"),
+        "ready",
+    );
+    let grid = cell(cx);
+    settle(cx);
+    let modes = snapshot(&view, cx).modes;
+    assert!(modes.alt_screen && modes.alternate_scroll && modes.mouse_report_click);
+    let middle = at(grid, 5, 5, 0.5);
+    wheel_lines(cx, middle, 1., true);
+    settle(cx);
+    assert!(written(&view, cx).is_empty());
+    // Without shift the program hears the wheel.
+    wheel_lines(cx, middle, 1., false);
+    expect_written(&view, cx, b"\x1b[<64;6;6M");
+}
+
+#[gpui::test]
+fn wheel_remainder_does_not_cross_destinations(cx: &mut TestAppContext) {
+    let hex = "dd bs=64 count=1 2>/dev/null | od -An -tx1 -v";
+    let script = format!(
+        "stty raw -echo opost; seq 1 200; printf '\\033[?1000h\\033[?1006h'; echo ready; \
+         while :; do {hex}; done"
+    );
+    let (view, cx) = open(cx, options(&script), "ready");
+    let grid = cell(cx);
+    settle(cx);
+    let middle = at(grid, 5, 5, 0.5);
+    // 2.5 lines toward a report, then half a line with shift: nothing
+    // scrolls, since the half line alone isn't a whole one.
+    wheel_lines(cx, middle, 2.5 / 3., false);
+    wheel_lines(cx, middle, 0.5 / 3., true);
+    assert_eq!(snapshot(&view, cx).display_offset, 0);
+    settle(cx);
+    assert!(written(&view, cx).is_empty());
+}
+
+/// A sibling drawn over the terminal's window that swallows mouse events.
+struct Swallow {
+    terminal: Entity<TerminalView>,
+}
+
+impl gpui::Render for Swallow {
+    fn render(
+        &mut self,
+        _: &mut gpui::Window,
+        _: &mut gpui::Context<Self>,
+    ) -> impl gpui::IntoElement {
+        use gpui::{InteractiveElement, ParentElement, Styled};
+        gpui::div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(
+                gpui::div()
+                    .w_full()
+                    .h(px(300.))
+                    .child(self.terminal.clone()),
+            )
+            .child(
+                gpui::div()
+                    .w_full()
+                    .h(px(300.))
+                    .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_mouse_move(|_, _, cx| cx.stop_propagation()),
+            )
+    }
+}
+
+#[gpui::test]
+fn gesture_ends_even_when_a_sibling_stops_propagation(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let options = hex_reader("\\033[?1002h\\033[?1006h");
+    let terminal =
+        cx.add_window_view(|window, cx| TerminalView::new(options, style(), window, cx).unwrap());
+    let (terminal, _) = terminal;
+    let (_, cx) = cx.add_window_view(|_, _| Swallow {
+        terminal: terminal.clone(),
+    });
+    cx.simulate_resize(size(px(800.), px(600.)));
+    wait_for_line(&terminal, cx, "ready");
+    settle(cx);
+    let grid = cell(cx);
+    button_down(cx, at(grid, 2, 5, 0.5), MouseButton::Left);
+    // Release over the sibling, below the terminal.
+    let below = point(px(100.), px(450.));
+    cx.simulate_mouse_move(below, MouseButton::Left, Modifiers::none());
+    button_up(cx, below, MouseButton::Left);
+    let bytes = {
+        settle(cx);
+        written(&terminal, cx)
+    };
+    let text = String::from_utf8(bytes).unwrap();
+    assert!(text.starts_with("\x1b[<0;6;3M"), "{text:?}");
+    assert!(text.ends_with('m'), "{text:?}");
+}
