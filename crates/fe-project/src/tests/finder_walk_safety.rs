@@ -7,7 +7,7 @@ use std::{
     os::unix::{ffi::OsStrExt, fs::symlink},
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc,
     },
     thread,
@@ -284,8 +284,9 @@ fn a_directory_swapped_for_a_symlink_mid_walk_is_not_followed() {
     let sub = root.join("sub");
     let (target, aside) = (outside.join("target"), outside.join("aside"));
     let stop = Arc::new(AtomicBool::new(false));
+    let swap_count = Arc::new(AtomicU64::new(0));
     let swapper = {
-        let stop = stop.clone();
+        let (stop, swap_count) = (stop.clone(), swap_count.clone());
         thread::spawn(move || {
             let mut swaps = 0_u64;
             while !stop.load(Ordering::Relaxed) {
@@ -294,6 +295,7 @@ fn a_directory_swapped_for_a_symlink_mid_walk_is_not_followed() {
                 fs::remove_file(&sub).unwrap();
                 fs::rename(&aside, &sub).unwrap();
                 swaps += 1;
+                swap_count.store(swaps, Ordering::Relaxed);
             }
             swaps
         })
@@ -308,7 +310,14 @@ fn a_directory_swapped_for_a_symlink_mid_walk_is_not_followed() {
     let started = std::time::Instant::now();
     let mut walks = 0;
     let mut found = None;
-    while found.is_none() && started.elapsed() < Duration::from_secs(1) {
+    // Walk until the minimums below are met (and for at least 1 s), however
+    // slow the machine is; the deadline only stops a swapper that is stuck.
+    while found.is_none()
+        && started.elapsed() < Duration::from_secs(30)
+        && (started.elapsed() < Duration::from_secs(1)
+            || walks <= 10
+            || swap_count.load(Ordering::Relaxed) <= 100)
+    {
         let mut index = walked(&root);
         found = found.or_else(|| leaked(&mut index));
         index.apply(&[FsChange::Rescan]);
