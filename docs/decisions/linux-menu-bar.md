@@ -33,6 +33,10 @@ window frame moves to `fe-shell` together (`app-shell.md` §1). fe-gpui's
 `menu` module gains what both kinds of menu share: `installed`, the table in
 use, and `run`, which runs an item as `choose` does for AppKit.
 
+Since kiln's K4.1, `MenuBarView` and the window frame live in kiln-shell
+(`kiln/crates/kiln-shell/src/menu_bar.rs`, `window_frame.rs`), and
+fe-workbench draws them.
+
 **Showing it.** `Workbench::set_menu_bar(true)`, which the standalone app
 calls where the platform has no native menu bar, as it calls `set_title_bar`
 on macOS. Tests call it on every platform, so CI on macOS covers the view.

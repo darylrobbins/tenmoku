@@ -18,8 +18,9 @@
 //!             .user_theme(paths.config_dir().unwrap().join("theme.toml")),
 //!     );
 //!     cx.open_window(kiln::window_options(&WindowSpec::main("Notes"), cx), |window, cx| {
-//!         window.follow_system_appearance(cx);
-//!         cx.new(|cx| Notes::new(window, cx))
+//!         let notes = cx.new(|cx| Notes::new(window, cx));
+//!         // The platform's chrome, and each window's setup.
+//!         cx.new(|cx| kiln::Root::new(notes, window, cx).title("Notes"))
 //!     })
 //!     .unwrap();
 //! });
@@ -347,7 +348,7 @@ impl Global for Watching {}
 ///
 /// 1. kiln's command dispatch, with the app commands (`app.quit`,
 ///    `window.close` and the rest) as typed actions too: [`crate::app`],
-///    [`crate::window`];
+///    [`crate::window`]; and the shell's, such as `menu_bar.open`;
 /// 2. the app's own commands, from [`Config::commands`];
 /// 3. the keymap and menus, parsed for this platform and checked against
 ///    every command registered so far, and the app's own catalogs
@@ -365,6 +366,7 @@ impl Global for Watching {}
 pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
     commands::init(cx, config.app_name.clone());
     crate::app_commands::init(cx);
+    kiln_shell::register(cx);
     for register in std::mem::take(&mut config.commands) {
         register(cx);
     }

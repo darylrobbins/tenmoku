@@ -30,8 +30,9 @@ pub fn init(cx: &mut App) {
 }
 
 /// Records the shell's commands, such as `menu_bar.open`, so keymaps can
-/// bind them: call it before the app's keymap is checked, as one of
-/// `kiln::Config::commands`.
+/// bind them: `kiln::init` calls it before it checks the app's keymap. An
+/// app not set up through `kiln::init` calls it itself, before its keymap
+/// is checked.
 pub fn register(cx: &mut App) {
     menu_bar::register(cx);
 }
