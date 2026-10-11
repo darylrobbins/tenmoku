@@ -737,3 +737,9 @@ context = "completion"
 keys = "escape"
 command = "completion.dismiss"
 context = "completion"
+
+# The command palette: every command that applies where focus is.
+[[bindings]]
+keys = "cmd-shift-p"
+command = "command_palette.toggle"
+context = "workbench"

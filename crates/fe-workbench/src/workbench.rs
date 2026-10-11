@@ -1386,3 +1386,7 @@ pub(crate) fn open_panel_failed(error: &str) -> (&'static str, String) {
 #[cfg(test)]
 #[path = "close_tests.rs"]
 mod close_tests;
+
+#[cfg(test)]
+#[path = "palette_tests.rs"]
+mod palette_tests;

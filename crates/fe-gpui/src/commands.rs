@@ -7,8 +7,8 @@
 use std::{ops::Range, ops::RangeInclusive, rc::Rc};
 
 use fe_command::{
-    Actor, CommandError, CommandId, ContextPredicate, DispatchError, Dispatched, Effect,
-    Invocation, Registry, Source, Value,
+    Actor, CommandError, CommandId, CommandMeta, ContextPredicate, DispatchError, Dispatched,
+    Effect, Invocation, Registry, Source, Value,
 };
 use fe_editor::commands::{Editor, EditorHost, EditorTarget};
 use fe_keymap::{CatalogError, CommandCatalog};
@@ -142,6 +142,16 @@ impl CommandCatalog for Catalog {
             result => result,
         }
     }
+}
+
+/// The editor's and vim's commands, for the command palette to list: it
+/// lists each where its context holds.
+pub fn command_list() -> Vec<CommandMeta> {
+    let editor = EDITOR_COMMANDS.with(Rc::clone);
+    let vim = vim::registry();
+    (editor.commands().cloned())
+        .chain(vim.commands().cloned())
+        .collect()
 }
 
 /// Registers the app commands, vim's among them, and the handler that runs

@@ -37,7 +37,9 @@ mod workbench;
 
 use std::rc::Rc;
 
-use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry, Value};
+use fe_command::{
+    Actor, CommandMeta, CommandTarget, ContextPredicate, Dispatched, Effect, Registry, Value,
+};
 use fe_keymap::{CatalogError, CommandCatalog};
 use gpui::{App, Global, Window};
 
@@ -84,6 +86,9 @@ pub fn init(cx: &mut App) {
     dock::init(cx);
     lsp::init(cx);
     kiln_shell::menu_bar::register(cx);
+    // `command_palette.toggle`, the palette listing these commands too.
+    kiln_shell::command_palette::register(cx);
+    kiln_shell::command_palette::add_commands(cx, command_list());
     // `app.quit` and `window.close` ask the windows' editors first.
     kiln_shell::close::init(cx);
     nav::init(cx);
@@ -141,6 +146,7 @@ pub fn command_catalog() -> Box<dyn CommandCatalog> {
         Box::new(find_bar::registry()),
         Box::new(lsp::registry()),
         kiln_shell::menu_bar::catalog(),
+        kiln_shell::command_palette::catalog(),
         Box::new(nav::registry()),
         Box::new(open::registry()),
         Box::new(outline_panel::registry()),
@@ -152,6 +158,27 @@ pub fn command_catalog() -> Box<dyn CommandCatalog> {
         Box::new(trust::registry()),
         fe_gpui::commands::command_catalog(),
     ]))
+}
+
+/// The workbench's commands and the editor's, for the command palette,
+/// which lists each where its context holds.
+fn command_list() -> Vec<CommandMeta> {
+    let mut list: Vec<CommandMeta> = new_registry().commands().cloned().collect();
+    list.extend(picker::registry().commands().cloned());
+    list.extend(dock::registry().commands().cloned());
+    list.extend(find_bar::registry().commands().cloned());
+    list.extend(lsp::registry().commands().cloned());
+    list.extend(nav::registry().commands().cloned());
+    list.extend(open::registry().commands().cloned());
+    list.extend(outline_panel::registry().commands().cloned());
+    list.extend(pane_group::registry().commands().cloned());
+    list.extend(pane_toolbar::registry().commands().cloned());
+    list.extend(project_panel::registry().commands().cloned());
+    list.extend(references_panel::registry().commands().cloned());
+    list.extend(status_bar::registry().commands().cloned());
+    list.extend(trust::registry().commands().cloned());
+    list.extend(fe_gpui::commands::command_list());
+    list
 }
 
 /// Each catalog in turn, until one knows the command.
