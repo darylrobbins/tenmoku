@@ -11,6 +11,7 @@ mod prompt;
 mod tabs;
 mod text_field;
 mod text_input;
+mod text_input_ime;
 mod theme_tokens;
 mod tree;
 mod tree_row;

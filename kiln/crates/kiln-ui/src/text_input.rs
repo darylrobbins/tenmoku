@@ -5,8 +5,8 @@ use std::ops::Range;
 use gpui::{
     App, Bounds, Context, ElementInputHandler, EntityInputHandler, EventEmitter, FocusHandle,
     Focusable, Hsla, InteractiveElement as _, IntoElement, MouseButton, ParentElement as _, Pixels,
-    Point, Render, SharedString, Styled as _, UTF16Selection, Window, canvas, div,
-    prelude::FluentBuilder as _, px,
+    Point, Render, SharedString, Styled as _, TextRun, UTF16Selection, Window, canvas, div,
+    prelude::FluentBuilder as _, px, size,
 };
 
 use crate::{ActiveTheme as _, Tokens, UiTheme};
@@ -20,7 +20,12 @@ pub enum TextInputEvent {
 }
 
 /// A single-line text input. Typed text goes at the end: there's no caret
-/// movement, selection or IME composition (M6).
+/// movement or selection.
+///
+/// An IME composition sits after the text, underlined. [`TextInput::text`]
+/// leaves it out and no [`TextInputEvent::Changed`] is emitted while it's
+/// open, so a picker doesn't refilter on each romaji key; committing it
+/// appends its text and emits one `Changed`.
 ///
 /// Its element sets the [`TextInput::KEY_CONTEXT`] key context. Its editing
 /// keys are commands the host registers and binds in that context, which
@@ -35,12 +40,23 @@ pub struct TextInput {
     placeholder: SharedString,
     focus: FocusHandle,
     bordered: bool,
+    /// The composition after the text, and the selected bytes within it.
+    marked: Option<(String, Range<usize>)>,
+    /// The font and size it was last drawn in, which it inherits from its
+    /// parents: the platform asks for bounds outside drawing.
+    /// Committed text was deleted under the composition: `Changed` is owed
+    /// when it ends.
+    change_owed: bool,
+    drawn_font: Option<(gpui::Font, Pixels)>,
 }
 
 impl EventEmitter<TextInputEvent> for TextInput {}
 
 impl TextInput {
     pub const KEY_CONTEXT: &str = "text_input";
+
+    /// Its horizontal padding (`px_3`), in rems.
+    const PADDING_REMS: f32 = 0.75;
 
     /// Its colours come from `cx.theme()` as it renders. `_theme` is
     /// ignored: deprecated, kept so callers that pass a [`UiTheme`] build.
@@ -50,6 +66,9 @@ impl TextInput {
             placeholder: placeholder.into(),
             focus: cx.focus_handle(),
             bordered: false,
+            marked: None,
+            change_owed: false,
+            drawn_font: None,
         }
     }
 
@@ -74,47 +93,52 @@ impl TextInput {
         &self.text
     }
 
-    /// Replaces the text, without emitting [`TextInputEvent::Changed`].
+    /// Replaces the text and drops any composition, without emitting
+    /// [`TextInputEvent::Changed`].
     pub fn set_text(&mut self, text: impl Into<String>, cx: &mut Context<Self>) {
+        self.marked = None;
+        self.change_owed = false;
         self.text = text.into();
         cx.notify();
     }
 
-    /// Adds `text` at the end, up to its first line break.
+    /// Adds `text` at the end, up to its first line break. This and the other
+    /// editing methods cancel a composition that's open.
     pub fn insert(&mut self, text: &str, cx: &mut Context<Self>) {
+        self.marked = None;
         let line = text.lines().next().unwrap_or_default();
-        if !line.is_empty() {
-            self.text.push_str(line);
-            self.changed(cx);
-        }
+        self.text.push_str(line);
+        self.finish_edit(!line.is_empty(), cx);
     }
 
     /// Deletes the last char.
     pub fn backspace(&mut self, cx: &mut Context<Self>) {
-        if self.text.pop().is_some() {
-            self.changed(cx);
-        }
+        self.marked = None;
+        let edited = self.text.pop().is_some();
+        self.finish_edit(edited, cx);
     }
 
     /// Deletes the trailing spaces and the word before them, or the run of
     /// punctuation (such as a `/`) if that comes first.
     pub fn delete_word_left(&mut self, cx: &mut Context<Self>) {
+        self.marked = None;
         let word = |ch: char| ch.is_alphanumeric() || ch == '_';
         let trimmed = self.text.trim_end();
         let punctuation = trimmed.ends_with(|ch: char| !word(ch));
         let kept =
             trimmed.trim_end_matches(|ch: char| word(ch) != punctuation && !ch.is_whitespace());
-        if kept.len() < self.text.len() {
+        let edited = kept.len() < self.text.len();
+        if edited {
             self.text.truncate(kept.len());
-            self.changed(cx);
         }
+        self.finish_edit(edited, cx);
     }
 
     pub fn clear(&mut self, cx: &mut Context<Self>) {
-        if !self.text.is_empty() {
-            self.text.clear();
-            self.changed(cx);
-        }
+        self.marked = None;
+        let edited = !self.text.is_empty();
+        self.text.clear();
+        self.finish_edit(edited, cx);
     }
 
     /// Adds the clipboard's text, up to its first line break.
@@ -134,23 +158,56 @@ impl TextInput {
         cx.notify();
     }
 
-    /// The byte range of UTF-16 range `range`, clamped to the text.
-    fn byte_range(&self, range: &Range<usize>) -> Range<usize> {
-        let offset = |utf16: usize| {
-            let mut seen = 0;
-            for (ix, ch) in self.text.char_indices() {
-                if seen >= utf16 {
-                    return ix;
-                }
-                seen += ch.len_utf16();
+    /// The committed text and the composition, as the platform sees them.
+    fn full_text(&self) -> String {
+        let marked = self.marked.as_ref().map_or("", |(text, _)| text);
+        format!("{}{marked}", self.text)
+    }
+
+    /// The byte offset in `text` of UTF-16 offset `utf16`, clamped.
+    fn byte_offset(text: &str, utf16: usize) -> usize {
+        let mut seen = 0;
+        for (ix, ch) in text.char_indices() {
+            if seen >= utf16 {
+                return ix;
             }
-            self.text.len()
-        };
-        offset(range.start)..offset(range.end.max(range.start))
+            seen += ch.len_utf16();
+        }
+        text.len()
+    }
+
+    /// The byte range of UTF-16 range `range` in `text`, clamped to it.
+    fn byte_range(text: &str, range: &Range<usize>) -> Range<usize> {
+        Self::byte_offset(text, range.start)..Self::byte_offset(text, range.end.max(range.start))
     }
 
     fn utf16_len(&self) -> usize {
         self.text.encode_utf16().count()
+    }
+
+    /// The composition's UTF-16 range, after the text.
+    fn marked_utf16(&self) -> Option<Range<usize>> {
+        let (text, _) = self.marked.as_ref()?;
+        let start = self.utf16_len();
+        Some(start..start + text.encode_utf16().count())
+    }
+
+    /// Ends an edit that dropped the composition: emits one `Changed` if
+    /// `edited` or the composition's replacement owes one, else redraws.
+    fn finish_edit(&mut self, edited: bool, cx: &mut Context<Self>) {
+        if std::mem::take(&mut self.change_owed) || edited {
+            self.changed(cx);
+        } else {
+            cx.notify();
+        }
+    }
+
+    /// Appends the composition's text and emits `Changed`.
+    fn commit_marked(&mut self, cx: &mut Context<Self>) {
+        if let Some((text, _)) = self.marked.take() {
+            self.text.push_str(&text);
+            self.finish_edit(!text.is_empty(), cx);
+        }
     }
 }
 
@@ -161,7 +218,7 @@ impl Focusable for TextInput {
 }
 
 /// Text from the platform: typing replaces no range, so it goes at the
-/// end. Composition (`replace_and_mark_text_in_range`) isn't supported.
+/// end. A composition is kept apart from the text until it commits.
 impl EntityInputHandler for TextInput {
     fn text_for_range(
         &mut self,
@@ -170,9 +227,10 @@ impl EntityInputHandler for TextInput {
         _: &mut Window,
         _: &mut Context<Self>,
     ) -> Option<String> {
-        let bytes = self.byte_range(&range);
-        let text = self.text[bytes].to_string();
-        let start = range.start.min(self.utf16_len());
+        let full = self.full_text();
+        let bytes = Self::byte_range(&full, &range);
+        let text = full[bytes].to_string();
+        let start = range.start.min(full.encode_utf16().count());
         actual_range.replace(start..start + text.encode_utf16().count());
         Some(text)
     }
@@ -183,18 +241,27 @@ impl EntityInputHandler for TextInput {
         _: &mut Window,
         _: &mut Context<Self>,
     ) -> Option<UTF16Selection> {
-        let end = self.utf16_len();
+        let start = self.utf16_len();
+        let range = match &self.marked {
+            Some((text, selected)) => {
+                let utf16 = |bytes: usize| text[..bytes].encode_utf16().count();
+                start + utf16(selected.start)..start + utf16(selected.end)
+            }
+            None => start..start,
+        };
         Some(UTF16Selection {
-            range: end..end,
+            range,
             reversed: false,
         })
     }
 
     fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
-        None
+        self.marked_utf16()
     }
 
-    fn unmark_text(&mut self, _: &mut Window, _: &mut Context<Self>) {}
+    fn unmark_text(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        self.commit_marked(cx);
+    }
 
     fn replace_text_in_range(
         &mut self,
@@ -203,11 +270,18 @@ impl EntityInputHandler for TextInput {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match range.map(|range| self.byte_range(&range)) {
+        let commits = range.is_none() || range == self.marked_utf16();
+        if commits {
+            // insert cancels the composition; an empty commit just ends it.
+            self.insert(text, cx);
+            return;
+        }
+        self.marked = None;
+        match range.map(|range| Self::byte_range(&self.text, &range)) {
             Some(bytes) if bytes != (self.text.len()..self.text.len()) => {
                 let line = text.lines().next().unwrap_or_default();
                 self.text.replace_range(bytes, line);
-                self.changed(cx);
+                self.finish_edit(true, cx);
             }
             _ => self.insert(text, cx),
         }
@@ -215,22 +289,93 @@ impl EntityInputHandler for TextInput {
 
     fn replace_and_mark_text_in_range(
         &mut self,
-        _: Option<Range<usize>>,
-        _: &str,
-        _: Option<Range<usize>>,
+        range: Option<Range<usize>>,
+        text: &str,
+        selected: Option<Range<usize>>,
         _: &mut Window,
-        _: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
+        let line = text.lines().next().unwrap_or_default();
+        if line.is_empty() {
+            // An empty mark ends the composition, whatever its range, and
+            // edits nothing.
+            self.marked = None;
+            self.finish_edit(false, cx);
+            return;
+        }
+        let committed = self.utf16_len();
+        let (mut prefix, mut suffix) = (String::new(), String::new());
+        if let Some(range) = range {
+            // The composition is always last, so a range reaching into the
+            // committed text deletes that part of it.
+            if range.start < committed {
+                let bytes = Self::byte_range(&self.text, &range);
+                self.change_owed |= !bytes.is_empty();
+                self.text.replace_range(bytes, "");
+            }
+            if let Some((old, _)) = &self.marked {
+                let rel =
+                    range.start.saturating_sub(committed)..range.end.saturating_sub(committed);
+                let bytes = Self::byte_range(old, &rel);
+                if range.start >= committed {
+                    prefix = old[..bytes.start].to_string();
+                    suffix = old[bytes.end..].to_string();
+                } else {
+                    suffix = old[bytes.end..].to_string();
+                }
+            }
+        }
+        let start = prefix.len();
+        let end = start + line.len();
+        let selected = selected
+            .map(|range| Self::byte_range(line, &range))
+            .map_or(end..end, |range| start + range.start..start + range.end);
+        let whole = format!("{prefix}{line}{suffix}");
+        self.marked = Some((whole, selected));
+        cx.notify();
     }
 
     fn bounds_for_range(
         &mut self,
-        _: Range<usize>,
+        range: Range<usize>,
         element_bounds: Bounds<Pixels>,
-        _: &mut Window,
+        window: &mut Window,
         _: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
-        Some(element_bounds)
+        let full = self.full_text();
+        if full.is_empty() {
+            return Some(Bounds::new(
+                element_bounds.origin,
+                size(px(0.), element_bounds.size.height),
+            ));
+        }
+        let style = window.text_style();
+        let rem = window.rem_size();
+        let (font, font_size) = self
+            .drawn_font
+            .clone()
+            .unwrap_or_else(|| (style.font(), style.font_size.to_pixels(rem)));
+        let run = TextRun {
+            len: full.len(),
+            font,
+            color: style.color,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        let line = window.text_system().shape_line(
+            SharedString::from(full.clone()),
+            font_size,
+            &[run],
+            None,
+        );
+        let bytes = Self::byte_range(&full, &range);
+        // The text starts after the element's `px_3` padding.
+        let left = element_bounds.left() + rem * Self::PADDING_REMS;
+        Some(Bounds::from_corners(
+            gpui::point(left + line.x_for_index(bytes.start), element_bounds.top()),
+            gpui::point(left + line.x_for_index(bytes.end), element_bounds.bottom()),
+        ))
     }
 
     fn character_index_for_point(
@@ -272,16 +417,22 @@ impl Render for TextInput {
             .px_3()
             .text_color(text)
             .child(self.text.clone())
+            .when_some(self.marked.as_ref(), |row, (marked, _)| {
+                row.child(div().underline().child(marked.clone()))
+            })
             .when(focused, |row| {
                 row.child(div().w(px(1.)).h(px(14.)).bg(text))
             })
-            .when(self.text.is_empty(), |row| {
+            .when(self.text.is_empty() && self.marked.is_none(), |row| {
                 row.child(div().text_color(muted).child(self.placeholder.clone()))
             })
             .child(
                 canvas(
                     |_, _, _| {},
                     move |bounds, _, window, cx| {
+                        let style = window.text_style();
+                        let drawn = (style.font(), style.font_size.to_pixels(window.rem_size()));
+                        input.update(cx, |input, _| input.drawn_font = Some(drawn));
                         window.handle_input(&focus, ElementInputHandler::new(bounds, input), cx)
                     },
                 )
