@@ -89,14 +89,24 @@ pub trait PaneItem: Render + Focusable + Sized + 'static {
     }
 
     /// Asked before anything closes the item: its tab, its pane, its
-    /// window, or quitting. It isn't asked while an item that stays open
-    /// shares its document. The default keeps a dirty item open.
+    /// window, or quitting ([`crate::close`]). It isn't asked while an
+    /// item that stays open shares its document. The default keeps a dirty
+    /// item open.
     fn may_close(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> CloseAnswer {
         if self.is_dirty(cx) {
             CloseAnswer::Keep
         } else {
             CloseAnswer::Close
         }
+    }
+
+    /// Its close-state revision: a number that changes whenever anything
+    /// [`PaneItem::may_close`] answers by changes, such as whether it's
+    /// dirty and its document's version. A close that an item agreed to
+    /// asks it again if this changed before the close went ahead
+    /// ([`crate::close`]). The default follows [`PaneItem::is_dirty`] only.
+    fn close_revision(&self, cx: &App) -> u64 {
+        u64::from(self.is_dirty(cx))
     }
 
     /// Saves it, for Save All and quitting with unsaved items. `None`: it
@@ -233,6 +243,7 @@ pub trait ItemHandle: 'static {
     /// [`PaneItem::shares_document`].
     fn shares_document(&self, other: &dyn ItemHandle, cx: &App) -> bool;
     fn may_close(&self, window: &mut Window, cx: &mut App) -> CloseAnswer;
+    fn close_revision(&self, cx: &App) -> u64;
     fn save(&self, window: &mut Window, cx: &mut App) -> Option<Task<gpui::Result<()>>>;
     fn path(&self, cx: &App) -> Option<PathBuf>;
     fn breadcrumbs(&self, cx: &App) -> Vec<ItemCrumb>;
@@ -302,6 +313,10 @@ impl<T: PaneItem> ItemHandle for Entity<T> {
 
     fn may_close(&self, window: &mut Window, cx: &mut App) -> CloseAnswer {
         self.update(cx, |item, cx| item.may_close(window, cx))
+    }
+
+    fn close_revision(&self, cx: &App) -> u64 {
+        self.read(cx).close_revision(cx)
     }
 
     fn save(&self, window: &mut Window, cx: &mut App) -> Option<Task<gpui::Result<()>>> {

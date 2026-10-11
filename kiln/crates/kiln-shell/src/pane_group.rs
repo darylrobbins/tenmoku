@@ -8,17 +8,23 @@
 //! A tab moves between panes only through [`PaneGroup::move_tab`], for a
 //! key or a drop, which can split a new pane off for it.
 
-use std::ops::{Deref, DerefMut};
+use std::{
+    ops::{Deref, DerefMut},
+    rc::Rc,
+};
 
 use gpui::{
     AnyElement, App, AppContext as _, Bounds, Context, CursorStyle, DragMoveEvent, Entity,
     InteractiveElement as _, IntoElement as _, MouseButton, MouseDownEvent, ParentElement as _,
-    Pixels, Point, Render, StatefulInteractiveElement as _, Styled as _, Window, div,
+    Pixels, Point, Render, StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div,
     prelude::FluentBuilder as _, px,
 };
 use kiln_ui::UiTheme;
 
-use crate::{ItemId, PaneView};
+use crate::{
+    ItemHandle, ItemId, PaneView,
+    close::{self, CloseKind, CloseRequest, Closing, Items, LiveItems},
+};
 
 /// The narrowest a pane gets by dragging a border.
 pub const MIN_PANE_WIDTH: Pixels = px(120.);
@@ -528,6 +534,13 @@ impl<V: PaneView> PaneGroup<V> {
             .map(|(_, pane)| pane.clone())
     }
 
+    /// Every item of every pane, in the panes' order.
+    pub fn items(&self, cx: &App) -> Vec<Box<dyn ItemHandle>> {
+        (self.panes().into_iter())
+            .flat_map(|pane| pane.read(cx).pane().items().to_vec())
+            .collect()
+    }
+
     /// The ratios of the axis at `path`, member indices from the root.
     pub fn ratios(&self, path: &[usize]) -> Option<Vec<f32>> {
         Some(self.root.axis_ref(path)?.1.ratios.clone())
@@ -591,8 +604,9 @@ impl<V: PaneView> PaneGroup<V> {
     /// tab moves, for a drag or a key. Into another pane, it goes at the
     /// index given, shown and focused; if that pane shows its document
     /// already ([`ItemHandle::shares_document`](crate::ItemHandle)), that
-    /// item is shown instead and the moved one closes, as long as its
-    /// unsaved changes live on in another item. A split makes the pane
+    /// item is shown instead and the moved one closes, once it agrees to
+    /// ([`close::confirm`]), which it isn't asked while that copy shows its
+    /// document. A split makes the pane
     /// first. Within its own pane, the item moves to the index. Returns the
     /// pane the item went to (or that showed its document), and whether it
     /// was split off for the move: the host then joins it to the group if
@@ -623,27 +637,44 @@ impl<V: PaneView> PaneGroup<V> {
             source.update(cx, |pane, cx| pane.reorder_item(ix, index, window, cx));
             return Some((target, new));
         }
-        let state = source.read(cx).pane();
-        let moved = state.items()[ix].boxed_clone();
+        let moved = source.read(cx).pane().items()[ix].boxed_clone();
         let shown = (target.read(cx).pane().items())
             .iter()
-            .position(|other| other.shares_document(&*moved, cx));
-        if let Some(shown) = shown {
-            if moved.is_dirty(cx) && !state.shown_elsewhere(&*moved, cx) {
-                log::warn!(
-                    "not moving {}: it has unsaved changes, and the target shows another copy",
-                    moved.tab_title(cx)
-                );
-                return None;
+            .any(|other| other.shares_document(&*moved, cx));
+        if shown {
+            // The moved item closes, the target's copy showing in its place.
+            let now = Items {
+                closing: vec![moved.boxed_clone()],
+                open: self.items(cx),
+            };
+            let panes: Vec<_> = self.panes().into_iter().map(Entity::downgrade).collect();
+            let id = moved.id();
+            let live: LiveItems = Rc::new(move |cx| {
+                let open: Vec<_> = (panes.iter().filter_map(WeakEntity::upgrade))
+                    .flat_map(|pane| pane.read(cx).pane().items().to_vec())
+                    .collect();
+                let closing = open.iter().filter(|item| item.id() == id).cloned();
+                Some(Items {
+                    closing: closing.collect(),
+                    open,
+                })
+            });
+            let request =
+                CloseRequest::new(CloseKind::Items).scope(window.window_handle(), Some(now), live);
+            let (from, to) = (source.downgrade(), target.downgrade());
+            let commit = move |window: Option<&mut Window>, cx: &mut App| {
+                if let Some(window) = window {
+                    show_copy(&from, &to, id, window, cx);
+                }
+            };
+            match close::confirm(request, commit, Some(window), cx) {
+                Closing::Now => show_copy(&source.downgrade(), &target.downgrade(), id, window, cx),
+                Closing::Refused => return None,
+                Closing::Later(closing) => {
+                    closing.detach();
+                    return None;
+                }
             }
-            source.update(cx, |pane, cx| {
-                pane.take_item(ix, window, cx);
-                cx.notify();
-            });
-            target.update(cx, |pane, cx| {
-                pane.activate_item(shown, window, cx);
-                cx.notify();
-            });
         } else {
             let item = source.update(cx, |pane, cx| {
                 cx.notify();
@@ -672,6 +703,46 @@ impl<V: PaneView> PaneGroup<V> {
             .child(self.root.render(&mut Vec::new(), ui, group, cx))
             .into_any_element()
     }
+}
+
+/// Closes item `id` in `source`, and shows the item in `target` that
+/// shows its document.
+fn show_copy<V: PaneView>(
+    source: &WeakEntity<V>,
+    target: &WeakEntity<V>,
+    id: ItemId,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let Some(moved) = (source.upgrade()).and_then(|source| {
+        source
+            .read(cx)
+            .pane()
+            .items()
+            .iter()
+            .find(|item| item.id() == id)
+            .cloned()
+    }) else {
+        return;
+    };
+    source
+        .update(cx, |pane, cx| {
+            if let Some(ix) = pane.pane().position(id) {
+                pane.take_item(ix, window, cx);
+            }
+            cx.notify();
+        })
+        .ok();
+    target
+        .update(cx, |pane, cx| {
+            let shown =
+                (pane.pane().items().iter()).position(|other| other.shares_document(&*moved, cx));
+            if let Some(shown) = shown {
+                pane.activate_item(shown, window, cx);
+            }
+            cx.notify();
+        })
+        .ok();
 }
 
 /// How far `to` lies from `from` in `direction`, and how much they overlap

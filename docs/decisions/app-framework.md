@@ -150,3 +150,37 @@ Its open questions:
 - Q9 (names): framework names are neutral; fastedit's stay as they are.
 - Q4, Q6, Q7, Q8 and Q10 carry over unchanged; Q8's layouts live under the
   app's `AppPaths` state directory.
+
+## 7. Where kiln-shell departs from `app-shell.md`
+
+K5's batch C (K5.7–K5.10) follows `app-shell.md` §3.6 and §4 as they read
+after T275 (its F4 claims and F5 close transactions), except as follows.
+
+**Close vetoes (K5.7, §3.6 and F5).**
+
+- `Shell::confirm_close(items) -> Task<bool>` is instead
+  `kiln_shell::close::confirm(CloseRequest, commit, window, cx) ->
+  Closing`. A tab closes from its pane's update and a pane from the host's,
+  outside any `Context<Shell>`, and the close must happen in the caller's
+  update when nothing is asked (`Closing::Now`), or else in the update
+  that revalidates the transaction (the `commit` closure, `Closing::Later`).
+  A `CloseRequest` names its kind (items, pane, window, quit) and, per
+  window, the items it closes and every item open there, read now and
+  again on each later pass (`LiveItems`), so a pane or window that gains
+  an item while it waits asks about it. Hosts give each window's items
+  with `close::set_window_items`.
+- `app.quit` and `window.close` stay kiln-platform's app commands; a
+  hook (`kiln_platform::commands::set_close_handlers`) has them run
+  kiln-shell's `close::quit` and `close::close_window`, which
+  `kiln_shell::init` installs. `close::set_quit` replaces `cx.quit()` for
+  a test or a host that does more as it quits.
+- A request that has nothing to ask (each item it closes has its document
+  open in an item that stays) closes at once even while another close
+  waits on an answer, rather than waiting behind it: fastedit's
+  `closing_panes_and_tabs` test closes such a pane while another pane's
+  close asks.
+- Within one transaction an item isn't asked if an item it closes that
+  shows the same document has agreed at an unchanged revision, so closing
+  a window with two split views of one dirty file asks once.
+- `PaneItem::close_revision`'s default follows `is_dirty` alone;
+  `EditorView`'s also follows its buffer's version.

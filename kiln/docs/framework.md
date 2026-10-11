@@ -92,6 +92,19 @@ an app's AI backend can load the same commands, config and keymaps.
   and `Dock`, and a `RootTrust` that any `TrustHost` view holds. The
   modal layer (`ModalLayer`, `ModalId`) shows any `ModalView`: a GPUI
   `ManagedView` that can be dismissed from outside, as `Picker` can.
+- **Closing asks first.** Every path that removes items (a tab, a tab
+  dropped on a copy of its document, a pane, a window by command or by its
+  close button, and quitting, window by window) asks them through
+  `close::confirm`, skipping an item whose document stays open in another.
+  When every item answers `Close`, the close happens in the caller's
+  update. An item that asks the user makes the close a transaction: one at
+  a time (a second request for the same close joins it; others wait,
+  unless they have nothing to ask), each answer kept with the item's
+  `close_revision`, and the scope read afresh after each answer, so an
+  item that changed since it agreed, or came while the close waited, is
+  asked again before anything closes. Hosts give each window's items with
+  `close::set_window_items`; `app.quit` and `window.close` go through the
+  same transactions.
 - **Widgets.** Stateless ones are `RenderOnce` builders over a `Div`, so
   GPUI's `Styled`, `InteractiveElement` and `FluentBuilder` methods work on
   them; values are controlled. Stateful ones are `Entity<T>` views that emit

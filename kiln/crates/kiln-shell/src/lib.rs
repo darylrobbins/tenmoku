@@ -19,13 +19,15 @@
 //!
 //! [`Shell`] is a window's shell around the host's centre view: the chrome,
 //! the docks, the status bar and the modal layer, under the app's root key
-//! context. A host's root folder's workspace trust is [`trust`]'s.
+//! context. Whatever closes items (a tab, a pane, a window, quitting) asks
+//! them first ([`close`]). A host's root folder's workspace trust is [`trust`]'s.
 //!
 //! The shell's leaf modules, which a host can use before it adopts the
 //! rest: the status bar's items ([`status`]), a picker palette over a
 //! delegate ([`picker`]), and a background writer for saved state
 //! ([`persist`]).
 
+pub mod close;
 pub mod crumbs;
 pub mod dock;
 pub mod item;
@@ -47,6 +49,7 @@ use kiln_command::{CommandId, Value};
 use kiln_core::{CatalogError, CommandCatalog};
 use kiln_platform::Capabilities;
 
+pub use close::{CloseKind, CloseRequest, Closing};
 pub use dock::{Dock, DockItem, DockPosition, DockState, DockView, PanelId};
 pub use item::{CloseAnswer, ItemCrumb, ItemHandle, ItemId, PaneItem};
 pub use menu_bar::MenuBarView;
@@ -61,8 +64,10 @@ pub use title_bar::TitleBar;
 
 /// Sets up what the shell draws for the platform: where it has no native
 /// alerts, `window.prompt` shows kiln-ui's in-window prompt, themed and
-/// wrapped, instead of GPUI's plain fallback.
+/// wrapped, instead of GPUI's plain fallback. `app.quit` and
+/// `window.close` ask the windows' items first ([`close`]).
 pub fn init(cx: &mut App) {
+    close::init(cx);
     if !Capabilities::current().native_prompts {
         cx.set_prompt_builder(kiln_ui::prompt_renderer);
     }

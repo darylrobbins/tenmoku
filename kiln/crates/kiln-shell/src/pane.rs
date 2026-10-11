@@ -32,6 +32,7 @@ use kiln_ui::{TAB_HEIGHT, TabBar, UiTheme};
 
 use crate::{
     ItemHandle, ItemId,
+    close::{self, CloseKind, CloseRequest, Closing, Items, LiveItems},
     pane_group::{Destination, Direction},
 };
 
@@ -221,6 +222,7 @@ pub struct PaneState<V> {
     peers: Peers<V>,
     /// The view's.
     id: EntityId,
+    view: WeakEntity<V>,
     emptied: bool,
     ui: UiTheme,
 }
@@ -241,6 +243,7 @@ impl<V: PaneView> PaneState<V> {
             hover: None,
             peers: Peers::default(),
             id: cx.entity_id(),
+            view: cx.weak_entity(),
             emptied: false,
             ui,
         }
@@ -335,6 +338,14 @@ impl<V: PaneView> PaneState<V> {
     pub fn shown_in_peers(&self, item: &dyn ItemHandle, cx: &App) -> bool {
         self.peer_item(cx, |other| other.shares_document(item, cx))
             .is_some()
+    }
+
+    /// Every item of the group's panes, this one's first. It reads the
+    /// others' views, so it can be called while this one updates.
+    pub fn group_items(&self, cx: &App) -> Vec<Box<dyn ItemHandle>> {
+        let mut items = self.items.clone();
+        items.extend(peer_items(&self.peers, self.id, cx));
+        items
     }
 
     /// The first item in another pane of the group that `pick`s.
@@ -568,6 +579,20 @@ impl<V: PaneView> PaneState<V> {
     }
 }
 
+/// The items of the panes in `peers` but `except`.
+fn peer_items<V: PaneView>(
+    peers: &Peers<V>,
+    except: EntityId,
+    cx: &App,
+) -> Vec<Box<dyn ItemHandle>> {
+    let peers = peers.borrow();
+    (peers.iter())
+        .filter(|peer| peer.entity_id() != except)
+        .filter_map(WeakEntity::upgrade)
+        .flat_map(|peer| peer.read(cx).pane().items.clone())
+        .collect()
+}
+
 /// A view that holds a [`PaneState`] and draws it. Its provided methods
 /// are the pane's operations; a host overrides the hooks to keep its own
 /// state in step.
@@ -682,19 +707,55 @@ pub trait PaneView:
     }
 
     /// Closes the active item and activates its right neighbour, or the
-    /// left one if it was last. An item with unsaved changes stays open
-    /// unless another item, in this pane or another, shows its document:
-    /// the changes live on there.
+    /// left one if it was last, once the item agrees
+    /// ([`PaneItem::may_close`](crate::PaneItem::may_close), through
+    /// [`close::confirm`]). It isn't asked while another item, in this pane
+    /// or another, shows its document: its changes live on there. An item
+    /// that asks the user closes once they agree, if it's still open.
     fn close_active_item(&mut self, window: &mut Window, cx: &mut App) {
         let state = self.pane();
-        let Some(item) = state.items.get(state.active) else {
+        let Some(item) = state.active_item().map(ItemHandle::boxed_clone) else {
             return;
         };
-        if item.is_dirty(cx) && !state.shown_elsewhere(&**item, cx) {
-            log::warn!("not closing {}: it has unsaved changes", item.tab_title(cx));
-            return;
+        let (id, view, peers) = (item.id(), state.view.clone(), state.peers.clone());
+        let now = Items {
+            closing: vec![item],
+            open: state.group_items(cx),
+        };
+        let live: LiveItems = Rc::new(move |cx| {
+            let pane = view.upgrade()?;
+            let mut open = pane.read(cx).pane().items.clone();
+            open.extend(peer_items(&peers, pane.entity_id(), cx));
+            let closing = open.iter().filter(|item| item.id() == id).cloned();
+            Some(Items {
+                closing: closing.collect(),
+                open,
+            })
+        });
+        let view = state.view.clone();
+        let commit = move |window: Option<&mut Window>, cx: &mut App| {
+            let Some(window) = window else {
+                return;
+            };
+            view.update(cx, |pane, cx| {
+                if let Some(ix) = pane.pane().position(id) {
+                    pane.take_item(ix, window, cx);
+                    cx.notify();
+                }
+            })
+            .ok();
+        };
+        let request =
+            CloseRequest::new(CloseKind::Items).scope(window.window_handle(), Some(now), live);
+        match close::confirm(request, commit, Some(window), cx) {
+            Closing::Now => {
+                if let Some(ix) = self.pane().position(id) {
+                    self.take_item(ix, window, cx);
+                }
+            }
+            Closing::Refused => {}
+            Closing::Later(closing) => closing.detach(),
         }
-        self.take_item(state.active, window, cx);
     }
 }
 

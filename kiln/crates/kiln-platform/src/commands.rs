@@ -9,7 +9,7 @@
 
 use std::rc::Rc;
 
-use gpui::{Action, App, Global, SharedString, Window};
+use gpui::{Action, AnyWindowHandle, App, Global, SharedString, Window};
 use kiln_command::{
     Actor, CommandId, CommandTarget, Dispatched, Effect, Invocation, Registry, Value,
 };
@@ -54,7 +54,7 @@ pub fn app_commands(app_name: &str) -> Registry<AppCommands> {
     let mut app = Registry::new();
     let hide = format!("Hide {app_name}");
     let commands: [(&str, &str, AppCommand); 8] = [
-        ("app.quit", "Quit", |cx| cx.quit()),
+        ("app.quit", "Quit", quit),
         ("app.hide", &hide, |cx| cx.hide()),
         ("app.hide_others", "Hide Others", |cx| cx.hide_other_apps()),
         ("app.show_all", "Show All", |cx| cx.unhide_other_apps()),
@@ -67,9 +67,7 @@ pub fn app_commands(app_name: &str) -> Registry<AppCommands> {
         ("window.toggle_fullscreen", "Toggle Full Screen", |cx| {
             on_active_window(cx, |window| window.toggle_fullscreen())
         }),
-        ("window.close", "Close Window", |cx| {
-            on_active_window(cx, |window| window.remove_window())
-        }),
+        ("window.close", "Close Window", close_window),
     ];
     for (id, title, run) in commands {
         app.register(id, title, move |cx: &mut &mut App, _: &Actor| {
@@ -79,6 +77,54 @@ pub fn app_commands(app_name: &str) -> Registry<AppCommands> {
         .expect("app command IDs are valid and distinct");
     }
     app
+}
+
+/// What `app.quit` and `window.close` run instead of quitting and
+/// closing outright: a shell's, which asks the windows' items first.
+#[derive(Clone)]
+struct CloseHandlers {
+    quit: Rc<dyn Fn(&mut App)>,
+    close_window: Rc<CloseWindow>,
+}
+
+/// What `window.close` runs on a window.
+type CloseWindow = dyn Fn(AnyWindowHandle, &mut App);
+
+impl Global for CloseHandlers {}
+
+/// Has `app.quit` run `quit`, and `window.close` run `close_window` on the
+/// active window, in place of quitting and closing it outright: for a
+/// shell that asks the windows' items whether they may close first.
+/// `close_window` runs once the dispatch is over, as the window can't be
+/// updated until then.
+pub fn set_close_handlers(
+    cx: &mut App,
+    quit: impl Fn(&mut App) + 'static,
+    close_window: impl Fn(AnyWindowHandle, &mut App) + 'static,
+) {
+    cx.set_global(CloseHandlers {
+        quit: Rc::new(quit),
+        close_window: Rc::new(close_window),
+    });
+}
+
+/// `app.quit`: the close handlers' quit, else quitting.
+fn quit(cx: &mut App) {
+    match cx.try_global::<CloseHandlers>().cloned() {
+        Some(handlers) => (handlers.quit)(cx),
+        None => cx.quit(),
+    }
+}
+
+/// `window.close`: the close handlers' close on the active window, else
+/// closing it.
+fn close_window(cx: &mut App) {
+    let Some(handlers) = cx.try_global::<CloseHandlers>().cloned() else {
+        return on_active_window(cx, |window| window.remove_window());
+    };
+    if let Some(handle) = cx.active_window() {
+        cx.defer(move |cx| (handlers.close_window)(handle, cx));
+    }
 }
 
 /// Runs `f` on the active window, if any, once the current dispatch is

@@ -17,7 +17,7 @@ use kiln_platform::{Capabilities, focus};
 use kiln_ui::{ROW_HEIGHT, UiTheme};
 
 use crate::{
-    DockPosition, MenuBarView, ModalId, ModalLayer, ModalView, TitleBar,
+    Closing, DockPosition, MenuBarView, ModalId, ModalLayer, ModalView, TitleBar, close,
     menu_bar::Open,
     window_frame::{self, TopRow},
 };
@@ -71,7 +71,9 @@ impl Shell {
     /// A shell under the app's root key `context`, in `ui`'s colours, with
     /// no chrome, centre, docks or status bar yet. Making it has the
     /// window keep keys working when the focused element stops being drawn
-    /// ([`focus::watch`]).
+    /// ([`focus::watch`]), and the platform's close button ask the
+    /// window's items first ([`close::close_window`], over the items the
+    /// host gave [`close::set_window_items`]).
     pub fn new(
         context: impl Into<SharedString>,
         ui: UiTheme,
@@ -79,6 +81,18 @@ impl Shell {
         cx: &mut Context<Self>,
     ) -> Self {
         focus::watch(window, cx);
+        // The platform's close button asks the window's items first.
+        window.on_window_should_close(cx, |window, cx| {
+            let handle = window.window_handle();
+            match close::close_window(handle, Some(window), cx) {
+                Closing::Now => true,
+                Closing::Refused => false,
+                Closing::Later(closing) => {
+                    closing.detach();
+                    false
+                }
+            }
+        });
         let shell = cx.weak_entity();
         let modals = cx.new(|_| {
             let mut layer = ModalLayer::new();
