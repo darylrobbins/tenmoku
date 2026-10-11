@@ -283,3 +283,46 @@ fn selection_and_drop() {
         }
     }
 }
+
+#[test]
+fn refuses_a_cwd_the_user_cannot_enter() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = temp_dir();
+    let locked = dir.path().join("locked");
+    std::fs::create_dir(&locked).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o600)).unwrap();
+    // Root enters any directory.
+    if std::fs::read_dir(&locked).is_ok() && unsafe { libc::geteuid() } == 0 {
+        return;
+    }
+    let options = TerminalOptions {
+        cwd: locked.clone(),
+        shell: Some((
+            "/bin/sh".to_owned(),
+            vec!["-c".to_owned(), "pwd".to_owned()],
+        )),
+        scrollback: TerminalOptions::DEFAULT_SCROLLBACK,
+    };
+    let size = GridSize {
+        cols: 80,
+        rows: 24,
+        cell_width: 8,
+        cell_height: 16,
+    };
+    let error = Terminal::spawn(options, size)
+        .err()
+        .expect("spawn should fail");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+}
+
+#[test]
+fn output_of_an_unfinished_synchronized_update_survives_exit() {
+    let dir = temp_dir();
+    let mut session = Session::sh("printf 'before\\n\\033[?2026hhello'", dir.path(), 80, 10);
+
+    let snapshot = session.wait_for("Exited", |_, session| session.exited.is_some());
+    assert_eq!(snapshot.row_text(0), "before");
+    assert_eq!(snapshot.row_text(1), "hello");
+}

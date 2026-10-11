@@ -215,6 +215,124 @@ impl EventListener for Listener {
     }
 }
 
+/// The sequence that ends a synchronized update (DECSET 2026).
+const END_SYNCHRONIZED_UPDATE: &[u8] = b"\x1b[?2026l";
+
+/// A pty that ends an unfinished synchronized update once the child has exited
+/// and its output is read.
+///
+/// The parser holds the output after `ESC[?2026h` back until the update ends
+/// or its timeout fires, and the event loop stops on the child's exit without
+/// doing either, so that output would never reach the grid. alacritty offers
+/// no way to flush the parser from outside the loop, so this feeds it the end
+/// sequence through the pty's reader, after the last real byte. Where no
+/// update is open the sequence does nothing.
+struct FlushingPty {
+    pty: tty::Pty,
+    reader: FlushingReader,
+    child_exited: Arc<AtomicBool>,
+}
+
+struct FlushingReader {
+    file: std::fs::File,
+    child_exited: Arc<AtomicBool>,
+    flushed: bool,
+}
+
+impl FlushingPty {
+    fn new(pty: tty::Pty) -> io::Result<FlushingPty> {
+        let child_exited = Arc::new(AtomicBool::new(false));
+        // A duplicate shares the file description, so it reads what the
+        // registered descriptor reports readable.
+        let reader = FlushingReader {
+            file: pty.file().try_clone()?,
+            child_exited: child_exited.clone(),
+            flushed: false,
+        };
+        Ok(FlushingPty {
+            pty,
+            reader,
+            child_exited,
+        })
+    }
+}
+
+impl io::Read for FlushingReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let read = self.file.read(buf);
+        // Nothing left to read from an exited child: end of its output.
+        let drained = match &read {
+            Ok(0) => true,
+            Ok(_) => false,
+            Err(error) => {
+                error.kind() == io::ErrorKind::WouldBlock
+                    || error.raw_os_error() == Some(rustix::io::Errno::IO.raw_os_error())
+            }
+        };
+        if drained
+            && !self.flushed
+            && self.child_exited.load(Ordering::SeqCst)
+            && buf.len() >= END_SYNCHRONIZED_UPDATE.len()
+        {
+            self.flushed = true;
+            buf[..END_SYNCHRONIZED_UPDATE.len()].copy_from_slice(END_SYNCHRONIZED_UPDATE);
+            return Ok(END_SYNCHRONIZED_UPDATE.len());
+        }
+        read
+    }
+}
+
+impl tty::EventedReadWrite for FlushingPty {
+    type Reader = FlushingReader;
+    type Writer = <tty::Pty as tty::EventedReadWrite>::Writer;
+
+    unsafe fn register(
+        &mut self,
+        poll: &Arc<polling::Poller>,
+        interest: polling::Event,
+        mode: polling::PollMode,
+    ) -> io::Result<()> {
+        unsafe { self.pty.register(poll, interest, mode) }
+    }
+
+    fn reregister(
+        &mut self,
+        poll: &Arc<polling::Poller>,
+        interest: polling::Event,
+        mode: polling::PollMode,
+    ) -> io::Result<()> {
+        self.pty.reregister(poll, interest, mode)
+    }
+
+    fn deregister(&mut self, poll: &Arc<polling::Poller>) -> io::Result<()> {
+        self.pty.deregister(poll)
+    }
+
+    fn reader(&mut self) -> &mut FlushingReader {
+        &mut self.reader
+    }
+
+    fn writer(&mut self) -> &mut Self::Writer {
+        self.pty.writer()
+    }
+}
+
+impl tty::EventedPty for FlushingPty {
+    fn next_child_event(&mut self) -> Option<tty::ChildEvent> {
+        let event = self.pty.next_child_event();
+        if event.is_some() {
+            self.child_exited.store(true, Ordering::SeqCst);
+        }
+        event
+    }
+}
+
+impl alacritty_terminal::event::OnResize for FlushingPty {
+    fn on_resize(&mut self, size: WindowSize) {
+        self.pty.on_resize(size);
+    }
+}
+
 /// A running terminal session. Dropping it hangs up the child.
 pub struct Terminal {
     term: Arc<FairMutex<Term<Listener>>>,
@@ -257,6 +375,10 @@ impl Terminal {
                 format!("{} is not a directory", options.cwd.display()),
             ));
         }
+        // A directory the user cannot enter fails the same way. `access` asks
+        // the OS without changing this process's cwd.
+        rustix::fs::access(&options.cwd, rustix::fs::Access::EXEC_OK)
+            .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()))?;
         let env = HashMap::from([
             ("TERM".to_owned(), "xterm-256color".to_owned()),
             ("COLORTERM".to_owned(), "truecolor".to_owned()),
@@ -287,6 +409,7 @@ impl Terminal {
         let user = pair.user.try_clone()?;
         let pty = tty::from_fd(&tty_options, 0, pair.controller, pair.user)?;
         let pid = pty.child().id();
+        let pty = FlushingPty::new(pty)?;
 
         let event_loop = EventLoop::new(term.clone(), listener.clone(), pty, true, false)?;
         let sender = event_loop.channel();

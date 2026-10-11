@@ -56,8 +56,18 @@ Apache-2.0 source, xterm's documentation (ctlseqs) and by running terminals.
   `Exited` is sent once, on alacritty's `Exit` (which follows its drain of the
   child's last output) with the code from `ChildExit`, or as `Exited(None)`
   by the pty thread when the loop stops any other way (an I/O error, drop).
-- `spawn` checks that `cwd` is a directory: alacritty's spawn ignores a failed
-  `chdir` and would run the shell in the app's own directory.
+- `spawn` checks that `cwd` is a directory the user can enter (`stat`, then
+  `access(X_OK)`, which leaves the app's cwd alone): alacritty's spawn ignores
+  a failed `chdir` and would run the shell in the app's own directory.
+- **An unfinished synchronized update is flushed on the child's exit.** After
+  `ESC[?2026h` the VTE parser buffers output until the update ends or its
+  150 ms timeout fires, and alacritty's loop stops on the child's exit with
+  neither, so that output never reached the grid. The parser is private to the
+  loop, so `FlushingPty` wraps the pty and, once the child has exited and its
+  output is read, feeds the parser `ESC[?2026l` through the reader. Where no
+  update is open that does nothing. Shutdown on drop and I/O-error stops still
+  discard the buffer: nothing reads the grid after a drop, and an error stop
+  has no further reads to feed.
 - Empty `input` is dropped: alacritty's writer treats a zero-byte write as
   "would block" and never moves past it.
 - The child's environment adds `TERM=xterm-256color`, `COLORTERM=truecolor`

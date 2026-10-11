@@ -147,6 +147,8 @@ alacritty_terminal = { version = "0.26", default-features = false }
 # fe-terminal opens the pty itself to keep its user side open (already in the
 # lock through alacritty_terminal).
 rustix-openpty = "0.2"
+# The `Poller` types in alacritty_terminal's `EventedReadWrite` (already in the lock).
+polling = "3.8"
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

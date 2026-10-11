@@ -1993,6 +1993,8 @@ dependencies = [
  "alacritty_terminal",
  "async-channel",
  "libc",
+ "polling",
+ "rustix",
  "rustix-openpty",
  "tempfile",
 ]

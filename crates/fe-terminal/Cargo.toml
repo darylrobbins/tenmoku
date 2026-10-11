@@ -10,6 +10,8 @@ publish.workspace = true
 [dependencies]
 alacritty_terminal.workspace = true
 async-channel.workspace = true
+polling.workspace = true
+rustix = { workspace = true, features = ["fs"] }
 rustix-openpty.workspace = true
 
 [dev-dependencies]
