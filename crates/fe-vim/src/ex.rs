@@ -182,7 +182,7 @@ impl Ex {
     /// what the range's lines are is found when it runs.
     pub fn parse(line: &str) -> Result<Self, ExError> {
         let (line, range, rest) = split(line);
-        let command = command(line, &range, rest)?;
+        let command = command(line, &range, rest, |_| Ok(()))?;
         Ok(Self { range, command })
     }
 }
@@ -196,8 +196,16 @@ fn split(line: &str) -> (&str, Vec<Address>, &str) {
     (line, range, &line[parser.at..])
 }
 
-/// The command `rest` names, after `range`, on `line`.
-fn command(line: &str, range: &[Address], rest: &str) -> Result<ExCommand, ExError> {
+/// The command `rest` names, after `range`, on `line`. `check` is called
+/// once the command is recognised, before its arguments are read, as nvim
+/// checks the range there: with whether both of the range's ends (not just
+/// its last) matter to the command.
+fn command(
+    line: &str,
+    range: &[Address],
+    rest: &str,
+    check: impl FnOnce(bool) -> Result<(), ExError>,
+) -> Result<ExCommand, ExError> {
     let not_a_command = || ExError::NotACommand(line.to_string());
     let name_len = rest
         .find(|ch: char| !ch.is_ascii_alphabetic())
@@ -206,6 +214,7 @@ fn command(line: &str, range: &[Address], rest: &str) -> Result<ExCommand, ExErr
     if name.is_empty()
         && let Some(args) = after.strip_prefix('&')
     {
+        check(true)?;
         return Ok(ExCommand::Substitute(Substitute::repeat(args, true)?));
     }
     if name.is_empty() {
@@ -213,15 +222,17 @@ fn command(line: &str, range: &[Address], rest: &str) -> Result<ExCommand, ExErr
             address.base == Base::All && address.parts.iter().any(|part| *part != Part::Offset(0))
         };
         let after = after.trim_start_matches([' ', '\t']);
-        return match (after.is_empty() || after.starts_with('"')) && !range.iter().any(ignored) {
-            true => Ok(ExCommand::Goto),
-            false => Err(not_a_command()),
-        };
+        if !(after.is_empty() || after.starts_with('"')) || range.iter().any(ignored) {
+            return Err(not_a_command());
+        }
+        check(false)?;
+        return Ok(ExCommand::Goto);
     }
     if let Some(command) = host(name) {
         return host_command(command, range, after);
     }
     if "substitute".starts_with(name) {
+        check(true)?;
         return Ok(ExCommand::Substitute(Substitute::parse(after)?));
     }
     let delete = DELETE.contains(&name);
@@ -233,6 +244,9 @@ fn command(line: &str, range: &[Address], rest: &str) -> Result<ExCommand, ExErr
     let after = after.find('"').map_or(after, |at| &after[..at]);
     if after.starts_with('!') {
         return Err(ExError::NoBang);
+    }
+    if delete {
+        check(true)?;
     }
     let mut args = after.trim_start_matches([' ', '\t']);
     let command = if delete {
@@ -520,12 +534,13 @@ fn execute(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Result<Hand
     target.model.sync_display();
     let last = i64::from(target.model.text().row_count());
     let lines = lines(target, &range)?;
-    let command = command(line, &range, rest)?;
-    // Only now, as in nvim: a line before the first fails the command it's
-    // for, not one that's wrong in its own way.
-    if lines.is_some_and(|(first, end)| first < 0 || end < 0) {
-        return Err(ExError::InvalidRange);
-    }
+    // As in nvim, a line before the first fails once the command is
+    // recognised, before its arguments are read; and a command that goes to
+    // the range's last line doesn't mind its first.
+    let command = command(line, &range, rest, |both| match lines {
+        Some((first, end)) if end < 0 || both && first < 0 => Err(ExError::InvalidRange),
+        _ => Ok(()),
+    })?;
     Ok(match command {
         ExCommand::Goto => {
             // nvim doesn't move to its largest line number.
@@ -654,6 +669,7 @@ fn resolve(
 fn offset(line: i64, by: i64) -> Result<i64, ExError> {
     let max = i64::from(i32::MAX);
     match by {
+        0 => Ok(line),
         by if by <= -max || by >= max => Err(ExError::OutOfRange),
         by if by < 0 => Ok(i64::from((line + by) as i32)),
         by if line >= 0 && by >= max - line => Err(ExError::OutOfRange),

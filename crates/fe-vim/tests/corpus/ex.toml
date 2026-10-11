@@ -979,3 +979,45 @@ name = "offset_minus_max"
 buffer = "a\nb\nc\nd\ne"
 cursor = [2, 0]
 keys = ":3-2147483647d<CR>"
+
+[[case]]
+name = "negative_delete_junk"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":-2d xxx<CR>"
+
+[[case]]
+name = "negative_delete_zero_count"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":-2d 0<CR>"
+
+[[case]]
+name = "negative_substitute_junk"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":-2s/a/b/z<CR>"
+
+[[case]]
+name = "negative_goto_comma_first"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":-2,3<CR>"
+
+[[case]]
+name = "negative_goto_semicolon_first"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":-2;3<CR>"
+
+[[case]]
+name = "max_plus_zero_semicolon"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":2147483647+0;2<CR>"
+
+[[case]]
+name = "max_minus_zero_semicolon"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = ":2147483647-0;2<CR>"

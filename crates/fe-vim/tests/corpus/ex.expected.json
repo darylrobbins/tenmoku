@@ -3763,6 +3763,132 @@
         "mode": "n",
         "registers": {}
       }
+    },
+    {
+      "name": "negative_delete_junk",
+      "buffer": "a\nb\nc\nd\ne",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":-2d xxx<CR>",
+      "expect": {
+        "buffer": "a\nb\nc\nd\ne",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "negative_delete_zero_count",
+      "buffer": "a\nb\nc\nd\ne",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":-2d 0<CR>",
+      "expect": {
+        "buffer": "a\nb\nc\nd\ne",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "negative_substitute_junk",
+      "buffer": "a\nb\nc\nd\ne",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":-2s/a/b/z<CR>",
+      "expect": {
+        "buffer": "a\nb\nc\nd\ne",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "negative_goto_comma_first",
+      "buffer": "a\nb\nc\nd\ne",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":-2,3<CR>",
+      "expect": {
+        "buffer": "a\nb\nc\nd\ne",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "negative_goto_semicolon_first",
+      "buffer": "a\nb\nc\nd\ne",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":-2;3<CR>",
+      "expect": {
+        "buffer": "a\nb\nc\nd\ne",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "max_plus_zero_semicolon",
+      "buffer": "a\nb\nc\nd\ne",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":2147483647+0;2<CR>",
+      "expect": {
+        "buffer": "a\nb\nc\nd\ne",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "max_minus_zero_semicolon",
+      "buffer": "a\nb\nc\nd\ne",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":2147483647-0;2<CR>",
+      "expect": {
+        "buffer": "a\nb\nc\nd\ne",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
     }
   ]
 }

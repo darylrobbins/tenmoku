@@ -159,6 +159,10 @@ fn entering_parsing_and_running() {
         (":-5d<CR>", "E16: Invalid range"),
         (":-5frob<CR>", "E492: Not an editor command: -5frob"),
         (":-5noh<CR>", "E481: No range allowed"),
+        // The range is checked before the arguments are read.
+        (":-5d xxx<CR>", "E16: Invalid range"),
+        (":-5d 0<CR>", "E16: Invalid range"),
+        (":-5s/a/b/z<CR>", "E16: Invalid range"),
         // Each offset is checked as it's applied.
         (
             ":1+2147483647-2147483647d<CR>",
@@ -174,6 +178,19 @@ fn entering_parsing_and_running() {
             "{keys}"
         );
         assert!(registers(&vim).is_empty(), "{keys}");
+    }
+    // A goto goes to its last line, whatever its first is; zero offsets
+    // are no-ops, even at the largest line number.
+    for (keys, cursor) in [
+        (":-5,3<CR>", (2, 0)),
+        (":-5;3<CR>", (2, 0)),
+        (":2147483647+0;2<CR>", (1, 0)),
+        (":2147483647-0;2<CR>", (1, 0)),
+    ] {
+        let mut vim = HeadlessVim::new("a\nb\nc\nd", (0, 0));
+        vim.feed(keys).unwrap();
+        assert_eq!(vim.cursor(), cursor, "{keys}");
+        assert_eq!(vim.state().message(), None, "{keys}");
     }
     // A later line replaces a negative one, a comment ends the command,
     // and searches and offsets chain in order.
