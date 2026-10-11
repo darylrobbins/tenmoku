@@ -82,7 +82,10 @@ an app's AI backend can load the same commands, config and keymaps.
   some (`platform = "macos"`); menu items carry roles (`settings`, `quit`,
   `about`) that each platform places by its conventions. A menu item's
   shortcut is looked up in the app's own key contexts, which the app passes
-  in: kiln names none of an app's contexts itself.
+  in: kiln names none of an app's contexts itself. Both are checked
+  against every command kiln knows (`kiln::catalog`: the app's, kiln's,
+  the shell's, and the picker's, whose keys the app binds) and the app's
+  own catalogs.
 - **The shell.** A window's `Shell` view lays out the app's centre view,
   the docks beside and below it, the status bar and the modal layer under
   the chrome, with the app's root key context, which the app passes in.

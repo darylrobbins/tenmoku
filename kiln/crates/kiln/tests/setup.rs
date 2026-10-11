@@ -137,6 +137,31 @@ fn init_registers_the_apps_commands_before_checking_the_keymap(cx: &mut TestAppC
     });
 }
 
+/// The shell's palette leaves its keys to the app's keymap: `init`
+/// knows the picker's commands, and so does `kiln::catalog`, for checking
+/// the keymap as on another platform.
+#[gpui::test]
+fn the_keymap_may_bind_the_pickers_commands(cx: &mut TestAppContext) {
+    let keymap = format!(
+        "{KEYMAP}\n[[bindings]]\nkeys = \"enter\"\ncommand = \"picker.confirm\"\ncontext = \"picker\"\n\
+         \n[[bindings]]\nkeys = \"backspace\"\ncommand = \"text_input.backspace\"\ncontext = \"text_input\"\n"
+    );
+    let config = || {
+        Config::new("com.example.Notes", "Notes")
+            .commands(notes::register)
+            .keymap("keymap.toml", keymap.clone())
+    };
+    let diagnostics = cx.update(|cx| kiln::init(cx, config()));
+    assert_eq!(diagnostics, []);
+    cx.update(|cx| {
+        assert_eq!(keys::current_keymap(cx).bindings().len(), 4);
+        let catalog = kiln::catalog(cx);
+        let (keymap, diagnostics) = config().keymap_for(Os::Linux, Some(&*catalog));
+        assert_eq!(diagnostics, []);
+        assert_eq!(keymap.bindings().len(), 4);
+    });
+}
+
 #[gpui::test]
 fn init_returns_what_it_dropped(cx: &mut TestAppContext) {
     let keymap =

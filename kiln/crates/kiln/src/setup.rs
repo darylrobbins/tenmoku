@@ -373,8 +373,9 @@ impl Global for Watching {}
 ///    [`crate::window`]; and the shell's, such as `menu_bar.open`;
 /// 2. the app's own commands, from [`Config::commands`];
 /// 3. the keymap and menus, parsed for this platform and checked against
-///    every command registered so far, and the app's own catalogs
-///    ([`Config::catalog`]), then installed;
+///    every command registered so far ([`catalog`]: the shell's picker
+///    commands too), and the app's own catalogs ([`Config::catalog`]),
+///    then installed;
 /// 4. in-window prompts where the platform has no native ones, and
 ///    `TextField`'s editing keys for this platform;
 /// 5. kiln's dark and light themes, in [`Config::theme_mode`];
@@ -398,11 +399,9 @@ pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
     });
 
     let os = Os::current();
-    let mut catalog = commands::catalog(cx);
-    let more = std::mem::take(&mut config.catalogs);
-    if !more.is_empty() {
-        catalog = Rc::new(Catalogs(std::iter::once(catalog).chain(more).collect()));
-    }
+    let mut catalogs = vec![catalog(cx)];
+    catalogs.append(&mut config.catalogs);
+    let catalog: Rc<dyn CommandCatalog> = Rc::new(Catalogs(catalogs));
     let keymap = config.keymap_store(os, catalog.clone());
     let mut diagnostics = keymap.diagnostics().to_vec();
     keys::init(cx, keymap.keymap().clone());
@@ -450,6 +449,20 @@ pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
     };
     cx.set_global(Watching(task));
     diagnostics
+}
+
+/// Every command [`init`] checks an app's keymap and menus against, but
+/// the app's own catalogs ([`Config::catalog`]): the app registry's, the
+/// typed commands (kiln's, the shell's and the app's) and the shell's
+/// picker commands (`picker.confirm`, `text_input.backspace` …), which
+/// its palette's keys run. For an app's tests that check its keymap and
+/// menus as on another platform ([`Config::keymap_for`]); call it once the
+/// commands are registered.
+pub fn catalog(cx: &App) -> Rc<dyn CommandCatalog> {
+    Rc::new(Catalogs(vec![
+        commands::catalog(cx),
+        Rc::from(kiln_shell::catalog()),
+    ]))
 }
 
 /// GPUI's options for a window as `spec` describes it, on this platform,
