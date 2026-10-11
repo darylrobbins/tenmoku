@@ -117,6 +117,15 @@ pub struct Buffer {
     history_bytes: HashMap<Origin, usize>,
     history_limit: usize,
     saved_version: Version,
+    /// The text as of the last save (or load). Shares rope storage with the
+    /// current text, so it holds only the leaves edited since.
+    saved_text: Text,
+    saved_line_ending: LineEnding,
+    /// Invariant: outside this range (current coordinates) the text and
+    /// `saved_text` are byte-identical; `None` means they're equal.
+    changed_since_save: Option<Range<usize>>,
+    /// Whether the text differs from `saved_text`; see [`Buffer::is_dirty`].
+    dirty: bool,
     pub(crate) subscribers: Vec<Weak<Mutex<Vec<BufferEvent>>>>,
 }
 
@@ -193,6 +202,10 @@ impl Buffer {
 
     fn with_text(text: Text, line_ending: LineEnding) -> Self {
         Self {
+            saved_text: text.clone(),
+            saved_line_ending: line_ending,
+            changed_since_save: None,
+            dirty: false,
             snapshot: BufferSnapshot {
                 id: BufferId(NEXT_BUFFER_ID.fetch_add(1, Ordering::Relaxed)),
                 text,
@@ -252,8 +265,52 @@ impl Buffer {
         self.line_ending = line_ending;
     }
 
+    /// Whether the text or line ending differs from the last save. Undoing or
+    /// retyping back to the saved text makes the buffer clean again.
     pub fn is_dirty(&self) -> bool {
-        self.version() != self.saved_version
+        self.dirty || self.line_ending != self.saved_line_ending
+    }
+
+    /// Widens `changed_since_save` to cover `batch`, an edit just applied.
+    fn note_batch(&mut self, edits: &[Edit]) {
+        let (Some(first), Some(last)) = (edits.first(), edits.last()) else {
+            return;
+        };
+        let old = first.old.start..last.old.end;
+        let new_end = last.new.end;
+        let delta = new_end as isize - old.end as isize;
+        self.changed_since_save = Some(match self.changed_since_save.take() {
+            None => old.start..new_end,
+            Some(h) => {
+                let end = (h.end.max(old.end) as isize + delta) as usize;
+                h.start.min(old.start)..end
+            }
+        });
+    }
+
+    /// Recomputes `dirty` once all of an operation's batches are noted. A
+    /// length change is dirty without comparing; otherwise only the changed
+    /// region is compared.
+    fn refresh_dirty(&mut self) {
+        if self.len() != self.saved_text.len() {
+            self.dirty = true;
+            return;
+        }
+        let equal = match &self.changed_since_save {
+            None => true,
+            Some(r) => chunks_equal(
+                self.snapshot.text.chunks_in_range(r.clone()),
+                self.saved_text.chunks_in_range(r.clone()),
+            ),
+        };
+        if equal {
+            self.dirty = false;
+            self.changed_since_save = None;
+            // Drop the pre-save leaves.
+            self.saved_text = self.snapshot.text.clone();
+        } else {
+            self.dirty = true;
+        }
     }
 
     /// The encoding [`Buffer::write_to`] writes in: the one the file was read
@@ -307,7 +364,14 @@ impl Buffer {
             })
     }
 
+    /// Records that the current text is on disk. Reloading from disk makes a
+    /// new `Buffer` (clean on load) and any save-as goes through here, so
+    /// both are covered.
     pub fn did_save(&mut self) {
+        self.saved_text = self.snapshot.text.clone();
+        self.saved_line_ending = self.line_ending;
+        self.changed_since_save = None;
+        self.dirty = false;
         self.saved_version = self.version();
         self.emit(BufferEvent::Saved {
             version: self.saved_version,
@@ -400,6 +464,8 @@ impl Buffer {
         let batch = apply(&mut self.snapshot, edits, None)?;
         let id = self.record(origin.clone(), batch.clone());
         let text = self.snapshot.text.clone();
+        self.note_batch(&batch.edits);
+        self.refresh_dirty();
         self.emit_batch(id, &origin, EditKind::Edit, &batch, text);
         Some(id)
     }
@@ -547,6 +613,10 @@ impl Buffer {
         let (id, origin) = (entry.id, entry.origin.clone());
         *self.history_bytes.entry(origin.clone()).or_default() += added;
         *self.redoable.entry(origin.clone()).or_default() += 1;
+        for batch in &batches {
+            self.note_batch(&batch.edits);
+        }
+        self.refresh_dirty();
         for (batch, text) in batches.iter().zip(texts) {
             self.emit_batch(id, &origin, EditKind::Undo, batch, text);
         }
@@ -590,6 +660,10 @@ impl Buffer {
         if let Some(count) = self.redoable.get_mut(&origin) {
             *count -= 1;
         }
+        for batch in &batches {
+            self.note_batch(&batch.edits);
+        }
+        self.refresh_dirty();
         for (batch, text) in batches.iter().zip(texts) {
             self.emit_batch(id, &origin, EditKind::Redo, batch, text);
         }
@@ -860,4 +934,32 @@ fn revert(
         }
     }
     Ok(produced)
+}
+
+/// Whether two chunk sequences hold the same bytes, however they're split.
+fn chunks_equal<'a>(a: impl Iterator<Item = &'a str>, b: impl Iterator<Item = &'a str>) -> bool {
+    let (mut a, mut b) = (a.map(str::as_bytes), b.map(str::as_bytes));
+    let (mut x, mut y): (&[u8], &[u8]) = (&[], &[]);
+    loop {
+        while x.is_empty() {
+            match a.next() {
+                Some(c) => x = c,
+                None => break,
+            }
+        }
+        while y.is_empty() {
+            match b.next() {
+                Some(c) => y = c,
+                None => break,
+            }
+        }
+        if x.is_empty() || y.is_empty() {
+            return x.is_empty() && y.is_empty();
+        }
+        let n = x.len().min(y.len());
+        if x[..n] != y[..n] {
+            return false;
+        }
+        (x, y) = (&x[n..], &y[n..]);
+    }
 }
