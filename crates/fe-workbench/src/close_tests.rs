@@ -131,3 +131,33 @@ fn a_window_and_a_quit_ask(cx: &mut TestAppContext) {
     answer("Discard", cx);
     assert!(!window_open(window, cx));
 }
+
+/// The prompt drawn in the window (Linux's) takes Enter and Escape, though
+/// GPUI hangs it under the editor in the dispatch tree, whose Enter would
+/// otherwise insert a line.
+#[gpui::test]
+fn the_in_window_prompt_takes_enter_and_escape(cx: &mut TestAppContext) {
+    let (_dir, workbench, cx) = opened(cx);
+    cx.update(|_, cx| cx.set_prompt_builder(fe_ui::prompt_renderer));
+    cx.simulate_input("x");
+    let text = |cx: &mut VisualTestContext| {
+        workbench.read_with(cx, |workbench, cx| {
+            let editor = workbench.active_editor(cx).unwrap();
+            editor.read(cx).model().text().to_string()
+        })
+    };
+    let prompt_shows =
+        |cx: &mut VisualTestContext| cx.update(|window, _| window.has_active_prompt());
+    for (key, closes) in [("escape", false), ("enter", true)] {
+        run("workbench.close_tab", cx);
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        assert!(prompt_shows(cx), "{key}");
+        cx.simulate_keystrokes(key);
+        cx.run_until_parked();
+        assert!(!prompt_shows(cx), "{key}");
+        assert_eq!(tabs(&workbench, cx), [usize::from(!closes)], "{key}");
+        if !closes {
+            assert_eq!(text(cx), "xalpha\n", "{key} edits nothing");
+        }
+    }
+}

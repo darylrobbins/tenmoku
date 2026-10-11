@@ -291,6 +291,13 @@ fn on_keystroke(event: &KeystrokeEvent, window: &mut Window, cx: &mut App) {
     {
         return;
     }
+    // A prompt drawn in the window has its keys (Enter, Escape) to itself:
+    // GPUI puts it in the dispatch tree under whatever drew last, so the
+    // keymap would see that element's context (an editor's, say) and run
+    // its bindings.
+    if window.has_active_prompt() {
+        return;
+    }
     crate::focus::watch(window, cx);
     let target = Target::of(window, cx);
     let input = cx.global_mut::<KeyInput>();
