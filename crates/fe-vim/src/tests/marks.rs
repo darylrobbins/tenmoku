@@ -1,3 +1,4 @@
+use fe_buffer::ResolvedSelection;
 use serde_json::json;
 
 use super::{commit, registers};
@@ -158,4 +159,85 @@ fn marks_follow_joins_and_other_origins() {
     assert_eq!(vim.mark('\''), Some((2, 0)));
     vim.feed("mA").unwrap();
     assert_eq!(vim.mark('A'), None);
+}
+
+#[test]
+fn marks_follow_each_external_edit() {
+    let edit = |vim: &mut HeadlessVim, range: std::ops::Range<usize>, with: &str| {
+        vim.model_mut()
+            .buffer_mut()
+            .edit([(range, with)], ai())
+            .unwrap();
+    };
+    // A row that was last, with rows put in after it and then it deleted
+    // (its text and the line break after it), with no command between.
+    let mut vim = HeadlessVim::new("aa\nbb", (1, 1));
+    vim.feed("ma").unwrap();
+    edit(&mut vim, 5..5, "\ncc");
+    edit(&mut vim, 3..6, "");
+    assert_eq!(vim.mark('a'), None);
+    // Emptied, it stays.
+    let mut vim = HeadlessVim::new("aa\nbb", (1, 1));
+    vim.feed("ma").unwrap();
+    edit(&mut vim, 5..5, "\ncc");
+    edit(&mut vim, 3..5, "");
+    assert_eq!(vim.mark('a'), Some((1, 1)));
+    // As is text put on its end rather than a row after it.
+    let mut vim = HeadlessVim::new("aa\nbb", (1, 1));
+    vim.feed("ma").unwrap();
+    edit(&mut vim, 5..5, "x");
+    edit(&mut vim, 3..6, "");
+    assert_eq!(vim.mark('a'), Some((1, 1)));
+
+    // The only row is deleted once another follows it.
+    let mut vim = HeadlessVim::new("aa", (0, 1));
+    vim.feed("ma").unwrap();
+    edit(&mut vim, 2..2, "\ncc");
+    edit(&mut vim, 0..3, "");
+    assert_eq!(vim.mark('a'), None);
+    // And a row that had one after it, once it's the only one, isn't by
+    // being emptied.
+    let mut vim = HeadlessVim::new("aa\nbb", (0, 1));
+    vim.feed("ma").unwrap();
+    edit(&mut vim, 2..5, "");
+    edit(&mut vim, 0..2, "");
+    assert_eq!(vim.mark('a'), Some((0, 1)));
+}
+
+#[test]
+fn typing_at_a_blocks_first_row_start_goes_before_its_marks() {
+    // As nvim does for `I` and `c` over a block starting at column zero
+    // (its `'<` and `'>` aren't held to that).
+    for keys in ["ma0<C-v>I<CR><Esc>", "ma0<C-v>c<CR><Esc>"] {
+        let mut vim = HeadlessVim::new("abc\ndef\nghi", (0, 1));
+        vim.feed(keys).unwrap();
+        assert_eq!(vim.mark('a'), Some((0, 1)), "{keys}");
+    }
+}
+
+#[test]
+fn merged_carets_delete_the_marks_of_the_rows_they_take() {
+    // Carets on rows 0 and 1 both delete up to mark `a`, as one deletion
+    // from the first: row 1's mark goes with its row.
+    let mut vim = HeadlessVim::new("a\nbb\ncc\ndd", (1, 1));
+    vim.feed("mbjjma").unwrap();
+    let carets = [0, 2].map(|offset| ResolvedSelection {
+        range: offset..offset,
+        reversed: false,
+    });
+    vim.model_mut().set_selections(carets);
+    vim.feed("d`a").unwrap();
+    assert_eq!(vim.text(), "d");
+    assert_eq!(vim.mark('b'), None);
+    // Changing, too.
+    let mut vim = HeadlessVim::new("a\nbb\ncc\ndd", (1, 1));
+    vim.feed("mbjjma").unwrap();
+    let carets = [0, 2].map(|offset| ResolvedSelection {
+        range: offset..offset,
+        reversed: false,
+    });
+    vim.model_mut().set_selections(carets);
+    vim.feed("c`aX<Esc>").unwrap();
+    assert_eq!(vim.text(), "Xd");
+    assert_eq!(vim.mark('b'), None);
 }

@@ -1934,6 +1934,256 @@
           ]
         }
       }
+    },
+    {
+      "name": "visual_put_chars_keeps_first_row_mark",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "ma0ylvj\"0p",
+      "expect": {
+        "buffer": "aef\nghi",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc\nd",
+            "linewise": false
+          },
+          "0": {
+            "text": "a",
+            "linewise": false
+          },
+          "1": {
+            "text": "abc\nd",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            0
+          ],
+          "a": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "visual_put_before_chars_keeps_first_row_mark",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "ma0ylvj\"0P",
+      "expect": {
+        "buffer": "aef\nghi",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "0": {
+            "text": "a",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            0
+          ],
+          "a": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "visual_put_chars_keeps_last_row_column",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "ma0ylggvj\"0p",
+      "expect": {
+        "buffer": "def\nghi",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc\nd",
+            "linewise": false
+          },
+          "0": {
+            "text": "d",
+            "linewise": false
+          },
+          "1": {
+            "text": "abc\nd",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            0
+          ],
+          "a": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "visual_put_empty_register_over_lines",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "ma0ylV\"_p",
+      "expect": {
+        "buffer": "\ndef\nghi",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "a",
+            "linewise": false
+          },
+          "1": {
+            "text": "abc\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "visual_put_before_empty_register_over_lines",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "ma0ylV\"_P",
+      "expect": {
+        "buffer": "\ndef\nghi",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "0": {
+            "text": "a",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "visual_put_lines_over_lines",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "majyykV\"0p",
+      "expect": {
+        "buffer": "abc\nghi\nghi",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "def\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "ghi\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "def\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
     }
   ]
 }

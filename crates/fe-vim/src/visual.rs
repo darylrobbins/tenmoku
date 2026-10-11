@@ -231,6 +231,31 @@ fn ends(model: &EditorModel, state: &VimState) -> Option<Ends> {
     resolve_ends(model, state, kind)
 }
 
+/// What a put over the visual selection replaces, as the marks see it.
+pub(crate) enum Replaced {
+    /// Characters across rows: the first row's marks stay, the last row's
+    /// are joined to it.
+    Chars(Range<usize>),
+    /// Whole rows from the first through the last, whose marks go.
+    Rows(u32, u32),
+}
+
+/// What a put over the visual selection replaces: `None` in a block (which
+/// takes no rows) or outside a visual mode.
+pub(crate) fn replaced(model: &mut EditorModel, state: &VimState) -> Option<Replaced> {
+    model.sync_display();
+    let ends = ends(model, state)?;
+    let text = model.text();
+    Some(match ends.kind {
+        VisualKind::Block => return None,
+        VisualKind::Char => Replaced::Chars(ends.range(text, VisualKind::Char)),
+        VisualKind::Line => {
+            let (first, last) = ends.rows(text);
+            Replaced::Rows(first, last)
+        }
+    })
+}
+
 /// [`ends`], also while a command line suspends a visual mode: for what
 /// only reports or paints them, never a visual command.
 fn held_ends(model: &EditorModel, state: &VimState) -> Option<Ends> {

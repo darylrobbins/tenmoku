@@ -1278,6 +1278,7 @@ pub(crate) fn block(
     rows: impl FnOnce(&BufferSnapshot) -> BlockRows,
 ) {
     let id = model.buffer_mut().start_transaction(origin.clone());
+    let before = model.snapshot().clone();
     let (snapshot, events, followed, watched) = {
         let mut buffer = model.buffer_mut();
         buffer.edit(edits, origin.clone());
@@ -1294,6 +1295,12 @@ pub(crate) fn block(
     state.carets.record_pending(id, vec![begin]);
     let point = text.offset_to_point(at);
     let start = text.row_start(point.row);
+    // Typing at a row's start goes before its marks, as an ordinary
+    // session's does: `edits` only change the row after that point.
+    if at == start {
+        let row_start = before.text().row_start(point.row);
+        state.marks.typing(&before, [row_start]);
+    }
     let first = FirstRow {
         events: followed,
         text: text.clone(),

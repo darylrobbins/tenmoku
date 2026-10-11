@@ -352,7 +352,23 @@ pub fn registry() -> Registry<VimCommands> {
                 {
                     follow(target);
                     insert::adopt_closing(target.state);
-                    visual::put(target, actor, args)
+                    // The selection goes as a delete takes it, whatever the
+                    // register puts back; a put refused leaves the marks.
+                    let marks = target.state.marks.clone();
+                    match visual::replaced(target.model, target.state) {
+                        Some(visual::Replaced::Chars(range)) => {
+                            target.state.marks.cutting(target.model.snapshot(), range);
+                        }
+                        Some(visual::Replaced::Rows(first, last)) => {
+                            target.state.marks.deleting(target.model.snapshot(), first, last);
+                        }
+                        None => {}
+                    }
+                    let put = visual::put(target, actor, args);
+                    if put.is_err() {
+                        target.state.marks = marks;
+                    }
+                    put
                 }
             },
         )

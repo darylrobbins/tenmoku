@@ -427,3 +427,41 @@ name = "joined_from_the_removed_indent"
 buffer = "aa\n   bbb"
 cursor = [1, 1]
 keys = "makJ"
+
+# Visual puts replace the selection as a delete takes it: the first row's
+# marks stay across a charwise one, and a linewise one's go.
+[[case]]
+name = "visual_put_chars_keeps_first_row_mark"
+buffer = "abc\ndef\nghi"
+cursor = [0, 1]
+keys = "ma0ylvj\"0p"
+
+[[case]]
+name = "visual_put_before_chars_keeps_first_row_mark"
+buffer = "abc\ndef\nghi"
+cursor = [0, 1]
+keys = "ma0ylvj\"0P"
+
+[[case]]
+name = "visual_put_chars_keeps_last_row_column"
+buffer = "abc\ndef\nghi"
+cursor = [1, 2]
+keys = "ma0ylggvj\"0p"
+
+[[case]]
+name = "visual_put_empty_register_over_lines"
+buffer = "abc\ndef\nghi"
+cursor = [0, 1]
+keys = "ma0ylV\"_p"
+
+[[case]]
+name = "visual_put_before_empty_register_over_lines"
+buffer = "abc\ndef\nghi"
+cursor = [0, 1]
+keys = "ma0ylV\"_P"
+
+[[case]]
+name = "visual_put_lines_over_lines"
+buffer = "abc\ndef\nghi"
+cursor = [1, 1]
+keys = "majyykV\"0p"

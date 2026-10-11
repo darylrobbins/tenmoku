@@ -5,13 +5,21 @@
 //! last jump left from (`:help jump-motions`), and `'<`, `'>`, `` `< `` and
 //! `` `> `` to the last visual extent's ends.
 
-use std::{collections::BTreeMap, ops::Range};
+use std::{
+    collections::BTreeMap,
+    fmt,
+    ops::Range,
+    sync::{Arc, Mutex},
+};
 
-use fe_buffer::{Anchor, BufferSnapshot, TransactionId};
+use fe_buffer::{
+    Anchor, BufferEvent, BufferSnapshot, Edit, Subscription, Text, TransactionId, Version,
+};
 use fe_command::{CommandError, Dispatched, Effect};
 use fe_text::Bias;
 
 use crate::{MarkArgs, MarkMotion, Motion, VimState, VimTarget, motion, visual::Pos};
+use fe_editor::EditorModel;
 
 /// What jumping to a mark that isn't set (or whose row was deleted) says.
 pub(crate) const NOT_SET: &str = "E20: Mark not set";
@@ -37,10 +45,191 @@ pub(crate) struct Place {
     /// How far past `exact` the column is (past the row's end).
     past: usize,
     end: End,
+    /// Whether its row lives, followed through each edit batch.
+    life: Life,
     column: usize,
     /// Joined to the row above, it keeps its column, counted from where the
     /// row's start went, rather than its text.
     keeps_column: bool,
+}
+
+/// One edit batch the buffer applied, as [`Life`] follows it.
+#[derive(Clone, Debug)]
+struct Batch {
+    from: Version,
+    to: Version,
+    edits: Arc<[Edit]>,
+    /// The text right after it.
+    text: Text,
+}
+
+/// The buffer's edit batches since the marks last caught up, which a mark's
+/// [`Life`] replays: the frozen [`End`] anchors can't tell a row that was
+/// emptied from one that was deleted once rows came or went around it.
+#[derive(Clone)]
+struct Feed(Arc<Mutex<FeedState>>);
+
+struct FeedState {
+    events: Subscription,
+    batches: Vec<Batch>,
+}
+
+impl fmt::Debug for Feed {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Feed")
+    }
+}
+
+impl Feed {
+    /// The batches not yet applied to the marks, with those received since.
+    fn batches(&self) -> Vec<Batch> {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let received = state.events.drain();
+        for event in received {
+            if let BufferEvent::Edited {
+                from,
+                to,
+                edits,
+                text,
+                ..
+            } = event
+            {
+                state.batches.push(Batch {
+                    from,
+                    to,
+                    edits,
+                    text,
+                });
+            }
+        }
+        state.batches.clone()
+    }
+
+    fn clear(&self) {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .batches
+            .clear();
+    }
+}
+
+/// Where a mark's row is, and whether it still is, as of `version`: what
+/// each edit batch did to it, from the text it left.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Life {
+    version: Version,
+    /// The row's start and end offsets.
+    start: usize,
+    end: usize,
+    /// Typing at the row's start goes before its marks (see
+    /// [`Marks::typing`]), as an empty row's start does.
+    before: bool,
+    /// It was empty when the mark was set: only an edit taking the line
+    /// breaks on both sides of it deletes it, where one taking a break and
+    /// the text of one that wasn't (even if emptied since) does.
+    hollow: bool,
+    /// Joined by a cut: not deleted by it.
+    kept: bool,
+    dead: bool,
+}
+
+impl Life {
+    fn new(snapshot: &BufferSnapshot, start: usize, end: usize) -> Self {
+        Self {
+            version: snapshot.version(),
+            start,
+            end,
+            before: start == end,
+            hollow: start == end,
+            kept: false,
+            dead: false,
+        }
+    }
+
+    /// Applies `batches`, those from its version on. One that doesn't follow
+    /// on from it (events missed) leaves it behind, to fall back on anchors.
+    fn advance(&mut self, batches: &[Batch]) {
+        for batch in batches {
+            if batch.to <= self.version {
+                continue;
+            }
+            if batch.from != self.version {
+                return;
+            }
+            self.step(batch);
+            self.version = batch.to;
+        }
+    }
+
+    /// The row is deleted when an edit takes its text and a line break
+    /// next to it (an empty row: both breaks); the only row never is.
+    fn step(&mut self, batch: &Batch) {
+        if self.dead {
+            return;
+        }
+        let (mut removed, mut added) = (0, 0);
+        let mut taken: Vec<Range<usize>> = Vec::new();
+        for edit in batch.edits.iter() {
+            removed += edit.old.len();
+            added += edit.new.len();
+            match taken.last_mut() {
+                Some(last) if edit.old.start <= last.end => last.end = last.end.max(edit.old.end),
+                _ if edit.old.is_empty() => {}
+                _ => taken.push(edit.old.clone()),
+            }
+        }
+        let len = batch.text.len() + removed - added;
+        let covers = |from: usize, to: usize| {
+            taken
+                .iter()
+                .any(|range| range.start <= from && range.end >= to)
+        };
+        let (start, end) = (self.start, self.end);
+        let before = start > 0 && start <= len;
+        let after = end < len;
+        let deleted = match self.hollow {
+            true => before && after && covers(start - 1, end + 1),
+            false => (before && covers(start - 1, end)) || (after && covers(start, end + 1)),
+        };
+        if deleted && !self.kept {
+            self.dead = true;
+            return;
+        }
+        let left = self.before || start == end;
+        let at = map(start, left, &batch.edits).min(batch.text.len());
+        let row = batch.text.offset_to_point(at).row;
+        self.start = batch.text.row_start(row);
+        self.end = self.start + batch.text.row_len(row) as usize;
+    }
+}
+
+/// `offset` after `edits`, staying before (`left`) or going after text
+/// inserted at it.
+fn map(offset: usize, left: bool, edits: &[Edit]) -> usize {
+    let mut shift = 0isize;
+    for edit in edits {
+        let delta = edit.new.len() as isize - edit.old.len() as isize;
+        match () {
+            _ if offset < edit.old.start => break,
+            _ if offset > edit.old.end => shift += delta,
+            _ if edit.old.is_empty() => {
+                return match left {
+                    true => edit.new.start,
+                    false => edit.new.end,
+                };
+            }
+            _ if offset == edit.old.start => return edit.new.start,
+            _ if offset == edit.old.end => return edit.new.end,
+            _ => {
+                return match left {
+                    true => edit.new.start,
+                    false => edit.new.end,
+                };
+            }
+        }
+    }
+    (offset as isize + shift) as usize
 }
 
 /// What an edit deleting a mark's row takes. fe-vim's own linewise deletes
@@ -108,9 +297,27 @@ impl Place {
             exact: snapshot.anchor_before(exact),
             past: column - exact_column,
             end,
+            life: Life::new(snapshot, start, last_end),
             column,
             keeps_column: false,
         }
+    }
+
+    /// Typing at its row's start goes before it.
+    fn before_text(self, snapshot: &BufferSnapshot, start: usize) -> Self {
+        Self {
+            row: snapshot.anchor_before(start),
+            life: Life {
+                before: true,
+                ..self.life
+            },
+            ..self
+        }
+    }
+
+    /// Caught up with `batches`.
+    fn advance(&mut self, batches: &[Batch]) {
+        self.life.advance(batches);
     }
 
     /// Its row and byte column in `snapshot`, as nvim's `getpos()` reports
@@ -125,11 +332,20 @@ impl Place {
         }
         let at = |anchor: &Anchor| snapshot.resolve(anchor);
         let row = at(&self.row);
-        let deleted = match &self.end {
-            End::Next(next) => row >= at(next),
-            End::Breaks(before, after) => at(before) >= at(after),
-            End::Last { end, before } => row >= at(end) && row <= at(before),
-            End::Kept => false,
+        // Followed through each batch up to this snapshot, its life knows;
+        // else the anchors do, as of when the mark was set.
+        let followed = self.life.version <= snapshot.version();
+        let deleted = match (followed, self.life.version == snapshot.version()) {
+            (true, true) => self.life.dead,
+            _ => {
+                (followed && self.life.dead)
+                    || match &self.end {
+                        End::Next(next) => row >= at(next),
+                        End::Breaks(before, after) => at(before) >= at(after),
+                        End::Last { end, before } => row >= at(end) && row <= at(before),
+                        End::Kept => false,
+                    }
+            }
         };
         if deleted {
             return None;
@@ -160,9 +376,46 @@ pub(crate) struct Marks {
     /// While a command that jumped runs, the jump mark before it, which
     /// [`settle`] may give back.
     previous: Option<Place>,
+    /// The buffer's edit batches, from the first mark set on.
+    feed: Option<Feed>,
 }
 
 impl Marks {
+    /// Starts following `model`'s buffer, before a mark is set.
+    pub(crate) fn watch(&mut self, model: &mut EditorModel) {
+        if self.feed.is_none() {
+            let events = model.buffer_mut().subscribe();
+            self.feed = Some(Feed(Arc::new(Mutex::new(FeedState {
+                events,
+                batches: Vec::new(),
+            }))));
+        }
+    }
+
+    /// The batches the marks haven't caught up with.
+    fn batches(&self) -> Vec<Batch> {
+        self.feed.as_ref().map(Feed::batches).unwrap_or_default()
+    }
+
+    /// Catches each mark's row up with the batches since.
+    fn advance(&mut self) {
+        let batches = self.batches();
+        if batches.is_empty() {
+            return;
+        }
+        let places = self
+            .named
+            .values_mut()
+            .chain(self.jump.iter_mut())
+            .chain(self.previous.iter_mut());
+        for place in places {
+            place.advance(&batches);
+        }
+        if let Some(feed) = &self.feed {
+            feed.clear();
+        }
+    }
+
     /// Sets the jump mark, keeping the one before until the command
     /// [`settle`]s.
     pub(crate) fn jumped(&mut self, from: Place) {
@@ -176,10 +429,10 @@ impl Marks {
     pub(crate) fn changing(&mut self, snapshot: &BufferSnapshot, first: u32, last: u32) {
         let change = |place: &Place| match place.position(snapshot)? {
             // Typing replaces its text: anchored before it.
-            (row, column) if row == first => Some(Place {
-                row: snapshot.anchor_before(snapshot.text().row_start(row)),
-                ..Place::through(snapshot, row, last, column)
-            }),
+            (row, column) if row == first => {
+                let start = snapshot.text().row_start(row);
+                Some(Place::through(snapshot, row, last, column).before_text(snapshot, start))
+            }
             (row, _) if row > first && row <= last => None,
             _ => Some(place.clone()),
         };
@@ -218,10 +471,9 @@ impl Marks {
             return;
         }
         self.update(|place| match place.position(snapshot)? {
-            (row, _) if rows.contains(&row) => Some(Place {
-                row: snapshot.anchor_before(text.row_start(row)),
-                ..place.clone()
-            }),
+            (row, _) if rows.contains(&row) => {
+                Some(place.clone().before_text(snapshot, text.row_start(row)))
+            }
             _ => Some(place.clone()),
         });
     }
@@ -251,11 +503,13 @@ impl Marks {
         self.update(|place| match place.position(snapshot)? {
             (row, column) if row == first => Some(Place::through(snapshot, row, last, column)),
             // Its row is joined, never deleted.
-            (row, column) if row == last => Some(Place {
-                keeps_column: true,
-                end: End::Kept,
-                ..Place::on(snapshot, row, column)
-            }),
+            (row, column) if row == last => {
+                let mut place = Place::on(snapshot, row, column);
+                place.keeps_column = true;
+                place.end = End::Kept;
+                place.life.kept = true;
+                Some(place)
+            }
             _ => Some(place.clone()),
         });
     }
@@ -270,10 +524,14 @@ impl Marks {
             Some(Place::on(snapshot, row, column))
         };
         self.update(follow);
+        if self.named.is_empty() && self.jump.is_none() && self.previous.is_none() {
+            self.feed = None;
+        }
     }
 
     /// Each mark becomes what `f` makes of it, or goes.
     fn update(&mut self, f: impl Fn(&Place) -> Option<Place>) {
+        self.advance();
         let named = std::mem::take(&mut self.named);
         self.named = named
             .into_iter()
@@ -357,7 +615,9 @@ impl VimState {
             }
             _ => None,
         };
-        Some(Mark(Of::Set(place?.clone())))
+        let mut place = place?.clone();
+        place.advance(&self.marks.batches());
+        Some(Mark(Of::Set(place)))
     }
 }
 
@@ -382,6 +642,7 @@ pub(crate) fn set(
         return Err(CommandError::new(format!("m doesn't set mark {name:?}")));
     }
     let at = cursor(target);
+    target.state.marks.watch(target.model);
     let place = Place::at(target.model.snapshot(), at);
     let marks = &mut target.state.marks;
     match name {
@@ -418,6 +679,7 @@ pub(crate) fn resolve(target: &mut VimTarget<'_>, motion: Motion) -> Result<Moti
 /// jumps from there (`:d`, `:s`).
 pub(crate) fn jump_here(target: &mut VimTarget<'_>) {
     let at = cursor(target);
+    target.state.marks.watch(target.model);
     let from = Place::at(target.model.snapshot(), at);
     target.state.marks.jumped(from);
 }
@@ -456,6 +718,7 @@ pub(crate) fn jump(
         return None;
     }
     let from = cursor(target);
+    target.state.marks.watch(target.model);
     let text = target.model.text();
     let lands = match (motion, count) {
         (Motion::MatchPair, Some(count)) => count <= 100,

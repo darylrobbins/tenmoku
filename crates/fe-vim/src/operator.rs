@@ -678,10 +678,15 @@ fn operate_unless_failing(
     if let Some(from) = jump.filter(|_| resolved) {
         state.marks.jumped(from);
     }
+    // The carets' ranges that overlap go as one deletion, whose first and
+    // last rows alone keep their marks.
+    let cuts = merged(&spans);
     if let Operator::Delete | Operator::Change = args.operator {
+        for range in &cuts {
+            state.marks.cutting(model.snapshot(), range.clone());
+        }
         for span in &spans {
             match span {
-                Span::Chars(range) => state.marks.cutting(model.snapshot(), range.clone()),
                 Span::Lines { rows, .. } if args.operator == Operator::Delete => {
                     let (first, last) = (*rows.start(), *rows.end());
                     state.marks.deleting(model.snapshot(), first, last);
@@ -706,15 +711,13 @@ fn operate_unless_failing(
             return Ok(move_only(model, state, &text, &before, &spans));
         }
         for span in &spans {
-            match span {
-                Span::Lines { rows, .. } => {
-                    let (first, last) = (*rows.start(), *rows.end());
-                    state.marks.changing(model.snapshot(), first, last);
-                }
-                Span::Chars(range) => state.marks.typing(model.snapshot(), [range.start]),
-                _ => {}
+            if let Span::Lines { rows, .. } = span {
+                let (first, last) = (*rows.start(), *rows.end());
+                state.marks.changing(model.snapshot(), first, last);
             }
         }
+        let starts = cuts.iter().map(|range| range.start);
+        state.marks.typing(model.snapshot(), starts);
         return insert::change(
             model,
             &mut **host,
@@ -1143,4 +1146,25 @@ fn put_unless_failing(
     land(model, &snapshot, carets);
     state.goals = None;
     Ok(Dispatched::new(Effect::Changed).with_transactions(transaction.into_iter().collect()))
+}
+
+/// The carets' character ranges, those overlapping or touching as the one
+/// deletion they make, in order.
+fn merged(spans: &[Span]) -> Vec<Range<usize>> {
+    let mut ranges: Vec<Range<usize>> = spans
+        .iter()
+        .filter_map(|span| match span {
+            Span::Chars(range) => Some(range.clone()),
+            _ => None,
+        })
+        .collect();
+    ranges.sort_by_key(|range| (range.start, range.end));
+    let mut merged: Vec<Range<usize>> = Vec::with_capacity(ranges.len());
+    for range in ranges {
+        match merged.last_mut() {
+            Some(last) if range.start <= last.end => last.end = last.end.max(range.end),
+            _ => merged.push(range),
+        }
+    }
+    merged
 }
