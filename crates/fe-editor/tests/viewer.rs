@@ -231,6 +231,12 @@ fn refuses_edits() {
         "editor.fold_all",
         "editor.unfold_all",
         "editor.toggle_soft_wrap",
+        "editor.add_cursor_above",
+        "editor.add_cursor_below",
+        "editor.select_next_occurrence",
+        "editor.select_all_occurrences",
+        "editor.split_selection_into_lines",
+        "editor.single_selection",
         "editor.nonexistent",
         "find.next",
     ];

@@ -25,11 +25,13 @@ pub mod completion;
 pub mod decorations;
 pub mod diagnostics;
 pub mod ghost_text;
+mod multi_cursor;
 mod row_change_decorations;
 pub mod row_changes;
 mod typing;
 mod viewer;
 
+pub use multi_cursor::MAX_OCCURRENCES;
 pub use typing::TYPING_PAUSE;
 pub use viewer::{COPY_LIMIT, CopyError, Outcome, ViewerModel};
 

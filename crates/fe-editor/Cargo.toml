@@ -13,6 +13,7 @@ fe-command.workspace = true
 fe-display.workspace = true
 fe-text.workspace = true
 imara-diff.workspace = true
+log.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true

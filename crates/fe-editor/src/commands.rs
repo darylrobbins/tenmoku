@@ -220,7 +220,7 @@ fn move_count<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u32, D::Erro
     Ok(count)
 }
 
-type Run = Result<Effect, CommandError>;
+pub(crate) type Run = Result<Effect, CommandError>;
 
 /// A movement's command and its `select_` twin: IDs and titles, and the
 /// movement for a page of so many rows.
@@ -501,12 +501,13 @@ pub fn registry() -> Registry<Editor> {
             "Moves every caret `count` times (at most 10,000) by `motion`, extending the selections if `extend`.",
         )
         .context(ContextPredicate::identifier(CONTEXT));
+    crate::multi_cursor::register(&mut registry);
     registry
 }
 
 /// Registers `editor.<name>`, which takes no args and runs `run` as the
 /// invoking actor.
-fn add(
+pub(crate) fn add(
     registry: &mut Registry<Editor>,
     name: &str,
     title: &str,

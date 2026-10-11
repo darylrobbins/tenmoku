@@ -92,6 +92,18 @@ fn every_editor_command_is_registered() {
         .map(|name| format!("editor.{name}"))
         .collect();
     expected.extend(["editor.insert".to_string(), "editor.move".to_string()]);
+    // The multi-cursor commands, which no GPUI action has yet; none edits.
+    expected.extend(
+        [
+            "add_cursor_above",
+            "add_cursor_below",
+            "select_next_occurrence",
+            "select_all_occurrences",
+            "split_selection_into_lines",
+            "single_selection",
+        ]
+        .map(|name| format!("editor.{name}")),
+    );
     assert_eq!(ids, expected);
     let mutating = [
         "backspace",

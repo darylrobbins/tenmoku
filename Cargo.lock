@@ -1931,6 +1931,7 @@ dependencies = [
  "fe-text",
  "imara-diff",
  "kiln-command",
+ "log",
  "proptest",
  "rand 0.9.5",
  "schemars",
