@@ -364,8 +364,10 @@ fn cached_text_keeps_readable_preceding_context() {
     fs::write(&path, bytes).unwrap();
     let view = Arc::new(FileView::open(&path).unwrap());
     let text = complete(&view);
-    // Cache the second chunk, then lose the file's start.
-    assert_eq!(text.char_at(chunk), Some('€'));
+    // Cache only the second chunk, well inside it, then lose the file's
+    // start: the three bytes before the euro are no longer readable.
+    assert_eq!(text.char_at(chunk + 10), Some('x'));
+    assert_eq!(text.error(), None);
     OpenOptions::new()
         .write(true)
         .open(&path)
@@ -376,6 +378,7 @@ fn cached_text_keeps_readable_preceding_context() {
     assert!(!text.is_char_boundary(chunk + 1));
     assert_eq!(text.clip_offset(chunk + 1, Bias::Left), chunk);
     assert_eq!(text.clip_offset(chunk + 2, Bias::Right), chunk + 3);
+    assert_eq!(text.error(), Some(ReadErrorKind::Changed));
 }
 
 #[test]
