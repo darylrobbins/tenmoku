@@ -14,7 +14,7 @@ use fe_ui::UiTheme;
 use gpui::{
     App, AppContext as _, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, ParentElement as _, PromptButton, PromptLevel, Render,
-    Styled as _, Subscription, WeakEntity, Window, div, px,
+    Styled as _, Subscription, WeakEntity, Window, WindowBounds, div, px,
 };
 
 use crate::{
@@ -37,10 +37,12 @@ use crate::{
     toolbar_picker::ToolbarPicker,
     trust::{self, TrustChanged},
 };
+use fe_command::Value;
 use kiln_shell::{
     CloseKind, CloseRequest, Closing, DockPosition, ItemHandle, ModalEvent, ModalId, ModalLayer,
     PaneView as _, Shell,
     close::{self, Items, LiveItems},
+    layout::{self, WindowLayout},
 };
 
 /// Shown in a tab when fastedit starts with nothing to open.
@@ -211,6 +213,16 @@ pub struct Workbench {
     /// Every command the workbench was dispatched, oldest first.
     #[cfg(test)]
     pub(crate) commands_run: Vec<fe_command::Invocation>,
+    /// The window's saved layout, once the host gives it one.
+    layout: Option<WindowLayout>,
+    /// A saved layout's items are still being restored: nothing is saved
+    /// until they're in.
+    restoring: bool,
+    /// The window's bounds as last drawn, for the layout saved at quit.
+    bounds: Option<WindowBounds>,
+    /// Saves the layout at quit, and keeps or deletes it as the window
+    /// closes.
+    _layout_hooks: Vec<Subscription>,
 }
 
 impl EventEmitter<RootChanged> for Workbench {}
@@ -348,6 +360,10 @@ impl Workbench {
             nav_pushes: 0,
             #[cfg(test)]
             commands_run: Vec::new(),
+            layout: None,
+            restoring: false,
+            bounds: None,
+            _layout_hooks: Vec::new(),
         };
         // Under test, the chrome's window moves are recorded, not made.
         #[cfg(test)]
@@ -869,6 +885,144 @@ impl Workbench {
         }
     }
 
+    /// Saves the window's layout from now on, in `layout`, as it changes
+    /// (a split, a close, a move, a dock toggle, a tab opening or
+    /// closing, a divider's drag), and in full as the app quits. As the
+    /// window closes, its entry is kept if it's the last window, else
+    /// deleted ([`kiln_shell::layout`]).
+    pub fn set_layout(&mut self, layout: WindowLayout, window: &Window, cx: &mut Context<Self>) {
+        self.layout = Some(layout);
+        let at_quit = cx.on_app_quit(|workbench, cx| {
+            let entry = workbench.layout_entry(cx);
+            let saved = workbench
+                .layout
+                .as_mut()
+                .map(|layout| layout.save_at_quit(entry, cx));
+            async move {
+                if let Some(saved) = saved {
+                    saved.await;
+                }
+            }
+        });
+        // The window closes, or the workbench goes: whichever is first.
+        let ours = window.window_handle().window_id();
+        let workbench = cx.weak_entity();
+        let closed = cx.on_window_closed(move |cx, closed| {
+            if closed == ours {
+                workbench
+                    .update(cx, |workbench, cx| workbench.close_layout(cx))
+                    .ok();
+            }
+        });
+        let released = cx.on_release(|workbench, cx| workbench.close_layout(cx));
+        self._layout_hooks = vec![at_quit, closed, released];
+    }
+
+    /// The window has closed: its entry is kept if no other window is open,
+    /// else deleted.
+    fn close_layout(&mut self, cx: &mut App) {
+        if let Some(layout) = self.layout.take() {
+            let entry = self.layout_entry(cx);
+            let others_open = !cx.windows().is_empty();
+            layout.close(entry, others_open, cx);
+        }
+    }
+
+    /// The window's layout id, once it has a layout.
+    pub fn layout_id(&self) -> Option<u64> {
+        self.layout.as_ref().and_then(WindowLayout::id)
+    }
+
+    /// Whether a restored layout's files are still being read.
+    pub fn restoring(&self) -> bool {
+        self.restoring
+    }
+
+    /// The window's layout, as saved: its bounds, its panes and their
+    /// files, the dock and whether the breadcrumbs show.
+    pub fn layout_entry(&self, cx: &App) -> Value {
+        let mut entry = Value::from_iter([
+            ("panes", layout::save_panes(&self.panes, &self.active, cx)),
+            ("dock", self.dock.read(cx).state().save()),
+            ("breadcrumbs", Value::from(self.breadcrumbs)),
+        ]);
+        if let (Some(bounds), Some(object)) = (self.bounds, entry.as_object_mut()) {
+            object.insert("bounds".into(), layout::save_bounds(bounds));
+        }
+        entry
+    }
+
+    /// Puts the window back as `entry` saved it: the dock and the
+    /// breadcrumbs at once; the panes, split as they were, with their
+    /// files read in the background, the views of one file sharing its
+    /// buffer, each with its caret. A file that's gone is left out, and a
+    /// pane left empty closes, unless it's the only one.
+    pub fn restore_layout(&mut self, entry: &Value, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(saved) = entry.get("dock") {
+            self.dock.update(cx, |dock, cx| dock.restore(saved, cx));
+        }
+        let breadcrumbs = entry.get("breadcrumbs").and_then(Value::as_bool);
+        if breadcrumbs.is_some_and(|shown| shown != self.breadcrumbs) {
+            self.toggle_breadcrumbs(cx);
+        }
+        let Some(saved) = entry.get("panes") else {
+            return;
+        };
+        let template = self.active.clone();
+        let mut new_pane = |_: &mut Window, cx: &mut App| {
+            template.update(cx, |pane, cx| cx.new(|cx| pane.new_peer(cx)))
+        };
+        let Some(restored) = layout::restore_panes(saved, &mut new_pane, window, cx) else {
+            return;
+        };
+        for pane in self.panes.panes() {
+            self.pane_subscriptions.remove(&pane.entity_id());
+        }
+        self.panes.set_root(restored.root);
+        let panes: Vec<_> = self.panes.panes().into_iter().cloned().collect();
+        for pane in &panes {
+            self.watch(pane, window, cx);
+        }
+        let active = restored.active;
+        self.activate(active.clone(), window, cx);
+        self.restoring = true;
+        let filled = restored.filled;
+        cx.spawn_in(window, async move |workbench, cx| {
+            let empty = filled.await;
+            workbench
+                .update_in(cx, |workbench, window, cx| {
+                    workbench.restoring = false;
+                    for pane in &empty {
+                        workbench.close_pane(pane, window, cx);
+                    }
+                    let open = workbench.panes.panes();
+                    let active = match open.contains(&&active) {
+                        true => active,
+                        false => open[0].clone(),
+                    };
+                    workbench.activate(active, window, cx);
+                    workbench.track_editors(cx);
+                })
+                .ok();
+        })
+        .detach();
+        self.track_editors(cx);
+        cx.notify();
+    }
+
+    /// Saves the layout if its shape changed, unless it's still being
+    /// restored.
+    fn save_layout(&mut self, window: &Window, cx: &mut Context<Self>) {
+        self.bounds = Some(window.window_bounds());
+        if self.layout.is_none() || self.restoring {
+            return;
+        }
+        let entry = self.layout_entry(cx);
+        if let Some(layout) = self.layout.as_mut() {
+            layout.save_if_changed(entry, cx);
+        }
+    }
+
     /// The quick-open palette, shown while [`Workbench::palette_open`].
     pub fn quick_open(&self) -> &Entity<Picker<QuickOpen>> {
         &self.quick_open
@@ -1250,6 +1404,9 @@ impl Workbench {
         for pane in self.panes.panes() {
             pane.update(cx, |pane, cx| pane.reload_settings(event, cx));
         }
+        // Editors restored from a saved layout open as the panes' do.
+        let theme = self.active.read(cx).theme().clone();
+        fe_gpui::set_restore_style(cx, theme, event.settings.editor.clone());
         self.reload_lsp_settings(&event.settings.lsp, cx);
     }
 
@@ -1329,6 +1486,7 @@ impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         window.set_window_title(&self.active.read(cx).title(cx));
         let followed = self.follow_active_editor(window, cx);
+        self.save_layout(window, cx);
         self.shell.update(cx, |shell, _| {
             // Not from its cache in a frame that gave it another editor: a
             // notification during a draw doesn't reach this frame's cache,
@@ -1390,3 +1548,7 @@ mod close_tests;
 #[cfg(test)]
 #[path = "palette_tests.rs"]
 mod palette_tests;
+
+#[cfg(test)]
+#[path = "layout_tests.rs"]
+mod layout_tests;

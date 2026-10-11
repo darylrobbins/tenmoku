@@ -15,9 +15,12 @@ use perf::Startup;
 use fe_buffer::Buffer;
 use fe_config::{Settings, SettingsEvent, SettingsStore};
 use fe_gpui::{EditorTheme, fe_keymap};
-use fe_workbench::{Workbench, loader};
-use gpui::{App, AppContext as _, Focusable as _, WindowHandle};
-use kiln::{Config, GlobalSettings, ui::ThemeMode};
+use fe_workbench::{Launch, Workbench, loader};
+use gpui::{App, AppContext as _, Entity, Focusable as _, Window, WindowBounds, WindowHandle};
+use kiln::{
+    Config, GlobalSettings, command::Value, core::layout::LayoutStore, shell::layout::WindowLayout,
+    ui::ThemeMode,
+};
 use kiln_platform::{Capabilities, WindowSpec, window_options};
 
 /// The buffer a finished read produced: a missing file is a new one, which
@@ -136,6 +139,84 @@ fn follow_settings(window: WindowHandle<Workbench>, cx: &mut App) {
     .detach();
 }
 
+/// The windows a launch on `root` opens, each with its layout (an id
+/// claimed for it, unless there's no root or no state directory) and the
+/// entry it restores, if any. A folder launch (`folder`) restores every
+/// saved window of the root that no live window holds, newest first, or
+/// else opens one fresh window; a file launch opens one fresh window.
+fn launch_windows(root: Option<&Path>, folder: bool) -> Vec<(Option<WindowLayout>, Option<Value>)> {
+    let Some(store) = root.and_then(layout_store) else {
+        return vec![(None, None)];
+    };
+    let mut windows: Vec<_> = if folder {
+        (store.restorable().into_iter())
+            .map(|(claim, entry)| (Some(WindowLayout::new(store.clone(), claim)), Some(entry)))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    if windows.is_empty() {
+        let layout = match store.claim_new() {
+            Ok(claim) => Some(WindowLayout::new(store, claim)),
+            Err(error) => {
+                log::error!("can't keep this window's layout: {error}");
+                None
+            }
+        };
+        windows.push((layout, None));
+    }
+    windows
+}
+
+/// The saved layouts of the folder `root`, if there's a state directory.
+fn layout_store(root: &Path) -> Option<LayoutStore> {
+    let dir = fe_config::paths::app_paths().layouts_dir()?;
+    Some(LayoutStore::new(dir, &kiln::core::trust::canonical(root)))
+}
+
+/// Where a saved window was.
+fn saved_bounds(entry: &Value) -> Option<WindowBounds> {
+    kiln::shell::layout::restore_bounds(entry.get("bounds")?)
+}
+
+/// A workbench for `launch`, in fastedit's chrome for this platform, with
+/// `settings`, saving its layout in `layout` and restoring `entry`.
+fn new_workbench(
+    launch: Launch,
+    settings: &Settings,
+    theme: EditorTheme,
+    layout: Option<WindowLayout>,
+    entry: Option<Value>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<Workbench> {
+    let capabilities = Capabilities::current();
+    let editor_settings = settings.editor.clone();
+    let status_bar = settings.status_bar.visible;
+    let workbench = cx.new(|cx| {
+        let mut workbench = Workbench::new(launch, theme, editor_settings, window, cx);
+        // The unified title bar is macOS's. Elsewhere the menus are drawn
+        // in the window, and the frame too where the window manager leaves
+        // it to the app (GNOME on Wayland).
+        workbench.set_title_bar(capabilities.unified_title_bar, cx);
+        workbench.set_menu_bar(!capabilities.native_menus, cx);
+        workbench.set_window_frame(!capabilities.unified_title_bar, cx);
+        workbench.set_status_bar_visible(status_bar, cx);
+        if let Some(entry) = &entry {
+            workbench.restore_layout(entry, window, cx);
+        }
+        if let Some(layout) = layout {
+            workbench.set_layout(layout, window, cx);
+        }
+        workbench
+    });
+    // Focus before the window's first draw: focusing after it would make
+    // the first frame request draw again.
+    let focus = workbench.read(cx).focus_handle(cx);
+    window.focus(&focus, cx);
+    workbench
+}
+
 /// Logs to stderr: warnings and errors, and fastedit's own info. `RUST_LOG`
 /// sets one level for everything instead (`debug`, `trace`, …).
 struct StderrLogger {
@@ -215,46 +296,36 @@ fn main() {
         .detach();
 
         let theme = EditorTheme::from_settings(&settings.editor, cx);
+        fe_gpui::set_restore_style(cx, theme.clone(), settings.editor.clone());
+        // A folder launch reopens its saved windows; a file launch opens
+        // the file, in a window that saves its layout from now on.
+        let mut windows = launch_windows(launch.root.as_deref(), reading.is_none());
+        let (layout, entry) = windows.remove(0);
+        let root = launch.root.clone();
         let mut failed = None;
+        let mut options = window_options(&WindowSpec::main("fastedit"), &capabilities, cx);
+        if let Some(bounds) = entry.as_ref().and_then(saved_bounds) {
+            options.window_bounds = Some(bounds);
+        }
         let window = cx
-            .open_window(
-                window_options(&WindowSpec::main("fastedit"), &capabilities, cx),
-                |window, cx| {
-                    startup.view = Some(Instant::now());
-                    // Show the file on the first frame if it's read by now.
-                    // A read that failed shows its error once the window is
-                    // up.
-                    launch.file = reading.as_ref().map(|reading| {
-                        let buffer = match reading.try_finish().map(|read| loaded(read, started)) {
-                            Some(Ok(buffer)) => Some(buffer),
-                            Some(Err(error)) => {
-                                failed = Some(error);
-                                None
-                            }
-                            None => None,
-                        };
-                        (reading.path().to_owned(), buffer)
-                    });
-                    let editor_settings = settings.editor.clone();
-                    let workbench = cx.new(|cx| {
-                        let mut workbench =
-                            Workbench::new(launch, theme, editor_settings, window, cx);
-                        // The unified title bar is macOS's. Elsewhere the menus
-                        // are drawn in the window, and the frame too where the
-                        // window manager leaves it to the app (GNOME on Wayland).
-                        workbench.set_title_bar(capabilities.unified_title_bar, cx);
-                        workbench.set_menu_bar(!capabilities.native_menus, cx);
-                        workbench.set_window_frame(!capabilities.unified_title_bar, cx);
-                        workbench.set_status_bar_visible(settings.status_bar.visible, cx);
-                        workbench
-                    });
-                    // Focus before the window's first draw: focusing after
-                    // it would make the first frame request draw again.
-                    let focus = workbench.read(cx).focus_handle(cx);
-                    window.focus(&focus, cx);
-                    workbench
-                },
-            )
+            .open_window(options, |window, cx| {
+                startup.view = Some(Instant::now());
+                // Show the file on the first frame if it's read by now.
+                // A read that failed shows its error once the window is
+                // up.
+                launch.file = reading.as_ref().map(|reading| {
+                    let buffer = match reading.try_finish().map(|read| loaded(read, started)) {
+                        Some(Ok(buffer)) => Some(buffer),
+                        Some(Err(error)) => {
+                            failed = Some(error);
+                            None
+                        }
+                        None => None,
+                    };
+                    (reading.path().to_owned(), buffer)
+                });
+                new_workbench(launch, &settings, theme.clone(), layout, entry, window, cx)
+            })
             .expect("failed to open the main window");
         startup.window = Some(Instant::now());
         let loading = window
@@ -280,6 +351,25 @@ fn main() {
             }
         }
         follow_settings(window, cx);
+        // The root's other saved windows.
+        for (layout, entry) in windows {
+            let launch = Launch {
+                root: root.clone(),
+                file: None,
+            };
+            let theme = theme.clone();
+            let mut options = window_options(&WindowSpec::main("fastedit"), &capabilities, cx);
+            if let Some(bounds) = entry.as_ref().and_then(saved_bounds) {
+                options.window_bounds = Some(bounds);
+            }
+            let opened = cx.open_window(options, |window, cx| {
+                new_workbench(launch, &settings, theme, layout, entry, window, cx)
+            });
+            match opened {
+                Ok(window) => follow_settings(window, cx),
+                Err(error) => log::error!("can't open a saved window: {error}"),
+            }
+        }
         cx.activate(true);
     });
 }

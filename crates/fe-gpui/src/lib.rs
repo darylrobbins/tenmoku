@@ -37,6 +37,7 @@ use gpui::{App, Hsla, Pixels, SharedString, px, rgb, rgba};
 pub use hover::{HoverContent, HoverFuture, HoverProvider};
 
 pub use keymap::{default_keymap, keymap_report, set_user_keymap};
+pub use pane_item::set_restore_style;
 pub use timing::{FrameTiming, FrameTimings};
 pub use view::EditorView;
 pub use vim::{set_vim_enabled, vim_enabled};

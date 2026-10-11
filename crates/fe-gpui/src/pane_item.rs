@@ -6,18 +6,21 @@
 
 use std::{
     hash::{DefaultHasher, Hash as _, Hasher as _},
-    path::Path,
+    path::{Path, PathBuf},
 };
+
+use fe_buffer::{Bias, Buffer};
+use fe_editor::EditorModel;
 
 use fe_command::{Invocation, Value};
 use fe_vim::VimState;
 use gpui::{
-    AnyView, App, AppContext as _, Context, Entity, PromptButton, PromptLevel, SharedString, Task,
-    Window,
+    AnyView, App, AppContext as _, Context, Entity, Global, PromptButton, PromptLevel,
+    SharedString, Task, Window,
 };
 use kiln_shell::{CloseAnswer, PaneItem, StatusItem, StatusSide};
 
-use crate::EditorView;
+use crate::{EditorSettings, EditorTheme, EditorView};
 
 /// An editor's status bar items, while it's the active item: the vim mode
 /// with vim on, and vim's last message, on the left; the cursor,
@@ -208,6 +211,77 @@ impl PaneItem for EditorView {
             ("path", Value::from(path)),
             ("caret", Value::from(caret)),
         ]))
+    }
+
+    /// Reads `state`'s file off the main thread and opens it, in the
+    /// theme and settings of [`set_restore_style`], its caret placed,
+    /// clamped to the text. A file that's gone, or can't be read, isn't
+    /// restored.
+    fn restore(state: Value, _: &mut Window, cx: &mut App) -> Task<Option<Entity<Self>>> {
+        let Some(path) = state.get("path").and_then(Value::as_str).map(PathBuf::from) else {
+            return Task::ready(None);
+        };
+        let read = cx.background_spawn({
+            let path = path.clone();
+            async move {
+                let file = std::fs::File::open(&path)?;
+                Buffer::from_reader_detecting(std::io::BufReader::new(file))
+            }
+        });
+        cx.spawn(async move |cx| {
+            let buffer = match read.await {
+                Ok(buffer) => buffer,
+                Err(error) => {
+                    log::info!("not restoring {}: {error}", path.display());
+                    return None;
+                }
+            };
+            cx.update(|cx| {
+                let (theme, settings) = restore_style(cx);
+                let mut model = EditorModel::new(buffer, Some(path));
+                model.set_tab_size(settings.tab_size);
+                model.set_soft_wrap(settings.soft_wrap);
+                let view = cx.new(|cx| EditorView::new(model, theme, cx));
+                view.update(cx, |view, cx| place_caret(view, &state, cx));
+                Some(view)
+            })
+        })
+    }
+
+    /// Places the caret `state` saved, clamped to the text.
+    fn apply_state(&mut self, state: &Value, _: &mut Window, cx: &mut Context<Self>) {
+        place_caret(self, state, cx);
+    }
+}
+
+/// Puts `editor`'s caret where `state` says, clamped to its text, and
+/// scrolls to it.
+fn place_caret(editor: &mut EditorView, state: &Value, cx: &mut Context<EditorView>) {
+    let Some(caret) = state.get("caret").and_then(Value::as_u64) else {
+        return;
+    };
+    let text = editor.model.text();
+    let caret = text.clip_offset((caret as usize).min(text.len()), Bias::Left);
+    editor.select_and_reveal(caret..caret, cx);
+}
+
+/// What restored editors open with: the host's theme and editor
+/// settings.
+struct RestoreStyle(EditorTheme, EditorSettings);
+
+impl Global for RestoreStyle {}
+
+/// Has editors restored from a saved layout open in `theme`, with
+/// `settings`' tab size and soft wrap, as the host's own do. Until it's
+/// called, they open in the default dark theme with default settings.
+pub fn set_restore_style(cx: &mut App, theme: EditorTheme, settings: EditorSettings) {
+    cx.set_global(RestoreStyle(theme, settings));
+}
+
+fn restore_style(cx: &App) -> (EditorTheme, EditorSettings) {
+    match cx.try_global::<RestoreStyle>() {
+        Some(RestoreStyle(theme, settings)) => (theme.clone(), settings.clone()),
+        None => (EditorTheme::default_dark(cx), EditorSettings::default()),
     }
 }
 

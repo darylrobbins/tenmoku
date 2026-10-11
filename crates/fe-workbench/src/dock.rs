@@ -269,6 +269,13 @@ impl Dock {
         cx.notify();
     }
 
+    /// Puts back the state [`DockState::save`] saved: whether it shows, its
+    /// active panel and whether References has joined the rail.
+    pub(crate) fn restore(&mut self, saved: &fe_command::Value, cx: &mut Context<Self>) {
+        self.state.restore(saved);
+        cx.notify();
+    }
+
     /// Whether a panel that isn't shown has focus.
     pub(crate) fn hidden_panel_focused(&self, window: &Window, cx: &App) -> bool {
         self.state.hidden_panel_focused(window, cx)
