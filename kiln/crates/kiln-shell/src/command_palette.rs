@@ -27,7 +27,7 @@ use kiln_platform::{
     command_actions::{Command as _, dispatch_invocation, typed_commands},
     keys,
 };
-use kiln_ui::{HighlightedLabel, UiTheme, char_ranges};
+use kiln_ui::{HighlightedLabel, UiTheme, char_ranges, ui_theme};
 
 use crate::{ModalId, Picker, PickerDelegate};
 
@@ -120,13 +120,14 @@ pub struct CommandPalette {
     stack: ContextStack,
     /// Each entry's key, looked up as its row first draws.
     keys: RefCell<HashMap<usize, Option<SharedString>>>,
-    ui: UiTheme,
 }
 
 impl CommandPalette {
     /// A palette of the commands that apply where `window`'s focus is now,
-    /// which a pick gives focus back to.
-    pub fn new(ui: UiTheme, window: &Window, cx: &App) -> Self {
+    /// which a pick gives focus back to. Its rows draw in the active
+    /// theme's colours ([`ui_theme`]); `_ui` is unused, left for callers
+    /// until a later API cleanup.
+    pub fn new(_ui: UiTheme, window: &Window, cx: &App) -> Self {
         let stack = keys::context_stack(&window.context_stack(), cx);
         let entries = commands_in(&stack, cx);
         Self {
@@ -135,7 +136,6 @@ impl CommandPalette {
             previous: window.focused(cx),
             stack,
             keys: RefCell::default(),
-            ui,
         }
     }
 
@@ -218,13 +218,14 @@ impl PickerDelegate for CommandPalette {
     fn render_match(&self, ix: usize, _: bool, cx: &App) -> AnyElement {
         let (entry, highlights) = &self.matches[ix];
         let title = self.entries[*entry].title.clone();
-        let label = HighlightedLabel::new(title, highlights.clone(), &self.ui);
+        let ui = ui_theme(cx);
+        let label = HighlightedLabel::new(title, highlights.clone(), &ui);
         let key = self.key_label(ix, cx).map(|key| {
             div()
                 .ml_auto()
                 .pl_3()
                 .flex_none()
-                .text_color(self.ui.muted_text)
+                .text_color(ui.muted_text)
                 .child(key)
         });
         div()
@@ -278,7 +279,7 @@ pub(crate) fn toggle(
     if shell.modal(cx) == Some(COMMAND_PALETTE) {
         return shell.dismiss_modal(window, cx);
     }
-    let ui = *shell.ui();
+    let ui = ui_theme(cx);
     let palette = CommandPalette::new(ui, window, cx);
     let picker = cx.new(|cx| Picker::new(palette, "Run a command…", ui, cx));
     picker.update(cx, |picker, cx| picker.show(window, cx));

@@ -34,7 +34,7 @@ use gpui::{
 use kiln_command::{CommandId, ContextFrame, ContextStack, Value};
 use kiln_core::{shortcut_label, shortcuts};
 use kiln_platform::keys;
-use kiln_ui::{ActivityRail, Icon, RailButton, TAB_HEIGHT, Tooltip, UiTheme};
+use kiln_ui::{ActivityRail, Icon, RailButton, TAB_HEIGHT, Tooltip, UiTheme, ui_theme};
 
 /// A panel's identity among a dock's panels: `"project"`, `"search"`, …
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -203,13 +203,14 @@ pub struct DockState {
     /// The key contexts a rail button's tooltip looks its show command's
     /// key up in, outermost first.
     shortcut_contexts: Vec<SharedString>,
-    ui: UiTheme,
     drawn: DrawnDock,
 }
 
 impl DockState {
-    /// An empty dock at `position`, shown, 240 px across.
-    pub fn new(position: DockPosition, ui: UiTheme) -> Self {
+    /// An empty dock at `position`, shown, 240 px across. It draws in the
+    /// active theme's colours ([`ui_theme`]), so it follows a theme change;
+    /// `_ui` is unused, left for callers until a later API cleanup.
+    pub fn new(position: DockPosition, _ui: UiTheme) -> Self {
         Self {
             position,
             panels: Vec::new(),
@@ -218,7 +219,6 @@ impl DockState {
             joined: HashSet::new(),
             size: px(240.),
             shortcut_contexts: Vec::new(),
-            ui,
             drawn: DrawnDock::default(),
         }
     }
@@ -433,15 +433,14 @@ impl DockState {
         let (title, command) = (panel.title(cx), panel.show_command(cx));
         self.drawn.buttons.borrow_mut().push(id);
         self.drawn.icons.borrow_mut().push(icon);
-        let ui = self.ui;
         let contexts = self.shortcut_contexts.clone();
         let last_tooltip = self.drawn.tooltip.clone();
-        RailButton::new(("dock-rail", ix), icon, &self.ui)
+        RailButton::new(("dock-rail", ix), icon, &ui_theme(cx))
             .highlighted(self.rail_highlighted() == Some(id))
             .on_click(cx.listener(move |view, _, window, cx| view.rail_clicked(id, window, cx)))
             .tooltip(move |_, cx| {
                 let shortcut = command.and_then(|command| Self::shortcut(&contexts, command, cx));
-                let tooltip = Tooltip::new(title.clone(), shortcut, &ui);
+                let tooltip = Tooltip::new(title.clone(), shortcut, &ui_theme(cx));
                 last_tooltip.replace(Some(tooltip.text()));
                 cx.new(|_| tooltip).into()
             })
@@ -464,7 +463,7 @@ impl DockState {
         let body = active
             .filter(|_| self.visible)
             .map(|panel| (panel.to_any_view(), panel.title(cx)));
-        let ui = &self.ui;
+        let ui = &ui_theme(cx);
         let title_row = |title: SharedString| {
             div()
                 .flex_none()
@@ -510,7 +509,7 @@ impl DockState {
                 .into_any_element();
         }
         let left = self.position == DockPosition::Left;
-        let rail = ActivityRail::new("dock-rail", &self.ui)
+        let rail = ActivityRail::new("dock-rail", ui)
             .children(buttons)
             .track(&self.drawn.rail);
         let column = body.map(|(view, title)| {

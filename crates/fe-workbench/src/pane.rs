@@ -745,7 +745,7 @@ impl Render for Pane {
                     .child(body)
                     .children(drop_layer),
             )
-            .children(self.state.drop_hint())
+            .children(self.state.drop_hint(cx))
     }
 }
 

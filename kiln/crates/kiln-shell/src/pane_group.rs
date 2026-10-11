@@ -19,7 +19,7 @@ use gpui::{
     Pixels, Point, Render, StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div,
     prelude::FluentBuilder as _, px,
 };
-use kiln_ui::UiTheme;
+use kiln_ui::{UiTheme, ui_theme};
 
 use crate::{
     ItemHandle, ItemId, PaneView,
@@ -734,19 +734,22 @@ impl<V: PaneView> PaneGroup<V> {
     }
 
     /// Draws the tree for host `H`, which reaches the group through
-    /// `group` when a divider is dragged.
+    /// `group` when a divider is dragged. Its borders are the active
+    /// theme's ([`ui_theme`]), so they follow a theme change; `_ui` is
+    /// unused, left for callers until a later API cleanup.
     pub fn render<H: 'static>(
         &self,
-        ui: &UiTheme,
+        _ui: &UiTheme,
         group: GroupOf<H, V>,
         cx: &mut Context<H>,
     ) -> AnyElement {
+        let ui = ui_theme(cx);
         div()
             .flex_1()
             .min_w_0()
             .h_full()
             .flex()
-            .child(self.root.render(&mut Vec::new(), ui, group, cx))
+            .child(self.root.render(&mut Vec::new(), &ui, group, cx))
             .into_any_element()
     }
 }

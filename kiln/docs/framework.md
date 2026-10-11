@@ -131,7 +131,10 @@ an app's AI backend can load the same commands, config and keymaps.
 - **Widgets.** Stateless ones are `RenderOnce` builders over a `Div`, so
   GPUI's `Styled`, `InteractiveElement` and `FluentBuilder` methods work on
   them; values are controlled. Stateful ones are `Entity<T>` views that emit
-  events (`cx.subscribe_in`). Widgets read `cx.theme()` while rendering.
+  events (`cx.subscribe_in`). Widgets read `cx.theme()` while rendering,
+  and so does the shell (its docks, panes, borders and pickers), so a theme
+  change reaches the whole window at once. Constructors that still take a
+  flat `UiTheme` ignore it; it goes in a later API cleanup.
 - **GPUI internals kiln relies on.** gpui-pre is pinned (`=0.3.7`), and a
   bump is its own change. `kiln::commands!` implements `gpui::Action` by
   hand rather than through GPUI's derive, so that an app needs no `gpui`

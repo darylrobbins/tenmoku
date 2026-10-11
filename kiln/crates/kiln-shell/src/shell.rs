@@ -14,7 +14,7 @@ use gpui::{
     StyleRefinement, Styled as _, Subscription, Tiling, Window, div, prelude::FluentBuilder as _,
 };
 use kiln_platform::{Capabilities, focus};
-use kiln_ui::{ROW_HEIGHT, UiTheme};
+use kiln_ui::{ROW_HEIGHT, UiTheme, ui_theme};
 
 use crate::{
     Closing, DockPosition, MenuBarView, ModalId, ModalLayer, ModalView, TitleBar, close,
@@ -54,7 +54,6 @@ type CenterFocus = Rc<dyn Fn(&App) -> FocusHandle>;
 pub struct Shell {
     context: SharedString,
     title: SharedString,
-    ui: UiTheme,
     text_size: Option<Pixels>,
     title_bar: bool,
     menu_bar: Option<Entity<MenuBarView>>,
@@ -70,15 +69,17 @@ pub struct Shell {
 }
 
 impl Shell {
-    /// A shell under the app's root key `context`, in `ui`'s colours, with
-    /// no chrome, centre, docks or status bar yet. Making it has the
-    /// window keep keys working when the focused element stops being drawn
-    /// ([`focus::watch`]), and the platform's close button ask the
-    /// window's items first ([`close::close_window`], over the items the
-    /// host gave [`close::set_window_items`]).
+    /// A shell under the app's root key `context`, with no chrome, centre,
+    /// docks or status bar yet. Making it has the window keep keys working
+    /// when the focused element stops being drawn ([`focus::watch`]), and
+    /// the platform's close button ask the window's items first
+    /// ([`close::close_window`], over the items the host gave
+    /// [`close::set_window_items`]). It draws in the active theme's colours
+    /// ([`ui_theme`]), so it follows a theme change; `_ui` is unused, left
+    /// for callers until a later API cleanup.
     pub fn new(
         context: impl Into<SharedString>,
-        ui: UiTheme,
+        _ui: UiTheme,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -106,7 +107,6 @@ impl Shell {
         Self {
             context: context.into(),
             title: SharedString::default(),
-            ui,
             text_size: None,
             title_bar: false,
             menu_bar: None,
@@ -290,11 +290,6 @@ impl Shell {
         (self.modals.clone()).update(cx, |layer, cx| layer.dismiss_modal(window, cx));
     }
 
-    /// The colours it draws in.
-    pub fn ui(&self) -> &UiTheme {
-        &self.ui
-    }
-
     fn toggle_command_palette(
         &mut self,
         _: &command_palette::Toggle,
@@ -320,7 +315,7 @@ impl Shell {
 
 impl Render for Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ui = &self.ui;
+        let ui = ui_theme(cx);
         let tiling = self
             .client_tiling
             .or_else(|| window_frame::client_tiling(window, cx))

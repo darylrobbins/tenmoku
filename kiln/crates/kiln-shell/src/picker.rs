@@ -30,7 +30,7 @@ use gpui::{
 use kiln_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry};
 use kiln_core::CommandCatalog;
 use kiln_platform::commands::RunCommand;
-use kiln_ui::{PaletteFrame, ROW_HEIGHT, TextInput, TextInputEvent, UiTheme};
+use kiln_ui::{PaletteFrame, ROW_HEIGHT, TextInput, TextInputEvent, UiTheme, ui_theme};
 
 /// The key context a picker's element sets.
 pub const KEY_CONTEXT: &str = "picker";
@@ -73,16 +73,18 @@ pub struct Picker<D: PickerDelegate> {
     input: Entity<TextInput>,
     selected: usize,
     scroll: UniformListScrollHandle,
-    ui: UiTheme,
     _input: Subscription,
 }
 
 impl<D: PickerDelegate> EventEmitter<DismissEvent> for Picker<D> {}
 
 impl<D: PickerDelegate> Picker<D> {
-    pub fn new(delegate: D, placeholder: &str, ui: UiTheme, cx: &mut Context<Self>) -> Self {
+    /// A picker over `delegate`'s matches. It draws in the active theme's
+    /// colours ([`ui_theme`]), so it follows a theme change; `_ui` is
+    /// unused, left for callers until a later API cleanup.
+    pub fn new(delegate: D, placeholder: &str, _ui: UiTheme, cx: &mut Context<Self>) -> Self {
         let placeholder = SharedString::from(placeholder.to_owned());
-        let input = cx.new(|cx| TextInput::new(placeholder, &ui, cx));
+        let input = cx.new(|cx| TextInput::new(placeholder, &ui_theme(cx), cx));
         let changed = cx.subscribe(&input, |picker, input, event, cx| {
             if *event == TextInputEvent::Changed {
                 let query = input.read(cx).text().to_owned();
@@ -94,7 +96,6 @@ impl<D: PickerDelegate> Picker<D> {
             input,
             selected: 0,
             scroll: UniformListScrollHandle::new(),
-            ui,
             _input: changed,
         }
     }
@@ -171,6 +172,7 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     fn render_rows(&mut self, range: Range<usize>, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let ui = ui_theme(cx);
         range
             .map(|ix| {
                 let selected = ix == self.selected;
@@ -182,8 +184,8 @@ impl<D: PickerDelegate> Picker<D> {
                     .flex()
                     .items_center()
                     .overflow_hidden()
-                    .when(selected, |row| row.bg(self.ui.row_selected))
-                    .hover(|row| row.bg(self.ui.row_hover))
+                    .when(selected, |row| row.bg(ui.row_selected))
+                    .hover(|row| row.bg(ui.row_hover))
                     .on_click(
                         cx.listener(move |picker, _, window, cx| {
                             picker.confirm_id(&id, window, cx)
@@ -233,7 +235,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .track_scroll(&self.scroll)
             .h(ROW_HEIGHT * count.min(VISIBLE_ROWS) as f32)
         });
-        let frame = PaletteFrame::new(&self.ui)
+        let frame = PaletteFrame::new(&ui_theme(cx))
             .input(self.input.clone())
             .when_some(self.delegate.status(), PaletteFrame::status)
             .when_some(list, PaletteFrame::list);

@@ -28,7 +28,7 @@ use gpui::{
     Pixels, Point, Render, ScrollHandle, SharedString, Styled as _, Subscription, WeakEntity,
     Window, canvas, div, point, px, size,
 };
-use kiln_ui::{TAB_HEIGHT, TabBar, UiTheme};
+use kiln_ui::{TAB_HEIGHT, TabBar, UiTheme, ui_theme};
 
 use crate::{
     ItemHandle, ItemId,
@@ -80,11 +80,11 @@ pub struct TabDropped<V> {
 }
 
 /// The dragged tab's title, in tab style, at the pointer.
-pub struct TabGhost(pub SharedString, pub UiTheme);
+pub struct TabGhost(pub SharedString);
 
 impl Render for TabGhost {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let tab = kiln_ui::Tab::new("ghost", self.0.clone(), &self.1).active(true);
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let tab = kiln_ui::Tab::new("ghost", self.0.clone(), &ui_theme(cx)).active(true);
         div().h(TAB_HEIGHT).text_size(px(12.)).child(tab)
     }
 }
@@ -224,12 +224,13 @@ pub struct PaneState<V> {
     id: EntityId,
     view: WeakEntity<V>,
     emptied: bool,
-    ui: UiTheme,
 }
 
 impl<V: PaneView> PaneState<V> {
-    /// An empty pane, for the view `cx` makes.
-    pub fn new(ui: UiTheme, cx: &mut Context<V>) -> Self {
+    /// An empty pane, for the view `cx` makes. It draws in the active
+    /// theme's colours ([`ui_theme`]), so it follows a theme change; `_ui`
+    /// is unused, left for callers until a later API cleanup.
+    pub fn new(_ui: UiTheme, cx: &mut Context<V>) -> Self {
         Self {
             items: Vec::new(),
             active: 0,
@@ -245,7 +246,6 @@ impl<V: PaneView> PaneState<V> {
             id: cx.entity_id(),
             view: cx.weak_entity(),
             emptied: false,
-            ui,
         }
     }
 
@@ -270,10 +270,6 @@ impl<V: PaneView> PaneState<V> {
     /// Focused when the pane has no item to focus.
     pub fn focus(&self) -> &FocusHandle {
         &self.focus
-    }
-
-    pub fn ui(&self) -> &UiTheme {
-        &self.ui
     }
 
     /// Adds `item` after the others, without showing it.
@@ -504,7 +500,7 @@ impl<V: PaneView> PaneState<V> {
     /// item, which a click activates, the × closes, and a drag carries.
     pub fn tab_bar(&self, cx: &mut Context<V>) -> TabBar {
         let pane = cx.entity().downgrade();
-        let ui = self.ui;
+        let ui = ui_theme(cx);
         let tabs: Vec<_> = self
             .items
             .iter()
@@ -515,10 +511,10 @@ impl<V: PaneView> PaneState<V> {
                     pane: pane.clone(),
                     item: item.id(),
                 };
-                kiln_ui::Tab::new(("tab", ix), label.clone(), &self.ui)
+                kiln_ui::Tab::new(("tab", ix), label.clone(), &ui)
                     .dirty(item.is_dirty(cx))
                     .on_drag(dragged, move |_, _, _, cx| {
-                        cx.new(|_| TabGhost(label.clone(), ui))
+                        cx.new(|_| TabGhost(label.clone()))
                     })
                     .on_drop(self.on_drop(cx))
                     .active(ix == self.active)
@@ -533,7 +529,7 @@ impl<V: PaneView> PaneState<V> {
                     }))
             })
             .collect();
-        TabBar::new("tabs", &self.ui)
+        TabBar::new("tabs", &ui)
             .track_scroll(&self.tab_scroll)
             .on_drop(self.on_drop(cx))
             .children(tabs)
@@ -542,17 +538,18 @@ impl<V: PaneView> PaneState<V> {
     /// The drop marker in the tab strip, or the overlay on the content,
     /// for where a hovering tab would drop: the last child of the pane's
     /// root element.
-    pub fn drop_hint(&self) -> Option<AnyElement> {
+    pub fn drop_hint(&self, cx: &App) -> Option<AnyElement> {
         let hover = self.hover?;
+        let ui = ui_theme(cx);
         let origin = self.bounds().origin;
         let (hint, fill) = match hover {
             DropTarget::TabBar(index) => {
                 let bar = self.tab_bar_bounds.get();
-                (marker(&self.tab_layout(), index, bar), self.ui.drop_target)
+                (marker(&self.tab_layout(), index, bar), ui.drop_target)
             }
             DropTarget::Content(zone) => {
                 let overlay = zone.overlay(self.bounds(), self.content_bounds.get());
-                (overlay, self.ui.drop_target.opacity(0.2))
+                (overlay, ui.drop_target.opacity(0.2))
             }
         };
         let element = div()
@@ -818,7 +815,7 @@ impl PaneView for ItemPane {
     }
 
     fn new_peer(&self, cx: &mut Context<Self>) -> Self {
-        let mut pane = Self::new(self.state.ui, cx);
+        let mut pane = Self::new(ui_theme(cx), cx);
         pane.state.set_peers(self.state.peers.clone());
         pane
     }
@@ -827,7 +824,7 @@ impl PaneView for ItemPane {
 impl Render for ItemPane {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.state.end_hover(cx);
-        let ui = self.state.ui;
+        let ui = ui_theme(cx);
         let body = match self.state.active_item() {
             Some(item) => item.to_any_view().into_any_element(),
             None => div().into_any_element(),
@@ -869,6 +866,6 @@ impl Render for ItemPane {
                     .child(body)
                     .children(self.state.drop_layer(cx)),
             )
-            .children(self.state.drop_hint())
+            .children(self.state.drop_hint(cx))
     }
 }
