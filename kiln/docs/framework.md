@@ -83,6 +83,15 @@ an app's AI backend can load the same commands, config and keymaps.
   `about`) that each platform places by its conventions. A menu item's
   shortcut is looked up in the app's own key contexts, which the app passes
   in: kiln names none of an app's contexts itself.
+- **The shell.** A window's `Shell` view lays out the app's centre view,
+  the docks beside and below it, the status bar and the modal layer under
+  the chrome, with the app's root key context, which the app passes in.
+  Where an app keeps a piece's state in a view of its own (to read it
+  without a context, or to add to what it does), kiln gives the state
+  and a view trait as well as a ready view: `DockState` with `DockView`
+  and `Dock`, and a `RootTrust` that any `TrustHost` view holds. The
+  modal layer (`ModalLayer`, `ModalId`) shows any `ModalView`: a GPUI
+  `ManagedView` that can be dismissed from outside, as `Picker` can.
 - **Widgets.** Stateless ones are `RenderOnce` builders over a `Div`, so
   GPUI's `Styled`, `InteractiveElement` and `FluentBuilder` methods work on
   them; values are controlled. Stateful ones are `Entity<T>` views that emit

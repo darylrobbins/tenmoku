@@ -4,18 +4,16 @@
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
-    rc::Rc,
 };
 
 use fe_buffer::Buffer;
 use fe_editor::EditorModel;
 use fe_gpui::{EditorSettings, EditorTheme, EditorView, SettingsEvent, commands::RunCommand};
-use fe_ui::{ROW_HEIGHT, UiTheme};
+use fe_ui::UiTheme;
 use gpui::{
     App, AppContext as _, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, ParentElement as _, PromptButton, PromptLevel, Render,
-    StyleRefinement, Styled as _, Subscription, WeakEntity, Window, div,
-    prelude::FluentBuilder as _, px,
+    Styled as _, Subscription, WeakEntity, Window, div, px,
 };
 
 use crate::{
@@ -38,10 +36,7 @@ use crate::{
     toolbar_picker::ToolbarPicker,
     trust::{self, TrustChanged},
 };
-use kiln_shell::{
-    ItemHandle, ModalEvent, ModalId, ModalLayer, TitleBar,
-    window_frame::{self, TopRow},
-};
+use kiln_shell::{DockPosition, ItemHandle, ModalEvent, ModalId, ModalLayer, Shell};
 
 /// Shown in a tab when fastedit starts with nothing to open.
 pub const WELCOME: &str = "\
@@ -149,7 +144,10 @@ pub struct Workbench {
     echoes: HashSet<EntityId>,
     quick_open: Entity<Picker<QuickOpen>>,
     language_picker: Entity<Picker<LanguagePicker>>,
-    /// The palettes' modal layer.
+    /// The window's shell: the chrome, the dock, the status bar and the
+    /// palettes' modal layer, around the panes.
+    shell: Entity<Shell>,
+    /// The shell's modal layer, which shows the palettes.
     modals: Entity<ModalLayer>,
     /// The palette that shows, if one does: the modal layer's, as of its
     /// last change.
@@ -158,13 +156,9 @@ pub struct Workbench {
     pub(crate) nav_state: Nav,
     status_bar: Entity<StatusBar>,
     status_bar_visible: bool,
-    title_bar: bool,
     /// The menu bar drawn in the window, where the platform has no native
     /// one: see [`Workbench::set_menu_bar`].
     menu_bar: Option<Entity<MenuBarView>>,
-    /// Whether the workbench draws the window's frame when the platform
-    /// asks the app to: see [`Workbench::set_window_frame`].
-    window_frame: bool,
     /// Stands in for the platform's client-side decorations: the test
     /// platform's windows only have server-side ones.
     #[cfg(test)]
@@ -189,6 +183,9 @@ pub struct Workbench {
     _rail: Subscription,
     /// To the modal layer's palettes coming and going.
     _modals: Subscription,
+    /// To the status bar, whose vim line shows in its place even while
+    /// it's hidden.
+    _status_bar: Subscription,
     /// What the panes' toolbar crumbs and "…" list.
     toolbar_picker: Entity<Picker<ToolbarPicker>>,
     /// Whether the panes show their toolbars.
@@ -271,7 +268,24 @@ impl Workbench {
             Picker::new(delegate, "Filter…", ui, cx)
         });
         let nav_state = Nav::new(launch_root.clone(), ui, cx);
-        let modals = Self::new_modal_layer(cx);
+        let status_bar = cx.new(|_| StatusBar::new(ui));
+        let shell = cx.new(|cx| {
+            let mut shell = Shell::new(KEY_CONTEXT, ui, window, cx).text_size(px(12.));
+            shell.set_title(title_bar::name(launch_root.as_deref()), cx);
+            shell.set_dock(DockPosition::Right, Some(dock.clone().into()), cx);
+            shell.set_status_bar(Some(status_bar.clone().into()), cx);
+            shell
+        });
+        let centre = cx.weak_entity();
+        let centre = cx.new(|cx| PaneArea {
+            workbench: centre,
+            focus: cx.focus_handle(),
+        });
+        shell.update(cx, |shell, cx| shell.set_center(centre, cx));
+        let modals = shell.read(cx).modals().clone();
+        let status_bar_changed = cx.observe(&status_bar, |workbench, _, cx| {
+            workbench.show_status_bar(cx);
+        });
         // The layer hides a palette that's dismissed or left.
         let modals_changed = cx.subscribe(&modals, |workbench, _, event, cx| {
             workbench.palette = match *event {
@@ -292,14 +306,13 @@ impl Workbench {
             echoes: HashSet::new(),
             quick_open,
             language_picker,
+            shell,
             modals,
             palette: None,
             nav_state,
-            status_bar: cx.new(|_| StatusBar::new(ui)),
+            status_bar,
             status_bar_visible: true,
-            title_bar: false,
             menu_bar: None,
-            window_frame: false,
             #[cfg(test)]
             client_tiling: None,
             root: launch_root,
@@ -312,6 +325,7 @@ impl Workbench {
             root_subscription,
             _rail: rail,
             _modals: modals_changed,
+            _status_bar: status_bar_changed,
             toolbar_picker,
             breadcrumbs: true,
             nav: NavButtons::default(),
@@ -372,21 +386,6 @@ impl Workbench {
                 }
             },
         )
-    }
-
-    /// The palettes' layer. A palette that still has focus as it hides,
-    /// with nothing focused before it opened, leaves it to the workbench's
-    /// focus: the active editor.
-    fn new_modal_layer(cx: &mut Context<Self>) -> Entity<ModalLayer> {
-        let workbench = cx.weak_entity();
-        cx.new(|_| {
-            let mut layer = ModalLayer::new();
-            layer.set_focus_fallback(Rc::new(move |_, cx| {
-                let workbench = workbench.upgrade()?;
-                Some(workbench.read(cx).focus_handle(cx))
-            }));
-            layer
-        })
     }
 
     /// Shows `picker` as `palette` in the modal layer, in place of any
@@ -461,6 +460,8 @@ impl Workbench {
             });
         }
         self.resolve_trust(Some(root.clone()), true, window, cx);
+        let name = title_bar::name(Some(&root));
+        self.shell.update(cx, |shell, cx| shell.set_title(name, cx));
         cx.emit(RootChanged(root));
         cx.notify();
     }
@@ -1014,12 +1015,17 @@ impl Workbench {
         &self.status_bar
     }
 
+    /// The window's shell, around the panes.
+    pub fn shell(&self) -> &Entity<Shell> {
+        &self.shell
+    }
+
     /// Shows or hides the title bar the standalone app draws under its
     /// transparent macOS title bar: see [`crate::titlebar_options`]. Off by
     /// default.
     pub fn set_title_bar(&mut self, shown: bool, cx: &mut Context<Self>) {
-        self.title_bar = shown;
-        cx.notify();
+        self.shell
+            .update(cx, |shell, cx| shell.set_title_bar(shown, cx));
     }
 
     /// Shows or hides the menu bar drawn in the window (kiln-shell's), from
@@ -1027,32 +1033,22 @@ impl Workbench {
     /// native menu bar (Linux). Off by default.
     pub fn set_menu_bar(&mut self, shown: bool, cx: &mut Context<Self>) {
         self.menu_bar = shown.then(|| cx.new(MenuBarView::new));
-        cx.notify();
+        let bar = self.menu_bar.clone();
+        self.shell
+            .update(cx, |shell, cx| shell.set_menu_bar(bar, cx));
     }
 
     /// Draws the window's frame (title, buttons, resize edges) whenever the
     /// platform asks the app to, as GNOME on Wayland does; the window manager
     /// draws it otherwise. For a standalone app on Linux. Off by default.
     pub fn set_window_frame(&mut self, drawn: bool, cx: &mut Context<Self>) {
-        self.window_frame = drawn;
-        cx.notify();
+        self.shell
+            .update(cx, |shell, cx| shell.set_window_frame(drawn, cx));
     }
 
     /// The menu bar, while it's shown.
     pub fn menu_bar(&self) -> Option<&Entity<MenuBarView>> {
         self.menu_bar.as_ref()
-    }
-
-    /// `menu_bar.open`: opens the first menu of the menu bar, if it's shown.
-    fn open_menu_bar(
-        &mut self,
-        _: &kiln_shell::menu_bar::Open,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(bar) = &self.menu_bar {
-            bar.update(cx, |bar, cx| bar.open(0, true, window, cx));
-        }
     }
 
     /// The name the title bar reads.
@@ -1069,7 +1065,16 @@ impl Workbench {
     /// though without saving it (see [`crate::save_toggles_to`]).
     pub fn set_status_bar_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
         self.status_bar_visible = visible;
+        self.show_status_bar(cx);
         cx.notify();
+    }
+
+    /// Has the shell show the status bar if it's visible, or if vim's
+    /// command line, which shows in its place, is open.
+    fn show_status_bar(&mut self, cx: &mut Context<Self>) {
+        let shown = self.status_bar_visible || self.status_bar.read(cx).line_open();
+        self.shell
+            .update(cx, |shell, cx| shell.set_status_bar_visible(shown, cx));
     }
 
     fn run_status_op(&mut self, op: StatusOp, window: &mut Window, cx: &mut Context<Self>) {
@@ -1289,72 +1294,51 @@ impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         window.set_window_title(&self.active.read(cx).title(cx));
         let followed = self.follow_active_editor(window, cx);
-        let main = div()
-            .flex_1()
-            .min_h_0()
-            .w_full()
-            .flex()
-            .child(self.panes.render(&self.ui, cx))
-            .child(self.dock.clone());
-        // Cached: frames the workbench redraws for other reasons reuse the
-        // bar's last render. Not in a frame that gave it another editor: a
-        // notification during a draw doesn't reach this frame's cache, nor
-        // ask for another frame.
-        let mut style = StyleRefinement::default().w_full().h(ROW_HEIGHT);
-        style.flex_shrink = Some(0.);
-        // Vim's command line shows in the bar's place even with it hidden.
-        let line_open = self.status_bar.read(cx).line_open();
-        let status_bar = (self.status_bar_visible || line_open).then(|| {
-            let bar = self.status_bar.clone();
+        self.shell.update(cx, |shell, _| {
+            // Not from its cache in a frame that gave it another editor: a
+            // notification during a draw doesn't reach this frame's cache,
+            // nor ask for another frame.
             if followed {
-                bar.into_any_element()
-            } else {
-                bar.cached(style).into_any_element()
+                shell.redraw_status_bar();
             }
-        });
-        #[cfg(test)]
-        let client_tiling = self
-            .client_tiling
-            .or_else(|| window_frame::client_tiling(window, cx));
-        #[cfg(not(test))]
-        let client_tiling = window_frame::client_tiling(window, cx);
-        let tiling = client_tiling.filter(|_| self.window_frame);
-        let top_row = (self.menu_bar.is_some() || tiling.is_some()).then(|| {
-            let row = TopRow::new(title_bar::name(self.root.as_deref()), tiling.is_some())
-                .key_context(KEY_CONTEXT);
-            match &self.menu_bar {
-                Some(bar) => row.menu_bar(bar.clone()),
-                None => row,
-            }
+            #[cfg(test)]
+            shell.set_client_tiling(self.client_tiling);
         });
         div()
-            .key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::on_run_command))
-            .on_action(cx.listener(Self::open_menu_bar))
             // So a modifier pressed while a panel has focus reaches the
             // editors, for their cmd-click hover.
             .on_modifiers_changed(EditorView::modifiers_changed)
-            .relative()
             .size_full()
-            .flex()
-            .flex_col()
-            .bg(self.ui.background)
-            .text_color(self.ui.text)
-            .text_size(px(12.))
-            .children(
-                self.title_bar
-                    .then(|| TitleBar::new(title_bar::name(self.root.as_deref()))),
-            )
-            .children(top_row)
-            .child(main)
-            .children(status_bar)
-            .child(self.modals.clone())
-            // The frame's border and resize edges, over everything, unless
-            // the window fills the screen.
-            .when_some(tiling.filter(|tiling| !tiling.is_tiled()), |root, _| {
-                root.border_1().border_color(self.ui.border)
-            })
-            .children(tiling.into_iter().flat_map(window_frame::resize_handles))
+            .child(self.shell.clone())
+    }
+}
+
+/// The shell's centre: the panes, which the workbench holds and lays out.
+/// Its focus is the workbench's, the active editor's.
+struct PaneArea {
+    workbench: WeakEntity<Workbench>,
+    /// Focused only once the workbench has gone.
+    focus: FocusHandle,
+}
+
+impl Render for PaneArea {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(workbench) = self.workbench.upgrade() else {
+            return div().into_any_element();
+        };
+        workbench.update(cx, |workbench, cx| {
+            workbench.panes.render(&workbench.ui, cx)
+        })
+    }
+}
+
+impl Focusable for PaneArea {
+    fn focus_handle(&self, cx: &App) -> FocusHandle {
+        match self.workbench.upgrade() {
+            Some(workbench) => workbench.read(cx).focus_handle(cx),
+            None => self.focus.clone(),
+        }
     }
 }
 

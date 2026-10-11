@@ -15,7 +15,9 @@
 //! ([`DockItem`]) at a time ([`dock`]); over them, the [`ModalLayer`]
 //! shows one modal view, such as a [`Picker`] ([`modal`]).
 //!
-//! A host's root folder's workspace trust is [`trust`]'s.
+//! [`Shell`] is a window's shell around the host's centre view: the chrome,
+//! the docks, the status bar and the modal layer, under the app's root key
+//! context. A host's root folder's workspace trust is [`trust`]'s.
 //!
 //! The shell's leaf modules, which a host can use before it adopts the
 //! rest: the status bar's items ([`status`]), a picker palette over a
@@ -30,6 +32,7 @@ pub mod modal;
 pub mod persist;
 pub mod picker;
 mod root;
+mod shell;
 pub mod status;
 mod title_bar;
 pub mod trust;
@@ -46,6 +49,7 @@ pub use menu_bar::MenuBarView;
 pub use modal::{ModalEvent, ModalId, ModalLayer, ModalView};
 pub use picker::{Picker, PickerDelegate};
 pub use root::Root;
+pub use shell::Shell;
 pub use status::{StatusItem, StatusItems, StatusSide};
 pub use title_bar::TitleBar;
 
