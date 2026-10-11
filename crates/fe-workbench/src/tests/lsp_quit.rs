@@ -308,3 +308,74 @@ fn quit_kills_a_server_stopped_but_not_reaped(cx: &mut TestAppContext) {
         assert_eq!(fake.kills(), 1, "{window_open}");
     }
 }
+
+#[gpui::test]
+fn quit_counts_every_server_still_cleaning_up(cx: &mut TestAppContext) {
+    // Two windows' servers stop and exit, their threads reading endless
+    // stderr on: both are force-stopped, not one for the two.
+    let (first, second) = (
+        FakeServer::new(Script::default()),
+        FakeServer::new(Script::default()),
+    );
+    let mut q = Quitting::new(cx, Arc::new(EndlessStderr(first.launcher())));
+    q.open_main();
+    first.wait_initialized();
+    let mut other = Quitting::new(cx, Arc::new(EndlessStderr(second.launcher())));
+    other.open_main();
+    second.wait_initialized();
+
+    let quit = q.quit(GRACE, FORCE);
+    assert_eq!(quit, Quit { forced: 2, left: 0 });
+    assert_eq!((first.kills(), second.kills()), (1, 1));
+}
+
+#[gpui::test]
+fn quit_counts_running_and_cleaning_up_servers(cx: &mut TestAppContext) {
+    // One server stops at once but its thread cleans up on; the other
+    // never answers `shutdown`.
+    let (cleaning, running) = (
+        FakeServer::new(Script::default()),
+        FakeServer::new(Script {
+            answer_shutdown: false,
+            ..Script::default()
+        }),
+    );
+    let mut q = Quitting::new(cx, Arc::new(EndlessStderr(cleaning.launcher())));
+    q.open_main();
+    cleaning.wait_initialized();
+    let mut other = Quitting::new(cx, running.launcher());
+    other.open_main();
+    running.wait_initialized();
+
+    let quit = q.quit(GRACE, FORCE);
+    assert_eq!(quit, Quit { forced: 2, left: 0 });
+    assert_eq!((cleaning.kills(), running.kills()), (1, 1));
+}
+
+#[gpui::test]
+fn quit_leaves_every_launcher_ignoring_cancel(cx: &mut TestAppContext) {
+    let mut held = Vec::new();
+    let mut quits = Vec::new();
+    for _ in 0..2 {
+        let fake = FakeServer::new(Script::default());
+        let (entered, entering) = mpsc::channel();
+        let (release, released) = mpsc::channel();
+        let launcher = Arc::new(Ignoring {
+            fake: fake.launcher(),
+            entered: Mutex::new(entered),
+            release: Mutex::new(released),
+        });
+        let mut q = Quitting::new(cx, launcher);
+        q.open_main();
+        entering.recv_timeout(Duration::from_secs(10)).unwrap();
+        held.push((fake, release));
+        quits.push(q);
+    }
+
+    let quit = quits[0].quit(GRACE, FORCE);
+    assert_eq!(quit, Quit { forced: 2, left: 2 });
+    for (fake, release) in held {
+        release.send(()).unwrap();
+        wait_until("the late server is killed", || fake.kills() == 1);
+    }
+}

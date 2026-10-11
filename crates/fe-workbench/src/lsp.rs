@@ -174,29 +174,15 @@ struct Shutdowns {
 
 impl Global for Shutdowns {}
 
-/// A manager's servers, as its sink hears of them on their threads: those
-/// started and not stopped yet, and those stopped for good.
-#[derive(Default)]
-struct Running {
-    running: HashSet<ServerId>,
-    stopped: HashSet<ServerId>,
-    /// The manager and its servers' threads have all ended and dropped
-    /// the sink. A `Stopped` status isn't that: the thread may still be
-    /// reaping the server's process group.
-    finished: bool,
-}
-
 /// Held by a manager's sink, so it drops with the last of the manager and
-/// its server threads: that is when cleanup is complete.
+/// its server threads.
 struct Cleanup {
-    running: Arc<Mutex<Running>>,
-    /// Gets a message each time a server stops, and when cleanup ends.
+    /// Gets a message each time a server stops, and when the sink drops.
     stop: mpsc::Sender<()>,
 }
 
 impl Drop for Cleanup {
     fn drop(&mut self) {
-        lock(&self.running).finished = true;
         self.stop.send(()).ok();
     }
 }
@@ -204,49 +190,41 @@ impl Drop for Cleanup {
 /// What waiting for a manager's servers to stop needs: its own channel, so
 /// waits for several managers don't take each other's news.
 struct Watch {
-    running: Arc<Mutex<Running>>,
     /// Gets a message each time one of them stops.
     stopped: mpsc::Receiver<()>,
-    /// Force-stops them, and outlives their manager.
+    /// Force-stops them, tells which threads haven't ended, and outlives
+    /// their manager.
     switch: KillSwitch,
 }
 
 impl Watch {
-    /// Counts `server` as running, unless it has stopped already: its
-    /// first status may not have been sent yet.
-    fn started(&self, server: ServerId) {
-        let mut running = lock(&self.running);
-        if !running.stopped.contains(&server) {
-            running.running.insert(server);
-        }
-    }
-
     /// Everything it watches has ended, processes reaped, not merely
     /// reported `Stopped`.
     fn is_done(&self) -> bool {
-        lock(&self.running).finished
+        self.switch.unfinished() == 0
     }
 
-    /// The servers not done: those not reported stopped, and at least one
-    /// while a thread is still cleaning up after a `Stopped`.
+    /// The servers not done: those whose threads haven't ended, whether or
+    /// not they've reported `Stopped`.
     fn count(&self) -> usize {
-        let running = lock(&self.running);
-        if running.finished {
-            0
-        } else {
-            running.running.len().max(1)
-        }
+        self.switch.unfinished()
     }
 
-    /// Blocks until every server it watches has stopped, or `deadline`.
+    /// Blocks until every server it watches has ended, or `deadline`.
     fn wait(&self, deadline: Instant) {
         while !self.is_done() {
             let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return;
+            }
             match self.stopped.recv_timeout(left) {
                 Ok(()) => {}
-                // Their threads have all ended.
-                Err(mpsc::RecvTimeoutError::Disconnected) => return,
                 Err(mpsc::RecvTimeoutError::Timeout) => return,
+                // The sink has dropped; a thread may be a moment from its
+                // end.
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    std::thread::sleep(Duration::from_millis(1).min(left))
+                }
             }
         }
     }
@@ -622,10 +600,8 @@ impl Workbench {
         }
         let launcher = host.unwrap_or_else(|| Arc::new(LocalLauncher));
         let (sender, generation) = (lsp.sender.clone(), lsp.generation);
-        let running = Arc::new(Mutex::new(Running::default()));
         let (stop, stopped) = mpsc::channel();
-        let watched = running.clone();
-        let cleanup = Cleanup { running, stop };
+        let cleanup = Cleanup { stop };
         #[cfg(test)]
         let sent = lsp.diagnostics_sent.clone();
         #[cfg(test)]
@@ -645,15 +621,12 @@ impl Workbench {
             ) {
                 restarting.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
-            if let LspEvent::Status { server, status, .. } = &event {
-                let mut running = lock(&cleanup.running);
-                if matches!(status, ServerStatus::Stopped(_)) {
-                    running.running.remove(server);
-                    running.stopped.insert(*server);
-                    cleanup.stop.send(()).ok();
-                } else if !running.stopped.contains(server) {
-                    running.running.insert(*server);
-                }
+            if let LspEvent::Status {
+                status: ServerStatus::Stopped(_),
+                ..
+            } = &event
+            {
+                cleanup.stop.send(()).ok();
             }
             sender.send_blocking((generation, event)).ok();
         };
@@ -667,7 +640,6 @@ impl Workbench {
         manager.update_settings(&lsp.settings);
         manager.set_trust(|_| false);
         lsp.watch = Some(Watch {
-            running: watched,
             stopped,
             switch: manager.kill_switch(),
         });
@@ -749,7 +721,6 @@ impl Workbench {
         let owners = &mut lsp.owners;
         let reserved = &mut lsp.reserved;
         let mut released = Vec::new();
-        let watch = &lsp.watch;
         let mut shown = HashSet::new();
         let mut to_resolve = Vec::new();
         let mut to_follow = Vec::new();
@@ -888,9 +859,6 @@ impl Workbench {
                 log::warn!("{}: {error}", path.display());
                 None
             });
-            if let (Some(server), Some(watch)) = (server, watch) {
-                watch.started(server);
-            }
             owners.insert(route, buffer);
             documents.insert(
                 buffer,
@@ -1190,9 +1158,6 @@ impl Workbench {
         match op {
             LspOp::Restart => match manager.restart(&name, &root) {
                 Ok(Some(restarted)) => {
-                    if let Some(watch) = &lsp.watch {
-                        watch.started(restarted);
-                    }
                     // Until its own status comes.
                     lsp.servers
                         .insert(restarted, (name.clone(), ServerStatus::Starting));

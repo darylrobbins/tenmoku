@@ -93,6 +93,8 @@ pub struct LspManager {
     trusted: Trusted,
     /// Thrown by [`KillSwitch::kill`]; shared with every server thread.
     switch: Arc<Flag>,
+    /// Shared with the [`KillSwitch`]es.
+    threads: Threads,
 }
 
 /// Force-stops every server an [`LspManager`] started, from
@@ -100,7 +102,13 @@ pub struct LspManager {
 /// manager, so a host can throw it after dropping the manager (whose drop
 /// only asks its servers to shut down) once it has waited long enough.
 #[derive(Clone)]
-pub struct KillSwitch(Arc<Flag>);
+pub struct KillSwitch {
+    flag: Arc<Flag>,
+    /// The threads of every server the manager started, until seen ended.
+    threads: Threads,
+}
+
+type Threads = Arc<Mutex<Vec<Done>>>;
 
 impl KillSwitch {
     /// For every server the manager started whose thread hasn't ended
@@ -114,14 +122,25 @@ impl KillSwitch {
     /// Once thrown it stays thrown: a server the manager starts afterwards
     /// launches nothing, and reports `Stopped(None)`.
     pub fn kill(&self) {
-        self.0.fire();
+        self.flag.fire();
+    }
+
+    /// How many of the servers the manager started have threads that
+    /// haven't ended: running, launching, waiting to restart, or still
+    /// cleaning up after reporting `Stopped` (reaping their process
+    /// group). Counts each server once, whatever its status, and still
+    /// works after the manager is dropped.
+    pub fn unfinished(&self) -> usize {
+        let mut threads = lock(&self.threads);
+        threads.retain(|done| done.clone().now_or_never().is_none());
+        threads.len()
     }
 }
 
 impl std::fmt::Debug for KillSwitch {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("KillSwitch")
-            .field("thrown", &self.0.fired())
+            .field("thrown", &self.flag.fired())
             .finish()
     }
 }
@@ -208,13 +227,17 @@ impl LspManager {
             next_id: 0,
             trusted: Arc::new(|_| true),
             switch: Arc::default(),
+            threads: Arc::default(),
         }
     }
 
     /// The switch that force-stops every server this manager starts, for a
     /// host that can't wait for them to shut down (a quit's deadline, say).
     pub fn kill_switch(&self) -> KillSwitch {
-        KillSwitch(self.switch.clone())
+        KillSwitch {
+            flag: self.switch.clone(),
+            threads: self.threads.clone(),
+        }
     }
 
     /// Sets the host's answer to whether servers may start for a workspace
@@ -467,6 +490,12 @@ impl LspManager {
         .spawn()
         .inspect_err(|_| *lock(&unmade) = before)?;
         self.retiring.remove(&key);
+        let done = done.shared();
+        {
+            let mut threads = lock(&self.threads);
+            threads.retain(|done| done.clone().now_or_never().is_none());
+            threads.push(done.clone());
+        }
         self.servers.insert(
             id,
             Handle {
@@ -477,7 +506,7 @@ impl LspManager {
                 commands,
                 stop,
                 cancel,
-                done: done.shared(),
+                done,
                 session,
                 thread,
             },
