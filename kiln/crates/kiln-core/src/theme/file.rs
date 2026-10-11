@@ -81,6 +81,15 @@ pub struct ThemeFile {
 }
 
 impl ThemeFile {
+    /// Whether `name` is a key of kiln's own at a theme file's top level
+    /// (`appearance`, `ui`, `surface` …), which an app's table can't use:
+    /// kiln reads it first.
+    pub fn is_reserved(name: &str) -> bool {
+        matches!(name, "kiln_theme" | "name" | "appearance")
+            || name == ALIAS_TABLE
+            || TOKEN_GROUPS.contains(&name)
+    }
+
     /// Reads the theme file at `path`, keeping the tables named in
     /// `extensions`. It's `None`, with an error, if the file is missing,
     /// unreadable or not TOML; otherwise every problem is a warning about

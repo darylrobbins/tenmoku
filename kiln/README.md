@@ -120,7 +120,9 @@ fn main() {
   settings type (serde, with `#[serde(crate = "kiln::serde")]`), layered over
   its defaults and reloaded when the files change; read it with
   `cx.settings::<S>()`. `Config::user_keymap` and `Config::user_theme` follow
-  the user's keymap and theme the same way.
+  the user's keymap and theme the same way; `Config::theme_extensions` names
+  the app's own tables in that theme file (an editor's colours, say), read
+  with `cx.theme().data().extension(name)`.
 - **Widgets.** Stateless ones (`Button`, `Checkbox`, `ListRow` …) are
   `RenderOnce` builders over a `div`, so GPUI's styling methods work on them.
   Stateful ones (`TextField`, `List`, `Tree`, `SplitPane` …) are views

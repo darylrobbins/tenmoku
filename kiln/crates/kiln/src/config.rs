@@ -20,6 +20,8 @@ use kiln_ui::{GlobalTheme, Theme, ThemeMode, set_themes};
 /// back the theme it replaced.
 pub(crate) struct UserTheme {
     path: PathBuf,
+    /// The app's tables the file may have ([`crate::Config::theme_extensions`]).
+    extensions: &'static [&'static str],
     /// The theme last read without errors, while the file exists.
     theme: Option<Theme>,
     /// The slot the theme went into, and the theme that was there.
@@ -28,9 +30,10 @@ pub(crate) struct UserTheme {
 }
 
 impl UserTheme {
-    pub(crate) fn load(path: PathBuf) -> Self {
+    pub(crate) fn load(path: PathBuf, extensions: &'static [&'static str]) -> Self {
         let mut theme = Self {
             path,
+            extensions,
             theme: None,
             replaced: None,
             diagnostics: Vec::new(),
@@ -47,7 +50,7 @@ impl UserTheme {
             self.diagnostics.clear();
             return self.theme.take().is_some();
         }
-        let (file, diagnostics) = ThemeFile::load(&self.path, &[]);
+        let (file, diagnostics) = ThemeFile::load(&self.path, self.extensions);
         self.diagnostics = diagnostics;
         let Some(file) = file else {
             return false;

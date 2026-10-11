@@ -42,7 +42,7 @@ use gpui::{App, Global, SharedString, Task, WindowOptions};
 use kiln_command::{CommandId, Value};
 use kiln_core::{
     CatalogError, CommandCatalog, Diagnostic, Keymap, KeymapLayer, KeymapStore, MenuBar, Os,
-    SettingsStore, SettingsType, load_keymap_layer,
+    SettingsStore, SettingsType, load_keymap_layer, theme::ThemeFile,
 };
 use kiln_platform::{
     Capabilities, WindowSpec, commands,
@@ -108,6 +108,7 @@ pub struct Config {
     theme_mode: ThemeMode,
     settings: Vec<AddSettings>,
     user_theme: Option<PathBuf>,
+    theme_extensions: &'static [&'static str],
     batches: Option<Batches>,
     log_target: Option<&'static str>,
 }
@@ -132,6 +133,7 @@ impl Config {
             theme_mode: ThemeMode::System,
             settings: Vec::new(),
             user_theme: None,
+            theme_extensions: &[],
             batches: None,
             log_target: None,
         }
@@ -220,6 +222,26 @@ impl Config {
     /// and one with errors keeps its last good version.
     pub fn user_theme(mut self, path: impl Into<PathBuf>) -> Self {
         self.user_theme = Some(path.into());
+        self
+    }
+
+    /// The app's own tables the user's theme file may have, such as an
+    /// editor's colours: kept as written, for the app to read with
+    /// `cx.theme().data().extension(name)`. A change to one alone is a
+    /// theme change. Only the user's file has them, so with kiln's own
+    /// themes (no file, or the other appearance's) `extension` is `None`
+    /// and the app uses its defaults. Without this, such a table is an
+    /// unknown key.
+    ///
+    /// # Panics
+    ///
+    /// If a name is one of kiln's own keys (`ui`, `surface` …), which a
+    /// theme file's table of that name would set instead.
+    pub fn theme_extensions(mut self, names: &'static [&'static str]) -> Self {
+        if let Some(name) = names.iter().find(|name| ThemeFile::is_reserved(name)) {
+            panic!("`{name}` is a theme key of kiln's own, not an app's table");
+        }
+        self.theme_extensions = names;
         self
     }
 
@@ -405,7 +427,7 @@ pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
         diagnostics.extend(found);
     }
     if let Some(path) = config.user_theme.take() {
-        let theme = UserTheme::load(path);
+        let theme = UserTheme::load(path, config.theme_extensions);
         diagnostics.extend(theme.diagnostics());
         service = service.source(theme);
     }
