@@ -21,6 +21,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 pub mod commands;
 pub mod completion;
+pub mod decorations;
 pub mod diagnostics;
 pub mod ghost_text;
 pub mod row_changes;
@@ -28,6 +29,7 @@ mod viewer;
 
 pub use viewer::{COPY_LIMIT, CopyError, Outcome, ViewerModel};
 
+use decorations::{Decoration, DecorationProvider, ProviderId};
 use diagnostics::{AnyDiagnosticSet, Diagnostic, DiagnosticEntry, DiagnosticSet};
 use row_changes::RowChange;
 
@@ -119,6 +121,8 @@ pub struct EditorModel {
     diff_base: Option<Arc<str>>,
     /// The changes against `diff_base` for the snapshot at this version.
     row_changes: RefCell<Option<(Version, Arc<[RowChange]>)>>,
+    /// Decoration providers, in registration order; shared with splits.
+    decorations: Vec<(ProviderId, Rc<RefCell<dyn DecorationProvider>>)>,
 }
 
 impl EditorModel {
@@ -148,6 +152,7 @@ impl EditorModel {
             diagnostics: None,
             diff_base: None,
             row_changes: RefCell::new(None),
+            decorations: Vec::new(),
         }
     }
 
@@ -159,8 +164,9 @@ impl EditorModel {
     }
 
     /// A second model over the same buffer, for a split: same path, tab size,
-    /// wrap, selections and diagnostics, but its own display rows with
-    /// nothing folded.
+    /// wrap, selections, diagnostics and decoration providers (the same
+    /// ones; providers added to either later aren't added to the other),
+    /// but its own display rows with nothing folded.
     /// Its char widths are [`Monospace`] until set.
     pub fn split(&self) -> EditorModel {
         let (events, snapshot) = {
@@ -191,6 +197,7 @@ impl EditorModel {
             diagnostics: self.diagnostics.as_ref().map(|set| set.boxed_clone()),
             diff_base: self.diff_base.clone(),
             row_changes: RefCell::new(None),
+            decorations: self.decorations.clone(),
         };
         model.apply_wrap();
         model
@@ -304,6 +311,9 @@ impl EditorModel {
         if let Some(set) = &mut self.diagnostics {
             set.refresh(&self.snapshot);
         }
+        for (_, provider) in &self.decorations {
+            provider.borrow_mut().refresh(&self.snapshot);
+        }
         // Nothing reads events outside undo and redo, which drain them
         // first; this keeps them from piling up while others edit.
         self.events.drain();
@@ -315,6 +325,41 @@ impl EditorModel {
         self.diagnostics
             .as_ref()
             .map_or_else(Vec::new, |set| set.entries(&self.snapshot))
+    }
+
+    /// Registers `provider`, painted over those registered before it at the
+    /// same priority. The host keeps its own handle to update it, then
+    /// repaints.
+    pub fn add_decoration_provider(
+        &mut self,
+        provider: Rc<RefCell<dyn DecorationProvider>>,
+    ) -> ProviderId {
+        let id = ProviderId::next();
+        self.decorations.push((id, provider));
+        id
+    }
+
+    /// Unregisters provider `id`; returns whether it was registered.
+    pub fn remove_decoration_provider(&mut self, id: ProviderId) -> bool {
+        let before = self.decorations.len();
+        self.decorations.retain(|(registered, _)| *registered != id);
+        self.decorations.len() != before
+    }
+
+    /// Every provider's decorations overlapping `range`, in the text as of
+    /// the last catch-up (see [`EditorModel`]), in paint order: by
+    /// priority, then registration, then start, the last on top.
+    pub fn decorations(&self, range: Range<usize>) -> Vec<Decoration> {
+        let mut all: Vec<(usize, Decoration)> = Vec::new();
+        let mut out = Vec::new();
+        for (registered, (_, provider)) in self.decorations.iter().enumerate() {
+            provider
+                .borrow()
+                .decorations(&self.snapshot, range.clone(), &mut out);
+            all.extend(out.drain(..).map(|item| (registered, item)));
+        }
+        all.sort_by_key(|(registered, item)| (item.priority, *registered, item.range.start));
+        all.into_iter().map(|(_, item)| item).collect()
     }
 
     /// Sets the text [`EditorModel::row_changes`] compares against (the
