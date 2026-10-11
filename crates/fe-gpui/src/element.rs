@@ -619,9 +619,11 @@ impl Element for EditorElement {
             let x = inlay_x(frame, caret?)?;
             (x > edge).then_some(x - edge)
         };
+        // The scroll to keep for the next frame, where this one shifts past it.
+        let mut kept_scroll = None;
         if let Some(past) = past_edge(&frame) {
             if model.display().wrap_width().is_none() {
-                frame = lay_out(&FrameInput {
+                let scrolled = lay_out(&FrameInput {
                     scroll: Vec2 {
                         x: frame.scroll.x + past,
                         y: frame.scroll.y,
@@ -629,6 +631,16 @@ impl Element for EditorElement {
                     autoscroll: false,
                     ..input
                 });
+                // A long row's slice goes by buffer x, so scrolling a wide
+                // composition's caret into view can leave the slice past the
+                // composition's anchor, and the inlay out of the frame. Keep
+                // the frame that has it, and shift it the rest of the way:
+                // the next frame starts from the same scroll, not this one.
+                if scrolled.inlay.is_some() {
+                    frame = scrolled;
+                } else {
+                    kept_scroll = Some(frame.scroll);
+                }
             }
             if let Some(past) = past_edge(&frame) {
                 shift_frame(&mut frame, past);
@@ -649,7 +661,8 @@ impl Element for EditorElement {
             .collect();
         let text = window.insert_hitbox(to_window(frame.text_bounds()), HitboxBehavior::Normal);
 
-        let scroll = point(px(frame.scroll.x), px(frame.scroll.y));
+        let kept = kept_scroll.unwrap_or(frame.scroll);
+        let scroll = point(px(kept.x), px(kept.y));
         self.view.update(cx, |view, cx| {
             // Scrolled to reveal the caret, say: what the popover was found
             // under has moved, and it isn't drawn from this frame on

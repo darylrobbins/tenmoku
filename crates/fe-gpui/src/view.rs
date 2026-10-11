@@ -996,6 +996,7 @@ impl Render for EditorView {
             // drops a composition too.
             let blur = cx.on_blur(&self.focus, window, |view, window, cx| {
                 let composing = view.composition.take().is_some();
+                view.autoscroll |= composing;
                 if view.hover.take().is_some() || composing {
                     cx.defer_in(window, |_, _, cx| cx.notify());
                 }

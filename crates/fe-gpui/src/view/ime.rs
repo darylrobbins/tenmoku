@@ -215,9 +215,21 @@ impl EditorView {
                 })
             })
         };
-        if ends && self.composition.take().is_some() {
+        if ends {
+            self.cancel_composition(cx);
+        }
+    }
+
+    /// Drops a composition without an edit, bringing the buffer caret back
+    /// into view: the composition's own scrolling stays otherwise
+    /// (`autoscroll` is off once a frame is drawn). Whether there was one.
+    pub(crate) fn cancel_composition(&mut self, cx: &mut Context<Self>) -> bool {
+        let was = self.composition.take().is_some();
+        if was {
+            self.autoscroll = true;
             cx.notify();
         }
+        was
     }
 
     /// Whether an input method may type, as vim's mode is now: with vim
@@ -231,8 +243,8 @@ impl EditorView {
     /// Drops a composition vim's mode or switch has ended since it started
     /// ([`EditorView::composition`]).
     pub(crate) fn drop_stale_composition(&mut self) {
-        if self.composition().is_none() {
-            self.composition = None;
+        if self.composition().is_none() && self.composition.take().is_some() {
+            self.autoscroll = true;
         }
     }
 
@@ -241,11 +253,8 @@ impl EditorView {
     /// recording and undo grouping see one typed run. Ending one with
     /// nothing types nothing.
     fn commit(&mut self, text: &str, cx: &mut Context<Self>) {
-        if self.composition.take().is_some() {
-            cx.notify();
-            if text.is_empty() {
-                return;
-            }
+        if self.cancel_composition(cx) && text.is_empty() {
+            return;
         }
         self.type_text(text, cx);
     }
@@ -351,9 +360,7 @@ impl EntityInputHandler for EditorView {
         }
         if text.is_empty() {
             // The input method gave up composing: nothing is typed.
-            if self.composition.take().is_some() {
-                cx.notify();
-            }
+            self.cancel_composition(cx);
             return;
         }
         let marked = self.marked_text_range(window, cx);

@@ -485,6 +485,88 @@ fn the_caret_of_a_composition_past_a_long_row_stays_in_view(cx: &mut TestAppCont
 }
 
 #[gpui::test]
+fn cancelling_an_overflowing_composition_shows_the_caret(cx: &mut TestAppContext) {
+    let row = "x".repeat(2000);
+    let (view, cx, _) = editor(cx, &row, &[(100, 100)]);
+    view.update(cx, |view, _| view.model_mut().set_soft_wrap(false));
+    draw(cx);
+    let long = "あいうえおかきくけこさしすせそ".repeat(30);
+    let end = long.chars().count();
+    for how in 0..3 {
+        // Composed and drawn, so the frame scrolls to its caret.
+        mark(&view, cx, &long, end..end);
+        draw(cx);
+        draw(cx);
+        assert!(view.read_with(cx, |view, _| view.scroll.x) > px(0.));
+        match how {
+            0 => mark(&view, cx, "", 0..0),
+            1 => ime(&view, cx, |view, window, cx| {
+                view.replace_text_in_range(None, "", window, cx)
+            }),
+            _ => {
+                // A command that moves nothing, on a caret at the start.
+                view.update(cx, |view, _| view.model_mut().set_cursor(0));
+                mark(&view, cx, &long, end..end);
+                draw(cx);
+                draw(cx);
+                view.update(cx, |view, _| view.model_mut().set_cursor(100));
+                let command = Invocation::of("editor.move_right").unwrap();
+                view.update(cx, |view, cx| {
+                    view.end_composition_for(&command, cx);
+                });
+            }
+        }
+        draw(cx);
+        draw(cx);
+        assert_eq!(marked(&view, cx), None, "{how}");
+        let text_bounds = view.read_with(cx, |view, _| {
+            let layout = view.layout.as_ref().unwrap();
+            layout.bounds(layout.frame.text_bounds())
+        });
+        let caret = caret_at(&view, cx, 100);
+        assert!(caret.origin.x >= text_bounds.origin.x, "{how}");
+        assert!(caret.right() <= text_bounds.right(), "{how}");
+    }
+}
+
+#[gpui::test]
+fn a_wide_composition_mid_way_along_a_long_row_stays_drawn(cx: &mut TestAppContext) {
+    let len = MAX_SHAPED_ROW_BYTES + 100;
+    let (view, cx, _) = editor(cx, &"x".repeat(len), &[(100, 100)]);
+    view.update(cx, |view, _| view.model_mut().set_soft_wrap(false));
+    draw(cx);
+    let text_bounds = view.read_with(cx, |view, _| {
+        let layout = view.layout.as_ref().unwrap();
+        layout.bounds(layout.frame.text_bounds())
+    });
+    let long = "あいうえおかきくけこさしすせそ".repeat(60);
+    let end = long.chars().count();
+    mark(&view, cx, &long, end..end);
+    for _ in 0..3 {
+        draw(cx);
+        assert!(view.read_with(cx, |view, _| {
+            view.layout.as_ref().unwrap().frame.inlay.is_some()
+        }));
+        assert!(view.read_with(cx, |view, _| view.painted_composition.is_some()));
+        let carets = view.read_with(cx, |view, _| view.painted_carets.clone());
+        assert_eq!(carets.len(), 1);
+        near(
+            carets[0].origin.x,
+            ime_bounds(&view, cx, 100 + end..100 + end).origin.x,
+        );
+        assert!(carets[0].right() <= text_bounds.right());
+        assert!(carets[0].origin.x > text_bounds.origin.x);
+    }
+    // Cancelled, the buffer caret is back in view.
+    mark(&view, cx, "", 0..0);
+    draw(cx);
+    draw(cx);
+    let caret = caret_at(&view, cx, 100);
+    assert!(caret.origin.x >= text_bounds.origin.x);
+    assert!(caret.right() <= text_bounds.right());
+}
+
+#[gpui::test]
 fn dropped(cx: &mut TestAppContext) {
     let (view, cx, seen) = editor(cx, "ab", &[(2, 2)]);
     let before = history(&view, cx);
