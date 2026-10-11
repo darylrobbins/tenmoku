@@ -20,6 +20,7 @@ use gpui::{
 use crate::{
     Dock, GitPanel, GitPanelEvent, KEY_CONTEXT, MenuBarView, OutlinePanel, Pane, PaneGroup, Picker,
     ProjectPanel, QuickOpen, ReferencesPanel, SearchPanel, StatusBar,
+    config_problems::{self, ConfigProblemsPicker},
     dock::{self, DockEvent, DockOp},
     git::GitState,
     language_picker::LanguagePicker,
@@ -100,15 +101,17 @@ pub(crate) enum Palette {
     Toolbar,
     Definitions,
     Symbols,
+    ConfigProblems,
 }
 
 impl Palette {
-    const ALL: [Palette; 5] = [
+    const ALL: [Palette; 6] = [
         Palette::QuickOpen,
         Palette::Language,
         Palette::Toolbar,
         Palette::Definitions,
         Palette::Symbols,
+        Palette::ConfigProblems,
     ];
 
     /// Its id in the modal layer.
@@ -119,6 +122,7 @@ impl Palette {
             Palette::Toolbar => "toolbar",
             Palette::Definitions => "definitions",
             Palette::Symbols => "symbols",
+            Palette::ConfigProblems => "config_problems",
         })
     }
 
@@ -152,6 +156,10 @@ pub struct Workbench {
     echoes: HashSet<EntityId>,
     quick_open: Entity<Picker<QuickOpen>>,
     language_picker: Entity<Picker<LanguagePicker>>,
+    /// The config files' problems, shown by `workbench.show_config_problems`.
+    pub(crate) config_problems: Entity<Picker<ConfigProblemsPicker>>,
+    /// To kiln's config diagnostics, which the status bar shows.
+    _config_problems: Subscription,
     /// The window's shell: the chrome, the dock, the status bar and the
     /// palettes' modal layer, around the panes.
     shell: Entity<Shell>,
@@ -297,6 +305,11 @@ impl Workbench {
         let changes_subscription = Self::follow_changes(&changes, window, cx);
         let language_picker =
             cx.new(|cx| Picker::new(LanguagePicker::new(ui), "Select a language…", ui, cx));
+        let config_problems = cx.weak_entity();
+        let config_problems = cx.new(|cx| {
+            let delegate = ConfigProblemsPicker::new(config_problems, ui);
+            Picker::new(delegate, "Filter config problems…", ui, cx)
+        });
         let toolbar_picker = cx.new(|cx| {
             let delegate = ToolbarPicker::new(outline.downgrade(), ui);
             Picker::new(delegate, "Filter…", ui, cx)
@@ -346,6 +359,8 @@ impl Workbench {
             echoes: HashSet::new(),
             quick_open,
             language_picker,
+            config_problems,
+            _config_problems: Self::follow_config_problems(window, cx),
             shell,
             modals,
             palette: None,
@@ -399,6 +414,7 @@ impl Workbench {
         workbench.follow_trust(window, cx);
         workbench.resolve_trust(workbench.root.clone(), as_folder, window, cx);
         workbench.start_lsp(window, cx);
+        workbench.sync_config_problems(window, cx);
         workbench
     }
 
@@ -1518,6 +1534,9 @@ impl Workbench {
             }
             if picker::toggles_quick_open(run, cx) {
                 return self.toggle_quick_open(window, cx);
+            }
+            if config_problems::shows(run, cx) {
+                return self.show_config_problems(window, cx);
             }
             if let Some(op) = nav::op(run, cx) {
                 return self.run_nav_op(op, window, cx);

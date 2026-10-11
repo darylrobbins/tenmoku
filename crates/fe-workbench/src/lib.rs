@@ -10,6 +10,7 @@
 //! [`fe_gpui::commands::RunCommand`] that the focused editor doesn't know
 //! and propagates.
 
+mod config_problems;
 mod dock;
 mod find_bar;
 mod git;
@@ -87,6 +88,7 @@ impl Global for Commands {}
 pub fn init(cx: &mut App) {
     cx.set_global(Commands(Rc::new(new_registry())));
     picker::init(cx);
+    config_problems::init(cx);
     dock::init(cx);
     lsp::init(cx);
     kiln_shell::menu_bar::register(cx);
@@ -148,6 +150,7 @@ pub fn command_catalog() -> Box<dyn CommandCatalog> {
         Box::new(new_registry()),
         Box::new(picker::registry()),
         kiln_shell::picker::catalog(),
+        Box::new(config_problems::registry()),
         Box::new(dock::registry()),
         Box::new(find_bar::registry()),
         Box::new(lsp::registry()),
@@ -171,6 +174,7 @@ pub fn command_catalog() -> Box<dyn CommandCatalog> {
 fn command_list() -> Vec<CommandMeta> {
     let mut list: Vec<CommandMeta> = new_registry().commands().cloned().collect();
     list.extend(picker::registry().commands().cloned());
+    list.extend(config_problems::registry().commands().cloned());
     list.extend(dock::registry().commands().cloned());
     list.extend(find_bar::registry().commands().cloned());
     list.extend(lsp::registry().commands().cloned());
