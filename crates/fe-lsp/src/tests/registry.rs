@@ -144,8 +144,8 @@ fn builtin_specs() {
         ]
     );
 
-    // With default settings TypeScript and JavaScript go to
-    // typescript-language-server, and typescript-go never runs.
+    // With default settings TypeScript and JavaScript go to typescript-go,
+    // and typescript-language-server never runs.
     let mut registry = Registry::default();
     let specs = registry.specs();
     assert_eq!(
@@ -153,28 +153,29 @@ fn builtin_specs() {
             .iter()
             .map(|spec| spec.name.as_str())
             .collect::<Vec<_>>(),
-        ["rust-analyzer", "pyright", "typescript-language-server"]
+        ["rust-analyzer", "pyright", "typescript-go"]
     );
     let chosen =
         |specs: &[ServerSpec], language| server_for(specs, language).map(|s| s.name.clone());
+    for language in ["javascript", "typescript", "tsx"] {
+        assert_eq!(chosen(&specs, language).as_deref(), Some("typescript-go"));
+    }
+    assert!(specs.iter().all(|s| s.name != "typescript-language-server"));
+    assert_eq!(chosen(&specs, "rust").as_deref(), Some("rust-analyzer"));
+    assert_eq!(chosen(&specs, "python").as_deref(), Some("pyright"));
+    assert_eq!(chosen(&specs, "text"), None);
+    registry.set_settings(LspSettings {
+        typescript_server: TypescriptServer::TypescriptLanguageServer,
+        ..LspSettings::default()
+    });
+    let specs = registry.specs();
     for language in ["javascript", "typescript", "tsx"] {
         assert_eq!(
             chosen(&specs, language).as_deref(),
             Some("typescript-language-server")
         );
     }
-    assert_eq!(chosen(&specs, "rust").as_deref(), Some("rust-analyzer"));
-    assert_eq!(chosen(&specs, "python").as_deref(), Some("pyright"));
-    assert_eq!(chosen(&specs, "text"), None);
-    registry.set_settings(LspSettings {
-        typescript_server: TypescriptServer::TypescriptGo,
-        ..LspSettings::default()
-    });
-    let specs = registry.specs();
-    for language in ["javascript", "typescript", "tsx"] {
-        assert_eq!(chosen(&specs, language).as_deref(), Some("typescript-go"));
-    }
-    assert!(specs.iter().all(|s| s.name != "typescript-language-server"));
+    assert!(specs.iter().all(|s| s.name != "typescript-go"));
 
     // The languageId for each language (§3.2).
     let file = |name: &str| PathBuf::from(ROOT).join(name);

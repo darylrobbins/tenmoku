@@ -164,9 +164,10 @@ are needed before the LSP provider lands:
   run through `scripts/lsp-real.sh` and an `lsp.yml` workflow. They pin
   rust-analyzer through the rustup component of the pinned toolchain, and the
   Node servers through a checked-in `tools/lsp/package-lock.json`.
-- **TypeScript.** Use typescript-language-server 6.0.1 with `typescript` 6.0.3.
-  The current `typescript` 7 is the Go port and has no `tsserver.js`
-  (see Q5).
+- **TypeScript.** typescript-go 7.0.2 (`tsc --lsp --stdio`) is the default
+  server (Q5, changed 2026-10-11). typescript-language-server 6.0.1 with
+  `typescript` 6.0.3 is the alternative, behind `lsp.typescript_server`. The
+  current `typescript` 7 is the Go port and has no `tsserver.js`.
 
 **Feature scope for M4 (§7).** M4 covers push diagnostics, definition,
 references, workspace symbols, hover and completion. Diagnostics go into a
@@ -186,8 +187,9 @@ for open documents came in later (T39, §7).
    async-process arrangement above.
 4. **When do real-server tests run in CI?** Recommended: nightly and on demand,
    not on every PR.
-5. **Which TypeScript server?** Recommended: typescript-language-server with
-   TS 6.0.3 for M4, and typescript-go as a configurable alternative.
+5. **Which TypeScript server?** Decided: typescript-go as the default, and
+   typescript-language-server as a configurable alternative (changed
+   2026-10-11; first recommended the other way round).
 6. **When do servers start?** Recommended: lazily, on the first open file of
    their language.
 7. **Do servers start in a workspace nobody has trusted?** Recommended: yes in
@@ -591,7 +593,18 @@ The built-in defaults cover the three M4 servers:
 
 - `rust-analyzer`
 - `pyright-langserver --stdio`
-- `typescript-language-server --stdio`
+- `tsc --lsp --stdio` (typescript-go), the default TypeScript and JavaScript
+  server. `lsp.typescript_server = "typescript-language-server"` swaps it for
+  `typescript-language-server --stdio`. Only the chosen one runs.
+
+There is no fallback between the two. When `tsc` isn't on the launcher's
+`PATH`, the server stops with "typescript-go not found" and navigation stays
+search-based, exactly as a missing typescript-language-server does;
+typescript-language-server doesn't start in its place. A `tsc` older than
+TypeScript 7 is the JavaScript compiler and has no `--lsp`, so `initialize`
+fails and §3.5's crash budget takes it to `Stopped`. The fixes are to install
+`typescript@7` (or set `lsp.servers.typescript-go.command`), or to set
+`lsp.typescript_server = "typescript-language-server"`.
 
 A new `[lsp]` table in `fe-config`'s layered TOML overrides them, through the
 same schema, diagnostics and hot reload as `[editor]`. The trust boundary below
@@ -1627,7 +1640,7 @@ ships no `tsserver.js`. typescript-language-server 6.0.1 then fails
 (`src/lsp-server.ts:133`). So `typescript` must be pinned to 6.0.3. TS 7's own
 server (`tsc --lsp --stdio`, serverInfo `typescript-go 7.0.2`) worked in the
 probe, negotiated utf-8, and exits with code 1 after `exit` (§3.4). Which
-server is the default is Q5.
+server is the default is Q5 (typescript-go).
 
 Whether fastedit ever installs or bundles servers for users is Q2. The
 `tools/lsp` lockfile is for tests only.
@@ -1833,7 +1846,16 @@ Recommendation: **(a)**. The gate stays free of Node and network either way.
 
 Recommendation: **(c)**.
 
-**Decided (user, 2026-10-06): (c).**
+**Decided (user, 2026-10-06): (c).** **Changed (user, 2026-10-11): (b).**
+typescript-language-server never versions its diagnostics, so TypeScript and
+JavaScript files showed none under the default (§10). typescript-go answers
+`textDocument/diagnostic`, which T306 sends. typescript-language-server stays
+behind `lsp.typescript_server`. T305, pulling its diagnostics through
+`typescript.tsserverRequest`, is parked. typescript-go's two quirks need no new
+handling, and the real-server run on Linux re-checked both: the exit code 1
+after a clean shutdown is a normal stop (§3.4), and the lowercased
+`tsconfig.json` path comes in one empty unversioned push that fe-lsp drops, with
+definitions and references into other files at the right path.
 
 **Q6. When do servers start?**
 
@@ -1967,7 +1989,8 @@ would run its code once the workbench drives fe-lsp (T143).
   - **typescript-language-server** 6.0.1 advertises no `diagnosticProvider`
     and never sets `version` on its pushes. Unversioned publications are
     dropped (§4.1), so TypeScript and JavaScript files show no diagnostics
-    under the default server (T305).
+    under typescript-language-server (T305, parked). It is no longer the
+    default (Q5).
   - **typescript-go** 7.0.2 pushes none for source files and answers pulls:
     the type error (TS2322) was shown 8 ms after the edit. It refuses a
     pull whose `previousResultId` is `null` (`InvalidParams`), which

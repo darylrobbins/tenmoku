@@ -185,9 +185,9 @@ impl Default for LspSettings {
 #[serde(rename_all = "kebab-case")]
 pub enum TypescriptServer {
     /// typescript-language-server, over tsserver.
-    #[default]
     TypescriptLanguageServer,
     /// typescript-go's `tsc --lsp`.
+    #[default]
     TypescriptGo,
 }
 

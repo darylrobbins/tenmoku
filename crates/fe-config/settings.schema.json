@@ -175,7 +175,7 @@
         },
         "typescript_server": {
           "$ref": "#/$defs/TypescriptServer",
-          "default": "typescript-language-server",
+          "default": "typescript-go",
           "description": "Which built-in server TypeScript and JavaScript files get."
         }
       },
@@ -343,7 +343,7 @@
           "resolve": 2000,
           "workspace_symbol": 5000
         },
-        "typescript_server": "typescript-language-server"
+        "typescript_server": "typescript-go"
       },
       "description": "Language servers. A project file may only turn them off."
     },

@@ -31,10 +31,7 @@ fn lsp_defaults_and_user_overrides() {
     let lsp = Settings::default().lsp;
     assert!(lsp.enabled);
     assert_eq!(lsp.max_file_bytes, 52_428_800);
-    assert_eq!(
-        lsp.typescript_server,
-        TypescriptServer::TypescriptLanguageServer
-    );
+    assert_eq!(lsp.typescript_server, TypescriptServer::TypescriptGo);
     let timeouts = &lsp.timeouts;
     assert_eq!(
         [
@@ -50,7 +47,7 @@ fn lsp_defaults_and_user_overrides() {
     assert!(lsp.servers.is_empty());
     assert_eq!(
         toml::Value::try_from(TypescriptServer::default()).unwrap(),
-        toml::Value::String("typescript-language-server".into())
+        toml::Value::String("typescript-go".into())
     );
 
     let dir = tempfile::tempdir().unwrap();
@@ -117,6 +114,18 @@ fn lsp_defaults_and_user_overrides() {
         .map(|d| (d.is_error(), d.key.as_deref()))
         .collect();
     assert_eq!(found, [(false, Some("lsp.servers.pyright.comand"))]);
+    // The other TypeScript server is a setting.
+    fs::write(
+        &path,
+        "[lsp]\ntypescript_server = \"typescript-language-server\"\n",
+    )
+    .unwrap();
+    store.reload(std::slice::from_ref(&path)).expect("a change");
+    assert_eq!(store.diagnostics(), []);
+    assert_eq!(
+        store.settings().lsp.typescript_server,
+        TypescriptServer::TypescriptLanguageServer
+    );
     fs::write(&path, &bad).unwrap();
 
     // At startup the erroring file is ignored.

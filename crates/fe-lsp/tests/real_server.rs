@@ -439,8 +439,8 @@ fn rustup_which(bin: &str) -> Option<PathBuf> {
 /// `initializationOptions` if given.
 fn settings(server: Server, command: &Path, options: Option<Value>) -> LspSettings {
     let mut settings = LspSettings::default();
-    if server == Server::TypescriptGo {
-        settings.typescript_server = TypescriptServer::TypescriptGo;
+    if server == Server::TypescriptLanguageServer {
+        settings.typescript_server = TypescriptServer::TypescriptLanguageServer;
     }
     let path = env::var("PATH").unwrap_or_default();
     settings.servers.insert(
