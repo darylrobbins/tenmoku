@@ -26,8 +26,10 @@
 //!   `Ready` to `Restarting(n)` or `Stopped`. Every reply says whether an
 //!   empty result is final ([`Reply`]).
 //! - A server's `textDocument/publishDiagnostics` are decoded on its
-//!   thread against the text it was published for, and reach the sink as
-//!   [`LspEvent::Diagnostics`] in byte ranges, with
+//!   thread against the text it was published for, and so are the replies
+//!   to `textDocument/diagnostic`, which open documents are pulled with
+//!   when the server advertises `diagnosticProvider`. Both lists reach the
+//!   sink together as [`LspEvent::Diagnostics`] in byte ranges, with
 //!   [`LspEvent::DiagnosticsCleared`] when the document closes or the
 //!   session ends.
 //! - [`LspManager::hover`] asks for a [`Hover`] at an offset of an open
@@ -63,6 +65,7 @@ mod identity;
 mod launcher;
 mod manager;
 mod navigation;
+mod pull;
 mod readiness;
 mod registration;
 mod registry;

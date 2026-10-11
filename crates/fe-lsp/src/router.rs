@@ -113,6 +113,9 @@ pub(crate) struct ClientState {
     pub(crate) readiness: Arc<Mutex<Readiness>>,
     /// Raised when `readiness` changes.
     pub(crate) signal: Rc<Signal>,
+    /// Raised at `workspace/diagnostic/refresh`, for the actor to pull
+    /// every open document again (pull.rs).
+    pub(crate) refresh: Rc<Signal>,
     pub(crate) log: SharedLog,
     /// Where publications wait for the actor to decode them.
     pub(crate) diagnostics: Rc<Inbox>,
@@ -153,7 +156,10 @@ pub(crate) fn client_router(state: ClientState) -> Router<ClientState> {
             ready(Ok(None))
         })
         .request::<ShowDocument, _>(|_, _| ready(Ok(ShowDocumentResult { success: false })))
-        .request::<WorkspaceDiagnosticRefresh, _>(|_, ()| ready(Ok(())))
+        .request::<WorkspaceDiagnosticRefresh, _>(|st, ()| {
+            st.refresh.raise();
+            ready(Ok(()))
+        })
         .request::<SemanticTokensRefresh, _>(|_, ()| ready(Ok(())))
         .request::<InlayHintRefreshRequest, _>(|_, ()| ready(Ok(())))
         .request::<CodeLensRefresh, _>(|_, ()| ready(Ok(())))

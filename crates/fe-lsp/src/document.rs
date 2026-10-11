@@ -53,10 +53,10 @@ use lsp_types::{
     TextDocumentSyncSaveOptions, Url, VersionedTextDocumentIdentifier,
 };
 
-use crate::diagnostics::decode;
 use crate::encoding::{PositionEncoding, to_lsp};
 use crate::event::{BUFFER_CHANGED, LspError, LspEvent, NOT_OPEN, ServerId, TOO_LARGE};
 use crate::identity::{Generation, Identities, IncarnationId, Point, SessionId};
+use crate::pull::{Lists, Pulled, Puller, Source, full_items};
 use crate::server::{Outgoing, Sink};
 
 /// The most edits one `didChange` sends as ranges; more go as the whole
@@ -323,6 +323,9 @@ pub struct SentVersion {
     /// The batches that took the previous version sent to this one, in
     /// order: none for a `didOpen`, one or more for a `didChange`.
     pub edits: Vec<Arc<[Edit]>>,
+    /// Whether `edits` are all of them: not if batches went missing
+    /// before it (a gap), when ranges can't be mapped across it.
+    pub(crate) edits_complete: bool,
 }
 
 /// A document open on a server, at the version the server has.
@@ -378,6 +381,8 @@ pub(crate) struct Link {
     pub(crate) outbox: VecDeque<Outgoing>,
     /// The manager's event sink.
     pub(crate) sink: Sink,
+    /// Pull diagnostics (pull.rs), if the server offers them.
+    pub(crate) puller: Puller,
 }
 
 impl Link {
@@ -424,8 +429,8 @@ struct Synced {
     /// The last [`RING`] versions sent, oldest first. Never empty: the
     /// newest is what the server has.
     ring: VecDeque<SentVersion>,
-    /// The newest LSP version diagnostics were decoded for.
-    published: Option<i32>,
+    /// Its pushed and pulled diagnostics, and its pulls (pull.rs).
+    diagnostics: Lists,
 }
 
 impl Synced {
@@ -450,6 +455,8 @@ struct Run {
     /// Send the whole text rather than `changes`.
     whole: bool,
     changes: Vec<TextDocumentContentChangeEvent>,
+    /// Batches went missing before or within it.
+    gap: bool,
 }
 
 impl Document {
@@ -488,6 +495,7 @@ impl Document {
         if saved == Some(document.at) {
             document.send_save(document.at, link);
         }
+        document.pull(link);
         Some(document)
     }
 
@@ -516,6 +524,7 @@ impl Document {
             },
             text,
         }));
+        self.want_pull();
     }
 
     fn oversized(&self) -> bool {
@@ -563,9 +572,11 @@ impl Document {
                 version: self.at,
                 text: self.text.clone(),
                 edits: Vec::new(),
+                edits_complete: true,
             }]),
-            published: None,
+            diagnostics: Lists::default(),
         });
+        self.want_pull();
         true
     }
 
@@ -618,32 +629,64 @@ impl Document {
     }
 
     /// Decodes a publication of `diagnostics` for LSP version `version`
-    /// against the ring (diagnostics.rs): `None` if it's dropped.
+    /// against the ring (diagnostics.rs): `None` if it's dropped. Otherwise
+    /// the event holds the pulled list too (pull.rs).
     pub(crate) fn publish(
         &mut self,
         version: i32,
         diagnostics: Vec<lsp_types::Diagnostic>,
         link: &Link,
     ) -> Option<LspEvent> {
+        self.accept(Source::Pushed, version, diagnostics, link)
+    }
+
+    /// Takes a pull's reply for this document (pull.rs): `None` if it's
+    /// dropped. Sends the next pull if one was wanted meanwhile.
+    pub(crate) fn pulled(&mut self, pulled: Pulled, link: &mut Link) -> Option<LspEvent> {
+        // The manager retires an identity as it closes the buffer, before
+        // the actor hears of the close: a reply landing in between is for
+        // an ended incarnation too, and nothing more is pulled for it.
+        let active = link.identities.active(self.buffer, link.server);
         let synced = self.synced.as_mut()?;
-        if synced.published.is_some_and(|newest| version < newest) {
+        if synced.identity != pulled.identity || active != Some(pulled.identity) {
             log::debug!(
-                "{}: dropped diagnostics for version {version}, older than {:?}",
-                self.uri,
-                synced.published,
-            );
-            return None;
-        }
-        let Some(sent) = synced.ring.iter().find(|sent| sent.lsp_version == version) else {
-            log::debug!(
-                "{}: dropped diagnostics for version {version}, not in the ring",
+                "{}: dropped pulled diagnostics for an ended incarnation",
                 self.uri
             );
             return None;
+        }
+        synced.diagnostics.replied();
+        let event = match full_items(pulled.result) {
+            Ok(items) => self.accept(Source::Pulled, pulled.lsp_version, items, link),
+            Err(why) => {
+                log::debug!(
+                    "{}: dropped pulled diagnostics for version {}: {why}",
+                    self.uri,
+                    pulled.lsp_version,
+                );
+                None
+            }
         };
-        let items = decode(&sent.text, link.encoding, diagnostics);
-        let buffer_version = sent.version;
-        synced.published = Some(version);
+        self.pull(link);
+        event
+    }
+
+    fn accept(
+        &mut self,
+        source: Source,
+        version: i32,
+        diagnostics: Vec<lsp_types::Diagnostic>,
+        link: &Link,
+    ) -> Option<LspEvent> {
+        let synced = self.synced.as_mut()?;
+        let (buffer_version, items) = synced.diagnostics.accept(
+            source,
+            version,
+            diagnostics,
+            &synced.ring,
+            link.encoding,
+            &self.uri,
+        )?;
         let (session, incarnation) = synced.identity;
         Some(LspEvent::Diagnostics {
             buffer: self.buffer,
@@ -653,6 +696,42 @@ impl Document {
             server: link.server,
             items,
         })
+    }
+
+    /// Marks the incarnation, if any, as wanting a pull.
+    fn want_pull(&mut self) {
+        if let Some(synced) = &mut self.synced {
+            synced.diagnostics.want();
+        }
+    }
+
+    /// Wants a pull, and sends it unless one is in flight (pull.rs).
+    pub(crate) fn repull(&mut self, link: &mut Link) {
+        self.want_pull();
+        self.pull(link);
+    }
+
+    /// Queues a pull behind the notifications queued so far, if one is
+    /// wanted, the server pulls, none is in flight and the incarnation is
+    /// still active (the manager may have closed the buffer already): for
+    /// the version the last of them leaves the server at.
+    pub(crate) fn pull(&mut self, link: &mut Link) {
+        let Some(synced) = &mut self.synced else {
+            return;
+        };
+        if !link.puller.pulls()
+            || link.identities.active(self.buffer, link.server) != Some(synced.identity)
+            || !synced.diagnostics.take_wanted()
+        {
+            return;
+        }
+        let version = synced.newest().lsp_version;
+        if let Some(issue) = link
+            .puller
+            .request(self.buffer, &self.uri, synced.identity, version)
+        {
+            link.outbox.push_back(Outgoing::Request(issue));
+        }
     }
 
     /// Closes a document that grew past its size limit: retires its own
@@ -716,6 +795,7 @@ impl Document {
                         }
                         continue;
                     }
+                    run.gap |= gap;
                     run.whole |= whole || gap || link.policy.change == TextDocumentSyncKind::FULL;
                     if run.whole {
                         run.changes.clear();
@@ -799,6 +879,7 @@ impl Document {
             version: self.at,
             text: self.text.clone(),
             edits: run.batches,
+            edits_complete: !run.gap,
         });
         link.send(Note::Change(DidChangeTextDocumentParams {
             text_document: VersionedTextDocumentIdentifier {
@@ -807,6 +888,7 @@ impl Document {
             },
             content_changes,
         }));
+        self.want_pull();
     }
 
     /// Admits a request computed on buffer version `version`, once drained

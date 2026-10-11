@@ -12,10 +12,11 @@
 //! The servers start from the built-in specs, through the `[lsp]` settings
 //! a user would write (`command` and `env`), and a launcher that wraps
 //! [`LocalLauncher`] to watch the wire ([`Tap`]): what `publishDiagnostics`
-//! carries, how the process went, and, to offer rust-analyzer only utf-16,
-//! a rewrite of `initialize`'s `positionEncodings`.
+//! and the replies to `textDocument/diagnostic` carry, how the process
+//! went, and, to offer rust-analyzer only utf-16, a rewrite of
+//! `initialize`'s `positionEncodings`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -58,7 +59,7 @@ const READY_WITHIN: Duration = Duration::from_secs(60);
 /// How long anything else may take: an answer that isn't empty, a
 /// `cargo check`, a process exiting.
 const WAIT: Duration = Duration::from_secs(120);
-/// How long a server may take to publish diagnostics for an edit.
+/// How long a server may take to report diagnostics for an edit.
 const DIAGNOSTICS_WITHIN: Duration = Duration::from_secs(30);
 
 #[test]
@@ -99,9 +100,19 @@ fn real_server_rust_analyzer_diagnostics_follow_saves() {
     let literal = range_of(&greet, "\"hello\"");
     greet.edit([(literal, "1")], Origin::User);
     s.save(&mut greet, &path);
-    s.wait_diagnostics(&greet, "cargo check's E0308 after the save", |items| {
+    // It's shown with what rust-analyzer's pull finds: printed, to see
+    // whether the two lists repeat each other (§10).
+    let items = s.wait_diagnostics(&greet, "cargo check's E0308 after the save", |items| {
         mismatch(items)
     });
+    for item in &items {
+        println!(
+            "rust-analyzer: after the save: {:?} {:?}: {}",
+            item.source,
+            item.code,
+            item.message.lines().next().unwrap_or_default(),
+        );
+    }
 
     // ... and leaves after saving the fix.
     let literal = range_of(&greet, "1");
@@ -111,6 +122,67 @@ fn real_server_rust_analyzer_diagnostics_follow_saves() {
         !mismatch(items)
     });
     s.stop_cleanly();
+}
+
+/// rust-analyzer counts its unresolved-import diagnostic as experimental,
+/// off unless the user turns experimental diagnostics on (§10). With them
+/// on, an unresolved import in an unsaved buffer comes by pull, and reaches
+/// the sink at the edited version, never saved.
+#[test]
+#[ignore = "needs language servers: scripts/lsp-real.sh"]
+fn real_server_rust_analyzer_unresolved_import_unsaved() {
+    let experimental = serde_json::json!({ "diagnostics": { "experimental": { "enable": true } } });
+    let Some(s) = Session::start_with(Server::RustAnalyzer, None, Some(experimental)) else {
+        return;
+    };
+    s.wait_ready();
+    let rel = Server::RustAnalyzer.greet();
+    let path = s.root.join(rel);
+    let mut greet = Buffer::new(&fs::read_to_string(&path).unwrap());
+    s.open(&mut greet, rel);
+    let pulled_from = s.seen.lock().pulled.len();
+    let end = greet.len();
+    greet.edit([(end..end, "\nuse crate::missing;\n")], Origin::User);
+    let edited = Instant::now();
+    s.manager().changed(greet.id());
+    let items = s.wait_until_diagnostics(
+        &greet,
+        "the unresolved import, unsaved",
+        edited + DIAGNOSTICS_WITHIN,
+        unresolved_import,
+    );
+    println!(
+        "rust-analyzer: the unresolved import reached the sink {:.2?} after the edit",
+        edited.elapsed(),
+    );
+    for item in &items {
+        println!(
+            "rust-analyzer:   {:?} {:?} {:?}: {}",
+            item.severity,
+            item.source,
+            item.code,
+            item.message.lines().next().unwrap_or_default(),
+        );
+    }
+    let uri = Url::from_file_path(&path).unwrap();
+    assert!(
+        (s.seen.lock().pulled[pulled_from..].iter())
+            .any(|pulled| pulled.uri == uri && pulled.items > 0),
+        "the unresolved import came by pull",
+    );
+    assert!(
+        fs::read_to_string(&path).unwrap().ends_with("}\n"),
+        "never saved"
+    );
+    s.stop_cleanly();
+}
+
+/// rust-analyzer's own unresolved-import diagnostic among `items`.
+fn unresolved_import(items: &[fe_lsp::Diagnostic]) -> bool {
+    items.iter().any(|item| {
+        item.source.as_deref() == Some("rust-analyzer")
+            && item.message.contains("unresolved import")
+    })
 }
 
 #[test]
@@ -244,12 +316,15 @@ impl Server {
         }
     }
 
-    /// An error, for the end of the greet file. rust-analyzer's is one
-    /// `cargo check` reports (E0432): it pushes only `cargo check`'s
-    /// diagnostics, and offers its own by pull, which fe-lsp doesn't use.
+    /// An error, for the end of the greet file, left unsaved. For
+    /// rust-analyzer, an unresolved import and a type mismatch. Its own
+    /// diagnostics, offered only by pull, report the mismatch (E0308); the
+    /// import (E0432) is an experimental one, off by default, so under the
+    /// built-in spec only `cargo check` reports it, pushed after a save
+    /// (§10, and `real_server_rust_analyzer_unresolved_import_unsaved`).
     fn error(self) -> &'static str {
         match self {
-            Self::RustAnalyzer => "\nuse crate::missing;\n",
+            Self::RustAnalyzer => "\nuse crate::missing;\npub fn broken() -> i32 { \"x\" }\n",
             Self::Pyright => "\nbroken: int = \"x\"\n",
             Self::TypescriptLanguageServer | Self::TypescriptGo => {
                 "\nexport const broken: number = \"x\";\n"
@@ -257,16 +332,46 @@ impl Server {
         }
     }
 
-    /// Whether its `publishDiagnostics` carry a version, as the runs
-    /// showed (§10); `None` if it publishes none for a source file
-    /// (typescript-go pushes them only for `tsconfig.json`, and answers
-    /// pull requests, which fe-lsp doesn't make).
+    /// Whether its `publishDiagnostics` holding the unsaved error carry a
+    /// version, as the runs showed (§10); `None` if it pushes none for it
+    /// (rust-analyzer's own diagnostics and typescript-go's are pull-only).
     fn versions_diagnostics(self) -> Option<bool> {
         match self {
-            Self::RustAnalyzer | Self::Pyright => Some(true),
+            Self::Pyright => Some(true),
             Self::TypescriptLanguageServer => Some(false),
-            Self::TypescriptGo => None,
+            Self::RustAnalyzer | Self::TypescriptGo => None,
         }
+    }
+
+    /// Whether a reply to fe-lsp's `textDocument/diagnostic` holds the
+    /// unsaved error, as the runs showed (§10).
+    fn pulls_diagnostics(self) -> bool {
+        match self {
+            Self::RustAnalyzer | Self::TypescriptGo => true,
+            // Neither advertises `diagnosticProvider`.
+            Self::Pyright | Self::TypescriptLanguageServer => false,
+        }
+    }
+
+    /// Whether the unsaved error reaches the sink: decoded from a
+    /// versioned push or a pull. typescript-language-server's pushes carry
+    /// no version, so they're dropped (§4.1).
+    fn shows_unsaved_error(self) -> bool {
+        self.pulls_diagnostics() || self.versions_diagnostics() == Some(true)
+    }
+
+    /// Whether `items`, at the edited version, hold the unsaved error.
+    fn holds_error(self, items: &[fe_lsp::Diagnostic]) -> bool {
+        items.iter().any(|item| match self {
+            Self::RustAnalyzer => {
+                item.source.as_deref() == Some("rust-analyzer")
+                    && item.code.as_deref() == Some("E0308")
+            }
+            Self::Pyright => item.severity == Some(fe_lsp::Severity::Error),
+            Self::TypescriptLanguageServer | Self::TypescriptGo => {
+                item.code.as_deref() == Some("2322")
+            }
+        })
     }
 
     /// Its binary: `FE_LSP_<SERVER>`, then `tools/lsp/node_modules`, then
@@ -330,8 +435,9 @@ fn rustup_which(bin: &str) -> Option<PathBuf> {
 
 /// The `[lsp]` settings that run `server`'s built-in spec from `command`,
 /// on this process's `PATH` (the one `scripts/lsp-real.sh` gives it, with
-/// tools/lsp's Node) rather than the login shell's.
-fn settings(server: Server, command: &Path) -> LspSettings {
+/// tools/lsp's Node) rather than the login shell's, with `options` as its
+/// `initializationOptions` if given.
+fn settings(server: Server, command: &Path, options: Option<Value>) -> LspSettings {
     let mut settings = LspSettings::default();
     if server == Server::TypescriptGo {
         settings.typescript_server = TypescriptServer::TypescriptGo;
@@ -342,6 +448,7 @@ fn settings(server: Server, command: &Path) -> LspSettings {
         LspServerSettings {
             command: Some(command.to_str().unwrap().into()),
             env: Some(BTreeMap::from([("PATH".into(), path)])),
+            initialization_options: options,
             ..LspServerSettings::default()
         },
     );
@@ -389,6 +496,12 @@ impl Session {
     /// `positionEncodings` instead of fe-lsp's own if given. `None` if the
     /// server isn't installed.
     fn start(server: Server, offer: Option<&[&str]>) -> Option<Self> {
+        Self::start_with(server, offer, None)
+    }
+
+    /// As [`start`](Self::start), with `options` as the server's
+    /// `initializationOptions`.
+    fn start_with(server: Server, offer: Option<&[&str]>, options: Option<Value>) -> Option<Self> {
         let command = server.command()?;
         let dir = tempfile::tempdir().unwrap();
         let root = fs::canonicalize(dir.path()).unwrap();
@@ -406,7 +519,7 @@ impl Session {
         let mut manager = LspManager::new(Arc::new(launcher), move |event| {
             let _ = sender.send((Instant::now(), event));
         });
-        manager.update_settings(&settings(server, &command));
+        manager.update_settings(&settings(server, &command, options));
         let mut main = Buffer::new(&fs::read_to_string(root.join(server.main())).unwrap());
         let launched = Instant::now();
         let id = open(&mut manager, &root, &mut main, server, server.main())
@@ -651,72 +764,151 @@ impl Session {
         }
     }
 
-    /// Whether the server's `publishDiagnostics` carry a version (§10),
+    /// How the server reports an error in an unsaved buffer (§10),
     /// checked against what the runs showed. It opens the greet file and
-    /// adds an error, saved for rust-analyzer (whose own diagnostics aren't
-    /// pushed, so only `cargo check` reports it), unsaved for the others.
-    /// The first publication for the file after that edit holding a
-    /// diagnostic must come within [`DIAGNOSTICS_WITHIN`]. For
-    /// typescript-go, which pushes none, no publication for the file may
-    /// come in that whole window, not even an empty list. A versioned one
-    /// must also reach the sink as [`LspEvent::Diagnostics`] for the edited
-    /// version.
+    /// adds an error without saving it, then watches the wire for
+    /// [`DIAGNOSTICS_WITHIN`]: whether a `publishDiagnostics` holding a
+    /// diagnostic for the file comes, and with a version
+    /// ([`Server::versions_diagnostics`]), and whether a reply to a
+    /// `textDocument/diagnostic` for it holds one
+    /// ([`Server::pulls_diagnostics`]). The error must also reach the sink
+    /// as [`LspEvent::Diagnostics`] at the edited version
+    /// ([`Server::shows_unsaved_error`]).
     fn check_diagnostics_version(&self) {
         let rel = self.server.greet();
         let path = self.root.join(rel);
-        let mut greet = Buffer::new(&fs::read_to_string(&path).unwrap());
-        self.open(&mut greet, rel);
-        let boundary = self.seen.lock().diagnostics.len();
-        let end = greet.len();
-        greet.edit([(end..end, self.server.error())], Origin::User);
-        let edited = Instant::now();
-        if self.server == Server::RustAnalyzer {
-            self.save(&mut greet, &path);
-        } else {
-            self.manager().changed(greet.id());
-        }
-        let uri = Url::from_file_path(&path).unwrap();
-        let deadline = edited + DIAGNOSTICS_WITHIN;
-        // A server expected to push nothing fails on any publication.
-        let any = self.server.versions_diagnostics().is_none();
-        let published = loop {
-            let seen = self.seen.lock();
-            let fresh = seen.diagnostics[boundary..]
-                .iter()
-                .find(|published| published.uri == uri && (any || published.items > 0));
-            if let Some(published) = fresh {
-                assert!(
-                    published.at <= deadline,
-                    "{}'s diagnostics came {:?} after the edit",
-                    self.server.name(),
-                    published.at - edited,
-                );
-                break Some(published.version);
-            }
-            drop(seen);
-            if Instant::now() > deadline {
-                break None;
-            }
-            std::thread::sleep(Duration::from_millis(100));
-        };
+        let advertised = (self.manager().capabilities(self.id))
+            .is_some_and(|capabilities| capabilities.diagnostic_provider.is_some());
         println!(
-            "{}: publishDiagnostics with the error in {rel} {}",
+            "{}: diagnosticProvider {}",
             self.server.name(),
-            match published {
-                Some(Some(version)) => format!("carry a version ({version})"),
-                Some(None) => "carry no version".to_owned(),
-                None => format!("never came within {DIAGNOSTICS_WITHIN:?}"),
+            if advertised {
+                "advertised"
+            } else {
+                "not advertised"
             },
         );
         assert_eq!(
-            published.map(|version| version.is_some()),
-            self.server.versions_diagnostics(),
-            "whether {}'s publishDiagnostics carry a version",
+            advertised,
+            self.server.pulls_diagnostics(),
+            "whether {} advertises diagnosticProvider",
             self.server.name(),
         );
-        if published.flatten().is_some() {
-            self.wait_diagnostics(&greet, "the error, decoded", |items| !items.is_empty());
+        let mut greet = Buffer::new(&fs::read_to_string(&path).unwrap());
+        self.open(&mut greet, rel);
+        let (pushed_from, pulled_from) = {
+            let seen = self.seen.lock();
+            (seen.diagnostics.len(), seen.pulled.len())
+        };
+        let end = greet.len();
+        greet.edit([(end..end, self.server.error())], Origin::User);
+        let edited = Instant::now();
+        self.manager().changed(greet.id());
+        let uri = Url::from_file_path(&path).unwrap();
+        let deadline = edited + DIAGNOSTICS_WITHIN;
+        // Everything over the whole window: the diagnostics the sink got
+        // for the edited version, and what came on the wire.
+        let (id, current) = (greet.id(), greet.version());
+        let mut shown: Option<(Duration, Vec<fe_lsp::Diagnostic>)> = None;
+        while let Some(left) = deadline.checked_duration_since(Instant::now()) {
+            if let Ok((
+                at,
+                LspEvent::Diagnostics {
+                    buffer,
+                    version,
+                    items,
+                    ..
+                },
+            )) = self.events.recv_timeout(left)
+                && buffer == id
+                && version == current
+                && at <= deadline
+                && shown.is_none()
+                && self.server.holds_error(&items)
+            {
+                shown = Some((at - edited, items));
+            }
         }
+        let seen = self.seen.lock();
+        let pushes: Vec<&Published> = (seen.diagnostics[pushed_from..].iter())
+            .filter(|published| published.uri == uri)
+            .collect();
+        let replies: Vec<&PulledReply> = (seen.pulled[pulled_from..].iter())
+            .filter(|pulled| pulled.uri == uri)
+            .collect();
+        let name = self.server.name();
+        for push in &pushes {
+            println!(
+                "{name}: pushed for {rel}: version {:?}, {} items",
+                push.version, push.items
+            );
+        }
+        for reply in &replies {
+            println!("{name}: pulled for {rel}: {}", reply.what);
+        }
+        match &shown {
+            Some((after, items)) => {
+                println!("{name}: the unsaved error reached the sink {after:.2?} after the edit");
+                for item in items {
+                    println!(
+                        "{name}:   {:?} {:?} {:?}: {}",
+                        item.severity,
+                        item.source,
+                        item.code,
+                        item.message.lines().next().unwrap_or_default(),
+                    );
+                }
+            }
+            None => println!("{name}: the unsaved error never reached the sink"),
+        }
+        let pushed = (pushes.iter())
+            .find(|published| published.items > 0)
+            .map(|published| published.version.is_some());
+        let pulled = replies.iter().any(|pulled| pulled.items > 0);
+        drop(seen);
+        assert_eq!(
+            (pushed, pulled),
+            (
+                self.server.versions_diagnostics(),
+                self.server.pulls_diagnostics()
+            ),
+            "how {name} reports an unsaved error (pushed with a version, pulled); its log:\n{}",
+            self.log(),
+        );
+        if self.server == Server::RustAnalyzer
+            && let Some((_, items)) = &shown
+        {
+            assert!(
+                !unresolved_import(items),
+                "rust-analyzer's unresolved import is an experimental diagnostic, off by default",
+            );
+        }
+        assert_eq!(
+            shown.is_some(),
+            self.server.shows_unsaved_error(),
+            "whether {name}'s unsaved error reached the sink at the edited version",
+        );
+    }
+
+    /// Waits until `deadline` for diagnostics on `buffer`'s current
+    /// version that `want` accepts, and returns them.
+    fn wait_until_diagnostics(
+        &self,
+        buffer: &Buffer,
+        what: &str,
+        deadline: Instant,
+        want: impl Fn(&[fe_lsp::Diagnostic]) -> bool,
+    ) -> Vec<fe_lsp::Diagnostic> {
+        let (id, current) = (buffer.id(), buffer.version());
+        self.until(what, deadline, |event| match event {
+            LspEvent::Diagnostics {
+                buffer,
+                version,
+                items,
+                ..
+            } if buffer == id && version == current && want(&items) => Some(items),
+            _ => None,
+        })
     }
 
     /// Writes `buffer` to `path`, marks it saved, and nudges its server.
@@ -727,23 +919,14 @@ impl Session {
     }
 
     /// Waits for diagnostics on `buffer`'s current version that `want`
-    /// accepts.
+    /// accepts, and returns them.
     fn wait_diagnostics(
         &self,
         buffer: &Buffer,
         what: &str,
         want: impl Fn(&[fe_lsp::Diagnostic]) -> bool,
-    ) {
-        let (id, current) = (buffer.id(), buffer.version());
-        self.until(what, Instant::now() + WAIT, |event| match event {
-            LspEvent::Diagnostics {
-                buffer,
-                version,
-                items,
-                ..
-            } if buffer == id && version == current && want(&items) => Some(()),
-            _ => None,
-        });
+    ) -> Vec<fe_lsp::Diagnostic> {
+        self.wait_until_diagnostics(buffer, what, Instant::now() + WAIT, want)
     }
 
     /// Stops the server: it answers `shutdown`, exits after `exit` without
@@ -832,15 +1015,28 @@ struct Seen(Arc<Mutex<Wire>>);
 struct Wire {
     /// Each `textDocument/publishDiagnostics`, in order.
     diagnostics: Vec<Published>,
+    /// The document of each `textDocument/diagnostic` sent, by id.
+    pulls: HashMap<i64, Url>,
+    /// Each reply to one, in order.
+    pulled: Vec<PulledReply>,
     /// How the process went, once fe-lsp has seen it go.
     exit: Option<ExitInfo>,
     /// How often fe-lsp killed it.
     kills: usize,
 }
 
+/// A reply to `textDocument/diagnostic` as it was read.
+struct PulledReply {
+    uri: Url,
+    /// How many diagnostics it held: none for an unchanged report or an
+    /// error.
+    items: usize,
+    /// What it was, for the output.
+    what: String,
+}
+
 /// A `textDocument/publishDiagnostics` as it was read.
 struct Published {
-    at: Instant,
     uri: Url,
     version: Option<i64>,
     /// How many diagnostics it held.
@@ -874,6 +1070,8 @@ impl ServerLauncher for Tap {
                 held: self.offer.as_ref().map(|_| Vec::new()),
                 offer: self.offer.clone(),
                 owed: Vec::new(),
+                written: Vec::new(),
+                seen: self.seen.clone(),
             }),
             output: Box::pin(Listen {
                 inner: io.output,
@@ -904,6 +1102,7 @@ fn frame(bytes: &[u8]) -> Option<Range<usize>> {
 
 /// The client's side: holds back the first message, `initialize`, until
 /// it's whole, then sends it with `positionEncodings` set to `offer`.
+/// Notes the document of each `textDocument/diagnostic` it passes on.
 struct Offer {
     inner: Pin<Box<dyn AsyncWrite + Send>>,
     /// The first message so far, while it's held back.
@@ -911,6 +1110,9 @@ struct Offer {
     offer: Option<Vec<String>>,
     /// Bytes for `inner` not yet written.
     owed: Vec<u8>,
+    /// What's been passed on since the last whole message.
+    written: Vec<u8>,
+    seen: Seen,
 }
 
 impl Offer {
@@ -935,7 +1137,23 @@ impl AsyncWrite for Offer {
         let this = self.get_mut();
         ready!(this.pay(cx))?;
         let Some(held) = &mut this.held else {
-            return this.inner.as_mut().poll_write(cx, buf);
+            let n = ready!(this.inner.as_mut().poll_write(cx, buf))?;
+            this.written.extend_from_slice(&buf[..n]);
+            while let Some(body) = frame(&this.written) {
+                if let Ok(message) = serde_json::from_slice::<Value>(&this.written[body.clone()])
+                    && message["method"] == "textDocument/diagnostic"
+                    && let Some(id) = message["id"].as_i64()
+                    && let Ok(uri) = Url::parse(
+                        message["params"]["textDocument"]["uri"]
+                            .as_str()
+                            .unwrap_or_default(),
+                    )
+                {
+                    this.seen.lock().pulls.insert(id, uri);
+                }
+                this.written.drain(..body.end);
+            }
+            return Poll::Ready(Ok(n));
         };
         held.extend_from_slice(buf);
         if let Some(body) = frame(held) {
@@ -988,17 +1206,32 @@ impl AsyncRead for Listen {
         let n = ready!(this.inner.as_mut().poll_read(cx, buf))?;
         this.read.extend_from_slice(&buf[..n]);
         while let Some(body) = frame(&this.read) {
-            if let Ok(message) = serde_json::from_slice::<Value>(&this.read[body.clone()])
+            let message = serde_json::from_slice::<Value>(&this.read[body.clone()]);
+            if let Ok(message) = &message
                 && message["method"] == "textDocument/publishDiagnostics"
                 && let Ok(uri) = Url::parse(message["params"]["uri"].as_str().unwrap_or_default())
             {
                 let params = &message["params"];
                 this.seen.lock().diagnostics.push(Published {
-                    at: Instant::now(),
                     uri,
                     version: params["version"].as_i64(),
                     items: params["diagnostics"].as_array().map_or(0, Vec::len),
                 });
+            }
+            // A reply to one of fe-lsp's pulls.
+            if let Ok(message) = &message
+                && message.get("method").is_none()
+                && let Some(id) = message["id"].as_i64()
+            {
+                let mut seen = this.seen.lock();
+                if let Some(uri) = seen.pulls.remove(&id) {
+                    let items = message["result"]["items"].as_array().map_or(0, Vec::len);
+                    let what = match message.get("error") {
+                        Some(error) => format!("error {} {}", error["code"], error["message"]),
+                        None => format!("{} report, {items} items", message["result"]["kind"]),
+                    };
+                    seen.pulled.push(PulledReply { uri, items, what });
+                }
             }
             this.read.drain(..body.end);
         }

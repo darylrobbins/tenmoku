@@ -67,13 +67,14 @@ use lsp_types::notification::{Cancel, DidChangeConfiguration, Exit, Initialized}
 use lsp_types::request::{Initialize, Request, Shutdown};
 use lsp_types::{
     CancelParams, ClientCapabilities, ClientInfo, CompletionClientCapabilities,
-    CompletionItemCapability, CompletionItemCapabilityResolveSupport, DiagnosticTag,
-    DidChangeConfigurationParams, DynamicRegistrationClientCapabilities, GeneralClientCapabilities,
-    GotoCapability, HoverClientCapabilities, InitializeParams, InitializeResult, InitializedParams,
-    MarkupKind, NumberOrString, PositionEncodingKind, PublishDiagnosticsClientCapabilities,
-    PublishDiagnosticsParams, ServerCapabilities, TagSupport, TextDocumentClientCapabilities,
-    TextDocumentSyncClientCapabilities, Url, WindowClientCapabilities, WorkspaceClientCapabilities,
-    WorkspaceFolder, WorkspaceSymbolClientCapabilities,
+    CompletionItemCapability, CompletionItemCapabilityResolveSupport, DiagnosticClientCapabilities,
+    DiagnosticTag, DidChangeConfigurationParams, DynamicRegistrationClientCapabilities,
+    GeneralClientCapabilities, GotoCapability, HoverClientCapabilities, InitializeParams,
+    InitializeResult, InitializedParams, MarkupKind, NumberOrString, PositionEncodingKind,
+    PublishDiagnosticsClientCapabilities, PublishDiagnosticsParams, ServerCapabilities, TagSupport,
+    TextDocumentClientCapabilities, TextDocumentSyncClientCapabilities, Url,
+    WindowClientCapabilities, WorkspaceClientCapabilities, WorkspaceFolder,
+    WorkspaceSymbolClientCapabilities,
 };
 
 use crate::clock::Clock;
@@ -86,6 +87,7 @@ use crate::launcher::{
     ExitInfo, Flag, LaunchCancel, ServerIo, ServerLauncher, ServerProcess, ServerSpec,
     UnversionedDiagnostics,
 };
+use crate::pull::{Provider, Pulled, Puller};
 use crate::readiness::Readiness;
 use crate::registration::Registrations;
 use crate::requests::{Issue, Orphans, Out, Settled};
@@ -508,6 +510,7 @@ impl Server {
         let settings = Rc::new(RefCell::new(carry.settings.clone()));
         let readiness = Arc::new(Mutex::new(Readiness::new(&self.spec)));
         let signal = Rc::new(Signal::default());
+        let refresh = Rc::new(Signal::default());
         let diagnostics = Rc::new(Inbox::default());
         let (main_loop, socket) = MainLoop::new_client(|socket| {
             client_router(ClientState {
@@ -520,6 +523,7 @@ impl Server {
                 clock: self.clock.clone(),
                 readiness: readiness.clone(),
                 signal: signal.clone(),
+                refresh: refresh.clone(),
                 log: self.log.clone(),
                 diagnostics: diagnostics.clone(),
                 session: self.session.clone(),
@@ -591,6 +595,7 @@ impl Server {
                 versions: HashMap::new(),
                 outbox: VecDeque::new(),
                 sink: self.sink.clone(),
+                puller: Puller::new(self.clock.clone()),
             },
             diagnostics,
             tick: None,
@@ -598,6 +603,7 @@ impl Server {
             moving: None,
             readiness,
             signal,
+            refresh,
             due: None,
             shown: ServerStatus::Starting,
             carry,
@@ -742,6 +748,8 @@ struct Actor {
     readiness: Arc<Mutex<Readiness>>,
     /// Raised by the router when `readiness` changed.
     signal: Rc<Signal>,
+    /// Raised by the router at `workspace/diagnostic/refresh`.
+    refresh: Rc<Signal>,
     /// Publications the router read, to decode.
     diagnostics: Rc<Inbox>,
     /// When readiness next has something to do on its own, and the timer.
@@ -791,6 +799,10 @@ enum Step {
     Readiness,
     /// The router read diagnostics.
     Published(Vec<PublishDiagnosticsParams>),
+    /// A pull's reply came (pull.rs).
+    Pulled(Pulled),
+    /// The server asked for every open document to be pulled again.
+    Refresh,
     /// Readiness's timer came due.
     Due,
     LoopEnded(Result<async_lsp::Result<()>, oneshot::Canceled>),
@@ -858,6 +870,10 @@ impl Actor {
                 published = futures::future::poll_fn(|cx| self.diagnostics.poll_take(cx)).fuse() => {
                     Step::Published(published)
                 }
+                pulled = self.link.puller.next().fuse() => Step::Pulled(pulled),
+                () = futures::future::poll_fn(|cx| self.refresh.poll_raised(cx)).fuse() => {
+                    Step::Refresh
+                }
                 () = wait_due(&mut self.due).fuse() => Step::Due,
                 () = wait_tick(&mut self.tick).fuse() => Step::Tick,
                 next = next_command(
@@ -901,6 +917,8 @@ impl Actor {
                         self.published(params);
                     }
                 }
+                Step::Pulled(pulled) => self.pulled(pulled),
+                Step::Refresh => self.repull(),
                 Step::Due => {
                     self.due = None;
                     self.readiness_changed();
@@ -1204,9 +1222,32 @@ impl Actor {
         }
     }
 
+    /// Takes a pull's reply for its document, or drops it (pull.rs).
+    fn pulled(&mut self, pulled: Pulled) {
+        let Some(document) = self.documents.get_mut(&pulled.buffer) else {
+            log::debug!(
+                "{}: dropped pulled diagnostics for a closed document",
+                self.spec.name
+            );
+            return;
+        };
+        if let Some(event) = document.pulled(pulled, &mut self.link) {
+            self.link.report(event);
+        }
+    }
+
+    /// Pulls every open document again (pull.rs).
+    fn repull(&mut self) {
+        for document in self.documents.values_mut() {
+            document.repull(&mut self.link);
+        }
+    }
+
+    /// Drains `buffer`'s document, then pulls it if that sent something.
     fn drain(&mut self, buffer: BufferId) {
         if let Some(document) = self.documents.get_mut(&buffer) {
             document.drain(&mut self.link);
+            document.pull(&mut self.link);
         }
     }
 
@@ -1259,7 +1300,11 @@ impl Actor {
         drop(readiness);
         if view != self.shown {
             self.shown = view.clone();
+            let ready = view == ServerStatus::Ready;
             self.status.send(view);
+            if ready {
+                self.repull();
+            }
         }
         match next {
             Some(at) if self.due.as_ref().is_none_or(|(armed, _)| *armed != at) => {
@@ -1274,7 +1319,7 @@ impl Actor {
     async fn initialize(&mut self, loop_done: &mut LoopDone, exited: &mut Exited<'_>) -> Started {
         let params = initialize_params(&self.spec, &self.folder);
         self.take_id();
-        let reply = send_request::<Initialize>(&self.socket, params).fuse();
+        let reply = send_request::<InitializeJson>(&self.socket, initialize_json(params)).fuse();
         let timeout = self.clock.sleep(INITIALIZE_TIMEOUT).fuse();
         pin_mut!(reply, timeout);
         // A stop while starting ends it at once: the protocol allows nothing
@@ -1368,6 +1413,9 @@ impl Actor {
             }
         };
         self.link.policy = SyncPolicy::from_capabilities(&result.capabilities);
+        self.link
+            .puller
+            .set_provider(Provider::from_capabilities(&result.capabilities));
         self.link.encoding = encoding;
         let mut session = lock(&self.session);
         session.capabilities = Some(result.capabilities);
@@ -1773,6 +1821,24 @@ fn workspace_folder(root: &Path) -> Result<WorkspaceFolder, String> {
     Ok(WorkspaceFolder { uri, name })
 }
 
+/// `initialize` with its parameters as JSON ([`initialize_json`]).
+enum InitializeJson {}
+
+impl Request for InitializeJson {
+    type Params = serde_json::Value;
+    type Result = InitializeResult;
+    const METHOD: &'static str = Initialize::METHOD;
+}
+
+/// `params` as sent: with `workspace.diagnostics { refreshSupport: true }`
+/// (pull.rs), which lsp-types 0.95.1 would name `workspace.diagnostic`.
+fn initialize_json(params: InitializeParams) -> serde_json::Value {
+    let mut params = serde_json::to_value(params).expect("InitializeParams serialize");
+    params["capabilities"]["workspace"]["diagnostics"] =
+        serde_json::json!({ "refreshSupport": true });
+    params
+}
+
 /// `initialize`'s parameters (§3.4): the single root, the spec's
 /// `initializationOptions`, and what M4 uses (§7) with every
 /// `dynamicRegistration` off (§3.6).
@@ -1851,6 +1917,10 @@ fn client_capabilities() -> ClientCapabilities {
                 version_support: Some(true),
                 code_description_support: Some(true),
                 data_support: None,
+            }),
+            diagnostic: Some(DiagnosticClientCapabilities {
+                dynamic_registration: dynamic,
+                related_document_support: Some(false),
             }),
             ..Default::default()
         }),

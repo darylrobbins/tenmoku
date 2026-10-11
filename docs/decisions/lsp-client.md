@@ -173,7 +173,8 @@ references, workspace symbols, hover and completion. Diagnostics go into a
 `DiagnosticSet` in `fe-editor`, copied from gpui-kit but **storing anchored
 byte ranges**. gpui-kit's version counts LSP columns in chars, which is wrong
 for every encoding except utf-32. Code actions, rename, formatting, semantic
-tokens, inlay hints, signature help, pull diagnostics and snippets are out.
+tokens, inlay hints, signature help and snippets are out. Pull diagnostics
+for open documents came in later (T39, §7).
 
 **Questions for the user (§9):**
 
@@ -929,7 +930,8 @@ search" as T107 and T112 already do.
 | `workspace/applyEdit` | M4: `{ applied: false, failureReason: "not supported" }`, since M4 sends nothing that triggers it (§7). Later: apply as **`Origin::Lsp`** (`crates/fe-buffer/src/buffer.rs:21-27`), through `Buffer::edit_from` on the snapshot of the version the edit names, so a conflict is refused rather than misapplied. Unopened files are edited on disk or opened first; that choice is for the rename/code-action card | |
 | `window/showMessageRequest` | `null` (no action chosen). Show the message | |
 | `window/showDocument` | `{ success: false }` in M4 | |
-| `workspace/diagnostic/refresh`, `semanticTokens/refresh`, `inlayHint/refresh`, `codeLens/refresh` | `null` | rust-analyzer: `workspace/diagnostic/refresh` once, after flycheck |
+| `workspace/diagnostic/refresh` | `null`, then every open document of the session is pulled again (§7, pull diagnostics) | rust-analyzer: once, after flycheck |
+| `semanticTokens/refresh`, `inlayHint/refresh`, `codeLens/refresh` | `null` | |
 | anything else | `MethodNotFound` (async-lsp's default for requests, `router.rs:56-62`) | |
 
 **Dynamic registration.** A successful reply means the registration is
@@ -1661,7 +1663,7 @@ Whether fastedit ever installs or bundles servers for users is Q2. The
 
 | Feature | LSP methods and client capabilities | `fe-lsp` | `fe-editor` / `fe-display` | `fe-gpui` / `fe-workbench` |
 |---|---|---|---|---|
-| Diagnostics | push `textDocument/publishDiagnostics`; `publishDiagnostics { versionSupport, relatedInformation, tagSupport [Unnecessary, Deprecated], codeDescriptionSupport }` | Converts to `fe_lsp::Diagnostic { range: Range<usize>, severity, message, source, code, tags }` decoded in the ring's text for the published version (§4.1). Emits `LspEvent::Diagnostics { buffer, session, incarnation, version, server, items }`, with ranges in that buffer version, and `LspEvent::DiagnosticsCleared { buffer, session, incarnation, server }` at close and session end. Unversioned publications are dropped unless the spec names a verified guarantee (§4.1) | **`DiagnosticSet` copied from gpui-kit** (`editor/diagnostics.rs:186`, as the plan's reuse map says), but holding `fe-buffer` anchors over byte ranges, not `lsp_types::Position` ranges, and keyed by server. On delivery, a `Diagnostics` is applied only if its `(session, incarnation)` is the active one (`LspManager::active_identity`) and not already cleared; its ranges are then rebased from the event's version with `map_offset` and anchored. A `DiagnosticsCleared` (whose identity is already retired) empties the server's set only if the set carries that identity, and records the identity as cleared. Lives in `fe-editor` (GPUI-free) | Squiggles and gutter marks from the set; the message on hover. Plain text in M4 |
+| Diagnostics | push `textDocument/publishDiagnostics`; `publishDiagnostics { versionSupport, relatedInformation, tagSupport [Unnecessary, Deprecated], codeDescriptionSupport }`. Pull `textDocument/diagnostic` for open documents (T39, below); `diagnostic { dynamicRegistration: false, relatedDocumentSupport: false }`, `workspace.diagnostics { refreshSupport: true }` | Converts to `fe_lsp::Diagnostic { range: Range<usize>, severity, message, source, code, tags }` decoded in the ring's text for the published version (§4.1). Emits `LspEvent::Diagnostics { buffer, session, incarnation, version, server, items }`, with ranges in that buffer version, and `LspEvent::DiagnosticsCleared { buffer, session, incarnation, server }` at close and session end. Unversioned publications are dropped unless the spec names a verified guarantee (§4.1) | **`DiagnosticSet` copied from gpui-kit** (`editor/diagnostics.rs:186`, as the plan's reuse map says), but holding `fe-buffer` anchors over byte ranges, not `lsp_types::Position` ranges, and keyed by server. On delivery, a `Diagnostics` is applied only if its `(session, incarnation)` is the active one (`LspManager::active_identity`) and not already cleared; its ranges are then rebased from the event's version with `map_offset` and anchored. A `DiagnosticsCleared` (whose identity is already retired) empties the server's set only if the set carries that identity, and records the identity as cleared. Lives in `fe-editor` (GPUI-free) | Squiggles and gutter marks from the set; the message on hover. Plain text in M4 |
 | Definition | `textDocument/definition`; `definition.linkSupport = true` | `LspNavigation::definitions` (§5) | — | T107's F12 and picker, unchanged |
 | References | `textDocument/references` | `LspNavigation::references` (§5) | — | T112's panel, unchanged |
 | Workspace symbols | `workspace/symbol` (`symbol.symbolKind` the full set) | `LspNavigation::workspace_symbols` | — | T107's cmd-T, unchanged |
@@ -1674,7 +1676,8 @@ Whether fastedit ever installs or bundles servers for users is Q2. The
 - code actions, rename, formatting
 - semantic tokens, inlay hints, signature help
 - document highlights, code lens, folding ranges, call and type hierarchy
-- pull diagnostics (3.17 `textDocument/diagnostic`)
+- workspace pull diagnostics (`workspace/diagnostic`), related documents,
+  result ids and dynamic registration of `textDocument/diagnostic`
 - snippets, `workspace/executeCommand`, applying `workspace/applyEdit`
 - `workspace/didChangeWatchedFiles`
 - multi-root workspaces
@@ -1682,6 +1685,47 @@ Whether fastedit ever installs or bundles servers for users is Q2. The
 
 `didSave` is in M4 (§4.1). It drives rust-analyzer's `checkOnSave`
 diagnostics.
+
+**Pull diagnostics (T39, `crates/fe-lsp/src/pull.rs`).** Added for
+rust-analyzer, whose own diagnostics are pull-only, and typescript-go, which
+pushes none for source files (§10). Open documents only:
+
+- **Who.** A session pulls when its `InitializeResult` has
+  `diagnosticProvider` (options or registration options); otherwise nothing
+  changes for it. The client offers `textDocument.diagnostic
+  { dynamicRegistration: false, relatedDocumentSupport: false }` and
+  `workspace.diagnostics { refreshSupport: true }`. lsp-types 0.95.1 names
+  the latter `workspace.diagnostic`, so `initialize` goes out as JSON with
+  the protocol's name. Of the four servers, rust-analyzer and typescript-go
+  pull (§10).
+- **When.** After a document's `didOpen`, after each flushed `didChange`,
+  after `didSave`, when the session turns `Ready`, and on
+  `workspace/diagnostic/refresh` (every open document of the session). The
+  triggers of one drain make one pull, queued right behind its
+  notifications. At most one pull per document is in flight: a trigger
+  meanwhile marks the document, and it's pulled once more when the reply
+  lands. A pull sends `{ textDocument, identifier }` (`identifier` from the
+  server's `DiagnosticOptions`, left out when it has none), never
+  `previousResultId` (left out, not `null`: typescript-go refuses a
+  `null`), and is cancelled after 30 s.
+- **Which version.** The LSP version of the last `didOpen` or `didChange`
+  sent before the request, since the server takes them in order. The reply
+  is decoded like a versioned publication (§4.1): against the ring's text
+  for that version, and dropped if the version has left the ring, if a newer
+  pull reply was applied, or if its incarnation has ended (closed, reopened,
+  or its session restarted). A `full` report gives the items; an `unchanged`
+  report, a partial result and an error (`ServerCancelled`,
+  `ContentModified`, the timeout) are dropped, and the next trigger pulls
+  again.
+- **Pushed and pulled.** Each incarnation keeps its latest accepted pushed
+  list and pulled list, each at its LSP version and each with its own
+  older-than-newest rule. Whenever either changes, one
+  `LspEvent::Diagnostics` holds both, at the newer version. The older
+  list's ranges are mapped through the ring's `edits` to it, start biased
+  right and end biased left as `DiagnosticSet::apply` maps them; if its
+  version has left the ring (or a gap broke its edits), it's left out until
+  it's replaced. `DiagnosticsCleared` and a session's end clear both. No UI
+  change: fe-editor still sees one list per (buffer, server).
 
 Watching files changed outside fastedit is a separate question. Without
 `workspace/didChangeWatchedFiles`, it isn't yet known whether rust-analyzer
@@ -1899,32 +1943,41 @@ would run its code once the workbench drives fe-lsp (T143).
   typescript-language-server, a true "no definition" (a builtin, say) shows
   search's guesses, labelled "by search". Not measured for frequency.
 - **Which servers version their diagnostics: checked in card 10
-  (2026-10-09).** The real-server tests watch the wire and record it
-  (`real_server_*` in `crates/fe-lsp/tests/real_server.rs`, run by
-  `scripts/lsp-real.sh`). Each test opens a file and adds an error, saved
-  for rust-analyzer and unsaved for the others. It then waits up to 30 s for
-  the first `publishDiagnostics` after the edit that holds a diagnostic for
-  that file:
-  - **rust-analyzer** (1.98.1 component) versions them. But it pushes only
-    `cargo check`'s diagnostics, whose `source` is `rustc`. It advertises
-    `diagnosticProvider` whatever the client offers, and sends
-    `workspace/diagnostic/refresh`. Its own diagnostics are pull-only, such
-    as an unresolved import in an unsaved buffer: for that edit it pushed an
-    empty, versioned list. fe-lsp doesn't pull (§7), so fastedit shows Rust
-    diagnostics only after a save. The save test,
-    `real_server_rust_analyzer_diagnostics_follow_saves`, sees E0308 from
-    `rustc` appear after saving a type error and leave after saving the fix.
-  - **pyright** 1.1.414 versions them.
-  - **typescript-language-server** 6.0.1 never sets `version`. Unversioned
-    publications are dropped (§4.1), so TypeScript and JavaScript files show
-    no diagnostics under the default server.
-  - **typescript-go** 7.0.2 pushes none for source files within 30 s. It
-    pushed one empty, unversioned list for `tsconfig.json`, with the path
-    lowercased (`…/t/.tmp…`).
-
-  No server-specific remedy is in card 10's scope. Two follow-up cards cover
-  it: T305 for typescript-language-server's unversioned diagnostics, and T306
-  for pulling diagnostics.
+  (2026-10-09), re-checked with pull diagnostics in T39 (2026-10-11).** The
+  real-server tests watch the wire and record it (`real_server_*` in
+  `crates/fe-lsp/tests/real_server.rs`, run by `scripts/lsp-real.sh`;
+  evidence in `docs/decisions/42t4r87mwk-pull-diagnostics.md`). Each test
+  opens a file and adds an error without saving it, then watches 30 s for
+  publications and pull replies holding a diagnostic for that file, and for
+  the error reaching the sink at the edited version:
+  - **rust-analyzer** (1.98.1 component) advertises `diagnosticProvider`
+    and answers pulls. It pushes only `cargo check`'s diagnostics (`source`
+    `rustc`), versioned, after a save. Its own come by pull and do reach an
+    unsaved buffer: a type mismatch (`source` `rust-analyzer`, E0308) was
+    shown 4 ms after the edit. Its unresolved-import diagnostic (E0432) is
+    experimental, off unless `diagnostics.experimental.enable` is set in
+    its `initializationOptions` or settings: under the built-in spec no pull
+    reply holds it, so an unresolved import shows only after a save, as
+    `rustc`'s E0432. With experimental diagnostics on, it reached an unsaved
+    buffer by pull 25 ms after the edit. The first pull after an edit is
+    often answered `ServerCancelled`; the next trigger pulls again.
+  - **pyright** 1.1.414 advertises no `diagnosticProvider`, even with the
+    client offering pull, and pushes versioned diagnostics as before (shown
+    0.3 s after the edit).
+  - **typescript-language-server** 6.0.1 advertises no `diagnosticProvider`
+    and never sets `version` on its pushes. Unversioned publications are
+    dropped (§4.1), so TypeScript and JavaScript files show no diagnostics
+    under the default server (T305).
+  - **typescript-go** 7.0.2 pushes none for source files and answers pulls:
+    the type error (TS2322) was shown 8 ms after the edit. It refuses a
+    pull whose `previousResultId` is `null` (`InvalidParams`), which
+    lsp-types 0.95.1 serializes, so fe-lsp sends the params as JSON with the
+    unset fields left out.
+  - **Duplicates.** rust-analyzer's pushed and pulled lists repeat each
+    other for a saved type mismatch: `rustc`'s E0308 ("mismatched types",
+    plus its "expected … because of return type" note) and
+    rust-analyzer's own E0308 ("expected &'static str, found i32") are all
+    shown, one event holding both lists. No other server does both.
 - **rust-analyzer from the 1.98.1 rustup component: checked in card 10
   (2026-10-09).** Version `rust-analyzer 1.98.1 (48a229ce 2026-09-01)`.
   - Offered `["utf-8", "utf-16"]`, it negotiates **utf-8**, as the

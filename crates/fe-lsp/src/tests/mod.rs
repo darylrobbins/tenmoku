@@ -13,6 +13,7 @@ mod launcher;
 mod launcher_path_safety;
 mod lifecycle;
 mod navigation;
+mod pull_diagnostics;
 mod readiness;
 mod registration;
 mod registry;

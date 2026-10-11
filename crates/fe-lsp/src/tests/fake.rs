@@ -641,7 +641,8 @@ impl FakeServer {
         })
     }
 
-    /// Changes the script's answer to `method` from now on.
+    /// Changes the script's answer to `method` from now on: for every
+    /// request not yet recorded.
     pub fn set_reply(&self, method: &str, reply: Scripted) {
         self.lock().script.replies.insert(method.to_owned(), reply);
     }
@@ -1024,6 +1025,9 @@ fn fake_router(
         .unhandled_request(|session, req: AnyRequest| {
             let fake = session.fake.clone();
             let launch = session.launch;
+            // Taken before the request is recorded, so a test that saw it
+            // recorded knows what it will be answered.
+            let script = fake.lock().script.clone();
             fake.record(
                 launch,
                 Record::Request {
@@ -1032,7 +1036,6 @@ fn fake_router(
                     params: req.params.clone(),
                 },
             );
-            let script = fake.lock().script.clone();
             let clock = fake.shared.clock.clone();
             let cancelled = script.answer_cancels.then(|| {
                 let (cancel, cancelled) = oneshot::channel();
