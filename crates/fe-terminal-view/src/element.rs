@@ -1,13 +1,14 @@
 //! Paints a [`TerminalView`]'s grid: shapes each [`layout`] run with the
 //! window's text system and paints it, with the backgrounds, selection and
-//! cursor, as quads.
+//! cursor, as quads, and an input method's marked text over the cursor. Takes
+//! text input while the view is focused.
 
 use fe_terminal::GridSize;
 use gpui::{
-    App, BorderStyle, Bounds, ContentMask, Element, ElementId, Entity, Font, FontStyle, FontWeight,
-    GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId, Pixels, Point, ShapedLine,
-    SharedString, Size, StrikethroughStyle, Style, TextAlign, TextRun, UnderlineStyle, Window,
-    fill, outline, point, px, relative, size,
+    App, BorderStyle, Bounds, ContentMask, Element, ElementId, ElementInputHandler, Entity, Font,
+    FontStyle, FontWeight, GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId,
+    Pixels, Point, ShapedLine, SharedString, Size, StrikethroughStyle, Style, TextAlign, TextRun,
+    UnderlineStyle, Window, fill, outline, point, px, relative, size,
 };
 
 use crate::layout::{self, CursorLayout, Run};
@@ -89,6 +90,8 @@ pub(crate) struct Prepainted {
     quads: Vec<(Bounds<Pixels>, Hsla)>,
     text: Vec<Text>,
     cursor: Option<Cursor>,
+    /// Marked text over its background, at the cursor.
+    marked: Option<(Bounds<Pixels>, Text)>,
 }
 
 impl Element for TerminalElement {
@@ -129,6 +132,7 @@ impl Element for TerminalElement {
         let cell = cell_size(&style, window);
         let grid = grid_size(bounds.size, cell);
         let focused = self.view.read(cx).focus.is_focused(window);
+        let marked = self.view.read(cx).marked.clone();
         let snapshot = self.view.update(cx, |view, cx| {
             view.fit(grid, cx);
             view.terminal().map(|terminal| terminal.snapshot())
@@ -139,6 +143,7 @@ impl Element for TerminalElement {
             quads: Vec::new(),
             text: Vec::new(),
             cursor: None,
+            marked: None,
         };
         let Some(snapshot) = snapshot else {
             return prepainted;
@@ -214,6 +219,22 @@ impl Element for TerminalElement {
             }),
             CursorLayout::Hidden => None,
         };
+        if let Some(text) = marked.filter(|_| focused) {
+            let row = snapshot
+                .cursor
+                .row
+                .min(snapshot.rows.len().saturating_sub(1));
+            let col = snapshot.cursor.col.min(snapshot.cols.saturating_sub(1));
+            let line = shape_marked(text, &font, &style, window);
+            let width = line.width.max(cell.width);
+            prepainted.marked = Some((
+                Bounds::new(at(row, col), size(width, cell.height)),
+                Text {
+                    origin: at(row, col),
+                    line,
+                },
+            ));
+        }
         prepainted
     }
 
@@ -255,8 +276,43 @@ impl Element for TerminalElement {
                 }
                 None => {}
             }
+            if let Some((bounds, text)) = &prepainted.marked {
+                window.paint_quad(fill(*bounds, prepainted.background));
+                paint_text(text, line_height, window, cx);
+            }
         });
+        let focus = self.view.read(cx).focus.clone();
+        window.handle_input(
+            &focus,
+            ElementInputHandler::new(bounds, self.view.clone()),
+            cx,
+        );
     }
+}
+
+/// Shapes an input method's marked text, underlined, in its natural widths:
+/// it isn't on the grid yet.
+fn shape_marked(
+    text: String,
+    font: &Font,
+    style: &TerminalStyle,
+    window: &mut Window,
+) -> ShapedLine {
+    let run = TextRun {
+        len: text.len(),
+        font: font.clone(),
+        color: style.foreground,
+        background_color: None,
+        underline: Some(UnderlineStyle {
+            thickness: px(1.),
+            color: Some(style.foreground),
+            wavy: false,
+        }),
+        strikethrough: None,
+    };
+    window
+        .text_system()
+        .shape_line(SharedString::from(text), style.font_size, &[run], None)
 }
 
 /// Shapes `run` with every glyph a cell wide, so they stay on the grid

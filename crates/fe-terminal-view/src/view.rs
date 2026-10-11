@@ -2,8 +2,8 @@ use std::io;
 
 use fe_terminal::{GridSize, Terminal, TerminalEvent, TerminalOptions};
 use gpui::{
-    App, Context, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    ParentElement, Render, Styled, Task, Window, div,
+    App, ClipboardItem, Context, EventEmitter, FocusHandle, Focusable, InteractiveElement,
+    IntoElement, ParentElement, Render, Styled, Subscription, Task, Window, div,
 };
 
 use crate::TerminalStyle;
@@ -26,7 +26,7 @@ pub enum TerminalViewEvent {
 pub struct TerminalView {
     /// Taken when the session starts.
     options: Option<TerminalOptions>,
-    terminal: Option<Terminal>,
+    pub(crate) terminal: Option<Terminal>,
     pub(crate) style: TerminalStyle,
     pub(crate) focus: FocusHandle,
     /// The size last given to the session.
@@ -36,6 +36,9 @@ pub struct TerminalView {
     events: Option<Task<()>>,
     /// A wakeup has notified since the last frame was laid out.
     notified: bool,
+    /// The text an input method is composing, not yet written to the pty.
+    pub(crate) marked: Option<String>,
+    _focus_reports: [Subscription; 2],
 }
 
 impl EventEmitter<TerminalViewEvent> for TerminalView {}
@@ -46,7 +49,7 @@ impl TerminalView {
     pub fn new(
         options: TerminalOptions,
         style: TerminalStyle,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> io::Result<Self> {
         if !std::fs::metadata(&options.cwd)?.is_dir() {
@@ -55,15 +58,22 @@ impl TerminalView {
                 format!("{} is not a directory", options.cwd.display()),
             ));
         }
+        let focus = cx.focus_handle();
+        let focus_reports = [
+            cx.on_focus_in(&focus, window, |view, _, _| view.report_focus(true)),
+            cx.on_focus_out(&focus, window, |view, _, _, _| view.report_focus(false)),
+        ];
         Ok(Self {
             options: Some(options),
             terminal: None,
             style,
-            focus: cx.focus_handle(),
+            focus,
             size: None,
             title: None,
             events: None,
             notified: false,
+            marked: None,
+            _focus_reports: focus_reports,
         })
     }
 
@@ -142,8 +152,21 @@ impl TerminalView {
                 cx.notify();
                 cx.emit(TerminalViewEvent::Exited(code));
             }
-            // Bells and clipboard stores wait for the cards that handle them.
-            TerminalEvent::Bell | TerminalEvent::ClipboardStore(_) => {}
+            TerminalEvent::ClipboardStore(text) => {
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+            }
+            // Bells wait for the card that handles them.
+            TerminalEvent::Bell => {}
+        }
+    }
+
+    /// Sends `CSI I` or `CSI O` when the program asked to hear of focus.
+    fn report_focus(&self, focused: bool) {
+        let Some(terminal) = &self.terminal else {
+            return;
+        };
+        if terminal.snapshot().modes.focus_reporting {
+            terminal.input(if focused { &b"\x1b[I"[..] } else { b"\x1b[O" });
         }
     }
 }
@@ -153,6 +176,7 @@ impl Render for TerminalView {
         div()
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus)
+            .on_key_down(cx.listener(Self::key_down))
             .size_full()
             .bg(self.style.background)
             .child(TerminalElement::new(cx.entity()))
