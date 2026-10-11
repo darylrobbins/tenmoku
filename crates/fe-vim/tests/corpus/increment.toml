@@ -1,0 +1,542 @@
+# Increment cases for fe-vim's oracle: <C-a> and <C-x> on decimal, negative,
+# hex (both cases), binary and zero-led numbers, one after the caret, none on
+# the row, counts, crossing zero, the 64-bit edges, a word like x1, `.`, `u`,
+# and in a visual mode (every kind, `g<C-a>`, `g<C-x>`, `.`). Hand-written:
+# name, buffer (rows joined with \n, no trailing newline), cursor = [row,
+# byte column] and keys in vim notation. What nvim does with each is recorded
+# in increment.expected.json by the ignored `record_corpus_with_neovim` test;
+# edit a case, then re-record.
+
+[[case]]
+name = "dec_up"
+buffer = "x 9 y"
+cursor = [0, 0]
+keys = "<C-a>"
+
+[[case]]
+name = "dec_down"
+buffer = "x 10 y"
+cursor = [0, 0]
+keys = "<C-x>"
+
+[[case]]
+name = "dec_on_digit"
+buffer = "abc 123 def"
+cursor = [0, 5]
+keys = "<C-a>"
+
+[[case]]
+name = "dec_cursor_on_end"
+buffer = "abc 123 def"
+cursor = [0, 6]
+keys = "<C-a>"
+
+[[case]]
+name = "count_down_neg"
+buffer = "-3"
+cursor = [0, 0]
+keys = "5<C-x>"
+
+[[case]]
+name = "negative_up"
+buffer = "-3"
+cursor = [0, 1]
+keys = "<C-a>"
+
+[[case]]
+name = "negative_to_zero"
+buffer = "-1"
+cursor = [0, 0]
+keys = "<C-a>"
+
+[[case]]
+name = "cross_zero_down"
+buffer = "2"
+cursor = [0, 0]
+keys = "5<C-x>"
+
+[[case]]
+name = "cross_zero_up"
+buffer = "-2"
+cursor = [0, 0]
+keys = "5<C-a>"
+
+[[case]]
+name = "zero_down"
+buffer = "0"
+cursor = [0, 0]
+keys = "<C-x>"
+
+[[case]]
+name = "hex_lower"
+buffer = "0xff"
+cursor = [0, 0]
+keys = "<C-a>"
+
+[[case]]
+name = "hex_upper"
+buffer = "0xFE"
+cursor = [0, 0]
+keys = "<C-a>"
+
+[[case]]
+name = "hex_mixed_last_upper"
+buffer = "0xfF"
+cursor = [0, 0]
+keys = "<C-x>"
+
+[[case]]
+name = "hex_big_prefix"
+buffer = "0XfE"
+cursor = [0, 3]
+keys = "<C-a>"
+
+[[case]]
+name = "hex_down_width"
+buffer = "0x100"
+cursor = [0, 2]
+keys = "<C-x>"
+
+[[case]]
+name = "hex_neg_ignored"
+buffer = "-0x10"
+cursor = [0, 0]
+keys = "<C-a>"
+
+[[case]]
+name = "hex_pad"
+buffer = "0x00ff"
+cursor = [0, 0]
+keys = "<C-a>"
+
+[[case]]
+name = "hex_cursor_in_digits"
+buffer = "a 0xab b"
+cursor = [0, 4]
+keys = "3<C-a>"
+
+[[case]]
+name = "bin_up"
+buffer = "0b101"
+cursor = [0, 0]
+keys = "<C-a>"
+
+[[case]]
+name = "bin_down_width"
+buffer = "0b1000"
+cursor = [0, 5]
+keys = "<C-x>"
+
+[[case]]
+name = "bin_upper_prefix"
+buffer = "0B11"
+cursor = [0, 0]
+keys = "<C-a>"
+
+[[case]]
+name = "leading_zero"
+buffer = "007"
+cursor = [0, 0]
+keys = "<C-a>"
+
+[[case]]
+name = "leading_zero_carry"
+buffer = "009"
+cursor = [0, 0]
+keys = "<C-a>"
+
+[[case]]
+name = "leading_zero_down"
+buffer = "0010"
+cursor = [0, 0]
+keys = "<C-x>"
+
+[[case]]
+name = "neg_leading_zero"
+buffer = "-007"
+cursor = [0, 0]
+keys = "<C-a>"
+
+[[case]]
+name = "after_cursor"
+buffer = "foo bar 42 baz 7"
+cursor = [0, 0]
+keys = "<C-a>"
+
+[[case]]
+name = "second_number"
+buffer = "1 2"
+cursor = [0, 2]
+keys = "<C-a>"
+
+[[case]]
+name = "past_last_number"
+buffer = "1 abc"
+cursor = [0, 3]
+keys = "<C-a>"
+
+[[case]]
+name = "none_on_row"
+buffer = "no digits here"
+cursor = [0, 0]
+keys = "<C-a>"
+
+[[case]]
+name = "none_then_undo"
+buffer = "abc\n5"
+cursor = [0, 0]
+keys = "<C-a>u"
+
+[[case]]
+name = "empty_row"
+buffer = "\n5"
+cursor = [0, 0]
+keys = "<C-a>"
+
+[[case]]
+name = "word_x1"
+buffer = "x1"
+cursor = [0, 0]
+keys = "<C-a>"
+
+[[case]]
+name = "word_x_dash_1"
+buffer = "x-1"
+cursor = [0, 0]
+keys = "<C-a>"
+
+[[case]]
+name = "word_a_dash_1"
+buffer = "a-1"
+cursor = [0, 2]
+keys = "<C-x>"
+
+[[case]]
+name = "dash_after_space"
+buffer = "a -1"
+cursor = [0, 0]
+keys = "<C-a>"
+
+[[case]]
+name = "dot_after"
+buffer = "x 9 y"
+cursor = [0, 0]
+keys = "<C-a>."
+
+[[case]]
+name = "dot_count"
+buffer = "5"
+cursor = [0, 0]
+keys = "3<C-a>."
+
+[[case]]
+name = "dot_new_count"
+buffer = "5"
+cursor = [0, 0]
+keys = "3<C-a>2."
+
+[[case]]
+name = "undo"
+buffer = "41"
+cursor = [0, 0]
+keys = "<C-a>u"
+
+[[case]]
+name = "max64"
+buffer = "18446744073709551615"
+cursor = [0, 0]
+keys = "<C-x>"
+
+[[case]]
+name = "max64_up"
+buffer = "18446744073709551615"
+cursor = [0, 0]
+keys = "<C-a>"
+
+[[case]]
+name = "max64_count"
+buffer = "18446744073709551615"
+cursor = [0, 0]
+keys = "4294967295<C-a>"
+
+[[case]]
+name = "max64_minus"
+buffer = "-18446744073709551615"
+cursor = [0, 0]
+keys = "<C-x>"
+
+[[case]]
+name = "max64_minus_up"
+buffer = "-18446744073709551615"
+cursor = [0, 0]
+keys = "<C-a>"
+
+[[case]]
+name = "over64"
+buffer = "99999999999999999999"
+cursor = [0, 0]
+keys = "<C-a>"
+
+[[case]]
+name = "i64_edge"
+buffer = "9223372036854775807"
+cursor = [0, 0]
+keys = "<C-a>"
+
+[[case]]
+name = "i64_edge_neg"
+buffer = "-9223372036854775808"
+cursor = [0, 0]
+keys = "<C-x>"
+
+[[case]]
+name = "hex_max"
+buffer = "0xffffffffffffffff"
+cursor = [0, 0]
+keys = "<C-a>"
+
+[[case]]
+name = "hex_zero_down"
+buffer = "0x0"
+cursor = [0, 0]
+keys = "<C-x>"
+
+[[case]]
+name = "bin_zero_down"
+buffer = "0b0"
+cursor = [0, 0]
+keys = "<C-x>"
+
+[[case]]
+name = "big_count"
+buffer = "1"
+cursor = [0, 0]
+keys = "4294967295<C-a>"
+
+[[case]]
+name = "caret_at_last_digit"
+buffer = "1 99 2"
+cursor = [0, 0]
+keys = "<C-a>"
+
+[[case]]
+name = "multibyte_before"
+buffer = "é 5"
+cursor = [0, 0]
+keys = "<C-a>"
+
+[[case]]
+name = "tab_row"
+buffer = "\t7\t8"
+cursor = [0, 0]
+keys = "<C-a>"
+
+[[case]]
+name = "second_row_unchanged"
+buffer = "1\n2"
+cursor = [0, 0]
+keys = "<C-a>"
+
+[[case]]
+name = "g_ctrl_a_normal_cancels"
+buffer = "5"
+cursor = [0, 0]
+keys = "g<C-a>"
+
+[[case]]
+name = "op_pending_cancels"
+buffer = "5 6"
+cursor = [0, 0]
+keys = "d<C-a>"
+
+[[case]]
+name = "v_one_row"
+buffer = "a 1 b 2"
+cursor = [0, 0]
+keys = "v$<C-a>"
+
+[[case]]
+name = "v_inside_selection"
+buffer = "a 1 b 2"
+cursor = [0, 4]
+keys = "ve<C-a>"
+
+[[case]]
+name = "v_selection_cuts_number"
+buffer = "a 123 b"
+cursor = [0, 2]
+keys = "vl<C-a>"
+
+[[case]]
+name = "v_starts_mid_number"
+buffer = "a 123 b"
+cursor = [0, 3]
+keys = "v$<C-a>"
+
+[[case]]
+name = "v_neg_inside"
+buffer = "x -5"
+cursor = [0, 1]
+keys = "v$<C-a>"
+
+[[case]]
+name = "v_neg_outside"
+buffer = "x -5"
+cursor = [0, 3]
+keys = "v$<C-a>"
+
+[[case]]
+name = "v_neg_to_pos"
+buffer = "x -1 y"
+cursor = [0, 0]
+keys = "v$<C-a>"
+
+[[case]]
+name = "v_pos_to_neg"
+buffer = "x 1 y"
+cursor = [0, 0]
+keys = "v$<C-x>"
+
+[[case]]
+name = "v_three_rows"
+buffer = "1\n2\n3"
+cursor = [0, 0]
+keys = "Vjj<C-a>"
+
+[[case]]
+name = "v_three_rows_g"
+buffer = "1\n1\n1"
+cursor = [0, 0]
+keys = "Vjjg<C-a>"
+
+[[case]]
+name = "v_three_rows_gx"
+buffer = "10\n10\n10"
+cursor = [0, 0]
+keys = "Vjjg<C-x>"
+
+[[case]]
+name = "v_count_g"
+buffer = "0\n0\n0"
+cursor = [0, 0]
+keys = "Vjj2g<C-a>"
+
+[[case]]
+name = "v_count"
+buffer = "1\n2\n3"
+cursor = [0, 0]
+keys = "Vjj5<C-a>"
+
+[[case]]
+name = "v_g_skip_row"
+buffer = "1\nx\n1"
+cursor = [0, 0]
+keys = "Vjjg<C-a>"
+
+[[case]]
+name = "v_charwise_rows"
+buffer = "a 1\nb 2\nc 3"
+cursor = [0, 2]
+keys = "vjj<C-a>"
+
+[[case]]
+name = "v_charwise_rows_g"
+buffer = "a 1\nb 2\nc 3"
+cursor = [0, 2]
+keys = "vjj$g<C-a>"
+
+[[case]]
+name = "v_charwise_last_row_cut"
+buffer = "a 1\n12 3"
+cursor = [0, 2]
+keys = "vj<C-a>"
+
+[[case]]
+name = "v_block"
+buffer = "1 1\n2 2\n3 3"
+cursor = [0, 2]
+keys = "<C-v>jj<C-a>"
+
+[[case]]
+name = "v_block_g"
+buffer = "1 1\n1 1\n1 1"
+cursor = [0, 2]
+keys = "<C-v>jjg<C-a>"
+
+[[case]]
+name = "v_hex"
+buffer = "0xf 1"
+cursor = [0, 0]
+keys = "V<C-a>"
+
+[[case]]
+name = "v_dot"
+buffer = "1\n2\n3\n4"
+cursor = [0, 0]
+keys = "Vj<C-a>jj."
+
+[[case]]
+name = "v_dot_charwise"
+buffer = "1 2 3 4"
+cursor = [0, 0]
+keys = "vee<C-a>w."
+
+[[case]]
+name = "v_none"
+buffer = "abc\nabc"
+cursor = [0, 0]
+keys = "Vj<C-a>"
+
+[[case]]
+name = "v_mark"
+buffer = "1\n2\n3"
+cursor = [0, 0]
+keys = "Vj<C-a>gv<Esc>"
+
+[[case]]
+name = "v_undo"
+buffer = "1\n2\n3"
+cursor = [0, 0]
+keys = "Vjj<C-a>u"
+
+[[case]]
+name = "v_backwards"
+buffer = "1\n2\n3"
+cursor = [2, 0]
+keys = "Vkk<C-a>"
+
+[[case]]
+name = "v_empty_row"
+buffer = "1\n\n3"
+cursor = [0, 0]
+keys = "Vjj<C-a>"
+
+[[case]]
+name = "v_g_hex"
+buffer = "0x0\n0x0\n0x0"
+cursor = [0, 0]
+keys = "Vjjg<C-a>"
+
+[[case]]
+name = "over64_down"
+buffer = "99999999999999999999"
+cursor = [0, 0]
+keys = "<C-x>"
+
+[[case]]
+name = "over64_count"
+buffer = "99999999999999999999"
+cursor = [0, 0]
+keys = "5<C-x>"
+
+[[case]]
+name = "over64_neg"
+buffer = "-99999999999999999999"
+cursor = [0, 0]
+keys = "<C-a>"
+
+[[case]]
+name = "over64_hex"
+buffer = "0x1ffffffffffffffff"
+cursor = [0, 0]
+keys = "<C-a>"

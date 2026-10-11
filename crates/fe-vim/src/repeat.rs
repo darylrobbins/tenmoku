@@ -6,13 +6,14 @@ use fe_editor::commands::origin;
 use serde::Serialize;
 
 use crate::{
-    CountArgs, InsertArgs, Mode, OperateArgs, PutArgs, ReplaceCharArgs, VimTarget, edit, insert,
-    operator, replace, visual,
+    CountArgs, InsertArgs, Mode, OperateArgs, PutArgs, ReplaceCharArgs, VimTarget, edit,
+    increment::{self, IncrementArgs},
+    insert, operator, replace, visual,
 };
 
 /// A change `.` can repeat: a committed `vim.operate` (not a yank),
 /// `vim.put`, `vim.insert`, `vim.replace_mode`, `vim.join`,
-/// `vim.replace_char` or `vim.toggle_case`, by its args.
+/// `vim.replace_char`, `vim.toggle_case` or `vim.increment`, by its args.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Change {
     Operate(OperateArgs),
@@ -22,6 +23,7 @@ pub enum Change {
     Join(CountArgs),
     ReplaceChar(ReplaceCharArgs),
     ToggleCase(CountArgs),
+    Increment(IncrementArgs),
 }
 
 impl Change {
@@ -39,6 +41,7 @@ impl Change {
             Self::Join(args) => of("vim.join", args),
             Self::ReplaceChar(args) => of("vim.replace_char", args),
             Self::ToggleCase(args) => of("vim.toggle_case", args),
+            Self::Increment(args) => of("vim.increment", args),
         }
     }
 
@@ -50,6 +53,7 @@ impl Change {
             Self::Insert(args) => args.count = count,
             Self::Join(args) | Self::ToggleCase(args) | Self::Replace(args) => args.count = count,
             Self::ReplaceChar(args) => args.count = count,
+            Self::Increment(args) => args.count = count,
         }
         self
     }
@@ -141,6 +145,7 @@ fn replay(
         Change::Join(args) => edit::join(target, actor, args)?,
         Change::ReplaceChar(args) => edit::replace_char(target, actor, args)?,
         Change::ToggleCase(args) => edit::toggle_case(target, actor, args)?,
+        Change::Increment(args) => increment::increment(target, actor, args)?,
     };
     if matches!(target.state.mode, Mode::Insert | Mode::Replace) {
         if let Some(text) = last.inserted.as_deref().filter(|text| !text.is_empty()) {
