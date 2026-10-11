@@ -267,3 +267,42 @@ fn run_cancels(keys: &str) -> Step {
     }
     last
 }
+
+#[test]
+fn ex_line_commands_land_past_rows_put_in_while_measuring() {
+    // Measuring text as the model catches up after an ex line's edit may
+    // edit the buffer through another model: the caret lands where the
+    // command put it all the same, here a row lower for the `X` row
+    // another origin puts at the start meanwhile.
+    let run = |keys: &str, measuring: bool| {
+        let mut vim = HeadlessVim::new("a\n  bb\n  cc\ndd\nee", (4, 1));
+        let mut split = vim.model().split();
+        let mut edited = !measuring;
+        let _measuring = Measuring::new(move |after_edit| {
+            if after_edit && !edited {
+                edited = true;
+                let ai = Origin::Ai {
+                    agent: "agent".into(),
+                    session: "session".into(),
+                };
+                split.buffer_mut().edit([(0..0, "X\n")], ai);
+            }
+        });
+        vim.feed(keys).unwrap();
+        (vim.text(), vim.cursor())
+    };
+    for keys in [
+        ":2,3j<CR>",
+        ":2,3j!<CR>",
+        ":2j 3<CR>",
+        ":4t1<CR>",
+        ":4m1<CR>",
+        ":2,3><CR>",
+        ":2,4sort<CR>",
+    ] {
+        let (plain, at) = run(keys, false);
+        let (edited, landed) = run(keys, true);
+        assert_eq!(edited, format!("X\n{plain}"), "{keys}");
+        assert_eq!(landed, (at.0 + 1, at.1), "{keys}");
+    }
+}

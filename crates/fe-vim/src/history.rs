@@ -5,7 +5,9 @@
 //! column) pairs rather than anchors: an anchor inside text that `dd`
 //! deleted collapses, while nvim's redo goes back to the old row and column.
 //! Undo and redo both put the carets back where they were before the change,
-//! as nvim does. Like nvim, each caret is taken where the change begins: an
+//! as nvim does, unless the command noted where redo goes apart
+//! ([`Carets::record_redo`]: `:m` and `:t`, whose redo nvim puts elsewhere).
+//! Like nvim, each caret is taken where the change begins: an
 //! operator's at the start of what it acts on (for whole rows, the first
 //! row at the caret's column), and an insert session's where typing starts
 //! (`o` and `O`: where the caret was). The others' (`J r ~ p P`) begin at
@@ -27,6 +29,9 @@ pub(crate) const KEPT: usize = 1000;
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Carets {
     entries: VecDeque<(TransactionId, Vec<(u32, usize)>)>,
+    /// Where redo puts the carets, for the transactions that noted it apart
+    /// from `entries`' (in the text after them), at most [`KEPT`].
+    redos: VecDeque<(TransactionId, Vec<(u32, usize)>)>,
     /// An insert session's, held apart until its transaction closes: one
     /// that changed nothing isn't kept, and mustn't push a real one out.
     pending: Option<Pending>,
@@ -93,6 +98,24 @@ impl Carets {
         } else if kept == Some(id) {
             self.record(id, carets);
         }
+    }
+
+    /// Notes `carets`, in the text right after `id`, as where redo puts
+    /// them, rather than where they were before it.
+    pub(crate) fn record_redo(&mut self, id: TransactionId, carets: Vec<(u32, usize)>) {
+        if self.redos.len() == KEPT {
+            self.redos.pop_front();
+        }
+        self.redos.push_back((id, carets));
+    }
+
+    /// Where redoing `id` puts the carets: as noted apart, or where undoing
+    /// it does.
+    pub(crate) fn get_redo(&self, id: TransactionId) -> Option<&[(u32, usize)]> {
+        let noted = self.redos.iter().rev().find(|(at, _)| *at == id);
+        noted
+            .map(|(_, carets)| carets.as_slice())
+            .or_else(|| self.get(id))
     }
 
     pub(crate) fn get(&self, id: TransactionId) -> Option<&[(u32, usize)]> {
@@ -175,10 +198,15 @@ pub(crate) fn undo(
     let Some(&last) = reverted.last() else {
         return Ok(Dispatched::new(Effect::Nothing));
     };
-    // The carets before the last transaction reverted or reapplied; without
-    // a record, where the model put them, made normal-mode carets.
+    // The carets before the last transaction reverted or reapplied (or where
+    // its redo was noted to go); without a record, where the model put them,
+    // made normal-mode carets.
     let text = model.text().clone();
-    let carets: Vec<usize> = match state.carets.get(last) {
+    let record = match redo {
+        true => state.carets.get_redo(last),
+        false => state.carets.get(last),
+    };
+    let carets: Vec<usize> = match record {
         Some(pairs) => pairs.iter().map(|&pair| clamped(&text, pair)).collect(),
         None => model
             .selections()

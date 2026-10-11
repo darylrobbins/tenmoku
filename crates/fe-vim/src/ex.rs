@@ -1,6 +1,58 @@
 //! Ex command lines, what `:` opens: a line is `[range] command [!] [args]`
 //! (`:help cmdline-ranges`), parsed by [`Ex::parse`] without the buffer and
-//! then run against it. The crate docs list the commands and ranges.
+//! then run against it. The crate docs describe the ranges, `:d`, `:s` and
+//! the host's commands. The commands ([`ExCommand`]):
+//!
+//! - `:{range}` alone, `:d[elete]`, `:noh[lsearch]`, `:s[ubstitute]`, `:&`
+//!   and `:&&`, and the host's `:w :q :wq :x :e :qa :wa`.
+//! - `:y[ank] [x] [count]`: the range's lines (the cursor's by default; with
+//!   a count, that many from the range's last) yanked linewise into
+//!   register `x` (`"` and `0` without one); the cursor stays.
+//! - `:j[oin][!] [count]`: the range's lines joined as `J` joins them, or as
+//!   they are with `!`. With no range, or one line and no count, a line
+//!   joins the next; with a count, that many from the range's last. The
+//!   caret goes to the joined line's first non-blank; with one line to join
+//!   (the last, or a range of one with a count), nothing is joined and it
+//!   only goes to that line, keeping its byte column.
+//! - `:m[ove] {address}`: the range's lines moved below the address's line
+//!   (`0` for the top; E134 for a line among them but the last, where
+//!   nothing moves). The caret goes to the last line moved, keeping its goal
+//!   column.
+//! - `:t` and `:co[py] {address}`: the range's lines copied below the
+//!   address's line; the caret goes to the last copy, keeping its goal
+//!   column. For both, a `/pat/` or `?pat?` anywhere in the line's
+//!   addresses makes where the caret lands its goal column, as in nvim, and
+//!   what follows the address is ignored.
+//! - `:>` and `:<`, repeated (`:>>>`) for more shifts, `[count]`: the
+//!   range's lines (with a count, that many from its last) shifted as `>>`
+//!   and `<<` shift them. A jump; the caret goes to the last line, at the
+//!   first non-blank's column on the last line that changed (or is empty),
+//!   its goal column left as it was.
+//! - `:sor[t][!] [i] [n] [u] [r] [/pattern/]`: the range's lines (all by
+//!   default) sorted, stably, as nvim sorts them: `!` the other way round,
+//!   `i` ignoring the case of ASCII letters, `n` by the first decimal
+//!   number (a `-` before it makes it negative; lines with none first), `u`
+//!   keeping the first of a run of equal lines (equal ignoring case with
+//!   `i`), and with a pattern (empty: the last search's) by what follows its
+//!   first match on each line, or with `r` by the match (lines without one
+//!   by nothing). The pattern doesn't become the last search. The caret
+//!   goes to the first line's first non-blank. `n` twice is E474, a second
+//!   pattern E475; `x`, `o`, `b`, `f` and `l` are refused, unsupported. Of
+//!   one line, it does nothing, whatever its arguments.
+//!
+//! `:j`, `:>` and `:<` take the print flags `l`, `p` and `#` after their
+//! count, and ignore them. Each command but `:y` (and a `:m` to where its
+//! lines are, or a `:sort` of one line) is one transaction, even one that
+//! leaves the text as it was, as in nvim; one `u` undoes it and `<C-r>`
+//! redoes it, putting the caret where nvim's do (for `:m` and `:t`, redo's
+//! place is noted apart from undo's). `.` doesn't repeat it. Only `:y` writes
+//! registers.
+//!
+//! Known limits: marks on rows `:m` moves stay behind on their rows and
+//! columns, `'<` and `'>` too (nvim's go with the rows): `:m` rewrites in
+//! place each row from its range to its destination, and `:sort` each row
+//! it reorders (there nvim's marks stay too). `'<` and `'>` on rows `:j`
+//! joins stay where `J` leaves them.
 
 use fe_buffer::TransactionId;
 use fe_command::{Actor, CommandError, Dispatched, Effect};
@@ -12,6 +64,8 @@ use crate::{
     search::{self, Pattern, PatternError},
     substitute::{self, Substitute},
 };
+
+mod lines;
 
 /// A parsed ex line.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -92,6 +146,46 @@ pub enum ExCommand {
         register: Option<char>,
         count: Option<u32>,
     },
+    /// `:y[ank] [x] [count]`: the range's lines (the count's from its
+    /// last) yanked linewise into register `x`; the cursor stays.
+    Yank {
+        register: Option<char>,
+        count: Option<u32>,
+    },
+    /// `:j[oin][!] [count]`: the range's lines joined (with one line, it
+    /// and the next; with a count, that many from the range's last), as
+    /// `J` joins them, or with `raw` (`!`) as they are.
+    Join { raw: bool, count: Option<u32> },
+    /// `:m[ove] {address}`: the range's lines moved below the address's
+    /// line (`0` for the top).
+    Move { to: Address },
+    /// `:t` and `:co[py] {address}`: the range's lines copied below the
+    /// address's line.
+    Copy { to: Address },
+    /// `:>` and `:<` (`left`), `times` of them (`:>>>`), `[count]`: the
+    /// range's lines (the count's from its last) shifted as `>>` and `<<`
+    /// shift them, `times` over.
+    Shift {
+        left: bool,
+        times: u32,
+        count: Option<u32>,
+    },
+    /// `:sor[t][!] [i] [n] [u] [r] [/pattern/]`: the range's lines (by
+    /// default all) sorted, stably: `reverse` (`!`) the other way round,
+    /// `ignore_case` (`i`) by ASCII letters' lower case, `numeric` (`n`)
+    /// by the first decimal number in each (lines with none first);
+    /// `unique` (`u`) keeps the first of a run of equal lines. With a
+    /// pattern (empty: the last search's), each line sorts by what follows
+    /// its first match, or with `by_match` (`r`) by the match (by nothing
+    /// if none).
+    Sort {
+        reverse: bool,
+        ignore_case: bool,
+        numeric: bool,
+        unique: bool,
+        by_match: bool,
+        pattern: Option<String>,
+    },
     /// `:noh[lsearch]`: no highlight until the next search.
     NoHighlight,
     /// `:s[ubstitute]`, `:&` and `:&&`: see [`Substitute`].
@@ -144,6 +238,20 @@ pub enum ExError {
     Trailing(String),
     #[error("E939: Positive count required")]
     ZeroCount,
+    /// `:m` to a line within the lines it moves.
+    #[error("E134: Cannot move a range of lines into itself")]
+    IntoItself,
+    /// A letter `:sort` doesn't take, or its second pattern, and what
+    /// follows it.
+    #[error("E475: Invalid argument: {0}")]
+    InvalidArgument(String),
+    /// `:sort`'s second number kind (`n` twice).
+    #[error("E474: Invalid argument")]
+    TwoNumberKinds,
+    /// `:sort`'s pattern with no closing delimiter: what follows the
+    /// opening one.
+    #[error("E654: Missing delimiter after search pattern: {0}")]
+    MissingDelimiter(String),
     /// A line before the first, or (but for [`ExCommand::Goto`], which
     /// stops at the last line) past the last.
     #[error("E16: Invalid range")]
@@ -229,6 +337,9 @@ fn command(
         check(true)?;
         return Ok(ExCommand::Substitute(Substitute::repeat(args, true)?));
     }
+    if name.is_empty() && after.starts_with(['>', '<']) {
+        return lines::shift(after, check);
+    }
     if name.is_empty() {
         let ignored = |address: &Address| {
             address.base == Base::All && address.parts.iter().any(|part| *part != Part::Offset(0))
@@ -250,53 +361,76 @@ fn command(
     let delete = DELETE.contains(&name);
     let nohlsearch = name.len() >= 3 && "nohlsearch".starts_with(name);
     if !delete && !nohlsearch {
-        return Err(not_a_command());
+        return lines::command(name, after, check)?.ok_or_else(not_a_command);
     }
-    // A `"` starts a comment, wherever it is in the arguments.
-    let after = after.find('"').map_or(after, |at| &after[..at]);
+    let after = uncommented(after);
     if after.starts_with('!') {
         return Err(ExError::NoBang);
     }
     if delete {
         check(true)?;
     }
-    let mut args = after.trim_start_matches([' ', '\t']);
-    let command = if delete {
-        // As in nvim, `#` writes `"` as `""dd` does.
-        let register = args.chars().next().and_then(|ch| match ch {
-            '#' => Some('"'),
-            _ if !ch.is_ascii_digit() && Registers::check(ch).is_ok() => Some(ch),
-            _ => None,
-        });
-        if register.is_some() {
-            args = args[1..].trim_start_matches([' ', '\t']);
-        }
-        let digits = args
-            .find(|ch: char| !ch.is_ascii_digit())
-            .unwrap_or(args.len());
-        let count = match digits {
-            0 => None,
-            _ => Some(
-                number(&args[..digits])
-                    .and_then(|count| u32::try_from(count).ok())
-                    .unwrap_or(u32::MAX),
-            ),
-        };
-        if count == Some(0) {
-            return Err(ExError::ZeroCount);
-        }
-        args = args[digits..].trim_start_matches([' ', '\t']);
-        ExCommand::Delete { register, count }
+    let args = after.trim_start_matches([' ', '\t']);
+    let (command, args) = if delete {
+        let (register, count, args) = register_and_count(args, true)?;
+        (ExCommand::Delete { register, count }, args)
     } else {
         if !range.is_empty() {
             return Err(ExError::NoRange);
         }
-        ExCommand::NoHighlight
+        (ExCommand::NoHighlight, args)
     };
-    match args.is_empty() {
-        true => Ok(command),
-        false => Err(ExError::Trailing(args.to_string())),
+    trailing(command, args)
+}
+
+/// `args` without a comment: a `"` starts one, wherever it is in them.
+fn uncommented(args: &str) -> &str {
+    args.find('"').map_or(args, |at| &args[..at])
+}
+
+/// `command`, unless `args` holds more than blanks: E488.
+fn trailing(command: ExCommand, args: &str) -> Result<ExCommand, ExError> {
+    match args.trim_start_matches([' ', '\t']) {
+        "" => Ok(command),
+        args => Err(ExError::Trailing(args.to_string())),
     }
+}
+
+/// A `[x] [count]` (the register only if `register`, as `:d` and `:y` take
+/// them) at the start of `args`, and what follows them.
+fn register_and_count(
+    args: &str,
+    register: bool,
+) -> Result<(Option<char>, Option<u32>, &str), ExError> {
+    let mut args = args.trim_start_matches([' ', '\t']);
+    // As in nvim, `#` writes `"` as `""dd` does.
+    let name = args
+        .chars()
+        .next()
+        .filter(|_| register)
+        .and_then(|ch| match ch {
+            '#' => Some('"'),
+            _ if !ch.is_ascii_digit() && Registers::check(ch).is_ok() => Some(ch),
+            _ => None,
+        });
+    if name.is_some() {
+        args = args[1..].trim_start_matches([' ', '\t']);
+    }
+    let digits = args
+        .find(|ch: char| !ch.is_ascii_digit())
+        .unwrap_or(args.len());
+    let count = match digits {
+        0 => None,
+        _ => Some(
+            number(&args[..digits])
+                .and_then(|count| u32::try_from(count).ok())
+                .unwrap_or(u32::MAX),
+        ),
+    };
+    if count == Some(0) {
+        return Err(ExError::ZeroCount);
+    }
+    Ok((name, count, &args[digits..]))
 }
 
 /// Builds a host command from its `!` and its argument.
@@ -552,7 +686,21 @@ fn execute(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Result<Hand
     let command = command(line, &range, rest, |both| match lines {
         Some((first, end)) if end < 0 || both && first < 0 => Err(ExError::InvalidRange),
         _ => Ok(()),
-    })?;
+    });
+    // As in nvim, `:sort` of one line ignores its arguments.
+    let command = match command {
+        Err(
+            ExError::InvalidArgument(_)
+            | ExError::TwoNumberKinds
+            | ExError::MissingDelimiter(_)
+            | ExError::Unsupported(_),
+        ) if lines::is_sort(rest)
+            && lines.map_or(last, |(first, end)| end - first.max(1) + 1) == 1 =>
+        {
+            return Ok(Ok(Dispatched::new(Effect::Notify)));
+        }
+        command => command?,
+    };
     Ok(match command {
         ExCommand::Goto => {
             // nvim doesn't move to its largest line number.
@@ -575,11 +723,81 @@ fn execute(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Result<Hand
         }
         ExCommand::Substitute(sub) => {
             let (first, end) = counted_lines(target, lines, sub.count, last)?;
-            // Lines from 1 as rows from 0: they're within the text.
-            let row = |line: i64| u32::try_from(line - 1).unwrap_or(u32::MAX);
             return substitute::run(target, actor, row(first)..row(end) + 1, &sub);
         }
+        ExCommand::Yank { register, count } => {
+            let (first, end) = counted_lines(target, lines, count, last)?;
+            lines::yank(target, row(first)..=row(end), register, searched(&range))
+        }
+        ExCommand::Join { raw, count } => {
+            let (first, end) = counted_lines(target, lines, count, last)?;
+            // One line joins the next if no range was given, or one line
+            // specifier and no count, as in nvim.
+            let next = match range.as_slice() {
+                [] => true,
+                [one] => one.base != Base::All && count.is_none(),
+                _ => false,
+            };
+            let end = match next && first == end {
+                true => (end + 1).min(last),
+                false => end,
+            };
+            lines::join(target, actor, row(first)..=row(end), raw)
+        }
+        ExCommand::Move { to: to_address } => {
+            let (first, end) = counted_lines(target, lines, None, last)?;
+            let to = destination(target, &to_address, last)?;
+            if (first..end).contains(&i64::from(to)) {
+                return Err(ExError::IntoItself);
+            }
+            let searched = searched(range.iter().chain([&to_address]));
+            lines::move_rows(target, actor, row(first)..=row(end), to, searched)
+        }
+        ExCommand::Copy { to: to_address } => {
+            let (first, end) = counted_lines(target, lines, None, last)?;
+            let to = destination(target, &to_address, last)?;
+            let searched = searched(range.iter().chain([&to_address]));
+            lines::copy(target, actor, row(first)..=row(end), to, searched)
+        }
+        ExCommand::Shift { left, times, count } => {
+            let (first, end) = counted_lines(target, lines, count, last)?;
+            let rows = row(first)..=row(end);
+            lines::shift_rows(target, actor, rows, left, times, searched(&range))
+        }
+        ExCommand::Sort { .. } => {
+            let (first, end) = match lines {
+                Some(_) => counted_lines(target, lines, None, last)?,
+                None => (1, last),
+            };
+            return lines::sort(target, actor, row(first)..=row(end), &command);
+        }
     })
+}
+
+/// Whether any of `addresses` searches for a pattern, which leaves the
+/// caret of `:y`, `:m`, `:t`, `:>` and `:<` its own goal column, as in nvim.
+fn searched<'a>(addresses: impl IntoIterator<Item = &'a Address>) -> bool {
+    addresses.into_iter().any(|address| {
+        address
+            .parts
+            .iter()
+            .any(|part| matches!(part, Part::Search(_)))
+    })
+}
+
+/// A line from 1 as a row from 0 (it's within the text).
+fn row(line: i64) -> u32 {
+    u32::try_from(line - 1).unwrap_or(u32::MAX)
+}
+
+/// The line `to` names (`:m` and `:t`'s, below which lines go), from 0
+/// (before the first) to the last: E16 past them.
+fn destination(target: &mut VimTarget<'_>, to: &Address, last: i64) -> Result<u32, ExError> {
+    let line = resolve(target, to, cursor_line(target), last)?;
+    match (0..=last).contains(&line) {
+        true => Ok(u32::try_from(line).unwrap_or(u32::MAX)),
+        false => Err(ExError::InvalidRange),
+    }
 }
 
 /// The lines a command taking a range and a count acts on, from 1: the
