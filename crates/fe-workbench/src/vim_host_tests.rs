@@ -126,6 +126,14 @@ fn message(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Option<
         .map(|(_, text)| text)
 }
 
+/// Forgets the vim message shown.
+fn message_clear(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) {
+    let editor = workbench.read_with(cx, |workbench, cx| workbench.active_editor(cx).cloned());
+    if let Some(editor) = editor {
+        cx.update(|_, cx| editor.update(cx, |editor, cx| editor.set_vim_message("", cx)));
+    }
+}
+
 fn prompt(cx: &mut VisualTestContext) -> Option<String> {
     cx.pending_prompt().map(|(question, _)| question)
 }
@@ -380,11 +388,62 @@ fn edit_follows_the_filesystem(cx: &mut TestAppContext) {
         "outside\n"
     );
 
-    // A trailing slash asks for a directory: a file is an error, no tab.
-    ex("e file.txt/", cx);
+    // Every step before a `..`, a `.` or a trailing slash must be a
+    // directory: a missing one, a file and a dangling link are errors, and
+    // open no tab, even for an open file or a missing final one.
+    std::os::unix::fs::symlink(root.join("gone"), root.join("dangling")).unwrap();
+    let tabs_before = tabs(&workbench, cx);
+    for line in [
+        "e missing/../file.txt",
+        "e a.txt/../file.txt",
+        "e dangling/../file.txt",
+        "e file.txt/",
+        "e a.txt/",
+        "e a.txt/.",
+        "e new.txt/",
+        "e missing/",
+    ] {
+        message_clear(&workbench, cx);
+        ex(line, cx);
+        draw(cx);
+        let shown = message(&workbench, cx).unwrap_or_default();
+        assert!(shown.starts_with("Can't open"), ":{line}: {shown}");
+        assert_eq!(tabs(&workbench, cx), tabs_before, ":{line}");
+    }
+    assert!(!root.join("new.txt").exists());
+}
+
+#[gpui::test]
+fn edit_reuses_a_tab_through_a_symlinked_root(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let real = dir.path().join("real");
+    std::fs::create_dir_all(real.join("sub")).unwrap();
+    write(&real, &["a.txt"]);
+    let alias = dir.path().join("alias");
+    std::os::unix::fs::symlink(&real, &alias).unwrap();
+    let (workbench, mut vcx) = window(cx, &alias, &["a.txt"]);
+    let cx = &mut vcx;
+    cx.simulate_keystrokes("x");
+    let editor = active(&workbench, cx);
+    assert!(dirty(&editor, cx));
+
+    // `sub/..` resolves through real/, yet the dirty tab is the one used.
+    ex("e sub/../a.txt", cx);
     draw(cx);
-    assert_eq!(tabs(&workbench, cx), [["a.txt", "file.txt"]]);
-    assert!(workbench.read_with(cx, |workbench, cx| workbench.active_editor(cx).is_none()));
+    assert_eq!(tabs(&workbench, cx), [["a.txt"]]);
+    assert_eq!(active(&workbench, cx), editor);
+
+    // So is a missing final file, once a tab holds it.
+    ex("e new.txt", cx);
+    draw(cx);
+    cx.simulate_keystrokes("i x escape");
+    let new = active(&workbench, cx);
+    ex("e sub/../a.txt", cx);
+    draw(cx);
+    ex("e sub/../new.txt", cx);
+    draw(cx);
+    assert_eq!(tabs(&workbench, cx), [["a.txt", "new.txt"]]);
+    assert_eq!(active(&workbench, cx), new);
 }
 
 #[gpui::test]
@@ -429,8 +488,9 @@ fn failed_saves_keep_the_tab(cx: &mut TestAppContext) {
 fn write_all_reports_the_first_failure(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    write(root, &["a.txt", "b.txt", "c.txt", "d.txt"]);
-    let (workbench, mut vcx) = window(cx, root, &["a.txt", "b.txt", "c.txt", "d.txt"]);
+    std::fs::create_dir(root.join("sub")).unwrap();
+    write(root, &["a.txt", "b.txt", "sub/c.txt", "d.txt"]);
+    let (workbench, mut vcx) = window(cx, root, &["a.txt", "b.txt", "sub/c.txt", "d.txt"]);
     let cx = &mut vcx;
     let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
     for ix in 0..4 {
@@ -449,13 +509,14 @@ fn write_all_reports_the_first_failure(cx: &mut TestAppContext) {
     draw(cx);
     cx.simulate_keystrokes("x");
     break_save(&root.join("b.txt"));
-    break_save(&root.join("c.txt"));
+    // sub/c.txt fails differently: its folder is gone.
+    std::fs::remove_dir_all(root.join("sub")).unwrap();
 
     ex("wa", cx);
     draw(cx);
     // b.txt fails first in pane order; a.txt and d.txt are saved.
     let shown = message(&workbench, cx).expect("a save error");
-    assert!(!shown.contains("E141"), "{shown}");
+    assert!(shown.contains("Is a directory"), "{shown}");
     assert_eq!(on_disk(&root.join("a.txt")), "ne\n");
     assert_eq!(on_disk(&root.join("d.txt")), "ne\n");
     assert_eq!(prompt(cx), None);
@@ -468,10 +529,10 @@ fn write_all_reports_the_first_failure(cx: &mut TestAppContext) {
 
     // With only the untitled one left failing, it is the message.
     std::fs::remove_dir(root.join("b.txt")).unwrap();
-    std::fs::remove_dir(root.join("c.txt")).unwrap();
+    std::fs::create_dir(root.join("sub")).unwrap();
     ex("wa", cx);
     let shown = message(&workbench, cx).expect("an error");
     assert!(shown.starts_with("E141"), "{shown}");
     assert_eq!(on_disk(&root.join("b.txt")), "ne\n");
-    assert_eq!(on_disk(&root.join("c.txt")), "ne\n");
+    assert_eq!(on_disk(&root.join("sub/c.txt")), "ne\n");
 }

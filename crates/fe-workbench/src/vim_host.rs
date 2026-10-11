@@ -11,7 +11,9 @@
 //! `:qa` closes; the app quits only when its last window has gone, as
 //! fastedit does when any last window closes.
 
-use std::path::{Component, Path, PathBuf};
+use std::ffi::OsStr;
+use std::os::unix::ffi::OsStrExt as _;
+use std::path::{Path, PathBuf};
 
 use fe_gpui::EditorView;
 use fe_vim::HostCommand;
@@ -208,10 +210,17 @@ impl Workbench {
             return;
         };
         let folder = (self.root.clone()).or_else(|| editor.path(cx)?.parent().map(Path::to_owned));
-        let Some(resolved) = resolve(path, folder.as_deref()) else {
-            let error = format!("Can't open {path}: no folder to resolve it against");
-            return message(editor, error, cx);
+        let resolved = match resolve(path, folder.as_deref()) {
+            Ok(resolved) => resolved,
+            Err(error) => return message(editor, error, cx),
         };
+        // A tab already on this file keeps its spelling of the path, so it
+        // is reused, not opened a second time.
+        let wanted = identity(&resolved);
+        let resolved = (self.open_editors(cx).iter())
+            .filter_map(|open| open.path(cx).map(|path| path.to_path_buf()))
+            .find(|open| *open == resolved || (wanted.is_some() && identity(open) == wanted))
+            .unwrap_or(resolved);
         pane.update(cx, |pane, cx| pane.open(resolved, window, cx));
     }
 }
@@ -239,33 +248,68 @@ fn save(
 }
 
 /// `path` as typed after `:e`: `~` and `~/…` under the home folder, an
-/// absolute path as is, a relative one under `folder` (`None` without
-/// one). `.` is dropped by name, so an open file is found, and its
-/// symlinks are kept, as its tab's path has them; but `..` follows the
-/// filesystem: it leaves the folder a symlink leads to, not the one it is
-/// in. A trailing slash stays, so a file isn't opened as a directory.
-fn resolve(path: &str, folder: Option<&Path>) -> Option<PathBuf> {
+/// absolute path as is, a relative one under `folder`. `.` is dropped by
+/// name, so an open file is found, and its symlinks are kept, as its
+/// tab's path has them; but `..` follows the filesystem: it leaves the
+/// folder a symlink leads to, not the one it is in. What comes before a
+/// `..`, a `.` or a trailing slash must be a directory, or that is the
+/// error: only the final file may be missing.
+fn resolve(path: &str, folder: Option<&Path>) -> Result<PathBuf, String> {
+    let cant = |why: &dyn std::fmt::Display| format!("Can't open {path}: {why}");
     let joined = match path.strip_prefix('~') {
-        Some("") => std::env::home_dir()?,
-        Some(rest) if rest.starts_with('/') => std::env::home_dir()?.join(&rest[1..]),
-        _ if Path::new(path).is_absolute() => PathBuf::from(path),
-        _ => folder?.join(path),
+        Some("") => std::env::home_dir(),
+        Some(rest) if rest.starts_with('/') => {
+            std::env::home_dir().map(|home| home.join(&rest[1..]))
+        }
+        _ if Path::new(path).is_absolute() => Some(PathBuf::from(path)),
+        _ => folder.map(|folder| folder.join(path)),
     };
+    let Some(joined) = joined else {
+        return Err(cant(&"no folder to resolve it against"));
+    };
+    let directory = |at: &Path| match std::fs::metadata(at) {
+        Ok(meta) if meta.is_dir() => Ok(()),
+        Ok(_) => Err(cant(&format!("{} is not a directory", at.display()))),
+        Err(error) => Err(cant(&format!("{}: {error}", at.display()))),
+    };
+    let bytes = joined.as_os_str().as_bytes();
+    let mut segments = bytes.split(|byte| *byte == b'/').peekable();
     let mut resolved = PathBuf::new();
-    for component in joined.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if let Ok(real) = std::fs::canonicalize(&resolved) {
-                    resolved = real;
+    if bytes.first() == Some(&b'/') {
+        resolved.push("/");
+    }
+    while let Some(segment) = segments.next() {
+        match segment {
+            b"" if segments.peek().is_some() => {}
+            b"" => {
+                if resolved.parent().is_some() {
+                    directory(&resolved)?;
+                    resolved.push("");
                 }
+            }
+            b"." => directory(&resolved)?,
+            b".." => {
+                directory(&resolved)?;
+                let real = std::fs::canonicalize(&resolved).map_err(|e| cant(&e))?;
+                resolved = real;
                 resolved.pop();
             }
-            other => resolved.push(other),
+            name => resolved.push(OsStr::from_bytes(name)),
         }
     }
-    if path.ends_with('/') {
-        resolved.push("");
+    Ok(resolved)
+}
+
+/// Where `path` is, whatever its symlinks are spelled like: its real path,
+/// or its real folder's with its own name while the file is missing.
+fn identity(path: &Path) -> Option<PathBuf> {
+    match std::fs::canonicalize(path) {
+        Ok(real) => Some(real),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(
+            std::fs::canonicalize(path.parent()?)
+                .ok()?
+                .join(path.file_name()?),
+        ),
+        Err(_) => None,
     }
-    Some(resolved)
 }
