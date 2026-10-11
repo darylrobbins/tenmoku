@@ -34,7 +34,7 @@ system (see [Boundary rules](#boundary-rules)).
 | `kiln-core` | no | config layers and typed settings stores, app paths, platform conventions, keymaps and menu tables resolved per platform, theme data, the trust store, a headless text-edit model |
 | `kiln-platform` | yes | platform capabilities, window options, prompts, fonts, dialogs, key input and its `KeyOwner` hook, command dispatch, native menus, the config service |
 | `kiln-ui` | yes | theme resolution (`cx.theme()`), icons (bundled Lucide plus an app's own) and the widget kit |
-| `kiln-shell` | yes | the app shell: today, the in-window prompt; the root view, window frame, in-window menu bar, panes, docks and palette are moving in |
+| `kiln-shell` | yes | the app shell: `Root` (title bar, window frame, in-window menu bar) and the in-window prompt; panes, docks and palette are moving in |
 | `kiln` | facade | re-exports of the above, `kiln::prelude`, `kiln::gpui`, `application()`, `init()` and `Config` |
 
 An app depends on `kiln` alone: it re-exports GPUI as `kiln::gpui`, brings
@@ -80,8 +80,10 @@ fn main() {
         );
         let spec = WindowSpec::main("Notes");
         cx.open_window(kiln::window_options(&spec, cx), |window, cx| {
-            window.follow_system_appearance(cx);
-            cx.new(|cx| Notes::new(window, cx))
+            let notes = cx.new(|cx| Notes::new(window, cx));
+            // The platform's chrome around the app's view, and each
+            // window's setup (focus, the system appearance).
+            cx.new(|cx| kiln::Root::new(notes, window, cx).title("Notes"))
         })
         .unwrap();
     });
@@ -125,9 +127,11 @@ fn main() {
   created with `cx.new(..)` that emit events for `cx.subscribe_in`. Widgets
   read `cx.theme()` while rendering, so a theme switch applies everywhere.
 
-The plan has a `kiln::Root` view, the window's frame, in-window menu bar
-and modal layer, wrapping the app's content view. It isn't in yet: until it
-is, the app's view is the window's root, as above.
+`kiln::Root` wraps the app's content view in what the platform leaves to
+the app: macOS's unified title bar, an in-window menu bar where there are
+no native menus (F10 opens it), and a window frame drawn by the app where
+the compositor draws none (GNOME on Wayland). A modal layer is still to
+come.
 
 ## The gallery
 

@@ -52,8 +52,8 @@ an app's AI backend can load the same commands, config and keymaps.
 
 - **Setup** is plain GPUI: `kiln::application().run(|cx| …)`, then
   `kiln::init(cx, Config::new(app_id, name))`, then `cx.open_window(
-  kiln::window_options(&spec, cx), |window, cx| …)`. Once `Root` lands, the
-  window's view is `cx.new(|cx| Root::new(content, window, cx))`. There is
+  kiln::window_options(&spec, cx), |window, cx| …)`, whose view is
+  `cx.new(|cx| Root::new(content, window, cx))`. There is
   no kiln `App` type; `&mut App` and `Window` are reachable everywhere.
 - **Extension traits** in `kiln::prelude`: `cx.theme()`, `cx.settings::<S>()`,
   `cx.set_theme_mode(..)`, `cx.binding_label(..)`, `window.run_command(..)`.
