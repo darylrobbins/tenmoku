@@ -2149,6 +2149,7 @@ dependencies = [
  "fe-buffer",
  "fe-config",
  "fe-editor",
+ "fe-git",
  "fe-gpui",
  "fe-keymap",
  "fe-lsp",

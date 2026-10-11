@@ -1,5 +1,5 @@
 //! The window shell: the editor panes, with the dock (the project panel,
-//! search or the outline) on the right.
+//! search, the outline or the git changes) on the right.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -18,8 +18,8 @@ use gpui::{
 };
 
 use crate::{
-    Dock, KEY_CONTEXT, MenuBarView, OutlinePanel, Pane, PaneGroup, Picker, ProjectPanel, QuickOpen,
-    ReferencesPanel, SearchPanel, StatusBar,
+    Dock, GitPanel, GitPanelEvent, KEY_CONTEXT, MenuBarView, OutlinePanel, Pane, PaneGroup, Picker,
+    ProjectPanel, QuickOpen, ReferencesPanel, SearchPanel, StatusBar,
     dock::{self, DockEvent, DockOp},
     language_picker::LanguagePicker,
     lsp::{self, Lsp},
@@ -187,6 +187,8 @@ pub struct Workbench {
     ui: UiTheme,
     /// To the project panel's events: replaced with it on a new root.
     root_subscription: Subscription,
+    /// To the Changes panel's events: replaced with it on a new root.
+    changes_subscription: Subscription,
     _rail: Subscription,
     /// To the modal layer's palettes coming and going.
     _modals: Subscription,
@@ -261,11 +263,20 @@ impl Workbench {
             pane
         });
         let outline = cx.new(|cx| OutlinePanel::new(ui, cx));
+        let changes = cx.new(|cx| GitPanel::new(root.clone(), ui, cx));
         let references = cx.weak_entity();
         let references = cx.new(|cx| ReferencesPanel::new(references, ui, cx));
         let dock = cx.new(|cx| {
             let search = cx.new(|cx| SearchPanel::new(root.clone(), pane.downgrade(), ui, cx));
-            Dock::new(panel.clone(), search, outline.clone(), references, ui, cx)
+            Dock::new(
+                panel.clone(),
+                search,
+                outline.clone(),
+                changes.clone(),
+                references,
+                ui,
+                cx,
+            )
         });
         let quick_open = Self::new_quick_open(root, pane.downgrade(), ui, cx);
         // A rail click runs the op its panel's key would, or hides the dock.
@@ -278,6 +289,7 @@ impl Workbench {
             },
         );
         let root_subscription = Self::follow_root(&panel, window, cx);
+        let changes_subscription = Self::follow_changes(&changes, window, cx);
         let language_picker =
             cx.new(|cx| Picker::new(LanguagePicker::new(ui), "Select a language…", ui, cx));
         let toolbar_picker = cx.new(|cx| {
@@ -346,6 +358,7 @@ impl Workbench {
             lsp: Lsp::new(),
             ui,
             root_subscription,
+            changes_subscription,
             _rail: rail,
             _modals: modals_changed,
             _status_bar: [status_bar_changed, vim_host_commands],
@@ -416,6 +429,24 @@ impl Workbench {
         )
     }
 
+    /// Subscribes to a root's Changes panel: its rows open as the project
+    /// panel's do.
+    fn follow_changes(
+        changes: &Entity<GitPanel>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Subscription {
+        cx.subscribe_in(
+            changes,
+            window,
+            |workbench, _, GitPanelEvent::OpenFile(path), window, cx| {
+                workbench
+                    .active
+                    .update(cx, |pane, cx| pane.open(path.clone(), window, cx))
+            },
+        )
+    }
+
     /// Shows `picker` as `palette` in the modal layer, in place of any
     /// other. The layer hides it once it's picked from, dismissed or left.
     pub(crate) fn show_palette<D: crate::PickerDelegate>(
@@ -436,8 +467,10 @@ impl Workbench {
     /// panel lists it in the background, and a new quick-open palette
     /// indexes it once opened. The old ones are dropped, and with them the
     /// old tree, its watcher, and the old index's walk; their batches land
-    /// nowhere. Search searches `root` from now on, its running search
-    /// cancelled and its results cleared, the query and options kept. The
+    /// nowhere. A new Changes panel reads `root`'s repository, the old
+    /// one's status landing nowhere. Search searches `root` from now on,
+    /// its running search cancelled and its results cleared, the query and
+    /// options kept. The
     /// dock keeps its visibility and active panel, and open tabs, dirty
     /// ones included, stay open. Emits [`RootChanged`].
     ///
@@ -461,12 +494,17 @@ impl Workbench {
             }
         }
         let panel_focused = self.panel.focus_handle(cx).contains_focused(window, cx);
+        let changes_focused =
+            (self.dock.read(cx).changes().focus_handle(cx)).contains_focused(window, cx);
         let ui = self.ui;
         let panel = cx.new(|cx| ProjectPanel::new(Some(root.clone()), ui, cx));
+        let changes = cx.new(|cx| GitPanel::new(Some(root.clone()), ui, cx));
         let quick_open = Self::new_quick_open(Some(root.clone()), self.active.downgrade(), ui, cx);
         self.root_subscription = Self::follow_root(&panel, window, cx);
+        self.changes_subscription = Self::follow_changes(&changes, window, cx);
         let search = self.dock.update(cx, |dock, cx| {
             dock.set_project(panel.clone(), cx);
+            dock.set_changes(changes.clone(), cx);
             dock.search().clone()
         });
         search.update(cx, |search, cx| search.set_root(root.clone(), cx));
@@ -477,6 +515,9 @@ impl Workbench {
         self.quick_open = quick_open;
         if panel_focused {
             window.focus(&self.panel.focus_handle(cx), cx);
+        }
+        if changes_focused {
+            window.focus(&changes.focus_handle(cx), cx);
         }
         // So the new tree reveals the active file, if it's under the root.
         self.revealed = None;

@@ -296,7 +296,8 @@ fn shift_f12_shows_the_panel(cx: &mut TestAppContext) {
         })
     };
     assert!(!dock.read_with(cx, |dock, _| dock.is_visible()));
-    let before = (vec![Icon::Files, Icon::Search, Icon::ListTree], false);
+    let rail = [Icon::Files, Icon::Search, Icon::ListTree, Icon::GitBranch];
+    let before = (rail.to_vec(), false);
     assert_eq!(tabs(cx), before, "no References tab yet");
 
     cx.simulate_keystrokes("shift-f12");
@@ -310,7 +311,7 @@ fn shift_f12_shows_the_panel(cx: &mut TestAppContext) {
         header(&panel, cx).as_deref(),
         Some("References to `helper`")
     );
-    let after = vec![Icon::Files, Icon::Search, Icon::ListTree, Icon::FileSymlink];
+    let after = [rail.as_slice(), &[Icon::FileSymlink]].concat();
     assert_eq!(tabs(cx), (after, true));
 
     let focused = cx.update(|window, cx| panel.focus_handle(cx).is_focused(window));

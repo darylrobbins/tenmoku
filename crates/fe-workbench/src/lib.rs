@@ -12,6 +12,7 @@
 
 mod dock;
 mod find_bar;
+mod git_panel;
 mod language_picker;
 pub mod loader;
 mod lsp;
@@ -44,6 +45,7 @@ use fe_keymap::{CatalogError, CommandCatalog};
 use gpui::{App, Global, Window};
 
 pub use dock::{Dock, DockPanel};
+pub use git_panel::{GitPanel, GitPanelEvent};
 pub use kiln_shell::MenuBarView;
 pub use lsp::{set_lsp_settings, set_server_launcher};
 pub use open::set_window_opener;

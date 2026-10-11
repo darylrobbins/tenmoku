@@ -1,7 +1,7 @@
 //! The right dock: one panel at a time, the project tree, project search,
-//! the outline or find references' results, under a title row naming it,
-//! and picked from the activity rail on the window's right edge, which
-//! stays when the dock hides. Switching keeps each panel's state. The
+//! the outline, the git changes or find references' results, under a title
+//! row naming it, and picked from the activity rail on the window's right
+//! edge, which stays when the dock hides. Switching keeps each panel's state. The
 //! References button joins the rail once that panel has shown.
 //!
 //! Its commands, and the search panel's, are those of [`init`]'s registry:
@@ -19,7 +19,7 @@ use gpui::{App, Context, Entity, EventEmitter, Global, IntoElement, Render, Shar
 use kiln_shell::{DockItem, DockPosition, DockState, DockView, PanelId};
 
 use crate::{
-    OutlinePanel, PANEL_WIDTH, ProjectPanel, ReferencesPanel,
+    GitPanel, OutlinePanel, PANEL_WIDTH, ProjectPanel, ReferencesPanel,
     search_panel::{self, SearchPanel},
 };
 
@@ -30,19 +30,26 @@ pub enum DockPanel {
     Project,
     Search,
     Outline,
+    Changes,
     References,
 }
 
 impl DockPanel {
     /// The panels the rail always has, in its order; References follows
     /// once it has shown.
-    pub const ALL: [DockPanel; 3] = [DockPanel::Project, DockPanel::Search, DockPanel::Outline];
+    pub const ALL: [DockPanel; 4] = [
+        DockPanel::Project,
+        DockPanel::Search,
+        DockPanel::Outline,
+        DockPanel::Changes,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             DockPanel::Project => "Project",
             DockPanel::Search => "Search",
             DockPanel::Outline => "Outline",
+            DockPanel::Changes => "Changes",
             DockPanel::References => "References",
         }
     }
@@ -53,6 +60,7 @@ impl DockPanel {
             DockPanel::Project => "project",
             DockPanel::Search => "search",
             DockPanel::Outline => "outline",
+            DockPanel::Changes => "changes",
             DockPanel::References => "references",
         })
     }
@@ -71,6 +79,7 @@ impl DockPanel {
             DockPanel::Project => "dock.show_project",
             DockPanel::Search => "search.show",
             DockPanel::Outline => "outline.show",
+            DockPanel::Changes => "git.show_changes",
             DockPanel::References => "nav.find_references",
         }
     }
@@ -81,6 +90,7 @@ impl DockPanel {
             DockPanel::Project => DockOp::ShowProject,
             DockPanel::Search => DockOp::ShowSearch,
             DockPanel::Outline => DockOp::ShowOutline,
+            DockPanel::Changes => DockOp::ShowChanges,
             DockPanel::References => DockOp::ShowReferences,
         }
     }
@@ -92,6 +102,7 @@ pub(crate) fn panel_icon(panel: DockPanel) -> Icon {
         DockPanel::Project => Icon::Files,
         DockPanel::Search => Icon::Search,
         DockPanel::Outline => Icon::ListTree,
+        DockPanel::Changes => Icon::GitBranch,
         DockPanel::References => Icon::FileSymlink,
     }
 }
@@ -131,6 +142,8 @@ macro_rules! dock_item {
 dock_item!(ProjectPanel, DockPanel::Project, true, false);
 dock_item!(SearchPanel, DockPanel::Search, true, true);
 dock_item!(OutlinePanel, DockPanel::Outline, true, false);
+// Focused when shown, as its rows take Enter and the arrows.
+dock_item!(GitPanel, DockPanel::Changes, true, true);
 // On the rail once it has shown.
 dock_item!(ReferencesPanel, DockPanel::References, false, false);
 
@@ -140,13 +153,14 @@ pub(crate) enum DockEvent {
     Rail(DockPanel),
 }
 
-/// The right dock: kiln-shell's [`DockState`] over fastedit's four panels,
+/// The right dock: kiln-shell's [`DockState`] over fastedit's five panels,
 /// whose rail clicks run the op the panel's key would.
 pub struct Dock {
     state: DockState,
     project: Entity<ProjectPanel>,
     search: Entity<SearchPanel>,
     outline: Entity<OutlinePanel>,
+    changes: Entity<GitPanel>,
     references: Entity<ReferencesPanel>,
     #[cfg(test)]
     ops: Vec<DockOp>,
@@ -158,6 +172,7 @@ impl Dock {
         project: Entity<ProjectPanel>,
         search: Entity<SearchPanel>,
         outline: Entity<OutlinePanel>,
+        changes: Entity<GitPanel>,
         references: Entity<ReferencesPanel>,
         ui: UiTheme,
         cx: &App,
@@ -168,12 +183,14 @@ impl Dock {
         state.add_panel(project.clone(), cx);
         state.add_panel(search.clone(), cx);
         state.add_panel(outline.clone(), cx);
+        state.add_panel(changes.clone(), cx);
         state.add_panel(references.clone(), cx);
         Self {
             state,
             project,
             search,
             outline,
+            changes,
             references,
             #[cfg(test)]
             ops: Vec::new(),
@@ -198,6 +215,18 @@ impl Dock {
 
     pub fn outline(&self) -> &Entity<OutlinePanel> {
         &self.outline
+    }
+
+    pub fn changes(&self) -> &Entity<GitPanel> {
+        &self.changes
+    }
+
+    /// Shows `changes` in the old one's place, for a new root, as
+    /// [`Dock::set_project`] does.
+    pub(crate) fn set_changes(&mut self, changes: Entity<GitPanel>, cx: &mut Context<Self>) {
+        self.state.add_panel(changes.clone(), cx);
+        self.changes = changes;
+        cx.notify();
     }
 
     pub fn references(&self) -> &Entity<ReferencesPanel> {
@@ -250,6 +279,11 @@ impl Dock {
             DockOp::ShowProject => DockPanel::Project,
             DockOp::ShowOutline => DockPanel::Outline,
             DockOp::ShowReferences => DockPanel::References,
+            DockOp::ShowChanges => DockPanel::Changes,
+            DockOp::RefreshChanges => {
+                self.changes.update(cx, GitPanel::refresh);
+                return true;
+            }
             DockOp::Toggle => {
                 self.state.toggle();
                 cx.notify();
@@ -357,6 +391,10 @@ pub(crate) enum DockOp {
     ShowOutline,
     /// The References button: shows the last results, finding none.
     ShowReferences,
+    /// `git.show_changes`.
+    ShowChanges,
+    /// `git.refresh`: reads the git status again, shown or not.
+    RefreshChanges,
     Toggle,
     ToggleRegex,
     ToggleCase,
@@ -390,6 +428,8 @@ pub(crate) fn registry() -> Registry<DockCommands> {
         ("search.show", "Find in Files", workbench, ShowSearch),
         ("dock.show_project", "Show Project", workbench, ShowProject),
         ("dock.toggle", "Toggle Dock", workbench, Toggle),
+        ("git.show_changes", "Show Changes", workbench, ShowChanges),
+        ("git.refresh", "Refresh Changes", workbench, RefreshChanges),
         ("search.toggle_regex", "Toggle Regex", search, ToggleRegex),
         (
             "search.toggle_case",
