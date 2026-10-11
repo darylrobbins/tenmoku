@@ -509,6 +509,9 @@ impl Pane {
     /// there are save prompts), unless another tab, in this pane or
     /// another, shows its buffer: the changes live on there.
     pub fn close_active(&mut self, window: &mut Window, cx: &mut App) {
+        // The intent counts now, not once the tab is gone: a discard prompt
+        // may keep it open while a pending open lands.
+        self.navigations += 1;
         self.close_active_item(window, cx);
     }
 

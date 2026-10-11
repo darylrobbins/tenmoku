@@ -704,3 +704,28 @@ fn a_pick_doesnt_undo_tabs_reordered(cx: &mut TestAppContext) {
         cx,
     );
 }
+
+#[gpui::test]
+fn a_pick_doesnt_undo_a_close_awaiting_the_discard_prompt(cx: &mut TestAppContext) {
+    let dir = tempfile::tempdir().unwrap();
+    let settings = dir.path().join("settings.toml");
+    let notes = dir.path().join("notes.toml");
+    fs::write(&settings, "a = 1\n").unwrap();
+    fs::write(&notes, "c = 3\n").unwrap();
+    init(cx);
+    let (workbench, mut cx_) = open(dir.path(), cx);
+    let cx_ = &mut cx_;
+    let pane = workbench.read_with(cx_, |workbench, _| workbench.pane().clone());
+    cx_.update(|window, cx| pane.update(cx, |pane, cx| pane.open(notes.clone(), window, cx)));
+    draw(cx_);
+    cx_.simulate_input("x");
+    set_problems(vec![problem(Severity::Error, &settings, 1, 1, "bad")], cx);
+    dispatch(super::SHOW, cx_);
+    confirm(&workbench, 0, cx_);
+    cx_.update(|window, cx| pane.update(cx, |pane, cx| pane.close_active(window, cx)));
+    draw(cx_);
+    assert!(cx_.has_pending_prompt());
+    assert_eq!(shown(&workbench, cx_), Some(notes));
+    let titles = pane.read_with(cx_, |pane, _| pane.tabs().len());
+    assert_eq!(titles, 1);
+}
