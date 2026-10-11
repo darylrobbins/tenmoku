@@ -47,7 +47,7 @@ fn z_keys_drive_the_model() {
         crate::step(crate::Pending::new(), crate::parse_keys("z").unwrap()[0]),
         crate::Step::Wait(_)
     ));
-    assert!(matches!(super::run("zz"), crate::Step::Cancel));
+    assert!(matches!(super::run("zQ"), crate::Step::Cancel));
 
     let registry = crate::registry();
     let command = registry.get(&"vim.fold".parse().unwrap()).unwrap();

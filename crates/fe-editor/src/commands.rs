@@ -34,6 +34,32 @@ pub trait EditorHost {
     fn fold_range_at(&self, row: u32) -> Option<RangeInclusive<u32>>;
     /// Every fold candidate in `rows`; none falls back to indented blocks.
     fn fold_ranges(&self, rows: Range<u32>) -> Vec<RangeInclusive<u32>>;
+    /// What the view shows, in the text's rows; `None` (the default) if
+    /// that isn't known.
+    fn viewport(&self) -> Option<Viewport> {
+        None
+    }
+    /// Changes what the view shows; the default does nothing.
+    fn scroll(&mut self, request: ScrollRequest) {
+        let _ = request;
+    }
+}
+
+/// What a view shows: its first visible row of the text and how many whole
+/// rows it has room for (rows past the text's end count, as Vim's `~`
+/// rows do).
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct Viewport {
+    pub top_row: u32,
+    pub rows: u32,
+}
+
+/// A change to what the view shows, for [`EditorHost::scroll`].
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ScrollRequest {
+    /// Show this row of the text first, even one near or at the text's
+    /// end, leaving the rows after it empty.
+    TopRow(u32),
 }
 
 /// A host for tests, scripts and agents: an in-memory clipboard, 20 page

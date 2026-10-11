@@ -1,0 +1,1426 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "ctrl_d",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-d>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          5,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 5
+      }
+    },
+    {
+      "name": "ctrl_d_twice",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-d><C-d>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          10,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 10
+      }
+    },
+    {
+      "name": "ctrl_d_count",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3<C-d>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 3
+      }
+    },
+    {
+      "name": "ctrl_d_count_persists",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3<C-d><C-d>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          6,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 6
+      }
+    },
+    {
+      "name": "ctrl_d_count_past_window",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "30<C-d><C-d>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          20,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 20
+      }
+    },
+    {
+      "name": "ctrl_d_keeps_goal",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        4,
+        27
+      ],
+      "keys": "<C-d><C-d>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          14,
+          27
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 10
+      }
+    },
+    {
+      "name": "ctrl_d_line_end",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "$<C-d>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          6,
+          10
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 5
+      }
+    },
+    {
+      "name": "ctrl_d_near_end",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "40G<C-d><C-d><C-d>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          54,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 50
+      }
+    },
+    {
+      "name": "ctrl_d_last_row_shown",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "Gk<C-d>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          59,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 50
+      }
+    },
+    {
+      "name": "ctrl_d_at_end",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "G<C-d>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          59,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 50
+      }
+    },
+    {
+      "name": "ctrl_u",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "G<C-u>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          54,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 45
+      }
+    },
+    {
+      "name": "ctrl_u_count_persists",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "G4<C-u><C-u>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          51,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 42
+      }
+    },
+    {
+      "name": "ctrl_u_count_then_ctrl_d",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "40G2<C-u><C-d>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          39,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 35
+      }
+    },
+    {
+      "name": "ctrl_u_near_top",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-d><C-d>3k<C-u>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 2
+      }
+    },
+    {
+      "name": "ctrl_u_cursor_to_top",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        3,
+        2
+      ],
+      "keys": "<C-u>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 0
+      }
+    },
+    {
+      "name": "ctrl_u_at_top",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-u>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 0
+      }
+    },
+    {
+      "name": "ctrl_e",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-e>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 1
+      }
+    },
+    {
+      "name": "ctrl_e_count_pushes",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        2,
+        3
+      ],
+      "keys": "5<C-e>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          5,
+          3
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 5
+      }
+    },
+    {
+      "name": "ctrl_e_keeps_cursor",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        6,
+        4
+      ],
+      "keys": "<C-e>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          6,
+          4
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 1
+      }
+    },
+    {
+      "name": "ctrl_e_to_end",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "G20<C-e>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          59,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 59
+      }
+    },
+    {
+      "name": "ctrl_y",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "G<C-y>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          58,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 49
+      }
+    },
+    {
+      "name": "ctrl_y_pushes",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-f>9j2<C-y>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          15,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 6
+      }
+    },
+    {
+      "name": "ctrl_y_keeps_goal",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-f>9j$<C-y>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          16,
+          13
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 7
+      }
+    },
+    {
+      "name": "ctrl_y_at_top",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        5,
+        0
+      ],
+      "keys": "<C-y>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          5,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 0
+      }
+    },
+    {
+      "name": "ctrl_f",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-f>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          8,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 8
+      }
+    },
+    {
+      "name": "ctrl_f_count",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2<C-f>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          16,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 16
+      }
+    },
+    {
+      "name": "ctrl_f_cursor_to_top",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        9,
+        5
+      ],
+      "keys": "<C-f>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          8,
+          5
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 8
+      }
+    },
+    {
+      "name": "ctrl_f_to_end",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "7<C-f><C-f>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          59,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 59
+      }
+    },
+    {
+      "name": "ctrl_f_at_end",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "G20<C-e><C-f>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          59,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 59
+      }
+    },
+    {
+      "name": "ctrl_b",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3<C-f><C-b>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          25,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 16
+      }
+    },
+    {
+      "name": "ctrl_b_count",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "G2<C-b>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          43,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 34
+      }
+    },
+    {
+      "name": "ctrl_b_cursor_to_bottom",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-f><C-b>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          9,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 0
+      }
+    },
+    {
+      "name": "ctrl_b_last_row_at_top",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "G20<C-e><C-b>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          58,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 49
+      }
+    },
+    {
+      "name": "ctrl_b_near_top",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-d><C-b>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          9,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 0
+      }
+    },
+    {
+      "name": "ctrl_b_at_top",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        4,
+        0
+      ],
+      "keys": "<C-b>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 0
+      }
+    },
+    {
+      "name": "zz",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-f>5jzz",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          13,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 9
+      }
+    },
+    {
+      "name": "zt",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-f>5jzt",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          13,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 13
+      }
+    },
+    {
+      "name": "zb",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-f>5jzb",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          13,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 4
+      }
+    },
+    {
+      "name": "z_cr",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-f>3jz<CR>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          11,
+          4
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 11
+      }
+    },
+    {
+      "name": "z_dot",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-f>4jz.",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          12,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 8
+      }
+    },
+    {
+      "name": "z_minus",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-f>5jz-",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          13,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 4
+      }
+    },
+    {
+      "name": "zz_near_top",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        2,
+        4
+      ],
+      "keys": "zz",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          2,
+          4
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 0
+      }
+    },
+    {
+      "name": "zb_near_top",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        2,
+        4
+      ],
+      "keys": "zb",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          2,
+          4
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 0
+      }
+    },
+    {
+      "name": "zt_near_top",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        1,
+        6
+      ],
+      "keys": "zt",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          1,
+          6
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 1
+      }
+    },
+    {
+      "name": "zt_near_bottom",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "Gzt",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          59,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 59
+      }
+    },
+    {
+      "name": "zz_near_bottom",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "Gzz",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          59,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 55
+      }
+    },
+    {
+      "name": "z_minus_near_bottom",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "G2kz-",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          57,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 48
+      }
+    },
+    {
+      "name": "zb_last_row",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "G20<C-e>zb",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          59,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 50
+      }
+    },
+    {
+      "name": "zt_count",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        4,
+        25
+      ],
+      "keys": "41ztj",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          41,
+          15
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 40
+      }
+    },
+    {
+      "name": "z_dot_count",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "50z.",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          49,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 45
+      }
+    },
+    {
+      "name": "z_cr_count_past_end",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "99z<CR>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          59,
+          4
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 59
+      }
+    },
+    {
+      "name": "visual_ctrl_d",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        3,
+        2
+      ],
+      "keys": "v<C-d>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          8,
+          2
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          3,
+          2
+        ],
+        "top": 5
+      }
+    },
+    {
+      "name": "visual_ctrl_d_line_end",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        4,
+        27
+      ],
+      "keys": "v<C-d>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          9,
+          26
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          4,
+          27
+        ],
+        "top": 5
+      }
+    },
+    {
+      "name": "visual_line_ctrl_d_twice",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        3,
+        2
+      ],
+      "keys": "V<C-d><C-d>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          13,
+          2
+        ],
+        "mode": "V",
+        "registers": {},
+        "visual": [
+          3,
+          2
+        ],
+        "top": 10
+      }
+    },
+    {
+      "name": "visual_ctrl_d_count",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        3,
+        2
+      ],
+      "keys": "vj3<C-d>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          7,
+          2
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          3,
+          2
+        ],
+        "top": 3
+      }
+    },
+    {
+      "name": "visual_ctrl_u",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "Gv<C-u>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          54,
+          0
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          59,
+          0
+        ],
+        "top": 45
+      }
+    },
+    {
+      "name": "visual_ctrl_e",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v<C-e><C-e>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ],
+        "top": 2
+      }
+    },
+    {
+      "name": "visual_zt",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-d>vjzt",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          6,
+          0
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          5,
+          0
+        ],
+        "top": 6
+      }
+    },
+    {
+      "name": "cursor_starts_below_view",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        30,
+        0
+      ],
+      "keys": "<C-d>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          35,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 31
+      }
+    },
+    {
+      "name": "jump_then_ctrl_u",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "40G<C-u>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          34,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 30
+      }
+    },
+    {
+      "name": "cursor_below_view_then_ctrl_e",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "15G<C-e>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          14,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 6
+      }
+    },
+    {
+      "name": "cursor_above_view_then_ctrl_y",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "G8k<C-y>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          51,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 49
+      }
+    },
+    {
+      "name": "ctrl_d_then_undo",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-d>xu",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          5,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " ",
+            "linewise": false
+          },
+          "-": {
+            "text": " ",
+            "linewise": false
+          }
+        },
+        "top": 5
+      }
+    },
+    {
+      "name": "operator_cancels",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        5,
+        0
+      ],
+      "keys": "d<C-d>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          5,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 0
+      }
+    },
+    {
+      "name": "zt_count_is_a_jump",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        30,
+        3
+      ],
+      "keys": "7zt``",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          30,
+          3
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 26
+      }
+    },
+    {
+      "name": "visual_zt_count",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        4,
+        25
+      ],
+      "keys": "v41ztj",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          41,
+          16
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          4,
+          25
+        ],
+        "top": 40
+      }
+    },
+    {
+      "name": "ctrl_d_at_end_takes_goal",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        54,
+        26
+      ],
+      "keys": "k60zt<C-d>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          59,
+          26
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 59
+      }
+    },
+    {
+      "name": "ctrl_f_last_page_takes_goal",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        54,
+        26
+      ],
+      "keys": "k60zb<C-f>",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          59,
+          26
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 59
+      }
+    },
+    {
+      "name": "jump_near_end_to_bottom",
+      "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "5<C-f>56G",
+      "window_rows": 10,
+      "expect": {
+        "buffer": "line 0\n  line 1 word\n    line 2 word word\nline 3 word word word\n  line 4 word word word word\n    line 5\nline 6 word\n  line 7 word word\n    line 8 word word word\nline 9 word word word word\n  line 10\n    line 11 word\nline 12 word word\n  line 13 word word word\n    line 14 word word word word\nline 15\n  line 16 word\n    line 17 word word\nline 18 word word word\n  line 19 word word word word\n    line 20\nline 21 word\n  line 22 word word\n    line 23 word word word\nline 24 word word word word\n  line 25\n    line 26 word\nline 27 word word\n  line 28 word word word\n    line 29 word word word word\nline 30\n  line 31 word\n    line 32 word word\nline 33 word word word\n  line 34 word word word word\n    line 35\nline 36 word\n  line 37 word word\n    line 38 word word word\nline 39 word word word word\n  line 40\n    line 41 word\nline 42 word word\n  line 43 word word word\n    line 44 word word word word\nline 45\n  line 46 word\n    line 47 word word\nline 48 word word word\n  line 49 word word word word\n    line 50\nline 51 word\n  line 52 word word\n    line 53 word word word\nline 54 word word word word\n  line 55\n    line 56 word\nline 57 word word\n  line 58 word word word\n    line 59 word word word word",
+        "cursor": [
+          55,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "top": 46
+      }
+    }
+  ]
+}

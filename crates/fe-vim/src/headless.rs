@@ -4,7 +4,10 @@ use std::collections::VecDeque;
 
 use fe_buffer::{Buffer, Point, TransactionId};
 use fe_command::{DispatchError, Dispatched, Invocation, Registry, Source};
-use fe_editor::{EditorModel, commands::HeadlessHost};
+use fe_editor::{
+    EditorModel,
+    commands::{EditorHost, HeadlessHost, ScrollRequest, Viewport},
+};
 
 use crate::{
     KeyError, Mode, Registers, Splits, Step, SubmitArgs, VimCommands, VimKey, VimState, VimTarget,
@@ -16,9 +19,17 @@ use crate::{
 /// [`crate::step`] in normal mode, in insert mode as the editor's text
 /// input and the keymap would take them, and in `cmdline` mode to a line of
 /// its own, as the host's command line.
+///
+/// It keeps a view of the text too, as a window of nvim's would (by
+/// default 22 rows from the first; [`HeadlessVim::set_window_rows`],
+/// [`HeadlessVim::top_row`]): its commands see it through
+/// [`EditorHost::viewport`] and change it through [`EditorHost::scroll`],
+/// and before and after each key it scrolls to keep the cursor in view as
+/// nvim's window does with 'scrolloff' 0.
 pub struct HeadlessVim {
     model: EditorModel,
     host: HeadlessHost,
+    view: Viewport,
     state: VimState,
     registers: Registers,
     registry: Registry<VimCommands>,
@@ -48,6 +59,10 @@ impl HeadlessVim {
         Self {
             model,
             host: HeadlessHost::new(),
+            view: Viewport {
+                top_row: 0,
+                rows: 22,
+            },
             state: VimState::new(),
             registers: Registers::new(),
             registry: registry(),
@@ -104,6 +119,13 @@ impl HeadlessVim {
 
     fn feed_key(&mut self, key: VimKey, replayed: bool) -> Result<(), FeedError> {
         self.sync_visual();
+        self.follow_cursor();
+        let fed = self.feed_mode_key(key, replayed);
+        self.follow_cursor();
+        fed
+    }
+
+    fn feed_mode_key(&mut self, key: VimKey, replayed: bool) -> Result<(), FeedError> {
         match self.state.mode() {
             Mode::Insert => {
                 self.state.record_key(key);
@@ -229,9 +251,13 @@ impl HeadlessVim {
         invocation: &Invocation,
     ) -> Result<Dispatched<TransactionId>, DispatchError> {
         let was_open = matches!(self.state.mode(), Mode::CmdLine(_));
+        let mut host = ViewHost {
+            host: &mut self.host,
+            view: &mut self.view,
+        };
         let mut target = VimTarget {
             model: &mut self.model,
-            host: &mut self.host,
+            host: &mut host,
             state: &mut self.state,
             registers: &mut self.registers,
         };
@@ -316,5 +342,93 @@ impl HeadlessVim {
 
     pub fn host_mut(&mut self) -> &mut HeadlessHost {
         &mut self.host
+    }
+
+    /// The first row the view shows.
+    pub fn top_row(&self) -> u32 {
+        self.view.top_row
+    }
+
+    /// Gives the view `rows` rows (at least 1), scrolling to keep the
+    /// cursor in it.
+    pub fn set_window_rows(&mut self, rows: u32) {
+        self.view.rows = rows.max(1);
+        self.follow_cursor();
+    }
+
+    /// Scrolls the view to show the cursor, as nvim's window does with
+    /// 'scrolloff' 0 (found by probing windows of 2 to 22 rows), and not
+    /// past the text's last row.
+    fn follow_cursor(&mut self) {
+        let row = self.cursor().0;
+        let last = self.model.text().row_count().saturating_sub(1);
+        let Viewport { top_row: top, rows } = self.view;
+        // Centring doesn't scroll further than showing the last row at the
+        // bottom.
+        let halfway = |above: u32| {
+            row.saturating_sub(above)
+                .min((last + 1).saturating_sub(rows))
+        };
+        let top = top.min(last);
+        self.view.top_row = if row < top {
+            // Close above it puts the cursor at the top, further centres it.
+            match top - row >= (rows / 2).saturating_sub(1).max(2) {
+                true => halfway((rows - 1) / 2),
+                false => row,
+            }
+        } else if row >= top.saturating_add(rows) {
+            // Below it: at the bottom if close, centred if further (a row
+            // more above the cursor than below, to within a view's
+            // height).
+            let after = (last + 1).saturating_sub(top.saturating_add(rows));
+            match row - (top.saturating_add(rows)) + 1 {
+                // Where the rest of the text fits in one view's height, the
+                // cursor goes to the bottom whatever the gap.
+                gap if gap <= rows.div_ceil(2) || after <= rows => row + 1 - rows,
+                gap if gap <= rows + 1 => halfway(rows / 2),
+                _ => halfway((rows - 1) / 2),
+            }
+        } else {
+            top
+        };
+    }
+}
+
+/// The host [`HeadlessVim`] dispatches with: its [`HeadlessHost`], and its
+/// view as the viewport.
+struct ViewHost<'a> {
+    host: &'a mut HeadlessHost,
+    view: &'a mut Viewport,
+}
+
+impl EditorHost for ViewHost<'_> {
+    fn page_rows(&self) -> u32 {
+        self.host.page_rows()
+    }
+
+    fn read_clipboard(&mut self) -> Option<String> {
+        self.host.read_clipboard()
+    }
+
+    fn write_clipboard(&mut self, text: String) {
+        self.host.write_clipboard(text);
+    }
+
+    fn fold_range_at(&self, row: u32) -> Option<std::ops::RangeInclusive<u32>> {
+        self.host.fold_range_at(row)
+    }
+
+    fn fold_ranges(&self, rows: std::ops::Range<u32>) -> Vec<std::ops::RangeInclusive<u32>> {
+        self.host.fold_ranges(rows)
+    }
+
+    fn viewport(&self) -> Option<Viewport> {
+        Some(*self.view)
+    }
+
+    fn scroll(&mut self, request: ScrollRequest) {
+        match request {
+            ScrollRequest::TopRow(row) => self.view.top_row = row,
+        }
     }
 }

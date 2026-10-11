@@ -104,6 +104,10 @@ pub struct VimState {
     /// that couldn't move, an operator whose target didn't resolve, an
     /// error message, a key that cancelled what was pending.
     pub(crate) failed: bool,
+    /// 'scroll', as a count before `<C-d>` or `<C-u>` set it, with the
+    /// view's rows then: a view of another height goes back to half its
+    /// rows, as nvim's does (see [`crate::scroll`]).
+    pub(crate) scroll: Option<(u32, u32)>,
 }
 
 impl VimState {

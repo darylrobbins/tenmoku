@@ -29,6 +29,10 @@ pub(crate) struct Case {
     pub(crate) cursor: (u32, usize),
     /// Vim notation.
     pub(crate) keys: String,
+    /// The window's height, which makes the case record the view's top
+    /// row too.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) window_rows: Option<u32>,
 }
 
 #[derive(Deserialize)]
@@ -54,23 +58,27 @@ pub(crate) struct Recorded {
     pub(crate) buffer: String,
     pub(crate) cursor: (u32, usize),
     pub(crate) keys: String,
-    pub(crate) expect: Outcome,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) window_rows: Option<u32>,
+    pub(crate) expect: Expect,
 }
 
 impl Recorded {
-    pub(crate) fn new(case: Case, expect: Outcome) -> Self {
+    pub(crate) fn new(case: Case, expect: impl Into<Expect>) -> Self {
         let Case {
             name,
             buffer,
             cursor,
             keys,
+            window_rows,
         } = case;
         Self {
             name,
             buffer,
             cursor,
             keys,
-            expect,
+            window_rows,
+            expect: expect.into(),
         }
     }
 
@@ -80,6 +88,47 @@ impl Recorded {
             buffer: self.buffer.clone(),
             cursor: self.cursor,
             keys: self.keys.clone(),
+            window_rows: self.window_rows,
+        }
+    }
+}
+
+/// What nvim was left with after the keys, as recorded: an [`Outcome`],
+/// and the view's top row for a case with `window_rows`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Expect {
+    pub(crate) buffer: String,
+    pub(crate) cursor: (u32, usize),
+    pub(crate) mode: String,
+    pub(crate) registers: BTreeMap<String, Register>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) visual: Option<(u32, usize)>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) marks: BTreeMap<String, (u32, usize)>,
+    /// The first row the window shows (`line('w0') - 1`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) top: Option<u32>,
+}
+
+impl From<Outcome> for Expect {
+    fn from(outcome: Outcome) -> Self {
+        let Outcome {
+            buffer,
+            cursor,
+            mode,
+            registers,
+            visual,
+            marks,
+        } = outcome;
+        Self {
+            buffer,
+            cursor,
+            mode,
+            registers,
+            visual,
+            marks,
+            top: None,
         }
     }
 }
@@ -126,17 +175,20 @@ pub(crate) struct NvimResult {
     pub(crate) visual: Option<(u32, usize)>,
     #[serde(default)]
     pub(crate) marks: BTreeMap<String, (u32, usize)>,
+    #[serde(default)]
+    pub(crate) top: Option<u32>,
 }
 
 impl NvimResult {
-    pub(crate) fn outcome(self) -> Outcome {
-        Outcome {
+    pub(crate) fn outcome(self) -> Expect {
+        Expect {
             buffer: self.buffer,
             cursor: self.cursor,
             mode: self.mode,
             registers: self.registers,
             visual: self.visual,
             marks: self.marks,
+            top: self.top,
         }
     }
 }
@@ -378,10 +430,14 @@ fn marks(vim: &HeadlessVim) -> BTreeMap<String, (u32, usize)> {
 
 /// Drives `recorded`'s keys through [`HeadlessVim`] and compares the buffer,
 /// the cursor, the mode, the registers, the visual anchor and the marks
-/// ([`MARKS`]) with nvim's.
+/// ([`MARKS`]) with nvim's, and with `window_rows` (the view that many rows
+/// high) the view's top row.
 pub(crate) fn check(recorded: &Recorded) -> Result<(), String> {
     let (case, expect) = (recorded.case(), &recorded.expect);
     let mut vim = HeadlessVim::new(&case.buffer, case.cursor);
+    if let Some(rows) = case.window_rows {
+        vim.set_window_rows(rows);
+    }
     vim.feed(&case.keys)
         .map_err(|error| format!("{}: {error}", case.name))?;
     let got = (
@@ -391,6 +447,7 @@ pub(crate) fn check(recorded: &Recorded) -> Result<(), String> {
         registers(&vim),
         vim.visual_anchor(),
         marks(&vim),
+        case.window_rows.map(|_| vim.top_row()),
     );
     let want = (
         expect.buffer.clone(),
@@ -399,6 +456,7 @@ pub(crate) fn check(recorded: &Recorded) -> Result<(), String> {
         expect.registers.clone(),
         expect.visual,
         expect.marks.clone(),
+        expect.top,
     );
     if got != want {
         return Err(format!(

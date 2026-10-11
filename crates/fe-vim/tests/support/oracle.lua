@@ -1,7 +1,11 @@
 -- Records what Neovim does with each corpus case, for fe-vim's oracle tests.
 -- Run by the ignored `record_corpus_with_neovim` test:
 --   nvim --clean --headless -l oracle.lua <cases.json> <results.json>
--- Each case is {name, buffer, cursor = {row, byte_col}, keys}, rows from 0.
+-- Each case is {name, buffer, cursor = {row, byte_col}, keys}, rows from 0,
+-- and optionally window_rows: the window is then that many rows high from
+-- before the cursor is set, with 'scroll' half of it, and the result holds
+-- `top`, the first row it shows (line('w0') - 1). 'scrolloff' is the
+-- default, 0.
 -- Keys after a failed command record nonsense: nvim flushes the keys queued
 -- after an error (a failed search's E486 among them), so end a case there.
 -- A result also holds `visual = {row, byte_col}`, the visual anchor
@@ -49,6 +53,14 @@ for reg in ('"0123456789-abcdefghijklmnopqrstuvwxyz/'):gmatch(".") do
   table.insert(recorded, reg)
 end
 
+-- The window's own height, which cases without window_rows keep.
+local default_rows = vim.api.nvim_win_get_height(0)
+local function set_rows(rows)
+  vim.api.nvim_win_set_height(0, rows)
+  assert(vim.api.nvim_win_get_height(0) == rows, "the window is " .. rows .. " rows high")
+  vim.wo.scroll = math.max(math.floor(rows / 2), 1)
+end
+
 local results = {}
 for _, case in ipairs(vim.json.decode(read(input))) do
   -- A fresh buffer, no registers and no last character search.
@@ -61,6 +73,12 @@ for _, case in ipairs(vim.json.decode(read(input))) do
   vim.fn.setcharsearch({ char = "" })
 
   vim.api.nvim_buf_set_lines(0, 0, -1, false, vim.split(case.buffer, "\n", { plain = true }))
+  if case.window_rows then
+    set_rows(case.window_rows)
+    vim.fn.winrestview({ topline = 1 })
+  elseif vim.api.nvim_win_get_height(0) ~= default_rows then
+    set_rows(default_rows)
+  end
   vim.api.nvim_win_set_cursor(0, { case.cursor[1] + 1, case.cursor[2] })
   -- do_lt: `<lt>` is `<`, as fe-vim's parse_keys reads it.
   local keys = vim.api.nvim_replace_termcodes(case.keys, true, true, true)
@@ -100,6 +118,10 @@ for _, case in ipairs(vim.json.decode(read(input))) do
       registers[reg] = register
     end
   end
+  local top = nil
+  if case.window_rows then
+    top = vim.fn.line("w0") - 1
+  end
   table.insert(results, {
     name = case.name,
     buffer = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), "\n"),
@@ -108,6 +130,7 @@ for _, case in ipairs(vim.json.decode(read(input))) do
     registers = registers,
     visual = visual,
     marks = marks,
+    top = top,
   })
 end
 
