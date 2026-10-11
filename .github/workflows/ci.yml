@@ -72,6 +72,11 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
       - name: Test
         run: cargo nextest run --workspace --profile ci
+      - name: Kiln builds and tests on its own
+        # Outside this workspace, from kiln/ plus only the entries of our root
+        # manifest it uses; offline, since the Test step filled the registry
+        # cache (scripts/check-framework-standalone.sh, TESTING.md).
+        run: scripts/check-framework-standalone.sh
       - name: Kiln's GPUI-free crates build for Windows
         # Windows is an addition to kiln, not a redesign
         # (docs/decisions/app-framework.md): its headless core cross-checks
