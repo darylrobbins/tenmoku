@@ -16,6 +16,14 @@
 //!   proposal's origin records who proposed it, and undo reverts the text but
 //!   leaves the hunk accepted. [`ProposedChange::dry_run`] reports, without
 //!   changing anything, which hunks would apply and why the rest can't.
+//! - [`EditStream`] writes an AI's output into a target range as it arrives,
+//!   chunk by chunk, while the user keeps typing. Streaming: the whole stream
+//!   is one transaction under the AI's origin, grown with
+//!   [`Buffer::edit_in`], so the user's undo never touches it and one undo of
+//!   AI origins reverts all of it and restores the old target text; redo
+//!   brings it back. Text the user types at the region's edges stays outside
+//!   it. Cancelling, by [`EditStream::finish`] or by dropping the stream,
+//!   keeps what landed.
 //!
 //! This crate must never depend on GPUI.
 
@@ -25,6 +33,7 @@ mod log;
 mod proposed;
 mod selection;
 mod snapshot;
+mod stream;
 
 pub use buffer::{
     Buffer, BufferEvent, EditError, EditKind, Origin, Subscription, TransactionId, UndoError,
@@ -37,6 +46,7 @@ pub use proposed::{
 };
 pub use selection::{ResolvedSelection, Selection, SelectionSet};
 pub use snapshot::{Anchor, BufferId, BufferSnapshot, Version};
+pub use stream::{EditStream, StreamError};
 
 #[cfg(test)]
 mod tests;
