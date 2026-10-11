@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
 mod keymap;
+mod layout;
 mod paths;
 mod settings;
 mod text_edit;

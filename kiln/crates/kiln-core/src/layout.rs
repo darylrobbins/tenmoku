@@ -1,0 +1,254 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
+//! Saved window layouts, one file per root folder: `<state>/layouts/<key>.json`
+//! (see [`AppPaths::layouts_dir`](crate::AppPaths::layouts_dir)), where
+//! `<key>` is [`layout_key`] of the canonical root. The file is
+//! `{"version": 1, "windows": [entry, …]}`, an entry per window, each a
+//! JSON object the app's shell writes, with its window's `id` and when it
+//! was `saved` (milliseconds since the Unix epoch). A file of another
+//! version, or one that doesn't parse, reads as empty.
+//!
+//! **Each window id has one live owner, across processes.** A window takes
+//! a [`Claim`] on an id before it uses it: an exclusive lock on
+//! `<key>.<id>.lock`, held for as long as the window is open, which the OS
+//! drops if the process dies. A window restores from an entry only if it
+//! can claim the entry's id ([`LayoutStore::restorable`]); otherwise that
+//! entry's window is open somewhere, and the window takes a fresh id
+//! ([`LayoutStore::claim_new`]).
+//!
+//! **Writes merge.** A window writes ([`LayoutStore::write`]) and deletes
+//! ([`LayoutStore::delete`]) only its own entry, by its claim: under an
+//! exclusive lock on `<key>.json.lock`, it reads the file as it is, puts
+//! its entry in or takes it out, and puts the file back whole through a
+//! temporary file. So windows on one root, in one process or several,
+//! never drop each other's entries.
+
+use std::{
+    collections::hash_map::RandomState,
+    fs::{self, File, OpenOptions},
+    hash::{BuildHasher as _, Hash as _, Hasher as _},
+    io,
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+use kiln_command::Value;
+
+use crate::{
+    platform::fs::private,
+    trust::{create_dir, write},
+};
+
+/// The layout file's version.
+pub const VERSION: u64 = 1;
+
+/// A stable key for the canonical root folder `root`: the FNV-1a 64 hash
+/// of its bytes, in hex, so roots that aren't UTF-8 have one too.
+pub fn layout_key(root: &Path) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in root.as_os_str().as_encoded_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
+}
+
+/// A fresh window id: random, and never twice in a process.
+fn fresh_id() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let mut hasher = RandomState::new().build_hasher();
+    (NEXT.fetch_add(1, Ordering::Relaxed), std::process::id()).hash(&mut hasher);
+    SystemTime::now().hash(&mut hasher);
+    hasher.finish()
+}
+
+fn now_millis() -> u64 {
+    let since = SystemTime::now().duration_since(UNIX_EPOCH);
+    since.map_or(0, |since| since.as_millis() as u64)
+}
+
+/// The id of a saved entry.
+pub fn entry_id(entry: &Value) -> Option<u64> {
+    entry.get("id")?.as_u64()
+}
+
+/// The saved layouts of one root folder's windows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LayoutStore {
+    dir: PathBuf,
+    key: String,
+}
+
+/// A window's hold on its id: see the module docs. Dropping it releases
+/// it; [`Claim::release`] can also remove its lock file.
+#[derive(Debug)]
+pub struct Claim {
+    id: u64,
+    path: PathBuf,
+    _lock: File,
+}
+
+impl Claim {
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
+    /// Releases the claim, and with `forget` removes its lock file, for an
+    /// id whose entry has gone.
+    pub fn release(self, forget: bool) {
+        let path = self.path.clone();
+        drop(self);
+        if forget {
+            fs::remove_file(path).ok();
+        }
+    }
+}
+
+impl LayoutStore {
+    /// The layouts of the canonical root folder `root`, in `dir`.
+    pub fn new(dir: impl Into<PathBuf>, root: &Path) -> Self {
+        Self {
+            dir: dir.into(),
+            key: layout_key(root),
+        }
+    }
+
+    /// The layout file.
+    pub fn file(&self) -> PathBuf {
+        self.dir.join(format!("{}.json", self.key))
+    }
+
+    fn claim_file(&self, id: u64) -> PathBuf {
+        self.dir.join(format!("{}.{id:016x}.lock", self.key))
+    }
+
+    /// The entries, newest first, as the file is now.
+    pub fn entries(&self) -> Vec<Value> {
+        // Each write puts its entry last, so of two saved in the same
+        // millisecond the later is newer.
+        let mut entries = read(&self.file());
+        entries.reverse();
+        entries.sort_by_key(|entry| {
+            std::cmp::Reverse(entry.get("saved").and_then(Value::as_u64).unwrap_or(0))
+        });
+        entries
+    }
+
+    /// Claims `id`: `None` if a live window, in this process or another,
+    /// holds it.
+    pub fn claim(&self, id: u64) -> io::Result<Option<Claim>> {
+        create_dir(&self.dir)?;
+        let path = self.claim_file(id);
+        let lock = private(
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false),
+        )
+        .open(&path)?;
+        match lock.try_lock() {
+            Ok(()) => Ok(Some(Claim {
+                id,
+                path,
+                _lock: lock,
+            })),
+            Err(fs::TryLockError::WouldBlock) => Ok(None),
+            Err(fs::TryLockError::Error(error)) => Err(error),
+        }
+    }
+
+    /// Claims a fresh random id, for a window that restores no entry.
+    pub fn claim_new(&self) -> io::Result<Claim> {
+        loop {
+            if let Some(claim) = self.claim(fresh_id())? {
+                return Ok(claim);
+            }
+        }
+    }
+
+    /// Claims each entry no live window holds, newest first, with the
+    /// entry: what a launch on the root restores, a window each.
+    pub fn restorable(&self) -> Vec<(Claim, Value)> {
+        self.entries()
+            .into_iter()
+            .filter_map(|entry| {
+                let claim = self.claim(entry_id(&entry)?).ok()??;
+                Some((claim, entry))
+            })
+            .collect()
+    }
+
+    /// The newest entry no live window holds, claimed: what a new window
+    /// on the root restores.
+    pub fn newest_restorable(&self) -> Option<(Claim, Value)> {
+        self.entries().into_iter().find_map(|entry| {
+            let claim = self.claim(entry_id(&entry)?).ok()??;
+            Some((claim, entry))
+        })
+    }
+
+    /// Puts `entry` in the file as `claim`'s window's, replacing its last,
+    /// stamped with its id and the time: see the module docs.
+    pub fn write(&self, claim: &Claim, mut entry: Value) -> io::Result<()> {
+        if let Some(object) = entry.as_object_mut() {
+            object.insert("id".into(), Value::from(claim.id));
+            object.insert("saved".into(), Value::from(now_millis()));
+        }
+        self.update(claim.id, Some(entry))
+    }
+
+    /// Takes `claim`'s window's entry out of the file.
+    pub fn delete(&self, claim: &Claim) -> io::Result<()> {
+        self.update(claim.id, None)
+    }
+
+    /// Reads the file, swaps entry `id` for `entry`, and writes it back
+    /// whole, under the file's lock.
+    fn update(&self, id: u64, entry: Option<Value>) -> io::Result<()> {
+        create_dir(&self.dir)?;
+        let file = self.file();
+        let lock = private(
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false),
+        )
+        .open(self.dir.join(format!("{}.json.lock", self.key)))?;
+        lock.lock()?;
+        let mut entries = read(&file);
+        entries.retain(|other| entry_id(other) != Some(id));
+        entries.extend(entry);
+        let text = Value::from_iter([
+            ("version", Value::from(VERSION)),
+            ("windows", Value::Array(entries)),
+        ]);
+        let text = serde_json::to_vec_pretty(&text).map_err(io::Error::other)?;
+        // The lock is released when `lock` drops, after the write.
+        write(&file, &text)
+    }
+}
+
+/// The entries in the layout file at `path`: none if it's missing, of
+/// another version, or bad.
+fn read(path: &Path) -> Vec<Value> {
+    let Ok(text) = fs::read(path) else {
+        return Vec::new();
+    };
+    let Ok(value) = serde_json::from_slice::<Value>(&text) else {
+        log::warn!("{} isn't a layout file; it's ignored", path.display());
+        return Vec::new();
+    };
+    if value.get("version").and_then(Value::as_u64) != Some(VERSION) {
+        return Vec::new();
+    }
+    match value.get("windows") {
+        Some(Value::Array(entries)) => (entries.iter())
+            .filter(|entry| entry_id(entry).is_some())
+            .cloned()
+            .collect(),
+        _ => Vec::new(),
+    }
+}

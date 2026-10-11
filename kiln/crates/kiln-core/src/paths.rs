@@ -208,6 +208,12 @@ impl AppPaths {
         self.state.as_ref().map(|dir| dir.join(TRUST_FILE))
     }
 
+    /// `<state>/layouts`: the saved window layouts, a file per root folder
+    /// ([`crate::layout`]).
+    pub fn layouts_dir(&self) -> Option<PathBuf> {
+        self.state.as_ref().map(|dir| dir.join("layouts"))
+    }
+
     /// `<root>/.<short>`: a project's own config directory.
     pub fn project_dir(&self, root: &Path) -> PathBuf {
         root.join(format!(".{}", self.short))

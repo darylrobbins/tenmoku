@@ -218,7 +218,7 @@ fn parse(text: &str) -> Option<BTreeMap<PathBuf, bool>> {
 
 /// Writes `contents` to `path` through a temporary file beside it, renamed
 /// over it, creating the directory (mode 0700) and the file (mode 0600).
-fn write(path: &Path, contents: &[u8]) -> io::Result<()> {
+pub(crate) fn write(path: &Path, contents: &[u8]) -> io::Result<()> {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let dir = path
         .parent()
@@ -245,7 +245,7 @@ fn write(path: &Path, contents: &[u8]) -> io::Result<()> {
 }
 
 /// Creates `dir` and its missing ancestors, mode 0700.
-fn create_dir(dir: &Path) -> io::Result<()> {
+pub(crate) fn create_dir(dir: &Path) -> io::Result<()> {
     let dir = if dir.as_os_str().is_empty() {
         Path::new(".")
     } else {

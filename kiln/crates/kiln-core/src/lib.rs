@@ -30,6 +30,7 @@ mod keymap;
 mod keystroke;
 mod label;
 pub mod layers;
+pub mod layout;
 mod load;
 mod matcher;
 pub mod menu;
