@@ -10,6 +10,7 @@ use crate::{
         Motion, MoveArgs, OperateArgs, Operator, PlayArgs, PutArgs, RecordArgs, ReplaceCharArgs,
         SelectArgs, SwapArgs, Target, TextObject, VisualArgs, VisualKind,
     },
+    feature,
 };
 
 /// The whole incomplete command: counts, `"{reg}`, an operator and a prefix
@@ -41,6 +42,8 @@ enum Prefix {
     /// `"`, awaiting a register name.
     Register,
     G,
+    /// `z`, awaiting a feature's key.
+    Z,
     /// `f F t T`: the motion, its char to be filled in.
     Find(Motion),
     /// `i` or `a` after an operator.
@@ -68,6 +71,8 @@ pub enum PendingKind {
     Register,
     Operator,
     G,
+    /// `z`.
+    Z,
     Find,
     TextObject,
     Replace,
@@ -78,7 +83,7 @@ pub enum PendingKind {
 }
 
 impl PendingKind {
-    /// Its `vim.pending_kind` value: `count`, `register`, `operator`, `g`,
+    /// Its `vim.pending_kind` value: `count`, `register`, `operator`, `g`, `z`,
     /// `find`, `text_object`, `replace`, `set_mark` or `mark`.
     pub fn name(self) -> &'static str {
         match self {
@@ -86,6 +91,7 @@ impl PendingKind {
             Self::Register => "register",
             Self::Operator => "operator",
             Self::G => "g",
+            Self::Z => "z",
             Self::Find => "find",
             Self::TextObject => "text_object",
             Self::Replace => "replace",
@@ -148,6 +154,7 @@ impl Pending {
         Some(match self.prefix {
             Some(Prefix::Register | Prefix::Record | Prefix::Play) => PendingKind::Register,
             Some(Prefix::G) => PendingKind::G,
+            Some(Prefix::Z) => PendingKind::Z,
             Some(Prefix::Find(_)) => PendingKind::Find,
             Some(Prefix::Object { .. }) => PendingKind::TextObject,
             Some(Prefix::Replace) => PendingKind::Replace,
@@ -182,8 +189,30 @@ impl Pending {
         }
     }
 
-    /// A key that doesn't continue the command.
-    fn reject(&self) -> Step {
+    /// The finished count: `2` of `2d3` once the typed one has ended.
+    #[allow(dead_code, reason = "for the feature modules' hooks")]
+    pub(crate) fn count(&self) -> Option<u32> {
+        self.count
+    }
+
+    #[allow(dead_code, reason = "for the feature modules' hooks")]
+    pub(crate) fn register(&self) -> Option<char> {
+        self.register
+    }
+
+    /// Whether the visual mode is blockwise.
+    #[allow(dead_code, reason = "for the feature modules' hooks")]
+    pub(crate) fn is_block(&self) -> bool {
+        self.block
+    }
+
+    /// A key that doesn't continue the command, unless a feature takes it
+    /// (with the count ended).
+    fn reject(mut self, key: VimKey) -> Step {
+        self.end_count();
+        if let Some(step) = feature::key(&self, key) {
+            return step;
+        }
         if self.is_empty() {
             Step::Forward
         } else {
@@ -259,10 +288,13 @@ impl Pending {
 
     /// The key after a prefix.
     fn complete(mut self, prefix: Prefix, key: VimKey) -> Step {
+        if prefix == Prefix::Z {
+            return feature::z(&self, key).unwrap_or(Step::Cancel);
+        }
         let ch = match key {
             VimKey::Char(ch) => ch,
             VimKey::Tab if matches!(prefix, Prefix::Find(_) | Prefix::Replace) => '\t',
-            _ => return Step::Cancel,
+            _ => return self.unmatched(prefix, key),
         };
         match prefix {
             Prefix::Register if is_register(ch) => Step::Wait(Pending {
@@ -324,6 +356,15 @@ impl Pending {
                     count: self.count,
                 },
             ),
+            _ => self.unmatched(prefix, key),
+        }
+    }
+
+    /// A key a prefix doesn't take: after `g` the features may, else it
+    /// cancels.
+    fn unmatched(self, prefix: Prefix, key: VimKey) -> Step {
+        match prefix {
+            Prefix::G => feature::g(&self, key).unwrap_or(Step::Cancel),
             _ => Step::Cancel,
         }
     }
@@ -381,7 +422,7 @@ pub fn step(mut pending: Pending, key: VimKey) -> Step {
                 },
             );
         }
-        _ => return pending.reject(),
+        _ => return pending.reject(key),
     };
     // `0` is a motion unless a count is being typed.
     if let Some(digit) = ch.to_digit(10)
@@ -394,6 +435,7 @@ pub fn step(mut pending: Pending, key: VimKey) -> Step {
     let prefix = match ch {
         '"' if pending.operator.is_none() => Prefix::Register,
         'g' => Prefix::G,
+        'z' if pending.operator.is_none() && feature::has_z() => Prefix::Z,
         'f' => Prefix::Find(Motion::FindForward(' ')),
         'F' => Prefix::Find(Motion::FindBackward(' ')),
         't' => Prefix::Find(Motion::TillForward(' ')),
@@ -408,7 +450,7 @@ pub fn step(mut pending: Pending, key: VimKey) -> Step {
         // In normal mode only; a count before `q` cancels.
         'q' if pending.is_empty() && !pending.visual => Prefix::Record,
         '@' if pending.operator.is_none() && !pending.visual => Prefix::Play,
-        _ if pending.visual => return pending.visual_key(ch),
+        _ if pending.visual => return pending.visual_key(ch, key),
         'v' | 'V' if pending.is_empty() => return visual(ch),
         _ => {
             if let Some(operator) = operator(ch) {
@@ -429,7 +471,7 @@ pub fn step(mut pending: Pending, key: VimKey) -> Step {
             }
             // The rest stand alone: after an operator they cancel.
             if pending.operator.is_some() {
-                return pending.reject();
+                return pending.reject(key);
             }
             if let Some((operator, motion)) = shorthand(ch) {
                 pending.operator = Some(operator);
@@ -477,7 +519,7 @@ pub fn step(mut pending: Pending, key: VimKey) -> Step {
                         register: pending.register,
                     },
                 ),
-                _ => pending.reject(),
+                _ => pending.reject(key),
             };
         }
     };
@@ -489,7 +531,7 @@ pub fn step(mut pending: Pending, key: VimKey) -> Step {
 impl Pending {
     /// A key in a visual mode that isn't a prefix: an operator acts on the
     /// selection at once.
-    fn visual_key(mut self, ch: char) -> Step {
+    fn visual_key(mut self, ch: char, key: VimKey) -> Step {
         use Operator::*;
         let (operator, target) = match ch {
             // A count or register is dropped.
@@ -526,7 +568,7 @@ impl Pending {
             _ => {
                 return match motion(ch) {
                     Some(motion) => self.commit(Target::Motion(motion)),
-                    None => self.reject(),
+                    None => self.reject(key),
                 };
             }
         };
@@ -544,7 +586,7 @@ fn visual(ch: char) -> Step {
     invocation("vim.visual", VisualArgs { kind })
 }
 
-fn invocation(command: &str, args: impl Serialize) -> Step {
+pub(crate) fn invocation(command: &str, args: impl Serialize) -> Step {
     let command = CommandId::parse(command).expect("vim command IDs are valid");
     let args = serde_json::to_value(args).expect("vim args serialize");
     Step::Commit(Invocation::new(command).args(args).source(Source::Keyboard))

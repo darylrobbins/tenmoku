@@ -24,6 +24,13 @@
 //! stamps the frame and `vim.mode` is never set. The design is
 //! `docs/decisions/vim-engine.md` (§1, §4, §9 and §10).
 //!
+//! Keys and commands that live in a module of their own register through
+//! `feature::FEATURES`: the reducer asks each feature about a key it would
+//! otherwise reject, a key after `g` it doesn't take and (once some feature
+//! has one) a key after `z`, and [`registry`] runs each feature's `register`.
+//! Each such module's docs describe its keys, its commands and any
+//! divergence from nvim.
+//!
 //! An insert session (`i a I A o O`, or the change operator `c`) is one
 //! `fe_buffer` transaction with the actor's origin, opened by the command
 //! that enters insert mode. In insert mode keys aren't vim's: typed text
@@ -702,8 +709,11 @@ mod cmdline;
 mod commands;
 mod edit;
 mod ex;
+mod feature;
+pub mod folds;
 mod headless;
 mod history;
+pub mod increment;
 mod insert;
 mod key;
 mod macros;
@@ -714,6 +724,7 @@ mod reducer;
 mod register;
 mod repeat;
 mod replace;
+pub mod scroll;
 pub mod search;
 mod state;
 mod substitute;

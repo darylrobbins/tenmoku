@@ -9,13 +9,13 @@ use fe_editor::{EditorModel, commands::EditorHost};
 use crate::{
     CommandLineArgs, CountArgs, InsertArgs, MarkArgs, MoveArgs, OperateArgs, PlayArgs, PutArgs,
     RecordArgs, Registers, ReplaceCharArgs, SelectArgs, SubmitArgs, SwapArgs, VimState, VisualArgs,
-    cmdline, edit, history, insert, macros, marks, motion, operator, repeat, replace, substitute,
-    visual,
+    cmdline, edit, feature, history, insert, macros, marks, motion, operator, repeat, replace,
+    substitute, visual,
 };
 
 /// Catches the marks up with the text before a command that may change it
 /// (see `marks::Marks::follow`).
-fn follow(target: &mut VimTarget<'_>) {
+pub(crate) fn follow(target: &mut VimTarget<'_>) {
     target.state.marks.follow(target.model.snapshot());
 }
 
@@ -45,7 +45,8 @@ impl CommandTarget for VimCommands {
 /// `vim.visual`, `vim.visual_exit`, `vim.visual_swap`, `vim.visual_put`,
 /// `vim.reselect` and `vim.select`, and for the command line (searches and
 /// ex commands) `vim.command_line`, `vim.command_line_submit` and
-/// `vim.command_line_cancel`.
+/// `vim.command_line_cancel`. Feature modules add their commands after these
+/// (see [`crate::feature`]).
 pub fn registry() -> Registry<VimCommands> {
     let normal = ContextPredicate::parse("editor && vim.mode == normal")
         .expect("vim's context predicate parses");
@@ -481,5 +482,6 @@ pub fn registry() -> Registry<VimCommands> {
         )
         .context(cmdline_mode)
         .mutates_buffer(false);
+    feature::register(&mut registry);
     registry
 }
