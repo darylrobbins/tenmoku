@@ -489,18 +489,27 @@ fn write_all_reports_the_first_failure(cx: &mut TestAppContext) {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     std::fs::create_dir(root.join("sub")).unwrap();
-    write(root, &["a.txt", "b.txt", "sub/c.txt", "d.txt"]);
-    let (workbench, mut vcx) = window(cx, root, &["a.txt", "b.txt", "sub/c.txt", "d.txt"]);
+    write(root, &["a.txt", "sub/c.txt", "b.txt", "d.txt"]);
+    // The first pane holds a.txt and sub/c.txt; the split holds a view of
+    // sub/c.txt, then b.txt, d.txt and an untitled buffer.
+    let (workbench, mut vcx) = window(cx, root, &["a.txt", "sub/c.txt"]);
     let cx = &mut vcx;
-    let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
-    for ix in 0..4 {
-        cx.update(|window, cx| pane.update(cx, |pane, cx| pane.activate(ix, window, cx)));
+    let first = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
+    for ix in 0..2 {
+        cx.update(|window, cx| first.update(cx, |pane, cx| pane.activate(ix, window, cx)));
         draw(cx);
         cx.simulate_keystrokes("x");
     }
-    // An untitled dirty buffer, after the files, in pane order.
+    run("pane.split_right", cx);
+    let second = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
+    assert_ne!(first, second);
+    for file in ["b.txt", "d.txt"] {
+        open(&workbench, root.join(file), cx);
+        cx.simulate_keystrokes("x");
+    }
+    // An untitled dirty buffer, last in pane order.
     cx.update(|window, cx| {
-        pane.update(cx, |pane, cx| {
+        second.update(cx, |pane, cx| {
             pane.add(EditorModel::new(Buffer::new("new"), None), cx);
             let ix = pane.tabs().len() - 1;
             pane.activate(ix, window, cx);
@@ -508,31 +517,46 @@ fn write_all_reports_the_first_failure(cx: &mut TestAppContext) {
     });
     draw(cx);
     cx.simulate_keystrokes("x");
+    // b.txt (second pane) fails as a directory; sub/c.txt (first pane)
+    // fails differently, its folder being gone.
     break_save(&root.join("b.txt"));
-    // sub/c.txt fails differently: its folder is gone.
     std::fs::remove_dir_all(root.join("sub")).unwrap();
 
     ex("wa", cx);
     draw(cx);
-    // b.txt fails first in pane order; a.txt and d.txt are saved.
+    // sub/c.txt fails first in pane order; a.txt and d.txt are saved.
     let shown = message(&workbench, cx).expect("a save error");
-    assert!(shown.contains("Is a directory"), "{shown}");
+    assert!(!shown.contains("Is a directory"), "{shown}");
+    assert!(!shown.starts_with("E141"), "{shown}");
     assert_eq!(on_disk(&root.join("a.txt")), "ne\n");
     assert_eq!(on_disk(&root.join("d.txt")), "ne\n");
     assert_eq!(prompt(cx), None);
-    let dirty_tabs = workbench.read_with(cx, |workbench, cx| {
-        (workbench.pane().read(cx).tabs().iter())
-            .filter(|tab| tab.editor.read(cx).model().is_dirty())
-            .count()
+    // Buffers, not tabs: sub/c.txt is shown in both panes.
+    let dirty_buffers = workbench.read_with(cx, |workbench, cx| {
+        let mut dirty = std::collections::BTreeSet::new();
+        for pane in workbench.pane_group().panes() {
+            for tab in pane.read(cx).tabs() {
+                if tab.editor.read(cx).model().is_dirty() {
+                    dirty.insert(tab.path.clone());
+                }
+            }
+        }
+        dirty.len()
     });
-    assert_eq!(dirty_tabs, 3);
+    assert_eq!(dirty_buffers, 3);
+
+    // Fix sub/c.txt: now b.txt, in the later pane, is the message.
+    std::fs::create_dir(root.join("sub")).unwrap();
+    ex("wa", cx);
+    draw(cx);
+    let shown = message(&workbench, cx).expect("a save error");
+    assert!(shown.contains("Is a directory"), "{shown}");
+    assert_eq!(on_disk(&root.join("sub/c.txt")), "ne\n");
 
     // With only the untitled one left failing, it is the message.
     std::fs::remove_dir(root.join("b.txt")).unwrap();
-    std::fs::create_dir(root.join("sub")).unwrap();
     ex("wa", cx);
     let shown = message(&workbench, cx).expect("an error");
     assert!(shown.starts_with("E141"), "{shown}");
     assert_eq!(on_disk(&root.join("b.txt")), "ne\n");
-    assert_eq!(on_disk(&root.join("sub/c.txt")), "ne\n");
 }
