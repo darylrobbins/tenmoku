@@ -122,12 +122,15 @@ impl FileEncoding {
     /// would (each malformed sequence one U+FFFD), and calls `unit` with each
     /// decoded unit's source byte range and text, in order and with no gaps.
     /// A unit is the bytes of one char (or a few, where they decode to
-    /// several), or of one malformed sequence with the bytes dropped after
-    /// it, which is a U+FFFD.
+    /// several), or of one malformed sequence, which is a U+FFFD. Bytes the
+    /// decoder reads past a malformed sequence and decodes again are the
+    /// units that follow it, not part of it.
     ///
-    /// `complete` says `bytes` end where the line does, so a char cut short
+    /// `complete` says `bytes` end where the stream does, so a char cut short
     /// is a malformed sequence, as the editor's decoding makes it. Otherwise
-    /// the bytes of one unit still pending at the end are not reported.
+    /// the bytes of one unit still pending at the end are not reported, so
+    /// `bytes` can run on into the line break that ends the line in the
+    /// editor's decoding, which settles what comes before it.
     /// `unit` stops the walk by returning `Ok(true)`, or its error.
     pub fn for_each_unit<E>(
         self,
@@ -135,28 +138,42 @@ impl FileEncoding {
         complete: bool,
         mut unit: impl FnMut(std::ops::Range<usize>, &str) -> Result<bool, E>,
     ) -> Result<(), E> {
+        let iso_2022_jp = self.encoding == encoding_rs::ISO_2022_JP;
         let mut decoder = self.encoding.new_decoder_without_bom_handling();
         let mut scratch = String::new();
         // Where the bytes not yet in a unit start: fed, or pending in `decoder`.
         let mut unit_start = 0;
+        // Whether `decoder` holds a byte to decode again, which an empty
+        // input makes it decode before the next byte.
+        let mut replay = false;
         // A byte at a time, then once more, empty, to end the stream.
-        for at in 0..=bytes.len() {
+        let mut at = 0;
+        'bytes: while at <= bytes.len() {
             let last = at == bytes.len();
             if last && !complete {
                 break;
             }
             let mut rest = &bytes[at..(at + 1).min(bytes.len())];
             loop {
+                let replaying = std::mem::take(&mut replay);
+                let input = if replaying { &[][..] } else { rest };
                 scratch.clear();
                 scratch.reserve(
                     decoder
-                        .max_utf8_buffer_length_without_replacement(rest.len())
+                        .max_utf8_buffer_length_without_replacement(input.len())
                         .expect("a byte's worth of UTF-8 fits in usize"),
                 );
                 let (result, read) =
-                    decoder.decode_to_string_without_replacement(rest, &mut scratch, last);
-                rest = &rest[read..];
-                let end = at + (usize::from(!last) - rest.len());
+                    decoder.decode_to_string_without_replacement(input, &mut scratch, last);
+                if !replaying {
+                    rest = &rest[read..];
+                }
+                let end = if replaying {
+                    // The decoded-again byte is one, as an escape's is.
+                    unit_start + 1
+                } else {
+                    at + (usize::from(!last) - rest.len())
+                };
                 match result {
                     DecoderResult::InputEmpty | DecoderResult::OutputFull => {
                         if !scratch.is_empty() {
@@ -165,22 +182,45 @@ impl FileEncoding {
                             }
                             unit_start = end;
                         }
-                        if result == DecoderResult::InputEmpty {
+                        if result == DecoderResult::InputEmpty && !replaying {
                             break;
                         }
                     }
                     DecoderResult::Malformed(bad, extra) => {
                         let bad_start = end - usize::from(extra) - usize::from(bad);
+                        let bad_end = bad_start + usize::from(bad);
                         if !scratch.is_empty() && unit(unit_start..bad_start, &scratch)? {
                             return Ok(());
                         }
-                        if unit(bad_start..end, "\u{FFFD}")? {
+                        // Bytes that decoded to nothing, such as an escape
+                        // sequence, go with the U+FFFD that follows them.
+                        let from = if scratch.is_empty() {
+                            unit_start
+                        } else {
+                            bad_start
+                        };
+                        if unit(from..bad_end, "\u{FFFD}")? {
                             return Ok(());
                         }
-                        unit_start = end;
+                        unit_start = bad_end;
+                        if extra > 0 {
+                            if iso_2022_jp {
+                                // Its escapes don't decode again, and the one
+                                // byte that does is decoded in the state it
+                                // was read in.
+                                replay = true;
+                            } else {
+                                // The bytes after it decode as if the stream
+                                // began at them.
+                                decoder = self.encoding.new_decoder_without_bom_handling();
+                                at = bad_end;
+                                continue 'bytes;
+                            }
+                        }
                     }
                 }
             }
+            at += 1;
         }
         Ok(())
     }
@@ -433,4 +473,135 @@ fn char_round_trips(encoding: &'static Encoding, ch: char) -> bool {
     let ch = &*ch.encode_utf8(&mut utf8);
     let (bytes, _, unmappable) = encoding.encode(ch);
     !unmappable && encoding.decode_without_bom_handling(&bytes).0 == ch
+}
+
+#[cfg(test)]
+mod unit_tests {
+    use std::ops::Range;
+
+    use encoding_rs::{Encoding, GB18030, GBK, ISO_2022_JP, SHIFT_JIS};
+
+    use super::FileEncoding;
+
+    /// The units of `bytes`, with a check that they run on from 0 with no gaps
+    /// and make the text the editor decodes the bytes to.
+    fn units(
+        encoding: &'static Encoding,
+        bytes: &[u8],
+        complete: bool,
+    ) -> Vec<(Range<usize>, String)> {
+        let mut units: Vec<(Range<usize>, String)> = Vec::new();
+        FileEncoding {
+            encoding,
+            bom: false,
+        }
+        .for_each_unit(bytes, complete, |range, text| {
+            units.push((range, text.to_owned()));
+            Ok::<_, ()>(false)
+        })
+        .unwrap();
+        let mut at = 0;
+        for (range, _) in &units {
+            assert_eq!(range.start, at, "{units:?}");
+            assert!(range.start < range.end, "{units:?}");
+            at = range.end;
+        }
+        if complete {
+            assert_eq!(at, bytes.len(), "{units:?}");
+            let text: String = units.iter().map(|(_, text)| &text[..]).collect();
+            assert_eq!(text, encoding.decode_without_bom_handling(bytes).0);
+        }
+        units
+    }
+
+    fn unit(range: Range<usize>, text: &str) -> (Range<usize>, String) {
+        (range, text.to_owned())
+    }
+
+    #[test]
+    fn bytes_read_again_after_a_malformed_char_are_units_of_their_own() {
+        for encoding in [GBK, GB18030] {
+            // \x81\x30 is cut short by the space: U+FFFD for the \x81, and
+            // the "0" and the space are read again.
+            assert_eq!(
+                units(encoding, b"\x81\x30 needle", true)[..4],
+                [
+                    unit(0..1, "\u{FFFD}"),
+                    unit(1..2, "0"),
+                    unit(2..3, " "),
+                    unit(3..4, "n")
+                ]
+            );
+            // \x81\x30\x81 is cut short by a space, and two bytes are read again,
+            // the first a char and the second malformed with the space.
+            assert_eq!(
+                units(encoding, b"\x81\x30\x81 x", true),
+                [
+                    unit(0..1, "\u{FFFD}"),
+                    unit(1..2, "0"),
+                    unit(2..3, "\u{FFFD}"),
+                    unit(3..4, " "),
+                    unit(4..5, "x"),
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn a_line_break_settles_a_malformed_char_before_it() {
+        // Through the "\n", as the editor decodes the line.
+        assert_eq!(
+            units(GBK, b"needle\x81\x30\n", false)[6..],
+            [unit(6..7, "\u{FFFD}"), unit(7..8, "0"), unit(8..9, "\n")]
+        );
+        // But at the end of the file, \x81\x30 are one malformed sequence.
+        assert_eq!(
+            units(GBK, b"needle\x81\x30", true)[6..],
+            [unit(6..8, "\u{FFFD}")]
+        );
+        // Without the end of the line or the file, the pending char is not reported.
+        assert_eq!(units(GBK, b"needle\x81\x30", false).len(), 6);
+    }
+
+    #[test]
+    fn a_malformed_sequence_with_no_bytes_to_read_again_is_just_those_bytes() {
+        assert_eq!(
+            units(SHIFT_JIS, b"\x82 a", true),
+            [unit(0..1, "\u{FFFD}"), unit(1..2, " "), unit(2..3, "a")]
+        );
+    }
+
+    #[test]
+    fn an_escape_cut_short_leaves_the_byte_after_it_a_unit() {
+        // ESC "$" starts an escape sequence that "X" cuts short: U+FFFD for
+        // the ESC, then "$" is read again, in ASCII, and "X".
+        assert_eq!(
+            units(ISO_2022_JP, b"\x1B$X needle", true)[..4],
+            [
+                unit(0..1, "\u{FFFD}"),
+                unit(1..2, "$"),
+                unit(2..3, "X"),
+                unit(3..4, " ")
+            ]
+        );
+        // The same in JIS X 0208, where "$" is a lead byte "X" completes: the
+        // ESC is U+FFFD, and "$X" is one char.
+        assert_eq!(
+            units(ISO_2022_JP, b"\x1B$B\x30\x21\x1B$X\x21y", true),
+            [
+                unit(0..5, "\u{4E9C}"),
+                unit(5..6, "\u{FFFD}"),
+                unit(6..8, "\u{3078}"),
+                unit(8..10, "\u{2606}"),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_char_cut_short_by_an_escape_does_not_swallow_it() {
+        // A lead byte cut short by an escape sequence back to ASCII.
+        let units = units(ISO_2022_JP, b"\x1B$B$\x1B(Bneedle", true);
+        assert_eq!(units[0], unit(0..4, "\u{FFFD}"));
+        assert_eq!(units[1], unit(4..8, "n"));
+    }
 }

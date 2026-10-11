@@ -530,9 +530,16 @@ fn decode_offsets(file: &mut FileMatches, cancelled: &dyn Fn() -> bool) -> Resul
         // bytes end by `preview_end`; and 3 more bytes settle the unit at
         // the end, as no unit is longer than 4.
         let len = end.max(preview_end) + 3;
-        if let Ok(bytes) = read_line(&source, line.line_offset, len, cancelled)? {
+        if let Ok((bytes, terminated)) = read_line(&source, line.line_offset, len, cancelled)? {
             if legacy {
-                decode_legacy_line(&bytes, bytes.len() < len, line, encoding, cancelled)?;
+                let ends = if terminated {
+                    LineEnd::Newline
+                } else if bytes.len() < len {
+                    LineEnd::Eof
+                } else {
+                    LineEnd::Cut
+                };
+                decode_legacy_line(&bytes, ends, line, encoding, cancelled)?;
             } else {
                 let moved = decode_line(&bytes, line, cancelled)?;
                 if moved && line.line_offset == 0 && bom_len > 0 {
@@ -583,14 +590,15 @@ fn open_regular(_: &Path) -> io::Result<File> {
 
 /// Up to `len` bytes of the line at `offset` in `source`, short of its
 /// `\n`, read [`CHECK_BYTES`] at a time with `cancelled` checked before
-/// each.
+/// each, and whether they stopped at a `\n`.
 fn read_line(
     source: &File,
     offset: u64,
     len: usize,
     cancelled: &dyn Fn() -> bool,
-) -> Result<io::Result<Vec<u8>>, Cancelled> {
+) -> Result<io::Result<(Vec<u8>, bool)>, Cancelled> {
     let mut bytes = Vec::new();
+    let mut terminated = false;
     while bytes.len() < len {
         check(cancelled)?;
         let start = bytes.len();
@@ -608,13 +616,14 @@ fn read_line(
         bytes.truncate(read);
         if let Some(newline) = bytes[start..].iter().position(|&byte| byte == b'\n') {
             bytes.truncate(start + newline);
+            terminated = true;
             break;
         }
         if read < end {
             break;
         }
     }
-    Ok(Ok(bytes))
+    Ok(Ok((bytes, terminated)))
 }
 
 /// Moves `line`'s offsets from `bytes`, the start of the line, to their
@@ -674,10 +683,12 @@ fn drop_bom(line: &mut LineMatch, bom_len: usize) {
 /// preview move to the text `encoding` decodes the bytes to, if the bytes
 /// from the preview's start still read as the preview in lossy UTF-8. The
 /// preview is that text over the bytes it covered, widened to whole decoded
-/// units at both ends. `complete` says `bytes` end where the line does.
+/// units at both ends. `ends` says what `bytes` end at: the editor decodes
+/// through a line's `\n`, which settles the bytes before it as it does, so
+/// that is decoded too and left out of the preview.
 fn decode_legacy_line(
     bytes: &[u8],
-    complete: bool,
+    ends: LineEnd,
     line: &mut LineMatch,
     encoding: FileEncoding,
     cancelled: &dyn Fn() -> bool,
@@ -725,7 +736,17 @@ fn decode_legacy_line(
     let mut preview_start = None;
     let mut out = 0;
     let mut block = 0;
-    encoding.for_each_unit(bytes, complete, |unit, text| {
+    let mut fed = bytes.to_vec();
+    if ends == LineEnd::Newline {
+        fed.push(b'\n');
+    }
+    encoding.for_each_unit(&fed, ends == LineEnd::Eof, |unit, text| {
+        // The `\n` is no part of the line.
+        let text = if ends == LineEnd::Newline && unit.end == fed.len() {
+            text.strip_suffix('\n').unwrap_or(text)
+        } else {
+            text
+        };
         if unit.start / CHECK_BYTES != block {
             block = unit.start / CHECK_BYTES;
             check(cancelled)?;
@@ -763,6 +784,17 @@ fn decode_legacy_line(
         *range = start..end;
     }
     Ok(())
+}
+
+/// What the bytes read of a line end at.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum LineEnd {
+    /// The end of the file.
+    Eof,
+    /// The line's `\n`, not among the bytes.
+    Newline,
+    /// The limit on the bytes read, in the line.
+    Cut,
 }
 
 /// `offsets`, byte offsets in `bytes` and whether each rounds up, as offsets
