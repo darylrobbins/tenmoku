@@ -161,7 +161,8 @@ impl Recovery {
 
     /// Counts the paths `events`, received `now`, name towards a burst, and
     /// restarts the quiet clock. Every path counts, including those of events
-    /// a [`Batch`] turns into [`FsChange::Rescan`].
+    /// a [`Batch`] turns into [`FsChange::Rescan`], but not unflagged
+    /// [`EventKind::Access`] ones.
     fn received(&mut self, events: &[notify::Result<Event>], now: Instant) {
         if self
             .last
@@ -174,6 +175,11 @@ impl Recovery {
             return;
         }
         for event in events.iter().flatten() {
+            // Reads don't change the tree, and a rescan's own opens would
+            // re-arm it; but a flagged event's paths still count.
+            if matches!(event.kind, EventKind::Access(_)) && !event.need_rescan() {
+                continue;
+            }
             self.paths.extend(event.paths.iter().cloned());
         }
         if self.paths.len() >= BURST {

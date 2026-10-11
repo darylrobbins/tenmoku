@@ -10,7 +10,7 @@ use std::{
 
 use notify::{
     Event, EventKind,
-    event::{CreateKind, Flag},
+    event::{AccessKind, AccessMode, CreateKind, Flag},
 };
 
 use super::*;
@@ -144,4 +144,32 @@ fn a_small_batch_is_not_followed_by_a_rescan() {
         Err(mpsc::RecvTimeoutError::Timeout) => {}
         other => panic!("no burst, yet: {other:?}"),
     }
+}
+
+/// Reads don't change the tree, and on Linux a rescan's own directory opens
+/// are reported: they mustn't arm another.
+#[test]
+fn a_burst_of_reads_is_not_followed_by_a_rescan() {
+    let (dir, root) = temp();
+    let (events, rx) = mpsc::channel();
+    for index in 0..2_000 {
+        let event = Event::new(EventKind::Access(AccessKind::Open(AccessMode::Any)))
+            .add_path(root.join(format!("dir-{index}")));
+        events.send(Ok(event)).unwrap();
+    }
+    SOURCE.set(Some(Source {
+        events: rx,
+        settle: SETTLE,
+    }));
+    let (tx, batches) = mpsc::channel();
+    let _watcher = ProjectWatcher::new(&root, move |batch| {
+        tx.send(batch).ok();
+    })
+    .unwrap();
+    match batches.recv_timeout(QUIET) {
+        Err(mpsc::RecvTimeoutError::Timeout) => {}
+        other => panic!("only reads, yet: {other:?}"),
+    }
+    drop(events);
+    drop(dir);
 }

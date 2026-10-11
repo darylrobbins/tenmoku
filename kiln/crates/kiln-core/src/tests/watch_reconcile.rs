@@ -75,15 +75,16 @@ fn a_file_in_a_directory_made_later_is_reported() {
     }
 }
 
-/// Unrelated events, every 10 ms, stand in for notify's through [`SOURCE`],
-/// so the watcher never hears of the file's change: only a re-stat finds it,
-/// and the events mustn't put that off.
+/// Unrelated events stand in for notify's through [`SOURCE`], queued without
+/// a gap (the queue is kept full, so it never empties), so the watcher never
+/// hears of the file's change: only a re-stat finds it, and the backlog
+/// mustn't put that off.
 #[test]
 fn a_change_amid_unrelated_events_is_reported() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("settings.toml");
     fs::write(&path, "editor.font_size = 13\n").unwrap();
-    let (events, rx) = mpsc::channel();
+    let (events, rx) = mpsc::sync_channel(1024);
     SOURCE.set(Some(rx));
     let noise = Noise::start(events, dir.path().join("unrelated"));
     let (tx, batches) = mpsc::channel();
@@ -110,15 +111,15 @@ fn a_change_amid_unrelated_events_is_reported() {
     }
 }
 
-/// Sends an event naming `path`, which no watcher tracks, every 10 ms until
-/// dropped; dropping it drops the sender.
+/// Sends events naming `path`, which no watcher tracks, as fast as the queue
+/// takes them until dropped; dropping it drops the sender.
 struct Noise {
     stop: Arc<AtomicBool>,
     thread: Option<thread::JoinHandle<()>>,
 }
 
 impl Noise {
-    fn start(events: mpsc::Sender<notify::Result<Event>>, path: PathBuf) -> Noise {
+    fn start(events: mpsc::SyncSender<notify::Result<Event>>, path: PathBuf) -> Noise {
         let stop = Arc::new(AtomicBool::new(false));
         let thread = thread::spawn({
             let stop = stop.clone();
@@ -129,7 +130,6 @@ impl Noise {
                     if events.send(Ok(event)).is_err() {
                         break;
                     }
-                    thread::sleep(Duration::from_millis(10));
                 }
             }
         });

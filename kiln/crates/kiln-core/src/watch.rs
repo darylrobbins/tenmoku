@@ -107,8 +107,14 @@ impl ConfigWatcher {
                 loop {
                     let now = Instant::now();
                     let files = if now >= reconcile_at {
-                        reconcile_at = now + RECONCILE;
-                        tracker.reconcile(&mut watch)
+                        if weak.strong_count() == 0 {
+                            break;
+                        }
+                        let files = tracker.reconcile(&mut watch);
+                        // From when it ends, so a slow one leaves a full
+                        // period for events, and the disconnect check.
+                        reconcile_at = Instant::now() + RECONCILE;
+                        files
                     } else {
                         match rx.recv_timeout(reconcile_at - now) {
                             Ok(event) => {
