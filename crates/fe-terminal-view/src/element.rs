@@ -1,17 +1,19 @@
 //! Paints a [`TerminalView`]'s grid: shapes each [`layout`] run with the
 //! window's text system and paints it, with the backgrounds, selection and
 //! cursor, as quads, and an input method's marked text over the cursor. Takes
-//! text input while the view is focused.
+//! text input while the view is focused, and the mouse over it.
 
 use fe_terminal::GridSize;
 use gpui::{
-    App, BorderStyle, Bounds, ContentMask, Element, ElementId, ElementInputHandler, Entity, Font,
-    FontStyle, FontWeight, GlobalElementId, Hsla, InspectorElementId, IntoElement, LayoutId,
-    Pixels, Point, ShapedLine, SharedString, Size, StrikethroughStyle, Style, TextAlign, TextRun,
-    UnderlineStyle, Window, fill, outline, point, px, relative, size,
+    App, BorderStyle, Bounds, ContentMask, CursorStyle, Element, ElementId, ElementInputHandler,
+    Entity, Font, FontStyle, FontWeight, GlobalElementId, Hitbox, HitboxBehavior, Hsla,
+    InspectorElementId, IntoElement, LayoutId, Pixels, Point, ShapedLine, SharedString, Size,
+    StrikethroughStyle, Style, TextAlign, TextRun, UnderlineStyle, Window, fill, outline, point,
+    px, relative, size,
 };
 
 use crate::layout::{self, CursorLayout, Run};
+use crate::mouse::{self, Frame};
 use crate::{TerminalStyle, TerminalView};
 
 /// The beam's width and the underline cursor's height.
@@ -86,6 +88,9 @@ enum Cursor {
 
 pub(crate) struct Prepainted {
     cell: Size<Pixels>,
+    hitbox: Hitbox,
+    /// What the mouse listeners map positions and encode reports by.
+    frame: Frame,
     background: Hsla,
     quads: Vec<(Bounds<Pixels>, Hsla)>,
     text: Vec<Text>,
@@ -133,12 +138,38 @@ impl Element for TerminalElement {
         let grid = grid_size(bounds.size, cell);
         let focused = self.view.read(cx).focus.is_focused(window);
         let marked = self.view.read(cx).marked.clone();
-        let snapshot = self.view.update(cx, |view, cx| {
+        let mut frame = Frame {
+            bounds,
+            cell,
+            rows: usize::from(grid.rows),
+            cols: usize::from(grid.cols),
+            modes: Default::default(),
+        };
+        let (snapshot, drag_scroll) = self.view.update(cx, |view, cx| {
             view.fit(grid, cx);
-            view.terminal().map(|terminal| terminal.snapshot())
+            let drag_scroll = view.drag_scroll(&frame);
+            (
+                view.terminal().map(|terminal| terminal.snapshot()),
+                drag_scroll,
+            )
         });
+        if let Some(snapshot) = &snapshot {
+            frame.modes = snapshot.modes;
+            // Keep scrolling while the drag is held past an end there's more
+            // history toward.
+            let more = match drag_scroll {
+                -1 => snapshot.display_offset < snapshot.history_size,
+                1 => snapshot.display_offset > 0,
+                _ => false,
+            };
+            if more {
+                window.request_animation_frame();
+            }
+        }
         let mut prepainted = Prepainted {
             cell,
+            hitbox: window.insert_hitbox(bounds, HitboxBehavior::Normal),
+            frame,
             background: style.background,
             quads: Vec::new(),
             text: Vec::new(),
@@ -281,6 +312,13 @@ impl Element for TerminalElement {
                 paint_text(text, line_height, window, cx);
             }
         });
+        let cursor = if mouse::reporting(&prepainted.frame.modes) {
+            CursorStyle::Arrow
+        } else {
+            CursorStyle::IBeam
+        };
+        window.set_cursor_style(cursor, &prepainted.hitbox);
+        mouse::listen(&self.view, &prepainted.hitbox, prepainted.frame, window);
         let focus = self.view.read(cx).focus.clone();
         window.handle_input(
             &focus,

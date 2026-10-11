@@ -8,6 +8,7 @@ use gpui::{
 
 use crate::TerminalStyle;
 use crate::element::TerminalElement;
+use crate::mouse::Drag;
 
 /// The key context a terminal view's bindings are scoped to.
 pub const KEY_CONTEXT: &str = "terminal";
@@ -38,6 +39,12 @@ pub struct TerminalView {
     notified: bool,
     /// The text an input method is composing, not yet written to the pty.
     pub(crate) marked: Option<String>,
+    /// What a held mouse button is doing.
+    pub(crate) drag: Option<Drag>,
+    /// The cell a press, drag or motion was last reported at.
+    pub(crate) reported: Option<(usize, usize)>,
+    /// Wheel motion, in lines, not yet scrolled or reported.
+    pub(crate) wheel: f32,
     _focus_reports: [Subscription; 2],
 }
 
@@ -73,6 +80,9 @@ impl TerminalView {
             events: None,
             notified: false,
             marked: None,
+            drag: None,
+            reported: None,
+            wheel: 0.,
             _focus_reports: focus_reports,
         })
     }
