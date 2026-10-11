@@ -113,6 +113,18 @@ fn keys_from_the_keymap_run_the_page_commands(cx: &mut TestAppContext) {
 #[gpui::test]
 fn f10_opens_the_menus_in_the_window(cx: &mut TestAppContext) {
     cx.update(init);
+    // `init` loads the keymap and menus for the host, and the gallery binds
+    // F10 everywhere but macOS: load them as on Linux, as the window draws.
+    cx.update(|cx| {
+        let config = setup::config();
+        let catalog = catalog(cx);
+        let (keymap, diagnostics) = config.keymap_for(Os::Linux, Some(&*catalog));
+        assert_eq!(diagnostics, []);
+        let (menus, diagnostics) = config.menu_bar_for(Os::Linux, Some(&*catalog));
+        assert_eq!(diagnostics, []);
+        kiln::platform::keys::set_keymap(cx, keymap);
+        kiln::platform::menus::install(cx, menus);
+    });
     let (root, cx) = cx.add_window_view(|window, cx| {
         let gallery = cx.new(|cx| Gallery::new(window, cx));
         kiln::Root::new(gallery, window, cx)

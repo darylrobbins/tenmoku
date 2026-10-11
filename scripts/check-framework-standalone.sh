@@ -89,8 +89,8 @@ echo
 step="cargo build --locked ${offline[*]} --workspace --all-targets"
 (cd "$scratch" && cargo build --locked "${offline[@]}" --workspace --all-targets)
 if ((test)); then
-  step="cargo test --locked ${offline[*]} --workspace"
-  (cd "$scratch" && cargo test --locked "${offline[@]}" --workspace)
+  step="cargo test --locked --no-fail-fast ${offline[*]} --workspace"
+  (cd "$scratch" && cargo test --locked --no-fail-fast "${offline[@]}" --workspace)
 fi
 step="done"
 
