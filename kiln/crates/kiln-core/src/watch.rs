@@ -70,6 +70,7 @@ impl ConfigWatcher {
         let (tx, rx) = mpsc::channel::<notify::Result<Event>>();
         let mut watcher = notify::recommended_watcher(tx)?;
         let rx = source(rx);
+        let clock = Clock::take();
         tracker.register(|dir| {
             watcher.watch(dir, RecursiveMode::NonRecursive)?;
             registered(dir);
@@ -103,9 +104,9 @@ impl ConfigWatcher {
                 // On a deadline, checked before every wait and while
                 // draining, so a steady stream of events can't put the
                 // re-stat off.
-                let mut reconcile_at = Instant::now() + RECONCILE;
+                let mut reconcile_at = clock.now() + RECONCILE;
                 loop {
-                    let now = Instant::now();
+                    let now = clock.now();
                     let files = if now >= reconcile_at {
                         if weak.strong_count() == 0 {
                             break;
@@ -113,13 +114,13 @@ impl ConfigWatcher {
                         let files = tracker.reconcile(&mut watch);
                         // From when it ends, so a slow one leaves a full
                         // period for events, and the disconnect check.
-                        reconcile_at = Instant::now() + RECONCILE;
+                        reconcile_at = clock.now() + RECONCILE;
                         files
                     } else {
                         match rx.recv_timeout(reconcile_at - now) {
                             Ok(event) => {
                                 let mut events = vec![event];
-                                while Instant::now() < reconcile_at {
+                                while clock.now() < reconcile_at {
                                     let Ok(event) = rx.try_recv() else {
                                         break;
                                     };
@@ -168,6 +169,36 @@ fn source(events: Events) -> Events {
     crate::tests::watch_reconcile::SOURCE
         .take()
         .unwrap_or(events)
+}
+
+/// The time the thread's deadlines are read from: in tests,
+/// [`crate::tests::watch_reconcile::CLOCK`] stands in, if set on this thread.
+#[cfg(not(test))]
+struct Clock;
+
+#[cfg(not(test))]
+impl Clock {
+    fn take() -> Clock {
+        Clock
+    }
+
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+}
+
+#[cfg(test)]
+struct Clock(Option<Arc<crate::tests::watch_reconcile::FakeClock>>);
+
+#[cfg(test)]
+impl Clock {
+    fn take() -> Clock {
+        Clock(crate::tests::watch_reconcile::CLOCK.take())
+    }
+
+    fn now(&self) -> Instant {
+        self.0.as_ref().map_or_else(Instant::now, |fake| fake.now())
+    }
 }
 
 /// Symlinks followed before giving up on a loop, as the OS does.

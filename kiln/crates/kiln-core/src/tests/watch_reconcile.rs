@@ -12,10 +12,9 @@ use std::{
     path::PathBuf,
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicU32, Ordering},
         mpsc,
     },
-    thread,
     time::{Duration, Instant},
 };
 
@@ -28,6 +27,12 @@ thread_local! {
     /// set on the thread that calls it.
     pub(crate) static SOURCE: Cell<Option<mpsc::Receiver<notify::Result<Event>>>> =
         const { Cell::new(None) };
+}
+
+thread_local! {
+    /// What [`ConfigWatcher::new`] reads the time from, when set on the
+    /// thread that calls it.
+    pub(crate) static CLOCK: Cell<Option<Arc<FakeClock>>> = const { Cell::new(None) };
 }
 
 /// An upper bound only, for a loaded host: a re-stat is due every 3 s.
@@ -75,78 +80,75 @@ fn a_file_in_a_directory_made_later_is_reported() {
     }
 }
 
-/// Unrelated events stand in for notify's through [`SOURCE`], queued without
-/// a gap (the queue is kept full, so it never empties), so the watcher never
-/// hears of the file's change: only a re-stat finds it, and the backlog
-/// mustn't put that off.
+/// A clock that moves on a step with every reading, whatever the thread's
+/// scheduling: a deadline passes after a set number of readings.
+pub(crate) struct FakeClock {
+    base: Instant,
+    step: Duration,
+    readings: AtomicU32,
+}
+
+impl FakeClock {
+    pub(crate) fn now(&self) -> Instant {
+        self.base + self.step * self.readings.fetch_add(1, Ordering::SeqCst)
+    }
+}
+
+/// Unrelated events stand in for notify's through [`SOURCE`], all queued
+/// before the thread reads any, so it's never without one when the
+/// re-stat falls due. [`CLOCK`] makes that due after about 100 readings, of
+/// the 10 000 events queued. The watcher never hears of the file's change:
+/// only a re-stat finds it, and the backlog mustn't put that off until
+/// it's read.
 #[test]
 fn a_change_amid_unrelated_events_is_reported() {
+    const BACKLOG: u32 = 10_000;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("settings.toml");
     fs::write(&path, "editor.font_size = 13\n").unwrap();
-    let (events, rx) = mpsc::sync_channel(1024);
+    // Declared before the watcher, so dropped after it: the thread reads
+    // until its sender is gone.
+    let (_events, rx) = mpsc::channel();
+    for _ in 0..BACKLOG {
+        let event =
+            Event::new(EventKind::Modify(ModifyKind::Any)).add_path(dir.path().join("unrelated"));
+        _events.send(Ok(event)).unwrap();
+    }
+    let clock = Arc::new(FakeClock {
+        base: Instant::now(),
+        step: crate::watch::RECONCILE / 100,
+        readings: AtomicU32::new(0),
+    });
     SOURCE.set(Some(rx));
-    let noise = Noise::start(events, dir.path().join("unrelated"));
+    CLOCK.set(Some(clock.clone()));
     let (tx, batches) = mpsc::channel();
-    let _watcher = ConfigWatcher::new(vec![path.clone()], move |batch| {
-        tx.send(batch).ok();
+    let (go, wait) = mpsc::channel::<()>();
+    let mut wait = Some(wait);
+    let _watcher = ConfigWatcher::new(vec![path.clone()], {
+        let clock = clock.clone();
+        move |batch| {
+            tx.send((batch, clock.readings.load(Ordering::SeqCst))).ok();
+            // The first batch holds the thread until the file has changed.
+            if let Some(wait) = wait.take() {
+                wait.recv_timeout(TIMEOUT).ok();
+            }
+        }
     })
     .unwrap();
-    // Declared after the watcher, so dropped first: the watcher's thread
-    // reads the noise's events until their sender is gone.
-    let _noise = noise;
-    let first = batches.recv_timeout(TIMEOUT).expect("a batch in time");
+    let (first, _) = batches.recv_timeout(TIMEOUT).expect("a batch in time");
     assert_eq!(first, std::slice::from_ref(&path));
 
     fs::write(&path, "editor.font_size = 18\n").unwrap();
-    let deadline = Instant::now() + TIMEOUT;
-    let mut reloaded = false;
-    while !reloaded {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        let batch = batches
-            .recv_timeout(remaining)
-            .expect("a batch naming the file changed amid unrelated events");
-        assert_eq!(batch, std::slice::from_ref(&path));
-        reloaded = reloads(&batch, &path, "editor.font_size = 18\n");
-    }
-}
-
-/// Sends events naming `path`, which no watcher tracks, as fast as the queue
-/// takes them until dropped; dropping it drops the sender.
-struct Noise {
-    stop: Arc<AtomicBool>,
-    thread: Option<thread::JoinHandle<()>>,
-}
-
-impl Noise {
-    fn start(events: mpsc::SyncSender<notify::Result<Event>>, path: PathBuf) -> Noise {
-        let stop = Arc::new(AtomicBool::new(false));
-        let thread = thread::spawn({
-            let stop = stop.clone();
-            move || {
-                while !stop.load(Ordering::Relaxed) {
-                    let event =
-                        Event::new(EventKind::Modify(ModifyKind::Any)).add_path(path.clone());
-                    if events.send(Ok(event)).is_err() {
-                        break;
-                    }
-                }
-            }
-        });
-        Noise {
-            stop,
-            thread: Some(thread),
-        }
-    }
-}
-
-impl Drop for Noise {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
-        }
-    }
+    go.send(()).unwrap();
+    let (batch, readings) = batches
+        .recv_timeout(TIMEOUT)
+        .expect("a batch naming the file changed amid unrelated events");
+    assert_eq!(batch, std::slice::from_ref(&path));
+    assert!(reloads(&batch, &path, "editor.font_size = 18\n"));
+    assert!(
+        readings < BACKLOG / 2,
+        "reported after {readings} readings, once the backlog was read"
+    );
 }
 
 /// FSEvents may still report the fixture's own writes, made just before the
