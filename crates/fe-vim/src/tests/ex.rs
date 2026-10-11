@@ -163,6 +163,10 @@ fn entering_parsing_and_running() {
         (":-5d xxx<CR>", "E16: Invalid range"),
         (":-5d 0<CR>", "E16: Invalid range"),
         (":-5s/a/b/z<CR>", "E16: Invalid range"),
+        // A bang is refused before the range is checked.
+        (":-5d!<CR>", "E477: No ! allowed"),
+        (":-2&!<CR>", "E477: No ! allowed"),
+        (":-5&&<CR>", "E16: Invalid range"),
         // Each offset is checked as it's applied.
         (
             ":1+2147483647-2147483647d<CR>",

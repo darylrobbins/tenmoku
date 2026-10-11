@@ -214,6 +214,9 @@ fn command(
     if name.is_empty()
         && let Some(args) = after.strip_prefix('&')
     {
+        if args.starts_with('!') {
+            return Err(ExError::NoBang);
+        }
         check(true)?;
         return Ok(ExCommand::Substitute(Substitute::repeat(args, true)?));
     }
