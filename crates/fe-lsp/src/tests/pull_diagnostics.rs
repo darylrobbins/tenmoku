@@ -12,8 +12,8 @@ use fe_text::Text;
 use lsp_types::notification::PublishDiagnostics;
 use lsp_types::request::WorkspaceDiagnosticRefresh;
 use lsp_types::{
-    DiagnosticOptions, DiagnosticServerCapabilities, Position, PositionEncodingKind,
-    PublishDiagnosticsParams, Range, Url,
+    DiagnosticOptions, DiagnosticServerCapabilities, NumberOrString, Position,
+    PositionEncodingKind, PublishDiagnosticsParams, Range, Url,
 };
 use serde_json::{Value, json};
 
@@ -228,6 +228,20 @@ impl Pulling {
             .active_identity(buffer.id(), self.server)
             .unwrap()
     }
+}
+
+/// The ids of the pulls of `uri`, in order.
+fn pulls_ids(records: &[Record], uri: &Url) -> Vec<NumberOrString> {
+    (records.iter())
+        .filter_map(|record| match record {
+            Record::Request { id, method, params }
+                if method == PULL && params["textDocument"]["uri"] == json!(uri) =>
+            {
+                Some(id.clone())
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 fn pulls_in(records: &[Record], uri: &Url) -> Vec<Value> {
@@ -594,6 +608,9 @@ fn pushed_and_pulled_merge() {
     let uc = s.open(&mut c, "c.rs");
     s.wait_pulls(&uc, 1);
     let raced = s.identity(&c);
+    let raced_id = (pulls_ids(&s.fake.records(), &uc))
+        .pop()
+        .expect("the raced pull's request");
     s.fake.set_writes(Writes::Stepped);
     let echo = s.manager.request::<Echo>(s.server, json!({}));
     wait_until("the server thread held on a write", || {
@@ -606,11 +623,16 @@ fn pushed_and_pulled_merge() {
     );
     let uc = s.open_unsynced(&mut c, "c.rs");
     assert_eq!(s.manager.active_identity(c.id(), s.server), None);
+    // A publication in the same interval is dropped too.
+    s.fake
+        .notify::<PublishDiagnostics>(PublishDiagnosticsParams {
+            uri: uc.clone(),
+            diagnostics: vec![over(v0, "alpha", "pushed in the race")],
+            version: Some(0),
+        });
     s.release();
     s.fake.wait_for("the raced pull answered", |records| {
-        records
-            .iter()
-            .any(|r| matches!(r, Record::Replied { method, .. } if method == PULL))
+        (records.iter()).any(|r| matches!(r, Record::Replied { id, .. } if *id == raced_id))
             && pulls_in(records, &uc).len() == 1
     });
     s.fake.set_writes(Writes::Open);

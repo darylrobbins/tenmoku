@@ -637,6 +637,16 @@ impl Document {
         diagnostics: Vec<lsp_types::Diagnostic>,
         link: &Link,
     ) -> Option<LspEvent> {
+        // The manager retires an identity before the actor hears of the
+        // close, as with a pull's reply (see `pulled`).
+        let identity = self.synced.as_ref()?.identity;
+        if link.identities.active(self.buffer, link.server) != Some(identity) {
+            log::debug!(
+                "{}: dropped pushed diagnostics for an ended incarnation",
+                self.uri
+            );
+            return None;
+        }
         self.accept(Source::Pushed, version, diagnostics, link)
     }
 
