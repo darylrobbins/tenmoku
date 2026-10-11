@@ -173,6 +173,14 @@ fn run(target: &mut VimTarget<'_>, args: ScrollArgs) -> Dispatched<fe_buffer::Tr
     let row = target.model.text().offset_to_point(head).row;
     let top = view.top_row;
     let count = args.count.filter(|&count| count > 0);
+    // A new height drops the counted 'scroll', as nvim's window does.
+    if target
+        .state
+        .scroll
+        .is_some_and(|(_, set_for)| set_for != rows)
+    {
+        target.state.scroll = None;
+    }
     // The z keys' row: the count's (from 1), else the cursor's.
     let z_row = count.map_or(row, |count| (count - 1).min(last));
     let (new_top, new_row) = match args.action {
@@ -283,16 +291,16 @@ fn run(target: &mut VimTarget<'_>, args: ScrollArgs) -> Dispatched<fe_buffer::Tr
 /// primary caret), as nvim's do: a jump, keeping the byte column (clamped as
 /// a caret is) and the goal column. In a visual mode, to the goal column:
 /// `visual::move_cursor` would reset the goal after a jump to the byte
-/// column, and clamp it short of the row's end.
+/// column, and clamp it short of the row's end; it goes to the same byte
+/// column (the row's end at most) and keeps the goal, as in other modes.
 fn jump_to_row(target: &mut VimTarget<'_>, head: usize, row: u32, extend: bool) -> bool {
     if extend {
+        let text = target.model.text().clone();
+        let column = text.offset_to_point(head).column;
+        let offset = text.row_start(row) + column.min(text.row_len(row)) as usize;
+        let offset = text.clip_offset(offset, Bias::Left);
         marks::jump_here(target);
-        let args = MoveArgs {
-            motion: Motion::DocumentEnd,
-            extend,
-            count: Some(row + 1),
-        };
-        let moved = motion::apply(target.model, target.state, args);
+        let moved = crate::visual::jump_cursor(target.model, target.state, offset);
         marks::settle(target);
         return moved;
     }

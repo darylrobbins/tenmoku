@@ -277,3 +277,50 @@ fn scroll_asks_the_host() {
         assert_eq!(model.text().offset_to_point(head).row, row, "{keys}");
     }
 }
+
+#[test]
+fn resizing_drops_counted_scroll() {
+    // Away and back: half of the view again, not the stale 3.
+    for plain in ["<C-d>", "<C-u>"] {
+        let mut v = vim((20, 0));
+        v.feed("3<C-d>").unwrap();
+        v.set_window_rows(4);
+        v.set_window_rows(10);
+        let row = v.cursor().0;
+        v.feed(plain).unwrap();
+        assert_eq!(v.cursor().0.abs_diff(row), 5, "{plain}");
+    }
+}
+
+#[test]
+fn resize_and_return_with_scroll_keys_between() {
+    let mut v = vim((0, 0));
+    assert_eq!(after(&mut v, "3<C-d>"), (3, (3, 0)));
+    v.set_window_rows(4);
+    assert_eq!(after(&mut v, "<C-d>").1, (5, 0));
+    v.set_window_rows(10);
+    let row = v.cursor().0;
+    assert_eq!(after(&mut v, "<C-d>").1, (row + 5, 0));
+}
+
+#[test]
+fn visual_count_z_keeps_byte_and_goal_column() {
+    let text = (0..60)
+        .map(|row| {
+            if row == 2 {
+                "x"
+            } else {
+                "abcdefghijklmnopqrstuvwxyz"
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    for (keys, row) in [("v2j20zt", 19), ("v2j20zz", 19), ("v2j20zb", 19)] {
+        let mut v = HeadlessVim::new(&text, (0, 20));
+        v.set_window_rows(10);
+        v.feed(keys).unwrap();
+        assert_eq!(v.cursor(), (row, 1), "{keys}");
+        v.feed("j").unwrap();
+        assert_eq!(v.cursor(), (row + 1, 20), "{keys}j");
+    }
+}

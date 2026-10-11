@@ -630,6 +630,27 @@ pub(crate) fn move_cursor(model: &mut EditorModel, state: &mut VimState, args: M
     moved_to.cursor != ends.cursor
 }
 
+/// Puts the visual cursor at `offset`, keeping its goal column (as `j` and
+/// `k` would have), for `{count}zt` and the like. False if it didn't move.
+pub(crate) fn jump_cursor(model: &mut EditorModel, state: &mut VimState, offset: usize) -> bool {
+    model.sync_display();
+    let Some(ends) = ends(model, state) else {
+        return false;
+    };
+    let text = model.text().clone();
+    let tab = model.tab_size().max(1);
+    let goal = ends
+        .goal
+        .unwrap_or_else(|| goal_of(&cursor_at(&text, ends.cursor), tab));
+    let moved_to = Ends {
+        cursor: offset,
+        goal: Some(goal),
+        ..ends
+    };
+    select(model, state, moved_to);
+    offset != ends.cursor
+}
+
 impl VimState {
     /// In a visual mode, the vim cursor's offset in `model`'s text: where
     /// the host paints the block cursor, which isn't the model selection's
