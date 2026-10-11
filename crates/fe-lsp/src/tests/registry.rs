@@ -671,10 +671,11 @@ fn configuration_answers_and_changes() {
 }
 
 /// Asserts each launch's `initialize` came after the launch before had
-/// been sent `exit`. A launch superseded before it handshook records no
-/// `initialize` (and its predecessor may have none either), so only a
-/// launch that did initialize is held to the order, and only against a
-/// predecessor that did too.
+/// been sent `exit`. Receiving `initialize` isn't completing the
+/// handshake: a launch superseded before the client consumed its reply is
+/// killed without `exit`, however its `initialize` was recorded. So only a
+/// predecessor that sent `initialized` is held to having been sent `exit`,
+/// and only before a successor that did initialize.
 fn assert_launches_follow_exits(fake: &FakeServer) {
     let timeline = fake.timeline();
     let at = |launch: usize, method: &str| {
@@ -683,7 +684,7 @@ fn assert_launches_follow_exits(fake: &FakeServer) {
             .position(|(from, r)| *from == launch && r.method() == method)
     };
     for launch in 2..=fake.launches() {
-        let (Some(initialize), Some(_)) = (at(launch, "initialize"), at(launch - 1, "initialize"))
+        let (Some(initialize), Some(_)) = (at(launch, "initialize"), at(launch - 1, "initialized"))
         else {
             continue;
         };
@@ -693,6 +694,53 @@ fn assert_launches_follow_exits(fake: &FakeServer) {
             "launch {launch}: exit {exit:?}, initialize {initialize:?}"
         );
     }
+}
+
+/// A launch superseded after its `initialize` was recorded but before its
+/// reply completed is killed without `exit`, and that is no violation.
+#[test]
+fn a_launch_superseded_mid_handshake_needs_no_exit() {
+    let fake_clock = Arc::new(ManualClock::new());
+    let fake = FakeServer::with_clock(
+        Script {
+            initialize_delay: Duration::from_secs(1),
+            ..Script::default()
+        },
+        fake_clock.clone(),
+    );
+    let (mut manager, _events) = manager(fake.launcher(), Some(Arc::new(ManualClock::new())));
+    let mut buffer = Buffer::new("fn main() {}\n");
+    let path = format!("{ROOT}/main.rs");
+    open(&mut manager, root(), &mut buffer, &path, "rust").unwrap();
+    fake.wait_for("the first initialize", |records| {
+        records.iter().any(|r| r.method() == "initialize")
+    });
+    // Both launches share the clock, and the predecessor's timer may outlive
+    // its kill. Age it, so only the successor's timer has a full second left.
+    fake_clock.wait_for_sleep(Duration::from_secs(1));
+    fake_clock.advance(Duration::from_millis(100));
+    let mut settings = LspSettings::default();
+    settings.servers.insert(
+        "rust-analyzer".into(),
+        server(json!({ "args": ["--next"] })),
+    );
+    manager.update_settings(&settings);
+    wait_until("the successor", || fake.launches() == 2);
+    fake.wait_for_at(2, "the second initialize", |records| {
+        records.iter().any(|r| r.method() == "initialize")
+    });
+    fake_clock.wait_for_sleep(Duration::from_secs(1));
+    fake_clock.advance(Duration::from_secs(1));
+    fake.wait_initialized_at(2);
+    let first: Vec<_> = fake
+        .records_of(1)
+        .iter()
+        .map(|r| r.method().to_owned())
+        .collect();
+    assert!(first.contains(&"initialize".to_owned()), "{first:?}");
+    assert!(!first.contains(&"initialized".to_owned()), "{first:?}");
+    assert!(!first.contains(&"exit".to_owned()), "{first:?}");
+    assert_launches_follow_exits(&fake);
 }
 
 #[test]

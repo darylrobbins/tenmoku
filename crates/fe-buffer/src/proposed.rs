@@ -488,9 +488,18 @@ impl Hunk {
     /// The hunk's status, given its current `range`: a pending hunk whose
     /// old text is gone becomes stale.
     fn check(&self, snapshot: &BufferSnapshot, range: Range<usize>) -> HunkStatus {
-        let status = self.verdict(snapshot, range);
-        self.status.set(status);
-        status
+        self.record(self.verdict(snapshot, range))
+    }
+
+    /// Records a `verdict` read earlier: only staleness is ever stored, and
+    /// only over a pending status, so a verdict that raced with another
+    /// thread's can't undo it.
+    fn record(&self, verdict: HunkStatus) -> HunkStatus {
+        if verdict == HunkStatus::Stale {
+            self.status.mark_stale()
+        } else {
+            verdict
+        }
     }
 
     /// What [`Hunk::check`] would make the status, without recording it.
@@ -551,6 +560,22 @@ impl Status {
         Self::ALL[usize::from(self.0.load(Ordering::Relaxed))]
     }
 
+    /// Records the transition from pending to stale, never the reverse, so a
+    /// check of an older snapshot can't undo a staleness another thread
+    /// recorded. Returns the status after.
+    fn mark_stale(&self) -> HunkStatus {
+        let seen = match self.0.compare_exchange(
+            HunkStatus::Pending as u8,
+            HunkStatus::Stale as u8,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => HunkStatus::Stale as u8,
+            Err(seen) => seen,
+        };
+        Self::ALL[usize::from(seen)]
+    }
+
     fn set(&self, status: HunkStatus) {
         self.0.store(status as u8, Ordering::Relaxed);
     }
@@ -565,5 +590,35 @@ impl Clone for Status {
 impl std::fmt::Debug for Status {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.get().fmt(f)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Buffer;
+
+    /// A check of an unchanged snapshot that read the hunk as pending, then
+    /// lost a race with a check of an edited snapshot that recorded it stale,
+    /// must not bring it back. Deterministic: the first check is paused
+    /// between reading its verdict and recording it.
+    #[test]
+    fn paused_pending_verdict_does_not_resurrect_a_stale_hunk() {
+        let mut buffer = Buffer::new("a\nb\n");
+        let base = buffer.snapshot();
+        let proposal = ProposedChange::from_text(&base, 0..base.len(), "a\nB\n", Origin::User);
+        buffer.edit([(2..3, "x")], Origin::User);
+        let edited = buffer.snapshot();
+        let hunk = &proposal.hunks[0];
+        let range = proposal.locate(&base)[0].clone();
+
+        let paused = hunk.verdict(&base, range);
+        assert_eq!(paused, HunkStatus::Pending);
+
+        let range = proposal.locate(&edited)[0].clone();
+        assert_eq!(hunk.check(&edited, range), HunkStatus::Stale);
+
+        hunk.record(paused);
+        assert_eq!(hunk.status.get(), HunkStatus::Stale);
     }
 }

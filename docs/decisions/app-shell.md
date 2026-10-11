@@ -712,6 +712,44 @@ impl Shell {
 Every path that removes items calls it first. When every answer is `Close`,
 nothing is awaited and the close happens in the same update, as today.
 
+**One close transaction at a time.** GPUI prompts are window-modal, so while
+one window's `Ask` is pending the other windows stay usable, and an earlier
+approval can go stale. `confirm_close` therefore runs as a transaction:
+
+- **Serialized.** `Shell` keeps one pending transaction per process (an app
+  global, since quit spans windows). A second close request while one is
+  pending (a second click on the red button, cmd-q during a window close, a
+  tab close during a quit) joins the pending one if it covers the same
+  items, and otherwise waits and starts after it resolves. It never runs
+  concurrently.
+- **Snapshot.** The transaction records its items, and for each one the
+  answer it got and the close-relevant state that answer was given under.
+  That state is an item-provided **close-state revision**, a new
+  `ItemHandle::close_revision(&self, cx) -> u64` that changes whenever any
+  input to `may_close` changes: dirtiness and the document's version for
+  `EditorView`, and for `ChatPane` (§3.4) also whether it is streaming, even
+  with an empty draft. An item whose veto can change without its revision
+  changing is a bug in that item. For a pane close, a window close or a
+  quit, it also records the target scope: the set of items in that pane, in
+  each window, or in every window.
+- **Revalidate before committing.** After the last answer, and before any
+  item closes, the transaction compares the snapshot with the live state.
+  Any item that is new in the scope being closed (a pane, a window or every
+  window, including one an asynchronous opener or a restore added to a pane
+  while its `Ask` was pending), and any approved item whose
+  `close_revision` changed (a clean one turned dirty, an edit since its `Ask`
+  resolved, or a chat that started streaming), is asked again, in order.
+  Every item the commit will remove is revalidated, so a pane close can't
+  remove an item that never approved. The comparison and the
+  commit run in one update, so nothing can change between them. The
+  transaction repeats until a pass asks nothing new, then commits. If a
+  repeat answer is `Keep` or `false`, the whole transaction resolves `false`
+  and nothing closes.
+- **Quit.** `cx.quit()` runs only from a transaction that has just passed
+  this revalidation across every window, so window A answering `Close` while
+  clean and then becoming dirty during window B's prompt is asked about
+  again before the quit.
+
 | Path | Today | With `confirm_close` |
 |---|---|---|
 | Close a tab (`workbench.close_tab`, the tab's ×) | `Pane::close_active`: a dirty tab no other tab shows stays, with a warning | that tab |
@@ -733,7 +771,16 @@ streaming `ChatPane` in §3.4 would). They show that the item cancels each
 path in the table: tab, pane, window by command, window by the close
 callback, and quit. After each one, everything stays open. `Ask(true)` and
 `Close` go ahead. `Keep` cancels. A quit with two windows where the second
-cancels leaves both windows open.
+cancels leaves both windows open. Two more tests cover stale approvals:
+editing a window that has already answered `Close` while another window's
+`Ask` is pending asks about that window again, and a quit with that edit
+made does not call `cx.quit()` until the new answer is `Close`; opening an
+item in a window while another window's `Ask` is pending (during a window
+close of the first, or a quit) asks about the new item too. A clean item whose veto state changes during another window's pending `Ask`
+(a `ChatPane` that starts streaming) is asked again, and so is an item that
+arrives in a pane during that pane's pending close confirmation. A further test checks
+that a second close request during a pending one doesn't run concurrently,
+and resolves with the first's outcome when it covers the same items.
 
 ## 4. Day-one host needs
 
@@ -928,21 +975,41 @@ one file per root folder:
 
 **Window ids, and several windows on one root.** Each window has an id: a
 random `u64` given when the window opens, or the id of the entry it was
-restored from.
+restored from. An id has one live owner at a time, across processes:
+
+- **Claim.** Before a window takes an entry's id, it takes a claim on it: a
+  lock file `layouts/<key>.<id>.lock`, held with an exclusive advisory lock
+  (`flock`) for the window's lifetime. The OS drops the claim if the process
+  dies, so a crash leaves no stale claim, and the entry stays for the next
+  launch.
+- **Live owner.** If the claim can't be taken because another window (in
+  this process or another) holds it, the entry has a live owner. The window
+  doesn't restore from that entry. It gets a fresh random id, with a fresh
+  claim, and starts empty or takes another unclaimed entry.
+- **Release.** The claim is released when the window closes, after its last
+  write and after any deletion of its entry.
 
 - **Writing.** A window writes only its own entry. The writer reads the
   file, replaces that window's entry, and puts the file back whole, through
   a temporary file and a rename. It holds a lock file throughout, as
   `TrustStore::update` does (`crates/fe-config/src/trust.rs:95`). So two
   windows on one root, even in two fastedit processes, never drop each
-  other's entries.
+  other's entries. Because each id has one owner (see the claim above), no
+  two windows write the same entry either, so one window's write never
+  replaces another's. A window writes only while it holds its claim.
 - **Closing.** Quitting keeps every window's entry, and so does closing the
   last window, which quits (`main.rs:255`). Closing a window while others
-  stay open deletes its entry, so it doesn't come back.
+  stay open deletes its entry, so it doesn't come back. A window deletes only
+  the entry whose id it owns, under its claim and the file lock. Closing an
+  owner never deletes an entry that another window owns, because no other
+  window owns an id it holds.
 - **Opening.** A folder launch reopens one window per entry, newest first,
-  or one empty window if there are none (Q4). A new window on a root
-  (`window.new`, or Open Folder in a new window) takes the newest entry that
-  no open window holds, or starts empty.
+  or one empty window if there are none (Q4). It skips every entry whose
+  claim is held by a live window, in this process or another, and gives that
+  window a fresh id instead. So launching a root already open in a second
+  process opens fresh windows rather than copies of the first process's.
+  A new window on a root (`window.new`, or Open Folder in a new window) takes
+  the newest entry whose claim it can take, or starts empty with a fresh id.
 
 **When it's saved.** After each layout change: a split, a close, a move, a
 dock toggle, a tab opening or closing, or the end of a divider drag. Saves
@@ -1004,10 +1071,10 @@ order:
 | S5 | **Move the leaf modules into `fe-shell`.** These are the generic parts that need neither `Pane` nor `Workbench`. From `status_bar.rs`: `StatusItem`, `StatusSide` and `StatusBar`, which now shows a list of items that `Workbench` hands it. From `pane_toolbar.rs`: `Toolbar`, the leading buttons, `path_crumbs`, `shortcut`, `dispatch` and `view.toggle_breadcrumbs`. Also `picker.rs` without `quick_open.toggle`, `title_bar.rs`, `persist.rs`'s writer (generalised), and `Catalog`. `fe-workbench` imports them from fe-shell. | m | S4, T144, T188 |
 | S6 | **The `Shell` root in `fe-shell`.** There is one per window. It composes the title bar, the dock (`dock.rs`'s generic part, with `DockItem`), the status bar and the modal layer, and it routes commands. It takes `trust.rs`, with `RootTrust` on `Shell`. Its centre is an element the host supplies, through **proposed** `Shell::set_center(AnyView)`; until S7, `Workbench` fills it with its `PaneGroup`. `Workbench` wraps one `Shell`. | m | S5, T144, T188 |
 | S7 | **Move the panes into `fe-shell`.** It takes the generic parts of `pane.rs` (§2.2), plus `pane_group.rs` (whose `render` now takes `Context<Shell>`), `pane_drag.rs`, and `pane_item.rs` with `ItemHandle`/`register_item`. `Shell` owns the `PaneGroup`. `impl PaneItem for EditorView` and its helpers move to `fe-gpui` (§3.3, Q1). fastedit's file opener (reads, reveal, placeholder) stays in `fe-workbench`. The screenshot golden is unchanged. | m | S6, T144, T188 |
-| S8 | **Close vetoes on every close path** (§3.6): `Shell::confirm_close` for a tab, a pane, a window (command and close button) and quit; `EditorView::may_close` asks Discard or Cancel. Tests: §3.6. | m | S7, T144, T188 |
+| S8 | **Close vetoes on every close path** (§3.6): `Shell::confirm_close` for a tab, a pane, a window (command and close button) and quit, as a serialized close transaction that revalidates item membership and dirtiness before it commits; `EditorView::may_close` asks Discard or Cancel. Tests: §3.6, including editing an already-approved window and opening an item while another window's `Ask` is pending. | m | S7, T144, T188 |
 | S9 | **Command palette over the registries** (§4.3): `command_palette.toggle` on cmd-shift-p lists the commands that apply in the focused context, with their keys, and dispatches the pick with `Source::Palette`. | s | S7, T144, T188 |
 | S10 | **Layout persistence** (§4.6): `PaneItem::serialize`/`restore`/`apply_state` for `EditorView`; document groups, so restored views of one file share a buffer; one file per root with an entry per window id, merged under a lock; saved on change and at quit; restored on open. Tests: §4.6's round trip of two split views of one file. | m | S8, T144, T188 |
-| S11 | **Multiple windows in fastedit** (§4.1): `window.new`, and Open Folder in a new window. Settings reloads fan out to every window, and there's a settings store per root. Windows on one root keep their own layouts by window id (§4.6). Tests: §4.6's two windows on one root. | m | S10, T144, T188 |
+| S11 | **Multiple windows in fastedit** (§4.1): `window.new`, and Open Folder in a new window. Settings reloads fan out to every window, and there's a settings store per root. Windows on one root keep their own layouts by window id, each id held by one window through a claim (§4.6). Tests: §4.6's two windows on one root, and a two-process same-root test: process A restores the root and writes; process B launches the same root and does not restore A's entries (it gets fresh ids) and writes; closing B's window leaves A's entries intact; A's later write and close touch only A's entries; and after A dies, a third launch restores A's entries. | m | S10, T144, T188 |
 | S12 | **Host example**: `crates/fe-shell/examples/host.rs` builds a window from `fe-shell` alone. It has a chat-like `PaneItem`, a host command bound in a host keymap row, a host status item, a host dock panel, and a theme applied with `apply_theme`. It runs as a test (as fe-workbench's `screenshots` example does), so the gate builds it without fastedit's crates. | s | S9, S11, T144, T188 |
 
 **Ordering against the open cards in the same files.** S1 is the first card
@@ -1088,8 +1155,8 @@ the same way:
    since it's this repository and the icons are Lucide's. Add an open
    `Icon::Path` only if the host needs icons from outside the bundle.
 4. **Restore the saved layout on launch?** **Recommended:** yes for a folder
-   launch (every window saved for the root) and for a new window on a
-   folder (the newest window entry no open window holds), as §4.6 says. A file launch
+   launch (every window saved for the root whose entry no live window owns) and for a new window on a
+   folder (the newest window entry whose claim it can take), as §4.6 says. A file launch
    (`fastedit file.rs`) opens just that file, as today. The host decides for
    itself.
 5. **One dock or several?** Today there is one dock, on the right.

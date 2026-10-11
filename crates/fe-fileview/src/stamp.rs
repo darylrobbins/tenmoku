@@ -60,10 +60,10 @@ impl Stamp {
 /// Windows error codes (`winerror.h`) a filesystem answers with when it doesn't
 /// implement the extended identity class: `ERROR_INVALID_FUNCTION`,
 /// `ERROR_NOT_SUPPORTED`, `ERROR_INVALID_PARAMETER`,
-/// `ERROR_CALL_NOT_IMPLEMENTED`.
+/// `ERROR_CALL_NOT_IMPLEMENTED`, `ERROR_INVALID_LEVEL` (what CIFS/SMB returns).
 #[cfg(any(windows, test))]
 fn identity_class_unsupported(error: &io::Error) -> bool {
-    matches!(error.raw_os_error(), Some(1 | 50 | 87 | 120))
+    matches!(error.raw_os_error(), Some(1 | 50 | 87 | 120 | 124))
 }
 
 /// The extended identity, or the legacy one when the filesystem (FAT, some
@@ -171,7 +171,7 @@ mod tests {
 
     #[test]
     fn unsupported_extended_identity_falls_back_to_legacy() {
-        for code in [1, 50, 87, 120] {
+        for code in [1, 50, 87, 120, 124] {
             let id = identity_with_fallback(Err(io::Error::from_raw_os_error(code)), || Ok((7, 9)));
             assert_eq!(id.unwrap(), (7, 9), "code {code}");
         }

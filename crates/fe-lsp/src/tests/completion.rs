@@ -198,13 +198,14 @@ fn items_convert_to_byte_edits() {
                 delay: Duration::from_secs(1),
             },
         );
+        // Count before asking: the request can reach the fake first.
+        let count = requests(&s.fake.records(), Completion::METHOD).len();
         let asked = s.manager.completion(
             buffer.id(),
             buffer.version(),
             end,
             CompletionTrigger::Character(".".into()),
         );
-        let count = requests(&s.fake.records(), Completion::METHOD).len();
         let records = s.fake.wait_for("the completion", |records| {
             requests(records, Completion::METHOD).len() > count
         });
@@ -282,13 +283,12 @@ fn resolve_triggers_and_timeouts() {
             delay: Duration::from_secs(60),
         },
     );
-    let late = s.manager.resolve(item.clone()).boxed();
     expect_timeout(
         &s,
         &clock,
         ResolveCompletionItem::METHOD,
         2,
-        late,
+        || s.manager.resolve(item.clone()).boxed(),
         Ok(item.clone()),
     );
 
@@ -301,12 +301,19 @@ fn resolve_triggers_and_timeouts() {
             delay: Duration::from_secs(60),
         },
     );
-    let late = s
-        .manager
-        .completion(buffer.id(), buffer.version(), 0, CompletionTrigger::Invoked)
-        .map(Result::unwrap)
-        .boxed();
-    expect_timeout(&s, &clock, Completion::METHOD, 3, late, None);
+    expect_timeout(
+        &s,
+        &clock,
+        Completion::METHOD,
+        3,
+        || {
+            (s.manager)
+                .completion(buffer.id(), buffer.version(), 0, CompletionTrigger::Invoked)
+                .map(Result::unwrap)
+                .boxed()
+        },
+        None,
+    );
 
     // Nor after the document is closed and opened again in the same
     // session.
@@ -338,7 +345,7 @@ fn resolve_triggers_and_timeouts() {
     assert_eq!(resolves, 0);
 }
 
-/// Waits for `late`'s `method` request, then moves the clock to just
+/// Starts `late` with `start`, waits for its `method` request, then moves the clock to just
 /// short of `secs` (still waiting) and on to it: `late` answers `then`, and
 /// the request is cancelled.
 fn expect_timeout<T: PartialEq + std::fmt::Debug>(
@@ -346,11 +353,13 @@ fn expect_timeout<T: PartialEq + std::fmt::Debug>(
     clock: &ManualClock,
     method: &str,
     secs: u64,
-    mut late: futures::future::BoxFuture<'static, T>,
+    start: impl FnOnce() -> futures::future::BoxFuture<'static, T>,
     then: T,
 ) {
+    // Count before `start`: the request may go out as soon as it's built,
+    // and under load the fake can record it before we'd look.
     let count = requests(&s.fake.records(), method).len();
-    // The request goes out once `late` is first polled.
+    let mut late = start();
     assert!(late.as_mut().now_or_never().is_none());
     let records = s
         .fake

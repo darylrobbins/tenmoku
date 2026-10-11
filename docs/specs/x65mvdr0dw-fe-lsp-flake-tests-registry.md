@@ -40,6 +40,6 @@ batches). Record the command and the counts in the criteria file.
 
 ## Implementation notes
 
-Cause: the test's assumption, not production. In the back-to-back restart rounds the first launch of a pair (`--aN`) is superseded by `--bN`, possibly before it handshakes, so it legitimately records no `initialize` (and may be killed without recording `exit`). `assert_launches_follow_exits` demanded `initialize` for every launch. It now checks the exit-before-initialize order only for a launch that initialized, against a predecessor that initialized too.
+Cause: the test's assumption, not production. In the back-to-back restart rounds the first launch of a pair (`--aN`) is superseded by `--bN`, possibly before it handshakes, so it legitimately records no `initialize` (and may be killed without recording `exit`). `assert_launches_follow_exits` demanded `initialize` for every launch. It checks the exit-before-initialize order only for a launch that initialized, against a predecessor that completed its handshake (sent `initialized`). Receiving `initialize` is not completing it: a launch superseded before the client consumed the reply is killed with no `exit`. Covered by `a_launch_superseded_mid_handshake_needs_no_exit`.
 
 Proof: `cargo test -p fe-lsp configuration_answers_and_changes` x10 under 28 busy loops (2x 14 cores): 10/10 passed.

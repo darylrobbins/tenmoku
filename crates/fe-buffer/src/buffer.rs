@@ -105,6 +105,9 @@ pub struct Buffer {
     replaced_on_read: bool,
     history: Vec<HistoryEntry>,
     open: Option<OpenTransaction>,
+    /// The caller's transaction while [`Buffer::with_transaction_aside`] has
+    /// it set aside; still protected from history trimming.
+    aside: Option<TransactionId>,
     next_transaction: u64,
     undo_clock: u64,
     /// How many undone (redoable) transactions each origin has, so edits only
@@ -200,6 +203,7 @@ impl Buffer {
             replaced_on_read: false,
             history: Vec::new(),
             open: None,
+            aside: None,
             next_transaction: 0,
             undo_clock: 0,
             redoable: HashMap::new(),
@@ -470,16 +474,14 @@ impl Buffer {
 
     /// Runs `f` with any open transaction set aside, so its edits start
     /// transactions of their own even under the open one's origin, then
-    /// restores it. The open transaction is left as the caller had it, unless
-    /// `f` pushed its history over the limit and trimmed it away.
+    /// restores it. The set-aside transaction is protected from history
+    /// trimming meanwhile, so it comes back as the caller had it.
     pub(crate) fn with_transaction_aside<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
-        let aside = self.open.take();
+        let open = self.open.take();
+        let outer_aside = std::mem::replace(&mut self.aside, open.as_ref().map(|open| open.id));
         let result = f(self);
-        if let Some(open) = aside
-            && self.history.iter().any(|entry| entry.id == open.id)
-        {
-            self.open = Some(open);
-        }
+        self.aside = outer_aside;
+        self.open = open;
         result
     }
 
@@ -649,13 +651,16 @@ impl Buffer {
             return;
         }
         let open = self.open.as_ref().map(|open| open.id);
+        let aside = self.aside;
         // Indices of the origin's closed entries, oldest first; the last
         // is never dropped.
         let mut droppable: Vec<usize> = self
             .history
             .iter()
             .enumerate()
-            .filter(|(_, entry)| entry.origin == *origin && Some(entry.id) != open)
+            .filter(|(_, entry)| {
+                entry.origin == *origin && Some(entry.id) != open && Some(entry.id) != aside
+            })
             .map(|(ix, _)| ix)
             .collect();
         droppable.pop();

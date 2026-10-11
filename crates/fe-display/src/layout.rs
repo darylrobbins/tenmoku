@@ -419,7 +419,8 @@ impl<L: MeasuredLine> Frame<L> {
     /// past an edge) clamp to its first or last row, and positions past the
     /// end of a soft-wrapped row stay on it. A block in this frame gives the
     /// end of the display row above it, or the start of the first row;
-    /// outside it, a block row clamps like the display row below it.
+    /// outside it, a block row clamps like the display row below it. A frame
+    /// with only block rows clamps to the nearest block's anchor.
     /// `long_rows` and `widths` are what the frame was laid out with.
     pub fn offset_at(
         &self,
@@ -447,7 +448,14 @@ impl<L: MeasuredLine> Frame<L> {
                 self.rows.last()
             }
         }) else {
-            return 0;
+            // A viewport filled by blocks has no text rows to clamp to; the
+            // nearest block's anchor is the closest boundary.
+            let block = if row < self.first_row {
+                self.block_offsets.first()
+            } else {
+                self.block_offsets.last()
+            };
+            return block.map_or(0, |(_, offset)| *offset);
         };
         let x = f64::from(position.x - self.text_left) + f64::from(self.scroll.x);
         let offset = row.offset_for_x(x, long_rows, widths);

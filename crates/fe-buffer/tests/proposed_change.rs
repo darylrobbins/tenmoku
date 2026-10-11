@@ -342,3 +342,58 @@ fn accept_all_is_independent_of_an_open_transaction() {
         assert!(text.starts_with("// more\n// top\n"), "{open:?}");
     }
 }
+
+#[test]
+fn accept_keeps_the_callers_transaction_past_the_history_limit() {
+    for open in open_origins() {
+        for all in [false, true] {
+            let (mut buffer, mut proposal, outer) = with_open_transaction(open.clone());
+            buffer.set_history_limit(0);
+            let id = proposal.hunks(buffer.current())[0].id;
+            let accepted = if all {
+                proposal.accept_all_as(&mut buffer, open.clone()).0.unwrap()
+            } else {
+                proposal.accept_as(&mut buffer, id, open.clone()).unwrap()
+            };
+            assert_ne!(accepted, outer, "{open:?} all={all}");
+
+            buffer.edit([(0..0, "// more\n")], open.clone());
+            assert_eq!(buffer.end_transaction(), Some(outer), "{open:?} all={all}");
+
+            // Closing it was the first chance to trim it, and the acceptance
+            // is the newest entry: undo reaches the acceptance, as it did
+            // before the caller's transaction closed.
+            assert_eq!(buffer.undo(|o| *o == open).unwrap(), Some(accepted));
+        }
+    }
+}
+
+#[test]
+fn stale_observation_is_not_overwritten_by_an_unchanged_snapshot() {
+    let mut buffer = Buffer::new(THREE_FNS);
+    let base = buffer.snapshot();
+    let proposal = ProposedChange::from_text(&base, 0..base.len(), &rewritten(), ai());
+    let one = THREE_FNS.find("    1\n").unwrap();
+    buffer.edit([(one + 4..one + 5, "9")], Origin::User);
+    let edited = buffer.snapshot();
+
+    let stale = |hunks: &[HunkView]| hunks[0].status == HunkStatus::Stale;
+    assert!(stale(&proposal.hunks(&edited)));
+    // A check of the unchanged snapshot, after the stale one, must not
+    // resurrect the hunk: staleness is permanent.
+    assert!(stale(&proposal.hunks(&base)));
+    assert!(stale(&proposal.hunks(&edited)));
+
+    // Concurrently, in either interleaving.
+    std::thread::scope(|scope| {
+        for _ in 0..4 {
+            scope.spawn(|| {
+                for _ in 0..200 {
+                    proposal.hunks(&base);
+                    proposal.hunks(&edited);
+                }
+            });
+        }
+    });
+    assert!(stale(&proposal.hunks(&edited)));
+}

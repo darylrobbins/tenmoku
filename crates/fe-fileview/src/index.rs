@@ -154,6 +154,8 @@ impl LineIndex {
             gate,
         });
         let spawned = if empty {
+            // No thread to wait for: it has "exited" from the start.
+            shared.exit();
             Ok(())
         } else {
             let (view, shared) = (Arc::clone(&view), Arc::clone(&shared));

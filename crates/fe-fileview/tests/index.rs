@@ -331,3 +331,15 @@ fn an_empty_file_and_one_without_breaks() {
     assert_eq!(index.row_for_offset(CHUNK_BYTES).unwrap(), Some(0));
     assert_eq!(index.row_start(0).unwrap(), Some(0));
 }
+
+#[test]
+fn a_stepped_empty_file_has_no_worker() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_, view) = open(&dir, "empty-stepped.txt", b"");
+    let (index, mut step) = LineIndex::build_stepped(view);
+    assert_eq!(index.progress().state, IndexState::Complete);
+    assert!(step.next().is_none());
+    assert!(step.exited_within(Duration::from_millis(100)));
+    drop(index);
+    assert!(step.exited_within(Duration::from_millis(100)));
+}

@@ -298,6 +298,19 @@ fn hit_testing_skips_blocks() {
 }
 
 #[test]
+fn dragging_past_a_viewport_filled_by_a_block() {
+    let editor = Editor::new(&[0], None);
+    let blocks = BlockMap::new([block(5, 5, 7)]);
+    // The block fills the viewport: no text rows are laid out.
+    let frame = editor.lay_out(Some(&blocks), LINE * 5., false, LINE * 5.);
+    assert!(frame.rows.is_empty());
+    let x = frame.text_left + 2. * CELL;
+    // Above: the end of row 4. Below: the same anchor, not the document start.
+    assert_eq!(editor.offset_at(&frame, x, -1.), 6 * 4 + 5);
+    assert_eq!(editor.offset_at(&frame, x, LINE * 5. + 1.), 6 * 4 + 5);
+}
+
+#[test]
 fn scrolling_counts_block_rows() {
     let last_row = 6 * (ROWS as usize - 1) + 2;
     let editor = Editor::new(&[last_row], None);
