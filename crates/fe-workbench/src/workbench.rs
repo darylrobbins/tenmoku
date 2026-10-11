@@ -38,7 +38,7 @@ use crate::{
     trust::{self, RootTrust, TrustChanged},
 };
 use kiln_shell::{
-    TitleBar,
+    ItemHandle, TitleBar,
     window_frame::{self, TopRow},
 };
 
@@ -1101,9 +1101,14 @@ impl Workbench {
         outline.update(cx, |outline, cx| outline.set_editor(editor.as_ref(), cx));
         self.push_symbols(editor.as_ref(), cx);
         let id = editor.as_ref().map(Entity::entity_id);
+        let item = self
+            .active
+            .read(cx)
+            .active_item()
+            .map(ItemHandle::boxed_clone);
         let followed = self.status_bar.update(cx, |bar, cx| {
-            let followed = bar.editor_id() != id;
-            bar.set_editor(editor.as_ref(), window, cx);
+            let followed = bar.item_id() != item.as_ref().map(|item| item.id());
+            bar.set_active_item(item.as_deref(), window, cx);
             followed
         });
         let reveal = id != self.revealed;

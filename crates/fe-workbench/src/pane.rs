@@ -267,6 +267,12 @@ impl Pane {
         self.tabs.get(self.active).map(|tab| &tab.editor)
     }
 
+    /// The active tab's item, its editor, unless a file being opened or a
+    /// read error shows in its place: what the status bar follows.
+    pub fn active_item(&self) -> Option<&dyn ItemHandle> {
+        self.active_editor().map(|editor| editor as &dyn ItemHandle)
+    }
+
     /// What gets focus when focus leaves a hidden panel: the active editor,
     /// or else the pane.
     pub(crate) fn focus_target(&self, cx: &App) -> FocusHandle {
@@ -1132,16 +1138,19 @@ impl Pane {
         })
     }
 
-    /// The path crumbs of the file shown, being read or that failed to be
-    /// read, then the symbol chain if it's of the editor shown.
+    /// The path crumbs of the file being read or that failed to be read,
+    /// or else of the active item's ([`kiln_shell::PaneItem::path`]), then
+    /// the item's own crumbs, then the symbol chain if it's of the editor
+    /// shown.
     fn crumbs(&self, cx: &mut Context<Self>) -> Vec<Crumb> {
         let path = match (&self.opening, &self.error) {
-            (Some(path), _) | (None, Some((path, _))) => Some(Some(path.as_path())),
-            (None, None) => self.tabs.get(self.active).map(|tab| tab.path.as_deref()),
+            (Some(path), _) | (None, Some((path, _))) => Some(Some(path.clone())),
+            (None, None) => self.tabs.get(self.active).map(|tab| tab.item().path(cx)),
         };
         let Some(path) = path else {
             return Vec::new();
         };
+        let path = path.as_deref();
         let path_crumbs = pane_toolbar::path_crumbs(path, self.toolbar.root.as_deref());
         let mut crumbs: Vec<_> =
             path_crumbs
@@ -1169,6 +1178,27 @@ impl Pane {
                     }))
                 })
                 .collect();
+        if let Some(tab) = self.tabs.get(self.active)
+            && self.opening.is_none()
+            && self.error.is_none()
+        {
+            let pane = cx.entity().downgrade();
+            crumbs.extend(tab.item().breadcrumbs(cx).into_iter().map(|mut crumb| {
+                // Focus the item first, so focus goes back to it once a
+                // picker the click opens is dismissed.
+                crumb.on_click = crumb.on_click.map(|on_click| {
+                    let pane = pane.clone();
+                    Rc::new(move |window: &mut Window, cx: &mut App| {
+                        if let Some(pane) = pane.upgrade() {
+                            let target = pane.read(cx).focus_target(cx);
+                            window.focus(&target, cx);
+                        }
+                        on_click(window, cx);
+                    }) as kiln_shell::item::CrumbClick
+                });
+                crumb.into_crumb()
+            }));
+        }
         let chain = &self.toolbar.symbols;
         let editor = self
             .active_editor()

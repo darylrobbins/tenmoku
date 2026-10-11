@@ -2,7 +2,8 @@
 
 //! The status bar's items: data a host and the active pane item contribute
 //! ([`StatusItem`]), the host's set of them over the item's
-//! ([`StatusItems`]), and how they draw ([`status_bar`], [`status_entry`]).
+//! ([`StatusItems`], [`StatusItems::items_for`]), and how they draw
+//! ([`status_bar`], [`status_entry`]).
 //!
 //! Items sort by side, then by priority, lower first, so left to right;
 //! ties keep the order they were given in, the active item's before the
@@ -18,6 +19,8 @@ use gpui::{App, IntoElement, SharedString, Window};
 use kiln_command::Invocation;
 use kiln_platform::{command_actions::dispatch_invocation, keys};
 use kiln_ui::{StatusBarFrame, StatusEntry, ui_theme};
+
+use crate::ItemHandle;
 
 /// Which end of the bar an item sits at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -104,6 +107,16 @@ impl StatusItems {
         // Stable, so ties keep their order.
         items.sort_by_key(|item| (item.side, item.priority));
         items
+    }
+}
+
+impl StatusItems {
+    /// Every item to draw while `active` is the active pane's active item:
+    /// its [`PaneItem::status_items`](crate::PaneItem::status_items) with
+    /// the host's over them ([`StatusItems::merged`]); the host's alone
+    /// with no item.
+    pub fn items_for(&self, active: Option<&dyn ItemHandle>, cx: &App) -> Vec<StatusItem> {
+        self.merged(active.map(|item| item.status_items(cx)).unwrap_or_default())
     }
 }
 

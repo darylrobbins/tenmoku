@@ -202,6 +202,9 @@ impl ItemCrumb {
     }
 }
 
+/// What [`ItemHandle::observe_in`] runs when the item notifies.
+pub type OnChangeIn = Box<dyn FnMut(&mut Window, &mut App)>;
+
 /// A [`PaneItem`] of any type: what a pane holds in a tab. Each method
 /// forwards to the item's, reading or updating its entity.
 pub trait ItemHandle: 'static {
@@ -218,6 +221,9 @@ pub trait ItemHandle: 'static {
     /// Runs `changed` whenever the item notifies, while the subscription
     /// is held.
     fn observe(&self, changed: Box<dyn FnMut(&mut App)>, cx: &mut App) -> Subscription;
+    /// Runs `changed` in `window` whenever the item notifies, while the
+    /// subscription is held and the window is open.
+    fn observe_in(&self, window: &mut Window, changed: OnChangeIn, cx: &mut App) -> Subscription;
 
     fn tab_title(&self, cx: &App) -> SharedString;
     fn tab_icon(&self, cx: &App) -> Option<Icon>;
@@ -263,6 +269,15 @@ impl<T: PaneItem> ItemHandle for Entity<T> {
 
     fn observe(&self, mut changed: Box<dyn FnMut(&mut App)>, cx: &mut App) -> Subscription {
         cx.observe(self, move |_, cx| changed(cx))
+    }
+
+    fn observe_in(
+        &self,
+        window: &mut Window,
+        mut changed: OnChangeIn,
+        cx: &mut App,
+    ) -> Subscription {
+        window.observe(self, cx, move |_, window, cx| changed(window, cx))
     }
 
     fn tab_title(&self, cx: &App) -> SharedString {

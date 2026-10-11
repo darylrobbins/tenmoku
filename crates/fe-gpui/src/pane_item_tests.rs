@@ -10,6 +10,7 @@ use fe_editor::EditorModel;
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use kiln_shell::ItemHandle;
 
+use super::status;
 use crate::{EditorTheme, EditorView};
 
 /// An editor over `text`, at `path`, in a headless window.
@@ -121,4 +122,31 @@ fn saved_state_is_the_path_and_caret(cx: &mut TestAppContext) {
         ("caret", Value::from(2)),
     ]);
     assert_eq!(state, Some(expected));
+}
+
+#[gpui::test]
+fn status_items_are_the_editors(cx: &mut TestAppContext) {
+    let (view, cx) = editor(cx, "abc\ndef\n", None);
+    view.update(cx, |view, _| view.model_mut().insert("é"));
+    let item: Box<dyn ItemHandle> = Box::new(view);
+    let items = cx.update(|_, cx| item.status_items(cx));
+    let drawn: Vec<_> = items
+        .iter()
+        .map(|item| (item.side, item.id.as_ref(), item.text.as_ref()))
+        .collect();
+    let right = kiln_shell::StatusSide::Right;
+    assert_eq!(
+        drawn,
+        [
+            (right, status::CURSOR, "Ln 1, Col 2"),
+            (right, status::INDENT, "Spaces: 4"),
+            (right, status::ENCODING, "UTF-8"),
+            (right, status::LINE_ENDING, "LF"),
+            (right, status::LANGUAGE, "Plain Text"),
+        ]
+    );
+    let language = items.last().unwrap().command.as_ref().unwrap();
+    assert_eq!(language.command.as_str(), "language.select");
+    assert_eq!(status::language_label("cpp"), "C++");
+    assert_eq!(status::language_label("zig"), "zig");
 }

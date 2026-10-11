@@ -2,7 +2,8 @@
 
 //! A pane item held through its handle: what it says forwarded, its type
 //! got back, a split sharing its document, the default close veto for
-//! unsaved changes, and notifications heard.
+//! unsaved changes, notifications heard, and the status items and crumbs
+//! the active item gives.
 
 use std::{cell::Cell, path::PathBuf, rc::Rc};
 
@@ -11,7 +12,10 @@ use gpui::{
     TestAppContext, Window, div,
 };
 use kiln_command::Value;
-use kiln_shell::{CloseAnswer, ItemCrumb, ItemHandle, ItemId, PaneItem, StatusItem, StatusSide};
+use kiln_shell::{
+    CloseAnswer, ItemCrumb, ItemHandle, ItemId, PaneItem, StatusItem, StatusItems, StatusSide,
+    crumbs::path_crumbs,
+};
 use kiln_ui::CrumbKind;
 
 /// One note's text: shared by the notes that show it.
@@ -228,4 +232,79 @@ fn observing_hears_notifications(cx: &mut TestAppContext) {
     note.update(cx, |_, cx| cx.notify());
     cx.run_until_parked();
     assert_eq!(heard.get(), 1, "not once dropped");
+}
+
+#[gpui::test]
+fn the_active_items_status_and_crumbs(cx: &mut TestAppContext) {
+    let (note, cx) = cx.add_window_view(|_, cx| Note::new("todo", cx));
+    let item: Box<dyn ItemHandle> = Box::new(note.clone());
+    let mut host = StatusItems::default();
+    host.set(StatusItem::new(
+        "host.ready",
+        StatusSide::Right,
+        10,
+        "Ready",
+    ));
+    let texts = |items: Vec<StatusItem>| -> Vec<String> {
+        items
+            .into_iter()
+            .map(|item| item.text.to_string())
+            .collect()
+    };
+    cx.update(|_, cx| {
+        assert_eq!(
+            texts(host.items_for(Some(&*item), cx)),
+            ["0 words", "Ready"]
+        );
+        assert_eq!(texts(host.items_for(None, cx)), ["Ready"], "no item");
+    });
+    // A host item with the item's id shows in its place.
+    host.set(StatusItem::new(
+        "note.words",
+        StatusSide::Right,
+        0,
+        "Host words",
+    ));
+    cx.update(|_, cx| {
+        assert_eq!(
+            texts(host.items_for(Some(&*item), cx)),
+            ["Host words", "Ready"]
+        );
+    });
+
+    // Its crumbs, as kiln-ui draws them.
+    let crumbs: Vec<_> = cx.update(|_, cx| {
+        item.breadcrumbs(cx)
+            .into_iter()
+            .map(ItemCrumb::into_crumb)
+            .collect()
+    });
+    assert_eq!(crumbs.len(), 1);
+    assert_eq!(
+        (crumbs[0].label.as_ref(), crumbs[0].kind),
+        ("todo", CrumbKind::Symbol)
+    );
+    // Its path as path crumbs, under the root.
+    let path = cx.update(|_, cx| item.path(cx));
+    let path_crumbs = path_crumbs(path.as_deref(), Some(std::path::Path::new("/notes")));
+    assert_eq!(path_crumbs.len(), 1);
+    assert_eq!(path_crumbs[0].label, "todo.txt");
+}
+
+#[gpui::test]
+fn observing_in_a_window(cx: &mut TestAppContext) {
+    let (note, cx) = cx.add_window_view(|_, cx| Note::new("todo", cx));
+    let item: Box<dyn ItemHandle> = Box::new(note.clone());
+    let heard = Rc::new(Cell::new(0));
+    let _subscription = cx.update(|window, cx| {
+        let heard = heard.clone();
+        let changed = move |window: &mut Window, _: &mut gpui::App| {
+            assert!(window.viewport_size().width > gpui::px(0.));
+            heard.set(heard.get() + 1);
+        };
+        item.observe_in(window, Box::new(changed), cx)
+    });
+    note.update(cx, |_, cx| cx.notify());
+    cx.run_until_parked();
+    assert_eq!(heard.get(), 1);
 }

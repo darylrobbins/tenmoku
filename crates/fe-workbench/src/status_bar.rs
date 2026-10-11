@@ -1,17 +1,18 @@
-//! The status bar along the window's bottom edge: the active editor's vim
-//! mode, with vim on, on the left; its cursor, selections, indentation,
-//! encoding, line endings and language on the right; and whatever items a
-//! host sets.
+//! The status bar along the window's bottom edge: the active item's
+//! items, for an editor its vim mode, with vim on, on the left, and its
+//! cursor, selections, indentation, encoding, line endings and language on
+//! the right ([`fe_gpui::pane_item::status`]); and whatever items a host
+//! sets.
 //!
 //! Items are data ([`StatusItem`], fastedit's name for kiln-shell's
 //! [`kiln_shell::StatusItem`], with the built-in items' ids), kept and
 //! drawn by kiln-shell's [`kiln_shell::status`]: the host's over the
-//! built-in ones, sorted. The built-in ones are computed from the
-//! active editor each time the bar renders, so nothing new is tracked: the
-//! bar observes the editor the workbench says is active
-//! ([`StatusBar::set_editor`]), and re-renders when it notifies, as it does
-//! on every caret move and edit. The workbench embeds the bar cached, so
-//! its other redraws reuse the bar's last frame.
+//! active item's ([`kiln_shell::PaneItem::status_items`]), sorted. Those
+//! are computed from the item each time the bar renders, so nothing new is
+//! tracked: the bar observes the item the workbench says is active
+//! ([`StatusBar::set_active_item`]), and re-renders when it notifies, as
+//! an editor does on every caret move and edit. The workbench embeds the
+//! bar cached, so its other redraws reuse the bar's last frame.
 //!
 //! While that editor has vim's command line open, the line shows in the
 //! bar's place, even with the bar hidden: see [`vim_line`].
@@ -26,14 +27,18 @@ use std::rc::Rc;
 use fe_command::{
     Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Invocation, Registry,
 };
-use fe_gpui::{EditorView, commands::RunCommand};
+use fe_gpui::{EditorView, commands::RunCommand, pane_item::status as built_in};
 use fe_ui::UiTheme;
-use fe_vim::VimState;
 use gpui::{
-    App, Context, Entity, EntityId, Global, IntoElement, Render, SharedString, Subscription,
-    WeakEntity, Window,
+    App, Context, Entity, Global, IntoElement, Render, SharedString, Subscription, WeakEntity,
+    Window,
 };
-use kiln_shell::status::{self, StatusItems};
+use kiln_shell::{
+    ItemHandle, ItemId,
+    status::{self, StatusItems},
+};
+
+pub(crate) use built_in::{PLAIN_TEXT, language_label};
 
 pub use kiln_shell::StatusSide;
 
@@ -75,78 +80,35 @@ impl From<StatusItem> for kiln_shell::StatusItem {
     }
 }
 
-/// The built-in items' ids: the vim mode on the left, the others on the
-/// right, in this order. A host item set with one of them shows in that
-/// item's place.
+/// The built-in items' ids, an editor's ([`fe_gpui::pane_item::status`]):
+/// the vim mode on the left, the others on the right, in this order. A host
+/// item set with one of them shows in that item's place.
 impl StatusItem {
     /// `NORMAL`, `INSERT`, `VISUAL`, `VISUAL LINE` or `VISUAL BLOCK`, only
     /// with vim on: on the left, priority 0.
-    pub const VIM_MODE: &str = "vim_mode";
+    pub const VIM_MODE: &str = built_in::VIM_MODE;
     /// Vim's last message, such as `E486: Pattern not found: zzz`, until
     /// the next key in the editor: on the left, priority 10.
-    pub const VIM_MESSAGE: &str = "vim_message";
+    pub const VIM_MESSAGE: &str = built_in::VIM_MESSAGE;
     /// `Ln 12, Col 5`, then ` (17 selected)` or ` (3 selections)`: priority
     /// 100.
-    pub const CURSOR: &str = "cursor";
+    pub const CURSOR: &str = built_in::CURSOR;
     /// `Spaces: 4`: priority 200.
-    pub const INDENT: &str = "indent";
+    pub const INDENT: &str = built_in::INDENT;
     /// The file's encoding, such as `UTF-8`, `UTF-8 with BOM` or `windows-1252`:
     /// priority 300.
-    pub const ENCODING: &str = "encoding";
+    pub const ENCODING: &str = built_in::ENCODING;
     /// `LF` or `CRLF`: priority 400.
-    pub const LINE_ENDING: &str = "line_ending";
+    pub const LINE_ENDING: &str = built_in::LINE_ENDING;
     /// The language's name, `Plain Text`, or `…` while it loads; a click
     /// runs `language.select`: priority 500.
-    pub const LANGUAGE: &str = "language";
+    pub const LANGUAGE: &str = built_in::LANGUAGE;
 }
-
-/// The built-in items' ids and priorities, left to right.
-const BUILT_IN_PRIORITIES: [(&str, i32); 5] = [
-    (StatusItem::CURSOR, 100),
-    (StatusItem::INDENT, 200),
-    (StatusItem::ENCODING, 300),
-    (StatusItem::LINE_ENDING, 400),
-    (StatusItem::LANGUAGE, 500),
-];
-
-/// The label the language picker and the bar show for a language id.
-pub(crate) fn language_label(id: &str) -> SharedString {
-    let label = match id {
-        "bash" => "Bash",
-        "c" => "C",
-        "cpp" => "C++",
-        "csharp" => "C#",
-        "css" => "CSS",
-        "dockerfile" => "Dockerfile",
-        "go" => "Go",
-        "html" => "HTML",
-        "java" => "Java",
-        "javascript" => "JavaScript",
-        "json" => "JSON",
-        "kotlin" => "Kotlin",
-        "lua" => "Lua",
-        "make" => "Makefile",
-        "markdown" => "Markdown",
-        "php" => "PHP",
-        "python" => "Python",
-        "ruby" => "Ruby",
-        "rust" => "Rust",
-        "scala" => "Scala",
-        "sql" => "SQL",
-        "swift" => "Swift",
-        "toml" => "TOML",
-        "tsx" => "TSX",
-        "typescript" => "TypeScript",
-        "xml" => "XML",
-        "yaml" => "YAML",
-        other => return SharedString::from(other.to_owned()),
-    };
-    label.into()
-}
-
-pub(crate) const PLAIN_TEXT: &str = "Plain Text";
 
 pub struct StatusBar {
+    /// The item followed: the active pane's active tab's.
+    item: Option<Box<dyn ItemHandle>>,
+    /// That item as an editor, for vim's command line.
     editor: Option<WeakEntity<EditorView>>,
     /// The host's items.
     items: StatusItems,
@@ -163,6 +125,7 @@ pub struct StatusBar {
 impl StatusBar {
     pub fn new(ui: UiTheme) -> Self {
         Self {
+            item: None,
             editor: None,
             items: StatusItems::default(),
             ui,
@@ -188,131 +151,48 @@ impl StatusBar {
         cx.notify();
     }
 
-    /// Follows `editor`, the active pane's active tab's, or none. The
+    /// Follows `item`, the active pane's active tab's, or none. The
     /// workbench calls it as it renders, as it does
     /// [`crate::OutlinePanel::set_editor`].
-    pub fn set_editor(
+    pub fn set_active_item(
         &mut self,
-        editor: Option<&Entity<EditorView>>,
+        item: Option<&dyn ItemHandle>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if editor.map(Entity::entity_id) == self.editor_id() {
+        if item.map(|item| item.id()) == self.item_id() {
             return;
         }
-        // Now, while the last frame still draws the editor left.
-        self.leave_line(editor.map(Entity::entity_id), window, cx);
-        self.editor = editor.map(Entity::downgrade);
-        self._observe = editor.map(|editor| {
-            cx.observe_in(editor, window, |bar, _, window, cx| {
-                bar.sync_line(window, cx);
-                cx.notify();
-            })
+        // Now, while the last frame still draws the item left.
+        self.leave_line(item.map(|item| item.id().0), window, cx);
+        self.editor = item
+            .and_then(|item| item.downcast_ref::<EditorView>())
+            .map(Entity::downgrade);
+        let bar = cx.entity().downgrade();
+        self._observe = item.map(|item| {
+            let changed = move |window: &mut Window, cx: &mut App| {
+                bar.update(cx, |bar, cx| {
+                    bar.sync_line(window, cx);
+                    cx.notify();
+                })
+                .ok();
+            };
+            item.observe_in(window, Box::new(changed), cx)
         });
+        self.item = item.map(ItemHandle::boxed_clone);
         // Not while the workbench draws.
         cx.defer_in(window, Self::sync_line);
         cx.notify();
     }
 
-    /// The editor followed.
-    pub(crate) fn editor_id(&self) -> Option<EntityId> {
-        self.editor.as_ref().map(|editor| editor.entity_id())
+    /// The item followed.
+    pub(crate) fn item_id(&self) -> Option<ItemId> {
+        self.item.as_ref().map(|item| item.id())
     }
 
     /// Every item to draw, sorted.
     fn items(&self, cx: &App) -> Vec<kiln_shell::StatusItem> {
-        let editor = self.editor.as_ref().and_then(WeakEntity::upgrade);
-        let built_in = editor.map(|editor| built_in_items(editor.read(cx)));
-        self.items.merged(built_in.into_iter().flatten())
-    }
-}
-
-/// The active editor's items.
-fn built_in_items(editor: &EditorView) -> Vec<kiln_shell::StatusItem> {
-    let model = editor.model();
-    let text = model.text();
-    let selections = model.selections();
-    let primary = model.primary_selection();
-    let head = if primary.reversed {
-        primary.range.start
-    } else {
-        primary.range.end
-    };
-    let row = text.offset_to_point(head).row;
-    let column = text.offset_to_char(head) - text.offset_to_char(text.row_start(row)) + 1;
-    let mut cursor = format!("Ln {}, Col {column}", row + 1);
-    if selections.len() > 1 {
-        cursor += &format!(" ({} selections)", selections.len());
-    } else if !primary.range.is_empty() {
-        let chars =
-            text.offset_to_char(primary.range.end) - text.offset_to_char(primary.range.start);
-        cursor += &format!(" ({chars} selected)");
-    }
-    let encoding = model.buffer().encoding().label();
-    let line_ending = match model.buffer().line_ending() {
-        fe_buffer::LineEnding::Lf => "LF",
-        fe_buffer::LineEnding::CrLf => "CRLF",
-    };
-    let language = match editor.syntax() {
-        Some(syntax) => language_label(syntax.language().name()),
-        None if editor.is_loading_language() => "…".into(),
-        None => PLAIN_TEXT.into(),
-    };
-    let vim_mode = editor.vim_mode().map(|mode| {
-        kiln_shell::StatusItem::new(
-            StatusItem::VIM_MODE,
-            StatusSide::Left,
-            0,
-            vim_mode_label(mode),
-        )
-    });
-    let vim_message = editor
-        .vim_state()
-        .and_then(VimState::message)
-        .map(|message| {
-            kiln_shell::StatusItem::new(
-                StatusItem::VIM_MESSAGE,
-                StatusSide::Left,
-                10,
-                message.to_owned(),
-            )
-        });
-    let language_command = Invocation::of("language.select").expect("a valid command ID");
-    let texts: [(SharedString, Option<Invocation>); 5] = [
-        (cursor.into(), None),
-        (format!("Spaces: {}", model.tab_size()).into(), None),
-        (encoding.into(), None),
-        (line_ending.into(), None),
-        (language, Some(language_command)),
-    ];
-    let right =
-        BUILT_IN_PRIORITIES
-            .into_iter()
-            .zip(texts)
-            .map(|((id, priority), (text, command))| kiln_shell::StatusItem {
-                id: id.into(),
-                side: StatusSide::Right,
-                priority,
-                text,
-                command,
-            });
-    vim_mode
-        .into_iter()
-        .chain(vim_message)
-        .chain(right)
-        .collect()
-}
-
-/// The bar's text for a `vim.mode`: an operator waiting is still normal
-/// mode.
-fn vim_mode_label(mode: &str) -> SharedString {
-    match mode {
-        "normal" | "operator_pending" => "NORMAL".into(),
-        "insert" => "INSERT".into(),
-        "visual" => "VISUAL".into(),
-        "visual_line" => "VISUAL LINE".into(),
-        "visual_block" => "VISUAL BLOCK".into(),
-        other => other.to_uppercase().into(),
+        self.items.items_for(self.item.as_deref(), cx)
     }
 }
 

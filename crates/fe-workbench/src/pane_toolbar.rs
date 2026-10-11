@@ -1,6 +1,7 @@
 //! What a pane's toolbar shows: back and forward, then breadcrumbs, the
-//! active tab's path under the workbench's root and the symbols enclosing
-//! its caret.
+//! active item's path under the workbench's root (kiln-shell's
+//! [`kiln_shell::crumbs::path_crumbs`]), the item's own crumbs, and the
+//! symbols enclosing its caret.
 //!
 //! The symbols come from the outline [`crate::OutlinePanel`] already keeps
 //! for the active editor: the workbench works the chain out as it follows
@@ -12,11 +13,7 @@
 //! [`init`]'s registry, in the workbench's [`crate::KEY_CONTEXT`], and its
 //! handler only says it ran: the workbench does it.
 
-use std::{
-    ffi::OsString,
-    path::{Component, Path, PathBuf},
-    rc::Rc,
-};
+use std::{ffi::OsString, path::PathBuf, rc::Rc};
 
 use fe_command::{
     Actor, CommandId, CommandTarget, ContextFrame, ContextPredicate, ContextStack, Dispatched,
@@ -87,60 +84,7 @@ pub(crate) enum ToolbarRequest {
     PaneCommands,
 }
 
-/// One path crumb: a directory, or the file last.
-pub(crate) struct PathCrumb {
-    pub(crate) label: SharedString,
-    /// The directory it lists when clicked: its own, or the file's.
-    pub(crate) dir: Option<PathBuf>,
-    pub(crate) file: bool,
-}
-
-/// `path`'s crumbs: a directory per component under `root`, then the file;
-/// outside `root`, its parent directory's name, then the file. A buffer
-/// with no path is `untitled`.
-pub(crate) fn path_crumbs(path: Option<&Path>, root: Option<&Path>) -> Vec<PathCrumb> {
-    let Some(path) = path else {
-        return vec![PathCrumb {
-            label: "untitled".into(),
-            dir: None,
-            file: true,
-        }];
-    };
-    let parent = path.parent().map(Path::to_owned);
-    let (mut dir, dirs): (PathBuf, Vec<_>) =
-        match root.and_then(|root| Some((root, path.strip_prefix(root).ok()?))) {
-            Some((root, relative)) => {
-                let mut components: Vec<_> = relative.components().collect();
-                components.pop();
-                (root.to_owned(), components)
-            }
-            None => match parent.as_deref().and_then(Path::file_name) {
-                Some(name) => {
-                    let above = parent.as_deref().and_then(Path::parent);
-                    let above = above.map_or_else(PathBuf::new, Path::to_owned);
-                    (above, vec![Component::Normal(name)])
-                }
-                None => (PathBuf::new(), Vec::new()),
-            },
-        };
-    let mut crumbs: Vec<_> = dirs
-        .into_iter()
-        .map(|component| {
-            dir.push(component);
-            PathCrumb {
-                label: component.as_os_str().to_string_lossy().into_owned().into(),
-                dir: Some(dir.clone()),
-                file: false,
-            }
-        })
-        .collect();
-    crumbs.push(PathCrumb {
-        label: crate::pane::file_name(Some(path)).into(),
-        dir: parent,
-        file: true,
-    });
-    crumbs
-}
+pub(crate) use kiln_shell::crumbs::path_crumbs;
 
 /// The items enclosing `offset`, outermost first: the innermost by binary
 /// search, then up its parents.
