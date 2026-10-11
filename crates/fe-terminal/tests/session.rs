@@ -326,3 +326,49 @@ fn output_of_an_unfinished_synchronized_update_survives_exit() {
     assert_eq!(snapshot.row_text(0), "before");
     assert_eq!(snapshot.row_text(1), "hello");
 }
+
+/// Runs `script` to its end and returns every event the session sent.
+fn events_of(script: &str) -> (Vec<TerminalEvent>, Snapshot) {
+    let dir = temp_dir();
+    let mut session = Session::sh(script, dir.path(), 80, 10);
+    let mut events = Vec::new();
+    let start = Instant::now();
+    while session.exited.is_none() {
+        assert!(start.elapsed() < DEADLINE, "no Exited");
+        match session.events.try_recv() {
+            Ok(TerminalEvent::Exited(code)) => session.exited = Some(code),
+            Ok(event) => events.push(event),
+            Err(_) => std::thread::sleep(Duration::from_millis(5)),
+        }
+    }
+    while let Ok(event) = session.events.try_recv() {
+        events.push(event);
+    }
+    (events, session.terminal.snapshot())
+}
+
+#[test]
+fn an_unterminated_title_or_clipboard_command_is_not_dispatched_on_exit() {
+    for script in [
+        "printf '\\033]0;title'",
+        "printf '\\033]52;c;aGVsbG8='",
+        "printf '\\033[?2026h\\033]0;title'",
+    ] {
+        let (events, _) = events_of(script);
+        assert!(
+            !events.iter().any(|event| matches!(
+                event,
+                TerminalEvent::Title(_) | TerminalEvent::ClipboardStore(_)
+            )),
+            "{script}: {events:?}"
+        );
+    }
+}
+
+#[test]
+fn a_long_unfinished_synchronized_update_survives_exit() {
+    // Far more than one locked read (65,535 bytes) of held-back output.
+    let (_, snapshot) =
+        events_of("printf '\\033[?2026h'; head -c 300000 /dev/zero | tr '\\0' x; printf '\\nend'");
+    assert!(snapshot.text().contains("end"), "{}", snapshot.text());
+}

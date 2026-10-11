@@ -5,6 +5,7 @@
 //! doesn't name it. Must not depend on GPUI.
 
 pub mod keys;
+mod pty_loop;
 mod session;
 mod snapshot;
 

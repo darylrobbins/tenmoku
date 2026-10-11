@@ -1,8 +1,7 @@
 //! A pty running a shell, and the VT grid its output draws.
 //!
-//! alacritty_terminal's `EventLoop` owns the pty on its own thread: it reads the
-//! child's output into the shared `Term`, writes queued input, and applies
-//! resizes. [`Terminal`] is the handle the app holds.
+//! A `PtyLoop` owns the pty on its own thread: it reads the child's output
+//! into the shared `Term`, writes queued input, and applies resizes. [`Terminal`] is the handle the app holds.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -13,7 +12,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
 
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
-use alacritty_terminal::event_loop::{EventLoop, EventLoopSender, Msg};
 use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Column, Direction, Point};
 use alacritty_terminal::selection::{Selection, SelectionType};
@@ -22,6 +20,7 @@ use alacritty_terminal::term::{self, Term};
 use alacritty_terminal::tty;
 use rustix_openpty::rustix::termios::Winsize;
 
+use crate::pty_loop::{LoopSender, Msg, PtyLoop};
 use crate::snapshot::{self, Snapshot};
 
 /// What to run and how much history to keep.
@@ -153,7 +152,7 @@ struct Listener {
     events: async_channel::Sender<TerminalEvent>,
     /// The event loop's input, set once it exists (the `Term` it drives is
     /// built first).
-    pty: Arc<OnceLock<EventLoopSender>>,
+    pty: Arc<OnceLock<LoopSender>>,
     size: Arc<Mutex<WindowSize>>,
     /// The child's exit code, from `ChildExit`, held until the loop has read
     /// the child's last output.
@@ -215,128 +214,10 @@ impl EventListener for Listener {
     }
 }
 
-/// The sequence that ends a synchronized update (DECSET 2026).
-const END_SYNCHRONIZED_UPDATE: &[u8] = b"\x1b[?2026l";
-
-/// A pty that ends an unfinished synchronized update once the child has exited
-/// and its output is read.
-///
-/// The parser holds the output after `ESC[?2026h` back until the update ends
-/// or its timeout fires, and the event loop stops on the child's exit without
-/// doing either, so that output would never reach the grid. alacritty offers
-/// no way to flush the parser from outside the loop, so this feeds it the end
-/// sequence through the pty's reader, after the last real byte. Where no
-/// update is open the sequence does nothing.
-struct FlushingPty {
-    pty: tty::Pty,
-    reader: FlushingReader,
-    child_exited: Arc<AtomicBool>,
-}
-
-struct FlushingReader {
-    file: std::fs::File,
-    child_exited: Arc<AtomicBool>,
-    flushed: bool,
-}
-
-impl FlushingPty {
-    fn new(pty: tty::Pty) -> io::Result<FlushingPty> {
-        let child_exited = Arc::new(AtomicBool::new(false));
-        // A duplicate shares the file description, so it reads what the
-        // registered descriptor reports readable.
-        let reader = FlushingReader {
-            file: pty.file().try_clone()?,
-            child_exited: child_exited.clone(),
-            flushed: false,
-        };
-        Ok(FlushingPty {
-            pty,
-            reader,
-            child_exited,
-        })
-    }
-}
-
-impl io::Read for FlushingReader {
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        let read = self.file.read(buf);
-        // Nothing left to read from an exited child: end of its output.
-        let drained = match &read {
-            Ok(0) => true,
-            Ok(_) => false,
-            Err(error) => {
-                error.kind() == io::ErrorKind::WouldBlock
-                    || error.raw_os_error() == Some(rustix::io::Errno::IO.raw_os_error())
-            }
-        };
-        if drained
-            && !self.flushed
-            && self.child_exited.load(Ordering::SeqCst)
-            && buf.len() >= END_SYNCHRONIZED_UPDATE.len()
-        {
-            self.flushed = true;
-            buf[..END_SYNCHRONIZED_UPDATE.len()].copy_from_slice(END_SYNCHRONIZED_UPDATE);
-            return Ok(END_SYNCHRONIZED_UPDATE.len());
-        }
-        read
-    }
-}
-
-impl tty::EventedReadWrite for FlushingPty {
-    type Reader = FlushingReader;
-    type Writer = <tty::Pty as tty::EventedReadWrite>::Writer;
-
-    unsafe fn register(
-        &mut self,
-        poll: &Arc<polling::Poller>,
-        interest: polling::Event,
-        mode: polling::PollMode,
-    ) -> io::Result<()> {
-        unsafe { self.pty.register(poll, interest, mode) }
-    }
-
-    fn reregister(
-        &mut self,
-        poll: &Arc<polling::Poller>,
-        interest: polling::Event,
-        mode: polling::PollMode,
-    ) -> io::Result<()> {
-        self.pty.reregister(poll, interest, mode)
-    }
-
-    fn deregister(&mut self, poll: &Arc<polling::Poller>) -> io::Result<()> {
-        self.pty.deregister(poll)
-    }
-
-    fn reader(&mut self) -> &mut FlushingReader {
-        &mut self.reader
-    }
-
-    fn writer(&mut self) -> &mut Self::Writer {
-        self.pty.writer()
-    }
-}
-
-impl tty::EventedPty for FlushingPty {
-    fn next_child_event(&mut self) -> Option<tty::ChildEvent> {
-        let event = self.pty.next_child_event();
-        if event.is_some() {
-            self.child_exited.store(true, Ordering::SeqCst);
-        }
-        event
-    }
-}
-
-impl alacritty_terminal::event::OnResize for FlushingPty {
-    fn on_resize(&mut self, size: WindowSize) {
-        self.pty.on_resize(size);
-    }
-}
-
 /// A running terminal session. Dropping it hangs up the child.
 pub struct Terminal {
     term: Arc<FairMutex<Term<Listener>>>,
-    pty: EventLoopSender,
+    pty: LoopSender,
     size: Arc<Mutex<WindowSize>>,
     pid: u32,
     event_loop: Option<JoinHandle<()>>,
@@ -409,13 +290,11 @@ impl Terminal {
         let user = pair.user.try_clone()?;
         let pty = tty::from_fd(&tty_options, 0, pair.controller, pair.user)?;
         let pid = pty.child().id();
-        let pty = FlushingPty::new(pty)?;
 
-        let event_loop = EventLoop::new(term.clone(), listener.clone(), pty, true, false)?;
-        let sender = event_loop.channel();
+        let (event_loop, sender) = PtyLoop::new(term.clone(), listener.clone(), pty)?;
         let _ = listener.pty.set(sender.clone());
-        let handle = event_loop.spawn();
-        // `EventLoop::spawn` hands the pty back through the join handle, so the
+        let handle = event_loop.spawn()?;
+        // `PtyLoop::spawn` hands the pty back through the join handle, so the
         // pty is dropped (hanging up and waiting for the child) by whichever
         // thread joins it. This thread does, so the app's never waits. If the
         // loop stopped on an error rather than the child's exit, `Exited` is

@@ -59,15 +59,19 @@ Apache-2.0 source, xterm's documentation (ctlseqs) and by running terminals.
 - `spawn` checks that `cwd` is a directory the user can enter (`stat`, then
   `access(X_OK)`, which leaves the app's cwd alone): alacritty's spawn ignores
   a failed `chdir` and would run the shell in the app's own directory.
-- **An unfinished synchronized update is flushed on the child's exit.** After
-  `ESC[?2026h` the VTE parser buffers output until the update ends or its
-  150 ms timeout fires, and alacritty's loop stops on the child's exit with
-  neither, so that output never reached the grid. The parser is private to the
-  loop, so `FlushingPty` wraps the pty and, once the child has exited and its
-  output is read, feeds the parser `ESC[?2026l` through the reader. Where no
-  update is open that does nothing. Shutdown on drop and I/O-error stops still
-  discard the buffer: nothing reads the grid after a drop, and an error stop
-  has no further reads to feed.
+- **An unfinished synchronized update is flushed on every way out of the
+  loop.** After `ESC[?2026h` the VTE parser buffers output until the update
+  ends or its 150 ms timeout fires, and alacritty's own loop stops on the
+  child's exit (or an error, or shutdown) with neither, so that output never
+  reached the grid. Its parser is private to its loop, so `pty_loop.rs` is a
+  cut-down copy of that loop that owns the `Processor`. After the loop ends,
+  on any path, it calls `Processor::stop_sync`, which releases the held bytes
+  to the grid, and only then publishes the exit (`Term::exit` on a child
+  exit; the pty thread's `Exited(None)` otherwise). `stop_sync` feeds no
+  input, so an unfinished OSC title or OSC 52 is not dispatched. The final
+  drain after a child exit reads past alacritty's 65,535-byte per-call limit
+  (capped, in case a writer inherited the pty). The loop relies on alacritty's
+  pty tokens (0 for data, 1 for child events), which `tty` does not export.
 - Empty `input` is dropped: alacritty's writer treats a zero-byte write as
   "would block" and never moves past it.
 - The child's environment adds `TERM=xterm-256color`, `COLORTERM=truecolor`
