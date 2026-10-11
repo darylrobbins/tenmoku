@@ -134,7 +134,7 @@ fn highlights_visible_rows(cx: &mut TestAppContext) {
     let (shown, _) = painted(&view, cx);
     assert!(!shown.is_empty());
     assert!(shown.len() <= crate::element::MAX_MATCHES);
-    assert!(found() <= crate::element::MAX_MATCHES, "{}", found());
+    assert!(found() <= shown.len() + 64);
 }
 
 /// Rows `r0`… with `foo` on rows 5 and 400.
@@ -283,3 +283,5 @@ fn count_off_thread(cx: &mut TestAppContext) {
 
 #[cfg(test)]
 mod peer_edit_tests;
+#[cfg(test)]
+mod scroll_tests;

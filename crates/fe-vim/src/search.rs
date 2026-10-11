@@ -563,6 +563,36 @@ pub fn matches_in(
     found
 }
 
+/// The matches on `row` that reach `window` (offsets in the text), in
+/// order, at most `cap` of them. They are the matches [`matches_in`] finds
+/// on the row, searched from its start: a non-empty one reaches the window
+/// if it ends after its start and starts before its end, an empty one if it
+/// is at either end or between. Stops at the first match starting past the
+/// window.
+pub fn matches_reaching(
+    text: &Text,
+    row: u32,
+    window: Range<usize>,
+    pattern: &Pattern,
+    cap: usize,
+) -> Vec<Range<usize>> {
+    if row >= text.row_count() {
+        return Vec::new();
+    }
+    let mut buf = String::new();
+    let (start, hay) = row_text(text, row, &mut buf);
+    pattern
+        .matches(hay)
+        .map(|range| start + range.start..start + range.end)
+        .take_while(|range| range.start <= window.end)
+        .filter(|range| match range.is_empty() {
+            true => window.start <= range.start,
+            false => range.end > window.start && range.start < window.end,
+        })
+        .take(cap)
+        .collect()
+}
+
 #[cfg(test)]
 thread_local! {
     /// How many rows [`Pattern::find`] and [`matches_in`] have searched on

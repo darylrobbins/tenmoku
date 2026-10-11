@@ -1225,36 +1225,9 @@ fn search_match_color(theme: &EditorTheme) -> Hsla {
 thread_local! {
     /// How many matches the last [`match_rects`] on this thread looked at.
     pub(crate) static CANDIDATES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// How many match ranges the last [`match_rects`] on this thread
-    /// enumerated, those off the displayed part of a row included.
+    /// How many match ranges the last [`match_rects`] on this thread kept:
+    /// those reaching the displayed part of their row.
     pub(crate) static FOUND: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-/// The matches on buffer row `row` that reach `window` (ending at or after
-/// its start, starting at or before its end), in order, and how many were
-/// enumerated to find them, at most `cap`. The row is searched from its
-/// start, for its context, as far as `window`'s end: the enumeration's cap
-/// doubles until a match starts past it, so a huge row costs what lies
-/// before the window and the rest is never built.
-fn matches_reaching(
-    text: &Text,
-    row: u32,
-    window: Range<usize>,
-    pattern: &fe_vim::search::Pattern,
-    cap: usize,
-) -> (Vec<Range<usize>>, usize) {
-    let mut room = 256.min(cap);
-    loop {
-        let mut all = fe_vim::search::matches_in(text, row..row + 1, pattern, room);
-        let done =
-            all.len() < room || room >= cap || all.last().is_some_and(|m| m.start > window.end);
-        if done {
-            let looked_at = all.len();
-            all.retain(|range| range.end >= window.start && range.start <= window.end);
-            return (all, looked_at);
-        }
-        room = room.saturating_mul(2).min(cap);
-    }
 }
 
 /// The rects of the search matches in the frame's displayed rows, at most
@@ -1264,12 +1237,15 @@ fn matches_reaching(
 /// off the displayed part of a wrapped or scrolled line don't use the
 /// budget. A zero-width match is one space wide.
 ///
-/// The find pattern's matches are found within [`MAX_MATCHES`] for the
-/// whole frame, from each displayed row's start, so a row dense with them
-/// costs no more; matches scrolled off to its left use that budget.
+/// Each displayed buffer row's matches are enumerated once, from the row's
+/// start, keeping those that reach what's displayed of it: from the text
+/// area's left edge on its first displayed row to the right edge on its
+/// last. The find pattern's [`MAX_MATCHES`] go to those, for the whole
+/// frame, so matches scrolled off don't use them.
 fn match_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
     // How many more ranges the frame may find: bounded for the find
     // pattern only.
+    let clip = view.find_pattern().is_some();
     let (pattern, mut budget) = match view.find_pattern() {
         Some(pattern) => (Some(pattern), MAX_MATCHES),
         None => (
@@ -1294,24 +1270,42 @@ fn match_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
     let space = glyph_widths.char_width(' ');
     let visible = frame.text_bounds();
     let mut rects = Vec::new();
-    // A buffer row's matches that reach its displayed rows, kept for its
-    // other wrapped rows: found once a frame, searched from the row's start
-    // for its context but only as far as the last displayed part.
+    // A buffer row's matches that reach the text area on its displayed rows,
+    // kept for its other wrapped rows: found once a frame, searched from the
+    // row's start for its context but only as far as the last displayed part.
     let mut whole: Option<(u32, Vec<Range<usize>>)> = None;
-    for (at, row) in frame.rows.iter().enumerate() {
-        if whole.as_ref().is_none_or(|(of, _)| *of != row.buffer_row) {
-            let same = frame.rows[at..]
+    let edge = space;
+    let (left_x, right_x) = (visible.x - edge, visible.x + visible.width + edge);
+    for (ix, row) in frame.rows.iter().enumerate() {
+        if whole.as_ref().is_none_or(|(at, _)| *at != row.buffer_row) {
+            let last = frame.rows[ix..]
                 .iter()
-                .take_while(|next| next.buffer_row == row.buffer_row);
-            let (from, to) = same.fold((usize::MAX, 0), |(from, to), next| {
-                let shown = next.shown();
-                (from.min(shown.start), to.max(shown.end))
-            });
-            let (all, looked_at) =
-                matches_reaching(text, row.buffer_row, from..to, pattern, budget);
-            budget = budget.saturating_sub(looked_at);
+                .take_while(|next| next.buffer_row == row.buffer_row)
+                .last()
+                .unwrap_or(row);
+            // Conservative at the right: a row that fits entirely reaches
+            // its end, else one character past the hit-test offset, which
+            // clamps a wrapped row's last character and rounds a tab down.
+            let fits =
+                frame.view_x(last.x_for_offset(last.end, long_rows, glyph_widths)) <= right_x;
+            let mut at = |shown: &fe_display::layout::RowLayout<_>, x: f32| {
+                let y = frame.row_top(shown.row) + frame.line_height / 2.;
+                frame.offset_at(text, Vec2 { x, y }, long_rows, glyph_widths)
+            };
+            let start = at(row, left_x);
+            let end = match fits {
+                true => last.end,
+                false => {
+                    let hit = at(last, right_x);
+                    text.clip_offset(hit + 1, fe_buffer::Bias::Right)
+                }
+            };
+            let window = start..end;
+            let all =
+                fe_vim::search::matches_reaching(text, row.buffer_row, window, pattern, budget);
+            budget = budget.saturating_sub(all.len());
             #[cfg(test)]
-            FOUND.with(|n| n.set(n.get() + looked_at));
+            FOUND.with(|n| n.set(n.get() + all.len()));
             whole = Some((row.buffer_row, all));
         }
         let found = whole.as_ref().map_or(&[][..], |(_, all)| all.as_slice());
@@ -1343,6 +1337,16 @@ fn match_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
             if left + width <= visible.x || left >= visible.x + visible.width {
                 continue;
             }
+            // The find pattern's are clipped to the text area; vim's
+            // paint as they always have.
+            let (left, width) = match clip {
+                true => {
+                    let right = (left + width).min(visible.x + visible.width);
+                    let left = left.max(visible.x);
+                    (left, right - left)
+                }
+                false => (left, width),
+            };
             rects.push(Rect {
                 x: left,
                 y: frame.row_top(row.row),
