@@ -619,3 +619,81 @@ fn gesture_ends_even_when_a_sibling_stops_propagation(cx: &mut TestAppContext) {
     assert!(text.starts_with("\x1b[<0;6;3M"), "{text:?}");
     assert!(text.ends_with('m'), "{text:?}");
 }
+
+fn up_with(cx: &mut VisualTestContext, position: Point<Pixels>, modifiers: Modifiers) {
+    cx.simulate_event(MouseUpEvent {
+        position,
+        button: MouseButton::Left,
+        modifiers,
+        click_count: 1,
+    });
+}
+
+#[gpui::test]
+fn movement_keeps_other_held_buttons(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx, hex_reader("\\033[?1002h\\033[?1006h"), "ready");
+    let grid = cell(cx);
+    settle(cx);
+    button_down(cx, at(grid, 2, 5, 0.5), MouseButton::Left);
+    button_down(cx, at(grid, 2, 5, 0.5), MouseButton::Right);
+    // Movement names only the right button; the left is still down.
+    cx.simulate_mouse_move(at(grid, 2, 6, 0.5), MouseButton::Right, Modifiers::none());
+    button_up(cx, at(grid, 2, 6, 0.5), MouseButton::Left);
+    cx.simulate_mouse_move(at(grid, 2, 7, 0.5), MouseButton::Right, Modifiers::none());
+    button_up(cx, at(grid, 2, 7, 0.5), MouseButton::Right);
+    expect_written(
+        &view,
+        cx,
+        b"\x1b[<0;6;3M\x1b[<2;6;3M\x1b[<34;7;3M\x1b[<0;7;3m\x1b[<34;8;3M\x1b[<2;8;3m",
+    );
+}
+
+#[gpui::test]
+fn shift_before_release_cancels_unshifted(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx, hex_reader("\\033[?1002h\\033[?1006h"), "ready");
+    let grid = cell(cx);
+    settle(cx);
+    button_down(cx, at(grid, 2, 5, 0.5), MouseButton::Left);
+    up_with(cx, at(grid, 2, 5, 0.5), Modifiers::shift());
+    expect_written(&view, cx, b"\x1b[<0;6;3M\x1b[<0;6;3m");
+}
+
+#[gpui::test]
+fn shift_during_missed_release_recovery_is_unshifted(cx: &mut TestAppContext) {
+    let (view, cx) = open(cx, hex_reader("\\033[?1002h\\033[?1006h"), "ready");
+    let grid = cell(cx);
+    settle(cx);
+    button_down(cx, at(grid, 2, 5, 0.5), MouseButton::Left);
+    cx.simulate_mouse_move(at(grid, 4, 7, 0.5), None, Modifiers::shift());
+    expect_written(&view, cx, b"\x1b[<0;6;3M\x1b[<0;8;5m");
+}
+
+#[gpui::test]
+fn selection_autoscroll_stops_after_release_over_a_sibling(cx: &mut TestAppContext) {
+    cx.executor().allow_parking();
+    let options = options("seq 1 200; echo ready; sleep 30");
+    let (terminal, _) =
+        cx.add_window_view(|window, cx| TerminalView::new(options, style(), window, cx).unwrap());
+    let (_, cx) = cx.add_window_view(|_, _| Swallow {
+        terminal: terminal.clone(),
+    });
+    cx.simulate_resize(size(px(800.), px(600.)));
+    wait_for_line(&terminal, cx, "ready");
+    settle(cx);
+    let grid = cell(cx);
+    // Well back into history, so there's room to scroll toward the bottom.
+    terminal.read_with(cx, |view, _| view.terminal().unwrap().scroll(-10));
+    let start = snapshot(&terminal, cx).display_offset;
+    assert!(start > 3);
+    press(cx, at(grid, 2, 5, 0.5), 1, Modifiers::none());
+    let below = point(px(100.), px(450.));
+    cx.simulate_mouse_move(below, MouseButton::Left, Modifiers::none());
+    until(cx, "autoscroll", |cx| {
+        snapshot(&terminal, cx).display_offset < start
+    });
+    release(cx, below, 1, Modifiers::none());
+    settle(cx);
+    let stopped = snapshot(&terminal, cx).display_offset;
+    settle(cx);
+    assert_eq!(snapshot(&terminal, cx).display_offset, stopped);
+}

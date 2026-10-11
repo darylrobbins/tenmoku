@@ -338,6 +338,18 @@ impl Terminal {
         let _ = self.pty.send(Msg::Input(bytes));
     }
 
+    /// Writes `bytes` to the pty without moving the view: for what the
+    /// program asked for rather than what the user typed, such as mouse
+    /// reports. Empty input does nothing.
+    pub fn input_in_place(&self, bytes: impl Into<Cow<'static, [u8]>>) {
+        let bytes = bytes.into();
+        // An empty write would stall alacritty's writer for good.
+        if bytes.is_empty() {
+            return;
+        }
+        let _ = self.pty.send(Msg::Input(bytes));
+    }
+
     /// Resizes the grid and tells the child (SIGWINCH).
     pub fn resize(&self, size: GridSize) {
         let window_size = size.window_size();

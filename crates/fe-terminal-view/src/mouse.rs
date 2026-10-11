@@ -278,18 +278,12 @@ impl TerminalView {
         let Some(terminal) = &self.terminal else {
             return;
         };
-        if bytes.is_empty() {
-            return;
-        }
-        let offset = terminal.snapshot().display_offset;
-        terminal.input(bytes);
-        if offset > 0 {
-            terminal.scroll(-(offset as i32));
-        }
+        terminal.input_in_place(bytes);
     }
 
     /// Releases every button the program heard pressed, except `keep`, at
-    /// `(row, col)`.
+    /// `(row, col)`. Shift is how the user takes a gesture back from the
+    /// program, so the releases never carry it.
     fn release_reported(
         &mut self,
         keep: Option<Button>,
@@ -298,6 +292,10 @@ impl TerminalView {
         frame: &Frame,
         cx: &mut Context<Self>,
     ) {
+        let modifiers = &Modifiers {
+            shift: false,
+            ..*modifiers
+        };
         let held = std::mem::take(&mut self.reported_buttons);
         for button in held {
             if Some(button) == keep {
@@ -371,19 +369,12 @@ impl TerminalView {
             // still hears it.
             self.drag = None;
             self.release_reported(None, (row, col), &event.modifiers, frame, cx);
-        } else if !self.reported_buttons.is_empty() {
-            // Only the button still down is.
-            self.release_reported(held, (row, col), &event.modifiers, frame, cx);
         }
         if let Some(&reported) = self.reported_buttons.last() {
             if event.modifiers.shift {
                 // Shift takes the gesture back from the program, which is
                 // told the buttons are up.
-                let modifiers = Modifiers {
-                    shift: false,
-                    ..event.modifiers
-                };
-                self.release_reported(None, (row, col), &modifiers, frame, cx);
+                self.release_reported(None, (row, col), &event.modifiers, frame, cx);
             } else if self.reported != Some((row, col)) {
                 self.reported = Some((row, col));
                 let drag = held.filter(|b| self.reported_buttons.contains(b));
@@ -412,9 +403,11 @@ impl TerminalView {
 
     fn mouse_up(&mut self, event: &MouseUpEvent, frame: &Frame, cx: &mut Context<Self>) {
         let released = button(event.button);
-        if let Some(released) = released.filter(|b| self.reported_buttons.contains(b)) {
+        let (row, col, _) = frame.cell_at(event.position);
+        if event.modifiers.shift {
+            self.release_reported(None, (row, col), &event.modifiers, frame, cx);
+        } else if let Some(released) = released.filter(|b| self.reported_buttons.contains(b)) {
             self.reported_buttons.retain(|&held| held != released);
-            let (row, col, _) = frame.cell_at(event.position);
             self.report(
                 Action::Release(released),
                 (row, col),
