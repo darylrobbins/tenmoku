@@ -1,6 +1,0 @@
-
-# The command palette: every command that applies where focus is.
-[[bindings]]
-keys = ""
-command = "command_palette.toggle"
-context = "workbench"
