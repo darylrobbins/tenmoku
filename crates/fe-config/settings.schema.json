@@ -253,9 +253,29 @@
         }
       ]
     },
+    "VimClipboard": {
+      "description": "`vim.clipboard`.",
+      "oneOf": [
+        {
+          "const": "",
+          "description": "Only the `+` and `*` registers reach the system clipboard.",
+          "type": "string"
+        },
+        {
+          "const": "unnamedplus",
+          "description": "Yanks, deletes and puts that name no register use the system clipboard.",
+          "type": "string"
+        }
+      ]
+    },
     "VimSettings": {
       "description": "Settings for vim mode.",
       "properties": {
+        "clipboard": {
+          "$ref": "#/$defs/VimClipboard",
+          "default": "",
+          "description": "Which register vim's unnamed register shares with the system\nclipboard: `\"unnamedplus\"` makes `yy` copy to it and `p` paste from\nit, as nvim's `clipboard=unnamedplus` does. Empty, only `\"+` and `\"*`\nreach it."
+        },
         "enabled": {
           "default": false,
           "description": "Whether the editor starts in vim's normal mode, where keys run vim\ncommands rather than type. View > Toggle Vim Mode flips it and saves\nit here.",
@@ -306,6 +326,7 @@
     "vim": {
       "$ref": "#/$defs/VimSettings",
       "default": {
+        "clipboard": "",
         "enabled": false
       },
       "description": "Vim mode."

@@ -23,6 +23,8 @@
 [vim]
 # Whether the editor starts in vim's normal mode, where keys run vim commands.
 # enabled = false
+# Set to "unnamedplus" to share yanks and puts with the system clipboard.
+# clipboard = ""
 
 [status_bar]
 # Whether the status bar shows at the bottom of the window.

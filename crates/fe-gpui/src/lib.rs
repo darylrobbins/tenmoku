@@ -40,7 +40,7 @@ pub use keymap::{default_keymap, keymap_report, set_user_keymap};
 pub use pane_item::set_restore_style;
 pub use timing::{FrameTiming, FrameTimings};
 pub use view::EditorView;
-pub use vim::{set_vim_enabled, vim_enabled};
+pub use vim::{apply_vim_reload, set_vim_clipboard, set_vim_enabled, vim_enabled};
 
 /// Key context active while an editor is focused: the `fe-command`
 /// context name, so keymap and command predicates agree.

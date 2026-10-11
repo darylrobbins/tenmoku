@@ -135,6 +135,27 @@ pub fn set_vim_enabled(cx: &mut App, enabled: bool) {
     cx.refresh_windows();
 }
 
+/// Sets `clipboard=unnamedplus` for every editor's registers: yanks,
+/// deletes and puts that name no register then use the system clipboard.
+/// `"+` and `"*` reach it either way.
+pub fn set_vim_clipboard(cx: &mut App, unnamedplus: bool) {
+    cx.default_global::<Vim>()
+        .registers
+        .set_clipboard_unnamed(unnamedplus);
+}
+
+/// Applies a settings reload's `vim.enabled` and `vim.clipboard`, each as
+/// `(now, before)`: only a value the file changed, so that reloading
+/// anything else keeps a Toggle Vim Mode.
+pub fn apply_vim_reload(cx: &mut App, enabled: (bool, bool), unnamedplus: (bool, bool)) {
+    if enabled.0 != enabled.1 {
+        set_vim_enabled(cx, enabled.0);
+    }
+    if unnamedplus.0 != unnamedplus.1 {
+        set_vim_clipboard(cx, unnamedplus.0);
+    }
+}
+
 /// Whether vim is on.
 pub fn vim_enabled(cx: &App) -> bool {
     cx.try_global::<Vim>().is_some_and(|vim| vim.enabled)
@@ -633,3 +654,6 @@ mod visual_tests;
 
 #[cfg(test)]
 mod search_tests;
+
+#[cfg(test)]
+mod clipboard_tests;

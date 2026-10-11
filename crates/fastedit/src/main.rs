@@ -14,7 +14,7 @@ use std::{
 use perf::Startup;
 
 use fe_buffer::Buffer;
-use fe_config::{Diagnostic, Settings, SettingsEvent, SettingsStore};
+use fe_config::{Diagnostic, Settings, SettingsEvent, SettingsStore, settings::VimClipboard};
 use fe_gpui::{EditorTheme, fe_keymap};
 use fe_workbench::{Launch, RootChanged, Workbench, loader};
 use gpui::{
@@ -150,13 +150,14 @@ fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
         if Arc::ptr_eq(global.settings(), global.previous()) {
             return;
         }
-        // Only when the file changed it, so that reloading anything else
-        // keeps a Toggle Vim Mode.
-        let (vim, was) = (global.settings().vim.enabled, global.previous().vim.enabled);
+        let (now, before) = (global.settings(), global.previous());
+        let unnamedplus = |s: &Settings| s.vim.clipboard == VimClipboard::Unnamedplus;
+        let (enabled, unnamed) = (
+            (now.vim.enabled, before.vim.enabled),
+            (unnamedplus(now), unnamedplus(before)),
+        );
         let diagnostics = global.diagnostics().to_vec();
-        if vim != was {
-            fe_gpui::set_vim_enabled(cx, vim);
-        }
+        fe_gpui::apply_vim_reload(cx, enabled, unnamed);
         for window in cx.windows() {
             if let Some(window) = window.downcast::<Workbench>() {
                 settle(window, diagnostics.clone(), cx);
@@ -399,6 +400,7 @@ fn main() {
         // native alerts, and the config files watched from here on.
         kiln::init(cx, config(store));
         fe_gpui::set_vim_enabled(cx, settings.vim.enabled);
+        fe_gpui::set_vim_clipboard(cx, settings.vim.clipboard == VimClipboard::Unnamedplus);
         fe_workbench::set_lsp_settings(cx, settings.lsp.clone());
         // Toggle Vim Mode and Toggle Status Bar save to the user's file,
         // which the watcher then reloads.

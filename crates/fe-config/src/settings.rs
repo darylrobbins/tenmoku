@@ -46,6 +46,23 @@ pub struct VimSettings {
     /// commands rather than type. View > Toggle Vim Mode flips it and saves
     /// it here.
     pub enabled: bool,
+    /// Which register vim's unnamed register shares with the system
+    /// clipboard: `"unnamedplus"` makes `yy` copy to it and `p` paste from
+    /// it, as nvim's `clipboard=unnamedplus` does. Empty, only `"+` and `"*`
+    /// reach it.
+    pub clipboard: VimClipboard,
+}
+
+/// `vim.clipboard`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub enum VimClipboard {
+    /// Only the `+` and `*` registers reach the system clipboard.
+    #[default]
+    #[serde(rename = "")]
+    Off,
+    /// Yanks, deletes and puts that name no register use the system clipboard.
+    #[serde(rename = "unnamedplus")]
+    Unnamedplus,
 }
 
 /// Settings for the status bar.
