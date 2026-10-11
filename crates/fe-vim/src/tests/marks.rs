@@ -241,3 +241,70 @@ fn merged_carets_delete_the_marks_of_the_rows_they_take() {
     assert_eq!(vim.text(), "Xd");
     assert_eq!(vim.mark('b'), None);
 }
+
+fn edit_all(vim: &mut HeadlessVim, edits: Vec<(std::ops::Range<usize>, &str)>) {
+    vim.model_mut().buffer_mut().edit(edits, ai()).unwrap();
+}
+
+#[test]
+fn a_cuts_join_protection_ends_with_its_batch() {
+    // `mak0vjd` leaves "ef\nghi" with `a` kept on its first row; deleting
+    // that row afterwards deletes the mark.
+    let mut vim = HeadlessVim::new("abc\ndef\nghi", (1, 1));
+    vim.feed("mak0vjd").unwrap();
+    assert_eq!(vim.text(), "ef\nghi");
+    assert_eq!(vim.mark('a'), Some((0, 1)));
+    edit_all(&mut vim, vec![(0..3, "")]);
+    assert_eq!(vim.mark('a'), None);
+    // Within the same replay as the cut.
+    let mut vim = HeadlessVim::new("abc\ndef\nghi", (1, 1));
+    vim.feed("mak0vjd").unwrap();
+    edit_all(&mut vim, vec![(0..3, "")]);
+    edit_all(&mut vim, vec![(0..0, "x\n")]);
+    assert_eq!(vim.mark('a'), None);
+}
+
+#[test]
+fn an_opened_empty_row_keeps_its_bias_in_the_row_life() {
+    // `yyjP` over an empty row puts "aa\n" above it, and `a` stays on the
+    // empty row, now row 2; deleting its line breaks deletes it.
+    let mut vim = HeadlessVim::new("aa\n\ncc", (1, 0));
+    vim.feed("makyyjP").unwrap();
+    assert_eq!(vim.text(), "aa\naa\n\ncc");
+    assert_eq!(vim.mark('a'), Some((2, 0)));
+    edit_all(&mut vim, vec![(5..7, "")]);
+    assert_eq!(vim.mark('a'), None);
+    let mut vim = HeadlessVim::new("aa\n\ncc", (1, 0));
+    vim.feed("makO<Esc>").unwrap();
+    assert_eq!(vim.mark('a'), Some((2, 0)));
+    edit_all(&mut vim, vec![(3..5, "")]);
+    assert_eq!(vim.mark('a'), None);
+}
+
+#[test]
+fn touching_replacements_map_as_anchors_do() {
+    let mut vim = HeadlessVim::new("a\nbb\ncc", (1, 1));
+    vim.feed("ma").unwrap();
+    edit_all(&mut vim, vec![(0..2, ""), (2..2, "x\n")]);
+    assert_eq!(vim.text(), "x\nbb\ncc");
+    assert_eq!(vim.mark('a'), Some((1, 1)));
+    edit_all(&mut vim, vec![(0..2, "")]);
+    assert_eq!(vim.mark('a'), Some((0, 1)));
+}
+
+#[test]
+fn cloned_states_and_returned_marks_follow_every_batch() {
+    let mut vim = HeadlessVim::new("aa\nbb", (1, 1));
+    vim.feed("ma").unwrap();
+    let clone = vim.state().clone();
+    let handle = vim.state().mark('a').unwrap();
+    edit_all(&mut vim, vec![(5..5, "\ncc")]);
+    // Advancing the original doesn't take the batch from the clone.
+    vim.feed("yy").unwrap();
+    edit_all(&mut vim, vec![(3..6, "")]);
+    let snapshot = vim.model().snapshot();
+    assert_eq!(vim.mark('a'), None);
+    assert_eq!(clone.mark('a').unwrap().get(snapshot), None);
+    // Nor a mark handle captured before them.
+    assert_eq!(handle.get(snapshot), None);
+}

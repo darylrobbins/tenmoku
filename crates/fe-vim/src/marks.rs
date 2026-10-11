@@ -9,7 +9,10 @@ use std::{
     collections::BTreeMap,
     fmt,
     ops::Range,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex, Weak,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use fe_buffer::{
@@ -66,12 +69,22 @@ struct Batch {
 /// The buffer's edit batches since the marks last caught up, which a mark's
 /// [`Life`] replays: the frozen [`End`] anchors can't tell a row that was
 /// emptied from one that was deleted once rows came or went around it.
-#[derive(Clone)]
-struct Feed(Arc<Mutex<FeedState>>);
+///
+/// Each handle (a clone included) is its own consumer, with its own place in
+/// the batches, which are kept until every handle has caught up.
+struct Feed {
+    state: Arc<Mutex<FeedState>>,
+    /// How many batches (counting those dropped) this handle has caught up
+    /// with.
+    seen: Arc<AtomicUsize>,
+}
 
 struct FeedState {
     events: Subscription,
     batches: Vec<Batch>,
+    /// How many batches were dropped from the front of `batches`.
+    dropped: usize,
+    consumers: Vec<Weak<AtomicUsize>>,
 }
 
 impl fmt::Debug for Feed {
@@ -80,12 +93,29 @@ impl fmt::Debug for Feed {
     }
 }
 
-impl Feed {
-    /// The batches not yet applied to the marks, with those received since.
-    fn batches(&self) -> Vec<Batch> {
-        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        let received = state.events.drain();
-        for event in received {
+impl PartialEq for Feed {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.state, &other.state)
+    }
+}
+
+impl Eq for Feed {}
+
+impl Clone for Feed {
+    fn clone(&self) -> Self {
+        let mut state = self.lock();
+        let seen = Arc::new(AtomicUsize::new(self.seen.load(Ordering::Relaxed)));
+        state.consumers.push(Arc::downgrade(&seen));
+        Self {
+            state: self.state.clone(),
+            seen,
+        }
+    }
+}
+
+impl FeedState {
+    fn receive(&mut self) {
+        for event in self.events.drain() {
             if let BufferEvent::Edited {
                 from,
                 to,
@@ -94,7 +124,7 @@ impl Feed {
                 ..
             } = event
             {
-                state.batches.push(Batch {
+                self.batches.push(Batch {
                     from,
                     to,
                     edits,
@@ -102,15 +132,54 @@ impl Feed {
                 });
             }
         }
-        state.batches.clone()
+    }
+}
+
+impl Feed {
+    fn new(events: Subscription) -> Self {
+        let seen = Arc::new(AtomicUsize::new(0));
+        let state = FeedState {
+            events,
+            batches: Vec::new(),
+            dropped: 0,
+            consumers: vec![Arc::downgrade(&seen)],
+        };
+        Self {
+            state: Arc::new(Mutex::new(state)),
+            seen,
+        }
     }
 
+    fn lock(&self) -> std::sync::MutexGuard<'_, FeedState> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The batches this handle hasn't caught up with, with those received
+    /// since.
+    fn batches(&self) -> Vec<Batch> {
+        let mut state = self.lock();
+        state.receive();
+        let from = self.seen.load(Ordering::Relaxed).max(state.dropped) - state.dropped;
+        state.batches[from..].to_vec()
+    }
+
+    /// This handle has caught up with everything received so far.
     fn clear(&self) {
-        self.0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .batches
-            .clear();
+        let mut state = self.lock();
+        state.receive();
+        self.seen
+            .store(state.dropped + state.batches.len(), Ordering::Relaxed);
+        state.consumers.retain(|seen| seen.strong_count() > 0);
+        let least = state
+            .consumers
+            .iter()
+            .filter_map(Weak::upgrade)
+            .map(|seen| seen.load(Ordering::Relaxed))
+            .min()
+            .unwrap_or(state.dropped);
+        let gone = least.saturating_sub(state.dropped);
+        state.batches.drain(..gone);
+        state.dropped += gone;
     }
 }
 
@@ -122,8 +191,9 @@ struct Life {
     /// The row's start and end offsets.
     start: usize,
     end: usize,
-    /// Typing at the row's start goes before its marks (see
-    /// [`Marks::typing`]), as an empty row's start does.
+    /// Text put in at the row's start goes before it, as the mark's `row`
+    /// anchor's bias says (see [`Marks::typing`] and [`Marks::opening`]);
+    /// an empty row's does, unless opened.
     before: bool,
     /// It was empty when the mark was set: only an edit taking the line
     /// breaks on both sides of it deletes it, where one taking a break and
@@ -196,40 +266,51 @@ impl Life {
             self.dead = true;
             return;
         }
-        let left = self.before || start == end;
-        let at = map(start, left, &batch.edits).min(batch.text.len());
+        // The join protects against this batch only; the row then lives as
+        // any other.
+        let joined = std::mem::take(&mut self.kept);
+        let at = map(start, self.before, &batch.edits).min(batch.text.len());
         let row = batch.text.offset_to_point(at).row;
         self.start = batch.text.row_start(row);
         self.end = self.start + batch.text.row_len(row) as usize;
+        if joined {
+            self.hollow = self.start == self.end;
+        }
     }
 }
 
 /// `offset` after `edits`, staying before (`left`) or going after text
-/// inserted at it.
+/// inserted at it, as fe-buffer's anchors map: at the start of a replaced
+/// range it stays, at its end it goes to the end of the new text, and where
+/// a replacement ends at an edit's start, that later edit decides.
 fn map(offset: usize, left: bool, edits: &[Edit]) -> usize {
-    let mut shift = 0isize;
-    for edit in edits {
-        let delta = edit.new.len() as isize - edit.old.len() as isize;
-        match () {
-            _ if offset < edit.old.start => break,
-            _ if offset > edit.old.end => shift += delta,
-            _ if edit.old.is_empty() => {
-                return match left {
-                    true => edit.new.start,
-                    false => edit.new.end,
-                };
-            }
-            _ if offset == edit.old.start => return edit.new.start,
-            _ if offset == edit.old.end => return edit.new.end,
-            _ => {
-                return match left {
-                    true => edit.new.start,
-                    false => edit.new.end,
-                };
-            }
-        }
+    let mut ix = edits.partition_point(|edit| edit.old.end < offset);
+    while ix + 1 < edits.len()
+        && edits[ix].old.start < offset
+        && edits[ix].old.end == offset
+        && edits[ix + 1].old.start == offset
+    {
+        ix += 1;
     }
-    (offset as isize + shift) as usize
+    let Some(edit) = edits.get(ix) else {
+        return match edits.last() {
+            Some(last) => offset + last.new.end - last.old.end,
+            None => offset,
+        };
+    };
+    if offset < edit.old.start {
+        return offset + edit.new.start - edit.old.start;
+    }
+    let left = match () {
+        _ if edit.old.is_empty() => left,
+        _ if offset == edit.old.start => true,
+        _ if offset == edit.old.end => false,
+        _ => left,
+    };
+    match left {
+        true => edit.new.start,
+        false => edit.new.end,
+    }
 }
 
 /// What an edit deleting a mark's row takes. fe-vim's own linewise deletes
@@ -385,10 +466,7 @@ impl Marks {
     pub(crate) fn watch(&mut self, model: &mut EditorModel) {
         if self.feed.is_none() {
             let events = model.buffer_mut().subscribe();
-            self.feed = Some(Feed(Arc::new(Mutex::new(FeedState {
-                events,
-                batches: Vec::new(),
-            }))));
+            self.feed = Some(Feed::new(events));
         }
     }
 
@@ -444,10 +522,12 @@ impl Marks {
     pub(crate) fn opening(&mut self, snapshot: &BufferSnapshot, row: u32) {
         let start = snapshot.text().row_start(row);
         self.update(|place| match place.position(snapshot)? {
-            (at, column) if at == row => Some(Place {
-                row: snapshot.anchor_after(start),
-                ..Place::on(snapshot, row, column)
-            }),
+            (at, column) if at == row => {
+                let mut place = Place::on(snapshot, row, column);
+                place.row = snapshot.anchor_after(start);
+                place.life.before = false;
+                Some(place)
+            }
             _ => Some(place.clone()),
         });
     }
@@ -557,7 +637,8 @@ enum Of {
         end: bool,
         linewise: bool,
     },
-    Set(Place),
+    /// Followed through the batches since it was read, from `Feed`.
+    Set(Place, Feed),
 }
 
 impl Mark {
@@ -573,7 +654,11 @@ impl Mark {
                 end,
                 linewise,
             } => (ends, *end, *linewise),
-            Of::Set(place) => return place.position(snapshot),
+            Of::Set(place, feed) => {
+                let mut place = place.clone();
+                place.advance(&feed.batches());
+                return place.position(snapshot);
+            }
         };
         let [a, b] = [&ends[0], &ends[1]].map(|pos| pos.position(snapshot));
         let (row, column) = if end { a.max(b) } else { a.min(b) };
@@ -616,8 +701,9 @@ impl VimState {
             _ => None,
         };
         let mut place = place?.clone();
-        place.advance(&self.marks.batches());
-        Some(Mark(Of::Set(place)))
+        let feed = self.marks.feed.as_ref()?.clone();
+        place.advance(&feed.batches());
+        Some(Mark(Of::Set(place, feed)))
     }
 }
 
