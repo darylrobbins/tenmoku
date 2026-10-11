@@ -210,3 +210,13 @@ fn matches_in_is_capped() {
     assert_eq!(all("\\<", "ab cd"), [0..0, 3..3]);
     assert_eq!(all("x*", "ab"), [0..0, 1..1]);
 }
+
+#[test]
+fn word_bounds_join_quantified_and_anchored_patterns() {
+    // A greedy or lazy quantifier gives up characters to meet the boundary.
+    assert_eq!(all("\\<foo.*\\>", "foo bar!"), [0..7]);
+    assert_eq!(all("\\<foo.\\{-}\\>", "foo bar!"), [0..3]);
+    // `^` and `$` beside a boundary are still plain characters.
+    assert_eq!(all("\\<^foo\\>", "foo"), Vec::<Range<usize>>::new());
+    assert_eq!(all("\\<foo$\\>", "foo"), Vec::<Range<usize>>::new());
+}

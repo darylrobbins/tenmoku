@@ -681,7 +681,7 @@ fn stands_alone(hay: &str, found: Range<usize>) -> bool {
 }
 
 /// Takes a leading `\<` and a trailing `\>` off `tokens` if they are the
-/// only ones and nothing branches, for [`word_starts`] and [`word_ends`] to
+/// only ones, nothing branches and what is between is literal text, for [`word_starts`] and [`word_ends`] to
 /// check; else leaves them to `regex`'s word boundaries.
 fn word_bounds(tokens: &mut Vec<Token>) -> (bool, bool) {
     let marks = |token: &Token| matches!(token, Token::WordStart | Token::WordEnd);
@@ -703,7 +703,15 @@ fn word_bounds(tokens: &mut Vec<Token>) -> (bool, bool) {
             marks(&tokens[ix]) && !(at == 0 && start || at + 1 == real.len() && end)
         })
         .count();
-    if !one_branch || others > 0 || inner == 0 || !(start || end) {
+    // Only literal text: a quantifier needs to retry other endpoints, and
+    // `^` and `$` read the marks beside them, which taking those off changes.
+    let literal = real.iter().all(|&ix| {
+        matches!(
+            tokens[ix],
+            Token::Char(_) | Token::WordStart | Token::WordEnd
+        )
+    });
+    if !one_branch || others > 0 || inner == 0 || !(start || end) || !literal {
         return (false, false);
     }
     if end {
