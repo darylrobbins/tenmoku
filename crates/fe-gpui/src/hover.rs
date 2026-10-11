@@ -251,16 +251,27 @@ impl EditorView {
         word: Option<Range<usize>>,
         caret: Option<usize>,
     ) -> Option<Hovered> {
+        let hovered = self.hovered_unfiltered(under, word, caret);
+        (!hovered.items.is_empty() || hovered.word.is_some()).then_some(hovered)
+    }
+
+    /// [`Self::hovered`] for what's there even if it's nothing to show:
+    /// to tell whether the popover still covers it.
+    fn hovered_unfiltered(
+        &self,
+        under: Under,
+        word: Option<Range<usize>>,
+        caret: Option<usize>,
+    ) -> Hovered {
         let word = word.filter(|_| self.hover_provider.is_some());
-        let hovered = Hovered {
+        Hovered {
             under,
             items: under.items(&self.model.diagnostics()),
             word,
             version: self.model.snapshot().version(),
             scroll: self.scroll,
             caret,
-        };
-        (!hovered.items.is_empty() || hovered.word.is_some()).then_some(hovered)
+        }
     }
 
     /// The pointer moved to `position` over the text, or off it (`None`):
@@ -271,13 +282,25 @@ impl EditorView {
         position: Option<Point<Pixels>>,
         cx: &mut Context<Self>,
     ) {
-        let found = position.and_then(|position| {
-            let under = self.under(position)?;
+        let under = position.and_then(|position| Some((self.under(position)?, position)));
+        let raw = under.map(|(under, _)| {
             let word = match under {
                 Under::Char(offset) => self.word_at(offset),
                 Under::RowEnd(_) => None,
             };
-            Some((self.hovered(under, word, None)?, position))
+            self.hovered_unfiltered(under, word, None)
+        });
+        // Still on what the popover shows, or waits to (whitespace within
+        // its range included, and a popover from the caret too): it goes
+        // on, from where the pointer is now.
+        if let (Some(raw), Some(current)) = (&raw, self.popover.current.as_mut())
+            && current.covers(raw)
+        {
+            current.hovered.under = raw.under;
+            return;
+        }
+        let found = under.zip(raw).and_then(|((_, position), raw)| {
+            (!raw.items.is_empty() || raw.word.is_some()).then_some((raw, position))
         });
         let at_caret =
             (self.popover.current.as_ref()).is_some_and(|current| current.hovered.caret.is_some());
@@ -288,14 +311,6 @@ impl EditorView {
             }
             return;
         };
-        // The same, even from another grapheme of it: the popover, or its
-        // wait, goes on, from where the pointer is now.
-        if let Some(current) = (self.popover.current.as_mut())
-            .filter(|current| current.hovered.caret.is_none() && current.covers(&hovered))
-        {
-            current.hovered.under = hovered.under;
-            return;
-        }
         // Onto another word within the same diagnostics: they stay shown
         // where they are, as card 7's popover did, while the new word's
         // wait and request run; the last word's text goes.
@@ -417,9 +432,18 @@ impl EditorView {
                 // there was to show stays, if it still stands. One with
                 // nothing to show stays too, unseen, so moves within its
                 // word don't ask again.
+                // One whose range leaves out where the pointer has moved to
+                // since is for an older position: the popover goes.
                 if let Some(content) = content.filter(|_| current_version == version) {
-                    current.content = Some(content);
-                    cx.notify();
+                    let offset = current.hovered.under.offset();
+                    let covers = (content.range.as_ref())
+                        .is_none_or(|range| range.contains(&offset) || range.start == offset);
+                    if covers {
+                        current.content = Some(content);
+                        cx.notify();
+                    } else {
+                        view.hide_popover(cx);
+                    }
                 }
             })
             .ok();

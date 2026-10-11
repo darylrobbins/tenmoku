@@ -406,3 +406,74 @@ fn ranges_nothing_to_say_and_vim(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(painted(&view, cx), []);
 }
+
+#[gpui::test]
+fn pointer_moves_within_what_it_shows(cx: &mut TestAppContext) {
+    let (view, provider, cx) = editor(0, cx);
+    let (alpha, plus, beta) = (word("alpha"), word("+"), word("beta"));
+    let docs = |text: &str| (Block::Text(text.into()), SharedString::from(UI_FONT));
+    let reply = |text: &str, range: Option<Range<usize>>| {
+        *provider.reply.borrow_mut() = Some(HoverContent {
+            text: text.into(),
+            range,
+        });
+    };
+
+    // Through the whitespace within the answered range: it stays, with no
+    // new request.
+    reply("the sum", Some(alpha.start..beta.end));
+    rest(at(&view, alpha.start, cx), cx);
+    assert_eq!(painted(&view, cx), [docs("the sum")]);
+    for offset in [alpha.end, plus.start, plus.end, beta.start] {
+        move_to(at(&view, offset, cx), cx);
+        cx.executor().advance_clock(HOVER_DELAY);
+        cx.run_until_parked();
+        assert_eq!(painted(&view, cx), [docs("the sum")]);
+    }
+    assert_eq!(calls(&provider), [alpha.start]);
+    move_to(at(&view, word("total").start, cx), cx);
+    assert_eq!(painted(&view, cx), []);
+
+    // An answer that comes after the pointer moved within the word, to
+    // where its range leaves out: dropped.
+    *provider.delay.borrow_mut() = Duration::from_millis(100);
+    reply("narrow", Some(beta.start..beta.start + 1));
+    move_to(at(&view, beta.start, cx), cx);
+    cx.executor().advance_clock(HOVER_DELAY);
+    cx.run_until_parked();
+    move_to(at(&view, beta.start + 2, cx), cx);
+    cx.executor().advance_clock(Duration::from_millis(100));
+    cx.run_until_parked();
+    assert_eq!(painted(&view, cx), []);
+    *provider.delay.borrow_mut() = Duration::ZERO;
+
+    // From the caret: the same word, or the range, keeps it, with no new
+    // request, pending or answered.
+    reply("the sum", Some(alpha.start..beta.end));
+    view.update(cx, |view, cx| {
+        view.model_mut().set_cursor(alpha.start);
+        cx.notify();
+    });
+    let asked = calls(&provider).len();
+    cx.simulate_keystrokes("cmd-k cmd-i");
+    cx.run_until_parked();
+    assert_eq!(painted(&view, cx), [docs("the sum")]);
+    for offset in [alpha.start + 2, plus.start, beta.start] {
+        move_to(at(&view, offset, cx), cx);
+        cx.executor().advance_clock(HOVER_DELAY);
+        cx.run_until_parked();
+        assert_eq!(painted(&view, cx), [docs("the sum")]);
+    }
+    assert_eq!(calls(&provider).len(), asked + 1);
+
+    *provider.delay.borrow_mut() = Duration::from_millis(100);
+    cx.simulate_keystrokes("escape");
+    cx.simulate_keystrokes("cmd-k cmd-i");
+    cx.run_until_parked();
+    move_to(at(&view, alpha.start + 2, cx), cx);
+    cx.executor()
+        .advance_clock(HOVER_DELAY + Duration::from_millis(100));
+    cx.run_until_parked();
+    assert_eq!(painted(&view, cx), [docs("the sum")]);
+    assert_eq!(calls(&provider).len(), asked + 2);
+}
