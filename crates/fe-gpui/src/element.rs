@@ -29,6 +29,9 @@ use gpui::{
 
 use crate::{EditorTheme, EditorView, FrameTiming};
 
+mod decorations;
+use decorations::{Decorations, Layer};
+
 /// What one frame laid out: kept by the view for hit testing and IME.
 pub(crate) struct FrameLayout {
     /// Window position of the editor's top-left corner, which the frame's
@@ -58,6 +61,8 @@ pub(crate) struct FrameLayout {
     /// What an input method was composing, and the buffer offset it was
     /// drawn at, as the frame's inlay.
     composition: Option<(usize, String)>,
+    /// The decorations the model's providers have for the frame's rows.
+    pub(crate) decorations: Decorations,
     /// When prepaint started and how long it took, for [`FrameTiming`].
     prepaint_started: Instant,
     prepaint_took: Duration,
@@ -698,11 +703,13 @@ impl Element for EditorElement {
             matches: Vec::new(),
             jump: None,
             composition: composed,
+            decorations: Decorations::default(),
             prepaint_started: started,
             prepaint_took: Duration::ZERO,
         };
         layout.matches = match_rects(&mut layout, view);
         layout.jump = jump_layout(&mut layout, view);
+        layout.decorations = Decorations::layout(&mut layout, view, em, window);
         // The completion menu goes by its word's start in this frame, which
         // the view doesn't hold until paint.
         let word = self.view.read(cx).completion_word_start();
@@ -836,6 +843,7 @@ impl Element for EditorElement {
                     bounds: text_bounds,
                 }),
                 |window| {
+                    layout.decorations.paint(Layer::Backgrounds, window, cx);
                     // Under the selection, which stays visible over a match.
                     for &found in &matches {
                         let found = layout.bounds(found);
@@ -843,6 +851,7 @@ impl Element for EditorElement {
                         #[cfg(test)]
                         if found.intersects(&text_bounds) {
                             painted_matches.push(found);
+                            decorations::note("matches");
                         }
                     }
                     for &selection in &selections {
@@ -850,6 +859,8 @@ impl Element for EditorElement {
                         window.paint_quad(fill(selection, theme.selection));
                         #[cfg(test)]
                         painted_selections.push(selection);
+                        #[cfg(test)]
+                        decorations::note("selection");
                     }
                     // Under the text, so the glyph stays readable.
                     if block {
@@ -863,6 +874,8 @@ impl Element for EditorElement {
                         let origin = layout.to_window(frame.line_origin(row));
                         row.line.paint(origin, line_height, window, cx);
                     }
+                    #[cfg(test)]
+                    decorations::note("text");
                     for marker in &frame.fold_markers {
                         let rect = marker.rect;
                         let origin = layout.to_window(Vec2 {
@@ -874,6 +887,8 @@ impl Element for EditorElement {
                     for (squiggle, style) in &squiggles {
                         window.paint_underline(squiggle.origin, squiggle.size.width, style);
                     }
+                    layout.decorations.paint(Layer::Underlines, window, cx);
+                    layout.decorations.paint(Layer::AfterLine, window, cx);
                     for &(underline, color) in &underlines {
                         window.paint_quad(fill(underline, color));
                     }
@@ -898,6 +913,7 @@ impl Element for EditorElement {
             for &(_, mark, color) in &marks {
                 window.paint_quad(fill(mark, color).corner_radii(mark.size.width / 2.));
             }
+            layout.decorations.paint(Layer::Gutter, window, cx);
             // Folded rows' chevrons always show; the rest only while the
             // pointer is over the fold column.
             for toggle in &frame.fold_toggles {
