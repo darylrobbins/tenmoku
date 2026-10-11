@@ -801,3 +801,9 @@ context = "completion"
 keys = "secondary-shift-p"
 command = "command_palette.toggle"
 context = "workbench"
+
+# A new window on the same folder.
+[[bindings]]
+keys = "secondary-shift-n"
+command = "window.new"
+context = "workbench"

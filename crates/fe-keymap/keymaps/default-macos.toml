@@ -743,3 +743,9 @@ context = "completion"
 keys = "cmd-shift-p"
 command = "command_palette.toggle"
 context = "workbench"
+
+# A new window on the same folder.
+[[bindings]]
+keys = "cmd-shift-n"
+command = "window.new"
+context = "workbench"

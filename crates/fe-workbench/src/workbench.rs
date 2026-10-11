@@ -498,6 +498,9 @@ impl Workbench {
         if op == OpenOp::Settings {
             return self.open_settings(window, cx);
         }
+        if op == OpenOp::NewWindow {
+            return open::open_window(self.root.clone(), cx);
+        }
         if self.prompting {
             return;
         }
@@ -536,7 +539,10 @@ impl Workbench {
                         ));
                     }
                     match (op, path) {
-                        (_, None) | (OpenOp::Settings, Some(_)) => {}
+                        (_, None) | (OpenOp::Settings | OpenOp::NewWindow, Some(_)) => {}
+                        (OpenOp::FolderInNewWindow, Some(path)) => {
+                            open::open_window(Some(path), cx)
+                        }
                         (OpenOp::Folder, Some(path)) => workbench.set_root(path, window, cx),
                         (OpenOp::File, Some(path)) => workbench
                             .active
@@ -573,6 +579,11 @@ impl Workbench {
                 .ok();
         })
         .detach();
+    }
+
+    /// The folder the workbench is rooted at, if any.
+    pub fn root(&self) -> Option<&Path> {
+        self.root.as_deref()
     }
 
     pub fn panel(&self) -> &Entity<ProjectPanel> {
@@ -1552,3 +1563,7 @@ mod palette_tests;
 #[cfg(test)]
 #[path = "layout_tests.rs"]
 mod layout_tests;
+
+#[cfg(test)]
+#[path = "windows_tests.rs"]
+mod windows_tests;

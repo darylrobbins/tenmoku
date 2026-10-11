@@ -5,6 +5,9 @@
 //! then shows the panel, and does what its answer asks with the window at
 //! hand: a folder re-roots the workbench in place
 //! ([`crate::Workbench::set_root`]), and a file opens in the active pane.
+//! `window.new` opens a window on the same folder, and Open Folder in New
+//! Window one on the folder picked, through the host's opener
+//! ([`set_window_opener`]).
 
 use std::{
     fs,
@@ -30,13 +33,20 @@ pub(crate) enum OpenOp {
     File,
     /// Open the user's `settings.toml`, creating it from the template.
     Settings,
+    /// Open a window on the same folder (`window.new`).
+    NewWindow,
+    /// Pick a folder to open in a new window.
+    FolderInNewWindow,
 }
 
 impl OpenOp {
     /// How the open panel is shown for it: one folder, or one file.
     pub(crate) fn prompt(self) -> PathPromptOptions {
-        debug_assert_ne!(self, OpenOp::Settings, "settings need no open panel");
-        let folder = self == OpenOp::Folder;
+        debug_assert!(
+            !matches!(self, OpenOp::Settings | OpenOp::NewWindow),
+            "settings and a new window need no open panel"
+        );
+        let folder = matches!(self, OpenOp::Folder | OpenOp::FolderInNewWindow);
         PathPromptOptions {
             files: !folder,
             directories: folder,
@@ -58,6 +68,31 @@ struct Commands(Rc<Registry<OpenCommands>>);
 
 impl Global for Commands {}
 
+/// Opens a window on a folder, or with none: the host's.
+type Opener = Rc<dyn Fn(Option<PathBuf>, &mut App)>;
+
+struct WindowOpener(Opener);
+
+impl Global for WindowOpener {}
+
+/// Has `window.new` and Open Folder in New Window open a window through
+/// `open`, given the folder it's on: the window's own, or the one picked.
+/// Until it's set, they do nothing but log.
+pub fn set_window_opener(cx: &mut App, open: impl Fn(Option<PathBuf>, &mut App) + 'static) {
+    cx.set_global(WindowOpener(Rc::new(open)));
+}
+
+/// Opens a window on `root` through the host's opener, once the current
+/// update is over.
+pub(crate) fn open_window(root: Option<PathBuf>, cx: &mut App) {
+    let Some(WindowOpener(open)) = cx.try_global::<WindowOpener>() else {
+        log::warn!("no window opener: the host opens one window");
+        return;
+    };
+    let open = open.clone();
+    cx.defer(move |cx| open(root, cx));
+}
+
 /// Registers the open commands.
 pub(crate) fn init(cx: &mut App) {
     cx.set_global(Commands(Rc::new(registry())));
@@ -68,6 +103,12 @@ pub(crate) fn registry() -> Registry<OpenCommands> {
         ("workbench.open_folder", "Open Folder…", OpenOp::Folder),
         ("workbench.open_file", "Open File…", OpenOp::File),
         ("workbench.open_settings", "Settings…", OpenOp::Settings),
+        ("window.new", "New Window", OpenOp::NewWindow),
+        (
+            "workbench.open_folder_in_new_window",
+            "Open Folder in New Window…",
+            OpenOp::FolderInNewWindow,
+        ),
     ];
     let mut registry = Registry::new();
     for (id, title, op) in commands {

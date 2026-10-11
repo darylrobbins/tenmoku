@@ -4,6 +4,7 @@
 mod perf;
 
 use std::{
+    collections::HashMap,
     io,
     path::{Path, PathBuf},
     sync::Arc,
@@ -13,10 +14,13 @@ use std::{
 use perf::Startup;
 
 use fe_buffer::Buffer;
-use fe_config::{Settings, SettingsEvent, SettingsStore};
+use fe_config::{Diagnostic, Settings, SettingsEvent, SettingsStore};
 use fe_gpui::{EditorTheme, fe_keymap};
-use fe_workbench::{Launch, Workbench, loader};
-use gpui::{App, AppContext as _, Entity, Focusable as _, Window, WindowBounds, WindowHandle};
+use fe_workbench::{Launch, RootChanged, Workbench, loader};
+use gpui::{
+    App, AppContext as _, Entity, Focusable as _, Global, Window, WindowBounds, WindowHandle,
+    WindowId, point, px,
+};
 use kiln::{
     Config, GlobalSettings, command::Value, core::layout::LayoutStore, shell::layout::WindowLayout,
     ui::ThemeMode,
@@ -109,61 +113,181 @@ fn log_keymap_report(cx: &App) {
     }
 }
 
-/// Applies each settings reload of kiln's config service to `window`: vim
-/// when the file changed it, then the workbench's editors, status bar and
-/// language servers. The service has logged the reload and its
-/// diagnostics.
-fn follow_settings(window: WindowHandle<Workbench>, cx: &mut App) {
+/// Each window's settings: the user's file under its root's project file
+/// (`app-shell.md` §4.1). Kiln's config service loads and watches the
+/// launch root's; a window on another root reads its own off the main
+/// thread when it opens, when it's re-rooted, and when the user's file
+/// reloads.
+#[derive(Default)]
+struct WindowSettings {
+    /// The root the config service's project layer is for.
+    launch_root: Option<PathBuf>,
+    /// What each window was last given, as the next event's `previous`.
+    given: HashMap<WindowId, Arc<Settings>>,
+}
+
+impl Global for WindowSettings {}
+
+/// The settings as the config service has them now.
+fn current_settings(cx: &App) -> Arc<Settings> {
+    cx.try_global::<GlobalSettings<Settings>>()
+        .map(|global| global.settings().clone())
+        .unwrap_or_default()
+}
+
+/// Applies each settings reload of kiln's config service to every
+/// window: vim when the file changed it, then each workbench's editors,
+/// status bar and language servers, with its root's project layer. The
+/// service has logged the reload and its diagnostics.
+fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
+    cx.set_global(WindowSettings {
+        launch_root,
+        given: HashMap::new(),
+    });
     cx.observe_global::<GlobalSettings<Settings>>(move |cx| {
         let global = cx.global::<GlobalSettings<Settings>>();
         // The settings as loaded, before any reload: nothing to apply.
         if Arc::ptr_eq(global.settings(), global.previous()) {
             return;
         }
-        let event = SettingsEvent {
-            settings: global.settings().clone(),
-            previous: global.previous().clone(),
-            diagnostics: global.diagnostics().to_vec(),
-        };
         // Only when the file changed it, so that reloading anything else
         // keeps a Toggle Vim Mode.
-        let vim = event.settings.vim.enabled;
-        if vim != event.previous.vim.enabled {
+        let (vim, was) = (global.settings().vim.enabled, global.previous().vim.enabled);
+        let diagnostics = global.diagnostics().to_vec();
+        if vim != was {
             fe_gpui::set_vim_enabled(cx, vim);
         }
-        // The app quits once its window closes.
-        window
-            .update(cx, |workbench, _, cx| workbench.reload_settings(&event, cx))
-            .ok();
+        for window in cx.windows() {
+            if let Some(window) = window.downcast::<Workbench>() {
+                settle(window, diagnostics.clone(), cx);
+            }
+        }
     })
     .detach();
 }
 
-/// The windows a launch on `root` opens, each with its layout (an id
-/// claimed for it, unless there's no root or no state directory) and the
-/// entry it restores, if any. A folder launch (`folder`) restores every
-/// saved window of the root that no live window holds, newest first, or
-/// else opens one fresh window; a file launch opens one fresh window.
+/// Gives `window` the settings of its root: the config service's for the
+/// launch root (or none), else its root's own, read off the main thread.
+fn settle(window: WindowHandle<Workbench>, diagnostics: Vec<Diagnostic>, cx: &mut App) {
+    let Ok(root) = window.read_with(cx, |workbench, _| workbench.root().map(Path::to_owned)) else {
+        return;
+    };
+    let launch_root = cx
+        .try_global::<WindowSettings>()
+        .and_then(|settings| settings.launch_root.clone());
+    if root.is_none() || root == launch_root {
+        let settings = current_settings(cx);
+        return give(window, settings, diagnostics, cx);
+    }
+    let read =
+        cx.background_spawn(async move { load_settings(root.as_deref()).settings().clone() });
+    cx.spawn(async move |cx| {
+        let settings = read.await;
+        cx.update(|cx| give(window, settings, diagnostics, cx));
+    })
+    .detach();
+}
+
+/// Applies `settings` to `window`'s workbench, against what it was given
+/// last.
+fn give(
+    window: WindowHandle<Workbench>,
+    settings: Arc<Settings>,
+    diagnostics: Vec<Diagnostic>,
+    cx: &mut App,
+) {
+    let id = window.window_id();
+    let previous = cx
+        .default_global::<WindowSettings>()
+        .given
+        .insert(id, settings.clone());
+    let previous = previous.unwrap_or_else(|| current_settings(cx));
+    if previous == settings {
+        return;
+    }
+    let event = SettingsEvent {
+        settings,
+        previous,
+        diagnostics,
+    };
+    window
+        .update(cx, |workbench, _, cx| workbench.reload_settings(&event, cx))
+        .ok();
+}
+
+/// Has a new window follow its root's settings: now, and whenever the
+/// workbench is re-rooted.
+fn watch_window(window: WindowHandle<Workbench>, settings: Arc<Settings>, cx: &mut App) {
+    let id = window.window_id();
+    cx.default_global::<WindowSettings>()
+        .given
+        .insert(id, settings);
+    if let Ok(workbench) = window.update(cx, |_, _, cx| cx.entity()) {
+        cx.subscribe(&workbench, move |_, _: &RootChanged, cx| {
+            settle(window, Vec::new(), cx)
+        })
+        .detach();
+    }
+    settle(window, Vec::new(), cx);
+    cx.on_window_closed(move |cx, closed| {
+        if closed == id {
+            cx.default_global::<WindowSettings>().given.remove(&id);
+        }
+    })
+    .detach();
+}
+
+/// Opens a window on `root` (`window.new`, Open Folder in New Window): the
+/// root's newest saved window no live window holds, or else a fresh one,
+/// a little below and right of the active window.
+fn open_window_on(root: Option<PathBuf>, cx: &mut App) {
+    let settings = current_settings(cx);
+    let theme = EditorTheme::from_settings(&settings.editor, cx);
+    let capabilities = Capabilities::current();
+    let (layout, entry) = match root.as_deref().and_then(layout_store) {
+        Some(store) => match kiln::shell::layout::new_window(&store) {
+            Some((layout, entry)) => (Some(layout), entry),
+            None => (None, None),
+        },
+        None => (None, None),
+    };
+    let mut options = window_options(&WindowSpec::main("fastedit"), &capabilities, cx);
+    // The active window, or the last opened where the platform has none
+    // (an X server without a window manager).
+    let from = cx.active_window().or_else(|| cx.windows().last().copied());
+    let cascaded = from.and_then(|active| {
+        active
+            .update(cx, |_, window, _| window.window_bounds())
+            .ok()
+    });
+    if let Some(bounds) = entry.as_ref().and_then(saved_bounds) {
+        options.window_bounds = Some(bounds);
+    } else if let Some(WindowBounds::Windowed(mut bounds)) = cascaded {
+        bounds.origin += point(px(40.), px(40.));
+        options.window_bounds = Some(WindowBounds::Windowed(bounds));
+    }
+    let launch = Launch { root, file: None };
+    let given = settings.clone();
+    let opened = cx.open_window(options, |window, cx| {
+        new_workbench(launch, &settings, theme, layout, entry, window, cx)
+    });
+    match opened {
+        Ok(window) => watch_window(window, given, cx),
+        Err(error) => log::error!("can't open a window: {error}"),
+    }
+}
+
+/// The windows a launch on `root` opens, each with its layout (unless
+/// there's no root or no state directory) and the entry it restores, if
+/// any: see [`kiln::shell::layout::launch`]. A folder launch (`folder`)
+/// restores the root's saved windows; a file launch restores nothing.
 fn launch_windows(root: Option<&Path>, folder: bool) -> Vec<(Option<WindowLayout>, Option<Value>)> {
-    let Some(store) = root.and_then(layout_store) else {
-        return vec![(None, None)];
-    };
-    let mut windows: Vec<_> = if folder {
-        (store.restorable().into_iter())
-            .map(|(claim, entry)| (Some(WindowLayout::new(store.clone(), claim)), Some(entry)))
-            .collect()
-    } else {
-        Vec::new()
-    };
+    let windows: Vec<_> = (root.and_then(layout_store).iter())
+        .flat_map(|store| kiln::shell::layout::launch(store, folder))
+        .map(|(layout, entry)| (Some(layout), entry))
+        .collect();
     if windows.is_empty() {
-        let layout = match store.claim_new() {
-            Ok(claim) => Some(WindowLayout::new(store, claim)),
-            Err(error) => {
-                log::error!("can't keep this window's layout: {error}");
-                None
-            }
-        };
-        windows.push((layout, None));
+        return vec![(None, None)];
     }
     windows
 }
@@ -302,6 +426,7 @@ fn main() {
         let mut windows = launch_windows(launch.root.as_deref(), reading.is_none());
         let (layout, entry) = windows.remove(0);
         let root = launch.root.clone();
+        let launch_root = launch.root.clone();
         let mut failed = None;
         let mut options = window_options(&WindowSpec::main("fastedit"), &capabilities, cx);
         if let Some(bounds) = entry.as_ref().and_then(saved_bounds) {
@@ -350,7 +475,9 @@ fn main() {
                 None => {}
             }
         }
-        follow_settings(window, cx);
+        follow_settings(launch_root.clone(), cx);
+        watch_window(window, settings.clone(), cx);
+        fe_workbench::set_window_opener(cx, open_window_on);
         // The root's other saved windows.
         for (layout, entry) in windows {
             let launch = Launch {
@@ -366,7 +493,7 @@ fn main() {
                 new_workbench(launch, &settings, theme, layout, entry, window, cx)
             });
             match opened {
-                Ok(window) => follow_settings(window, cx),
+                Ok(window) => watch_window(window, settings.clone(), cx),
                 Err(error) => log::error!("can't open a saved window: {error}"),
             }
         }
