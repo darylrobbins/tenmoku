@@ -1825,9 +1825,9 @@
         0,
         0
       ],
-      "keys": ":s/\\%(a\\|.\\){0,}./[&]/g<CR>",
+      "keys": ":s/\\%(a\\|.\\)\\{0,}./[&]/g<CR>",
       "expect": {
-        "buffer": "ax́a",
+        "buffer": "[ax́a]",
         "cursor": [
           0,
           0
@@ -1835,7 +1835,7 @@
         "mode": "n",
         "registers": {
           "/": {
-            "text": "\\%(a\\|.\\){0,}.",
+            "text": "\\%(a\\|.\\)\\{0,}.",
             "linewise": false
           }
         }
@@ -2055,9 +2055,9 @@
         0,
         0
       ],
-      "keys": ":s/\\(a\\|.\\){0,}./[\\1]/g<CR>",
+      "keys": ":s/\\(a\\|.\\)\\{0,}./[\\1]/g<CR>",
       "expect": {
-        "buffer": "ax́a",
+        "buffer": "[x́]",
         "cursor": [
           0,
           0
@@ -2065,7 +2065,7 @@
         "mode": "n",
         "registers": {
           "/": {
-            "text": "\\(a\\|.\\){0,}.",
+            "text": "\\(a\\|.\\)\\{0,}.",
             "linewise": false
           }
         }
@@ -2273,6 +2273,880 @@
         "registers": {
           "/": {
             "text": "\\(a\\|.\\)\\{0,}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "order_group_star",
+      "buffer": "ax",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\%(a\\|.\\)\\{0,}/[&]/<CR>",
+      "expect": {
+        "buffer": "[ax]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\%(a\\|.\\)\\{0,}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "order_group_bounded",
+      "buffer": "ax",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\%(a\\|.\\)\\{0,2}/[&]/<CR>",
+      "expect": {
+        "buffer": "[ax]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\%(a\\|.\\)\\{0,2}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "order_group_lazy_star",
+      "buffer": "a",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\%(a\\|.\\)\\{-}/[&]/<CR>",
+      "expect": {
+        "buffer": "[]a",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\%(a\\|.\\)\\{-}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "order_group_lazy_min",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\%(a\\|.\\)\\{-2,}/[&]/<CR>",
+      "expect": {
+        "buffer": "[ab]c",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\%(a\\|.\\)\\{-2,}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "order_group_lazy_bounded",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\%(a\\|.\\)\\{-,2}/[&]/<CR>",
+      "expect": {
+        "buffer": "[]abc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\%(a\\|.\\)\\{-,2}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "order_group_dot_first",
+      "buffer": "ax",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\%(.\\|a\\)\\{0,}/[&]/<CR>",
+      "expect": {
+        "buffer": "[ax]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\%(.\\|a\\)\\{0,}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "order_group_mark_after_bare",
+      "buffer": "áb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\%(a\\|.\\)\\{0,}/[&]/<CR>",
+      "expect": {
+        "buffer": "[áb]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\%(a\\|.\\)\\{0,}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "order_capture_star",
+      "buffer": "ax",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\(a\\|.\\)\\{0,}/[\\1]/<CR>",
+      "expect": {
+        "buffer": "[x]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(a\\|.\\)\\{0,}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "order_capture_star_mark",
+      "buffer": "á",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\(a\\|.\\)\\{0,}/[\\1]/<CR>",
+      "expect": {
+        "buffer": "[́]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(a\\|.\\)\\{0,}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "order_capture_bounded",
+      "buffer": "ax",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\(a\\|.\\)\\{0,2}/[\\1]/<CR>",
+      "expect": {
+        "buffer": "[x]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(a\\|.\\)\\{0,2}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "order_capture_bounded_mark",
+      "buffer": "á",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\(a\\|.\\)\\{0,3}/[\\1]/<CR>",
+      "expect": {
+        "buffer": "[́]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(a\\|.\\)\\{0,3}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "order_capture_lazy_star",
+      "buffer": "a",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\(a\\|.\\)\\{-}/[\\1]/<CR>",
+      "expect": {
+        "buffer": "[]a",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(a\\|.\\)\\{-}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "order_capture_lazy_min",
+      "buffer": "áb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\(a\\|.\\)\\{-1,}/[\\1]/<CR>",
+      "expect": {
+        "buffer": "[́]b",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(a\\|.\\)\\{-1,}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "empty_last_star_mixed",
+      "buffer": "ab",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\(a\\|b\\|\\)\\{0,}/[\\1]/<CR>",
+      "expect": {
+        "buffer": "[]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(a\\|b\\|\\)\\{0,}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "empty_last_plus_mixed",
+      "buffer": "ab",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\(a\\|b\\|\\)\\{1,}/[\\1]/<CR>",
+      "expect": {
+        "buffer": "[]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(a\\|b\\|\\)\\{1,}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "empty_last_open_mixed",
+      "buffer": "ab",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\(a\\|b\\|\\)\\{2,}/[\\1]/<CR>",
+      "expect": {
+        "buffer": "[]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(a\\|b\\|\\)\\{2,}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "empty_last_bounded_mixed",
+      "buffer": "ab",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\(a\\|b\\|\\)\\{0,3}/[\\1]/<CR>",
+      "expect": {
+        "buffer": "[]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(a\\|b\\|\\)\\{0,3}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "empty_last_exact_mixed",
+      "buffer": "ab",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\(a\\|b\\|\\)\\{2}/[\\1]/<CR>",
+      "expect": {
+        "buffer": "[b]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(a\\|b\\|\\)\\{2}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "empty_last_lazy_mixed",
+      "buffer": "ab",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\(a\\|b\\|\\)\\{-2,}/[\\1]/<CR>",
+      "expect": {
+        "buffer": "[b]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(a\\|b\\|\\)\\{-2,}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "empty_last_star_after_base",
+      "buffer": "xab",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/x\\(a\\|b\\|\\)\\{0,}/[\\1]/<CR>",
+      "expect": {
+        "buffer": "[]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x\\(a\\|b\\|\\)\\{0,}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "empty_last_plus_after_base",
+      "buffer": "xab",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/x\\(a\\|b\\|\\)\\{1,}/[\\1]/<CR>",
+      "expect": {
+        "buffer": "[]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x\\(a\\|b\\|\\)\\{1,}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "empty_last_open_after_base",
+      "buffer": "xababab",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/x\\(a\\|b\\|\\)\\{3,}/[\\1]/<CR>",
+      "expect": {
+        "buffer": "[]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x\\(a\\|b\\|\\)\\{3,}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "empty_last_bounded_after_base",
+      "buffer": "xab",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/x\\(a\\|b\\|\\)\\{0,3}/[\\1]/<CR>",
+      "expect": {
+        "buffer": "[]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x\\(a\\|b\\|\\)\\{0,3}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "empty_last_long_run",
+      "buffer": "ababababab",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\(a\\|b\\|\\)\\{0,}/[\\1]/<CR>",
+      "expect": {
+        "buffer": "[]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(a\\|b\\|\\)\\{0,}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "empty_last_long_run_after_base",
+      "buffer": "xababababab",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/x\\(a\\|b\\|\\)\\{0,}/[\\1]/<CR>",
+      "expect": {
+        "buffer": "[]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x\\(a\\|b\\|\\)\\{0,}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "empty_middle_after_base",
+      "buffer": "xab",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/x\\(a\\|\\|b\\)\\{0,}/[\\1]/<CR>",
+      "expect": {
+        "buffer": "[]b",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x\\(a\\|\\|b\\)\\{0,}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "empty_middle_plus",
+      "buffer": "abab",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\(a\\|\\|b\\)\\{1,}/[\\1]/<CR>",
+      "expect": {
+        "buffer": "[]bab",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(a\\|\\|b\\)\\{1,}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "empty_nested_star",
+      "buffer": "aab",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\(a\\{0,}\\)\\{0,}b/[\\1]/<CR>",
+      "expect": {
+        "buffer": "[]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(a\\{0,}\\)\\{0,}b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "empty_marks_star",
+      "buffer": "áb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\(a\\|.\\|\\)\\{0,}/[\\1]/<CR>",
+      "expect": {
+        "buffer": "[]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(a\\|.\\|\\)\\{0,}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "count_group_exact9",
+      "buffer": "abcdefghij",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\%(a\\|.\\)\\{9}/[&]/<CR>",
+      "expect": {
+        "buffer": "[abcdefghi]j",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\%(a\\|.\\)\\{9}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "count_group_open9",
+      "buffer": "abcdefghij",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\%(a\\|.\\)\\{9,}/[&]/<CR>",
+      "expect": {
+        "buffer": "[abcdefghij]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\%(a\\|.\\)\\{9,}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "count_group_bounded9_10",
+      "buffer": "abcdefghij",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\%(a\\|.\\)\\{9,10}/[&]/<CR>",
+      "expect": {
+        "buffer": "[abcdefghij]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\%(a\\|.\\)\\{9,10}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "count_group_bounded3_12",
+      "buffer": "abcdefghij",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\%(a\\|.\\)\\{3,12}/[&]/<CR>",
+      "expect": {
+        "buffer": "[abcdefghij]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\%(a\\|.\\)\\{3,12}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "count_group_short",
+      "buffer": "abcdefgh",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\%(a\\|.\\)\\{9}/[&]/<CR>",
+      "expect": {
+        "buffer": "abcdefgh",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\%(a\\|.\\)\\{9}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "count_capture_exact9",
+      "buffer": "abcdefghij",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\(a\\|.\\)\\{9}/[\\1]/<CR>",
+      "expect": {
+        "buffer": "[i]j",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(a\\|.\\)\\{9}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "count_group_marks_exact9",
+      "buffer": "ábćdefgh́ij",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\%(a\\|.\\)\\{9}/[&]/<CR>",
+      "expect": {
+        "buffer": "[ábćdefgh́]ij",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\%(a\\|.\\)\\{9}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "count_group_marks_then_dot",
+      "buffer": "ábćdefgh́ij",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\%(a\\|.\\)\\{9}./[&]/<CR>",
+      "expect": {
+        "buffer": "[ábćdefgh́i]j",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\%(a\\|.\\)\\{9}.",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "count_group_marks_star_then_dot",
+      "buffer": "ábćdefgh́ij",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\%(a\\|.\\)\\{0,}./[&]/<CR>",
+      "expect": {
+        "buffer": "[ábćdefgh́ij]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\%(a\\|.\\)\\{0,}.",
             "linewise": false
           }
         }

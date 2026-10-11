@@ -220,3 +220,23 @@ fn word_bounds_join_quantified_and_anchored_patterns() {
     assert_eq!(all("\\<^foo\\>", "foo"), Vec::<Range<usize>>::new());
     assert_eq!(all("\\<foo$\\>", "foo"), Vec::<Range<usize>>::new());
 }
+
+#[test]
+fn huge_counts_of_mixed_groups_finish() {
+    // Each is written out one time after another or not at all: none may
+    // run away or overflow the stack, and each is either a pattern or too
+    // large.
+    for count in ["1000000", "0,1000000", "1000000,", "-1000000", "-0,1000000"] {
+        let pattern = format!("\\%(a\\|.\\)\\{{{count}}}");
+        let result = std::thread::Builder::new()
+            .stack_size(512 * 1024)
+            .spawn(move || Pattern::parse(&pattern).map(|_| ()))
+            .unwrap()
+            .join()
+            .expect("no overflow");
+        assert!(
+            matches!(result, Ok(()) | Err(PatternError::TooLarge(_))),
+            "{count}: {result:?}"
+        );
+    }
+}

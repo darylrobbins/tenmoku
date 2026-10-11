@@ -490,7 +490,7 @@ keys = ":s/\\%(a\\|.\\)\\?./[&]/<CR>"
 name = "mixed_group_star_then_dot"
 buffer = "ax\u0301a"
 cursor = [0, 0]
-keys = ":s/\\%(a\\|.\\){0,}./[&]/g<CR>"
+keys = ":s/\\%(a\\|.\\)\\{0,}./[&]/g<CR>"
 
 [[case]]
 name = "mixed_group_plus_marked"
@@ -550,7 +550,7 @@ keys = ":s/\\(a\\|.\\)\\?./[\\1]/<CR>"
 name = "mixed_capture_star_then_dot"
 buffer = "ax\u0301a"
 cursor = [0, 0]
-keys = ":s/\\(a\\|.\\){0,}./[\\1]/g<CR>"
+keys = ":s/\\(a\\|.\\)\\{0,}./[\\1]/g<CR>"
 
 [[case]]
 name = "mixed_capture_plus_marked"
@@ -605,3 +605,242 @@ name = "dup_capture_star_global"
 buffer = "xa ya"
 cursor = [0, 0]
 keys = ":s/\\(a\\|.\\)\\{0,}/[\\1]/g<CR>"
+
+# A repeat of a group that ends in different ways keeps the order nvim tries
+# its alternatives and its times in: greedy takes another time before
+# stopping, lazy stops first, and what comes last in the text is what a
+# capture holds.
+
+[[case]]
+name = "order_group_star"
+buffer = "ax"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)\\{0,}/[&]/<CR>"
+
+[[case]]
+name = "order_group_bounded"
+buffer = "ax"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)\\{0,2}/[&]/<CR>"
+
+[[case]]
+name = "order_group_lazy_star"
+buffer = "a"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)\\{-}/[&]/<CR>"
+
+[[case]]
+name = "order_group_lazy_min"
+buffer = "abc"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)\\{-2,}/[&]/<CR>"
+
+[[case]]
+name = "order_group_lazy_bounded"
+buffer = "abc"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)\\{-,2}/[&]/<CR>"
+
+[[case]]
+name = "order_group_dot_first"
+buffer = "ax"
+cursor = [0, 0]
+keys = ":s/\\%(.\\|a\\)\\{0,}/[&]/<CR>"
+
+[[case]]
+name = "order_group_mark_after_bare"
+buffer = "áb"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)\\{0,}/[&]/<CR>"
+
+[[case]]
+name = "order_capture_star"
+buffer = "ax"
+cursor = [0, 0]
+keys = ":s/\\(a\\|.\\)\\{0,}/[\\1]/<CR>"
+
+[[case]]
+name = "order_capture_star_mark"
+buffer = "á"
+cursor = [0, 0]
+keys = ":s/\\(a\\|.\\)\\{0,}/[\\1]/<CR>"
+
+[[case]]
+name = "order_capture_bounded"
+buffer = "ax"
+cursor = [0, 0]
+keys = ":s/\\(a\\|.\\)\\{0,2}/[\\1]/<CR>"
+
+[[case]]
+name = "order_capture_bounded_mark"
+buffer = "á"
+cursor = [0, 0]
+keys = ":s/\\(a\\|.\\)\\{0,3}/[\\1]/<CR>"
+
+[[case]]
+name = "order_capture_lazy_star"
+buffer = "a"
+cursor = [0, 0]
+keys = ":s/\\(a\\|.\\)\\{-}/[\\1]/<CR>"
+
+[[case]]
+name = "order_capture_lazy_min"
+buffer = "áb"
+cursor = [0, 0]
+keys = ":s/\\(a\\|.\\)\\{-1,}/[\\1]/<CR>"
+
+# The last time of a repeat can match nothing, which sets its captures: the
+# repeat's translation has to take that time too.
+
+[[case]]
+name = "empty_last_star_mixed"
+buffer = "ab"
+cursor = [0, 0]
+keys = ":s/\\(a\\|b\\|\\)\\{0,}/[\\1]/<CR>"
+
+[[case]]
+name = "empty_last_plus_mixed"
+buffer = "ab"
+cursor = [0, 0]
+keys = ":s/\\(a\\|b\\|\\)\\{1,}/[\\1]/<CR>"
+
+[[case]]
+name = "empty_last_open_mixed"
+buffer = "ab"
+cursor = [0, 0]
+keys = ":s/\\(a\\|b\\|\\)\\{2,}/[\\1]/<CR>"
+
+[[case]]
+name = "empty_last_bounded_mixed"
+buffer = "ab"
+cursor = [0, 0]
+keys = ":s/\\(a\\|b\\|\\)\\{0,3}/[\\1]/<CR>"
+
+[[case]]
+name = "empty_last_exact_mixed"
+buffer = "ab"
+cursor = [0, 0]
+keys = ":s/\\(a\\|b\\|\\)\\{2}/[\\1]/<CR>"
+
+[[case]]
+name = "empty_last_lazy_mixed"
+buffer = "ab"
+cursor = [0, 0]
+keys = ":s/\\(a\\|b\\|\\)\\{-2,}/[\\1]/<CR>"
+
+[[case]]
+name = "empty_last_star_after_base"
+buffer = "xab"
+cursor = [0, 0]
+keys = ":s/x\\(a\\|b\\|\\)\\{0,}/[\\1]/<CR>"
+
+[[case]]
+name = "empty_last_plus_after_base"
+buffer = "xab"
+cursor = [0, 0]
+keys = ":s/x\\(a\\|b\\|\\)\\{1,}/[\\1]/<CR>"
+
+[[case]]
+name = "empty_last_open_after_base"
+buffer = "xababab"
+cursor = [0, 0]
+keys = ":s/x\\(a\\|b\\|\\)\\{3,}/[\\1]/<CR>"
+
+[[case]]
+name = "empty_last_bounded_after_base"
+buffer = "xab"
+cursor = [0, 0]
+keys = ":s/x\\(a\\|b\\|\\)\\{0,3}/[\\1]/<CR>"
+
+[[case]]
+name = "empty_last_long_run"
+buffer = "ababababab"
+cursor = [0, 0]
+keys = ":s/\\(a\\|b\\|\\)\\{0,}/[\\1]/<CR>"
+
+[[case]]
+name = "empty_last_long_run_after_base"
+buffer = "xababababab"
+cursor = [0, 0]
+keys = ":s/x\\(a\\|b\\|\\)\\{0,}/[\\1]/<CR>"
+
+[[case]]
+name = "empty_middle_after_base"
+buffer = "xab"
+cursor = [0, 0]
+keys = ":s/x\\(a\\|\\|b\\)\\{0,}/[\\1]/<CR>"
+
+[[case]]
+name = "empty_middle_plus"
+buffer = "abab"
+cursor = [0, 0]
+keys = ":s/\\(a\\|\\|b\\)\\{1,}/[\\1]/<CR>"
+
+[[case]]
+name = "empty_nested_star"
+buffer = "aab"
+cursor = [0, 0]
+keys = ":s/\\(a\\{0,}\\)\\{0,}b/[\\1]/<CR>"
+
+[[case]]
+name = "empty_marks_star"
+buffer = "áb"
+cursor = [0, 0]
+keys = ":s/\\(a\\|.\\|\\)\\{0,}/[\\1]/<CR>"
+
+# Counts past what is written out one way after another: exact, bounded and
+# open-ended, greedy and lazy, over plain letters and over marks.
+
+[[case]]
+name = "count_group_exact9"
+buffer = "abcdefghij"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)\\{9}/[&]/<CR>"
+
+[[case]]
+name = "count_group_open9"
+buffer = "abcdefghij"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)\\{9,}/[&]/<CR>"
+
+[[case]]
+name = "count_group_bounded9_10"
+buffer = "abcdefghij"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)\\{9,10}/[&]/<CR>"
+
+[[case]]
+name = "count_group_bounded3_12"
+buffer = "abcdefghij"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)\\{3,12}/[&]/<CR>"
+
+[[case]]
+name = "count_group_short"
+buffer = "abcdefgh"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)\\{9}/[&]/<CR>"
+
+[[case]]
+name = "count_capture_exact9"
+buffer = "abcdefghij"
+cursor = [0, 0]
+keys = ":s/\\(a\\|.\\)\\{9}/[\\1]/<CR>"
+
+[[case]]
+name = "count_group_marks_exact9"
+buffer = "ábćdefgh́ij"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)\\{9}/[&]/<CR>"
+
+[[case]]
+name = "count_group_marks_then_dot"
+buffer = "ábćdefgh́ij"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)\\{9}./[&]/<CR>"
+
+[[case]]
+name = "count_group_marks_star_then_dot"
+buffer = "ábćdefgh́ij"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)\\{0,}./[&]/<CR>"
