@@ -22,6 +22,7 @@ use unicode_segmentation::UnicodeSegmentation;
 pub mod commands;
 pub mod completion;
 pub mod diagnostics;
+pub mod ghost_text;
 mod viewer;
 
 pub use viewer::{COPY_LIMIT, CopyError, Outcome, ViewerModel};

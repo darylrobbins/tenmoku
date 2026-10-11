@@ -5,6 +5,7 @@ mod commands;
 mod completion;
 mod diagnostics;
 mod fold_candidates;
+mod ghost_text;
 mod laws;
 mod pending_wrap;
 mod shared_buffer;
