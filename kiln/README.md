@@ -34,7 +34,7 @@ system (see [Boundary rules](#boundary-rules)).
 | `kiln-core` | no | config layers and typed settings stores, app paths, platform conventions, keymaps and menu tables resolved per platform, theme data, the trust store, a headless text-edit model |
 | `kiln-platform` | yes | platform capabilities, window options, prompts, fonts, dialogs, key input and its `KeyOwner` hook, command dispatch, native menus, the config service |
 | `kiln-ui` | yes | theme resolution (`cx.theme()`), icons (bundled Lucide plus an app's own) and the widget kit |
-| `kiln-shell` | yes | the app shell: `Root` (title bar, window frame, in-window menu bar) and the in-window prompt; panes, docks and palette are moving in |
+| `kiln-shell` | yes | the app shell: `Root` (title bar, window frame, in-window menu bar), the in-window prompt, `PaneItem`/`ItemHandle`, status items, the picker, breadcrumbs and a background settings writer; panes, docks, the palette and layout persistence are moving in |
 | `kiln` | facade | re-exports of the above, `kiln::prelude`, `kiln::gpui`, `application()`, `init()` and `Config` |
 
 An app depends on `kiln` alone: it re-exports GPUI as `kiln::gpui`, brings
