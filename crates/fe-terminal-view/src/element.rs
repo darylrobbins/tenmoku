@@ -97,6 +97,10 @@ enum Cursor {
 pub struct PaintedText {
     pub origin: Point<Pixels>,
     pub text: String,
+    /// The shaped line's natural width.
+    pub width: Pixels,
+    /// Each shaped glyph's byte index in `text` and x offset from `origin`.
+    pub glyphs: Vec<(usize, Pixels)>,
 }
 
 /// The cursor as last painted.
@@ -109,7 +113,8 @@ pub enum PaintedCursor {
 }
 
 /// What the last prepaint laid out, for tests to check the production
-/// shaping and painting path with.
+/// shaping and painting path with. Only recorded after
+/// [`TerminalView::record_paint`].
 #[doc(hidden)]
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PaintReport {
@@ -144,6 +149,14 @@ impl Prepainted {
                 .map(|text| PaintedText {
                     origin: text.origin,
                     text: text.line.text.to_string(),
+                    width: text.line.width,
+                    glyphs: text
+                        .line
+                        .runs
+                        .iter()
+                        .flat_map(|run| &run.glyphs)
+                        .map(|glyph| (glyph.index, glyph.position.x))
+                        .collect(),
                 })
                 .collect::<Vec<_>>()
         };
@@ -214,6 +227,7 @@ impl Element for TerminalElement {
         // A window that's lost focus to another app keeps its focus handle.
         let focused = self.view.read(cx).is_focused(window);
         let marked = self.view.read(cx).marked.clone();
+        let record = self.view.read(cx).record_paint;
         let mut frame = Frame {
             bounds,
             cell,
@@ -374,8 +388,10 @@ impl Element for TerminalElement {
                 },
             ));
         }
-        let report = prepainted.report();
-        self.view.update(cx, |view, _| view.painted = report);
+        if record {
+            let report = prepainted.report();
+            self.view.update(cx, |view, _| view.painted = report);
+        }
         prepainted
     }
 

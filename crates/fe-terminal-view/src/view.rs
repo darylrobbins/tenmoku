@@ -54,6 +54,8 @@ pub struct TerminalView {
     pub(crate) wheel_to: WheelTo,
     /// What the last prepaint laid out.
     pub(crate) painted: PaintReport,
+    /// Whether prepaint fills `painted`: off outside tests.
+    pub(crate) record_paint: bool,
     _focus_reports: [Subscription; 2],
     /// Redraws the cursor when the window gains or loses focus.
     _activation: Subscription,
@@ -99,6 +101,7 @@ impl TerminalView {
             wheel: 0.,
             wheel_to: WheelTo::default(),
             painted: PaintReport::default(),
+            record_paint: false,
             _focus_reports: focus_reports,
             _activation: activation,
         })
@@ -110,7 +113,18 @@ impl TerminalView {
         self.focus.is_focused(window) && window.is_window_active()
     }
 
-    /// What the last frame laid out. For tests.
+    /// Starts or stops recording what each frame lays out, for
+    /// [`painted`](Self::painted). Off by default: recording allocates on
+    /// every prepaint. For tests.
+    #[doc(hidden)]
+    pub fn record_paint(&mut self, on: bool) {
+        self.record_paint = on;
+        if !on {
+            self.painted = PaintReport::default();
+        }
+    }
+
+    /// What the last frame laid out, once recording. For tests.
     #[doc(hidden)]
     pub fn painted(&self) -> &PaintReport {
         &self.painted

@@ -1,7 +1,9 @@
 //! A terminal view in a test window, running a real shell on a pty.
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -9,8 +11,10 @@ use fe_terminal_view::{
     PaintedCursor, PaintedText, TerminalOptions, TerminalStyle, TerminalView, TerminalViewEvent,
 };
 use gpui::{
-    Bounds, Entity, Focusable, Hsla, Pixels, Size, TestAppContext, VisualTestContext, point, px,
-    rgb, size,
+    Bounds, DevicePixels, Entity, Focusable, Font, FontId, FontMetrics, FontRun, GlyphId, Hsla,
+    LineLayout, NoopTextSystem, Pixels, PlatformTextSystem, RenderGlyphParams, ShapedGlyph, Size,
+    TestAppContext, TestDispatcher, TextRenderingMode, TextRun, VisualTestContext, point, px, rgb,
+    size,
 };
 
 fn style() -> TerminalStyle {
@@ -142,6 +146,7 @@ fn painting<'a>(
     ));
     let (view, cx) =
         cx.add_window_view(|window, cx| TerminalView::new(options, style(), window, cx).unwrap());
+    view.update(cx, |view, _| view.record_paint(true));
     cx.simulate_resize(size(px(400.), px(200.)));
     cx.update(|window, cx| {
         window.activate_window();
@@ -183,8 +188,101 @@ fn on_grid(texts: &[PaintedText], cell: Size<Pixels>) -> Vec<(usize, usize, Stri
         .collect()
 }
 
-#[gpui::test]
-fn paints_every_cell_on_the_grid(cx: &mut TestAppContext) {
+/// Advances, in ems, of the controlled shaping below: narrow `i`, and `a` and
+/// `b` that together aren't two cells wide. `->` and `=>` ligate into one
+/// glyph, a combining mark has no advance, anything else is a cell wide.
+const NARROW: f32 = 0.25;
+const A: f32 = 0.4;
+const B: f32 = 0.5;
+const LIGATURE: f32 = 0.9;
+const CELL: f32 = 0.6;
+
+/// The test platform's text system, shaping the way a real font does: glyphs
+/// differ in width, combining marks add no glyph or advance, and some
+/// sequences form a ligature.
+struct Shaping(NoopTextSystem);
+
+impl PlatformTextSystem for Shaping {
+    fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> gpui::Result<()> {
+        self.0.add_fonts(fonts)
+    }
+    fn all_font_names(&self) -> Vec<String> {
+        self.0.all_font_names()
+    }
+    fn font_id(&self, descriptor: &Font) -> gpui::Result<FontId> {
+        self.0.font_id(descriptor)
+    }
+    fn font_metrics(&self, font_id: FontId) -> FontMetrics {
+        self.0.font_metrics(font_id)
+    }
+    fn typographic_bounds(&self, font_id: FontId, glyph: GlyphId) -> gpui::Result<Bounds<f32>> {
+        self.0.typographic_bounds(font_id, glyph)
+    }
+    fn advance(&self, font_id: FontId, glyph: GlyphId) -> gpui::Result<Size<f32>> {
+        self.0.advance(font_id, glyph)
+    }
+    fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
+        self.0.glyph_for_char(font_id, ch)
+    }
+    fn glyph_raster_bounds(
+        &self,
+        params: &RenderGlyphParams,
+    ) -> gpui::Result<Bounds<DevicePixels>> {
+        self.0.glyph_raster_bounds(params)
+    }
+    fn rasterize_glyph(
+        &self,
+        params: &RenderGlyphParams,
+        bounds: Bounds<DevicePixels>,
+    ) -> gpui::Result<(Size<DevicePixels>, Vec<u8>)> {
+        self.0.rasterize_glyph(params, bounds)
+    }
+    fn layout_line(&self, text: &str, font_size: Pixels, runs: &[FontRun]) -> LineLayout {
+        let mut layout = self.0.layout_line(text, font_size, runs);
+        let mut glyphs = Vec::new();
+        let mut x = px(0.);
+        let mut chars = text.char_indices().peekable();
+        while let Some((index, ch)) = chars.next() {
+            let em = match ch {
+                '\u{301}' => 0.,
+                'i' => NARROW,
+                'a' => A,
+                'b' => B,
+                '-' | '=' if chars.peek().is_some_and(|&(_, next)| next == '>') => {
+                    chars.next();
+                    LIGATURE
+                }
+                _ => CELL,
+            };
+            if em > 0. {
+                glyphs.push(ShapedGlyph {
+                    id: GlyphId(1),
+                    position: point(x, px(0.)),
+                    index,
+                    is_emoji: false,
+                });
+            }
+            x += font_size * em;
+        }
+        layout.width = x;
+        if let Some(run) = layout.runs.first_mut() {
+            run.glyphs = glyphs;
+        }
+        layout
+    }
+    fn recommended_rendering_mode(&self, font: FontId, size: Pixels) -> TextRenderingMode {
+        self.0.recommended_rendering_mode(font, size)
+    }
+}
+
+#[test]
+fn paints_every_cell_on_the_grid() {
+    let mut cx = TestAppContext::build_with_text_system(
+        TestDispatcher::new(0),
+        None,
+        Arc::new(Shaping(NoopTextSystem::new())),
+    );
+    let cx = &mut cx;
     // Narrow glyphs, a ligature-capable sequence, a combining mark, a wide
     // character, and underlined, struck-out text ending in the cursor on the
     // wide character.
@@ -209,8 +307,42 @@ fn paints_every_cell_on_the_grid(cx: &mut TestAppContext) {
     // The cursor paints its own cell's character.
     assert_eq!(row(4), [(0, "a"), (1, "b")]);
 
+    // The controlled shaping behaves as assumed: narrow glyphs are narrower
+    // than a cell, a combining mark adds no glyph or advance, and `->` shaped
+    // together is one glyph.
+    let em = style().font_size;
+    let shaped = |row: usize, col: usize| {
+        report
+            .text
+            .iter()
+            .find(|t| t.origin == point(cell.width * col as f32, cell.height * row as f32))
+            .unwrap()
+    };
+    assert_eq!(shaped(0, 0).width, em * NARROW);
+    assert!(shaped(0, 0).width < cell.width);
+    assert_eq!(shaped(2, 0).glyphs.len(), 1);
+    assert_eq!(shaped(2, 0).width, em * CELL);
+    let ligated = cx.update(|window, _| {
+        let run = TextRun {
+            len: 2,
+            font: gpui::font(style().font_family),
+            color: style().foreground,
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        window
+            .text_system()
+            .shape_line("->".into(), em, &[run], None)
+    });
+    assert_eq!(ligated.width, em * LIGATURE);
+    assert_eq!(ligated.runs[0].glyphs.len(), 1);
+
     // Underline and strikeout span the two cells `ab` occupy (the cursor draws
-    // the wide character's), not the glyphs' natural width.
+    // the wide character's), not the glyphs' natural width, which differs.
+    let natural = shaped(4, 0).width + shaped(4, 1).width;
+    assert!((f32::from(natural) - f32::from(em * (A + B))).abs() < 1e-3);
+    assert_ne!(natural, cell.width * 2.);
     let decorations = |quads: &[Bounds<Pixels>], row: usize| {
         quads
             .iter()
