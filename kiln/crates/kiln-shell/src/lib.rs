@@ -8,11 +8,15 @@
 //! [`Capabilities`], or GPUI's window decorations, and its colours from
 //! the active theme.
 //!
+//! What a pane shows in a tab is a [`PaneItem`], held through an
+//! [`ItemHandle`] ([`item`]).
+//!
 //! The shell's leaf modules, which a host can use before it adopts the
 //! rest: the status bar's items ([`status`]), a picker palette over a
 //! delegate ([`picker`]), and a background writer for saved state
 //! ([`persist`]).
 
+pub mod item;
 pub mod menu_bar;
 pub mod persist;
 pub mod picker;
@@ -26,6 +30,7 @@ use kiln_command::{CommandId, Value};
 use kiln_core::{CatalogError, CommandCatalog};
 use kiln_platform::Capabilities;
 
+pub use item::{CloseAnswer, ItemCrumb, ItemHandle, ItemId, PaneItem};
 pub use menu_bar::MenuBarView;
 pub use picker::{Picker, PickerDelegate};
 pub use root::Root;

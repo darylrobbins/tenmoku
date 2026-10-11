@@ -22,6 +22,7 @@ use gpui::{
     FocusHandle, Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Pixels,
     Point, Render, ScrollHandle, Styled as _, Subscription, Task, WeakEntity, Window, canvas, div,
 };
+use kiln_shell::{ItemHandle, ItemId};
 
 use crate::{
     find_bar::{self, FindBar, FindOp},
@@ -32,10 +33,11 @@ use crate::{
 };
 
 /// A tab's ID, which stays with it as tabs open, close and move: its
-/// editor's.
-pub(crate) type TabId = EntityId;
+/// item's, the editor's.
+pub(crate) type TabId = ItemId;
 
-/// An open file.
+/// An open file. Its editor is the tab's [`PaneItem`](kiln_shell::PaneItem)
+/// ([`Tab::item`]), which the tab bar and the window's title read.
 pub struct Tab {
     /// `None` for a buffer that was never saved, such as the welcome text.
     pub path: Option<PathBuf>,
@@ -47,7 +49,12 @@ pub struct Tab {
 
 impl Tab {
     pub(crate) fn id(&self) -> TabId {
-        self.editor.entity_id()
+        self.item().id()
+    }
+
+    /// The tab's item: its editor, as kiln-shell holds items.
+    pub fn item(&self) -> &dyn ItemHandle {
+        &self.editor
     }
 }
 
@@ -276,11 +283,7 @@ impl Pane {
             return format!("{} — loading", file_name(Some(path)));
         }
         match self.tabs.get(self.active) {
-            Some(tab) => {
-                let model = tab.editor.read(cx).model();
-                let dirty = if model.is_dirty() { " ●" } else { "" };
-                format!("{}{dirty} — fastedit", file_name(model.path()))
-            }
+            Some(tab) => tab.item().window_title(cx).into(),
             None => "fastedit".into(),
         }
     }
@@ -788,10 +791,7 @@ impl Reveal {
 }
 
 pub(crate) fn file_name(path: Option<&Path>) -> String {
-    path.and_then(Path::file_name)
-        .map_or("untitled".into(), |name| {
-            name.to_string_lossy().into_owned()
-        })
+    fe_gpui::pane_item::file_name(path)
 }
 
 #[cfg(test)]
@@ -866,8 +866,8 @@ impl Render for Pane {
         let pane = cx.entity().downgrade();
         let ui = self.ui;
         let tabs = self.tabs.iter().enumerate().map(|(ix, tab)| {
-            let dirty = tab.editor.read(cx).model().is_dirty();
-            let label = file_name(tab.path.as_deref());
+            let dirty = tab.item().is_dirty(cx);
+            let label = tab.item().tab_title(cx);
             let dragged = DraggedTab {
                 pane: pane.clone(),
                 tab: tab.id(),
@@ -875,7 +875,7 @@ impl Render for Pane {
             fe_ui::Tab::new(("tab", ix), label.clone(), &self.ui)
                 .dirty(dirty)
                 .on_drag(dragged, move |_, _, _, cx| {
-                    cx.new(|_| TabGhost(label.clone().into(), ui))
+                    cx.new(|_| TabGhost(label.clone(), ui))
                 })
                 .on_drop(cx.listener(Self::on_drop))
                 .active(ix == self.active)

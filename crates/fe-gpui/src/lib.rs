@@ -12,7 +12,8 @@
 //! there, or at the caret on `editor.show_hover`, and a completion menu
 //! (`completion_menu`) of what the host's [`CompletionProvider`] offers at
 //! the caret. Vim mode, one app-wide switch
-//! ([`set_vim_enabled`]), routes an editor's keys through `fe-vim`.
+//! ([`set_vim_enabled`]), routes an editor's keys through `fe-vim`. An
+//! editor is a kiln-shell pane item ([`pane_item`]).
 
 pub mod commands;
 pub mod completion_menu;
@@ -21,6 +22,7 @@ mod file_viewer;
 mod hover;
 pub mod keymap;
 pub mod menu;
+pub mod pane_item;
 mod timing;
 mod view;
 mod vim;

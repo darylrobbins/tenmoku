@@ -1845,6 +1845,7 @@ dependencies = [
  "image",
  "kiln-command",
  "kiln-platform",
+ "kiln-shell",
  "log",
  "serde_json",
  "tempfile",

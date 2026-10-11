@@ -18,6 +18,8 @@ fe-keymap.workspace = true
 fe-syntax.workspace = true
 fe-vim.workspace = true
 kiln-platform.workspace = true
+# EditorView is a pane item (pane_item.rs).
+kiln-shell.workspace = true
 gpui.workspace = true
 log.workspace = true
 unicode-segmentation.workspace = true
