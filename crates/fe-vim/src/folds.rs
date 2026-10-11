@@ -255,7 +255,17 @@ fn reopen(model: &mut EditorModel, row: u32, recursive: bool, open: impl Fn(usiz
         return;
     };
     if recursive {
+        // Unfolding takes every fold it touches; the ones reaching outside
+        // the outermost aren't nested in it, so they go back.
+        let straddling: Vec<_> = fold_rows(model)
+            .into_iter()
+            .filter(|&(start, end)| start <= outer_end && end >= outer_start)
+            .filter(|&(start, end)| start < outer_start || end > outer_end)
+            .collect();
         model.unfold_rows(outer_start..=outer_end);
+        for (start, end) in straddling {
+            model.fold_rows(start..=end);
+        }
         return;
     }
     model.unfold_rows(row..=row);

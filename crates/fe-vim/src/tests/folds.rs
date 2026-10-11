@@ -181,3 +181,18 @@ fn recursive_open_reaches_every_nested_fold() {
         assert_eq!(folds(&vim), expected, "{keys}");
     }
 }
+
+#[test]
+fn recursive_open_keeps_overlapping_folds_that_reach_outside() {
+    let text = "a\n  b\n    c\n    d\n  e\n    f\n    g\nh";
+    for keys in ["zA", "zO"] {
+        let mut vim = HeadlessVim::new(text, (0, 0));
+        vim.feed("zM").unwrap();
+        vim.model_mut().unfold_rows(0..=6);
+        vim.model_mut().fold_rows(0..=4);
+        vim.model_mut().fold_rows(4..=6);
+        assert_eq!(folds(&vim), vec![(0, 4), (4, 6)]);
+        vim.feed(keys).unwrap();
+        assert_eq!(folds(&vim), vec![(4, 6)], "{keys}");
+    }
+}
