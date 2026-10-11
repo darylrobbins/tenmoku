@@ -1,20 +1,21 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-//! Hot reload. The only wait is for the watcher's first batch, which is sent
-//! from its thread before any event and so doesn't wait on FSEvents delivery.
-//! Each reload is fed to [`KeymapStore::reload`] directly: delivering a save
-//! as a batch is `ConfigWatcher`'s job, and its own tests cover that. The wait
-//! is bounded by [`TIMEOUT`], and no duration is asserted.
+//! The one test that waits on the file system. Waits are bounded by
+//! [`TIMEOUT`], and no duration is asserted.
 
-use std::{fs, path::Path, sync::mpsc, time::Duration};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::mpsc,
+    time::Duration,
+};
 
 use crate::ConfigWatcher;
 
 use super::{keystroke, stack, write};
 use crate::{KeyOutcome, KeymapStore, Matcher};
 
-/// An upper bound only, sized for a loaded CI host. It bounds the watcher's
-/// first batch, which doesn't wait on FSEvents delivery.
+/// An upper bound only, sized for a loaded CI host: FSEvents may take a while.
 const TIMEOUT: Duration = Duration::from_secs(60);
 
 const DEFAULTS: &str = "\
@@ -42,6 +43,28 @@ fn replace(path: &Path, text: &str) {
     fs::rename(&temp, path).unwrap();
 }
 
+/// Reloads each batch for `path`, feeding the matcher, until `done` holds.
+/// One save can arrive in several batches, the first maybe before it
+/// finishes.
+fn reload_until(
+    store: &mut KeymapStore,
+    matcher: &mut Matcher,
+    batches: &mpsc::Receiver<Vec<PathBuf>>,
+    path: &Path,
+    done: fn(&KeymapStore) -> bool,
+) {
+    loop {
+        let batch = batches.recv_timeout(TIMEOUT).expect("a batch in time");
+        assert_eq!(batch, [path]);
+        if let Some(event) = store.reload(&batch) {
+            matcher.set_keymap(event.keymap);
+        }
+        if done(store) {
+            return;
+        }
+    }
+}
+
 #[test]
 fn hot_reload_swaps_the_keymap() {
     let dir = tempfile::tempdir().unwrap();
@@ -60,10 +83,13 @@ fn hot_reload_swaps_the_keymap() {
 
     // A valid edit changes what the matcher resolves.
     replace(&path, &binding("editor.duplicate_line"));
-    let event = store
-        .reload(std::slice::from_ref(&path))
-        .expect("the edit reloads");
-    matcher.set_keymap(event.keymap);
+    reload_until(&mut store, &mut matcher, &batches, &path, |store| {
+        store
+            .keymap()
+            .bindings()
+            .iter()
+            .any(|binding| binding.command.as_str() == "editor.duplicate_line")
+    });
     assert_eq!(
         cmd_j(&mut matcher).as_deref(),
         Some("editor.duplicate_line")
@@ -75,10 +101,9 @@ fn hot_reload_swaps_the_keymap() {
         &path,
         "[[bindings]]\nkeys = \"cmd-bogus\"\ncommand = \"editor.x\"\n",
     );
-    let event = store
-        .reload(std::slice::from_ref(&path))
-        .expect("the edit reloads");
-    matcher.set_keymap(event.keymap);
+    reload_until(&mut store, &mut matcher, &batches, &path, |store| {
+        store.diagnostics().iter().any(|d| d.is_error())
+    });
     assert_eq!(
         cmd_j(&mut matcher).as_deref(),
         Some("editor.duplicate_line")
