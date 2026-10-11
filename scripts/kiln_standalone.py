@@ -252,11 +252,19 @@ def check_lock(repo: Path, scratch: Path) -> int:
     return 1 if errors else 0
 
 
-# Repository paths kiln's sources and docs mention, e.g. docs/decisions/….
-REPO_PATH = re.compile(r"\b((?:docs|crates|scripts|vendor|tools|\.github)/[\w./-]*\w)")
+# Paths kiln's sources and docs mention, e.g. docs/framework.md. One that
+# exists under kiln/ is kiln's own; any other is the repository's.
+# Not inside a URL (crates.io/crates/…) or a longer path.
+REPO_PATH = re.compile(r"(?<![\w./-])((?:docs|crates|scripts|vendor|tools|\.github)/[\w./-]*\w)")
 # THIRD_PARTY.md table rows for kiln files: | `kiln/…` | source | …
 THIRD_PARTY_ROW = re.compile(r"^\|\s*`(kiln/[^`]*)`\s*\|\s*([^|]*)\|", re.MULTILINE)
-NOTICE_FILES = ("LICENSE", "LICENSE-APACHE", "LICENSE-MIT", "NOTICE", "THIRD_PARTY.md", "README.md", "CLEAN_ROOM.md")
+# The files kiln/ keeps for itself (card K6.3), as a split-out repository
+# would have them.
+OWN_FILES = ("README.md", "THIRD_PARTY.md", "NOTICE", "CLEAN_ROOM.md", "deny.toml",
+             ".config/nextest.toml", "docs")
+# Licence texts, which come with the licence flip: until then every crate
+# is LicenseRef-Proprietary and there's no licence to ship.
+LICENCE_FILES = ("LICENSE", "LICENSE-APACHE", "LICENSE-MIT")
 
 
 def report(repo: Path) -> int:
@@ -267,6 +275,10 @@ def report(repo: Path) -> int:
     closure = lock_closure(load(repo / "Cargo.lock"), set(manifests))
     workspace = root["workspace"]
 
+    kiln = repo / KILN
+    own = [name + ("/" if (kiln / name).is_dir() else "") for name in OWN_FILES
+           if (kiln / name).exists()]
+    print(f"kiln/ has its own: {', '.join(own) or '(none)'}")
     print("kiln/ needs from outside itself:")
     inherited = [f"{k} = {workspace['package'][k]}" for k in sorted(package_keys)]
     print(f"  [workspace.package]: {', '.join(inherited)}")
@@ -298,11 +310,13 @@ def report(repo: Path) -> int:
         print(f"  build script: {build.relative_to(repo)}")
 
     mentions: dict[str, set[str]] = {}
-    for path in sorted((repo / KILN).rglob("*")):
+    for path in sorted(kiln.rglob("*")):
         if not path.is_file() or path.suffix not in (".rs", ".toml", ".md"):
             continue
         text = path.read_text(encoding="utf-8")
         for target in REPO_PATH.findall(text):
+            if (kiln / target).exists():
+                continue  # kiln's own, such as docs/framework.md.
             mentions.setdefault(target, set()).add(path.relative_to(repo).as_posix())
     if mentions:
         print("  repo paths mentioned in kiln/ (docs and comments; not shipped with it):")
@@ -311,15 +325,22 @@ def report(repo: Path) -> int:
 
     third = repo / "THIRD_PARTY.md"
     rows = THIRD_PARTY_ROW.findall(third.read_text(encoding="utf-8")) if third.exists() else []
-    if rows:
-        print("  THIRD_PARTY.md rows for kiln files (kiln/ needs its own copy):")
-        for path, source in rows:
+    own_third = kiln / "THIRD_PARTY.md"
+    own_text = own_third.read_text(encoding="utf-8") if own_third.exists() else ""
+    # kiln's copy names each path relative to kiln/.
+    uncopied = [(path, source) for path, source in rows
+                if f"`{Path(path).relative_to(KILN).as_posix()}" not in own_text]
+    if uncopied:
+        print("  THIRD_PARTY.md rows for kiln files (kiln/THIRD_PARTY.md lacks them):")
+        for path, source in uncopied:
             print(f"    {path}  from {source.strip()}")
-    missing = [n for n in NOTICE_FILES if not (repo / KILN / n).exists()]
+    missing = [n for n in OWN_FILES if not (kiln / n).exists()]
     if missing:
-        print(f"  licensing files kiln/ lacks: {', '.join(missing)}")
+        print(f"  files kiln/ lacks: {', '.join(missing)}")
     licences = sorted({m["package"].get("license", "?") for m in manifests.values()})
-    print(f"  crate licence: {', '.join(licences)}")
+    texts = [n for n in LICENCE_FILES if (kiln / n).exists()]
+    print(f"  crate licence: {', '.join(licences)}; licence texts: "
+          f"{', '.join(texts) or 'none yet (they come with the licence flip)'}")
     return 0
 
 

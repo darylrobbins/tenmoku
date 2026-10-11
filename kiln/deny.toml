@@ -1,0 +1,59 @@
+# kiln's dependency policy, for `cargo deny check` in kiln's own workspace.
+# kiln is to be published under a permissive licence: every dependency
+# must be permissively licensed (CLEAN_ROOM.md). While kiln lives inside a
+# host repository, that repository's deny.toml applies to it as well; this
+# file keeps only what kiln's own dependency graph needs.
+
+[graph]
+all-features = false
+
+[licenses]
+confidence-threshold = 0.93
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    # BSD-style; libbz2-rs-sys, via GPUI's http client compression.
+    "bzip2-1.0.6",
+    # Public-domain dedication without a patent grant (notify, hexf-parse,
+    # tiny-keccak).
+    "CC0-1.0",
+]
+# MPL-2.0 is allowed only as an *unmodified* dependency, crate by crate.
+# Never patch or copy MPL code into kiln's files. Add entries only after
+# review, and list shipped ones in THIRD_PARTY.md (MPL requires a
+# source-location notice).
+exceptions = [
+    # Build-time only (gpui-pre-apple build script); not linked into the binary.
+    { allow = ["MPL-2.0"], crate = "cbindgen" },
+    # Windows DirectWrite bindings via zed-font-kit; unmodified. Ships only on Windows.
+    { allow = ["MPL-2.0"], crate = "dwrote" },
+    # dirs-sys helper via zed-font-kit; unmodified.
+    { allow = ["MPL-2.0"], crate = "option-ext" },
+]
+
+# kiln's own crates are unpublished until the licence flip.
+[licenses.private]
+ignore = true
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[advisories]
+# Vulnerabilities fail everywhere. "Unmaintained" fails only for kiln's
+# direct dependencies: GPUI's tree (paste, rustybuzz, ttf-parser) is
+# outside its control.
+unmaintained = "workspace"
+ignore = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

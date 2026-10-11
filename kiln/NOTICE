@@ -1,0 +1,16 @@
+kiln
+Copyright (c) 2026 Daryl Robbins. All rights reserved.
+
+This product includes software developed by third parties. See THIRD_PARTY.md.
+
+GPUI (gpui-pre crates; kiln-ui's TextField adapts its examples/input.rs)
+Copyright Zed Industries, Inc.
+Licensed under the Apache License, Version 2.0.
+gpui-pre 0.3.7 ships no NOTICE file, so Apache-2.0 section 4(d) asks nothing
+further of kiln; this entry is attribution.
+
+Lucide icons (unmodified, in crates/kiln-ui/assets/icons)
+Copyright (c) 2026 Lucide Icons and Contributors.
+Licensed under the ISC License.
+Icons derived from Feather: Copyright (c) 2013-present Cole Bemis.
+Licensed under the MIT License.

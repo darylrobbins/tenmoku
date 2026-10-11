@@ -6,7 +6,7 @@
 //! The grammar keeps to the shape of GPUI's key-context predicates (minus
 //! its `>` descendant operator), so card 1b can hand a binding's predicate
 //! to GPUI. It adds `.` in identifiers and quoted values; see
-//! `docs/decisions/command-model.md`.
+//! `docs/command-model.md` in kiln.
 
 use std::{
     collections::{BTreeMap, BTreeSet},

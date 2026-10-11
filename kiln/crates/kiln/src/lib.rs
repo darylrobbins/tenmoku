@@ -3,7 +3,7 @@
 //! Kiln: an app framework on GPUI that hides the differences between
 //! platforms and provides high-level widgets, in GPUI's own idioms. This
 //! crate sets an app up ([`application`], [`init`]) and re-exports the
-//! others; see `docs/decisions/app-framework.md`.
+//! others; see `docs/framework.md` in kiln.
 
 mod app_commands;
 mod config;

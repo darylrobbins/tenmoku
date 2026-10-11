@@ -2,7 +2,7 @@
 
 //! What differs between operating systems, as data. This directory and
 //! `kiln-platform`'s sources are the only places in kiln that branch on the
-//! operating system (`scripts/check_kiln_boundary.py`); everything else
+//! operating system (kiln's `docs/framework.md` §4); everything else
 //! asks [`Os`], so it can be tested "as Linux" on any host.
 
 pub(crate) mod fs;

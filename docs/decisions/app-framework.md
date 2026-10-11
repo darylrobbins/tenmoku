@@ -3,6 +3,10 @@
 Status: **build**. Decided 2026-10-10. Supersedes `app-shell.md` (see §6).
 The name `kiln` is a placeholder; the final name is chosen before the
 framework is open-sourced, and renamed in one change (card K6.4).
+`kiln/docs/` holds the framework's standalone copy of this record and of
+the parts of `command-model.md` it implements, written without fastedit,
+so kiln's code can cite them once it leaves this repository; this record
+stays the source of truth here (card K6.3).
 
 ## 1. Decision
 

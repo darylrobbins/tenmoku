@@ -1,0 +1,33 @@
+# kiln's own nextest settings, for when it's built as a workspace of its
+# own. Inside a host repository, that repository's .config/nextest.toml
+# applies instead and must carry the same entries for kiln's tests.
+
+[profile.ci]
+fail-fast = false
+
+[profile.ci.junit]
+path = "junit.xml"
+
+# These tests use the operating system's real file watcher (FSEvents on
+# macOS), which under load can deliver late or not at all, and no timeout
+# bounds that. A pass after a retry is reported FLAKY in the JUnit report.
+[[profile.ci.overrides]]
+filter = '''
+(package(kiln-core) and (test(=tests::watch::watcher_follows_links_changed_while_registering)
+  or test(=tests::watch_late::late_user_event_does_not_hide_project_edit)))
+or (package(kiln-platform) and test(=the_watcher_reloads_settings_saved_on_disk))
+'''
+retries = 2
+
+# A flood of file events makes FSEvents drop events with no drop or rescan
+# flag, so a test waiting on delivery can't pass while another floods. One
+# real-watcher test at a time keeps them apart.
+[test-groups.fsevents]
+max-threads = 1
+
+[[profile.default.overrides]]
+filter = '''
+(package(kiln-core) and (test(/^tests::watch::/) or test(/^tests::watch_late::/)))
+or (package(kiln-platform) and test(=the_watcher_reloads_settings_saved_on_disk))
+'''
+test-group = "fsevents"

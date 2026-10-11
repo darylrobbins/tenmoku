@@ -1,5 +1,10 @@
 # Third-party code
 
+kiln/, the app framework, keeps its own copy of its rows (the `kiln/…` rows
+below: `TextField`'s GPUI adaptation and the Lucide icons) in
+`kiln/THIRD_PARTY.md`, with `kiln/NOTICE`, for when it leaves this
+repository. Change both files together.
+
 ## Code copied or adapted into this repository
 
 | Our path | Source | Commit | License |

@@ -6,7 +6,7 @@
 //! component such as a text editor, registers its commands on it. Must never
 //! depend on GPUI.
 //!
-//! The design is recorded in `docs/decisions/command-model.md`.
+//! The design is recorded in `docs/command-model.md` in kiln.
 
 mod id;
 mod invocation;
