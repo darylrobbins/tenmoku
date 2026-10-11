@@ -43,9 +43,7 @@ use fe_nav::{
 };
 use fe_project::FsChange;
 use fe_ui::UiTheme;
-use gpui::{
-    App, AppContext as _, Context, Entity, Focusable as _, Global, Subscription, Task, Window,
-};
+use gpui::{App, AppContext as _, Context, Entity, Focusable as _, Global, Task, Window};
 
 use crate::{
     Picker, StatusBar, StatusItem, StatusSide, Workbench,
@@ -164,7 +162,6 @@ pub(crate) struct Nav {
     pub(crate) goto: Requests,
     pub(crate) definitions: Entity<Picker<DefinitionsPicker>>,
     pub(crate) symbols: Entity<Picker<SymbolsPicker>>,
-    _pickers: [Subscription; 4],
     /// Builds started.
     #[cfg(test)]
     pub(crate) builds: usize,
@@ -181,12 +178,7 @@ pub(crate) struct Nav {
 
 impl Nav {
     /// Navigation in `root`, built on the first nav command.
-    pub(crate) fn new(
-        root: Option<PathBuf>,
-        ui: UiTheme,
-        window: &mut Window,
-        cx: &mut Context<Workbench>,
-    ) -> Self {
+    pub(crate) fn new(root: Option<PathBuf>, ui: UiTheme, cx: &mut Context<Workbench>) -> Self {
         let navigation = Arc::new(Navigation::new());
         let workbench = cx.weak_entity();
         let definitions = cx.new(|cx| {
@@ -197,8 +189,6 @@ impl Nav {
             let delegate = SymbolsPicker::new(workbench, navigation.clone(), ui);
             Picker::new(delegate, "Go to symbol in workspace…", ui, cx)
         });
-        let [a, b] = Workbench::follow_palette(&definitions, Palette::Definitions, window, cx);
-        let [c, d] = Workbench::follow_palette(&symbols, Palette::Symbols, window, cx);
         let (ready_tx, ready) = async_channel::bounded(1);
         Self {
             root,
@@ -213,7 +203,6 @@ impl Nav {
             goto: Requests::default(),
             definitions,
             symbols,
-            _pickers: [a, b, c, d],
             #[cfg(test)]
             builds: 0,
             #[cfg(test)]
@@ -766,8 +755,7 @@ impl Workbench {
             picker.delegate.open(items, status, previous);
             picker.show(window, cx);
         });
-        self.palette = Some(Palette::Definitions);
-        cx.notify();
+        self.show_palette(Palette::Definitions, picker, window, cx);
     }
 
     /// Shows the workspace symbols picker, focused, in place of any other
@@ -784,8 +772,7 @@ impl Workbench {
             picker.delegate.opened(ready, previous);
             picker.show(window, cx);
         });
-        self.palette = Some(Palette::Symbols);
-        cx.notify();
+        self.show_palette(Palette::Symbols, picker, window, cx);
     }
 }
 

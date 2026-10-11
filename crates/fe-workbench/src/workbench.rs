@@ -4,6 +4,7 @@
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},
+    rc::Rc,
 };
 
 use fe_buffer::Buffer;
@@ -11,9 +12,9 @@ use fe_editor::EditorModel;
 use fe_gpui::{EditorSettings, EditorTheme, EditorView, SettingsEvent, commands::RunCommand};
 use fe_ui::{ROW_HEIGHT, UiTheme};
 use gpui::{
-    App, AppContext as _, Context, DismissEvent, Entity, EntityId, EventEmitter, FocusHandle,
-    Focusable, InteractiveElement as _, IntoElement, ParentElement as _, PromptButton, PromptLevel,
-    Render, StyleRefinement, Styled as _, Subscription, WeakEntity, Window, div,
+    App, AppContext as _, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement as _, IntoElement, ParentElement as _, PromptButton, PromptLevel, Render,
+    StyleRefinement, Styled as _, Subscription, WeakEntity, Window, div,
     prelude::FluentBuilder as _, px,
 };
 
@@ -38,7 +39,7 @@ use crate::{
     trust::{self, RootTrust, TrustChanged},
 };
 use kiln_shell::{
-    ItemHandle, TitleBar,
+    ItemHandle, ModalEvent, ModalId, ModalLayer, TitleBar,
     window_frame::{self, TopRow},
 };
 
@@ -87,7 +88,8 @@ pub fn resolve_launch(arg: Option<PathBuf>) -> Launch {
     }
 }
 
-/// The palette shown over the window: one at a time.
+/// The palette shown over the window, one at a time, in kiln-shell's
+/// modal layer: fastedit's names for its [`ModalId`]s.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Palette {
     QuickOpen,
@@ -95,6 +97,32 @@ pub(crate) enum Palette {
     Toolbar,
     Definitions,
     Symbols,
+}
+
+impl Palette {
+    const ALL: [Palette; 5] = [
+        Palette::QuickOpen,
+        Palette::Language,
+        Palette::Toolbar,
+        Palette::Definitions,
+        Palette::Symbols,
+    ];
+
+    /// Its id in the modal layer.
+    pub(crate) fn id(self) -> ModalId {
+        ModalId(match self {
+            Palette::QuickOpen => "quick_open",
+            Palette::Language => "language",
+            Palette::Toolbar => "toolbar",
+            Palette::Definitions => "definitions",
+            Palette::Symbols => "symbols",
+        })
+    }
+
+    /// The palette shown as `id`.
+    fn of(id: ModalId) -> Option<Self> {
+        Self::ALL.into_iter().find(|palette| palette.id() == id)
+    }
 }
 
 /// The workbench was re-rooted at the folder it carries, by
@@ -121,7 +149,10 @@ pub struct Workbench {
     echoes: HashSet<EntityId>,
     quick_open: Entity<Picker<QuickOpen>>,
     language_picker: Entity<Picker<LanguagePicker>>,
-    /// The palette that shows, if one does.
+    /// The palettes' modal layer.
+    modals: Entity<ModalLayer>,
+    /// The palette that shows, if one does: the modal layer's, as of its
+    /// last change.
     pub(crate) palette: Option<Palette>,
     /// Go to definition, workspace symbols, back and forward.
     pub(crate) nav_state: Nav,
@@ -153,15 +184,13 @@ pub struct Workbench {
     /// The root's language servers.
     pub(crate) lsp: Lsp,
     ui: UiTheme,
-    /// To the project panel's and the palette's events: replaced with them
-    /// on a new root.
-    root_subscriptions: [Subscription; 3],
+    /// To the project panel's events: replaced with it on a new root.
+    root_subscription: Subscription,
     _rail: Subscription,
-    /// To the language picker's dismissal and blur.
-    _language_picker: [Subscription; 2],
+    /// To the modal layer's palettes coming and going.
+    _modals: Subscription,
     /// What the panes' toolbar crumbs and "…" list.
     toolbar_picker: Entity<Picker<ToolbarPicker>>,
-    _toolbar_picker: [Subscription; 2],
     /// Whether the panes show their toolbars.
     breadcrumbs: bool,
     nav: NavButtons,
@@ -234,18 +263,24 @@ impl Workbench {
                 workbench.run_dock_op(op, window, cx);
             },
         );
-        let root_subscriptions = Self::follow_root(&panel, &quick_open, window, cx);
+        let root_subscription = Self::follow_root(&panel, window, cx);
         let language_picker =
             cx.new(|cx| Picker::new(LanguagePicker::new(ui), "Select a language…", ui, cx));
-        let language_subscriptions =
-            Self::follow_palette(&language_picker, Palette::Language, window, cx);
         let toolbar_picker = cx.new(|cx| {
             let delegate = ToolbarPicker::new(outline.downgrade(), ui);
             Picker::new(delegate, "Filter…", ui, cx)
         });
-        let toolbar_subscriptions =
-            Self::follow_palette(&toolbar_picker, Palette::Toolbar, window, cx);
-        let nav_state = Nav::new(launch_root.clone(), ui, window, cx);
+        let nav_state = Nav::new(launch_root.clone(), ui, cx);
+        let modals = Self::new_modal_layer(cx);
+        // The layer hides a palette that's dismissed or left.
+        let modals_changed = cx.subscribe(&modals, |workbench, _, event, cx| {
+            workbench.palette = match *event {
+                ModalEvent::Shown(id) => Palette::of(id),
+                ModalEvent::Dismissed(id) if workbench.palette == Palette::of(id) => None,
+                ModalEvent::Dismissed(_) => workbench.palette,
+            };
+            cx.notify();
+        });
         let mut workbench = Self {
             panel,
             dock,
@@ -257,6 +292,7 @@ impl Workbench {
             echoes: HashSet::new(),
             quick_open,
             language_picker,
+            modals,
             palette: None,
             nav_state,
             status_bar: cx.new(|_| StatusBar::new(ui)),
@@ -273,11 +309,10 @@ impl Workbench {
             trust: RootTrust::default(),
             lsp: Lsp::new(),
             ui,
-            root_subscriptions,
+            root_subscription,
             _rail: rail,
-            _language_picker: language_subscriptions,
+            _modals: modals_changed,
             toolbar_picker,
-            _toolbar_picker: toolbar_subscriptions,
             breadcrumbs: true,
             nav: NavButtons::default(),
             chain_key: None,
@@ -316,14 +351,13 @@ impl Workbench {
         cx.new(|cx| Picker::new(QuickOpen::new(root, pane, ui), "Go to file…", ui, cx))
     }
 
-    /// Subscribes to a root's project panel and quick-open palette.
+    /// Subscribes to a root's project panel.
     fn follow_root(
         panel: &Entity<ProjectPanel>,
-        quick_open: &Entity<Picker<QuickOpen>>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> [Subscription; 3] {
-        let open = cx.subscribe_in(
+    ) -> Subscription {
+        cx.subscribe_in(
             panel,
             window,
             |workbench, _, event, window, cx| match event {
@@ -337,57 +371,38 @@ impl Workbench {
                     workbench.nav_state.fs_changed(changes, cx);
                 }
             },
-        );
-        let [dismissed, left] = Self::follow_palette(quick_open, Palette::QuickOpen, window, cx);
-        [open, dismissed, left]
+        )
     }
 
-    /// Hides `picker`, shown as `palette`, once it's picked from, dismissed
-    /// or left. Its events once another palette shows instead are ignored.
-    pub(crate) fn follow_palette<D: crate::PickerDelegate>(
-        picker: &Entity<Picker<D>>,
+    /// The palettes' layer. A palette that still has focus as it hides,
+    /// with nothing focused before it opened, leaves it to the workbench's
+    /// focus: the active editor.
+    fn new_modal_layer(cx: &mut Context<Self>) -> Entity<ModalLayer> {
+        let workbench = cx.weak_entity();
+        cx.new(|_| {
+            let mut layer = ModalLayer::new();
+            layer.set_focus_fallback(Rc::new(move |_, cx| {
+                let workbench = workbench.upgrade()?;
+                Some(workbench.read(cx).focus_handle(cx))
+            }));
+            layer
+        })
+    }
+
+    /// Shows `picker` as `palette` in the modal layer, in place of any
+    /// other. The layer hides it once it's picked from, dismissed or left.
+    pub(crate) fn show_palette<D: crate::PickerDelegate>(
+        &mut self,
         palette: Palette,
+        picker: Entity<Picker<D>>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> [Subscription; 2] {
-        // Focus is elsewhere by then, unless nothing was focused before it
-        // opened.
-        let dismissed = cx.subscribe_in(
-            picker,
-            window,
-            move |workbench, picker, _: &DismissEvent, window, cx| {
-                if picker.focus_handle(cx).is_focused(window) {
-                    window.focus(&workbench.focus_handle(cx), cx);
-                }
-                // Not once another palette shows instead, its input focused.
-                if workbench.palette == Some(palette) {
-                    workbench.palette = None;
-                }
-                cx.notify();
-            },
-        );
-        // Left for another element, or the window deactivated: GPUI blurs
-        // then too, focus staying on the input. That's dismissed as Escape
-        // would be, so focus doesn't stay on an input no longer drawn.
-        let weak = picker.downgrade();
-        let left = cx.on_blur(
-            &picker.focus_handle(cx),
-            window,
-            move |workbench, window, cx| {
-                if workbench.palette != Some(palette) {
-                    return;
-                }
-                let Some(picker) = weak.upgrade() else {
-                    return;
-                };
-                if picker.focus_handle(cx).is_focused(window) {
-                    picker.update(cx, |picker, cx| picker.dismiss(window, cx));
-                }
-                workbench.palette = None;
-                cx.notify();
-            },
-        );
-        [dismissed, left]
+    ) {
+        self.modals.update(cx, |layer, cx| {
+            layer.show_modal(palette.id(), picker, window, cx)
+        });
+        self.palette = Some(palette);
+        cx.notify();
     }
 
     /// Re-roots the workbench at `root`, in this window: a new project
@@ -411,20 +426,18 @@ impl Workbench {
             self.dismiss_palette(window, cx);
         }
         if self.palette == Some(Palette::QuickOpen) {
-            // Dismissed as Escape would be, as the palette's subscriptions
-            // go with it.
+            // Dismissed as Escape would be, as the palette goes.
             let picker = self.quick_open.clone();
-            picker.update(cx, |picker, cx| picker.dismiss(window, cx));
+            self.dismiss_palette(window, cx);
             if picker.focus_handle(cx).contains_focused(window, cx) {
                 window.focus(&self.focus_handle(cx), cx);
             }
-            self.palette = None;
         }
         let panel_focused = self.panel.focus_handle(cx).contains_focused(window, cx);
         let ui = self.ui;
         let panel = cx.new(|cx| ProjectPanel::new(Some(root.clone()), ui, cx));
         let quick_open = Self::new_quick_open(Some(root.clone()), self.active.downgrade(), ui, cx);
-        self.root_subscriptions = Self::follow_root(&panel, &quick_open, window, cx);
+        self.root_subscription = Self::follow_root(&panel, window, cx);
         let search = self.dock.update(cx, |dock, cx| {
             dock.set_project(panel.clone(), cx);
             dock.search().clone()
@@ -838,15 +851,16 @@ impl Workbench {
             self.dismiss_palette(window, cx);
         }
         let previous = window.focused(cx);
-        self.quick_open.update(cx, |picker, cx| {
-            if show {
+        let picker = self.quick_open.clone();
+        if show {
+            picker.update(cx, |picker, cx| {
                 picker.delegate.opened(previous, cx);
                 picker.show(window, cx);
-            } else {
-                picker.dismiss(window, cx);
-            }
-        });
-        self.palette = show.then_some(Palette::QuickOpen);
+            });
+            self.show_palette(Palette::QuickOpen, picker, window, cx);
+        } else {
+            self.dismiss_palette(window, cx);
+        }
         cx.notify();
     }
 
@@ -873,32 +887,18 @@ impl Workbench {
         if self.palette != Some(Palette::Language) {
             self.dismiss_palette(window, cx);
         }
-        self.language_picker.update(cx, |picker, cx| {
+        let picker = self.language_picker.clone();
+        picker.update(cx, |picker, cx| {
             picker.delegate.opened(&editor, cx);
             picker.show(window, cx);
         });
-        self.palette = Some(Palette::Language);
-        cx.notify();
+        self.show_palette(Palette::Language, picker, window, cx);
     }
 
     /// Dismisses the palette that shows, as Escape would.
     pub(crate) fn dismiss_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        match self.palette.take() {
-            Some(Palette::QuickOpen) => self
-                .quick_open
-                .update(cx, |picker, cx| picker.dismiss(window, cx)),
-            Some(Palette::Language) => self
-                .language_picker
-                .update(cx, |picker, cx| picker.dismiss(window, cx)),
-            Some(Palette::Toolbar) => self
-                .toolbar_picker
-                .update(cx, |picker, cx| picker.dismiss(window, cx)),
-            Some(Palette::Definitions) => (self.nav_state.definitions.clone())
-                .update(cx, |picker, cx| picker.dismiss(window, cx)),
-            Some(Palette::Symbols) => {
-                (self.nav_state.symbols.clone()).update(cx, |picker, cx| picker.dismiss(window, cx))
-            }
-            None => {}
+        if self.palette.take().is_some() {
+            (self.modals.clone()).update(cx, |layer, cx| layer.dismiss_modal(window, cx));
         }
     }
 
@@ -918,14 +918,14 @@ impl Workbench {
         let previous = window.focused(cx).filter(|focused| *focused != input);
         let (pane, root) = (pane.downgrade(), self.root.clone());
         let workbench = cx.entity().downgrade();
-        self.toolbar_picker.update(cx, |picker, cx| {
+        let picker = self.toolbar_picker.clone();
+        picker.update(cx, |picker, cx| {
             picker
                 .delegate
                 .open(request, pane, workbench, root, previous, cx);
             picker.show(window, cx);
         });
-        self.palette = Some(Palette::Toolbar);
-        cx.notify();
+        self.show_palette(Palette::Toolbar, picker, window, cx);
     }
 
     /// The toolbar picker, shown by a crumb or "…".
@@ -1348,14 +1348,7 @@ impl Render for Workbench {
             .children(top_row)
             .child(main)
             .children(status_bar)
-            .map(|root| match self.palette {
-                Some(Palette::QuickOpen) => root.child(self.quick_open.clone()),
-                Some(Palette::Language) => root.child(self.language_picker.clone()),
-                Some(Palette::Toolbar) => root.child(self.toolbar_picker.clone()),
-                Some(Palette::Definitions) => root.child(self.nav_state.definitions.clone()),
-                Some(Palette::Symbols) => root.child(self.nav_state.symbols.clone()),
-                None => root,
-            })
+            .child(self.modals.clone())
             // The frame's border and resize edges, over everything, unless
             // the window fills the screen.
             .when_some(tiling.filter(|tiling| !tiling.is_tiled()), |root, _| {

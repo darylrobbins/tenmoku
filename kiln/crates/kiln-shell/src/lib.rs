@@ -12,7 +12,8 @@
 //! [`ItemHandle`] ([`item`]). The active item gives the pane's breadcrumbs
 //! ([`crumbs`]) and the status bar's items ([`StatusItems::items_for`]).
 //! Beside the panes, a [`Dock`] shows one of its registered panels
-//! ([`DockItem`]) at a time ([`dock`]).
+//! ([`DockItem`]) at a time ([`dock`]); over them, the [`ModalLayer`]
+//! shows one modal view, such as a [`Picker`] ([`modal`]).
 //!
 //! The shell's leaf modules, which a host can use before it adopts the
 //! rest: the status bar's items ([`status`]), a picker palette over a
@@ -23,6 +24,7 @@ pub mod crumbs;
 pub mod dock;
 pub mod item;
 pub mod menu_bar;
+pub mod modal;
 pub mod persist;
 pub mod picker;
 mod root;
@@ -38,6 +40,7 @@ use kiln_platform::Capabilities;
 pub use dock::{Dock, DockItem, DockPosition, DockState, DockView, PanelId};
 pub use item::{CloseAnswer, ItemCrumb, ItemHandle, ItemId, PaneItem};
 pub use menu_bar::MenuBarView;
+pub use modal::{ModalEvent, ModalId, ModalLayer, ModalView};
 pub use picker::{Picker, PickerDelegate};
 pub use root::Root;
 pub use status::{StatusItem, StatusItems, StatusSide};
