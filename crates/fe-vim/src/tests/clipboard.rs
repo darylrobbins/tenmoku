@@ -79,3 +79,28 @@ fn kinds_round_trip() {
     v.feed("\"+p").unwrap();
     assert_eq!(v.text(), "x");
 }
+
+#[test]
+fn kinds_compare_raw_clipboard_text() {
+    use crate::{Register, Registers, Write};
+    use fe_editor::commands::HeadlessHost;
+
+    // A charwise write holding a CRLF keeps its kind on an unchanged
+    // clipboard, read with its newlines normalized.
+    let host = &mut HeadlessHost::new();
+    let mut regs = Registers::new();
+    regs.write(Some('+'), Write::Yank, Register::new("ab\r\n", false), host)
+        .unwrap();
+    let got = regs.read(Some('+'), host).unwrap().unwrap();
+    assert_eq!((got.text.as_str(), got.linewise), ("ab\n", false));
+
+    // Text replaced externally that only matches after normalization is
+    // another app's: linewise.
+    let host = &mut HeadlessHost::new();
+    let mut regs = Registers::new();
+    regs.write(Some('+'), Write::Yank, Register::new("ab\n", false), host)
+        .unwrap();
+    host.clipboard = Some("ab\r\n".into());
+    let got = regs.read(Some('+'), host).unwrap().unwrap();
+    assert_eq!((got.text.as_str(), got.linewise), ("ab\n", true));
+}

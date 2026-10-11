@@ -143,16 +143,16 @@ impl Registers {
             _ => false,
         };
         if clipboard {
-            let text = host.read_clipboard().unwrap_or_default();
-            let text = text.replace("\r\n", "\n").replace('\r', "\n");
-            // Text fe-vim wrote keeps its kind; another app's is linewise
-            // when it ends in a line break.
-            if let Some(last) = self
-                .clipboard_last
-                .as_ref()
-                .filter(|last| last.text == text)
-            {
-                return Ok(Some(last.clone()));
+            let raw = host.read_clipboard().unwrap_or_default();
+            let text = raw.replace("\r\n", "\n").replace('\r', "\n");
+            // Text fe-vim wrote keeps its kind (compared before newline
+            // normalization, as the clipboard holds it verbatim); another
+            // app's is linewise when it ends in a line break.
+            if let Some(last) = self.clipboard_last.as_ref().filter(|last| last.text == raw) {
+                return Ok(Some(Register {
+                    text,
+                    ..last.clone()
+                }));
             }
             let linewise = text.ends_with('\n');
             return Ok(Some(Register::new(text, linewise)));
