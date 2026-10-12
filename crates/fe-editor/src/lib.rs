@@ -27,6 +27,7 @@ pub mod diagnostics;
 mod disk;
 pub mod ghost_text;
 mod multi_cursor;
+pub mod occurrences;
 mod row_change_decorations;
 pub mod row_changes;
 mod rows;

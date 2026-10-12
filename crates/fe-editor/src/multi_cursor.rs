@@ -64,7 +64,7 @@ pub(crate) fn register(registry: &mut Registry<Editor>) {
 
 /// What to do after a match: stop, look past it, or look from the next
 /// byte (the match didn't count, so one overlapping it still may).
-enum Step {
+pub(crate) enum Step {
     Stop,
     Take,
     Pass,
@@ -357,7 +357,7 @@ fn overlaps(selections: &[ResolvedSelection], range: Range<usize>) -> bool {
 /// Whether the match at `range`, a run of one char class, isn't part of a
 /// longer run of that class in its row (as [`EditorModel::word_range_at`]
 /// sees runs, so a line break ends one).
-fn is_whole_word(text: &Text, range: Range<usize>) -> bool {
+pub(crate) fn is_whole_word(text: &Text, range: Range<usize>) -> bool {
     let class_at = |offset: usize| {
         text.char_at(offset)
             .filter(|&ch| ch != '\n')
@@ -372,7 +372,7 @@ fn is_whole_word(text: &Text, range: Range<usize>) -> bool {
 
 /// Calls `found` with the start of each match of `needle` that starts and
 /// ends in `range`, in order, walking the text's chunks.
-fn each_match(
+pub(crate) fn each_match(
     text: &Text,
     needle: &[u8],
     range: Range<usize>,
