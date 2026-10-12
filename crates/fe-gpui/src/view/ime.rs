@@ -233,11 +233,25 @@ impl EditorView {
     }
 
     /// Whether an input method may type, as vim's mode is now: with vim
-    /// off or in insert mode. Otherwise a composition goes, typing nothing.
+    /// off or in insert mode, in a view that isn't read-only. Otherwise a
+    /// composition goes, typing nothing.
     fn takes_input(&mut self, cx: &mut Context<Self>) -> bool {
         self.sync_vim(cx);
         self.drop_stale_composition();
-        self.accepts_text()
+        if self.read_only {
+            self.cancel_composition(cx);
+        }
+        self.accepts_text() && !self.read_only
+    }
+
+    /// Whether a read-only view refuses an input method's call: every
+    /// one, and one that `edits`, putting in text or taking it out, with
+    /// vim on says `E21` ([`EditorView::refuse_edit`]).
+    fn refuses_input(&mut self, edits: bool, cx: &mut Context<Self>) -> bool {
+        if self.read_only && edits {
+            self.refuse_edit(cx);
+        }
+        self.read_only
     }
 
     /// Drops a composition vim's mode or switch has ended since it started
@@ -257,6 +271,72 @@ impl EditorView {
             return;
         }
         self.type_text(text, cx);
+    }
+
+    /// In replace mode, puts `text` in place of `range` as an input method
+    /// asks: as many of the range's graphemes as `text` has chars are
+    /// overwritten as typing overwrites, so `<BS>` puts them back; the
+    /// range's graphemes left over are taken out first, or the chars left
+    /// over go in first, before the overwriting. Where typing wouldn't
+    /// overwrite char for grapheme, the range is simply replaced: a line
+    /// break or a tab in either, or a char of `text` that joins the one
+    /// before it. Recorded as `text` typed, which a replay overwrites with
+    /// from the caret.
+    fn replace_over(&mut self, range: Range<usize>, text: &str, cx: &mut Context<Self>) {
+        use unicode_segmentation::UnicodeSegmentation as _;
+        let typed = Invocation::of(vim::INSERT)
+            .expect("a valid command ID")
+            .args(fe_command::Value::from_iter([("text", text)]))
+            .source(fe_command::Source::Keyboard);
+        let origin = fe_editor::commands::origin(&typed.actor);
+        let taken = self.model.text().slice_to_string(range.clone());
+        let graphemes: Vec<&str> = taken.graphemes(true).collect();
+        let chars = text.chars().count();
+        let breaks = ['\n', '\r', '\t'];
+        if taken.contains(breaks) || text.contains(breaks) || text.graphemes(true).count() != chars
+        {
+            self.model.run_as(origin, |model| {
+                model.select_range(range, false);
+                model.insert(text);
+            });
+            self.record_typing(&typed);
+            self.changed(cx);
+            return;
+        }
+        let over = match chars.checked_sub(graphemes.len()) {
+            // Fewer chars: the graphemes past them go.
+            None => {
+                let kept: usize = graphemes[..chars].iter().map(|g| g.len()).sum();
+                self.model.run_as(origin, |model| {
+                    model.select_range(range.start + kept..range.end, false);
+                    model.insert("");
+                    model.set_cursor(range.start);
+                });
+                text
+            }
+            // More: the first of them go in before the range.
+            Some(more) => {
+                let split = text
+                    .char_indices()
+                    .nth(more)
+                    .map_or(text.len(), |(at, _)| at);
+                self.model.run_as(origin, |model| {
+                    model.set_cursor(range.start);
+                    if split > 0 {
+                        model.insert(&text[..split]);
+                    }
+                });
+                &text[split..]
+            }
+        };
+        self.record_typing(&typed);
+        // Recorded whole above: its parts aren't again.
+        let replaying = std::mem::replace(&mut self.vim_replaying, true);
+        if !over.is_empty() {
+            self.type_text(over, cx);
+        }
+        self.vim_replaying = replaying;
+        self.changed(cx);
     }
 
     /// Whether the last frame drew the composition as it is now, so its
@@ -327,7 +407,9 @@ impl EntityInputHandler for EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.takes_input(cx) {
+        // Nothing over a range takes the range out.
+        let edits = !text.is_empty() || range_utf16.as_ref().is_some_and(|r| !r.is_empty());
+        if self.refuses_input(edits, cx) || !self.takes_input(cx) {
             return;
         }
         let marked = self.marked_text_range(window, cx);
@@ -342,9 +424,14 @@ impl EntityInputHandler for EditorView {
         let range = composed.range_for_utf16(&range);
         let range = composed.buffer_offset(range.start)..composed.buffer_offset(range.end);
         self.composition = None;
-        self.model.select_range(range, false);
-        self.model.insert(text);
-        self.changed(cx);
+        // Typed over the range as the keyboard types, so a recording holds
+        // it and replace mode overwrites.
+        if self.typing_mode() == Some(true) {
+            self.replace_over(range, text, cx);
+        } else {
+            self.model.select_range(range, false);
+            self.type_text(text, cx);
+        }
     }
 
     fn replace_and_mark_text_in_range(
@@ -355,7 +442,7 @@ impl EntityInputHandler for EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !self.takes_input(cx) {
+        if self.refuses_input(!text.is_empty(), cx) || !self.takes_input(cx) {
             return;
         }
         if text.is_empty() {

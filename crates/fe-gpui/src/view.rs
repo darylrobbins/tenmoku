@@ -113,6 +113,19 @@ pub struct EditorView {
     ancestors: Option<ContextStack>,
     /// The find pattern and its count ([`find`]).
     pub(crate) find: find::Find,
+    /// Edits are refused ([`host`]).
+    pub(crate) read_only: bool,
+    /// The open command line is a search an operator other than a yank
+    /// waits on ([`EditorView::note_command_line`]).
+    pub(crate) line_operates: bool,
+    /// The host's blocks between the rows ([`host::HostBlock`]).
+    pub(crate) blocks: Vec<HostBlock>,
+    /// The top, in screen rows, the last frame reported or the host set
+    /// ([`EditorView::report_scroll_top`]).
+    pub(crate) reported_top: f32,
+    /// Where the host set the top since the last frame, which doesn't
+    /// report it unless something else scrolled since.
+    pub(crate) top_set: Option<Pixels>,
     /// The carets the last frame painted, in window coordinates.
     #[cfg(test)]
     pub(crate) painted_carets: Vec<Bounds<Pixels>>,
@@ -153,6 +166,9 @@ pub struct EditorView {
     /// The completion menu, as the last frame showed it.
     #[cfg(test)]
     pub(crate) painted_completion: Option<crate::completion_menu::Painted>,
+    /// The host's blocks the last frame painted.
+    #[cfg(test)]
+    pub(crate) painted_blocks: Vec<crate::element::PaintedBlock>,
 }
 
 /// A word a bound click would run its command on: see [`EditorView::hover`].
@@ -213,6 +229,11 @@ impl EditorView {
             completion_subscriptions: Vec::new(),
             ancestors: None,
             find: Default::default(),
+            read_only: false,
+            line_operates: false,
+            blocks: Vec::new(),
+            reported_top: 0.,
+            top_set: None,
             #[cfg(test)]
             painted_carets: Vec::new(),
             #[cfg(test)]
@@ -237,6 +258,8 @@ impl EditorView {
             painted_popover_blocks: Vec::new(),
             #[cfg(test)]
             painted_completion: None,
+            #[cfg(test)]
+            painted_blocks: Vec::new(),
         };
         crate::vim::register(&view.focus, cx);
         crate::hover::hide_on_escape(&mut view, cx);
@@ -291,6 +314,10 @@ impl EditorView {
             return;
         };
         if !over_text || text.is_empty() {
+            return;
+        }
+        if self.read_only {
+            self.refuse_edit(cx);
             return;
         }
         window.focus(&self.focus, cx);
@@ -1251,7 +1278,10 @@ fn read_primary_text(_: &App) -> Option<String> {
 }
 
 mod find;
+mod host;
 mod ime;
+
+pub use host::{EditorViewEvent, HostBlock, HostBlockKind};
 
 #[cfg(test)]
 mod ime_tests;
@@ -1288,3 +1318,6 @@ mod completion_tests;
 
 #[cfg(test)]
 mod multi_cursor_tests;
+
+#[cfg(test)]
+mod diff_seams_tests;

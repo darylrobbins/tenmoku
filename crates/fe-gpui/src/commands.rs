@@ -22,6 +22,11 @@ use crate::{EditorView, completion_menu, view::synced_syntax, vim};
 pub(crate) use kiln_platform::commands::notify_observers;
 pub use kiln_platform::commands::{AppCommands, RunCommand, observe_invocations};
 
+/// What a host such as a diff view sets on an editor and hears from it
+/// (`EditorView::set_read_only`, `set_blocks` and `set_scroll_top`): their
+/// types are reachable here, as the crate root doesn't re-export them.
+pub use crate::view::{EditorViewEvent, HostBlock, HostBlockKind};
+
 /// The name app commands are titled with (`Hide fastedit`).
 const APP_NAME: &str = "fastedit";
 
@@ -228,6 +233,17 @@ impl EditorHost for ViewHost<'_> {
     }
 }
 
+/// Whether a read-only view refuses `invocation`, one of the editor's: it
+/// edits, or asks for or accepts a completion, where the registry would run
+/// it.
+fn refused(registry: &Registry<Editor>, invocation: &Invocation) -> bool {
+    let command = invocation.command.as_str();
+    let completes = command == completion_menu::TRIGGER || command == completion_menu::ACCEPT;
+    registry
+        .validate(invocation)
+        .is_ok_and(|meta| meta.mutates_buffer || completes)
+}
+
 impl EditorView {
     pub(crate) fn on_run_command(
         &mut self,
@@ -250,7 +266,9 @@ impl EditorView {
     /// ([`fe_vim::VimState::replace_text`]), and `vim.normal_mode` is
     /// replace mode's `Esc`, `vim.replace_normal_mode`. While a macro
     /// records, what runs is recorded as the keys it was
-    /// ([`EditorView::record_typing`]).
+    /// ([`EditorView::record_typing`]). A read-only view refuses a command
+    /// that edits, and accepting or asking for a completion
+    /// ([`EditorView::refuse_edit`]).
     ///
     /// Given the window, the view takes [`SAVE`] over from fe-editor's
     /// synchronous command: it saves off the main thread
@@ -280,6 +298,10 @@ impl EditorView {
             return;
         }
         let registry = EDITOR_COMMANDS.with(Rc::clone);
+        if self.read_only && refused(&registry, &invocation) {
+            self.refuse_edit(cx);
+            return;
+        }
         let replace = self.typing_mode();
         if replace.is_some() && registry.validate(&invocation).is_ok() {
             self.record_typing(&invocation);
@@ -315,10 +337,16 @@ impl EditorView {
                     Err(error) => Err(error),
                     Ok(_) => match invocation.command.as_str() {
                         vim::NEWLINE => vim::line_break(state, &mut self.model, &invocation),
-                        vim::INSERT if replace == Some(true) => {
+                        vim::INSERT
+                            if replace == Some(true)
+                                || vim::types_keys(
+                                    invocation.args.get("text").and_then(Value::as_str),
+                                ) =>
+                        {
                             let text = invocation.args.get("text").and_then(Value::as_str);
                             let text = text.unwrap_or_default();
-                            vim::replace_text(state, &mut self.model, &invocation, text)
+                            let overwrite = replace == Some(true);
+                            vim::type_as_keys(state, &mut self.model, &invocation, text, overwrite)
                         }
                         vim::BACKSPACE if replace == Some(true) => {
                             vim::replace_backspace(state, &mut self.model, &invocation)

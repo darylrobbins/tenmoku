@@ -97,12 +97,13 @@ pub(crate) const NORMAL_MODE: &str = "vim.normal_mode";
 pub(crate) const REPLACE_NORMAL_MODE: &str = "vim.replace_normal_mode";
 
 /// The editor commands a recording holds in vim notation, as the keys the
-/// keymap binds them to: in insert and replace mode, the arrows.
-const MOVES: [(&str, VimKey); 4] = [
+/// keymap binds them to: in insert and replace mode, the arrows and `Tab`.
+const MOVES: [(&str, VimKey); 5] = [
     ("editor.move_left", VimKey::Left),
     ("editor.move_right", VimKey::Right),
     ("editor.move_up", VimKey::Up),
     ("editor.move_down", VimKey::Down),
+    ("editor.tab", VimKey::Tab),
 ];
 
 /// How the carets paint (§9 item 7).
@@ -404,22 +405,55 @@ fn arrow_motion(key: VimKey) -> Option<&'static str> {
     })
 }
 
-/// Types `text` in replace mode ([`VimState::replace_text`]), acting as
-/// `invocation`'s actor, as [`line_break`] does: a character at a time, as
-/// typed keys and a macro's replay of them go in, so text an input method
-/// commits at once overwrites what its replay does, even where a joiner in
-/// it joins the text after it.
-pub(crate) fn replace_text(
+/// `text` with each `\r\n`, and each `\r` alone, made a `\n`: one line
+/// break, as typing and a recording take it.
+fn line_breaks(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+/// Whether text committed at once in insert mode is typed as its keys
+/// ([`type_as_keys`]): it holds a line break or a tab, which a recording
+/// replays as `<CR>` and `<Tab>`.
+pub(crate) fn types_keys(text: Option<&str>) -> bool {
+    text.is_some_and(|text| text.contains(['\n', '\r', '\t']))
+}
+
+/// Types `text`, committed at once in insert or replace mode, as its keys
+/// go in one at a time and as a macro's replay of them does, acting as
+/// `invocation`'s actor, as [`line_break`] does: a line break as `Enter`
+/// ([`VimState::line_break`], which copies the row's indentation), a tab
+/// as `Tab` (`editor.tab`), and the rest as typed, in replace mode a
+/// character at a time ([`VimState::replace_text`]) when `overwrite`, so
+/// even where a joiner joins the text after it, it overwrites what its
+/// replay does.
+pub(crate) fn type_as_keys(
     state: &VimState,
     model: &mut EditorModel,
     invocation: &Invocation,
     text: &str,
+    overwrite: bool,
 ) -> Result<Dispatched<TransactionId>, DispatchError> {
     let origin = fe_editor::commands::origin(&invocation.actor);
     let ((), transactions) = model.run_as(origin, |model| {
-        // A `\r\n` is one line break, as `replace_text` takes it whole.
-        for ch in text.replace("\r\n", "\n").chars() {
-            state.replace_text(model, ch.encode_utf8(&mut [0; 4]));
+        for piece in line_breaks(text).split_inclusive(['\n', '\t']) {
+            let (run, key) = match piece.strip_suffix(['\n', '\t']) {
+                Some(run) => (run, piece.chars().last()),
+                None => (piece, None),
+            };
+            match overwrite {
+                true => {
+                    for ch in run.chars() {
+                        state.replace_text(model, ch.encode_utf8(&mut [0; 4]));
+                    }
+                }
+                false if !run.is_empty() => model.insert(run),
+                false => {}
+            }
+            match key {
+                Some('\n') => state.line_break(model),
+                Some(_) => model.tab(),
+                None => {}
+            }
         }
     });
     Ok(Dispatched::new(Effect::Changed).with_transactions(transactions))
@@ -642,12 +676,14 @@ impl EditorView {
     pub(crate) fn record_typing(&mut self, invocation: &Invocation) {
         let command = invocation.command.as_str();
         let keys: Vec<VimKey> = match command {
+            // As it's typed ([`type_as_keys`]): a line break, `\r` too, as
+            // `<CR>`, and a tab as `<Tab>`.
             INSERT => {
                 let text = invocation.args.get("text").and_then(|text| text.as_str());
-                (text.unwrap_or_default().chars())
-                    .filter(|&ch| ch != '\r')
+                (line_breaks(text.unwrap_or_default()).chars())
                     .map(|ch| match ch {
                         '\n' => VimKey::Enter,
+                        '\t' => VimKey::Tab,
                         ch => VimKey::Char(ch),
                     })
                     .collect()
@@ -925,7 +961,14 @@ impl EditorView {
     }
 
     /// [`EditorView::run_vim`] without the replay: for the replay's own keys.
-    fn run_vim_once(&mut self, invocation: &Invocation, cx: &mut Context<Self>) -> bool {
+    pub(crate) fn run_vim_once(&mut self, invocation: &Invocation, cx: &mut Context<Self>) -> bool {
+        // Every vim command comes this way, however its keys came: typed,
+        // replayed by the keymap or a macro, or dispatched as an action.
+        if self.refuses_vim(invocation) {
+            self.refuse_vim(invocation, cx);
+            return false;
+        }
+        self.note_command_line(invocation);
         if invocation.command.as_str() == "vim.record" {
             // A new recording: what it can't hold is logged again.
             self.vim_unrecorded_logged = false;

@@ -1,0 +1,347 @@
+//! The host's blocks ([`crate::view::HostBlock`]) in a frame: placed by
+//! fe-display's block layer between the display rows, as screen rows
+//! ([`block_map`]), then painted across the text area: a filler's faint
+//! diagonal hatch, or a band of text on its tint. Positions down the frame
+//! go by screen row, so a block's rows push the text's down ([`row_at`]).
+
+use std::ops::Range;
+
+use fe_display::{
+    Block, BlockMap, CharWidth, ExpandedRow, ScreenRow,
+    layout::{
+        Frame, MAX_SHAPED_ROW_BYTES, MeasuredLine as _, Rect, RowLayout, StyleRun, TextMeasure,
+        Vec2,
+    },
+};
+use fe_editor::decorations::Tint;
+use gpui::{App, Bounds, ContentMask, Hsla, PathBuilder, Pixels, Window, fill, point, px};
+
+use super::{FrameLayout, Line, Shaper};
+use crate::{EditorTheme, EditorView, view::HostBlockKind};
+
+/// How opaque a text block's band is over its tint.
+const BAND_ALPHA: f32 = 0.15;
+/// How opaque a filler's hatch is over the text colour.
+const HATCH_ALPHA: f32 = 0.12;
+/// How far apart a filler's hatch lines are, across, in line heights.
+const HATCH_SPACING: f32 = 0.5;
+
+/// The view's blocks, each above the first display row of its buffer row,
+/// or after the last row for the row count, by their index in the view's
+/// list. One above a row a fold hides is left out.
+pub(super) fn block_map(view: &EditorView) -> BlockMap {
+    let display = view.model.display();
+    let rows = view.model.text().row_count();
+    let blocks = view.blocks.iter().enumerate().filter_map(|(ix, block)| {
+        let above = match block.above >= rows {
+            true => display.row_count(),
+            false => {
+                let row = display.row_for_buffer_row(block.above);
+                let shown = display.row(row);
+                (shown.buffer_row == block.above && shown.first).then_some(row)?
+            }
+        };
+        Some(Block {
+            above,
+            rows: block.rows,
+            id: ix as u64,
+        })
+    });
+    BlockMap::new(blocks)
+}
+
+/// The display row laid out at `y` in the frame, if a row this frame shows
+/// is there: none on a block's rows, nor above the frame.
+pub(super) fn row_at(frame: &Frame<Line>, y: f32) -> Option<&RowLayout<Line>> {
+    if y + frame.scroll.y < 0. {
+        return None;
+    }
+    match frame.screen_row_at(y) {
+        ScreenRow::Text(row) => frame.row(row),
+        ScreenRow::Block { .. } => None,
+    }
+}
+
+/// A block laid out in a frame, to paint.
+pub(super) struct Placed {
+    /// The host's, which tests see.
+    #[cfg(test)]
+    id: u64,
+    /// In the frame.
+    rect: Rect,
+    kind: PlacedKind,
+}
+
+enum PlacedKind {
+    Filler,
+    /// The band's colour, and each line shown.
+    Lines {
+        band: Hsla,
+        lines: Vec<Shown>,
+    },
+}
+
+/// A text block's line, shaped, and where it's painted.
+struct Shown {
+    at: Vec2,
+    line: Line,
+    /// As shaped, which tests see.
+    #[cfg(test)]
+    text: String,
+}
+
+/// What a frame painted of a block, for tests.
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct PaintedBlock {
+    /// The host's.
+    pub(crate) id: u64,
+    pub(crate) bounds: Bounds<Pixels>,
+    /// A text block's band colour; `None` for a filler.
+    pub(crate) band: Option<Hsla>,
+    /// A filler's hatch lines.
+    pub(crate) hatch: usize,
+    /// A text block's lines shown, and the window position each starts at.
+    pub(crate) lines: Vec<(String, gpui::Point<Pixels>)>,
+}
+
+/// The lines of the text blocks `frame` shows that are in view, each with
+/// its block's index in `frame.blocks`, its y and its text, tabs expanded.
+fn shown_lines(frame: &Frame<Line>, view: &EditorView) -> Vec<(usize, f32, String)> {
+    let tab_size = view.model.tab_size();
+    let line_height = frame.line_height;
+    let mut out = Vec::new();
+    for (ix, laid) in frame.blocks.iter().enumerate() {
+        let Some(HostBlockKind::Lines { lines, .. }) =
+            view.blocks.get(laid.id as usize).map(|block| &block.kind)
+        else {
+            continue;
+        };
+        let shown = lines.iter().take(laid.rows as usize).enumerate();
+        for (row, line) in shown {
+            let y = laid.rect.y + line_height * row as f32;
+            if y + line_height > 0. && y < frame.height {
+                out.push((ix, y, ExpandedRow::new(line, tab_size).text().to_string()));
+            }
+        }
+    }
+    out
+}
+
+/// How wide the widest line of the text blocks in view is, from column 0:
+/// the view scrolls as far as it reaches too. A line shaped whole is as
+/// wide as `shaper` shapes it, which the frame's own shaping of it reuses;
+/// a longer one, as its grapheme clusters measure ([`clusters`]).
+pub(super) fn widest(
+    frame: &Frame<Line>,
+    view: &EditorView,
+    shaper: &mut Shaper,
+    widths: &mut dyn CharWidth,
+) -> f64 {
+    (shown_lines(frame, view).iter())
+        .map(|(_, _, text)| match text.len() > MAX_SHAPED_ROW_BYTES {
+            true => clusters(text, widths).last().map_or(0., |(_, _, end)| end),
+            false => f64::from(shaper.shape(text, &runs(text, view)).width()),
+        })
+        .fold(0., f64::max)
+}
+
+/// The style run of a line of `text`: the text colour.
+fn runs(text: &str, view: &EditorView) -> [StyleRun<Hsla>; 1] {
+    [StyleRun {
+        len: text.len(),
+        style: view.theme.foreground,
+    }]
+}
+
+/// Each grapheme cluster of `text`, as fe-display's long rows measure
+/// them ([`CharWidth::cluster_width`]): its bytes, and the x it starts and
+/// ends at from column 0.
+fn clusters<'a>(
+    text: &'a str,
+    widths: &'a mut dyn CharWidth,
+) -> impl Iterator<Item = (Range<usize>, f64, f64)> + 'a {
+    use unicode_segmentation::UnicodeSegmentation as _;
+    let mut x = 0.;
+    text.grapheme_indices(true).map(move |(at, cluster)| {
+        let start = x;
+        x += f64::from(widths.cluster_width(cluster));
+        (at..at + cluster.len(), start, x)
+    })
+}
+
+/// Of a line longer than [`MAX_SHAPED_ROW_BYTES`], the part around the
+/// view scrolled to `scroll_x`, a view's width either side, as much of it
+/// as is shaped at once, cut between grapheme clusters: its bytes and the
+/// x it starts at, from column 0.
+fn slice(
+    text: &str,
+    frame: &Frame<Line>,
+    scroll_x: f32,
+    widths: &mut dyn CharWidth,
+) -> (Range<usize>, f64) {
+    let width = f64::from(frame.width - frame.text_left);
+    let left = f64::from(scroll_x) - width;
+    let right = f64::from(scroll_x) + width * 2.;
+    let mut start = None;
+    for (cluster, x, end_x) in clusters(text, widths) {
+        match start {
+            None if end_x > left => start = Some((cluster.start, x)),
+            Some((from, from_x)) if x >= right || cluster.end - from > MAX_SHAPED_ROW_BYTES => {
+                return (from..cluster.start, from_x);
+            }
+            _ => {}
+        }
+    }
+    let (from, from_x) = start.unwrap_or((text.len(), 0.));
+    (from..text.len(), from_x)
+}
+
+/// Lays out the blocks `frame` shows, shaping the lines of each in view,
+/// scrolled to `scroll_x`: a long one around the view ([`slice`]). The
+/// lines scroll with the rows, but for soft-wrapped rows, which don't.
+pub(super) fn layout(
+    frame: &Frame<Line>,
+    view: &EditorView,
+    shaper: &mut Shaper,
+    widths: &mut dyn CharWidth,
+    scroll_x: f32,
+) -> Vec<Placed> {
+    let mut placed: Vec<Placed> = (frame.blocks.iter())
+        .map(|laid| {
+            let block = view.blocks.get(laid.id as usize);
+            let kind = match block.map(|block| &block.kind) {
+                Some(HostBlockKind::Lines { tint, .. }) => PlacedKind::Lines {
+                    band: tint_color(&view.theme, *tint).opacity(BAND_ALPHA),
+                    lines: Vec::new(),
+                },
+                _ => PlacedKind::Filler,
+            };
+            Placed {
+                #[cfg(test)]
+                id: block.map_or(0, |block| block.id),
+                rect: laid.rect,
+                kind,
+            }
+        })
+        .collect();
+    for (ix, y, text) in shown_lines(frame, view) {
+        let (range, x) = match text.len() > MAX_SHAPED_ROW_BYTES {
+            true => slice(&text, frame, scroll_x, widths),
+            false => (0..text.len(), 0.),
+        };
+        let text = &text[range];
+        let shown = Shown {
+            at: Vec2 {
+                x: frame.text_left + (x - f64::from(scroll_x)) as f32,
+                y,
+            },
+            line: shaper.shape(text, &runs(text, view)),
+            #[cfg(test)]
+            text: text.to_string(),
+        };
+        if let PlacedKind::Lines { lines, .. } = &mut placed[ix].kind {
+            lines.push(shown);
+        }
+    }
+    placed
+}
+
+/// A tint's colour, as the decorations resolve it.
+fn tint_color(theme: &EditorTheme, tint: Tint) -> Hsla {
+    match tint {
+        Tint::Error => theme.error,
+        Tint::Warning => theme.warning,
+        Tint::Information => theme.information,
+        Tint::Added => theme.change_added,
+        Tint::Modified => theme.change_modified,
+        Tint::Removed => theme.change_deleted,
+        Tint::Hint => theme.hint,
+        Tint::Accent => theme.cursor,
+        Tint::Muted => theme.foreground,
+    }
+}
+
+/// Paints `placed`, each clipped to its rect inside the text area, noting
+/// in tests what it painted in `painted`.
+pub(super) fn paint(
+    placed: &[Placed],
+    layout: &FrameLayout,
+    theme: &EditorTheme,
+    window: &mut Window,
+    cx: &mut App,
+    #[cfg(test)] painted: &mut Vec<PaintedBlock>,
+) {
+    let line_height = px(layout.frame.line_height);
+    for block in placed {
+        let bounds = layout.bounds(block.rect);
+        window.with_content_mask(Some(ContentMask { bounds }), |window| match &block.kind {
+            PlacedKind::Filler => {
+                let shown = layout.bounds(layout.frame.text_bounds());
+                let _hatch = paint_hatch(bounds, shown, line_height, theme, window);
+                #[cfg(test)]
+                painted.push(PaintedBlock {
+                    id: block.id,
+                    bounds,
+                    band: None,
+                    hatch: _hatch,
+                    lines: Vec::new(),
+                });
+            }
+            PlacedKind::Lines { band, lines } => {
+                window.paint_quad(fill(bounds, *band));
+                for shown in lines {
+                    let origin = layout.to_window(shown.at);
+                    shown.line.paint(origin, line_height, window, cx);
+                }
+                #[cfg(test)]
+                painted.push(PaintedBlock {
+                    id: block.id,
+                    bounds,
+                    band: Some(*band),
+                    hatch: 0,
+                    lines: (lines.iter())
+                        .map(|shown| (shown.text.clone(), layout.to_window(shown.at)))
+                        .collect(),
+                });
+            }
+        });
+    }
+}
+
+/// Strokes a filler's hatch over what's `shown` of `bounds`: lines rising
+/// to the right, [`HATCH_SPACING`] line heights apart, placed from the
+/// block's corner so they scroll with it. Returns how many.
+fn paint_hatch(
+    bounds: Bounds<Pixels>,
+    shown: Bounds<Pixels>,
+    line_height: Pixels,
+    theme: &EditorTheme,
+    window: &mut Window,
+) -> usize {
+    let shown = bounds.intersect(&shown);
+    if shown.is_empty() {
+        return 0;
+    }
+    let spacing = f32::from((line_height * HATCH_SPACING).max(px(4.)));
+    let color = theme.foreground.opacity(HATCH_ALPHA);
+    // Each line is where x + y is the block's corner's plus a whole number
+    // of spacings; those crossing what's shown.
+    let corner = f32::from(bounds.left() + bounds.bottom());
+    let (top, bottom) = (shown.top(), shown.bottom());
+    let first = f32::from(shown.left() + top);
+    let mut sum = corner + ((first - corner) / spacing).floor() * spacing;
+    let end = f32::from(shown.right() + bottom);
+    let mut count = 0;
+    while sum < end {
+        let mut path = PathBuilder::stroke(px(1.));
+        path.move_to(point(px(sum) - bottom, bottom));
+        path.line_to(point(px(sum) - top, top));
+        if let Ok(path) = path.build() {
+            window.paint_path(path, color);
+            count += 1;
+        }
+        sum += spacing;
+    }
+    count
+}

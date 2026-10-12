@@ -9,7 +9,7 @@ use std::{
 
 use fe_buffer::Text;
 use fe_display::{
-    BlockMap, CharWidth, LongRows, MAX_CLUSTER_BYTES,
+    CharWidth, LongRows, MAX_CLUSTER_BYTES,
     layout::{
         self, Frame, FrameInput, FrameStyles, MeasuredLine, Rect, StyleRun, StyledSpan,
         TextMeasure, Vec2,
@@ -34,6 +34,9 @@ use crate::{
 
 mod decorations;
 use decorations::{Decorations, Layer};
+mod host_blocks;
+#[cfg(test)]
+pub(crate) use host_blocks::PaintedBlock;
 
 /// What one frame laid out: kept by the view for hit testing and IME.
 pub(crate) struct FrameLayout {
@@ -68,6 +71,8 @@ pub(crate) struct FrameLayout {
     composition: Option<(usize, String)>,
     /// The decorations the model's providers have for the frame's rows.
     pub(crate) decorations: Decorations,
+    /// The host's blocks in view ([`host_blocks`]).
+    host_blocks: Vec<host_blocks::Placed>,
     /// When prepaint started and how long it took, for [`FrameTiming`].
     prepaint_started: Instant,
     prepaint_took: Duration,
@@ -103,8 +108,7 @@ impl FrameLayout {
     pub(crate) fn char_at(&self, text: &Text, position: Point<Pixels>) -> Option<usize> {
         let at = self.to_frame(position);
         let frame = &self.frame;
-        let display_row = ((at.y + frame.scroll.y) / frame.line_height).floor();
-        let row = frame.row(u32::try_from(display_row as i64).ok()?)?;
+        let row = host_blocks::row_at(frame, at.y)?;
         let line_x = at.x - frame.line_origin(row).x;
         if line_x < 0. {
             return None;
@@ -128,8 +132,7 @@ impl FrameLayout {
             glyph_widths,
             ..
         } = self;
-        let display_row = ((at.y + frame.scroll.y) / frame.line_height).floor();
-        let row = frame.row(u32::try_from(display_row as i64).ok()?)?;
+        let row = host_blocks::row_at(frame, at.y)?;
         if !row.last {
             return None;
         }
@@ -149,12 +152,7 @@ impl FrameLayout {
             glyph_widths,
             ..
         } = self;
-        let display_row = ((at.y + frame.scroll.y) / frame.line_height).floor();
-        let Some(row) = u32::try_from(display_row as i64)
-            .ok()
-            .and_then(|display_row| frame.row(display_row))
-            .filter(|row| row.last)
-        else {
+        let Some(row) = host_blocks::row_at(frame, at.y).filter(|row| row.last) else {
             return 0;
         };
         let end = frame.view_x(row.x_for_offset(row.end, long_rows, glyph_widths));
@@ -576,11 +574,17 @@ impl Element for EditorElement {
             if !view.model.display().wrap_is_pending() {
                 return false;
             }
-            let (pending, top) = view
-                .model
-                .wrap_pending_at(f32::from(view.scroll.y) / line_height_f32);
+            // The scroll goes by screen rows, which the blocks before and
+            // after the wrap place. A top inside a block keeps its place
+            // above the display row below it.
+            let screen_top = f32::from(view.scroll.y) / line_height_f32;
+            let blocks = host_blocks::block_map(view);
+            let display_top = blocks.to_display_top(screen_top);
+            let in_block = screen_top - blocks.to_screen_top(display_top);
+            let (pending, top) = view.model.wrap_pending_at(display_top);
             if !view.autoscroll {
-                view.scroll.y = px(top * line_height_f32);
+                let top = host_blocks::block_map(view).to_screen_top(top) + in_block;
+                view.scroll.y = px(top.max(0.) * line_height_f32);
             }
             pending
         });
@@ -589,6 +593,7 @@ impl Element for EditorElement {
         }
 
         let view = self.view.read(cx);
+        let host_top = view.host_top_holds();
         let theme = &view.theme;
         let model = &view.model;
         let selections = model.selections();
@@ -631,10 +636,11 @@ impl Element for EditorElement {
             text: composition.text.replace(['\n', '\r'], " "),
             style: theme.foreground,
         });
+        let blocks = host_blocks::block_map(view);
         let mut lay_out = |input: &FrameInput<Hsla>| {
             layout::layout_frame_with_inlay(
                 input,
-                &BlockMap::default(),
+                &blocks,
                 inlay.as_ref(),
                 &mut shaper,
                 &mut long_rows,
@@ -698,6 +704,32 @@ impl Element for EditorElement {
                 shift_frame(&mut frame, past);
             }
         }
+        // A text block's line wider than the rows: the view scrolls as far
+        // as it reaches too, where layout clamped short of it. Soft-wrapped
+        // rows don't scroll, so then only the blocks' lines do.
+        let mut host_x = frame.scroll.x;
+        if kept_scroll.is_none() && !input.autoscroll {
+            let widest = host_blocks::widest(&frame, view, &mut shaper, &mut glyph_widths);
+            let text_width = f64::from(frame.width - frame.text_left);
+            let reach = (widest - text_width + f64::from(em) * 4.).max(0.) as f32;
+            let wanted = input.scroll.x.min(reach).max(0.);
+            if model.display().wrap_width().is_some() {
+                host_x = wanted;
+                if wanted > 0. {
+                    kept_scroll = Some(Vec2 {
+                        x: wanted,
+                        y: frame.scroll.y,
+                    });
+                }
+            } else {
+                let past = wanted - frame.scroll.x;
+                if past > 0. {
+                    shift_frame(&mut frame, past);
+                }
+                host_x = frame.scroll.x;
+            }
+        }
+        let placed = host_blocks::layout(&frame, view, &mut shaper, &mut glyph_widths, host_x);
         let composed = composition.map(|(offset, composition)| (offset, composition.text.clone()));
         let to_window = |rect: Rect| {
             Bounds::new(
@@ -724,6 +756,7 @@ impl Element for EditorElement {
             }
             view.scroll = scroll;
             view.autoscroll = false;
+            view.report_scroll_top(host_top, cx);
             view.load_injected_languages(cx);
         });
         let view = self.view.read(cx);
@@ -742,6 +775,7 @@ impl Element for EditorElement {
             jump: None,
             composition: composed,
             decorations: Decorations::default(),
+            host_blocks: placed,
             prepaint_started: started,
             prepaint_took: Duration::ZERO,
         };
@@ -808,7 +842,26 @@ impl Element for EditorElement {
                         .map(|s| s.head())
                         .collect(),
                 };
-                let carets = block_carets(&mut layout, text, heads.into_iter());
+                let mut carets = block_carets(&mut layout, text, heads.into_iter());
+                // Composing in replace mode, the primary caret is the
+                // composition's: under the grapheme after its caret.
+                let composing = view
+                    .composition()
+                    .filter(|_| shape == CaretShape::Underline);
+                if let Some((at, composition)) = composing
+                    && let Some(primary) = block_rect(&mut layout, text, at)
+                    && let Some(caret) = composition_block(
+                        &mut layout,
+                        text,
+                        at,
+                        &composition.text,
+                        composition.selected.end,
+                    )
+                {
+                    let primary = layout.bounds(primary);
+                    carets.retain(|caret| caret.origin != primary.origin);
+                    carets.push(caret);
+                }
                 match shape {
                     // Replace and operator-pending mode's: a bar under the
                     // grapheme the block covers (§9 item 7).
@@ -891,6 +944,8 @@ impl Element for EditorElement {
         let mut painted_chevrons = Vec::new();
         #[cfg(test)]
         let mut painted_brackets = Vec::new();
+        #[cfg(test)]
+        let mut painted_blocks = Vec::new();
 
         // In vim's normal mode nothing types: neither keys nor an input
         // method insert text.
@@ -912,6 +967,15 @@ impl Element for EditorElement {
                     bounds: text_bounds,
                 }),
                 |window| {
+                    host_blocks::paint(
+                        &layout.host_blocks,
+                        &layout,
+                        &theme,
+                        window,
+                        cx,
+                        #[cfg(test)]
+                        &mut painted_blocks,
+                    );
                     layout.decorations.paint(Layer::Backgrounds, window, cx);
                     // Under the selection, which stays visible over a match.
                     for &found in &matches {
@@ -1105,6 +1169,7 @@ impl Element for EditorElement {
                 view.painted_matches = painted_matches;
                 view.painted_chevrons = painted_chevrons;
                 view.painted_brackets = painted_brackets;
+                view.painted_blocks = painted_blocks;
                 let underlines = underlines.iter().map(|&(bounds, _)| bounds).collect();
                 view.painted_hover = (underlines, hover.is_some());
                 view.painted_squiggles = squiggles;
@@ -1456,6 +1521,38 @@ fn block_rect(layout: &mut FrameLayout, text: &Text, head: usize) -> Option<Rect
         .filter(|&end| end > bar.x);
     let width = end.map_or_else(|| glyph_widths.char_width(' '), |end| end - bar.x);
     Some(Rect { width, ..bar })
+}
+
+/// The block over the grapheme after the caret of `composing`, drawn at
+/// buffer offset `at` with its caret at byte `caret`, if this frame laid it
+/// out: the composition's own next grapheme, or past its end the buffer's
+/// after it ([`block_rect`]), one space wide at a line's end.
+fn composition_block(
+    layout: &mut FrameLayout,
+    text: &Text,
+    at: usize,
+    composing: &str,
+    caret: usize,
+) -> Option<Bounds<Pixels>> {
+    use unicode_segmentation::UnicodeSegmentation as _;
+    let inlay = layout.frame.inlay?;
+    let start = layout.inlay_bounds(caret..caret)?;
+    let next =
+        (composing.get(caret..)?.graphemes(true).next()).map(|grapheme| caret + grapheme.len());
+    let width = match next {
+        Some(next) => layout.inlay_bounds(caret..next)?.size.width,
+        None => {
+            // The block at `at` runs from before the composition to the end
+            // of the buffer's grapheme after it.
+            let block = block_rect(layout, text, at)?;
+            let after = block.x + block.width - (inlay.x + inlay.width);
+            match after > 0. {
+                true => px(after),
+                false => px(layout.glyph_widths.char_width(' ')),
+            }
+        }
+    };
+    Some(Bounds::new(start.origin, size(width, start.size.height)))
 }
 
 /// The frame's selection rects. In a vim visual mode, an empty row the
