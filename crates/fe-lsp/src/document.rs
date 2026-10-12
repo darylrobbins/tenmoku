@@ -207,8 +207,11 @@ impl Drop for Attached {
 /// A document notification, waiting its turn in the actor's queue.
 #[derive(Debug)]
 pub(crate) enum Note {
-    Open(DidOpenTextDocumentParams),
-    Change(DidChangeTextDocumentParams),
+    /// With the document as it opens it, which the server has once it's
+    /// handed to async-lsp (workspace_edit.rs).
+    Open(DidOpenTextDocumentParams, Box<SentDocument>),
+    /// With the document at the version it makes.
+    Change(DidChangeTextDocumentParams, Box<SentDocument>),
     Save(DidSaveTextDocumentParams),
     /// With the incarnation it ends, whose diagnostics are reported
     /// cleared once it's handed to async-lsp.
@@ -223,8 +226,8 @@ impl Note {
     #[cfg(test)]
     pub(crate) fn describe(&self) -> String {
         let (method, uri) = match self {
-            Self::Open(p) => ("didOpen", &p.text_document.uri),
-            Self::Change(p) => ("didChange", &p.text_document.uri),
+            Self::Open(p, _) => ("didOpen", &p.text_document.uri),
+            Self::Change(p, _) => ("didChange", &p.text_document.uri),
             Self::Save(p) => ("didSave", &p.text_document.uri),
             Self::Close(p, _) => ("didClose", &p.text_document.uri),
         };
@@ -235,8 +238,8 @@ impl Note {
     pub(crate) fn send(self, socket: &async_lsp::ServerSocket) -> Option<Ended> {
         // If the loop has gone, the actor hears so from it.
         let _ = match self {
-            Self::Open(params) => socket.notify::<DidOpenTextDocument>(params),
-            Self::Change(params) => socket.notify::<DidChangeTextDocument>(params),
+            Self::Open(params, _) => socket.notify::<DidOpenTextDocument>(params),
+            Self::Change(params, _) => socket.notify::<DidChangeTextDocument>(params),
             Self::Save(params) => socket.notify::<DidSaveTextDocument>(params),
             Self::Close(params, ended) => {
                 let _ = socket.notify::<DidCloseTextDocument>(params);
@@ -557,23 +560,33 @@ impl Document {
             return false;
         };
         let version = link.versions.get(&self.uri).map_or(0, |last| last + 1);
-        link.send(Note::Open(DidOpenTextDocumentParams {
-            text_document: TextDocumentItem {
-                uri: self.uri.clone(),
-                language_id: self.language_id.clone(),
-                version,
-                text: self.text.to_string(),
+        let sent = SentVersion {
+            lsp_version: version,
+            version: self.at,
+            text: self.text.clone(),
+            edits: Vec::new(),
+            edits_complete: true,
+        };
+        let identity = (link.session, incarnation);
+        link.send(Note::Open(
+            DidOpenTextDocumentParams {
+                text_document: TextDocumentItem {
+                    uri: self.uri.clone(),
+                    language_id: self.language_id.clone(),
+                    version,
+                    text: self.text.to_string(),
+                },
             },
-        }));
+            Box::new(SentDocument {
+                buffer: self.buffer,
+                uri: self.uri.clone(),
+                identity,
+                sent: sent.clone(),
+            }),
+        ));
         self.synced = Some(Synced {
-            identity: (link.session, incarnation),
-            ring: VecDeque::from([SentVersion {
-                lsp_version: version,
-                version: self.at,
-                text: self.text.clone(),
-                edits: Vec::new(),
-                edits_complete: true,
-            }]),
+            identity,
+            ring: VecDeque::from([sent]),
             diagnostics: Lists::default(),
         });
         self.want_pull();
@@ -891,13 +904,22 @@ impl Document {
             edits: run.batches,
             edits_complete: !run.gap,
         });
-        link.send(Note::Change(DidChangeTextDocumentParams {
-            text_document: VersionedTextDocumentIdentifier {
-                uri: self.uri.clone(),
-                version,
+        let sent = Box::new(SentDocument {
+            buffer: self.buffer,
+            uri: self.uri.clone(),
+            identity: synced.identity,
+            sent: synced.newest().clone(),
+        });
+        link.send(Note::Change(
+            DidChangeTextDocumentParams {
+                text_document: VersionedTextDocumentIdentifier {
+                    uri: self.uri.clone(),
+                    version,
+                },
+                content_changes,
             },
-            content_changes,
-        }));
+            sent,
+        ));
         self.want_pull();
     }
 

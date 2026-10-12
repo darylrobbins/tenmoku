@@ -113,9 +113,10 @@ fn server_requests_get_the_m4_answers() {
         label: None,
         edit: WorkspaceEdit::default(),
     };
+    // An edit with nothing in it is applied at once (workspace_edit.rs).
     assert_eq!(
         fake.request::<ApplyWorkspaceEdit>(edit),
-        Ok(json!({ "applied": false, "failureReason": "not supported" }))
+        Ok(json!({ "applied": true }))
     );
     let message = ShowMessageRequestParams {
         typ: MessageType::INFO,

@@ -5,6 +5,7 @@ use fe_buffer::{BufferId, Version};
 
 use crate::diagnostics::Diagnostic;
 use crate::identity::{IncarnationId, SessionId};
+use crate::workspace_edit::{ApplyReply, FileEdits};
 
 /// Identifies one server instance started by an [`LspManager`](crate::LspManager).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -51,6 +52,15 @@ pub enum LspEvent {
         session: SessionId,
         incarnation: IncarnationId,
         server: ServerId,
+    },
+    /// The server asked for `edits` to be applied (`workspace/applyEdit`,
+    /// a code action's command, say), under `label` for undo. Answer
+    /// through `reply`: unanswered after 5 s, it's answered not applied.
+    ApplyEdit {
+        server: ServerId,
+        label: Option<String>,
+        edits: Vec<FileEdits>,
+        reply: ApplyReply,
     },
 }
 
@@ -99,6 +109,10 @@ pub enum LspError {
     /// The reply couldn't be read.
     #[error("bad reply: {0}")]
     Protocol(String),
+    /// A workspace edit that can't be applied as the server meant it, and
+    /// why (crate::workspace_edit).
+    #[error("the edit can't be applied: {0}")]
+    RefusedEdit(String),
 }
 
 /// [`LspError::Unavailable`]'s reasons for a request on a document (§4.1).

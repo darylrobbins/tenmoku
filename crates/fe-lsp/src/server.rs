@@ -66,20 +66,23 @@ use futures::{
 use lsp_types::notification::{Cancel, DidChangeConfiguration, Exit, Initialized};
 use lsp_types::request::{Initialize, Request, Shutdown};
 use lsp_types::{
-    CancelParams, ClientCapabilities, ClientInfo, CompletionClientCapabilities,
-    CompletionItemCapability, CompletionItemCapabilityResolveSupport, DiagnosticClientCapabilities,
-    DiagnosticTag, DidChangeConfigurationParams, DynamicRegistrationClientCapabilities,
+    CancelParams, ClientCapabilities, ClientInfo, CodeActionCapabilityResolveSupport,
+    CodeActionClientCapabilities, CodeActionKind, CodeActionKindLiteralSupport,
+    CodeActionLiteralSupport, CompletionClientCapabilities, CompletionItemCapability,
+    CompletionItemCapabilityResolveSupport, DiagnosticClientCapabilities, DiagnosticTag,
+    DidChangeConfigurationParams, DynamicRegistrationClientCapabilities, FailureHandlingKind,
     GeneralClientCapabilities, GotoCapability, HoverClientCapabilities, InitializeParams,
-    InitializeResult, InitializedParams, MarkupKind, NumberOrString, PositionEncodingKind,
-    PublishDiagnosticsClientCapabilities, PublishDiagnosticsParams, ServerCapabilities, TagSupport,
-    TextDocumentClientCapabilities, TextDocumentSyncClientCapabilities, Url,
-    WindowClientCapabilities, WorkspaceClientCapabilities, WorkspaceFolder,
-    WorkspaceSymbolClientCapabilities,
+    InitializeResult, InitializedParams, MarkupKind, NumberOrString, ParameterInformationSettings,
+    PositionEncodingKind, PublishDiagnosticsClientCapabilities, PublishDiagnosticsParams,
+    RenameClientCapabilities, ServerCapabilities, SignatureHelpClientCapabilities,
+    SignatureInformationSettings, TagSupport, TextDocumentClientCapabilities,
+    TextDocumentSyncClientCapabilities, Url, WindowClientCapabilities, WorkspaceClientCapabilities,
+    WorkspaceEditClientCapabilities, WorkspaceFolder, WorkspaceSymbolClientCapabilities,
 };
 
 use crate::clock::Clock;
 use crate::diagnostics::Inbox;
-use crate::document::{Admitted, Document, Link, Note, Opened, Opening, SyncPolicy};
+use crate::document::{Admitted, Document, Link, Note, Opened, Opening, SentDocument, SyncPolicy};
 use crate::encoding::PositionEncoding;
 use crate::event::{LspError, LspEvent, NOT_OPEN, ServerId, ServerStatus, SharedLog};
 use crate::identity::{EndSession, Identities, SessionId};
@@ -93,6 +96,7 @@ use crate::registration::Registrations;
 use crate::requests::{Issue, Orphans, Out, Settled};
 use crate::restart::{Carry, Kill, SharedCrashes, Verdict, Waited};
 use crate::router::{ClientState, Signal, client_router};
+use crate::workspace_edit::{Asked, Edits, decode};
 
 /// How long `initialize` may take before the start counts as failed.
 pub(crate) const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -155,6 +159,10 @@ pub(crate) enum Command {
     /// A request on no document in particular, sent with the documents
     /// the server has open then, brought up to date first.
     WithDocuments(WithDocuments),
+    /// Called with the documents the server has open now, at the versions
+    /// handed to async-lsp ([`Handed`]), without bringing them up to date
+    /// (workspace_edit.rs).
+    Documents(Box<dyn FnOnce(Opened) + Send>),
     /// New `settings` for the spec: they answer `workspace/configuration`
     /// from now on, and `workspace/didChangeConfiguration` carries them.
     Configure(serde_json::Value),
@@ -512,6 +520,7 @@ impl Server {
         let signal = Rc::new(Signal::default());
         let refresh = Rc::new(Signal::default());
         let diagnostics = Rc::new(Inbox::default());
+        let edits = Rc::new(Edits::default());
         let (main_loop, socket) = MainLoop::new_client(|socket| {
             client_router(ClientState {
                 name: self.spec.name.clone(),
@@ -526,6 +535,7 @@ impl Server {
                 refresh: refresh.clone(),
                 log: self.log.clone(),
                 diagnostics: diagnostics.clone(),
+                edits: edits.clone(),
                 session: self.session.clone(),
                 _socket: socket,
             })
@@ -598,6 +608,8 @@ impl Server {
                 puller: Puller::new(self.spec.pull_diagnostics, self.clock.clone()),
             },
             diagnostics,
+            edits,
+            handed: Handed::default(),
             tick: None,
             drain_queued: false,
             moving: None,
@@ -752,6 +764,10 @@ struct Actor {
     refresh: Rc<Signal>,
     /// Publications the router read, to decode.
     diagnostics: Rc<Inbox>,
+    /// `workspace/applyEdit`s the router read, to decode.
+    edits: Rc<Edits>,
+    /// What the server has of each open document.
+    handed: Handed,
     /// When readiness next has something to do on its own, and the timer.
     due: Option<(Instant, Timer)>,
     /// The status last reported.
@@ -799,6 +815,8 @@ enum Step {
     Readiness,
     /// The router read diagnostics.
     Published(Vec<PublishDiagnosticsParams>),
+    /// The router read `workspace/applyEdit`s.
+    ApplyEdits(Vec<Asked>),
     /// A pull's reply came (pull.rs).
     Pulled(Pulled),
     /// The server asked for every open document to be pulled again.
@@ -870,6 +888,9 @@ impl Actor {
                 published = futures::future::poll_fn(|cx| self.diagnostics.poll_take(cx)).fuse() => {
                     Step::Published(published)
                 }
+                asked = futures::future::poll_fn(|cx| self.edits.poll_take(cx)).fuse() => {
+                    Step::ApplyEdits(asked)
+                }
                 pulled = self.link.puller.next().fuse() => Step::Pulled(pulled),
                 () = futures::future::poll_fn(|cx| self.refresh.poll_raised(cx)).fuse() => {
                     Step::Refresh
@@ -915,6 +936,11 @@ impl Actor {
                 Step::Published(published) => {
                     for params in published {
                         self.published(params);
+                    }
+                }
+                Step::ApplyEdits(asked) => {
+                    for asked in asked {
+                        self.apply_edit(asked);
                     }
                 }
                 Step::Pulled(pulled) => self.pulled(pulled),
@@ -974,6 +1000,7 @@ impl Actor {
     fn notify(&mut self, note: Note) {
         #[cfg(test)]
         self.handed(note.describe());
+        self.handed.hand(&note);
         // If the loop has gone, `loop_done` says so.
         let ended = note.send(&self.socket);
         let _ = self.socket.emit(Taken);
@@ -1048,16 +1075,14 @@ impl Actor {
                 for id in ids {
                     self.drain(id);
                 }
-                let opened = Opened {
-                    encoding: self.link.encoding,
-                    documents: (self.documents.values())
-                        .filter_map(Document::current)
-                        .collect(),
-                };
-                if let Some(issue) = admit(Ok(opened)) {
+                if let Some(issue) = admit(Ok(self.opened())) {
                     self.link.outbox.push_back(Outgoing::Request(issue));
                 }
             }
+            Command::Documents(with) => with(Opened {
+                encoding: self.link.encoding,
+                documents: self.handed.documents(),
+            }),
             Command::Configure(settings) => {
                 self.settings.replace(settings.clone());
                 self.carry.settings = settings.clone();
@@ -1225,6 +1250,39 @@ impl Actor {
         };
         if let Some(event) = document.publish(version, params.diagnostics, &self.link) {
             self.link.report(event);
+        }
+    }
+
+    /// The documents the server has open, as last sent.
+    fn opened(&self) -> Opened {
+        Opened {
+            encoding: self.link.encoding,
+            documents: (self.documents.values())
+                .filter_map(Document::current)
+                .collect(),
+        }
+    }
+
+    /// Decodes a `workspace/applyEdit` against the documents as handed to
+    /// the server ([`Handed`]), and hands it to the host to answer,
+    /// or answers it not applied if it's refused (workspace_edit.rs). One
+    /// already answered (it timed out) is dropped.
+    fn apply_edit(&mut self, Asked { params, reply }: Asked) {
+        if reply.is_answered() {
+            return;
+        }
+        match decode(params.edit, &self.handed.documents(), self.link.encoding) {
+            Err(why) => {
+                log::info!("{}: refused workspace/applyEdit: {why}", self.spec.name);
+                reply.failed(why);
+            }
+            Ok(edits) if edits.is_empty() => reply.applied(),
+            Ok(edits) => self.link.report(LspEvent::ApplyEdit {
+                server: self.link.server,
+                label: params.label,
+                edits,
+                reply,
+            }),
         }
     }
 
@@ -1693,6 +1751,40 @@ async fn next_command(
     }
 }
 
+/// The version of each open document last handed to async-lsp: what the
+/// server has, as far as the actor can know, to read its
+/// `workspace/applyEdit`s against (workspace_edit.rs). Kept as notes are
+/// handed, not from the documents' rings, which run ahead of it while notes
+/// wait in the outbox, and lose versions to newer ones or to a close.
+#[derive(Default)]
+pub(crate) struct Handed(HashMap<BufferId, SentDocument>);
+
+impl Handed {
+    /// `note` is being handed to async-lsp.
+    pub(crate) fn hand(&mut self, note: &Note) {
+        match note {
+            Note::Open(_, sent) | Note::Change(_, sent) => {
+                self.0.insert(sent.buffer, (**sent).clone());
+            }
+            Note::Close(_, (buffer, identity)) => {
+                if self
+                    .0
+                    .get(buffer)
+                    .is_some_and(|sent| sent.identity == *identity)
+                {
+                    self.0.remove(buffer);
+                }
+            }
+            Note::Save(_) => {}
+        }
+    }
+
+    /// Every document the server has open, at the version it has.
+    pub(crate) fn documents(&self) -> Vec<SentDocument> {
+        self.0.values().cloned().collect()
+    }
+}
+
 /// Resolves when readiness's timer is due; never, while it isn't running.
 async fn wait_due(due: &mut Option<(Instant, Timer)>) {
     match due {
@@ -1852,8 +1944,9 @@ fn initialize_json(params: InitializeParams) -> serde_json::Value {
 }
 
 /// `initialize`'s parameters (§3.4): the single root, the spec's
-/// `initializationOptions`, and what M4 uses (§7) with every
-/// `dynamicRegistration` off (§3.6).
+/// `initializationOptions`, and what M4 uses (§7) plus rename, code
+/// actions, formatting and signature help, with every `dynamicRegistration`
+/// off (§3.6).
 #[allow(deprecated)] // `root_uri`: still what servers read first.
 pub(crate) fn initialize_params(spec: &ServerSpec, folder: &WorkspaceFolder) -> InitializeParams {
     InitializeParams {
@@ -1888,6 +1981,15 @@ fn client_capabilities() -> ClientCapabilities {
             }),
             workspace_folders: Some(true),
             configuration: Some(true),
+            // Answered by the host, through `LspEvent::ApplyEdit`
+            // (workspace_edit.rs), which takes edits to files' text only.
+            apply_edit: Some(true),
+            workspace_edit: Some(WorkspaceEditClientCapabilities {
+                document_changes: Some(true),
+                resource_operations: Some(Vec::new()),
+                failure_handling: Some(FailureHandlingKind::Abort),
+                ..Default::default()
+            }),
             ..Default::default()
         }),
         text_document: Some(TextDocumentClientCapabilities {
@@ -1920,6 +2022,54 @@ fn client_capabilities() -> ClientCapabilities {
             }),
             references: Some(DynamicRegistrationClientCapabilities {
                 dynamic_registration: dynamic,
+            }),
+            rename: Some(RenameClientCapabilities {
+                dynamic_registration: dynamic,
+                prepare_support: Some(true),
+                ..Default::default()
+            }),
+            code_action: Some(CodeActionClientCapabilities {
+                dynamic_registration: dynamic,
+                code_action_literal_support: Some(CodeActionLiteralSupport {
+                    code_action_kind: CodeActionKindLiteralSupport {
+                        value_set: [
+                            CodeActionKind::EMPTY,
+                            CodeActionKind::QUICKFIX,
+                            CodeActionKind::REFACTOR,
+                            CodeActionKind::REFACTOR_EXTRACT,
+                            CodeActionKind::REFACTOR_INLINE,
+                            CodeActionKind::REFACTOR_REWRITE,
+                            CodeActionKind::SOURCE,
+                            CodeActionKind::SOURCE_ORGANIZE_IMPORTS,
+                            CodeActionKind::SOURCE_FIX_ALL,
+                        ]
+                        .map(|kind| kind.as_str().to_owned())
+                        .into(),
+                    },
+                }),
+                is_preferred_support: Some(true),
+                data_support: Some(true),
+                resolve_support: Some(CodeActionCapabilityResolveSupport {
+                    properties: vec!["edit".into()],
+                }),
+                ..Default::default()
+            }),
+            formatting: Some(DynamicRegistrationClientCapabilities {
+                dynamic_registration: dynamic,
+            }),
+            range_formatting: Some(DynamicRegistrationClientCapabilities {
+                dynamic_registration: dynamic,
+            }),
+            signature_help: Some(SignatureHelpClientCapabilities {
+                dynamic_registration: dynamic,
+                signature_information: Some(SignatureInformationSettings {
+                    documentation_format: Some(vec![MarkupKind::Markdown, MarkupKind::PlainText]),
+                    parameter_information: Some(ParameterInformationSettings {
+                        label_offset_support: Some(true),
+                    }),
+                    active_parameter_support: Some(true),
+                }),
+                context_support: Some(true),
             }),
             publish_diagnostics: Some(PublishDiagnosticsClientCapabilities {
                 related_information: Some(true),

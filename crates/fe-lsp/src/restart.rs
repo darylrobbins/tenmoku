@@ -202,7 +202,8 @@ impl Carry {
     /// next session.
     pub(crate) fn hold(&mut self, command: Command) {
         match command {
-            Command::Request(_) => {}
+            // Dropped, they answer `ServerDown`.
+            Command::Request(_) | Command::Documents(_) => {}
             Command::Admit { admit, .. } => {
                 // It answers the caller itself, so issues nothing.
                 let _ = admit(Err(LspError::ServerDown));

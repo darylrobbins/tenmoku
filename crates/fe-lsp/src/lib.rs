@@ -39,6 +39,13 @@
 //! - [`LspManager::completion`] asks for [`Completions`] at an offset of
 //!   an open buffer, as edits in that buffer's version, and
 //!   [`LspManager::resolve`] fills in an item's documentation.
+//! - Workspace edits (a rename's, a code action's, or a server's
+//!   `workspace/applyEdit`, which reaches the sink as
+//!   [`LspEvent::ApplyEdit`]) are decoded into [`FileEdits`]: byte edits
+//!   of the version the server has of each open file, and LSP edits for
+//!   the host to place in each closed one ([`workspace_edit`]).
+//! - [`rename`], [`code_action`], [`formatting`] and [`signature_help`]
+//!   hold those features.
 //! - [`LspNavigation`] answers fe-nav's go-to-definition, references and
 //!   workspace symbols from a manager's servers, once each is ready.
 //!
@@ -57,11 +64,13 @@
 //! This crate must never depend on GPUI.
 
 mod clock;
+pub mod code_action;
 mod completion;
 mod diagnostics;
 mod document;
 mod encoding;
 mod event;
+pub mod formatting;
 mod hover;
 mod identity;
 mod launcher;
@@ -71,11 +80,14 @@ mod pull;
 mod readiness;
 mod registration;
 mod registry;
+pub mod rename;
 mod requests;
 mod restart;
 mod router;
 mod server;
+pub mod signature_help;
 mod tsserver;
+pub mod workspace_edit;
 
 #[cfg(any(test, feature = "test-support"))]
 #[path = "tests/fake.rs"]
@@ -101,3 +113,4 @@ pub use launcher::{
 pub use manager::{DEFAULT_MAX_FILE_BYTES, KillSwitch, LspManager};
 pub use navigation::LspNavigation;
 pub use requests::{ORPHANS_MAX, Reply};
+pub use workspace_edit::{ApplyReply, EditTarget, FileEdits, decode_closed};

@@ -1329,7 +1329,7 @@ impl LspManager {
         }
     }
 
-    fn send(&self, server: ServerId, command: Command) {
+    pub(crate) fn send(&self, server: ServerId, command: Command) {
         if let Some(handle) = self.servers.get(&server) {
             // A server that has gone has no documents to sync.
             let _ = handle.commands.unbounded_send(command);

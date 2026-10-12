@@ -5,7 +5,8 @@
 //! (readiness.rs), `window/logMessage` (into the log ring) and
 //! `window/showMessage` ([`LspEvent::ShowMessage`]), and
 //! `textDocument/publishDiagnostics`, which goes to the actor to decode
-//! (diagnostics.rs). Each is parsed here,
+//! (diagnostics.rs). `workspace/applyEdit` goes to the actor too, to decode
+//! and hand to the host (workspace_edit.rs). Each is parsed here,
 //! so one the client can't read is logged and ignored rather than ending
 //! the main loop, as async-lsp's typed handlers would. Everything else is
 //! logged and ignored too.
@@ -19,6 +20,7 @@ use std::task::{Context, Poll, Waker};
 
 use async_lsp::router::Router;
 use async_lsp::{AnyNotification, ServerSocket};
+use futures::FutureExt;
 use lsp_types::notification::{
     LogMessage, Notification, Progress, PublishDiagnostics, ShowMessage,
 };
@@ -29,8 +31,8 @@ use lsp_types::request::{
     WorkspaceFoldersRequest,
 };
 use lsp_types::{
-    ApplyWorkspaceEditResponse, LogMessageParams, ProgressParams, ProgressParamsValue,
-    ShowDocumentResult, ShowMessageParams, WorkspaceFolder,
+    LogMessageParams, ProgressParams, ProgressParamsValue, ShowDocumentResult, ShowMessageParams,
+    WorkspaceFolder,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -40,6 +42,7 @@ use crate::diagnostics::Inbox;
 use crate::event::{LspEvent, ServerId, SharedLog};
 use crate::readiness::Readiness;
 use crate::server::{Queue, Session, Sink, Taken};
+use crate::workspace_edit::Edits;
 
 /// rust-analyzer's `experimental/serverStatus`, sent once the client opts
 /// in with `experimental.serverStatusNotification`.
@@ -119,6 +122,8 @@ pub(crate) struct ClientState {
     pub(crate) log: SharedLog,
     /// Where publications wait for the actor to decode them.
     pub(crate) diagnostics: Rc<Inbox>,
+    /// Where `workspace/applyEdit`s wait for the actor to decode them.
+    pub(crate) edits: Rc<Edits>,
     /// Holds the session's registrations.
     pub(crate) session: Arc<Mutex<Session>>,
     /// Keeps the main loop's event channel open for as long as the loop
@@ -144,13 +149,7 @@ pub(crate) fn client_router(state: ClientState) -> Router<ClientState> {
                 .collect();
             ready(Ok(answers))
         })
-        .request::<ApplyWorkspaceEdit, _>(|_, _| {
-            ready(Ok(ApplyWorkspaceEditResponse {
-                applied: false,
-                failure_reason: Some("not supported".into()),
-                failed_change: None,
-            }))
-        })
+        .request::<ApplyWorkspaceEdit, _>(|st, params| st.edits.ask(params, &*st.clock).map(Ok))
         .request::<ShowMessageRequest, _>(|st, params| {
             log::info!("{}: {:?}: {}", st.name, params.typ, params.message);
             ready(Ok(None))
