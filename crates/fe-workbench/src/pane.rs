@@ -413,7 +413,7 @@ impl Pane {
                 let open = self.position(&path);
                 let ix = open.unwrap_or_else(|| {
                     let model = self.peer_model(&path, cx).unwrap_or_else(|| {
-                        EditorModel::new(buffer.unwrap_or_else(|| Buffer::new("")), Some(path))
+                        EditorModel::new(loader::buffer_or_new(buffer), Some(path))
                     });
                     let editor = self.new_editor(model, cx);
                     let ix = self.state.push(Box::new(editor), cx);

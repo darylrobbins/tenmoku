@@ -1,7 +1,8 @@
 //! Consecutive typing outside an open transaction, grouped into one undo
 //! step. A run of keystrokes extends one transaction through
 //! [`Buffer::edit_in`] until a caret move, a pause, a new word, a line
-//! break, another edit of the model's origin, an undo, redo or save ends it.
+//! break, another edit of the model's origin, an undo, redo, save or a
+//! save's preparation ends it.
 
 use std::{
     ops::Range,
@@ -67,6 +68,8 @@ pub(crate) struct TypingGroup {
     ends_blank: bool,
     /// The buffer's events since its last edit.
     events: Subscription,
+    /// The models' count of prepared saves when it started.
+    save_mark: u64,
 }
 
 impl TypingGroup {
@@ -143,6 +146,7 @@ impl EditorModel {
                 at: now,
                 ends_blank: typed.ends_blank,
                 events: buffer.subscribe(),
+                save_mark: self.history.borrow().save_marks,
             });
         }
         id
@@ -159,6 +163,7 @@ impl EditorModel {
     /// Whether `typed`, now, continues `group`.
     fn continues(&self, group: &TypingGroup, typed: Typed, now: Instant) -> bool {
         if group.interrupted()
+            || group.save_mark != self.history.borrow().save_marks
             || group.origin != self.origin
             || group.kind != typed.kind
             || (typed.starts_word && group.ends_blank && typed.kind == Kind::Insert)

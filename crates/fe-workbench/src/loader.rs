@@ -9,7 +9,7 @@
 
 use std::{
     fs::File,
-    io::{self, BufReader},
+    io,
     path::{Path, PathBuf},
     sync::mpsc,
     thread,
@@ -19,15 +19,27 @@ use std::{
 use fe_buffer::Buffer;
 
 /// Reads `path` into a buffer, detecting its encoding (`EditorModel::open`
-/// doesn't), so saving writes it back the same way. A missing file is
-/// `Ok(None)`: a new file, which saves as UTF-8.
+/// doesn't), so saving writes it back the same way, with the file's stamp
+/// ([`Buffer::from_file`]), so saving refuses a file changed since. A
+/// missing file is `Ok(None)`: a new file, which saves as UTF-8; open it in
+/// [`buffer_or_new`].
 pub fn read(path: PathBuf) -> io::Result<Option<Buffer>> {
     let file = match File::open(&path) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
-    Buffer::from_reader_detecting(BufReader::with_capacity(256 * 1024, file)).map(Some)
+    Buffer::from_file(file).map(Some)
+}
+
+/// The buffer [`read`] read, or for a missing file an empty one that knows
+/// the file was missing, so a save refuses one created since.
+pub fn buffer_or_new(read: Option<Buffer>) -> Buffer {
+    read.unwrap_or_else(|| {
+        let mut buffer = Buffer::new("");
+        buffer.set_disk_stamp(None);
+        buffer
+    })
 }
 
 /// A read running on its own thread.
@@ -118,6 +130,31 @@ mod tests {
     fn missing_file_is_a_new_buffer() {
         let dir = tempfile::tempdir().unwrap();
         assert!(read(dir.path().join("new.txt")).unwrap().is_none());
+    }
+
+    #[test]
+    fn saves_refuse_files_changed_after_the_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("notes.txt");
+        std::fs::write(&path, "read").unwrap();
+        let buffer = read(path.clone()).unwrap().unwrap();
+        // Rewritten between the read and the model being made.
+        std::fs::write(&path, "theirs").unwrap();
+        let mut model =
+            fe_editor::EditorModel::new(buffer_or_new(Some(buffer)), Some(path.clone()));
+        model.insert("mine ");
+        assert!(model.save().is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "theirs");
+
+        // Missing when read, created before the first save.
+        let new = dir.path().join("new.txt");
+        let buffer = buffer_or_new(read(new.clone()).unwrap());
+        assert!(buffer.disk_stamp_known());
+        let mut model = fe_editor::EditorModel::new(buffer, Some(new.clone()));
+        std::fs::write(&new, "theirs").unwrap();
+        model.insert("mine");
+        assert!(model.save().is_err());
+        assert_eq!(std::fs::read_to_string(&new).unwrap(), "theirs");
     }
 
     #[test]

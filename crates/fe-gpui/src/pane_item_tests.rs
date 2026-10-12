@@ -150,3 +150,34 @@ fn status_items_are_the_editors(cx: &mut TestAppContext) {
     assert_eq!(status::language_label("cpp"), "C++");
     assert_eq!(status::language_label("zig"), "zig");
 }
+
+#[gpui::test]
+fn a_restored_editor_refuses_a_file_changed_since(cx: &mut TestAppContext) {
+    use kiln_shell::PaneItem as _;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("restored.txt");
+    fs::write(&path, "read\n").unwrap();
+    let (_, cx) = editor(cx, "", None);
+    let state = Value::from_iter([
+        ("path", Value::from(path.to_str().unwrap())),
+        ("caret", Value::from(0)),
+    ]);
+    let task = cx.update(|window, cx| EditorView::restore(state, window, cx));
+    let restored = Rc::new(RefCell::new(None));
+    cx.update(|_, cx| {
+        let restored = restored.clone();
+        cx.spawn(async move |_| *restored.borrow_mut() = Some(task.await))
+            .detach();
+    });
+    cx.run_until_parked();
+    let view = restored.take().flatten().expect("restored");
+
+    fs::write(&path, "theirs\n").unwrap();
+    let saved = view.update(cx, |view, _| {
+        view.model_mut().insert("mine ");
+        view.model_mut().save()
+    });
+    assert!(saved.is_err());
+    assert_eq!(fs::read_to_string(&path).unwrap(), "theirs\n");
+}

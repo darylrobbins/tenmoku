@@ -1,13 +1,17 @@
 use std::{
     collections::HashMap,
+    fs::{File, Metadata},
+    io,
     ops::Range,
+    path::Path,
     sync::{
         Arc, Mutex, Weak,
         atomic::{AtomicU64, Ordering},
     },
+    time::SystemTime,
 };
 
-use fe_text::{Bias, EncodeError, FileEncoding, LineEnding, Text};
+use fe_text::{Bias, DecodedFile, EncodeError, FileEncoding, LineEnding, Text};
 
 use crate::{
     BufferId, BufferSnapshot, Edit, Version,
@@ -92,6 +96,119 @@ impl Subscription {
     }
 }
 
+/// What a file on disk looked like when it was read or saved: compared
+/// before a save to tell whether something else wrote it since.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct DiskStamp {
+    pub len: u64,
+    pub modified: SystemTime,
+    #[cfg(unix)]
+    pub dev: u64,
+    #[cfg(unix)]
+    pub ino: u64,
+}
+
+impl DiskStamp {
+    pub fn from_metadata(metadata: &Metadata) -> io::Result<Self> {
+        #[cfg(unix)]
+        use std::os::unix::fs::MetadataExt;
+        Ok(Self {
+            len: metadata.len(),
+            modified: metadata.modified()?,
+            #[cfg(unix)]
+            dev: metadata.dev(),
+            #[cfg(unix)]
+            ino: metadata.ino(),
+        })
+    }
+
+    /// The stamp of the file at `path`, following symlinks; `None` when
+    /// there's no file there.
+    pub fn of(path: impl AsRef<Path>) -> io::Result<Option<Self>> {
+        match std::fs::metadata(path) {
+            Ok(metadata) => Self::from_metadata(&metadata).map(Some),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+}
+
+/// What a save writes: the text as of one version with how to encode it.
+/// `Send`, so the write can run off the thread that owns the buffer; take
+/// it with [`Buffer::save_snapshot`], and once it's on disk report it with
+/// [`Buffer::did_save_snapshot`].
+#[derive(Clone)]
+pub struct SaveSnapshot {
+    buffer: BufferId,
+    version: Version,
+    text: Text,
+    line_ending: LineEnding,
+    encoding: FileEncoding,
+    replaced_on_read: bool,
+}
+
+impl SaveSnapshot {
+    pub fn version(&self) -> Version {
+        self.version
+    }
+
+    pub fn text(&self) -> &Text {
+        &self.text
+    }
+
+    pub fn line_ending(&self) -> LineEnding {
+        self.line_ending
+    }
+
+    pub fn encoding(&self) -> FileEncoding {
+        self.encoding
+    }
+
+    /// Writes the text with the snapshot's line endings in its encoding.
+    ///
+    /// Refuses with [`std::io::ErrorKind::InvalidData`] rather than lose data:
+    /// before writing anything if the file had bytes that were invalid in its
+    /// encoding and some of the U+FFFD they became are still in the text, and
+    /// part-way through on a char the encoding can't represent. Output may
+    /// have been written by then, so write to a temporary file and keep it
+    /// only on success, as `EditorModel::save` does.
+    pub fn write_to(&self, out: impl std::io::Write) -> std::io::Result<()> {
+        let text = &self.text;
+        if self.replaced_on_read
+            && text
+                .chunks()
+                .any(|chunk| chunk.contains(char::REPLACEMENT_CHARACTER))
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "the file had bytes that aren't valid {}, shown as U+FFFD; \
+                     saving would replace them",
+                    self.encoding.label()
+                ),
+            ));
+        }
+        text.write_encoded(self.line_ending, self.encoding, out)
+            .map_err(|error| match error {
+                EncodeError::Unmappable { ch, offset } => {
+                    let point = text.offset_to_point(offset);
+                    let row_start = text.row_start(point.row);
+                    let column = text.offset_to_char(offset) - text.offset_to_char(row_start) + 1;
+                    std::io::Error::new(
+                        std::io::ErrorKind::InvalidData,
+                        format!(
+                            "{ch:?} (U+{:04X}) on line {}, column {column} can't be saved in {}",
+                            u32::from(ch),
+                            point.row + 1,
+                            self.encoding.label()
+                        ),
+                    )
+                }
+                EncodeError::Io(error) => error,
+            })
+    }
+}
+
 /// An editable text buffer.
 ///
 /// Every change is a batch of edits applied atomically and recorded with its
@@ -129,6 +246,10 @@ pub struct Buffer {
     changed_since_save: Option<Range<usize>>,
     /// Whether the text differs from `saved_text`; see [`Buffer::is_dirty`].
     dirty: bool,
+    /// The file as it was when last read or saved: `Some(None)` when it
+    /// was missing, `None` when the buffer doesn't know (it wasn't read
+    /// from a file it was told about).
+    disk_stamp: Option<Option<DiskStamp>>,
     pub(crate) subscribers: Vec<Weak<Mutex<Vec<BufferEvent>>>>,
 }
 
@@ -203,12 +324,32 @@ impl Buffer {
         Ok(buffer)
     }
 
+    /// Reads `file` as [`Buffer::from_reader_detecting`] does, recording
+    /// its [`DiskStamp`] from the handle before reading.
+    pub fn from_file(file: File) -> io::Result<Self> {
+        let (decoded, stamp) = Self::read_file(file)?;
+        let mut buffer = Self::with_text(decoded.text, decoded.line_ending);
+        buffer.encoding = decoded.encoding;
+        buffer.replaced_on_read = decoded.replaced;
+        buffer.disk_stamp = Some(Some(stamp));
+        Ok(buffer)
+    }
+
+    /// Reads and decodes `file` as [`Buffer::from_file`] does, for
+    /// [`Buffer::reload`], with its stamp taken before reading.
+    pub fn read_file(file: File) -> io::Result<(DecodedFile, DiskStamp)> {
+        let stamp = DiskStamp::from_metadata(&file.metadata()?)?;
+        let decoded = Text::from_reader_detecting(io::BufReader::with_capacity(256 * 1024, file))?;
+        Ok((decoded, stamp))
+    }
+
     fn with_text(text: Text, line_ending: LineEnding) -> Self {
         Self {
             saved_text: text.clone(),
             saved_line_ending: line_ending,
             changed_since_save: None,
             dirty: false,
+            disk_stamp: None,
             snapshot: BufferSnapshot {
                 id: BufferId(NEXT_BUFFER_ID.fetch_add(1, Ordering::Relaxed)),
                 text,
@@ -322,54 +463,47 @@ impl Buffer {
         self.encoding
     }
 
-    /// Writes the text with the buffer's line endings in its encoding. Call
+    /// Writes the text with the buffer's line endings in its encoding, as
+    /// [`SaveSnapshot::write_to`] does, refusing as it does. Call
     /// [`Buffer::did_save`] once it's safely on disk.
-    ///
-    /// Refuses with [`std::io::ErrorKind::InvalidData`] rather than lose data:
-    /// before writing anything if the file had bytes that were invalid in its
-    /// encoding and some of the U+FFFD they became are still in the text, and
-    /// part-way through on a char the encoding can't represent. Output may
-    /// have been written by then, so write to a temporary file and keep it
-    /// only on success, as `EditorModel::save` does.
     pub fn write_to(&self, out: impl std::io::Write) -> std::io::Result<()> {
-        let text = &self.snapshot.text;
-        if self.replaced_on_read
-            && text
-                .chunks()
-                .any(|chunk| chunk.contains(char::REPLACEMENT_CHARACTER))
-        {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!(
-                    "the file had bytes that aren't valid {}, shown as U+FFFD; \
-                     saving would replace them",
-                    self.encoding.label()
-                ),
-            ));
-        }
-        text.write_encoded(self.line_ending, self.encoding, out)
-            .map_err(|error| match error {
-                EncodeError::Unmappable { ch, offset } => {
-                    let point = text.offset_to_point(offset);
-                    let row_start = text.row_start(point.row);
-                    let column = text.offset_to_char(offset) - text.offset_to_char(row_start) + 1;
-                    std::io::Error::new(
-                        std::io::ErrorKind::InvalidData,
-                        format!(
-                            "{ch:?} (U+{:04X}) on line {}, column {column} can't be saved in {}",
-                            u32::from(ch),
-                            point.row + 1,
-                            self.encoding.label()
-                        ),
-                    )
-                }
-                EncodeError::Io(error) => error,
-            })
+        self.save_snapshot().write_to(out)
     }
 
-    /// Records that the current text is on disk. Reloading from disk makes a
-    /// new `Buffer` (clean on load) and any save-as goes through here, so
-    /// both are covered.
+    /// What saving now would write, to write on another thread. O(1).
+    pub fn save_snapshot(&self) -> SaveSnapshot {
+        SaveSnapshot {
+            buffer: self.id(),
+            version: self.version(),
+            text: self.snapshot.text.clone(),
+            line_ending: self.line_ending,
+            encoding: self.encoding,
+            replaced_on_read: self.replaced_on_read,
+        }
+    }
+
+    /// The file as it was when last read, reloaded or saved: `None` when
+    /// it was missing, or when that isn't known (see
+    /// [`Buffer::disk_stamp_known`]).
+    pub fn disk_stamp(&self) -> Option<DiskStamp> {
+        self.disk_stamp.flatten()
+    }
+
+    /// Whether the buffer knows the file it was read from or saved to, as
+    /// [`Buffer::from_file`], [`Buffer::set_disk_stamp`], a save or a
+    /// reload tell it, even if the file was missing. One made from
+    /// text or a reader doesn't.
+    pub fn disk_stamp_known(&self) -> bool {
+        self.disk_stamp.is_some()
+    }
+
+    /// Records the file the text was read from as `stamp`, or as missing.
+    pub fn set_disk_stamp(&mut self, stamp: Option<DiskStamp>) {
+        self.disk_stamp = Some(stamp);
+    }
+
+    /// Records that the current text is on disk. A save-as goes through
+    /// here; see [`Buffer::reload`] for reading the file again.
     pub fn did_save(&mut self) {
         self.saved_text = self.snapshot.text.clone();
         self.saved_line_ending = self.line_ending;
@@ -379,6 +513,78 @@ impl Buffer {
         self.emit(BufferEvent::Saved {
             version: self.saved_version,
         });
+    }
+
+    /// Records that `snapshot`, taken from this buffer, is on disk as the
+    /// file `stamp` describes. Edits made since it leave the buffer dirty
+    /// until they're undone, or retyped back to the snapshot's text.
+    pub fn did_save_snapshot(&mut self, snapshot: &SaveSnapshot, stamp: Option<DiskStamp>) {
+        debug_assert_eq!(snapshot.buffer, self.id(), "another buffer's snapshot");
+        if snapshot.version == self.version() {
+            self.did_save();
+            self.saved_line_ending = snapshot.line_ending;
+        } else {
+            self.saved_text = snapshot.text.clone();
+            self.saved_line_ending = snapshot.line_ending;
+            self.saved_version = snapshot.version;
+            self.changed_since_save = Some(0..self.len());
+            self.refresh_dirty();
+            self.emit(BufferEvent::Saved {
+                version: snapshot.version,
+            });
+        }
+        self.disk_stamp = Some(stamp);
+    }
+
+    /// Replaces the text with `file`'s, read from disk, as one transaction
+    /// of `origin`, so undo takes the reload back. The edit covers only the
+    /// part that differs, so anchors before and after it keep their places.
+    /// Adopts the file's encoding and line ending, then marks the buffer
+    /// saved, as of `stamp`. Text equal to the file's makes no edit but is
+    /// still marked saved.
+    ///
+    /// The reload never joins an open transaction. One of another origin is
+    /// set aside meanwhile. One of `origin` is split: it closes before the
+    /// reload, and a new one, as deeply nested, opens after it, so edits
+    /// that follow come after the reload in undo order; the matching
+    /// [`Buffer::end_transaction`]s close the new one.
+    pub fn reload(
+        &mut self,
+        file: DecodedFile,
+        stamp: Option<DiskStamp>,
+        origin: Origin,
+    ) -> Option<TransactionId> {
+        let (old, new) = differing_ranges(&self.snapshot.text, &file.text);
+        let id = if old.is_empty() && new.is_empty() {
+            None
+        } else {
+            let new_text = file.text.slice_to_string(new);
+            let split = match self.open.take() {
+                Some(open) if open.origin == origin => {
+                    self.finish_transaction(open.id);
+                    Some(open.depth)
+                }
+                open => {
+                    self.open = open;
+                    None
+                }
+            };
+            let id = self
+                .with_transaction_aside(|buffer| buffer.edit([(old, new_text)], origin.clone()));
+            if let Some(depth) = split {
+                self.start_transaction(origin);
+                if let Some(open) = &mut self.open {
+                    open.depth = depth;
+                }
+            }
+            id
+        };
+        self.line_ending = file.line_ending;
+        self.encoding = file.encoding;
+        self.replaced_on_read = file.replaced;
+        self.did_save();
+        self.disk_stamp = Some(stamp);
+        id
     }
 
     /// Caps each origin's undo history at `bytes` of old and new text.
@@ -1001,6 +1207,90 @@ fn revert(
         }
     }
     Ok(produced)
+}
+
+/// The ranges of `old` and `new` between their longest common prefix and
+/// suffix, on char boundaries: replacing the first with the second's text
+/// turns `old` into `new`. Walks both texts without copying either.
+fn differing_ranges(old: &Text, new: &Text) -> (Range<usize>, Range<usize>) {
+    let prefix = common_prefix(old, new);
+    // The bytes before `prefix` are the same in both, so a char boundary in
+    // one is one in the other.
+    let prefix = old.clip_offset(prefix, Bias::Left);
+    let suffix = common_suffix(old, new, old.len().min(new.len()) - prefix);
+    // Likewise for the bytes after.
+    let old_end = old.clip_offset(old.len() - suffix, Bias::Right);
+    let suffix = old.len() - old_end;
+    (prefix..old_end, prefix..new.len() - suffix)
+}
+
+/// How many leading bytes `a` and `b` share.
+fn common_prefix(a: &Text, b: &Text) -> usize {
+    let (mut a, mut b) = (a.chunks().map(str::as_bytes), b.chunks().map(str::as_bytes));
+    let (mut x, mut y): (&[u8], &[u8]) = (&[], &[]);
+    let mut shared = 0;
+    loop {
+        if x.is_empty() {
+            match a.next() {
+                Some(chunk) => x = chunk,
+                None => return shared,
+            }
+            continue;
+        }
+        if y.is_empty() {
+            match b.next() {
+                Some(chunk) => y = chunk,
+                None => return shared,
+            }
+            continue;
+        }
+        let n = x.len().min(y.len());
+        let same = x[..n]
+            .iter()
+            .zip(&y[..n])
+            .take_while(|(p, q)| p == q)
+            .count();
+        shared += same;
+        if same < n {
+            return shared;
+        }
+        (x, y) = (&x[n..], &y[n..]);
+    }
+}
+
+/// How many trailing bytes, up to `limit`, `a` and `b` share. Compares a
+/// window at a time from the end, since the rope's chunks only go forward.
+fn common_suffix(a: &Text, b: &Text, limit: usize) -> usize {
+    const WINDOW: usize = 64 * 1024;
+    let (mut x, mut y) = (Vec::new(), Vec::new());
+    let mut shared = 0;
+    while shared < limit {
+        let take = (limit - shared).min(WINDOW);
+        read_bytes(a, a.len() - shared - take, take, &mut x);
+        read_bytes(b, b.len() - shared - take, take, &mut y);
+        let same = x
+            .iter()
+            .rev()
+            .zip(y.iter().rev())
+            .take_while(|(p, q)| p == q)
+            .count();
+        shared += same;
+        if same < take {
+            break;
+        }
+    }
+    shared
+}
+
+/// Copies `len` bytes of `text` from `start`, which needn't be a char
+/// boundary, into `out`.
+fn read_bytes(text: &Text, start: usize, len: usize, out: &mut Vec<u8>) {
+    out.clear();
+    while out.len() < len {
+        let bytes = text.bytes_at(start + out.len());
+        let n = bytes.len().min(len - out.len());
+        out.extend_from_slice(&bytes[..n]);
+    }
 }
 
 /// Whether two chunk sequences hold the same bytes, however they're split.

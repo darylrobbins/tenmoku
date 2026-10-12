@@ -14,8 +14,8 @@ use std::{
 };
 
 use fe_buffer::{
-    Bias, Buffer, BufferEvent, BufferSnapshot, EditKind, Origin, ResolvedSelection, Selection,
-    SelectionSet, Subscription, Text, TransactionId, UndoError, Version,
+    Bias, Buffer, BufferEvent, BufferSnapshot, DiskStamp, EditKind, Origin, ResolvedSelection,
+    Selection, SelectionSet, Subscription, Text, TransactionId, UndoError, Version,
 };
 use fe_display::{CharWidth, DisplayMap, ExpandedRow, Monospace, WRAP_SLICE_BYTES};
 use unicode_segmentation::{GraphemeCursor, GraphemeIncomplete};
@@ -24,6 +24,7 @@ pub mod commands;
 pub mod completion;
 pub mod decorations;
 pub mod diagnostics;
+mod disk;
 pub mod ghost_text;
 mod multi_cursor;
 mod row_change_decorations;
@@ -31,6 +32,7 @@ pub mod row_changes;
 mod typing;
 mod viewer;
 
+pub use disk::{SaveError, SaveJob, Saved};
 pub use multi_cursor::MAX_OCCURRENCES;
 pub use typing::TYPING_PAUSE;
 pub use viewer::{COPY_LIMIT, CopyError, Outcome, ViewerModel};
@@ -136,6 +138,10 @@ pub struct EditorModel {
 }
 
 impl EditorModel {
+    /// A model of `buffer`, saved to `path`. Saves refuse a file changed
+    /// since the buffer's [`DiskStamp`](fe_buffer::DiskStamp); a buffer
+    /// that doesn't know one (see [`Buffer::disk_stamp_known`]) is
+    /// stamped by its first save.
     pub fn new(mut buffer: Buffer, path: Option<PathBuf>) -> Self {
         let events = buffer.subscribe();
         let snapshot = buffer.snapshot();
@@ -169,10 +175,14 @@ impl EditorModel {
         model
     }
 
+    /// Reads `path` as UTF-8, recording the file's stamp so a save can
+    /// tell whether something else wrote it since.
     pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
         let path = path.as_ref();
         let file = std::fs::File::open(path)?;
-        let buffer = Buffer::from_reader(io::BufReader::with_capacity(256 * 1024, file))?;
+        let stamp = DiskStamp::from_metadata(&file.metadata()?)?;
+        let mut buffer = Buffer::from_reader(io::BufReader::with_capacity(256 * 1024, file))?;
+        buffer.set_disk_stamp(Some(stamp));
         Ok(Self::new(buffer, Some(path.to_path_buf())))
     }
 
@@ -222,49 +232,6 @@ impl EditorModel {
     /// this) by [`EditorModel::split`].
     pub fn shares_buffer_with(&self, other: &EditorModel) -> bool {
         Rc::ptr_eq(&self.buffer, &other.buffer)
-    }
-
-    /// Saves atomically: writes a new file beside the target and renames it
-    /// over the original, so a failed save never truncates the file.
-    ///
-    /// The new file gets a random name and is created exclusively with
-    /// owner-only permissions, so it never follows a planted symlink and is
-    /// never readable by others mid-save. The original's permissions are then
-    /// applied through the open handle. If the path is a symlink, the file it
-    /// points to is updated and the link is left in place.
-    pub fn save(&mut self) -> io::Result<()> {
-        let path = self
-            .path
-            .clone()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "buffer has no path"))?;
-        let (target, permissions) = match std::fs::canonicalize(&path) {
-            Ok(target) => {
-                let permissions = std::fs::metadata(&target)?.permissions();
-                (target, Some(permissions))
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => (path, None),
-            Err(error) => return Err(error),
-        };
-        let dir = match target.parent() {
-            Some(dir) if !dir.as_os_str().is_empty() => dir,
-            _ => Path::new("."),
-        };
-        let file_name = target.file_name().unwrap_or_default().to_string_lossy();
-        let temp = tempfile::Builder::new()
-            .prefix(&format!(".{file_name}."))
-            .suffix(".fastedit-save")
-            .tempfile_in(dir)?;
-        if let Some(permissions) = permissions {
-            temp.as_file().set_permissions(permissions)?;
-        }
-        let mut out = io::BufWriter::new(temp);
-        self.buffer.borrow().write_to(&mut out)?;
-        let temp = out.into_inner().map_err(|error| error.into_error())?;
-        temp.as_file().sync_all()?;
-        // Dropping `temp` on any error above deletes it.
-        temp.persist(&target).map_err(|error| error.error)?;
-        self.buffer.borrow_mut().did_save();
-        Ok(())
     }
 
     pub fn path(&self) -> Option<&Path> {
@@ -1447,6 +1414,9 @@ struct History {
     /// given one: accepted completions. Kept while the buffer lives, a few
     /// words each: fe-buffer doesn't say when it drops a transaction.
     caret_picks: HashMap<TransactionId, CaretPick>,
+    /// How many saves have been prepared: a run of typing in any model
+    /// ends at one, so its snapshot is an undo step's edge.
+    save_marks: u64,
 }
 
 struct Recorded {
@@ -1466,6 +1436,7 @@ impl History {
             batches: VecDeque::new(),
             models: Vec::new(),
             caret_picks: HashMap::new(),
+            save_marks: 0,
         }
     }
 

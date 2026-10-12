@@ -267,7 +267,8 @@ impl PaneItem for EditorView {
             let path = path.clone();
             async move {
                 let file = std::fs::File::open(&path)?;
-                Buffer::from_reader_detecting(std::io::BufReader::new(file))
+                // Stamped, so a save refuses a file changed since.
+                Buffer::from_file(file)
             }
         });
         cx.spawn(async move |cx| {

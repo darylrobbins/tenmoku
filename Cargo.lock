@@ -1888,6 +1888,7 @@ dependencies = [
  "imara-diff",
  "proptest",
  "rand 0.9.5",
+ "tempfile",
  "thiserror 2.0.21",
 ]
 
