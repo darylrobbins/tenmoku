@@ -463,7 +463,8 @@ impl TextMeasure for Double {
 fn caret_shown_when_text_and_inlay_both_shape_wider_than_measured(head: usize) {
     // Both the buffer's "x" and the inlay's "W" measure 10 and are shaped
     // at 20, so no scroll worked out from the index alone shows the caret.
-    let buffer = Buffer::new(&"x".repeat(30_000));
+    // A second long row shares the view, and is shaped for it too.
+    let buffer = Buffer::new(&format!("{}\n{}", "x".repeat(30_000), "y".repeat(40_000)));
     let display = DisplayMap::new(buffer.current(), 4);
     let selections = [ResolvedSelection {
         range: head..head,
@@ -504,6 +505,21 @@ fn caret_shown_when_text_and_inlay_both_shape_wider_than_measured(head: usize) {
     let caret = frame.cursors.first().expect("the caret is laid out");
     assert!(caret.x >= GUTTER, "{caret:?}");
     assert!(caret.x + CURSOR_WIDTH <= WIDTH, "{caret:?}");
+    // The shaped text is what's under the caret, not left at the old view.
+    let row = frame.row_containing(head).expect("the caret's row");
+    assert!(row.shown().contains(&head), "{:?}", row.shown());
+    shaped_text_covers_the_view(&frame, row);
+    let other = frame.rows.get(1).expect("the other long row is laid out");
+    shaped_text_covers_the_view(&frame, other);
+}
+
+/// Checks `row`'s shaped text reaches both edges of the view.
+fn shaped_text_covers_the_view(frame: &Frame<DoubleLine>, row: &RowLayout<DoubleLine>) {
+    let slice = row.slice.as_ref().expect("a long row is sliced");
+    let left = frame.text_left as f64 + slice.start_x - f64::from(frame.scroll.x);
+    let right = left + f64::from(row.line.width());
+    assert!(left <= f64::from(frame.text_left), "{left} {slice:?}");
+    assert!(right >= f64::from(frame.width), "{right} {slice:?}");
 }
 
 #[test]

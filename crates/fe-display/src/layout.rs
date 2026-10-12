@@ -987,7 +987,7 @@ pub fn layout_frame_with_inlay<M: TextMeasure>(
                     .min_by(|&a, &b| tried[a].4.total_cmp(&tried[b].4))
                     .unwrap_or(0)
             });
-        let (mut scroll_x, long, _, visible, _) = tried.swap_remove(best);
+        let (mut scroll_x, mut long, _, visible, _) = tried.swap_remove(best);
         if !visible {
             // No view shapes a slice that shows its own caret, as the slice
             // that holds the inlay and the caret together is not the one the
@@ -997,7 +997,22 @@ pub fn layout_frame_with_inlay<M: TextMeasure>(
             let x = long[ix].as_ref().map_or(plain_x, |row| {
                 row.x_for_offset(primary_head, long_rows, widths)
             });
-            scroll_x = follow(x, scroll_x).max(0.);
+            let moved = follow(x, scroll_x).max(0.);
+            if moved != scroll_x {
+                // The slices, the other long rows' too, are for the old
+                // view: shape them for the one it moved to, then show the
+                // caret as they place it, keeping them: they cover the view
+                // around it.
+                let (shaped_scroll, shaped) = settle(measure, long_rows, widths, moved);
+                let x = shaped[ix].as_ref().map_or(plain_x, |row| {
+                    row.x_for_offset(primary_head, long_rows, widths)
+                });
+                scroll_x = follow(x, shaped_scroll).max(0.);
+                // The caret's row stays as shaped; the others are shaped
+                // for the view it ends at.
+                long = shape_all(measure, long_rows, widths, scroll_x);
+                long[ix] = shaped.into_iter().nth(ix).flatten();
+            }
         }
         (scroll_x, long)
     } else {
