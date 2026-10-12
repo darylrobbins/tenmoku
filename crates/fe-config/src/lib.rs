@@ -12,6 +12,7 @@
 
 pub mod editorconfig;
 pub mod paths;
+pub mod recent;
 pub mod settings;
 pub mod theme;
 pub mod write;
@@ -26,6 +27,7 @@ pub use layers::{Layer, load_layer, merge, parse_layer};
 pub use paths::{
     config_dir, config_dir_from, project_settings_path, user_settings_path, user_theme_path,
 };
+pub use recent::{RecentList, recent_path};
 pub use settings::{
     EditorSettings, Settings, SettingsEvent, SettingsStore, ThemeModeSetting, ThemeSettings,
     settings_schema,
