@@ -664,11 +664,13 @@ fn gesture_ends_even_when_a_sibling_stops_propagation(cx: &mut TestAppContext) {
     let below = point(px(100.), px(450.));
     cx.simulate_mouse_move(below, MouseButton::Left, Modifiers::none());
     button_up(cx, below, MouseButton::Left);
-    let bytes = {
-        settle(cx);
-        written(&terminal, cx)
-    };
-    let text = String::from_utf8(bytes).unwrap();
+    let report =
+        |cx: &mut VisualTestContext| String::from_utf8(written(&terminal, cx)).unwrap_or_default();
+    until(cx, "the press and release reports", |cx| {
+        let text = report(cx);
+        text.starts_with("\x1b[<0;6;3M") && text.ends_with('m')
+    });
+    let text = report(cx);
     assert!(text.starts_with("\x1b[<0;6;3M"), "{text:?}");
     assert!(text.ends_with('m'), "{text:?}");
 }
