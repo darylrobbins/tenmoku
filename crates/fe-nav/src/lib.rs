@@ -21,6 +21,9 @@
 //!   from a [`SymbolIndex`], with a capped text search while it's
 //!   incomplete, and finds references by a word search of the project,
 //!   dropping the hits a parse puts in comments and strings.
+//! - [`ScipIndex`] decodes a SCIP index (`index.scip`) into each file's
+//!   occurrences and each symbol's definition and reference sites, for
+//!   exact answers with no language server running.
 //!
 //! Like [`fe_project::search`], nothing here owns an executor: the caller
 //! runs [`build`] on a background thread of its own, and the workers are
@@ -33,6 +36,7 @@ mod extract;
 mod index;
 mod provider;
 mod references;
+mod scip;
 mod search;
 
 pub use build::{
@@ -46,4 +50,5 @@ pub use provider::{
     NavigationProvider, Precision, Readiness, Reference, ReferencesSummary, Tier, WorkspaceSymbol,
 };
 pub use references::ReferenceOptions;
+pub use scip::{ScipEncoding, ScipError, ScipIndex, ScipOccurrence, ScipSite, ScipSymbolInfo};
 pub use search::{SearchNavigation, SearchStats};

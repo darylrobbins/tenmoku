@@ -99,6 +99,10 @@ libc = "0.2"
 log = "0.4"
 # EditorConfig lookup and glob matching (Apache-2.0, no dependencies).
 ec4rs = "1.2"
+# SCIP indexes (fe-nav): the generated protobuf types (Apache-2.0) and the
+# protobuf runtime they're built on (MIT), which scip pins at =3.7.2.
+scip = "0.10"
+protobuf = "3.7"
 # Command args, invocation records and their schemas (all already in the lock through gpui).
 schemars = "1"
 serde = { version = "1", features = ["derive"] }

@@ -11,7 +11,11 @@ publish.workspace = true
 fe-buffer.workspace = true
 fe-project.workspace = true
 fe-syntax.workspace = true
+fe-text.workspace = true
 frizbee.workspace = true
+# Decoding `index.scip` (ScipIndex).
+protobuf.workspace = true
+scip.workspace = true
 # `O_NONBLOCK`, so opening a file swapped for a FIFO doesn't hang a build
 # (already in the lock through fe-project).
 libc.workspace = true
