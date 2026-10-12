@@ -12,6 +12,7 @@
 //! and propagates.
 
 mod config_problems;
+mod disk_sync;
 mod dock;
 mod find_bar;
 mod git;

@@ -23,6 +23,7 @@ use crate::{
     Dock, GitPanel, GitPanelEvent, KEY_CONTEXT, MenuBarView, OutlinePanel, Pane, PaneGroup, Picker,
     ProjectPanel, QuickOpen, ReferencesPanel, SearchPanel, StatusBar,
     config_problems::{self, ConfigProblemsPicker},
+    disk_sync::DiskSync,
     dock::{self, DockEvent, DockOp},
     git::GitState,
     go_to_line::GoToLine,
@@ -267,6 +268,8 @@ pub struct Workbench {
     /// Saves the layout at quit, and keeps or deletes it as the window
     /// closes.
     _layout_hooks: Vec<Subscription>,
+    /// Keeps the open buffers in step with their files on disk.
+    pub(crate) disk_sync: DiskSync,
 }
 
 impl EventEmitter<RootChanged> for Workbench {}
@@ -467,6 +470,7 @@ impl Workbench {
             restoring: false,
             bounds: None,
             _layout_hooks: Vec::new(),
+            disk_sync: DiskSync::new(window, cx),
         };
         // Under test, the chrome's window moves are recorded, not made.
         #[cfg(test)]
@@ -524,6 +528,7 @@ impl Workbench {
                     workbench
                         .git
                         .update(cx, |git, cx| git.fs_changed(changes, cx));
+                    workbench.disk_fs_changed(changes, window, cx);
                 }
             },
         )
