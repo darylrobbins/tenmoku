@@ -14,7 +14,7 @@ use std::{
 use fe_text::{Bias, DecodedFile, EncodeError, FileEncoding, LineEnding, Text};
 
 use crate::{
-    BufferId, BufferSnapshot, Edit, Version,
+    Backup, BufferId, BufferSnapshot, Edit, Version,
     edit::{Mapping, normalize},
     log::{Collapse, EditLog},
 };
@@ -241,6 +241,9 @@ pub struct Buffer {
     /// current text, so it holds only the leaves edited since.
     saved_text: Text,
     saved_line_ending: LineEnding,
+    /// The encoding as of the last save (or load); see
+    /// [`Buffer::is_dirty`].
+    saved_encoding: FileEncoding,
     /// Invariant: outside this range (current coordinates) the text and
     /// `saved_text` are byte-identical; `None` means they're equal.
     changed_since_save: Option<Range<usize>>,
@@ -250,7 +253,28 @@ pub struct Buffer {
     /// was missing, `None` when the buffer doesn't know (it wasn't read
     /// from a file it was told about).
     disk_stamp: Option<Option<DiskStamp>>,
+    /// Set by [`Buffer::from_backup`] until the next save.
+    restore: Option<Restore>,
     pub(crate) subscribers: Vec<Weak<Mutex<Vec<BufferEvent>>>>,
+}
+
+/// A restore from a backup; see [`Buffer::from_backup`].
+struct Restore {
+    transaction: TransactionId,
+    /// Whether the transaction is applied (not undone). The buffer is dirty
+    /// while it is, whatever its text: the backup was of unsaved changes.
+    applied: bool,
+    backup: SaveFormat,
+    /// The file's, as it was read; undoing the restore returns to it.
+    disk: SaveFormat,
+}
+
+/// How a save writes the text.
+#[derive(Copy, Clone)]
+struct SaveFormat {
+    line_ending: LineEnding,
+    encoding: FileEncoding,
+    replaced_on_read: bool,
 }
 
 struct OpenTransaction {
@@ -320,6 +344,7 @@ impl Buffer {
         let decoded = Text::from_reader_detecting(reader)?;
         let mut buffer = Self::with_text(decoded.text, decoded.line_ending);
         buffer.encoding = decoded.encoding;
+        buffer.saved_encoding = decoded.encoding;
         buffer.replaced_on_read = decoded.replaced;
         Ok(buffer)
     }
@@ -330,9 +355,99 @@ impl Buffer {
         let (decoded, stamp) = Self::read_file(file)?;
         let mut buffer = Self::with_text(decoded.text, decoded.line_ending);
         buffer.encoding = decoded.encoding;
+        buffer.saved_encoding = decoded.encoding;
         buffer.replaced_on_read = decoded.replaced;
         buffer.disk_stamp = Some(Some(stamp));
         Ok(buffer)
+    }
+
+    /// Restores `backup` (see [`BackupStore`](crate::BackupStore)) over
+    /// `disk`, the file it was of as it is now, or `None` when the buffer
+    /// was untitled or the file is gone.
+    ///
+    /// The file's text, or no text, is the saved base, and the backup's
+    /// text is applied over it as one transaction of
+    /// `Origin::Host("backup")`, empty when the texts are equal. The buffer
+    /// saves in the backup's encoding, BOM and line ending, and is dirty
+    /// while the transaction is applied, until a save, even when the backup
+    /// saves just what the file holds. Undoing it returns to the file's text
+    /// and save format, clean; redoing it restores the backup's. A backup
+    /// of a file keeps the [`DiskStamp`] the buffer had when it was taken,
+    /// so if the file changed on disk since, a save is refused as any stale
+    /// save is.
+    pub fn from_backup(disk: Option<File>, backup: &Backup) -> io::Result<Self> {
+        let mut buffer = match disk {
+            Some(file) => Self::from_file(file)?,
+            None => Self::new(""),
+        };
+        let origin = Origin::Host("backup".into());
+        let (old, new) = differing_ranges(&buffer.snapshot.text, &backup.text);
+        let transaction = if old.is_empty() && new.is_empty() {
+            buffer.record_empty(origin)
+        } else {
+            let new_text = backup.text.slice_to_string(new);
+            buffer
+                .edit([(old, new_text)], origin)
+                .expect("the texts differ")
+        };
+        let meta = &backup.meta;
+        let restore = Restore {
+            transaction,
+            applied: false,
+            backup: SaveFormat {
+                line_ending: meta.line_ending,
+                encoding: meta.encoding,
+                replaced_on_read: meta.replaced,
+            },
+            disk: SaveFormat {
+                line_ending: buffer.line_ending,
+                encoding: buffer.encoding,
+                replaced_on_read: buffer.replaced_on_read,
+            },
+        };
+        buffer.restore = Some(restore);
+        buffer.note_restore(transaction, true);
+        buffer.disk_stamp = meta.path.is_some().then_some(meta.disk_stamp);
+        Ok(buffer)
+    }
+
+    /// Records an empty transaction of `origin`, closed, for a restore
+    /// that changes no text.
+    fn record_empty(&mut self, origin: Origin) -> TransactionId {
+        debug_assert!(self.open.is_none() && self.history.is_empty());
+        let id = self.next_transaction_id();
+        self.history.push(HistoryEntry {
+            id,
+            origin,
+            batches: Vec::new(),
+            undone: None,
+        });
+        id
+    }
+
+    /// Follows `transaction` being applied or undone: if it's the restore,
+    /// switches to the backup's save format or back to the file's.
+    fn note_restore(&mut self, transaction: TransactionId, applied: bool) {
+        let Some(restore) = &mut self.restore else {
+            return;
+        };
+        if restore.transaction != transaction {
+            return;
+        }
+        restore.applied = applied;
+        let format = if applied {
+            restore.backup
+        } else {
+            restore.disk
+        };
+        self.line_ending = format.line_ending;
+        self.encoding = format.encoding;
+        self.replaced_on_read = format.replaced_on_read;
+    }
+
+    /// Whether reading the file decoded malformed bytes to U+FFFD.
+    pub(crate) fn replaced_on_read(&self) -> bool {
+        self.replaced_on_read
     }
 
     /// Reads and decodes `file` as [`Buffer::from_file`] does, for
@@ -347,9 +462,11 @@ impl Buffer {
         Self {
             saved_text: text.clone(),
             saved_line_ending: line_ending,
+            saved_encoding: FileEncoding::UTF8,
             changed_since_save: None,
             dirty: false,
             disk_stamp: None,
+            restore: None,
             snapshot: BufferSnapshot {
                 id: BufferId(NEXT_BUFFER_ID.fetch_add(1, Ordering::Relaxed)),
                 text,
@@ -409,10 +526,15 @@ impl Buffer {
         self.line_ending = line_ending;
     }
 
-    /// Whether the text or line ending differs from the last save. Undoing or
-    /// retyping back to the saved text makes the buffer clean again.
+    /// Whether the text, line ending or encoding differs from the last
+    /// save, or the buffer holds a restored backup (see
+    /// [`Buffer::from_backup`]). Undoing or retyping back to the saved text
+    /// makes the buffer clean again.
     pub fn is_dirty(&self) -> bool {
-        self.dirty || self.line_ending != self.saved_line_ending
+        self.dirty
+            || self.line_ending != self.saved_line_ending
+            || self.encoding != self.saved_encoding
+            || self.restore.as_ref().is_some_and(|restore| restore.applied)
     }
 
     /// Widens `changed_since_save` to cover `batch`, an edit just applied.
@@ -507,6 +629,8 @@ impl Buffer {
     pub fn did_save(&mut self) {
         self.saved_text = self.snapshot.text.clone();
         self.saved_line_ending = self.line_ending;
+        self.saved_encoding = self.encoding;
+        self.restore = None;
         self.changed_since_save = None;
         self.dirty = false;
         self.saved_version = self.version();
@@ -523,10 +647,13 @@ impl Buffer {
         if snapshot.version == self.version() {
             self.did_save();
             self.saved_line_ending = snapshot.line_ending;
+            self.saved_encoding = snapshot.encoding;
         } else {
             self.saved_text = snapshot.text.clone();
             self.saved_line_ending = snapshot.line_ending;
+            self.saved_encoding = snapshot.encoding;
             self.saved_version = snapshot.version;
+            self.restore = None;
             self.changed_since_save = Some(0..self.len());
             self.refresh_dirty();
             self.emit(BufferEvent::Saved {
@@ -875,6 +1002,7 @@ impl Buffer {
             at: self.undo_clock,
         });
         let (id, origin) = (entry.id, entry.origin.clone());
+        self.note_restore(id, false);
         *self.history_bytes.entry(origin.clone()).or_default() += added;
         *self.redoable.entry(origin.clone()).or_default() += 1;
         for batch in &batches {
@@ -919,6 +1047,7 @@ impl Buffer {
         entry.batches = batches.clone();
         let added = entry_bytes(entry);
         let (id, origin) = (entry.id, entry.origin.clone());
+        self.note_restore(id, true);
         let held = self.history_bytes.entry(origin.clone()).or_default();
         *held = *held - removed + added;
         if let Some(count) = self.redoable.get_mut(&origin) {

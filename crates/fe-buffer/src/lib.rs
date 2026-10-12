@@ -24,9 +24,13 @@
 //!   brings it back. Text the user types at the region's edges stays outside
 //!   it. Cancelling, by [`EditStream::finish`] or by dropping the stream,
 //!   keeps what landed.
+//! - [`BackupStore`] keeps backups of unsaved buffers on disk, privately and
+//!   atomically, for hot exit and crash recovery; [`Buffer::from_backup`]
+//!   restores one, dirty over the file's current text.
 //!
 //! This crate must never depend on GPUI.
 
+mod backup;
 mod buffer;
 mod edit;
 mod log;
@@ -36,6 +40,7 @@ mod selection;
 mod snapshot;
 mod stream;
 
+pub use backup::{Backup, BackupId, BackupMeta, BackupStore, ParseBackupIdError};
 pub use buffer::{
     Buffer, BufferEvent, DiskStamp, EditError, EditKind, Origin, SaveSnapshot, Subscription,
     TransactionId, UndoError,
