@@ -18,6 +18,7 @@ use gpui::{
     Render, Styled as _, Subscription, WeakEntity, Window, WindowBounds, div, px,
 };
 
+use self::recent_picker::{RecentOp, RecentPicker};
 use crate::{
     Dock, GitPanel, GitPanelEvent, KEY_CONTEXT, MenuBarView, OutlinePanel, Pane, PaneGroup, Picker,
     ProjectPanel, QuickOpen, ReferencesPanel, SearchPanel, StatusBar,
@@ -111,10 +112,11 @@ pub(crate) enum Palette {
     Rename,
     /// `lsp.code_actions`' list.
     CodeActions,
+    Recent,
 }
 
 impl Palette {
-    const ALL: [Palette; 9] = [
+    const ALL: [Palette; 10] = [
         Palette::QuickOpen,
         Palette::Language,
         Palette::Toolbar,
@@ -124,6 +126,7 @@ impl Palette {
         Palette::GoToLine,
         Palette::Rename,
         Palette::CodeActions,
+        Palette::Recent,
     ];
 
     /// Its id in the modal layer.
@@ -138,6 +141,7 @@ impl Palette {
             Palette::GoToLine => "go_to_line",
             Palette::Rename => "rename",
             Palette::CodeActions => "code_actions",
+            Palette::Recent => "recent",
         })
     }
 
@@ -182,6 +186,8 @@ pub struct Workbench {
     /// To kiln's config diagnostics, which the status bar shows.
     _config_problems: Subscription,
     go_to_line: Entity<Picker<GoToLine>>,
+    /// The recent folders and files, shown by `workbench.open_recent`.
+    recent_picker: Entity<Picker<RecentPicker>>,
     /// The window's shell: the chrome, the dock, the status bar and the
     /// palettes' modal layer, around the panes.
     shell: Entity<Shell>,
@@ -352,6 +358,16 @@ impl Workbench {
             let delegate = ToolbarPicker::new(outline.downgrade(), ui);
             Picker::new(delegate, "Filter…", ui, cx)
         });
+        recent_picker::init(cx);
+        let recent = cx.weak_entity();
+        let recent_picker = cx.new(|cx| {
+            let delegate = RecentPicker::new(recent, ui);
+            Picker::new(delegate, "Open recent folder or file…", ui, cx)
+        });
+        // A file's folder is only the root it opens in, not one opened.
+        if let Some(root) = launch_root.clone().filter(|_| as_folder) {
+            recent_picker::record(root, true, cx);
+        }
         let nav_state = Nav::new(launch_root.clone(), ui, cx);
         let status_bar = cx.new(|_| StatusBar::new(ui));
         toast::init(cx);
@@ -406,6 +422,7 @@ impl Workbench {
             config_problems,
             _config_problems: Self::follow_config_problems(window, cx),
             go_to_line,
+            recent_picker,
             shell,
             modals,
             palette: None,
@@ -669,6 +686,7 @@ impl Workbench {
         }
         self.resolve_trust(Some(root.clone()), true, window, cx);
         self.track_editors(cx);
+        recent_picker::record(root.clone(), true, cx);
         let name = title_bar::name(Some(&root));
         self.shell.update(cx, |shell, cx| shell.set_title(name, cx));
         cx.emit(RootChanged(root));
@@ -1046,16 +1064,22 @@ impl Workbench {
     }
 
     /// Observes each open editor, and stops observing closed ones. A newly
-    /// observed editor gets its diff base.
+    /// observed editor gets its diff base, and its file, if it has one, is
+    /// recorded as opened recently.
     fn track_editors(&mut self, cx: &mut Context<Self>) {
         let editors = self.open_editors(cx);
         let open: HashSet<EntityId> = editors.iter().map(Entity::entity_id).collect();
         self.editors.retain(|id, _| open.contains(id));
         self.echoes.retain(|id| open.contains(id));
         for editor in &editors {
-            self.editors
-                .entry(editor.entity_id())
-                .or_insert_with(|| cx.observe(editor, Self::editor_changed));
+            if self.editors.contains_key(&editor.entity_id()) {
+                continue;
+            }
+            let observed = cx.observe(editor, Self::editor_changed);
+            self.editors.insert(editor.entity_id(), observed);
+            if let Some(path) = editor.read(cx).model().path().map(Path::to_owned) {
+                recent_picker::record(path, false, cx);
+            }
         }
         self.git.update(cx, |git, cx| git.track(&editors, cx));
     }
@@ -1335,6 +1359,49 @@ impl Workbench {
             picker.show(window, cx);
         });
         self.show_palette(Palette::GoToLine, picker, window, cx);
+    }
+
+    /// The recent folders and files picker, shown by `workbench.open_recent`.
+    #[cfg(test)]
+    pub(crate) fn recent_picker(&self) -> &Entity<Picker<RecentPicker>> {
+        &self.recent_picker
+    }
+
+    /// Does a recent command: shows the picker, focused, in place of any
+    /// other palette, or afresh if it shows; empties the list; or, while
+    /// the picker shows, opens its selected folder in a new window, or its
+    /// selected file as confirming it would.
+    fn run_recent_op(&mut self, op: RecentOp, window: &mut Window, cx: &mut Context<Self>) {
+        let picker = self.recent_picker.clone();
+        match op {
+            RecentOp::Open => {
+                // Dismissing it would hide it again once its dismissal lands.
+                if self.palette != Some(Palette::Recent) {
+                    self.dismiss_palette(window, cx);
+                }
+                let input = picker.focus_handle(cx);
+                let previous = window.focused(cx).filter(|focused| *focused != input);
+                picker.update(cx, |picker, cx| {
+                    picker.delegate.opened(previous, cx);
+                    picker.show(window, cx);
+                });
+                self.show_palette(Palette::Recent, picker, window, cx);
+            }
+            RecentOp::Clear => {
+                recent_picker::clear(cx);
+                picker.update(cx, |picker, cx| picker.delegate.cleared(cx));
+            }
+            RecentOp::OpenInNewWindow if self.palette == Some(Palette::Recent) => {
+                // After this update: confirming a file reads the workbench.
+                window.defer(cx, move |window, cx| {
+                    picker.update(cx, |picker, cx| {
+                        let selected = picker.selected();
+                        picker.delegate.open_in_new_window(selected, window, cx)
+                    })
+                });
+            }
+            RecentOp::OpenInNewWindow => cx.propagate(),
+        }
     }
 
     /// Dismisses the palette that shows, as Escape would.
@@ -1693,6 +1760,9 @@ impl Workbench {
             if toast::dismisses_all(run, cx) {
                 return self.toasts.update(cx, |toasts, cx| toasts.dismiss_all(cx));
             }
+            if let Some(op) = recent_picker::op(run, cx) {
+                return self.run_recent_op(op, window, cx);
+            }
             if config_problems::shows(run, cx) {
                 return self.show_config_problems(window, cx);
             }
@@ -1859,6 +1929,9 @@ mod vim_host;
 
 #[path = "external_drop.rs"]
 mod external_drop;
+
+#[path = "recent_picker.rs"]
+mod recent_picker;
 
 // Nothing shows a toast yet: the next card routes messages to it.
 #[cfg_attr(
