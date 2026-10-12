@@ -122,6 +122,10 @@ pub struct EditorView {
     pub(crate) blocks: Vec<HostBlock>,
     /// The proposed changes shown as diff blocks ([`proposal`]).
     pub(crate) proposals: Vec<std::rc::Rc<std::cell::RefCell<fe_buffer::ProposedChange>>>,
+    /// The buttons in the proposals' blocks the last frame painted: the
+    /// hunk, the button, and the part of its box shown, in window
+    /// coordinates. A click there presses it.
+    pub(crate) proposal_buttons: Vec<(fe_buffer::HunkId, ProposalButton, gpui::Bounds<Pixels>)>,
     /// The top, in screen rows, the last frame reported or the host set
     /// ([`EditorView::report_scroll_top`]).
     pub(crate) reported_top: f32,
@@ -244,6 +248,7 @@ impl EditorView {
             line_operates: false,
             blocks: Vec::new(),
             proposals: Vec::new(),
+            proposal_buttons: Vec::new(),
             reported_top: 0.,
             top_set: None,
             #[cfg(test)]
@@ -582,6 +587,11 @@ impl EditorView {
         window.focus(&self.focus, cx);
         // A click ends a composition, typing nothing.
         self.composition = None;
+        // A proposal's button leaves the carets where they are.
+        if self.press_proposal_button(event.position, cx) {
+            self.drag = None;
+            return;
+        }
         if self.toggle_fold_at(event.position, cx) {
             self.drag = None;
             self.changed(cx);
@@ -1297,6 +1307,8 @@ mod ime;
 mod proposal;
 
 pub use host::{EditorViewEvent, HostBlock, HostBlockKind};
+pub(crate) use proposal::ProposalButton;
+pub use proposal::ProposalEvent;
 
 #[cfg(test)]
 mod ime_tests;
@@ -1339,3 +1351,6 @@ mod diff_seams_tests;
 
 #[cfg(test)]
 mod proposal_tests;
+
+#[cfg(test)]
+mod proposal_accept_tests;

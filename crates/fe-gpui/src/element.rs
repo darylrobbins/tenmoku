@@ -82,6 +82,8 @@ pub(crate) struct FrameLayout {
     host_blocks: Vec<host_blocks::Placed>,
     /// The proposals' hunks in view ([`proposal`]).
     pub(crate) proposals: proposal::Layout,
+    /// Their new texts, indexed, kept from frame to frame.
+    pub(crate) proposal_texts: proposal::Texts,
     /// When prepaint started and how long it took, for [`FrameTiming`].
     prepaint_started: Instant,
     prepaint_took: Duration,
@@ -562,7 +564,12 @@ impl Element for EditorElement {
             // count them.
             view.sync_find(cx);
         });
-        let hunks = proposal::hunks(self.view.read(cx));
+        let mut proposal_texts = self.view.update(cx, |view, _| {
+            let layout = view.layout.as_mut();
+            layout.map(|layout| mem::take(&mut layout.proposal_texts))
+        });
+        let proposal_texts = proposal_texts.get_or_insert_default();
+        let hunks = proposal::hunks(self.view.read(cx), proposal_texts);
         // Wrap a slice of what's pending around the top of the viewport,
         // keeping the text at the top where it is unless the caret is about
         // to be scrolled into view, and ask for another frame to continue.
@@ -720,7 +727,14 @@ impl Element for EditorElement {
         let mut host_x = frame.scroll.x;
         if kept_scroll.is_none() && !input.autoscroll {
             let host = host_blocks::widest(&frame, view, &mut shaper, &mut glyph_widths);
-            let proposed = proposal::widest(&frame, &hunks, view, &mut shaper, &mut glyph_widths);
+            let proposed = proposal::widest(
+                &frame,
+                &hunks,
+                proposal_texts,
+                view,
+                &mut shaper,
+                &mut glyph_widths,
+            );
             let widest = host.max(proposed);
             let text_width = f64::from(frame.width - frame.text_left);
             let reach = (widest - text_width + f64::from(em) * 4.).max(0.) as f32;
@@ -742,8 +756,15 @@ impl Element for EditorElement {
             }
         }
         let placed = host_blocks::layout(&frame, view, &mut shaper, &mut glyph_widths, host_x);
-        let proposals =
-            proposal::layout(&frame, &hunks, view, &mut shaper, &mut glyph_widths, host_x);
+        let mut proposals = proposal::layout(
+            &frame,
+            &hunks,
+            proposal_texts,
+            view,
+            &mut shaper,
+            &mut glyph_widths,
+            host_x,
+        );
         let composed = composition.map(|(offset, composition)| (offset, composition.text.clone()));
         let to_window = |rect: Rect| {
             Bounds::new(
@@ -758,6 +779,7 @@ impl Element for EditorElement {
             .map(|area| window.insert_hitbox(to_window(area.rect), HitboxBehavior::Normal))
             .collect();
         let text = window.insert_hitbox(to_window(frame.text_bounds()), HitboxBehavior::Normal);
+        proposal::insert_hitboxes(&mut proposals, to_window, window);
 
         let kept = kept_scroll.unwrap_or(frame.scroll);
         let scroll = point(px(kept.x), px(kept.y));
@@ -791,6 +813,7 @@ impl Element for EditorElement {
             decorations: Decorations::default(),
             host_blocks: placed,
             proposals,
+            proposal_texts: mem::take(proposal_texts),
             prepaint_started: started,
             prepaint_took: Duration::ZERO,
         };
@@ -961,6 +984,7 @@ impl Element for EditorElement {
         let mut painted_brackets = Vec::new();
         #[cfg(test)]
         let mut painted_blocks = Vec::new();
+        let mut proposal_buttons = Vec::new();
         #[cfg(test)]
         let mut painted_proposals = Vec::new();
 
@@ -999,6 +1023,7 @@ impl Element for EditorElement {
                         &layout,
                         window,
                         cx,
+                        &mut proposal_buttons,
                         #[cfg(test)]
                         &mut painted_proposals,
                     );
@@ -1188,6 +1213,7 @@ impl Element for EditorElement {
             view.viewport_height_changed();
             view.frame_timings.record(timing);
             view.drop_stale_hover(hover_shown);
+            view.proposal_buttons = proposal_buttons;
             #[cfg(test)]
             {
                 view.painted_carets = painted;
