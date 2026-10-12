@@ -312,3 +312,16 @@ fn long_row_autoscroll_uses_the_inlay_as_measured_in_the_row() {
     let text_width = WIDTH - GUTTER;
     assert_eq!(frame.scroll.x, 625. - text_width + 4. * CELL);
 }
+
+#[test]
+fn long_row_autoscroll_shows_the_caret_past_an_inlay_wider_than_a_slice() {
+    // The inlay is wider than `MAX_SHAPED_ROW_BYTES` characters, so the
+    // view past it is in the index at the row's start, where the inlay
+    // is still in the slice.
+    let wide = "W".repeat(8200);
+    let mut long_rows = LongRows::default();
+    let (frame, _) = lay_out_long_inlay_with(&mut Mono, (40, &wide), 60, 0., true, &mut long_rows);
+    let caret = frame.cursors.first().expect("the caret is laid out");
+    assert!(caret.x >= GUTTER, "{caret:?}");
+    assert!(caret.x + CURSOR_WIDTH <= WIDTH, "{caret:?}");
+}

@@ -728,6 +728,27 @@ pub fn layout_frame_with_inlay<M: TextMeasure>(
             && contains(display_row.range.clone(), display_row.last, inlay.offset)
         {
             slice = index.extend_to(&slice, inlay.offset, widths);
+            if !slice.range.contains(&inlay.offset) && slice.range.end != inlay.offset {
+                // The view is in the row's coordinates, which the inlay
+                // displaces the text after it in; look for the slice in the
+                // index's, where a view past the inlay is further left. If
+                // that takes the inlay in, it's the slice that fills the view.
+                let at = index.x_for_offset(inlay.offset, widths);
+                let by: f64 = inlay
+                    .text
+                    .chars()
+                    .map(|ch| f64::from(widths.char_width(ch)))
+                    .sum();
+                let unshift = |x: f64| {
+                    if x <= at { x } else { (x - by).max(at) }
+                };
+                let shifted =
+                    index.slice(unshift(view.start)..unshift(view.end), slice_margin, widths);
+                let shifted = index.extend_to(&shifted, inlay.offset, widths);
+                if shifted.range.contains(&inlay.offset) || shifted.range.end == inlay.offset {
+                    slice = shifted;
+                }
+            }
         }
         let mut shape_slice = |measure: &mut M, slice: &RowSlice| {
             let spans = highlights(slice.range.clone());
