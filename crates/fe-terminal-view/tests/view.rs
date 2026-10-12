@@ -457,7 +457,14 @@ fn unfocused_while_the_window_is_inactive(cx: &mut TestAppContext) {
     // The pty's threads wake the view's event task.
     cx.executor().allow_parking();
     let dir = tempfile::tempdir().unwrap();
-    let options = TerminalOptions::new(dir.path());
+    // A silent shell: the user's login shell prints a prompt whenever it
+    // likes, and the pty reader thread would wake the test scheduler from
+    // outside it. This one prints nothing and blocks until the test ends.
+    let mut options = TerminalOptions::new(dir.path());
+    options.shell = Some((
+        "/bin/sh".to_owned(),
+        vec!["-c".to_owned(), "read line".to_owned()],
+    ));
     let (view, cx) =
         cx.add_window_view(|window, cx| TerminalView::new(options, style(), window, cx).unwrap());
     let focused =
