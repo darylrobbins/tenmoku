@@ -20,9 +20,25 @@ notify.workspace = true
 # search pattern's inline flags and anchors.
 regex-syntax = "0.8"
 
+# `NSFileManager`, to trash through a file reference URL (already in the lock
+# through GPUI). Linux's freedesktop.org trash is moved into through directory
+# handles in `fs_ops`.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-foundation = { version = "0.3.2", default-features = false, features = [
+    "std",
+    "NSError",
+    "NSFileManager",
+    "NSString",
+    "NSURL",
+] }
+
 [dev-dependencies]
 criterion.workspace = true
 tempfile.workspace = true
+
+# Reads the freedesktop.org trash back in the tests.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+trash = "5.2.9"
 
 [[bench]]
 name = "tree"
