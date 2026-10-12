@@ -20,6 +20,7 @@ use fe_buffer::{
 use fe_display::{CharWidth, DisplayMap, ExpandedRow, Monospace, WRAP_SLICE_BYTES};
 use unicode_segmentation::{GraphemeCursor, GraphemeIncomplete};
 
+pub mod auto_save;
 pub mod commands;
 pub mod completion;
 pub mod decorations;
