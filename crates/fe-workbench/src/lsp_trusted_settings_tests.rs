@@ -1,17 +1,17 @@
 //! A trusted root's language servers get the project file's `[lsp]` table
-//! unfiltered (`fe_config::settings::ProjectLsp`, over the filtered
-//! settings); an untrusted one's manager keeps the filtered settings the
+//! unfiltered (`fe_config::settings::LspLayer`, over the user file's
+//! `lsp` table); an untrusted one's manager keeps the filtered settings the
 //! workbench was given.
 
 use std::{fs, path::PathBuf, sync::Arc};
 
-use fe_config::{Settings, SettingsEvent, SettingsStore, settings::ProjectLsp};
+use fe_config::{Settings, SettingsEvent, SettingsStore, settings::LspLayer};
 use fe_lsp::fake::{FakeServer, Record};
 use gpui::TestAppContext;
 use lsp_types::{ConfigurationItem, ConfigurationParams, request::WorkspaceConfiguration};
 use serde_json::{Value, json};
 
-use crate::tests::lsp::Lsp;
+use crate::{lsp::Layers, tests::lsp::Lsp};
 
 const USER: &str = r#"
 [lsp.servers.rust-analyzer]
@@ -206,8 +206,12 @@ fn trust_changes_and_reloads(cx: &mut TestAppContext) {
     let (read, generation) = s
         .workbench
         .read_with(&s.cx, |w, _| (w.lsp.trusted_read, w.lsp.generation));
-    let mut stale = ProjectLsp::new(fe_config::project_settings_path(&s.root));
+    let mut stale = LspLayer::project(fe_config::project_settings_path(&s.root));
     stale.read();
+    let stale = Layers {
+        user: None,
+        project: stale,
+    };
     let src = s.path("src");
     let workbench = s.workbench.clone();
     s.cx.update(|window, cx| workbench.update(cx, |w, cx| w.set_root(src.clone(), window, cx)));
@@ -309,27 +313,73 @@ fn invalid_files_keep_the_last_good_settings(cx: &mut TestAppContext) {
     reload(&mut s);
     assert_eq!(handed_command(&mut s).as_deref(), Some("ra-project"));
 
-    // The user's file: the host's store keeps its last good table, which
-    // the trusted settings are laid over, so turning servers off there
-    // holds when the file breaks and the root is trusted again.
-    let user = user_path(&s);
-    let project_path = fe_config::project_settings_path(&s.root);
+    // The user's file is a layer of its own, kept for every window: turning
+    // servers off there holds when the file breaks, whatever the host
+    // delivers, and the project's file can't turn them back on.
     s.write_user_settings("lsp.enabled = false\n");
-    let mut store = SettingsStore::load(Some(user.clone()), Some(project_path));
-    give(&mut s, Settings::clone(store.settings()));
-    s.draw();
+    reload(&mut s);
     s.fake.wait_for_at(2, "shutdown, exit", |records| {
         records.iter().any(|r| r.is_notification("exit"))
     });
     s.write_user_settings("lsp.enabled = \n");
-    let reloaded = store.reload(std::slice::from_ref(&user));
-    assert!(reloaded.is_some_and(|event| !event.settings.lsp.enabled));
+    // A window the host settles on another root reads its own store, which
+    // has no last good table for the user's file: the defaults.
+    let fresh = Settings::clone(
+        SettingsStore::load(Some(user_path(&s)), Some(project_path(&s))).settings(),
+    );
+    assert!(fresh.lsp.enabled);
+    give(&mut s, fresh);
+    s.draw();
     s.set_trust(false);
     s.set_trust(true);
     assert!(!handed(&mut s).enabled);
     assert_eq!(handed_command(&mut s).as_deref(), Some("ra-project"));
     s.open("src/lib.rs");
     assert_eq!(s.fake.launches(), 2);
+}
+
+fn project_path(s: &Lsp) -> PathBuf {
+    fe_config::project_settings_path(&s.root)
+}
+
+#[gpui::test]
+fn removed_disabling_flags_stop_applying(cx: &mut TestAppContext) {
+    // The host's store keeps a project file's `enabled = false` keys. The
+    // trusted settings don't come from it: once the file stops setting
+    // them, they're gone, with no host reload to say so.
+    let mut s = Lsp::untrusted(cx);
+    write_project(
+        &s.root,
+        "lsp.enabled = false\n[lsp.servers.rust-analyzer]\nenabled = false\n",
+    );
+    reload(&mut s);
+    s.open("src/main.rs");
+    s.set_trust(true);
+    s.draw();
+    assert!(!handed(&mut s).enabled);
+
+    // Removed, the host's settings still have the flags until it reloads.
+    write_project(&s.root, &project(r#"["project"]"#));
+    project_changed(&mut s);
+    s.until("the servers enabled", |s| {
+        s.workbench
+            .read_with(&s.cx, |w, _| w.lsp_handed())
+            .is_some_and(|lsp| lsp.enabled)
+    });
+    s.draw();
+    s.fake.wait_initialized();
+    assert_eq!(handed_command(&mut s).as_deref(), Some("ra-project"));
+
+    // An invalid command with the flags changed beside it keeps the last
+    // good file, not the flags.
+    write_project(
+        &s.root,
+        "lsp.enabled = false\n[lsp.servers.rust-analyzer]\ncommand = \"\"\n",
+    );
+    project_changed(&mut s);
+    s.draw();
+    assert!(handed(&mut s).enabled);
+    assert_eq!(handed_command(&mut s).as_deref(), Some("ra-project"));
 }
 
 #[gpui::test]

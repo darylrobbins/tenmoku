@@ -408,49 +408,65 @@ fn schema_for(table: &Table) -> Arc<serde_json::Value> {
 }
 
 /// The `lsp` settings of the user and project files for a trusted root:
-/// loaded and checked as [`SettingsStore::load`] does them, but with the
-/// project file's `lsp` keys applied as written, not narrowed. Either file
-/// may be absent or missing.
+/// each file's `lsp` table checked as [`SettingsStore::load`] checks a
+/// file, the project's applied as written, not narrowed, over the user's,
+/// over the defaults. Either file may be absent or missing.
 ///
-/// It reads the files, blocking: call it off the main thread. It's
-/// [`ProjectLsp::apply`] over a fresh store's settings; a workbench keeps a
-/// [`ProjectLsp`] instead, so an invalid project file keeps its last good
-/// table, and lays it over the settings the app's store has, which keep
-/// the user file's. [`SettingsStore`] keeps narrowing the project's keys,
-/// as it's the app's and trust is per root.
+/// It reads the files, blocking: call it off the main thread. A workbench
+/// keeps an [`LspLayer`] for each file instead, so an invalid file keeps
+/// its last good table, whatever the host's own reads of the files give.
 pub fn trusted_lsp(user: Option<PathBuf>, project: Option<PathBuf>) -> LspSettings {
-    let filtered = SettingsStore::load(user, project.clone())
-        .settings()
-        .lsp
-        .clone();
-    let Some(project) = project else {
-        return filtered;
-    };
-    let mut layer = ProjectLsp::new(project);
-    layer.read();
-    layer.apply(&filtered)
+    let mut settings = LspSettings::default();
+    if let Some(user) = user {
+        let mut layer = LspLayer::user(user);
+        layer.read();
+        settings = layer.apply(&settings);
+    }
+    if let Some(project) = project {
+        let mut layer = LspLayer::project(project);
+        layer.read();
+        settings = layer.apply(&settings);
+    }
+    settings
 }
 
-/// A project file's `lsp` table, for a trusted root: checked as the
+/// A settings file's `lsp` table, for a trusted root: checked as the
 /// settings store checks a file (TOML, serde, then the schema), and kept
 /// at its last good value while the file has errors, which is empty until
 /// it has read cleanly once. A missing file has an empty table.
+///
+/// The user's file and the project's are layers of their own, applied over
+/// the defaults in turn ([`LspLayer::apply`]), never over the host's
+/// effective settings: those have the project's keys narrowed, and may
+/// have come from a read of the user's file the host has no last good
+/// table for.
 #[derive(Clone, Debug, PartialEq)]
-pub struct ProjectLsp {
+pub struct LspLayer {
     path: PathBuf,
     good: Table,
+    /// The `theme` isn't the project's to set, so it can't reject its file.
+    project: bool,
 }
 
-impl ProjectLsp {
-    /// `path`'s table, not read yet: empty.
-    pub fn new(path: PathBuf) -> Self {
+impl LspLayer {
+    /// The user's file `path`'s table, not read yet: empty.
+    pub fn user(path: PathBuf) -> Self {
         Self {
             path,
             good: Table::new(),
+            project: false,
         }
     }
 
-    /// The project's settings file.
+    /// A project's file `path`'s table, not read yet: empty.
+    pub fn project(path: PathBuf) -> Self {
+        Self {
+            project: true,
+            ..Self::user(path)
+        }
+    }
+
+    /// The settings file.
     pub fn path(&self) -> &std::path::Path {
         &self.path
     }
@@ -462,8 +478,9 @@ impl ProjectLsp {
         if layer.has_errors() {
             return;
         }
-        // The theme isn't the project's to set, so it can't reject the file.
-        layer.table.remove("theme");
+        if self.project {
+            layer.table.remove("theme");
+        }
         if toml::Value::Table(layer.table.clone())
             .try_into::<Settings>()
             .is_err()
@@ -483,18 +500,17 @@ impl ProjectLsp {
         };
     }
 
-    /// `filtered`, the effective settings with the project's `lsp` keys
-    /// narrowed, with the project's `lsp` table laid over it as written.
-    /// If the two don't merge into valid settings, `filtered`.
-    pub fn apply(&self, filtered: &LspSettings) -> LspSettings {
+    /// `base` with this layer's `lsp` table laid over it as written. If the
+    /// two don't merge into valid settings, `base`.
+    pub fn apply(&self, base: &LspSettings) -> LspSettings {
         if self.good.is_empty() {
-            return filtered.clone();
+            return base.clone();
         }
-        let mut table = match Table::try_from(filtered) {
+        let mut table = match Table::try_from(base) {
             Ok(table) => table,
             Err(error) => {
                 log::error!("the LSP settings don't serialize to a table: {error}");
-                return filtered.clone();
+                return base.clone();
             }
         };
         crate::layers::merge(&mut table, &self.good);
@@ -502,14 +518,20 @@ impl ProjectLsp {
         settings.insert("lsp".into(), toml::Value::Table(table.clone()));
         let errors = schema_errors(&settings);
         if !errors.is_empty() {
-            log::warn!("the project's LSP settings don't apply: {errors}");
-            return filtered.clone();
+            log::warn!(
+                "the LSP settings of {} don't apply: {errors}",
+                self.path.display()
+            );
+            return base.clone();
         }
         toml::Value::Table(table)
             .try_into()
             .unwrap_or_else(|error| {
-                log::warn!("the project's LSP settings don't apply: {error}");
-                filtered.clone()
+                log::warn!(
+                    "the LSP settings of {} don't apply: {error}",
+                    self.path.display()
+                );
+                base.clone()
             })
     }
 }

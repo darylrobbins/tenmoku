@@ -5,7 +5,7 @@
 use std::{collections::BTreeMap, fs};
 
 use fe_config::SettingsStore;
-use fe_config::settings::{ProjectLsp, UNTRUSTED_LSP, trusted_lsp};
+use fe_config::settings::{LspLayer, LspSettings, UNTRUSTED_LSP, trusted_lsp};
 use serde_json::json;
 
 const USER: &str = r#"
@@ -110,14 +110,14 @@ fn project_lsp_keeps_its_last_good_table() {
     let dir = tempfile::tempdir().unwrap();
     let project = dir.path().join("project.toml");
     let filtered = fe_config::settings::LspSettings::default();
-    let mut layer = ProjectLsp::new(project.clone());
+    let mut layer = LspLayer::project(project.clone());
     // Missing: nothing over the filtered settings.
     layer.read();
     assert_eq!(layer.apply(&filtered), filtered);
 
     fs::write(&project, PROJECT).unwrap();
     layer.read();
-    let command = |layer: &ProjectLsp| {
+    let command = |layer: &LspLayer| {
         layer.apply(&filtered).servers["rust-analyzer"]
             .command
             .clone()
@@ -157,4 +157,68 @@ fn project_lsp_keeps_its_last_good_table() {
     fs::write(&project, "").unwrap();
     layer.read();
     assert_eq!(layer.apply(&filtered), filtered);
+}
+
+#[test]
+fn trusted_settings_are_the_project_over_the_user_over_the_defaults() {
+    let dir = tempfile::tempdir().unwrap();
+    let user = dir.path().join("user.toml");
+    let project = dir.path().join("project.toml");
+    let enabled = |lsp: &LspSettings| (lsp.enabled, lsp.servers["rust-analyzer"].enabled);
+    let both = |user_text: &str, project_text: &str| {
+        fs::write(&user, user_text).unwrap();
+        fs::write(&project, project_text).unwrap();
+        trusted_lsp(Some(user.clone()), Some(project.clone()))
+    };
+
+    // The project's disabling flags are the host store's too, but they
+    // aren't in the trusted settings once the file stops setting them.
+    let off = "lsp.enabled = false\n[lsp.servers.rust-analyzer]\nenabled = false\n";
+    assert_eq!(enabled(&both("", off)), (false, false));
+    let removed = "[lsp.servers.rust-analyzer]\ncommand = \"ra\"\n";
+    assert_eq!(enabled(&both("", removed)), (true, true));
+
+    // The user's own flag holds when the project doesn't set it.
+    assert_eq!(enabled(&both(off, removed)), (false, false));
+}
+
+#[test]
+fn layers_keep_their_last_good_tables_with_flags_changed_in_an_invalid_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("project.toml");
+    let mut layer = LspLayer::project(project.clone());
+    fs::write(&project, "[lsp.servers.rust-analyzer]\ncommand = \"ra\"\n").unwrap();
+    layer.read();
+
+    // An invalid command with a disabling flag beside it: the file is
+    // rejected whole, the flag with it.
+    fs::write(
+        &project,
+        "lsp.enabled = false\n[lsp.servers.rust-analyzer]\ncommand = \"\"\nenabled = false\n",
+    )
+    .unwrap();
+    layer.read();
+    let applied = layer.apply(&LspSettings::default());
+    assert!(applied.enabled);
+    assert_eq!(
+        applied.servers["rust-analyzer"].command.as_deref(),
+        Some("ra")
+    );
+    assert!(applied.servers["rust-analyzer"].enabled);
+}
+
+#[test]
+fn a_user_layer_keeps_its_last_good_table() {
+    let dir = tempfile::tempdir().unwrap();
+    let user = dir.path().join("user.toml");
+    fs::write(&user, "lsp.enabled = false\n").unwrap();
+    let mut layer = LspLayer::user(user.clone());
+    layer.read();
+    assert!(!layer.apply(&LspSettings::default()).enabled);
+    fs::write(&user, "lsp.enabled = \n").unwrap();
+    layer.read();
+    assert!(!layer.apply(&LspSettings::default()).enabled);
+    fs::write(&user, "").unwrap();
+    layer.read();
+    assert!(layer.apply(&LspSettings::default()).enabled);
 }

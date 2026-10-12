@@ -659,10 +659,17 @@ include override commands for `cargo check` and build scripts. So:
 - **Workspace trust.** Q7 was revised to (b) (§9, T177): language servers
   start only in folders the user trusts. In a trusted root, the project
   layer's `lsp` keys apply as written (T65): the workbench lays the root's
-  project file's `lsp` table (`fe_config::settings::ProjectLsp`, which keeps
-  its last good table while the file has errors) over the filtered settings
-  it was given, which keep the user file's, and hands that root's
-  `LspManager` the result. It reads the file off the main thread when the
+  project file's `lsp` table over the user file's, over the defaults (each
+  an `fe_config::settings::LspLayer`, which keeps its last good table while
+  the file has errors), and hands that root's `LspManager` the result. The
+  user file's layer is the app's, shared by every window and read by the
+  workbench itself, not taken from the filtered settings the window was
+  given: those have the project's keys narrowed, so a disabling flag the
+  project file has since dropped would stay in them, and a window the host
+  settles with a fresh store has no last good table for a broken user file
+  (T67). The watcher is made, held and dropped on the background executor,
+  and the main thread never locks the layers a read holds, so untrusting
+  and re-rooting don't wait on the file system. It reads the file off the main thread when the
   root becomes trusted, when a manager starts for a trusted root, at each
   settings reload, and when the file changes: it watches the file while the
   root is trusted, as the app's store narrows it and so reloads for no

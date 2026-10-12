@@ -10,9 +10,12 @@
 //!   the old one's servers shut down.
 //! - **Trusted settings.** While the root is trusted, its manager gets the
 //!   project file's `[lsp]` table unfiltered: the root's
-//!   `.fastedit/settings.toml` read as a [`ProjectLsp`], which keeps its last
-//!   good table while the file has errors, laid over the filtered settings
-//!   the workbench was given, which keep the user file's. It's read on the
+//!   `.fastedit/settings.toml` read as an [`LspLayer`], which keeps its last
+//!   good table while the file has errors, laid over the user's file read
+//!   the same way, over the defaults. The user's layer is the app's, kept
+//!   for every window whatever the host's reads of the file give them, and
+//!   the filtered settings the workbench was given, which have the project's
+//!   keys narrowed, aren't a part of it. It's read on the
 //!   background executor when the root becomes trusted, when a manager
 //!   starts for a trusted root, at each reload, and when the file changes:
 //!   the workbench watches it while the root is trusted, as the app's store
@@ -97,7 +100,7 @@ use fe_buffer::{Buffer, BufferEvent, BufferId, Version};
 use fe_command::{
     Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Invocation, Registry,
 };
-use fe_config::settings::{LspSettings, ProjectLsp};
+use fe_config::settings::{LspLayer, LspSettings};
 use fe_editor::completion::{CompletionItem, CompletionList, CompletionTrigger};
 use fe_editor::{
     EditorModel,
@@ -112,6 +115,7 @@ use gpui::{
     App, AppContext as _, Context, Global, SharedString, Subscription, Task, WeakEntity, Window,
 };
 
+use crate::open::settings_path;
 use crate::{RootChanged, StatusItem, StatusSide, TrustChanged, Workbench};
 
 /// The status bar item's id.
@@ -132,6 +136,42 @@ impl Global for Launcher {}
 struct Settings(LspSettings);
 
 impl Global for Settings {}
+
+/// The user's settings file's `lsp` table, for every window of the app:
+/// kept at its last good value while the file has errors, whatever the
+/// host's own reads of the file give a window.
+struct UserLayer(Arc<Mutex<LspLayer>>);
+
+impl Global for UserLayer {}
+
+/// The app's layer for the user's file `path`.
+fn user_layer(cx: &mut App, path: PathBuf) -> Arc<Mutex<LspLayer>> {
+    if let Some(UserLayer(layer)) = cx.try_global::<UserLayer>()
+        && lock(layer).path() == path
+    {
+        return layer.clone();
+    }
+    let layer = Arc::new(Mutex::new(LspLayer::user(path)));
+    cx.set_global(UserLayer(layer.clone()));
+    layer
+}
+
+/// The layers a read of the trusted settings gives.
+pub(crate) struct Layers {
+    pub(crate) user: Option<LspLayer>,
+    pub(crate) project: LspLayer,
+}
+
+impl Layers {
+    /// The project's table over the user's, over the defaults.
+    fn apply(&self) -> LspSettings {
+        let user = match &self.user {
+            Some(user) => user.apply(&LspSettings::default()),
+            None => LspSettings::default(),
+        };
+        self.project.apply(&user)
+    }
+}
 
 /// Has workbenches opened from now on start their language servers with
 /// `launcher`, to sandbox, proxy or refuse them, rather than spawning them
@@ -321,8 +361,14 @@ pub(crate) struct Lsp {
     settings: LspSettings,
     /// The root's project settings file's `lsp` table, as last read for a
     /// trusted root, kept at its last good value while the file has errors.
-    /// Shared with the reads, on the background executor.
-    project: Option<Arc<Mutex<ProjectLsp>>>,
+    /// Shared with the reads, on the background executor, so the main
+    /// thread never locks it.
+    project: Option<Arc<Mutex<LspLayer>>>,
+    /// The project settings file, for its watcher.
+    project_path: Option<PathBuf>,
+    /// The user's settings file's `lsp` table, as for `project`: the app's,
+    /// shared by every window's reads.
+    user: Option<Arc<Mutex<LspLayer>>>,
     /// Bumped with each read of the trusted settings and each trust
     /// change, so a superseded read is dropped.
     trusted_read: u64,
@@ -483,6 +529,8 @@ impl Lsp {
             messages: HashMap::new(),
             settings: LspSettings::default(),
             project: None,
+            project_path: None,
+            user: None,
             trusted_read: 0,
             gate_open: false,
             _trusted: None,
@@ -608,6 +656,8 @@ impl Workbench {
         lsp.root = None;
         lsp._root = None;
         lsp.project = None;
+        lsp.project_path = None;
+        lsp.user = None;
         lsp.gate_open = false;
         lsp._project_changes = None;
         let Some(root) = self.root.clone() else {
@@ -643,8 +693,10 @@ impl Workbench {
     fn start_lsp_manager(&mut self, root: PathBuf, cx: &mut Context<Self>) {
         let lsp = &mut self.lsp;
         lsp.root = Some(root.clone());
-        let project = ProjectLsp::new(fe_config::project_settings_path(&root));
-        lsp.project = Some(Arc::new(Mutex::new(project)));
+        let path = fe_config::project_settings_path(&root);
+        lsp.project = Some(Arc::new(Mutex::new(LspLayer::project(path.clone()))));
+        lsp.project_path = Some(path);
+        lsp.user = settings_path(cx).map(|path| user_layer(cx, path));
         let host = cx.try_global::<Launcher>().map(|host| host.0.clone());
         #[cfg(test)]
         {
@@ -741,31 +793,39 @@ impl Workbench {
     /// wakeups from the watcher's thread.
     fn watch_project(&mut self, cx: &mut Context<Self>) {
         let lsp = &mut self.lsp;
-        let Some(project) = &lsp.project else {
+        let Some(path) = lsp.project_path.clone() else {
             return;
         };
         if lsp._project_changes.is_some() {
             return;
         }
-        let path = lock(project).path().to_owned();
         let (sender, changes) = async_channel::unbounded::<()>();
         #[cfg(test)]
         {
             lsp.project_changed = Some(sender.clone());
         }
-        let watcher = cx.background_spawn(async move {
+        // The watcher is made, held and dropped on the background executor:
+        // dropping it joins its thread, which may be in the middle of
+        // blocking file system work. The task below holds `release` and
+        // drops it without waiting, whenever it's cancelled, which ends the
+        // background task.
+        let (release, released) = async_channel::bounded::<()>(1);
+        cx.background_spawn(async move {
             if cfg!(test) {
-                return None;
+                return;
             }
-            fe_config::ConfigWatcher::new(vec![path.clone()], move |_| {
+            let watcher = fe_config::ConfigWatcher::new(vec![path.clone()], move |_| {
                 sender.send_blocking(()).ok();
             })
             .inspect_err(|error| log::warn!("not watching {}: {error}", path.display()))
-            .ok()
-        });
+            .ok();
+            released.recv().await.ok();
+            drop(watcher);
+        })
+        .detach();
         let generation = lsp.generation;
         lsp._project_changes = Some(cx.spawn(async move |workbench, cx| {
-            let _watcher = watcher.await;
+            let _release = release;
             while changes.recv().await.is_ok() {
                 while changes.try_recv().is_ok() {}
                 let read = workbench.update(cx, |workbench, cx| {
@@ -780,10 +840,10 @@ impl Workbench {
         }));
     }
 
-    /// Reads the root's project settings file off the main thread, then
-    /// lays its `lsp` table over the filtered settings, hands them to the
-    /// manager and lets servers start, unless the root, its trust or a
-    /// newer read came first.
+    /// Reads the user's and the root's project settings files off the main
+    /// thread, then lays the project's `lsp` table over the user's, hands
+    /// them to the manager and lets servers start, unless the root, its
+    /// trust or a newer read came first.
     fn read_trusted_settings(&mut self, cx: &mut Context<Self>) {
         let lsp = &mut self.lsp;
         let (Some(_), Some(project)) = (&lsp.manager, lsp.project.clone()) else {
@@ -791,23 +851,32 @@ impl Workbench {
         };
         lsp.trusted_read += 1;
         let (read, generation) = (lsp.trusted_read, lsp.generation);
-        let layer = cx.background_spawn(async move {
+        let user = lsp.user.clone();
+        let layers = cx.background_spawn(async move {
+            let user = user.map(|user| {
+                let mut user = lock(&user);
+                user.read();
+                user.clone()
+            });
             let mut project = lock(&project);
             project.read();
-            project.clone()
+            Layers {
+                user,
+                project: project.clone(),
+            }
         });
         lsp._trusted = Some(cx.spawn(async move |workbench, cx| {
-            let layer = layer.await;
+            let layers = layers.await;
             workbench
                 .update(cx, |workbench, cx| {
-                    workbench.apply_trusted_settings(read, generation, &layer, cx)
+                    workbench.apply_trusted_settings(read, generation, &layers, cx)
                 })
                 .ok();
         }));
     }
 
-    /// Applies the trusted settings, `project` laid over the filtered
-    /// ones, from read `read` for manager `generation`, if they're still
+    /// Applies the trusted settings, `layers`' project laid over its user,
+    /// from read `read` for manager `generation`, if they're still
     /// current, and lets servers start for the root.
     ///
     /// Opening the gate, the documents opened while it was shut are opened
@@ -817,7 +886,7 @@ impl Workbench {
         &mut self,
         read: u64,
         generation: u64,
-        project: &ProjectLsp,
+        layers: &Layers,
         cx: &mut Context<Self>,
     ) {
         let lsp = &mut self.lsp;
@@ -827,7 +896,7 @@ impl Workbench {
         let (Some(manager), root) = (lsp.manager.clone(), lsp.root.clone()) else {
             return;
         };
-        let settings = project.apply(&lsp.settings);
+        let settings = layers.apply();
         let mut manager = lock(&manager);
         if !lsp.gate_open {
             for &buffer in lsp.documents.keys() {
