@@ -6,6 +6,12 @@
 //! Every path in and out is absolute. `Repo` is `Send + Sync`, so the workbench
 //! can run it on a background thread. Nothing here writes to the repository.
 
+mod index;
+mod refs;
+
+pub use index::SplitStatus;
+pub use refs::{Branch, Head};
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
