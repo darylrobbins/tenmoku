@@ -33,7 +33,7 @@ mod select;
 mod syntax;
 
 pub use brackets::{BracketPair, bracket_pair};
-pub use comment::{CommentTokens, comment_tokens};
+pub use comment::{CommentTokens, auto_pairs, comment_tokens};
 pub use detect::{detect_language_name, language_name_for_shebang};
 pub use driver::{Spawner, SyntaxDriver};
 pub use fold::{fold_range_at, fold_ranges};

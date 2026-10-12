@@ -35,3 +35,27 @@ pub fn comment_tokens(language: &str) -> Option<CommentTokens> {
         _ => return None,
     })
 }
+
+/// The pairs typing an opener closes in the language called `language`, by the
+/// names [`crate::language_names`] gives (and `markdown_inline`), whether or not
+/// its Cargo feature is on. Brackets come first, then quotes. An unknown name
+/// (plain text) gets `()`, `[]`, `{}`, `""`.
+pub fn auto_pairs(language: &str) -> &'static [(char, char)] {
+    match language {
+        "markdown_inline" => &[],
+        "rust" => &[('(', ')'), ('[', ']'), ('{', '}'), ('"', '"')],
+        "javascript" | "typescript" | "tsx" | "go" | "bash" => &[
+            ('(', ')'),
+            ('[', ']'),
+            ('{', '}'),
+            ('"', '"'),
+            ('\'', '\''),
+            ('`', '`'),
+        ],
+        "markdown" => &[('(', ')'), ('[', ']'), ('{', '}'), ('"', '"'), ('`', '`')],
+        "python" | "php" | "ruby" | "lua" | "sql" | "toml" | "yaml" | "css" | "html" | "xml"
+        | "dockerfile" | "make" | "scala" | "kotlin" | "swift" | "csharp" | "java" | "c"
+        | "cpp" | "json" => &[('(', ')'), ('[', ']'), ('{', '}'), ('"', '"'), ('\'', '\'')],
+        _ => &[('(', ')'), ('[', ']'), ('{', '}'), ('"', '"')],
+    }
+}
