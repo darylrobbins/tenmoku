@@ -79,6 +79,10 @@ pub struct VimSettings {
     /// it, as nvim's `clipboard=unnamedplus` does. Empty, only `"+` and `"*`
     /// reach it.
     pub clipboard: VimClipboard,
+    /// true: `s` and `S` start the forward and backward jump, as leap and
+    /// flash map them, instead of changing a char or a line (`cl` and `cc`
+    /// still do). `gs` and `gS` start it either way.
+    pub jump_on_s: bool,
 }
 
 /// `vim.clipboard`.

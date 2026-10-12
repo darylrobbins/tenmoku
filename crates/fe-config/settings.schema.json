@@ -311,6 +311,11 @@
           "default": false,
           "description": "Whether the editor starts in vim's normal mode, where keys run vim\ncommands rather than type. View > Toggle Vim Mode flips it and saves\nit here.",
           "type": "boolean"
+        },
+        "jump_on_s": {
+          "default": false,
+          "description": "true: `s` and `S` start the forward and backward jump, as leap and\nflash map them, instead of changing a char or a line (`cl` and `cc`\nstill do). `gs` and `gS` start it either way.",
+          "type": "boolean"
         }
       },
       "type": "object"
@@ -365,7 +370,8 @@
       "$ref": "#/$defs/VimSettings",
       "default": {
         "clipboard": "",
-        "enabled": false
+        "enabled": false,
+        "jump_on_s": false
       },
       "description": "Vim mode."
     }

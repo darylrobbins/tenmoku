@@ -95,6 +95,8 @@ struct Vim {
     editors: Vec<(WeakFocusHandle, WeakEntity<EditorView>)>,
     /// Shared by every editor, as Vim's are by every window.
     registers: Registers,
+    /// `vim.jump_on_s`: whether `s` and `S` start the jump.
+    jump_on_s: bool,
 }
 
 impl Global for Vim {}
@@ -142,6 +144,23 @@ pub fn set_vim_clipboard(cx: &mut App, unnamedplus: bool) {
     cx.default_global::<Vim>()
         .registers
         .set_clipboard_unnamed(unnamedplus);
+}
+
+/// Lets `s` and `S` start the jump in every editor, and in any opened or
+/// switched on later (`vim.jump_on_s`).
+pub fn set_vim_jump_on_s(cx: &mut App, on: bool) {
+    let vim = cx.default_global::<Vim>();
+    vim.jump_on_s = on;
+    let editors: Vec<_> = vim.editors.iter().map(|(_, view)| view.clone()).collect();
+    for editor in editors {
+        editor
+            .update(cx, |view, _| {
+                if let Some(state) = &mut view.vim {
+                    state.set_jump_on_s(on);
+                }
+            })
+            .ok();
+    }
 }
 
 /// Applies a settings reload's `vim.enabled` and `vim.clipboard`, each as
@@ -360,7 +379,11 @@ impl EditorView {
         }
         self.vim_generation = generation;
         let was_on = self.vim.is_some();
-        self.vim = enabled.then(VimState::new);
+        self.vim = enabled.then(|| {
+            let mut state = VimState::new();
+            state.set_jump_on_s(cx.try_global::<Vim>().is_some_and(|vim| vim.jump_on_s));
+            state
+        });
         was_on || enabled
     }
 
@@ -660,3 +683,6 @@ mod clipboard_tests;
 
 #[cfg(test)]
 mod scroll_tests;
+
+#[cfg(test)]
+mod jump_setting_tests;

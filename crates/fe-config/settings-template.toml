@@ -25,6 +25,9 @@
 # enabled = false
 # Set to "unnamedplus" to share yanks and puts with the system clipboard.
 # clipboard = ""
+# true: s and S start the forward and backward jump, as leap and flash map
+# them, instead of changing a char or a line. gs and gS start it either way.
+# jump_on_s = false
 
 [status_bar]
 # Whether the status bar shows at the bottom of the window.

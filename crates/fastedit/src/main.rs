@@ -151,6 +151,7 @@ fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
             return;
         }
         let (now, before) = (global.settings(), global.previous());
+        let jump_on_s = now.vim.jump_on_s;
         let unnamedplus = |s: &Settings| s.vim.clipboard == VimClipboard::Unnamedplus;
         let (enabled, unnamed) = (
             (now.vim.enabled, before.vim.enabled),
@@ -158,6 +159,7 @@ fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
         );
         let diagnostics = global.diagnostics().to_vec();
         fe_gpui::apply_vim_reload(cx, enabled, unnamed);
+        fe_gpui::set_vim_jump_on_s(cx, jump_on_s);
         for window in cx.windows() {
             if let Some(window) = window.downcast::<Workbench>() {
                 settle(window, diagnostics.clone(), cx);
@@ -401,6 +403,7 @@ fn main() {
         kiln::init(cx, config(store));
         fe_gpui::set_vim_enabled(cx, settings.vim.enabled);
         fe_gpui::set_vim_clipboard(cx, settings.vim.clipboard == VimClipboard::Unnamedplus);
+        fe_gpui::set_vim_jump_on_s(cx, settings.vim.jump_on_s);
         fe_workbench::set_lsp_settings(cx, settings.lsp.clone());
         // Toggle Vim Mode and Toggle Status Bar save to the user's file,
         // which the watcher then reloads.
