@@ -14,7 +14,7 @@ use std::{
 };
 
 use fe_buffer::{Bias, Buffer, BufferId};
-use fe_editor::{EditorModel, SaveError, SaveJob, Saved};
+use fe_editor::{EditorModel, IndentStyle, SaveError, SaveJob, Saved};
 
 use fe_command::{Invocation, Value};
 use fe_vim::VimState;
@@ -44,7 +44,8 @@ pub mod status {
     /// `Ln 12, Col 5`, then ` (17 selected)` or ` (3 selections)`: priority
     /// 100.
     pub const CURSOR: &str = "cursor";
-    /// `Spaces: 4`: priority 200.
+    /// `Spaces: 2` for a file indented with spaces (the editor's tab size
+    /// when it can't tell), or `Tab Size: 4` with tabs: priority 200.
     pub const INDENT: &str = "indent";
     /// The file's encoding, such as `UTF-8`, `UTF-8 with BOM` or
     /// `windows-1252`: priority 300.
@@ -572,10 +573,15 @@ pub(crate) fn status_items(editor: &EditorView) -> Vec<StatusItem> {
                 message.to_owned(),
             )
         });
+    let indent = match model.indent_style() {
+        Some(IndentStyle::Tabs) => format!("Tab Size: {}", model.tab_size()),
+        Some(IndentStyle::Spaces(n)) => format!("Spaces: {n}"),
+        None => format!("Spaces: {}", model.tab_size()),
+    };
     let language_command = Invocation::of("language.select").expect("a valid command ID");
     let texts: [(SharedString, Option<Invocation>); 5] = [
         (cursor.into(), None),
-        (format!("Spaces: {}", model.tab_size()).into(), None),
+        (indent.into(), None),
         (encoding.into(), None),
         (line_ending.into(), None),
         (language, Some(language_command)),
@@ -604,3 +610,7 @@ mod tests;
 #[cfg(test)]
 #[path = "pane_item_save_tests.rs"]
 mod save_tests;
+
+#[cfg(test)]
+#[path = "indent_status_tests.rs"]
+mod indent_status_tests;

@@ -13,7 +13,7 @@ use fe_buffer::{Bias, ResolvedSelection, SelectionSet, Text};
 use fe_command::{Effect, Registry};
 
 use crate::{
-    EditorModel, caret,
+    EditorModel, IndentStyle, caret,
     commands::{Editor, add},
 };
 
@@ -66,12 +66,12 @@ impl Block {
 }
 
 impl EditorModel {
-    /// Inserts `tab_size` spaces at the start of each touched row that
-    /// isn't blank. Offsets at a row's start move right with it.
+    /// Inserts [`EditorModel::indent_unit`] at the start of each touched
+    /// row that isn't blank. Offsets at a row's start move right with it.
     pub fn indent_rows(&mut self) {
         self.sync_display();
+        let indent = self.indent_unit();
         let text = self.text();
-        let indent = " ".repeat(self.tab_size);
         let edits = self
             .blocks(false)
             .iter()
@@ -85,10 +85,14 @@ impl EditorModel {
         self.edit_rows_in_place(edits);
     }
 
-    /// Removes a leading tab, or else up to `tab_size` leading spaces, from
-    /// each touched row.
+    /// Removes a leading tab, or else up to the indent width in leading
+    /// spaces (`tab_size` with tabs or no style), from each touched row.
     pub fn outdent_rows(&mut self) {
         self.sync_display();
+        let width = match self.indent_style {
+            Some(IndentStyle::Spaces(n)) => usize::from(n),
+            Some(IndentStyle::Tabs) | None => self.tab_size,
+        };
         let text = self.text();
         let edits = self
             .blocks(false)
@@ -101,7 +105,7 @@ impl EditorModel {
                 } else {
                     row_text
                         .bytes()
-                        .take(self.tab_size)
+                        .take(width)
                         .take_while(|&byte| byte == b' ')
                         .count()
                 };

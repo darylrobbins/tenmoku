@@ -27,6 +27,7 @@ pub mod diagnostics;
 mod disk;
 pub mod ghost_text;
 pub mod indent_guides;
+mod indent_style;
 mod multi_cursor;
 pub mod occurrences;
 mod row_change_decorations;
@@ -38,6 +39,7 @@ mod typing;
 mod viewer;
 
 pub use disk::{SaveError, SaveJob, Saved};
+pub use indent_style::{IndentStyle, detect_indent_style};
 pub use multi_cursor::MAX_OCCURRENCES;
 pub use text_diff::{Hunk, HunkKind, Side, TextDiff};
 pub use typing::TYPING_PAUSE;
@@ -115,6 +117,8 @@ pub struct EditorModel {
     /// keep while moving vertically.
     goals: Vec<Option<usize>>,
     tab_size: usize,
+    /// What tab, indent and outdent use; `None` for `tab_size` spaces.
+    indent_style: Option<IndentStyle>,
     path: Option<PathBuf>,
     events: Subscription,
     /// Display rows: soft wrap and folds. Synced after each edit.
@@ -153,6 +157,7 @@ impl EditorModel {
         let snapshot = buffer.snapshot();
         let selections = SelectionSet::caret(&snapshot, 0);
         let display = DisplayMap::new(&snapshot, 4);
+        let indent_style = detect_indent_style(snapshot.text());
         let mut history = History::new(buffer.subscribe(), &snapshot);
         let caught_up = history.join(snapshot.version());
         let model = Self {
@@ -163,6 +168,7 @@ impl EditorModel {
             selections,
             goals: Vec::new(),
             tab_size: 4,
+            indent_style,
             path,
             events,
             display,
@@ -193,7 +199,7 @@ impl EditorModel {
     }
 
     /// A second model over the same buffer, for a split: same path, tab size,
-    /// wrap, selections, diagnostics and decoration providers (the same
+    /// indent style, wrap, selections, diagnostics and decoration providers (the same
     /// ones; providers added to either later aren't added to the other),
     /// but its own display rows with nothing folded.
     /// Its char widths are [`Monospace`] until set.
@@ -216,6 +222,7 @@ impl EditorModel {
             selections: self.selections.clone(),
             goals: Vec::new(),
             tab_size: self.tab_size,
+            indent_style: self.indent_style,
             path: self.path.clone(),
             events,
             widths: Box::new(Monospace),
@@ -284,6 +291,27 @@ impl EditorModel {
         self.tab_size = tab_size.max(1);
         self.display.set_tab_size(self.tab_size, &mut *self.widths);
         self.wrap_near_cursor();
+    }
+
+    /// The indentation the text used when the model was made (see
+    /// [`detect_indent_style`]), or as set since; `None` when it couldn't
+    /// tell, for `tab_size` spaces.
+    pub fn indent_style(&self) -> Option<IndentStyle> {
+        self.indent_style
+    }
+
+    pub fn set_indent_style(&mut self, style: Option<IndentStyle>) {
+        self.indent_style = style;
+    }
+
+    /// One level of indentation: a tab, `n` spaces for
+    /// [`IndentStyle::Spaces`], or `tab_size` spaces with no style.
+    pub fn indent_unit(&self) -> String {
+        match self.indent_style {
+            Some(IndentStyle::Tabs) => "\t".to_owned(),
+            Some(IndentStyle::Spaces(n)) => " ".repeat(n.into()),
+            None => " ".repeat(self.tab_size),
+        }
     }
 
     /// The display rows, as of the last catch-up (see [`EditorModel`]).
@@ -1012,15 +1040,29 @@ impl EditorModel {
         self.apply_with_carets(edits);
     }
 
-    /// Inserts spaces up to the next tab stop at each caret, or if any
-    /// selection touches more than one row, indents the rows selections
-    /// touch ([`EditorModel::indent_rows`]).
+    /// Inserts a tab at each caret with [`IndentStyle::Tabs`], else spaces
+    /// up to the next multiple of the indent width (`tab_size` with no
+    /// style); or if any selection touches more than one row, indents the
+    /// rows selections touch ([`EditorModel::indent_rows`]).
     pub fn tab(&mut self) {
         self.sync_display();
         if self.touches_many_rows() {
             self.indent_rows();
             return;
         }
+        let width = match self.indent_style {
+            Some(IndentStyle::Tabs) => {
+                let edits = self
+                    .selections()
+                    .into_iter()
+                    .map(|selection| (selection.range, "\t".to_owned()))
+                    .collect();
+                self.apply_typed(edits, Typed::insert("\t"));
+                return;
+            }
+            Some(IndentStyle::Spaces(n)) => usize::from(n),
+            None => self.tab_size,
+        };
         let edits = self
             .selections()
             .into_iter()
@@ -1029,8 +1071,7 @@ impl EditorModel {
                 let expanded = self.expanded_row(row);
                 let col = selection.range.start - self.text().row_start(row);
                 let column = expanded.char_column(expanded.to_display(col));
-                let width = self.tab_size - column % self.tab_size;
-                (selection.range, " ".repeat(width))
+                (selection.range, " ".repeat(width - column % width))
             })
             .collect();
         self.apply_typed(edits, Typed::insert(" "));
