@@ -19,6 +19,30 @@ pub const WHEEL_LINES: f32 = 3.;
 /// Coordinates the X10 encoding can carry: a byte, less its offset of 32.
 const X10_MAX: usize = 223;
 
+/// The most text a selection writes to the primary selection.
+const PRIMARY_SELECTION_MAX: usize = 1 << 20;
+
+/// Writes `text` to the primary selection. GPUI has one on Linux and FreeBSD
+/// only; elsewhere this does nothing.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn write_primary_text(cx: &mut App, text: String) {
+    cx.write_to_primary(gpui::ClipboardItem::new_string(text));
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+fn write_primary_text(_: &mut App, _: String) {}
+
+/// The primary selection's text, where GPUI has one (Linux and FreeBSD).
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn read_primary_text(cx: &App) -> Option<String> {
+    cx.read_from_primary().and_then(|item| item.text())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+fn read_primary_text(_: &App) -> Option<String> {
+    None
+}
+
 /// A button, as a program hears it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Button {
@@ -334,6 +358,12 @@ impl TerminalView {
             );
             return true;
         }
+        if pressed == Button::Middle && self.primary_selection {
+            if let Some(text) = read_primary_text(cx).filter(|text| !text.is_empty()) {
+                self.paste_text(&text, cx);
+            }
+            return true;
+        }
         if pressed != Button::Left {
             return false;
         }
@@ -416,9 +446,28 @@ impl TerminalView {
                 cx,
             );
         }
-        if event.button == MouseButton::Left {
-            self.drag = None;
+        if event.button == MouseButton::Left && self.drag.take().is_some() {
+            self.write_primary(cx);
         }
+    }
+
+    /// Writes the selected text to the primary selection, unless it's empty,
+    /// over [`PRIMARY_SELECTION_MAX`] or already what this view wrote last.
+    fn write_primary(&mut self, cx: &mut Context<Self>) {
+        if !self.primary_selection {
+            return;
+        }
+        let Some(text) = self.terminal.as_ref().and_then(|t| t.selected_text()) else {
+            return;
+        };
+        if text.is_empty()
+            || text.len() > PRIMARY_SELECTION_MAX
+            || self.last_primary.as_deref() == Some(text.as_str())
+        {
+            return;
+        }
+        write_primary_text(cx, text.clone());
+        self.last_primary = Some(text);
     }
 
     /// Scrolls whole lines of the wheel's motion: pixels by the cell height,

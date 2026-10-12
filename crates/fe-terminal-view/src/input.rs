@@ -227,7 +227,7 @@ impl TerminalView {
     }
 
     /// Writes `text` as a paste, bracketed when the program asked for that.
-    fn paste_text(&mut self, text: &str, cx: &mut Context<Self>) {
+    pub(crate) fn paste_text(&mut self, text: &str, cx: &mut Context<Self>) {
         let Some(terminal) = &self.terminal else {
             return;
         };

@@ -58,6 +58,11 @@ pub struct TerminalView {
     pub(crate) find: Option<TerminalQuery>,
     /// The query's matches the last prepaint found on screen.
     pub(crate) find_matches: Vec<TerminalMatch>,
+    /// Whether a selection is written to the Linux primary selection and a
+    /// middle click pastes from it.
+    pub(crate) primary_selection: bool,
+    /// The text this view last wrote to the primary selection.
+    pub(crate) last_primary: Option<String>,
     /// What the last prepaint laid out.
     pub(crate) painted: PaintReport,
     /// Whether prepaint fills `painted`: off outside tests.
@@ -108,11 +113,19 @@ impl TerminalView {
             wheel_to: WheelTo::default(),
             find: None,
             find_matches: Vec::new(),
+            primary_selection: cfg!(any(target_os = "linux", target_os = "freebsd")),
+            last_primary: None,
             painted: PaintReport::default(),
             record_paint: false,
             _focus_reports: focus_reports,
             _activation: activation,
         })
+    }
+
+    /// Turns the Linux primary selection on or off: while on, a selection
+    /// made with the mouse is written to it and a middle click pastes from it.
+    pub fn set_primary_selection(&mut self, on: bool) {
+        self.primary_selection = on;
     }
 
     /// Whether the view has focus in an active window: what decides a filled
