@@ -20,7 +20,10 @@ use grep_regex::{RegexMatcher, RegexMatcherBuilder};
 use grep_searcher::{
     BinaryDetection, MmapChoice, Searcher, SearcherBuilder, Sink, SinkContext, SinkMatch,
 };
-use ignore::{DirEntry, WalkState};
+use ignore::{
+    DirEntry, WalkState,
+    gitignore::{Gitignore, GitignoreBuilder},
+};
 
 use crate::listing;
 
@@ -219,6 +222,123 @@ impl Matcher for LineSelector {
     }
 }
 
+/// A glob that doesn't parse.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GlobError {
+    pub glob: String,
+    pub message: String,
+}
+
+impl fmt::Display for GlobError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "invalid glob `{}`: {}", self.glob, self.message)
+    }
+}
+
+impl std::error::Error for GlobError {}
+
+/// Narrows a search to some paths by include and exclude globs, which are
+/// gitignore-style and relative to the root, as ripgrep's `-g` writes them:
+/// `*.rs` matches at any depth, `dir/**` is everything under `dir`, and a
+/// trailing `/` matches directories only. Matching is case-sensitive.
+///
+/// A file or directory matching an exclude glob, itself or through a parent,
+/// is skipped, and an excluded directory isn't walked. With includes, only
+/// files matching one (itself or through a parent) are searched; directories
+/// are walked regardless. Exclude wins. Filters only narrow: ignored and
+/// hidden files stay skipped.
+#[derive(Clone, Debug, Default)]
+pub struct PathFilter {
+    include: Option<Arc<Gitignore>>,
+    exclude: Option<Arc<Gitignore>>,
+}
+
+impl PathFilter {
+    pub fn new(root: &Path, include: &[&str], exclude: &[&str]) -> Result<PathFilter, GlobError> {
+        Ok(PathFilter {
+            include: build_globs(root, include)?,
+            exclude: build_globs(root, exclude)?,
+        })
+    }
+
+    fn is_empty(&self) -> bool {
+        self.include.is_none() && self.exclude.is_none()
+    }
+
+    /// Whether `rel`, relative to the root, is excluded.
+    fn excludes(&self, rel: &Path, is_dir: bool) -> bool {
+        self.exclude
+            .as_ref()
+            .is_some_and(|globs| globs.matched_path_or_any_parents(rel, is_dir).is_ignore())
+    }
+
+    /// Whether the file `rel` passes the include globs.
+    fn includes(&self, rel: &Path) -> bool {
+        self.include
+            .as_ref()
+            .is_none_or(|globs| globs.matched_path_or_any_parents(rel, false).is_ignore())
+    }
+}
+
+fn build_globs(root: &Path, globs: &[&str]) -> Result<Option<Arc<Gitignore>>, GlobError> {
+    if globs.is_empty() {
+        return Ok(None);
+    }
+    let mut builder = GitignoreBuilder::new(root);
+    builder.case_insensitive(false).map_err(|err| GlobError {
+        glob: String::new(),
+        message: err.to_string(),
+    })?;
+    for glob in globs {
+        if let Some(message) = unclosed_class(glob) {
+            return Err(GlobError {
+                glob: (*glob).to_string(),
+                message: message.to_string(),
+            });
+        }
+        builder.add_line(None, glob).map_err(|err| GlobError {
+            glob: (*glob).to_string(),
+            message: err.to_string(),
+        })?;
+    }
+    let built = builder.build().map_err(|err| GlobError {
+        glob: String::new(),
+        message: err.to_string(),
+    })?;
+    Ok(Some(Arc::new(built)))
+}
+
+/// Why `glob` has a `[` that never closes, which the glob parser would take
+/// as a literal.
+fn unclosed_class(glob: &str) -> Option<&'static str> {
+    let mut chars = glob.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => {
+                chars.next();
+            }
+            '[' => {
+                if matches!(chars.peek(), Some('!' | '^')) {
+                    chars.next();
+                }
+                // A `]` first in the class is a member.
+                if chars.peek() == Some(&']') {
+                    chars.next();
+                }
+                loop {
+                    match chars.next() {
+                        Some(']') => break,
+                        Some(_) => {}
+                        None => return Some("unclosed character class"),
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 /// How much to search.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SearchOptions {
@@ -352,7 +472,27 @@ pub fn search(
     cancel: Arc<AtomicBool>,
     sink: impl FnMut(Vec<FileMatches>),
 ) -> Result<SearchSummary, SearchError> {
-    search_inner(root.as_ref(), query, options, None, cancel, sink)
+    search_inner(
+        root.as_ref(),
+        query,
+        options,
+        None,
+        &PathFilter::default(),
+        cancel,
+        sink,
+    )
+}
+
+/// [`search()`] over only the paths `filter` lets through.
+pub fn search_filtered(
+    root: impl AsRef<Path>,
+    query: &SearchQuery,
+    options: &SearchOptions,
+    filter: &PathFilter,
+    cancel: Arc<AtomicBool>,
+    sink: impl FnMut(Vec<FileMatches>),
+) -> Result<SearchSummary, SearchError> {
+    search_inner(root.as_ref(), query, options, None, filter, cancel, sink)
 }
 
 /// [`search()`], but for the file at `excluded`, relative to `root`, whose
@@ -368,7 +508,15 @@ pub fn search_excluding(
     cancel: Arc<AtomicBool>,
     sink: impl FnMut(Vec<FileMatches>),
 ) -> Result<SearchSummary, SearchError> {
-    search_inner(root.as_ref(), query, options, Some(excluded), cancel, sink)
+    search_inner(
+        root.as_ref(),
+        query,
+        options,
+        Some(excluded),
+        &PathFilter::default(),
+        cancel,
+        sink,
+    )
 }
 
 fn search_inner(
@@ -376,6 +524,7 @@ fn search_inner(
     query: &SearchQuery,
     options: &SearchOptions,
     excluded: Option<&Path>,
+    filter: &PathFilter,
     cancel: Arc<AtomicBool>,
     sink: impl FnMut(Vec<FileMatches>),
 ) -> Result<SearchSummary, SearchError> {
@@ -387,6 +536,7 @@ fn search_inner(
         root,
         open_root: &open_root,
         excluded,
+        filter,
         matcher,
         cancel: &cancel,
         max: options.max_matches,
@@ -426,7 +576,8 @@ fn search_sequential<F: FnMut(Vec<FileMatches>)>(
     collector: &mut Collector<'_, F>,
 ) {
     let mut searchers = Searchers::new();
-    let walker = listing::walk_builder(shared.root)
+    let walker = shared
+        .walk_builder()
         .sort_by_file_name(|a, b| a.cmp(b))
         .build();
     for entry in walker {
@@ -451,9 +602,7 @@ fn search_parallel<F: FnMut(Vec<FileMatches>)>(
     collector: &mut Collector<'_, F>,
 ) {
     let (tx, rx) = mpsc::channel();
-    let walker = listing::walk_builder(shared.root)
-        .threads(threads)
-        .build_parallel();
+    let walker = shared.walk_builder().threads(threads).build_parallel();
     thread::scope(|scope| {
         scope.spawn(|| {
             walker.run(|| {
@@ -552,6 +701,7 @@ struct Shared<'a> {
     open_root: &'a Path,
     /// A file not to search, relative to `root`.
     excluded: Option<&'a Path>,
+    filter: &'a PathFilter,
     /// Picks the lines to look at, and finds the ranges in them.
     matcher: LineSelector,
     cancel: &'a AtomicBool,
@@ -564,6 +714,20 @@ struct Shared<'a> {
 }
 
 impl Shared<'_> {
+    /// The listing walk, not entering what the filter excludes.
+    fn walk_builder(&self) -> ignore::WalkBuilder {
+        let root = self.root.to_path_buf();
+        let filter = self.filter.clone();
+        listing::walk_builder(self.root, move |entry| {
+            if filter.exclude.is_none() || entry.depth() == 0 {
+                return true;
+            }
+            let rel = entry.path().strip_prefix(&root).unwrap_or(entry.path());
+            let is_dir = entry.file_type().is_some_and(|kind| kind.is_dir());
+            !filter.excludes(rel, is_dir)
+        })
+    }
+
     fn search_entry(&self, searchers: &mut Searchers, entry: &DirEntry) -> Outcome {
         if self.cancel.load(Ordering::Relaxed) {
             return Outcome::Quit;
@@ -575,6 +739,9 @@ impl Shared<'_> {
         }
         let path = entry.path();
         let rel = path.strip_prefix(self.root).unwrap_or(path);
+        if !self.filter.is_empty() && !rel.as_os_str().is_empty() && !self.filter.includes(rel) {
+            return Outcome::Skip;
+        }
         if self.excluded == Some(rel) {
             self.files_searched.fetch_add(1, Ordering::Relaxed);
             return Outcome::Skip;
@@ -729,6 +896,10 @@ impl Sink for FileSink<'_, '_> {
         Ok(false)
     }
 }
+
+#[cfg(test)]
+#[path = "search_filter_tests.rs"]
+mod filter_tests;
 
 #[cfg(test)]
 thread_local! {

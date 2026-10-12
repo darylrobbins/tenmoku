@@ -380,7 +380,10 @@ impl Rules {
 /// stops at a repository nested below a directory that isn't in one, nor
 /// follows a submodule's `.git` file. `.git` is never entered. Symlinks
 /// aren't followed.
-pub(crate) fn walk_builder(dir: &Path) -> WalkBuilder {
+pub(crate) fn walk_builder(
+    dir: &Path,
+    keep: impl Fn(&DirEntry) -> bool + Send + Sync + 'static,
+) -> WalkBuilder {
     // Rules are read and matched by canonical paths, as the tree's are,
     // whatever spelling of `dir` the walk reports entries under.
     let canonical = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
@@ -393,7 +396,7 @@ pub(crate) fn walk_builder(dir: &Path) -> WalkBuilder {
     let mut builder = WalkBuilder::new(dir);
     builder
         .standard_filters(false)
-        .filter_entry(move |entry| filter.keeps(entry));
+        .filter_entry(move |entry| keep(entry) && filter.keeps(entry));
     builder
 }
 
