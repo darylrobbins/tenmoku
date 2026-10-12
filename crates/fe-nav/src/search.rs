@@ -28,7 +28,7 @@ use crate::{
     Definition, Definitions, FileReferences, FileSymbols, Location, NavError, NavRequest,
     NavigationProvider, Precision, Readiness, ReferenceOptions, ReferencesSummary, Skipped,
     SymbolIndex, Tier, WorkspaceSymbol,
-    extract::{extract_with, is_symbol, symbols_language},
+    extract::{extract_with, is_symbol, symbol_name, symbols_language},
     references,
 };
 
@@ -549,8 +549,9 @@ impl NavigationProvider for SearchNavigation {
             };
             if let Some(outline) = outline {
                 let items = &outline.items;
+                let language = syntax.language().name();
                 for item in items {
-                    if item.name != word || !is_symbol(item.kind) {
+                    if symbol_name(language, &item.name) != word || !is_symbol(item.kind) {
                         continue;
                     }
                     let definition = Definition {
@@ -560,11 +561,11 @@ impl NavigationProvider for SearchNavigation {
                             row: item.row,
                             snapshot: None,
                         },
-                        name: item.name.clone(),
+                        name: word.clone(),
                         kind: Some(item.kind),
-                        container: item
-                            .parent
-                            .map(|parent| items[parent as usize].name.clone()),
+                        container: (item.parent).map(|parent| {
+                            symbol_name(language, &items[parent as usize].name).to_owned()
+                        }),
                         tier: Tier::SameFile,
                     };
                     let on_name =

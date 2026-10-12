@@ -146,14 +146,14 @@ pub(crate) fn extract_with(
         .iter()
         .filter(|item| is_symbol(item.kind))
         .map(|item| Symbol {
-            name: item.name.clone(),
+            name: symbol_name(language.name(), &item.name).to_owned(),
             kind: item.kind,
             name_range: item.name_range.clone(),
             range: item.range.clone(),
             row: item.row,
-            container: item
-                .parent
-                .map(|parent| items[parent as usize].name.clone()),
+            container: (item.parent).map(|parent| {
+                symbol_name(language.name(), &items[parent as usize].name).to_owned()
+            }),
         })
         .collect();
     Ok(FileSymbols {
@@ -192,13 +192,24 @@ fn read(mut file: fs::File, limit: usize) -> Result<Buffer, Skipped> {
 }
 
 /// Whether an outline item of this kind is a definition. An `impl` is a
-/// header over its methods, and headings and tables aren't code; their
-/// children still count.
+/// header over its methods, and headings aren't code; their children still
+/// count. A table is SQL's, as TOML has no symbols.
 pub(crate) fn is_symbol(kind: OutlineKind) -> bool {
-    !matches!(
-        kind,
-        OutlineKind::Impl | OutlineKind::Heading(_) | OutlineKind::Table
-    )
+    !matches!(kind, OutlineKind::Impl | OutlineKind::Heading(_))
+}
+
+/// The name a definition is found by. A quoted SQL identifier, "t" or `t`,
+/// is found without its quotes, as the word at a caret has none.
+pub(crate) fn symbol_name<'a>(language: &str, name: &'a str) -> &'a str {
+    if language == "sql" {
+        for quote in ['"', '`'] {
+            let inner = name.strip_prefix(quote).and_then(|n| n.strip_suffix(quote));
+            if let Some(inner) = inner.filter(|inner| !inner.is_empty()) {
+                return inner;
+            }
+        }
+    }
+    name
 }
 
 /// A reader that counts the bytes read through it.

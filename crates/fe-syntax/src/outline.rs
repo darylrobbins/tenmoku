@@ -1677,7 +1677,7 @@ const JAVASCRIPT_DEFINITIONS: &str = include_str!("../queries/definitions/javasc
 const TYPESCRIPT_DEFINITIONS: &str = include_str!("../queries/definitions/typescript.scm");
 
 /// The outline and definitions queries, by language name.
-static QUERIES: [OutlineQuery; 18] = [
+static QUERIES: [OutlineQuery; 21] = [
     OutlineQuery::new(
         "rust",
         &[include_str!("../queries/outline/rust.scm")],
@@ -1760,6 +1760,21 @@ static QUERIES: [OutlineQuery; 18] = [
         &[],
     ),
     OutlineQuery::new("toml", &[include_str!("../queries/outline/toml.scm")], &[]),
+    OutlineQuery::new(
+        "bash",
+        &[include_str!("../queries/outline/bash.scm")],
+        &[include_str!("../queries/definitions/bash.scm")],
+    ),
+    OutlineQuery::new(
+        "make",
+        &[include_str!("../queries/outline/make.scm")],
+        &[include_str!("../queries/definitions/make.scm")],
+    ),
+    OutlineQuery::new(
+        "sql",
+        &[include_str!("../queries/outline/sql.scm")],
+        &[include_str!("../queries/definitions/sql.scm")],
+    ),
 ];
 
 fn query_for(language_name: &str) -> Option<&'static OutlineQuery> {

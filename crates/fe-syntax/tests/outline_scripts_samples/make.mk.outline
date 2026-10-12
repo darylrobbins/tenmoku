@@ -1,0 +1,10 @@
+Function "all" 16:1-18:1
+Function "tool" 19:1-22:1
+Function "install" 25:1-25:8
+Function "uninstall" 25:9-25:18
+Function "libutil.a(util.o)" 28:1-31:1
+Function "$(OUT)/stamp" 31:1-34:1
+Function "help" 34:1-34:5
+Function "lib.a(help.o)" 34:6-34:19
+Macro "compile-rule" 37:1-42:1
+Function "clean" 42:1-44:1

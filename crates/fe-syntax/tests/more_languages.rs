@@ -342,7 +342,6 @@ fn supported_flags() {
         ("markdown", "# A\n"),
         ("toml", "[a]\nb = 1\n"),
         ("json", "{\"a\": 1}\n"),
-        ("bash", "f() { x=1; }\n"),
         ("yaml", "a: 1\n"),
     ] {
         let syntax = parsed(language, text);

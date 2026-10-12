@@ -1,0 +1,5 @@
+Function "local_only" 11:1-11:20
+Function "log" 13:1-16:2
+Function "build" 18:1-23:2
+  Function "inner" 19:3-21:4
+Function "upload" 25:1-29:2

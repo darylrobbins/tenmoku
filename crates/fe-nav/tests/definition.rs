@@ -164,6 +164,66 @@ fn kind_hint_orders_candidates() {
 }
 
 #[test]
+fn sql_tables_and_views_are_definitions() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let schema = "\
+CREATE TABLE public.users (id INTEGER, email TEXT);
+CREATE VIEW mailing AS SELECT email FROM users;
+CREATE MATERIALIZED VIEW totals AS SELECT COUNT(*) AS n FROM mailing;
+";
+    write(root, "schema.sql", schema);
+    let report = "SELECT * FROM users, mailing, totals;\n";
+    write(root, "report.sql", report);
+    let nav = indexed(root);
+
+    // In the same file, by the last part of public.users.
+    let schema = ("schema.sql", "sql", schema);
+    let users = goto(&nav, root, schema, "users;", 0, 0);
+    assert_eq!(listed(&users), ["schema.sql SameFile Table"]);
+    let mailing = goto(&nav, root, schema, "mailing;", 0, 0);
+    assert_eq!(listed(&mailing), ["schema.sql SameFile Table"]);
+
+    // From another file, through the index.
+    let report = ("report.sql", "sql", report);
+    for name in ["users", "mailing", "totals"] {
+        let found = goto(&nav, root, report, name, 0, 0);
+        assert_eq!(listed(&found), ["schema.sql Project Table"], "{name}");
+        assert!(found.unambiguous, "{name}");
+    }
+}
+
+#[test]
+fn quoted_sql_names_are_found_without_their_quotes() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let schema = "\
+CREATE TABLE `events` (\"kind\" TEXT);
+CREATE FUNCTION \"latest\"() RETURNS TEXT AS $$ SELECT kind FROM events; $$ LANGUAGE sql;
+";
+    write(root, "schema.sql", schema);
+    let report = "SELECT latest() FROM events;\n";
+    write(root, "report.sql", report);
+    let nav = indexed(root);
+
+    let schema = ("schema.sql", "sql", schema);
+    let events = goto(&nav, root, schema, "events;", 0, 0);
+    assert_eq!(listed(&events), ["schema.sql SameFile Table"]);
+    let item = &events.items[0];
+    assert_eq!(item.name, "events");
+    // The range is the name as written, quotes and all.
+    assert_eq!(item.location.range, 13..21);
+
+    let report = ("report.sql", "sql", report);
+    for name in ["latest", "events"] {
+        let found = goto(&nav, root, report, name, 0, 0);
+        assert_eq!(found.items.len(), 1, "{name}: {:?}", listed(&found));
+        assert_eq!(found.items[0].name, name);
+        assert_eq!(found.items[0].location.rel, Path::new("schema.sql"));
+    }
+}
+
+#[test]
 fn words_comments_and_definitions() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();

@@ -1,0 +1,12 @@
+Variable "TARGET" 5:1-5:21
+Variable "RETRIES" 6:8-6:17
+Variable "LOG_DIR" 7:10-7:33
+Variable "HOST" 8:1-8:10
+Variable "PORT" 8:11-8:18
+Variable "hosts" 9:1-9:14
+Variable "extra" 10:12-10:29
+Function "local_only" 11:1-11:20
+Function "log" 13:1-16:2
+Function "build" 18:1-23:2
+  Function "inner" 19:3-21:4
+Function "upload" 25:1-29:2

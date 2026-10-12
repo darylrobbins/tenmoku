@@ -164,13 +164,17 @@ fn symbols_match_golden_files() {
         .collect();
     supported.sort_unstable();
     // The languages T113 added have their samples, and goldens, in
-    // more_languages_samples/, which tests/more_languages.rs checks.
-    covered.extend(
-        fs::read_dir(tests_dir().join("more_languages_samples"))
-            .unwrap()
-            .filter_map(|entry| language_for_path(&entry.unwrap().path()))
-            .map(|language| language.name()),
-    );
+    // more_languages_samples/, which tests/more_languages.rs checks; Bash,
+    // Make and SQL have theirs in outline_scripts_samples/, which
+    // tests/outline_scripts.rs checks.
+    for dir in ["more_languages_samples", "outline_scripts_samples"] {
+        covered.extend(
+            fs::read_dir(tests_dir().join(dir))
+                .unwrap()
+                .filter_map(|entry| language_for_path(&entry.unwrap().path()))
+                .map(|language| language.name()),
+        );
+    }
     covered.sort_unstable();
     assert_eq!(
         covered, supported,
@@ -366,6 +370,10 @@ fn unsupported_languages_have_no_symbols() {
         "kotlin",
         "scala",
         "lua",
+        // Added by T40.
+        "bash",
+        "make",
+        "sql",
     ];
     for language in code {
         assert!(symbols_supported(language), "{language}");
