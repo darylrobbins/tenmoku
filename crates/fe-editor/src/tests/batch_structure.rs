@@ -134,10 +134,10 @@ fn grouped_insertions_through_one_borrow_keep_the_fold_through_undo_and_redo() {
     }
 }
 
-#[test]
-fn many_batches_recorded_together_take_linear_work() {
+/// Records `batches` one-char batches through one `buffer_mut` borrow, syncs a folded
+/// split, and returns how long that took. Checks the folds and text length on every run.
+fn time_recording(batches: usize) -> Duration {
     let (mut a, mut b) = folded();
-    let batches = 10_000;
     let started = Instant::now();
     {
         let mut guard = a.buffer_mut();
@@ -151,5 +151,30 @@ fn many_batches_recorded_together_take_linear_work() {
     let took = started.elapsed();
     assert_eq!(b.display().folds(), FOLD);
     assert_eq!(b.text().len(), TEXT.len() + batches);
-    assert!(took < Duration::from_secs(2), "took {took:?}");
+    took
+}
+
+#[test]
+fn many_batches_recorded_together_take_linear_work() {
+    // A single timing per size is at the mercy of machine load: a burst landing on one size's
+    // run skews the ratio either way. So the sizes alternate for several rounds, which exposes
+    // both to the same load, and each size is judged by its fastest run, the one least disturbed.
+    // Linear work gives about 10x between the sizes and quadratic about 100x, so 50x separates
+    // them with headroom for the noise that remains.
+    const SMALL: usize = 1_000;
+    const LARGE: usize = 10_000;
+    const ROUNDS: usize = 5;
+    let mut small = Vec::new();
+    let mut large = Vec::new();
+    for _ in 0..ROUNDS {
+        small.push(time_recording(SMALL));
+        large.push(time_recording(LARGE));
+    }
+    let fastest_small = small.iter().min().copied().unwrap();
+    let fastest_large = large.iter().min().copied().unwrap();
+    assert!(
+        fastest_large < fastest_small * 50,
+        "fastest {LARGE} batches took {fastest_large:?}, over 50x the fastest {SMALL} \
+         batches at {fastest_small:?}; {SMALL}: {small:?}, {LARGE}: {large:?}"
+    );
 }
