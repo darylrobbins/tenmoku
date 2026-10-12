@@ -239,6 +239,16 @@ impl Lsp {
     /// `rust` and `python`, installed as the host's launcher, and the
     /// manual clock.
     fn with_scripts(cx: &mut TestAppContext, rust: Script, python: Script) -> Self {
+        Self::with_first_window(cx, rust, python, false)
+    }
+
+    /// As [`Self::with_scripts`], the first window rootless if `rootless`.
+    fn with_first_window(
+        cx: &mut TestAppContext,
+        rust: Script,
+        python: Script,
+        rootless: bool,
+    ) -> Self {
         // Server threads wake the workbench's event loop.
         cx.executor().allow_parking();
         let (fake, python) = (FakeServer::new(rust), FakeServer::new(python));
@@ -263,7 +273,15 @@ impl Lsp {
         });
         let dir = Rc::new(project());
         let root = fs::canonicalize(dir.path()).unwrap();
-        let (workbench, cx) = window(cx, rooted(&root));
+        let launch = if rootless {
+            Launch {
+                root: None,
+                file: None,
+            }
+        } else {
+            rooted(&root)
+        };
+        let (workbench, cx) = window(cx, launch);
         let mut lsp = Self {
             workbench,
             cx,
@@ -284,6 +302,12 @@ impl Lsp {
     /// The workbench, its root not trusted yet.
     pub(crate) fn untrusted(cx: &mut TestAppContext) -> Self {
         Self::with_scripts(cx, Script::default(), Script::default())
+    }
+
+    /// A rootless workbench, the app's first and only window, with the
+    /// project's folder and the fakes ready for `another_rooted`.
+    pub(crate) fn rootless(cx: &mut TestAppContext) -> Self {
+        Self::with_first_window(cx, Script::default(), Script::default(), true)
     }
 
     /// The workbench, its root trusted.

@@ -474,27 +474,24 @@ fn starting_a_manager_does_not_wait_on_a_user_file_read(cx: &mut TestAppContext)
 
 #[gpui::test]
 fn a_rootless_window_keeps_the_user_layer_current(cx: &mut TestAppContext) {
-    let mut s = Lsp::untrusted(cx);
-    let launch = crate::Launch {
-        root: None,
-        file: None,
-    };
-    let (rootless, rootless_cx) = crate::tests::lsp::window(&mut s.cx, launch);
-    rootless_cx.run_until_parked();
+    // The app's only window is rootless: it initializes and maintains the
+    // user layer itself.
+    let mut s = Lsp::rootless(cx);
     assert!(
-        rootless
-            .read_with(&rootless_cx, |w, _| w.lsp_user_layer())
+        s.workbench
+            .read_with(&s.cx, |w, _| w.lsp_user_layer())
             .is_some()
     );
-    // A valid disabling value read while only the rootless window is
-    // delivered it holds through the file breaking, before a root is
+    // A valid disabling value read by the rootless window holds through
+    // the file breaking, before a rooted window opens and its root is
     // trusted.
     s.write_user_settings("lsp.enabled = false\n");
     user_changed(&mut s);
     s.write_user_settings("lsp.enabled = \n");
     user_changed(&mut s);
-    s.set_trust(true);
-    assert!(!handed(&mut s).enabled);
+    let mut rooted = s.another_rooted(&s.root.clone());
+    rooted.set_trust(true);
+    assert!(!handed(&mut rooted).enabled);
 }
 
 #[gpui::test]
