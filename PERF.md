@@ -352,7 +352,9 @@ compared with the budgets as stated.
   pessimistic and noisy.
 
 "median" is criterion's median estimate; "fastest" is the smallest of
-times/iters over the 100 samples in `new/sample.json`.
+times/iters over all the samples in each case's `new/sample.json`. The sample
+count is not the same for every case: the two buffer load cases set
+`sample_size(10)`.
 
 | Case | helium median | helium fastest | Budget | Verdict |
 |---|---|---|---|---|
@@ -961,3 +963,39 @@ scan through a mapping took 7.8 s and 4.3 GB resident on 4 GB. Three runs at `49
 |---|---|---|---|---|
 | 1 GiB, warm | open + first 60 rows | 0.18 to 0.32 ms | 0.02 to 0.31 MB | 100 ms, 100 MB |
 | 1 GiB, warm | full line index | 0.24 to 0.27 s | 3.3 to 4.3 MB | 2 s, 50 MB |
+
+## Config reload (M5) (`cargo test --release -p fastedit --test config_reload_latency -- --ignored --nocapture --test-threads=1`)
+
+M5's exit criterion is "TOML edits apply < 200 ms". `crates/fastedit/tests/config_reload_latency.rs`
+times it: kiln's config service is set up as `main.rs`'s `config()` does it
+(fastedit's `SettingsStore`, the default keymap with a user `keymap.toml` and
+its `on_keymap_reload` keymap report, the user theme with fastedit's tables), on a real `ConfigWatcher`. For each of
+`settings.toml`, `keymap.toml` and the user theme, 20 saves are made as editors
+make them (write a temp file, rename it over) and each is timed from the rename
+to the change being visible in the `App`: `editor.font_size`, a new binding for
+`editor.select_all`, the theme's accent colour. The test polls every 1 ms
+(`sleep` plus `run_until_parked`), so times have about 1 ms of resolution and a
+floor of about 1.1 ms. The three `#[ignore]`d tests run on their own, 100 ms
+apart between saves.
+
+- **Machine:** helium (Linux x86_64, AMD Ryzen 9 5900X, 12 cores / 24
+  threads), release build. The watcher is notify's inotify here, not FSEvents.
+- **Commit:** `b5014fc` plus the keymap-report callback. **Date:** 2026-10-12.
+- **Load average** (`/proc/loadavg`, 1 minute): 13.18 before the first run,
+  10.00 after the last. Three runs, all within the ranges below.
+- **No Mac numbers were taken.** The Mac path is FSEvents and is still to run.
+
+| File | helium p50 | helium max | Target |
+|---|---|---|---|
+| `settings.toml` | 1.1 ms | 1.2 ms | 200 ms |
+| `keymap.toml` | 2.5 ms | 2.6 to 3.1 ms | 200 ms |
+| user theme | 1.1 ms | 1.2 ms | 200 ms |
+
+- **The 200 ms target holds on helium's inotify path**, by two orders of
+  magnitude. The keymap is slower because it rebuilds and checks the keymap
+  and menus. No file is over 200 ms, so no follow-up is filed.
+- **Worst case: 3 s.** kiln's `ConfigWatcher` re-stats every watched file every
+  `RECONCILE` (3 s, `kiln/crates/kiln-core/src/watch.rs`) to recover saves the
+  platform watcher silently drops (FSEvents on the Mac). A save whose event is
+  lost applies up to 3 s late, well over 200 ms. That applies on both
+  platforms; these runs lost no events, so they don't exercise it.
