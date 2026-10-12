@@ -31,11 +31,13 @@ mod row_change_decorations;
 pub mod row_changes;
 mod rows;
 pub mod scripted_ai;
+pub mod text_diff;
 mod typing;
 mod viewer;
 
 pub use disk::{SaveError, SaveJob, Saved};
 pub use multi_cursor::MAX_OCCURRENCES;
+pub use text_diff::{Hunk, HunkKind, Side, TextDiff};
 pub use typing::TYPING_PAUSE;
 pub use viewer::{COPY_LIMIT, CopyError, Outcome, ViewerModel};
 

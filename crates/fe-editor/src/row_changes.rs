@@ -133,7 +133,7 @@ pub(crate) fn diff_count() -> usize {
 }
 
 /// Rows of a text, without their line terminators.
-struct Rows<'a>(Vec<&'a str>);
+pub(crate) struct Rows<'a>(Vec<&'a str>);
 
 impl<'a> TokenSource for Rows<'a> {
     type Token = &'a str;
@@ -150,7 +150,7 @@ impl<'a> TokenSource for Rows<'a> {
 
 /// `base`'s rows, split as [`fe_text::Text`] splits: `\r\n`, `\r` and `\n`
 /// all end a row. `scratch` holds the normalised text when it's needed.
-fn rows<'a>(text: &'a str, scratch: &'a mut String) -> Rows<'a> {
+pub(crate) fn rows<'a>(text: &'a str, scratch: &'a mut String) -> Rows<'a> {
     let text = if text.contains('\r') {
         *scratch = text.replace("\r\n", "\n").replace('\r', "\n");
         scratch.as_str()
