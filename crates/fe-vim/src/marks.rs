@@ -21,7 +21,7 @@ use fe_buffer::{
 use fe_command::{CommandError, Dispatched, Effect};
 use fe_text::Bias;
 
-use crate::{MarkArgs, MarkMotion, Motion, VimState, VimTarget, motion, visual::Pos};
+use crate::{MarkArgs, MarkMotion, Motion, VimState, VimTarget, motion, prose, visual::Pos};
 use fe_editor::EditorModel;
 
 /// What jumping to a mark that isn't set (or whose row was deleted) says.
@@ -856,8 +856,8 @@ pub(crate) fn settle(target: &mut VimTarget<'_>) {
 
 /// The jump mark a jump by `motion` (resolved, with `count`) from the vim
 /// cursor or primary caret sets, if it is one that gets anywhere: `%`
-/// finding a bracket, or a count of 100 or less (a search is checked before
-/// it runs, and a mark resolved).
+/// finding a bracket, a count of 100 or less, or `{ } ( )` not running out
+/// of text (a search is checked before it runs, and a mark resolved).
 pub(crate) fn jump(
     target: &mut VimTarget<'_>,
     motion: Motion,
@@ -874,6 +874,13 @@ pub(crate) fn jump(
         (Motion::MatchPair, None) => {
             motion::match_pair(text, motion::Cursor::at(text, from).offset()).is_some()
         }
+        (
+            Motion::ParagraphForward
+            | Motion::ParagraphBackward
+            | Motion::SentenceForward
+            | Motion::SentenceBackward,
+            count,
+        ) => prose::lands(text, from, motion, count),
         _ => true,
     };
     lands.then(|| Place::at(target.model.snapshot(), from))

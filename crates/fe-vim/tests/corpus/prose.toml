@@ -1,0 +1,696 @@
+# { } ( ) and ip ap is as (T415), with counts, at the text's ends, over
+# blank and blank-only rows, and in d c y and the visual modes. Recorded in
+# prose.expected.json by the ignored `record_corpus_with_neovim` test.
+
+# } goes to the next empty row.
+[[case]]
+name = "para_forward"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [0, 3]
+keys = "}"
+
+# a count skips a run of empty rows as one boundary.
+[[case]]
+name = "para_forward_count"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [0, 3]
+keys = "2}"
+
+# run out at the end: the last char.
+[[case]]
+name = "para_forward_to_text_end"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [0, 3]
+keys = "3}"
+
+# on the last row: its last char.
+[[case]]
+name = "para_forward_on_last_row"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [8, 2]
+keys = "}"
+
+# a count past the end fails, nothing moving.
+[[case]]
+name = "para_forward_past_end_fails"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [0, 3]
+keys = "9}"
+
+# from an empty row, the empty rows after it are skipped.
+[[case]]
+name = "para_forward_from_empty_rows"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [6, 0]
+keys = "}"
+
+# a row of blanks is no paragraph boundary.
+[[case]]
+name = "para_backward_over_blank_row"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [5, 3]
+keys = "{"
+
+# { with a count.
+[[case]]
+name = "para_backward_count"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [8, 2]
+keys = "2{"
+
+# run out at the start: the first char.
+[[case]]
+name = "para_backward_to_text_start"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [1, 4]
+keys = "{"
+
+# a count past the start fails.
+[[case]]
+name = "para_backward_past_start_fails"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [3, 4]
+keys = "5{"
+
+# ) goes to the next sentence start.
+[[case]]
+name = "sentence_forward"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [0, 2]
+keys = ")"
+
+# across a row end.
+[[case]]
+name = "sentence_forward_count"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [0, 2]
+keys = "3)"
+
+# an empty row is a sentence start.
+[[case]]
+name = "sentence_forward_to_empty_row"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [1, 12]
+keys = ")"
+
+# from an empty row, the next non-blank.
+[[case]]
+name = "sentence_forward_from_empty_row"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [2, 0]
+keys = ")"
+
+# run out at the end: the last char.
+[[case]]
+name = "sentence_forward_to_text_end"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [8, 2]
+keys = ")"
+
+# a count past the end fails.
+[[case]]
+name = "sentence_forward_past_end_fails"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [8, 2]
+keys = "2)"
+
+# ( goes to the start of the sentence.
+[[case]]
+name = "sentence_backward"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [1, 12]
+keys = "("
+
+# ( with a count, over an empty row.
+[[case]]
+name = "sentence_backward_count"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [3, 13]
+keys = "3("
+
+# a count past the start fails.
+[[case]]
+name = "sentence_backward_past_start_fails"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [0, 10]
+keys = "3("
+
+# closers after the mark still end a sentence.
+[[case]]
+name = "sentence_closers"
+buffer = "He said \"Stop.\" Then (he left.) Done\n   Next row?  Yes."
+cursor = [0, 0]
+keys = "2)"
+
+# ( back over closers.
+[[case]]
+name = "sentence_closers_back"
+buffer = "He said \"Stop.\" Then (he left.) Done\n   Next row?  Yes."
+cursor = [0, 33]
+keys = "2("
+
+# the next start is its first non-blank, a row down.
+[[case]]
+name = "sentence_leading_blanks"
+buffer = "He said \"Stop.\" Then (he left.) Done\n   Next row?  Yes."
+cursor = [0, 32]
+keys = ")"
+
+# d} from a paragraph's first column is linewise.
+[[case]]
+name = "d_para_linewise"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [3, 0]
+keys = "d}"
+
+# d{ from a first column is linewise.
+[[case]]
+name = "d_para_back_linewise"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [5, 0]
+keys = "d{"
+
+# from mid row it stops at the row end.
+[[case]]
+name = "d_para_charwise"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [0, 4]
+keys = "d}"
+
+# at the end it takes the last char.
+[[case]]
+name = "d_para_takes_last_char"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [8, 2]
+keys = "d}"
+
+# c) changes to the next sentence.
+[[case]]
+name = "c_sentence"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [0, 9]
+keys = "c)X<Esc>"
+
+# y( yanks back to the sentence start.
+[[case]]
+name = "y_sentence_back"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [1, 12]
+keys = "y("
+
+# d2) over two sentences.
+[[case]]
+name = "d_sentence_count"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [0, 0]
+keys = "d2)"
+
+# ip is the paragraph's rows.
+[[case]]
+name = "dip"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [3, 4]
+keys = "dip"
+
+# ap takes the blank rows after it.
+[[case]]
+name = "dap"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [3, 4]
+keys = "dap"
+
+# a count adds the blank rows as a run.
+[[case]]
+name = "d2ip"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [0, 0]
+keys = "d2ip"
+
+# three paragraphs with their blank rows.
+[[case]]
+name = "y3ap"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [0, 0]
+keys = "y3ap"
+
+# cip changes the rows.
+[[case]]
+name = "cip"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [5, 2]
+keys = "cipnew<Esc>"
+
+# with no blank rows after, those before.
+[[case]]
+name = "dap_last_takes_blanks_before"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [8, 1]
+keys = "dap"
+
+# from blank rows, those and the text after.
+[[case]]
+name = "dap_from_blank_rows"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [6, 0]
+keys = "dap"
+
+# a row of blanks is a paragraph boundary for objects.
+[[case]]
+name = "dip_on_whitespace_row"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [4, 1]
+keys = "dip"
+
+# a count past the end fails.
+[[case]]
+name = "dip_count_past_end_fails"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [5, 0]
+keys = "d9ip"
+
+# is is the sentence.
+[[case]]
+name = "dis"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [0, 10]
+keys = "dis"
+
+# as takes the blanks after it.
+[[case]]
+name = "das"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [0, 10]
+keys = "das"
+
+# a count takes the blanks as one.
+[[case]]
+name = "d2is"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [0, 10]
+keys = "d2is"
+
+# from blanks, as takes them and the sentence after.
+[[case]]
+name = "yas_on_blanks"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [0, 8]
+keys = "yas"
+
+# cis changes the sentence.
+[[case]]
+name = "cis"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [1, 3]
+keys = "cisNew one.<Esc>"
+
+# two sentences and their blanks.
+[[case]]
+name = "y2as_across_rows"
+buffer = "He said \"Stop.\" Then (he left.) Done\n   Next row?  Yes."
+cursor = [0, 16]
+keys = "y2as"
+
+# with no blanks after, those before.
+[[case]]
+name = "das_last_takes_blanks_before"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [3, 13]
+keys = "das"
+
+# an empty row is a sentence of its own.
+[[case]]
+name = "dis_empty_row"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [2, 0]
+keys = "dis"
+
+# vip is linewise.
+[[case]]
+name = "vip"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [0, 0]
+keys = "vip"
+
+# a repeated ip adds the next run.
+[[case]]
+name = "vip_repeated"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [0, 0]
+keys = "vipip"
+
+# and again, then deletes.
+[[case]]
+name = "vip_repeated_three"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [0, 0]
+keys = "vipipipd"
+
+# a repeated ap adds the next paragraph.
+[[case]]
+name = "vap_repeated"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [0, 0]
+keys = "vapap"
+
+# growing a charwise selection keeps it charwise.
+[[case]]
+name = "vip_grows_charwise"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [0, 3]
+keys = "vjip"
+
+# a linewise row that's a run of its own takes one more.
+[[case]]
+name = "Vip_one_row_run"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [3, 2]
+keys = "Vip"
+
+# . repeats dap.
+[[case]]
+name = "dap_dot"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [0, 0]
+keys = "dap."
+
+# } sets the jump mark.
+[[case]]
+name = "jump_mark_after_para"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [0, 3]
+keys = "}''"
+
+# ) sets the jump mark.
+[[case]]
+name = "jump_mark_after_sentence"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [0, 3]
+keys = "2)``"
+
+# } in a visual mode.
+[[case]]
+name = "visual_para"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [0, 2]
+keys = "v}d"
+
+# ) in a visual mode.
+[[case]]
+name = "visual_sentence"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [0, 2]
+keys = "v2)y"
+
+# counted change objects: two runs of rows.
+[[case]]
+name = "c2ip"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [0, 3]
+keys = "c2ipnew<Esc>"
+
+# ap takes the blank rows after the paragraph.
+[[case]]
+name = "cap"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [3, 2]
+keys = "capnew<Esc>"
+
+# two paragraphs with their blank rows.
+[[case]]
+name = "c2ap"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [0, 0]
+keys = "c2apnew<Esc>"
+
+# two items: a sentence and the blanks after it.
+[[case]]
+name = "c2is"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [0, 10]
+keys = "c2isX<Esc>"
+
+# as takes the blanks after the sentence.
+[[case]]
+name = "cas"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [1, 0]
+keys = "casX <Esc>"
+
+# two sentences with their blanks, across the row's end.
+[[case]]
+name = "c2as"
+buffer = "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one"
+cursor = [0, 0]
+keys = "c2asX <Esc>"
+
+# a visual as on a sentence before an empty row reaches the empty row.
+[[case]]
+name = "vas_reaches_empty_row"
+buffer = "A\n\nB"
+cursor = [0, 0]
+keys = "vas"
+
+# so does a count of two is.
+[[case]]
+name = "v2is_reaches_empty_row"
+buffer = "A\n\nB"
+cursor = [0, 0]
+keys = "v2is"
+
+# on an empty row, as is the row and the sentence after it.
+[[case]]
+name = "vas_on_empty_row"
+buffer = "A.\n\nB. C."
+cursor = [1, 0]
+keys = "vas"
+
+# and blanks starting the next row are taken with the empty row.
+[[case]]
+name = "vis_on_empty_row_then_blanks"
+buffer = "A.\n\n  C. D."
+cursor = [1, 0]
+keys = "vis"
+
+# on the first of two empty rows, is goes to the second.
+[[case]]
+name = "vis_on_first_of_two_empty_rows"
+buffer = "A. B.\n\n\nC. D."
+cursor = [1, 0]
+keys = "vis"
+
+# growing is over an empty row stops on it.
+[[case]]
+name = "visis_stops_on_empty_row"
+buffer = "A.\n\nB."
+cursor = [0, 0]
+keys = "visis"
+
+# a count of two is there takes the empty row as two items.
+[[case]]
+name = "vis2is_over_empty_row"
+buffer = "A.\n\nB."
+cursor = [0, 0]
+keys = "vis2is"
+
+# as grows by two items, stopping on the empty row too.
+[[case]]
+name = "vasas_over_empty_row"
+buffer = "A.\n\nB."
+cursor = [0, 0]
+keys = "vasas"
+
+# growing back over an empty row stops on it.
+[[case]]
+name = "visoas_back_over_empty_row"
+buffer = "A.\n\nB."
+cursor = [2, 0]
+keys = "visoas"
+
+# and on to the sentence before it.
+[[case]]
+name = "visoisis_back_past_empty_row"
+buffer = "A.\n\nB."
+cursor = [2, 0]
+keys = "visoisis"
+
+# running out of text keeps what it got to: the text's end.
+[[case]]
+name = "vis9is_to_text_end"
+buffer = "Ab. Cd. Ef."
+cursor = [0, 0]
+keys = "vis9is"
+
+# as too, and the delete takes it all.
+[[case]]
+name = "vas9asd_to_text_end"
+buffer = "Ab. Cd. Ef."
+cursor = [0, 0]
+keys = "vas9asd"
+
+# back to the text's start.
+[[case]]
+name = "vis9is_back_to_text_start"
+buffer = "Ab. Cd. Ef."
+cursor = [0, 9]
+keys = "viso9is"
+
+# a linewise selection that grows by is stays linewise.
+[[case]]
+name = "Vlis_stays_linewise"
+buffer = "Ab. Cd.\nEf."
+cursor = [0, 0]
+keys = "Vlisd"
+
+# a blockwise one stays blockwise.
+[[case]]
+name = "ctrl_v_las_stays_blockwise"
+buffer = "Ab. Cd.\nEf."
+cursor = [0, 0]
+keys = "<C-v>las"
+
+# over one position a linewise selection becomes charwise.
+[[case]]
+name = "Vis_becomes_charwise"
+buffer = "Ab. Cd.\nEf."
+cursor = [0, 5]
+keys = "Vis"
+
+# a sentence of punctuation alone before an empty row keeps the anchor.
+[[case]]
+name = "vis_punctuation_before_empty_row"
+buffer = "!\n\nB."
+cursor = [0, 0]
+keys = "vis"
+
+# and the delete takes it and the empty row.
+[[case]]
+name = "visd_punctuation_before_empty_row"
+buffer = "!\n\nB."
+cursor = [0, 0]
+keys = "visd"
+
+# so does a count of two.
+[[case]]
+name = "v2is_punctuation_before_empty_row"
+buffer = "!\n\nB."
+cursor = [0, 0]
+keys = "v2is"
+
+# as too.
+[[case]]
+name = "vasd_punctuation_before_empty_row"
+buffer = "!\n\nB."
+cursor = [0, 0]
+keys = "vasd"
+
+# on blanks alone as takes one.
+[[case]]
+name = "vas_blanks_alone"
+buffer = "   "
+cursor = [0, 0]
+keys = "vas"
+
+# and deletes it.
+[[case]]
+name = "vasd_blanks_alone"
+buffer = "   "
+cursor = [0, 0]
+keys = "vasd"
+
+# a count from the last blank keeps the anchor, the cursor at the start.
+[[case]]
+name = "v2as_blanks_alone"
+buffer = "   "
+cursor = [0, 2]
+keys = "v2as"
+
+# and deletes them all.
+[[case]]
+name = "v2asd_blanks_alone"
+buffer = "   "
+cursor = [0, 2]
+keys = "v2asd"
+
+# a text of one mark: the anchor at its row's end.
+[[case]]
+name = "vis_one_mark"
+buffer = "!"
+cursor = [0, 0]
+keys = "vis"
+
+# and the delete takes it.
+[[case]]
+name = "visd_one_mark"
+buffer = "!"
+cursor = [0, 0]
+keys = "visd"
+
+# a mark before another row: two items take both.
+[[case]]
+name = "v2isd_mark_then_row"
+buffer = "!\n."
+cursor = [0, 0]
+keys = "v2isd"
+
+# growing back from a row of blanks' end stops on its blank.
+[[case]]
+name = "vkis_from_blank_row_end"
+buffer = "A.\n \nB."
+cursor = [2, 1]
+keys = "vkis"
+
+# and the delete leaves the sentence before.
+[[case]]
+name = "vkisd_from_blank_row_end"
+buffer = "A.\n \nB."
+cursor = [2, 1]
+keys = "vkisd"
+
+# as takes the sentence before too.
+[[case]]
+name = "vkasd_from_blank_row_end"
+buffer = "A.\n \nB."
+cursor = [2, 1]
+keys = "vkasd"
+
+# growing forward from a row's end goes on to the next row's sentence.
+[[case]]
+name = "v_dollar_is"
+buffer = "Ab. Cd.\nEf."
+cursor = [0, 0]
+keys = "v$is"
+
+# and a count, then delete.
+[[case]]
+name = "v_dollar_2isd"
+buffer = "Ab. Cd.\nEf."
+cursor = [0, 0]
+keys = "v$2isd"
+
+# growing back from a row's end takes the sentence ending it.
+[[case]]
+name = "vk_dollar_is"
+buffer = "Ab. Cd.\nEf. Gh."
+cursor = [1, 6]
+keys = "vk$is"
+
+# two as back, then delete.
+[[case]]
+name = "vk_dollar_2asd"
+buffer = "Ab. Cd.\nEf. Gh."
+cursor = [1, 6]
+keys = "vk$2asd"
+
+# back from a row's end after blanks before an empty row: on to the empty row.
+[[case]]
+name = "v2k_dollar_is_before_empty_row"
+buffer = "Ab. \n\n Cd."
+cursor = [2, 3]
+keys = "v2k$is"
+
+# as, then delete.
+[[case]]
+name = "v2k_dollar_asd_before_empty_row"
+buffer = "Ab. \n\n Cd."
+cursor = [2, 3]
+keys = "v2k$asd"

@@ -54,6 +54,9 @@ pub(crate) fn select_object(
     args: SelectArgs,
 ) -> Result<Dispatched<TransactionId>, CommandError> {
     use TextObject::*;
+    if let InnerParagraph | AParagraph | InnerSentence | ASentence = args.text_object {
+        return crate::prose::select_visual(target, args);
+    }
     let VimTarget { model, state, .. } = target;
     model.sync_display();
     let Some(ends) = ends(model, state) else {

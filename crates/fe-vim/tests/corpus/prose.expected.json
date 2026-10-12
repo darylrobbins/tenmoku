@@ -1,0 +1,2485 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "para_forward",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "}",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "para_forward_count",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "2}",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          6,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "para_forward_to_text_end",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "3}",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          8,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "para_forward_on_last_row",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        8,
+        2
+      ],
+      "keys": "}",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          8,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "para_forward_past_end_fails",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "9}",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "para_forward_from_empty_rows",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        6,
+        0
+      ],
+      "keys": "}",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          8,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "para_backward_over_blank_row",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        5,
+        3
+      ],
+      "keys": "{",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "para_backward_count",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        8,
+        2
+      ],
+      "keys": "2{",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "para_backward_to_text_start",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        1,
+        4
+      ],
+      "keys": "{",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "para_backward_past_start_fails",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        3,
+        4
+      ],
+      "keys": "5{",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          3,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "sentence_forward",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": ")",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "sentence_forward_count",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "3)",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          1,
+          10
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "sentence_forward_to_empty_row",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        1,
+        12
+      ],
+      "keys": ")",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "sentence_forward_from_empty_row",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": ")",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "sentence_forward_to_text_end",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        8,
+        2
+      ],
+      "keys": ")",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          8,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "sentence_forward_past_end_fails",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        8,
+        2
+      ],
+      "keys": "2)",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          8,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "sentence_backward",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        1,
+        12
+      ],
+      "keys": "(",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          1,
+          10
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "sentence_backward_count",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        3,
+        13
+      ],
+      "keys": "3(",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "sentence_backward_past_start_fails",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        0,
+        10
+      ],
+      "keys": "3(",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "sentence_closers",
+      "buffer": "He said \"Stop.\" Then (he left.) Done\n   Next row?  Yes.",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2)",
+      "expect": {
+        "buffer": "He said \"Stop.\" Then (he left.) Done\n   Next row?  Yes.",
+        "cursor": [
+          0,
+          32
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "sentence_closers_back",
+      "buffer": "He said \"Stop.\" Then (he left.) Done\n   Next row?  Yes.",
+      "cursor": [
+        0,
+        33
+      ],
+      "keys": "2(",
+      "expect": {
+        "buffer": "He said \"Stop.\" Then (he left.) Done\n   Next row?  Yes.",
+        "cursor": [
+          0,
+          16
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "sentence_leading_blanks",
+      "buffer": "He said \"Stop.\" Then (he left.) Done\n   Next row?  Yes.",
+      "cursor": [
+        0,
+        32
+      ],
+      "keys": ")",
+      "expect": {
+        "buffer": "He said \"Stop.\" Then (he left.) Done\n   Next row?  Yes.",
+        "cursor": [
+          1,
+          14
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "d_para_linewise",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        3,
+        0
+      ],
+      "keys": "d}",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\n\n\nLast one",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "Eight nine. Ten.\n  \nEleven twelve.\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "Eight nine. Ten.\n  \nEleven twelve.\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "d_para_back_linewise",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        5,
+        0
+      ],
+      "keys": "d{",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\nEight nine. Ten.\n  \n",
+            "linewise": true
+          },
+          "1": {
+            "text": "\nEight nine. Ten.\n  \n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "d_para_charwise",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "d}",
+      "expect": {
+        "buffer": "One \n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two. Three four!\nFive six? Seven.",
+            "linewise": false
+          },
+          "1": {
+            "text": "two. Three four!\nFive six? Seven.",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d_para_takes_last_char",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        8,
+        2
+      ],
+      "keys": "d}",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLa",
+        "cursor": [
+          8,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "st one",
+            "linewise": false
+          },
+          "-": {
+            "text": "st one",
+            "linewise": false
+          },
+          "1": {
+            "text": "st one",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "c_sentence",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        0,
+        9
+      ],
+      "keys": "c)X<Esc>",
+      "expect": {
+        "buffer": "One two. X\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "Three four!",
+            "linewise": false
+          },
+          "-": {
+            "text": "Three four!",
+            "linewise": false
+          },
+          "1": {
+            "text": "Three four!",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "y_sentence_back",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        1,
+        12
+      ],
+      "keys": "y(",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          1,
+          10
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "Se",
+            "linewise": false
+          },
+          "0": {
+            "text": "Se",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d_sentence_count",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d2)",
+      "expect": {
+        "buffer": "Five six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "One two. Three four!\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "One two. Three four!\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "dip",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        3,
+        4
+      ],
+      "keys": "dip",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          3,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "Eight nine. Ten.\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "Eight nine. Ten.\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "dap",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        3,
+        4
+      ],
+      "keys": "dap",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          3,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "Eight nine. Ten.\n  \n",
+            "linewise": true
+          },
+          "1": {
+            "text": "Eight nine. Ten.\n  \n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "d2ip",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d2ip",
+      "expect": {
+        "buffer": "Eight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "One two. Three four!\nFive six? Seven.\n\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "One two. Three four!\nFive six? Seven.\n\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "y3ap",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "y3ap",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "cip",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        5,
+        2
+      ],
+      "keys": "cipnew<Esc>",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nnew\n\n\nLast one",
+        "cursor": [
+          5,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "Eleven twelve.\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "Eleven twelve.\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "dap_last_takes_blanks_before",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        8,
+        1
+      ],
+      "keys": "dap",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.",
+        "cursor": [
+          5,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\n\nLast one\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "\n\nLast one\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "dap_from_blank_rows",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        6,
+        0
+      ],
+      "keys": "dap",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.",
+        "cursor": [
+          5,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\n\nLast one\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "\n\nLast one\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "dip_on_whitespace_row",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        4,
+        1
+      ],
+      "keys": "dip",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          4,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "  \n",
+            "linewise": true
+          },
+          "1": {
+            "text": "  \n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "dip_count_past_end_fails",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        5,
+        0
+      ],
+      "keys": "d9ip",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          5,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dis",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        0,
+        10
+      ],
+      "keys": "dis",
+      "expect": {
+        "buffer": "One two. \nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "Three four!",
+            "linewise": false
+          },
+          "-": {
+            "text": "Three four!",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "das",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        0,
+        10
+      ],
+      "keys": "das",
+      "expect": {
+        "buffer": "One two.\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " Three four!",
+            "linewise": false
+          },
+          "-": {
+            "text": " Three four!",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d2is",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        0,
+        10
+      ],
+      "keys": "d2is",
+      "expect": {
+        "buffer": "One two. \nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "Three four!",
+            "linewise": false
+          },
+          "-": {
+            "text": "Three four!",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "yas_on_blanks",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "yas",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " Three four!",
+            "linewise": false
+          },
+          "0": {
+            "text": " Three four!",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "cis",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        1,
+        3
+      ],
+      "keys": "cisNew one.<Esc>",
+      "expect": {
+        "buffer": "One two. Three four!\nNew one. Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          1,
+          7
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "Five six?",
+            "linewise": false
+          },
+          "-": {
+            "text": "Five six?",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "y2as_across_rows",
+      "buffer": "He said \"Stop.\" Then (he left.) Done\n   Next row?  Yes.",
+      "cursor": [
+        0,
+        16
+      ],
+      "keys": "y2as",
+      "expect": {
+        "buffer": "He said \"Stop.\" Then (he left.) Done\n   Next row?  Yes.",
+        "cursor": [
+          0,
+          16
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "Then (he left.) Done\n   Next row?  ",
+            "linewise": false
+          },
+          "0": {
+            "text": "Then (he left.) Done\n   Next row?  ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "das_last_takes_blanks_before",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        3,
+        13
+      ],
+      "keys": "das",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          3,
+          11
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "Ten.\n  ",
+            "linewise": false
+          },
+          "1": {
+            "text": "Ten.\n  ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dis_empty_row",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "dis",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "vip",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vip",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "V",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "vip_repeated",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vipip",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "V",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "vip_repeated_three",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vipipipd",
+      "expect": {
+        "buffer": "  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "vap_repeated",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vapap",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "V",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "vip_grows_charwise",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "vjip",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          3
+        ]
+      }
+    },
+    {
+      "name": "Vip_one_row_run",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        3,
+        2
+      ],
+      "keys": "Vip",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "V",
+        "registers": {},
+        "visual": [
+          3,
+          2
+        ]
+      }
+    },
+    {
+      "name": "dap_dot",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dap.",
+      "expect": {
+        "buffer": "Eleven twelve.\n\n\nLast one",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "Eight nine. Ten.\n  \n",
+            "linewise": true
+          },
+          "1": {
+            "text": "Eight nine. Ten.\n  \n",
+            "linewise": true
+          },
+          "2": {
+            "text": "One two. Three four!\nFive six? Seven.\n\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "jump_mark_after_para",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "}''",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "jump_mark_after_sentence",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "2)``",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "visual_para",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "v}d",
+      "expect": {
+        "buffer": "OnEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "e two. Three four!\nFive six? Seven.\n\n",
+            "linewise": false
+          },
+          "1": {
+            "text": "e two. Three four!\nFive six? Seven.\n\n",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "visual_sentence",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "v2)y",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "e two. Three four!\nF",
+            "linewise": false
+          },
+          "0": {
+            "text": "e two. Three four!\nF",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "c2ip",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "c2ipnew<Esc>",
+      "expect": {
+        "buffer": "new\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "One two. Three four!\nFive six? Seven.\n\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "One two. Three four!\nFive six? Seven.\n\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "cap",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        3,
+        2
+      ],
+      "keys": "capnew<Esc>",
+      "expect": {
+        "buffer": "One two. Three four!\nFive six? Seven.\n\nnew\nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          3,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "Eight nine. Ten.\n  \n",
+            "linewise": true
+          },
+          "1": {
+            "text": "Eight nine. Ten.\n  \n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "c2ap",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "c2apnew<Esc>",
+      "expect": {
+        "buffer": "new\nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \n",
+            "linewise": true
+          },
+          "1": {
+            "text": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "c2is",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        0,
+        10
+      ],
+      "keys": "c2isX<Esc>",
+      "expect": {
+        "buffer": "One two. X\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "Three four!",
+            "linewise": false
+          },
+          "-": {
+            "text": "Three four!",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "cas",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "casX <Esc>",
+      "expect": {
+        "buffer": "One two. Three four!\nX Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "Five six? ",
+            "linewise": false
+          },
+          "-": {
+            "text": "Five six? ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "c2as",
+      "buffer": "One two. Three four!\nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "c2asX <Esc>",
+      "expect": {
+        "buffer": "X \nFive six? Seven.\n\nEight nine. Ten.\n  \nEleven twelve.\n\n\nLast one",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "One two. Three four!\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "One two. Three four!\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "vas_reaches_empty_row",
+      "buffer": "A\n\nB",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vas",
+      "expect": {
+        "buffer": "A\n\nB",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "v2is_reaches_empty_row",
+      "buffer": "A\n\nB",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v2is",
+      "expect": {
+        "buffer": "A\n\nB",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "vas_on_empty_row",
+      "buffer": "A.\n\nB. C.",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "vas",
+      "expect": {
+        "buffer": "A.\n\nB. C.",
+        "cursor": [
+          2,
+          1
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          1,
+          0
+        ]
+      }
+    },
+    {
+      "name": "vis_on_empty_row_then_blanks",
+      "buffer": "A.\n\n  C. D.",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "vis",
+      "expect": {
+        "buffer": "A.\n\n  C. D.",
+        "cursor": [
+          2,
+          1
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          1,
+          0
+        ]
+      }
+    },
+    {
+      "name": "vis_on_first_of_two_empty_rows",
+      "buffer": "A. B.\n\n\nC. D.",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "vis",
+      "expect": {
+        "buffer": "A. B.\n\n\nC. D.",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          1,
+          0
+        ]
+      }
+    },
+    {
+      "name": "visis_stops_on_empty_row",
+      "buffer": "A.\n\nB.",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "visis",
+      "expect": {
+        "buffer": "A.\n\nB.",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "vis2is_over_empty_row",
+      "buffer": "A.\n\nB.",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vis2is",
+      "expect": {
+        "buffer": "A.\n\nB.",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "vasas_over_empty_row",
+      "buffer": "A.\n\nB.",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vasas",
+      "expect": {
+        "buffer": "A.\n\nB.",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "visoas_back_over_empty_row",
+      "buffer": "A.\n\nB.",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "visoas",
+      "expect": {
+        "buffer": "A.\n\nB.",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "name": "visoisis_back_past_empty_row",
+      "buffer": "A.\n\nB.",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "visoisis",
+      "expect": {
+        "buffer": "A.\n\nB.",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "name": "vis9is_to_text_end",
+      "buffer": "Ab. Cd. Ef.",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vis9is",
+      "expect": {
+        "buffer": "Ab. Cd. Ef.",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "vas9asd_to_text_end",
+      "buffer": "Ab. Cd. Ef.",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vas9asd",
+      "expect": {
+        "buffer": "",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "Ab. Cd. Ef.",
+            "linewise": false
+          },
+          "-": {
+            "text": "Ab. Cd. Ef.",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            10
+          ]
+        }
+      }
+    },
+    {
+      "name": "vis9is_back_to_text_start",
+      "buffer": "Ab. Cd. Ef.",
+      "cursor": [
+        0,
+        9
+      ],
+      "keys": "viso9is",
+      "expect": {
+        "buffer": "Ab. Cd. Ef.",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          10
+        ]
+      }
+    },
+    {
+      "name": "Vlis_stays_linewise",
+      "buffer": "Ab. Cd.\nEf.",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "Vlisd",
+      "expect": {
+        "buffer": "Ef.",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "Ab. Cd.\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "Ab. Cd.\n",
+            "linewise": true
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "ctrl_v_las_stays_blockwise",
+      "buffer": "Ab. Cd.\nEf.",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>las",
+      "expect": {
+        "buffer": "Ab. Cd.\nEf.",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "\u0016",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "Vis_becomes_charwise",
+      "buffer": "Ab. Cd.\nEf.",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "Vis",
+      "expect": {
+        "buffer": "Ab. Cd.\nEf.",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          4
+        ]
+      }
+    },
+    {
+      "name": "vis_punctuation_before_empty_row",
+      "buffer": "!\n\nB.",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vis",
+      "expect": {
+        "buffer": "!\n\nB.",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "visd_punctuation_before_empty_row",
+      "buffer": "!\n\nB.",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "visd",
+      "expect": {
+        "buffer": "B.",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "!\n\n",
+            "linewise": false
+          },
+          "1": {
+            "text": "!\n\n",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "v2is_punctuation_before_empty_row",
+      "buffer": "!\n\nB.",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v2is",
+      "expect": {
+        "buffer": "!\n\nB.",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "vasd_punctuation_before_empty_row",
+      "buffer": "!\n\nB.",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vasd",
+      "expect": {
+        "buffer": "B.",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "!\n\n",
+            "linewise": false
+          },
+          "1": {
+            "text": "!\n\n",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "vas_blanks_alone",
+      "buffer": "   ",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vas",
+      "expect": {
+        "buffer": "   ",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "vasd_blanks_alone",
+      "buffer": "   ",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vasd",
+      "expect": {
+        "buffer": "  ",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " ",
+            "linewise": false
+          },
+          "-": {
+            "text": " ",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "v2as_blanks_alone",
+      "buffer": "   ",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "v2as",
+      "expect": {
+        "buffer": "   ",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          2
+        ]
+      }
+    },
+    {
+      "name": "v2asd_blanks_alone",
+      "buffer": "   ",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "v2asd",
+      "expect": {
+        "buffer": "",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "   ",
+            "linewise": false
+          },
+          "-": {
+            "text": "   ",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "vis_one_mark",
+      "buffer": "!",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vis",
+      "expect": {
+        "buffer": "!",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "name": "visd_one_mark",
+      "buffer": "!",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "visd",
+      "expect": {
+        "buffer": "",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "!",
+            "linewise": false
+          },
+          "-": {
+            "text": "!",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "v2isd_mark_then_row",
+      "buffer": "!\n.",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v2isd",
+      "expect": {
+        "buffer": "",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "!\n.",
+            "linewise": false
+          },
+          "1": {
+            "text": "!\n.",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "vkis_from_blank_row_end",
+      "buffer": "A.\n \nB.",
+      "cursor": [
+        2,
+        1
+      ],
+      "keys": "vkis",
+      "expect": {
+        "buffer": "A.\n \nB.",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          2,
+          1
+        ]
+      }
+    },
+    {
+      "name": "vkisd_from_blank_row_end",
+      "buffer": "A.\n \nB.",
+      "cursor": [
+        2,
+        1
+      ],
+      "keys": "vkisd",
+      "expect": {
+        "buffer": "A.\n",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " \nB.",
+            "linewise": false
+          },
+          "1": {
+            "text": " \nB.",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "vkasd_from_blank_row_end",
+      "buffer": "A.\n \nB.",
+      "cursor": [
+        2,
+        1
+      ],
+      "keys": "vkasd",
+      "expect": {
+        "buffer": "",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "A.\n \nB.",
+            "linewise": false
+          },
+          "1": {
+            "text": "A.\n \nB.",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "v_dollar_is",
+      "buffer": "Ab. Cd.\nEf.",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v$is",
+      "expect": {
+        "buffer": "Ab. Cd.\nEf.",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "v_dollar_2isd",
+      "buffer": "Ab. Cd.\nEf.",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v$2isd",
+      "expect": {
+        "buffer": "",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "Ab. Cd.\nEf.",
+            "linewise": false
+          },
+          "1": {
+            "text": "Ab. Cd.\nEf.",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "vk_dollar_is",
+      "buffer": "Ab. Cd.\nEf. Gh.",
+      "cursor": [
+        1,
+        6
+      ],
+      "keys": "vk$is",
+      "expect": {
+        "buffer": "Ab. Cd.\nEf. Gh.",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          1,
+          6
+        ]
+      }
+    },
+    {
+      "name": "vk_dollar_2asd",
+      "buffer": "Ab. Cd.\nEf. Gh.",
+      "cursor": [
+        1,
+        6
+      ],
+      "keys": "vk$2asd",
+      "expect": {
+        "buffer": "",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "Ab. Cd.\nEf. Gh.",
+            "linewise": false
+          },
+          "1": {
+            "text": "Ab. Cd.\nEf. Gh.",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            6
+          ]
+        }
+      }
+    },
+    {
+      "name": "v2k_dollar_is_before_empty_row",
+      "buffer": "Ab. \n\n Cd.",
+      "cursor": [
+        2,
+        3
+      ],
+      "keys": "v2k$is",
+      "expect": {
+        "buffer": "Ab. \n\n Cd.",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          2,
+          3
+        ]
+      }
+    },
+    {
+      "name": "v2k_dollar_asd_before_empty_row",
+      "buffer": "Ab. \n\n Cd.",
+      "cursor": [
+        2,
+        3
+      ],
+      "keys": "v2k$asd",
+      "expect": {
+        "buffer": "Ab.",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " \n\n Cd.",
+            "linewise": false
+          },
+          "1": {
+            "text": " \n\n Cd.",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            0,
+            6
+          ]
+        }
+      }
+    }
+  ]
+}

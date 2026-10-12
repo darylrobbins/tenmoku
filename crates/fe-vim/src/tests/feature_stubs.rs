@@ -8,11 +8,23 @@ use crate::{
     HeadlessVim, Motion, MoveArgs, OperateArgs, Operator, SelectArgs, Target, TextObject, context,
 };
 
-const MOTIONS: [(Motion, &str); 14] = [
+/// The prose card's motions and objects (T415), which now work: only their
+/// names are checked here.
+const PROSE_MOTIONS: [(Motion, &str); 4] = [
     (Motion::ParagraphForward, "paragraph_forward"),
     (Motion::ParagraphBackward, "paragraph_backward"),
     (Motion::SentenceForward, "sentence_forward"),
     (Motion::SentenceBackward, "sentence_backward"),
+];
+
+const PROSE_OBJECTS: [(TextObject, &str); 4] = [
+    (TextObject::InnerParagraph, "inner_paragraph"),
+    (TextObject::AParagraph, "a_paragraph"),
+    (TextObject::InnerSentence, "inner_sentence"),
+    (TextObject::ASentence, "a_sentence"),
+];
+
+const MOTIONS: [(Motion, &str); 10] = [
     (Motion::WordEndBackward, "word_end_backward"),
     (Motion::BigWordEndBackward, "big_word_end_backward"),
     (Motion::NextLineFirstNonBlank, "next_line_first_non_blank"),
@@ -25,11 +37,7 @@ const MOTIONS: [(Motion, &str); 14] = [
     (Motion::DisplayUp, "display_up"),
 ];
 
-const OBJECTS: [(TextObject, &str); 12] = [
-    (TextObject::InnerParagraph, "inner_paragraph"),
-    (TextObject::AParagraph, "a_paragraph"),
-    (TextObject::InnerSentence, "inner_sentence"),
-    (TextObject::ASentence, "a_sentence"),
+const OBJECTS: [(TextObject, &str); 8] = [
     (TextObject::InnerBracket, "inner_bracket"),
     (TextObject::ABracket, "a_bracket"),
     (TextObject::InnerAngle, "inner_angle"),
@@ -146,6 +154,12 @@ fn new_variants_change_nothing() {
     }
     for (operator, name) in OPERATORS {
         round_trips(operator, name);
+    }
+    for (motion, name) in PROSE_MOTIONS {
+        round_trips(motion, name);
+    }
+    for (object, name) in PROSE_OBJECTS {
+        round_trips(object, name);
     }
 }
 
