@@ -971,11 +971,13 @@ fn quitting_waits_for_a_held_launch(cx: &mut TestAppContext) {
     s.cx.update(|window, _| window.remove_window());
     s.cx.run_until_parked();
     let hold = s.hold.clone();
+    // Timed before the release thread starts its sleep, so the lower bound
+    // below cannot undercount.
+    let started = Instant::now();
     let release = thread::spawn(move || {
         thread::sleep(Duration::from_millis(200));
         hold.set(false);
     });
-    let started = Instant::now();
     // No window left: through the app.
     s.cx.cx.update(crate::lsp::shut_down_all);
     let took = started.elapsed();
