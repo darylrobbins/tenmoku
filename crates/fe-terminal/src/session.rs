@@ -21,6 +21,7 @@ use alacritty_terminal::tty;
 use rustix_openpty::rustix::termios::Winsize;
 
 use crate::pty_loop::{LoopSender, Msg, PtyLoop};
+use crate::search::{self, QueryError, TerminalMatch, TerminalQuery};
 use crate::snapshot::{self, Snapshot};
 
 /// What to run and how much history to keep.
@@ -409,6 +410,28 @@ impl Terminal {
             .lock()
             .selection_to_string()
             .filter(|text| !text.is_empty())
+    }
+
+    /// Finds `query`'s next match after the selection (or before it, when not
+    /// `forward`), else from the cursor, wrapping through the whole history
+    /// once. The match becomes the selection, and the view scrolls to its
+    /// first line (to the bottom when that's on screen). With no match the
+    /// selection and view stay as they were.
+    pub fn find(
+        &self,
+        query: &TerminalQuery,
+        forward: bool,
+    ) -> Result<Option<TerminalMatch>, QueryError> {
+        search::find(&mut self.term.lock(), query, forward)
+    }
+
+    /// `query`'s matches on the visible rows at the current display offset,
+    /// top to bottom, at most 1,000: for highlighting them all.
+    pub fn find_all_visible(
+        &self,
+        query: &TerminalQuery,
+    ) -> Result<Vec<TerminalMatch>, QueryError> {
+        search::find_all_visible(&self.term.lock(), query)
     }
 }
 

@@ -6,9 +6,11 @@
 
 pub mod keys;
 mod pty_loop;
+mod search;
 mod session;
 mod snapshot;
 
+pub use search::{GridPoint, QueryError, TerminalMatch, TerminalQuery};
 pub use session::{GridSize, SelectionKind, Side, Terminal, TerminalEvent, TerminalOptions};
 pub use snapshot::{
     Cell, CellFlags, Color, Cursor, CursorShape, Modes, SelectionSpan, Snapshot, indexed_rgb,
