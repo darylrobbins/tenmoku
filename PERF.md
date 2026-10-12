@@ -776,46 +776,63 @@ of each case, each built into a private `CARGO_TARGET_DIR`:
 | present | — | — | 3.998 | 5.106 |
 | **total** | **—** | **—** | **4.529** | **5.481** |
 
-**`move/long-row`**, 50 samples on helium (new case, no Mac run yet):
+**`move/long-row`**, helium only (new case, no Mac run yet). The row copy
+(`EditorModel::row_at`) was removed in T20 (Mac T407): grapheme moves read a
+1 KiB window either side of the caret, word moves scan chunks outwards, and
+`LineStart` reads only the leading whitespace. "Before" is `4d37cc6` (50
+samples per run), "after" is the T20 commit (600 samples per run). Each
+binary was built into its own `CARGO_TARGET_DIR`, copied out, and the two
+were run alternately three times under `xvfb-run` with
+`--bench move/long-row`; each side is its fastest run (lowest p50). All
+numbers are helium (Linux), 2026-10-12, other lanes building.
 
-| Stage | Mac p50 | Mac p99 | helium p50 | helium p99 |
+| Stage | before p50 | before p99 | after p50 | after p99 |
 |---|---|---|---|---|
-| dispatch | — | — | 72.464 | 74.917 |
-| pre_layout | — | — | 0.015 | 0.027 |
-| prepaint | — | — | 0.014 | 0.023 |
-| paint | — | — | 0.009 | 0.012 |
-| draw_rest | — | — | 0.018 | 0.031 |
-| present | — | — | 0.176 | 0.206 |
-| **total** | **—** | **—** | **72.684** | **75.144** |
+| dispatch | 72.331 | 73.889 | 0.011 | 0.032 |
+| **total** | **72.541** | **74.115** | **5.083** | **6.073** |
+
+The after `total` is dominated by `present` (not tabulated per stage here),
+the Linux headless renderer's 4 to 5 ms as in the other caret-move cases, not
+the editor; the before runs' `present` was 0.18 ms in the earlier 50-sample
+run, so `total` is not comparable stage by stage, only `dispatch` is. The run before T20 recorded `dispatch` 72.464 / 74.917 ms and
+`total` 72.684 / 75.144 ms (p50 / p99).
 
 On the Mac, every case fits the budget, with a p50 between 5% and 23% of 4 ms and a p99
 between 3% and 18% of 8 ms, so no stage is over. The largest stage is
 `pre_layout` in `type/10k-rust`: the reparse of the edited Rust file, inside
-its 1 ms in-frame budget. An edit to highlighted text also costs about
+its 1 ms in-frame reparse budget. An edit to highlighted text also costs about
 0.12 ms more `prepaint` than a caret move in the same file or an edit to
 plain text, from highlighting the visible rows again. The first keystroke after the
 editor opens is slower (2.1 ms for `type/small` in a `--test` run, mostly
 `dispatch` and `present`); criterion's warm-up keeps it out of the numbers.
 
 The 2026-10-11 helium run is after the keymap engine, vim, LSP sync,
-diagnostics, find highlights and kiln landed. No case's p99 is near 8 ms
-(the highest is 5.6 ms, and all but `move/long-row` stay under 6 ms), but on
+diagnostics, find highlights and kiln landed. Leaving out `move/long-row`,
+which is reported separately below, no case's p99 is near 8 ms (the highest is
+5.6 ms, and they all stay under 6 ms), but on
 helium that is mostly `present` (about 4 to 4.6 ms at p50 in the cases that
 are unchanged on screen apart from the caret, 0.3 ms in `type/10k-rust`),
 which is the Linux renderer and says nothing about Metal; the stages the
 editor owns (`dispatch` through `draw_rest`) total 0.2 to 0.8 ms at p50 in
-every case but `move/long-row`. Typing during a background parse costs the
-same as typing with none (`type/during-parse` against `type/small`: `prepaint`
-0.35 ms against 0.31 ms, `pre_layout` 0.02 ms against 0.04 ms), so M2's
-"UI never blocks on a parse" holds at 5 MB. The 3.9 ms p99 of
+every case but `move/long-row`. `type/during-parse` types with a background
+parse queued under the deterministic test executor: the harness's
+`TestDispatcher` runs queued tasks only when it is driven, so the parse stays
+pending but does not run concurrently with the timed keystroke. Typing with
+it queued costs the same as typing with none (`type/during-parse` against
+`type/small`: `prepaint` 0.35 ms against 0.31 ms, `pre_layout` 0.02 ms against
+0.04 ms). That shows the keystroke path does not wait on a pending parse; it
+does not show M2's "UI never blocks on a parse" while a parse is actually
+running, which needs a measurement with real concurrent execution. The 4.044 ms p99 of
 `type/10k-rust` comes from `pre_layout` (1.1 ms, the in-frame reparse at its
-budget) and `present`. `move/long-row` is the outlier: `dispatch` is 72 ms at
-p50, 18 times the 4 ms target, from `EditorModel::row_at` copying the whole
-10 MB row on every arrow key; everything after `dispatch` is under 0.2 ms.
-That is the case to re-run after the row copy is fixed. A Mac run of the two
-new cases is still to do. The numbers leave out OS event delivery, waiting
-for vsync, the compositor, scan-out and the GPU's own time, which need a
-real screen.
+budget) and `present`.
+
+`move/long-row` failed the budget before T20: its p99 was 75.144 ms against
+8 ms, and `dispatch` was 72 ms at p50, 18 times the 4 ms target, from
+`EditorModel::row_at` copying the whole 10 MB row on every arrow key;
+everything after `dispatch` was under 0.2 ms. After T20 (table above) its
+`dispatch` is 0.011 ms at p50. A Mac run of the two new cases is still to do.
+The numbers leave out OS event delivery, waiting for vsync, the compositor,
+scan-out and the GPU's own time, which need a real screen.
 
 ## Large-file view (`cargo run --release -p fe-fileview --example first_screen` and `--example line_index`)
 

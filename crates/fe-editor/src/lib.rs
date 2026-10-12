@@ -18,7 +18,7 @@ use fe_buffer::{
     SelectionSet, Subscription, Text, TransactionId, UndoError, Version,
 };
 use fe_display::{CharWidth, DisplayMap, ExpandedRow, Monospace, WRAP_SLICE_BYTES};
-use unicode_segmentation::UnicodeSegmentation;
+use unicode_segmentation::{GraphemeCursor, GraphemeIncomplete};
 
 pub mod commands;
 pub mod completion;
@@ -730,13 +730,19 @@ impl EditorModel {
 
     /// The word (or run of punctuation or whitespace) around `offset`.
     pub fn word_range_at(&self, offset: usize) -> Range<usize> {
-        let (_, row_start, row_text) = self.row_at(offset);
-        let col = offset - row_start;
-        let class_at = |ix: usize| row_text[ix..].chars().next().map(CharClass::of);
+        let text = self.text();
+        let row = self.row_span(offset);
+        let class_at = |ix: usize| {
+            chars_forward(text, ix..row.end)
+                .next()
+                .map(|(_, ch)| CharClass::of(ch))
+        };
         // A click just past a word (on the space after it, or at the row's
         // end) selects the word rather than the gap.
-        let mut col = col;
-        let prev = prev_char_start(&row_text, col);
+        let mut col = offset;
+        let prev = chars_backward(text, row.start..col)
+            .next()
+            .map(|(ix, _)| ix);
         let prev_class = prev.and_then(class_at);
         let class = match (class_at(col), prev_class) {
             (None | Some(CharClass::Whitespace), Some(prev_class))
@@ -749,21 +755,14 @@ impl EditorModel {
             (None, Some(prev_class)) => prev_class,
             (None, None) => return offset..offset,
         };
-        let mut start = col;
-        while let Some(prev) = prev_char_start(&row_text, start) {
-            if class_at(prev) != Some(class) {
-                break;
-            }
-            start = prev;
-        }
-        let mut end = col;
-        while let Some(ch) = row_text[end..].chars().next() {
-            if CharClass::of(ch) != class {
-                break;
-            }
-            end += ch.len_utf8();
-        }
-        row_start + start..row_start + end
+        let start = chars_backward(text, row.start..col)
+            .take_while(|&(_, ch)| CharClass::of(ch) == class)
+            .last()
+            .map_or(col, |(ix, _)| ix);
+        let end = chars_forward(text, col..row.end)
+            .find(|&(_, ch)| CharClass::of(ch) != class)
+            .map_or(row.end, |(ix, _)| ix);
+        start..end
     }
 
     /// The whole row around `offset`, including its line break.
@@ -818,13 +817,9 @@ impl EditorModel {
             Movement::WordLeft => self.prev_word(offset),
             Movement::WordRight => self.next_word(offset),
             Movement::LineStart => {
-                let (_, row_start, row_text) = self.row_at(offset);
-                let indent = row_text.len() - row_text.trim_start().len();
-                if offset == row_start + indent {
-                    row_start
-                } else {
-                    row_start + indent
-                }
+                let row = self.row_span(offset);
+                let indent = row.start + self.indent_len(&row);
+                if offset == indent { row.start } else { indent }
             }
             Movement::LineEnd => {
                 let row = text.offset_to_point(offset).row;
@@ -872,90 +867,128 @@ impl EditorModel {
         ExpandedRow::new(&self.text().slice_to_string(range), self.tab_size)
     }
 
-    /// Row index, start offset and text of the row containing `offset`.
-    fn row_at(&self, offset: usize) -> (u32, usize, String) {
+    /// The offsets of the row containing `offset`, without its line break.
+    fn row_span(&self, offset: usize) -> Range<usize> {
         let text = self.text();
         let row = text.offset_to_point(offset).row;
-        (row, text.row_start(row), text.row_to_string(row))
+        let start = text.row_start(row);
+        start..start + text.row_len(row) as usize
+    }
+
+    /// The length of the whitespace the row starts with.
+    fn indent_len(&self, row: &Range<usize>) -> usize {
+        chars_forward(self.text(), row.clone())
+            .find(|&(_, ch)| !ch.is_whitespace())
+            .map_or(row.end, |(ix, _)| ix)
+            - row.start
+    }
+
+    /// The grapheme boundary after (`forward`) or before `offset` within its
+    /// row, reading a window of the row around it, widened while a cluster
+    /// might continue past its edge.
+    fn grapheme_boundary(&self, offset: usize, row: &Range<usize>, forward: bool) -> usize {
+        let text = self.text();
+        let (row_start, row_len) = (row.start, row.len());
+        let col = offset - row_start;
+        let mut cursor = GraphemeCursor::new(col, row_len, true);
+        let mut half = GRAPHEME_WINDOW;
+        loop {
+            let start = text.clip_offset(offset.saturating_sub(half).max(row_start), Bias::Left);
+            let end = text.clip_offset((offset + half).min(row.end), Bias::Right);
+            let window = text.slice_to_string(start..end);
+            let found = if forward {
+                cursor.next_boundary(&window, start - row_start)
+            } else {
+                cursor.prev_boundary(&window, start - row_start)
+            };
+            match found {
+                Ok(boundary) => {
+                    return match (boundary, forward) {
+                        (Some(boundary), _) => row_start + boundary,
+                        (None, true) => row.end,
+                        (None, false) => row_start,
+                    };
+                }
+                Err(GraphemeIncomplete::PreContext(end)) => {
+                    // Context before the window: a run of regional indicators
+                    // or an emoji sequence can reach back past it.
+                    let end = row_start + end;
+                    let start =
+                        text.clip_offset(end.saturating_sub(half).max(row_start), Bias::Left);
+                    cursor.provide_context(&text.slice_to_string(start..end), start - row_start);
+                }
+                Err(_) if start == row_start && end == row.end => {
+                    return if forward { row.end } else { row_start };
+                }
+                Err(_) => half *= 2,
+            }
+        }
     }
 
     fn prev_grapheme(&self, offset: usize) -> usize {
-        let (_, row_start, row_text) = self.row_at(offset);
-        let col = offset - row_start;
-        if col == 0 {
+        let row = self.row_span(offset);
+        if offset == row.start {
             return offset.saturating_sub(1);
         }
-        let prev = row_text
-            .grapheme_indices(true)
-            .map(|(ix, _)| ix)
-            .take_while(|&ix| ix < col)
-            .last()
-            .unwrap_or(0);
-        row_start + prev
+        self.grapheme_boundary(offset, &row, false)
     }
 
     fn next_grapheme(&self, offset: usize) -> usize {
-        let (_, row_start, row_text) = self.row_at(offset);
-        let col = offset - row_start;
-        if col >= row_text.len() {
+        let row = self.row_span(offset);
+        if offset >= row.end {
             return (offset + 1).min(self.text().len());
         }
-        let next = row_text
-            .grapheme_indices(true)
-            .map(|(ix, _)| ix)
-            .find(|&ix| ix > col)
-            .unwrap_or(row_text.len());
-        row_start + next
+        self.grapheme_boundary(offset, &row, true)
     }
 
     fn next_word(&self, offset: usize) -> usize {
-        let (_, row_start, row_text) = self.row_at(offset);
-        let mut col = offset - row_start;
-        if col >= row_text.len() {
+        let row = self.row_span(offset);
+        if offset >= row.end {
             return (offset + 1).min(self.text().len());
         }
-        let mut chars = row_text[col..].chars().peekable();
-        while let Some(&ch) = chars.peek()
+        let mut chars = chars_forward(self.text(), offset..row.end).peekable();
+        let mut end = offset;
+        while let Some(&(ix, ch)) = chars.peek()
             && ch.is_whitespace()
         {
-            col += ch.len_utf8();
+            end = ix + ch.len_utf8();
             chars.next();
         }
-        if let Some(&first) = chars.peek() {
+        if let Some(&(_, first)) = chars.peek() {
             let class = CharClass::of(first);
-            while let Some(&ch) = chars.peek()
+            while let Some(&(ix, ch)) = chars.peek()
                 && CharClass::of(ch) == class
             {
-                col += ch.len_utf8();
+                end = ix + ch.len_utf8();
                 chars.next();
             }
         }
-        row_start + col
+        end
     }
 
     fn prev_word(&self, offset: usize) -> usize {
-        let (_, row_start, row_text) = self.row_at(offset);
-        let mut col = offset - row_start;
-        if col == 0 {
+        let row = self.row_span(offset);
+        if offset == row.start {
             return offset.saturating_sub(1);
         }
-        let mut chars = row_text[..col].chars().rev().peekable();
-        while let Some(&ch) = chars.peek()
+        let mut chars = chars_backward(self.text(), row.start..offset).peekable();
+        let mut start = offset;
+        while let Some(&(ix, ch)) = chars.peek()
             && ch.is_whitespace()
         {
-            col -= ch.len_utf8();
+            start = ix;
             chars.next();
         }
-        if let Some(&first) = chars.peek() {
+        if let Some(&(_, first)) = chars.peek() {
             let class = CharClass::of(first);
-            while let Some(&ch) = chars.peek()
+            while let Some(&(ix, ch)) = chars.peek()
                 && CharClass::of(ch) == class
             {
-                col -= ch.len_utf8();
+                start = ix;
                 chars.next();
             }
         }
-        row_start + col
+        start
     }
 
     /// Replaces every selection with `text` and leaves a caret after each,
@@ -1002,10 +1035,12 @@ impl EditorModel {
             .selections()
             .into_iter()
             .map(|selection| {
-                let (_, row_start, row_text) = self.row_at(selection.range.start);
-                let indent_len = row_text.len() - row_text.trim_start().len();
-                let indent_len = indent_len.min(selection.range.start - row_start);
-                (selection.range, format!("\n{}", &row_text[..indent_len]))
+                let row = self.row_span(selection.range.start);
+                let indent_len = self.indent_len(&row).min(selection.range.start - row.start);
+                let indent = self
+                    .text()
+                    .slice_to_string(row.start..row.start + indent_len);
+                (selection.range, format!("\n{indent}"))
             })
             .collect();
         self.apply_with_carets(edits);
@@ -1798,8 +1833,34 @@ fn indented_blocks(text: &Text, tab_size: usize) -> Vec<RangeInclusive<u32>> {
     blocks
 }
 
-fn prev_char_start(text: &str, col: usize) -> Option<usize> {
-    text[..col].char_indices().next_back().map(|(ix, _)| ix)
+/// How far either side of a caret a grapheme move first reads.
+const GRAPHEME_WINDOW: usize = 1024;
+
+/// The chars in `range` with their offsets, read a chunk at a time.
+fn chars_forward(text: &Text, range: Range<usize>) -> impl Iterator<Item = (usize, char)> {
+    let mut pos = range.start;
+    text.chunks_in_range(range).flat_map(move |chunk| {
+        let base = pos;
+        pos += chunk.len();
+        chunk.char_indices().map(move |(ix, ch)| (base + ix, ch))
+    })
+}
+
+/// The chars in `range` with their offsets, last first. Chunks only iterate
+/// forward, so this reads the range backwards in blocks of
+/// [`GRAPHEME_WINDOW`] bytes.
+fn chars_backward(text: &Text, range: Range<usize>) -> impl Iterator<Item = (usize, char)> {
+    let mut end = range.end;
+    let mut block: Vec<(usize, char)> = Vec::new();
+    std::iter::from_fn(move || {
+        if block.is_empty() && end > range.start {
+            let start = text.clip_offset(end.saturating_sub(GRAPHEME_WINDOW), Bias::Left);
+            let start = start.max(range.start);
+            block.extend(chars_forward(text, start..end));
+            end = start;
+        }
+        block.pop()
+    })
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
