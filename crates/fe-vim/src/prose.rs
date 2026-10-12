@@ -370,6 +370,14 @@ fn visual_sentences(
     let items = items(count, around);
     match cursor.cmp(&anchor) {
         Ordering::Equal => {
+            // Both at a row's end after a sentence's last mark: the anchor
+            // stays and the cursor takes that mark.
+            let at = Walk::visual(text, cursor);
+            if at.past_end && at.ch_before().is_some_and(ends_sentence) {
+                let mut mark = at.copy();
+                mark.past_end = false;
+                return (cursor, mark.offset());
+            }
             let (start, end) = initial(walk(cursor), count, around);
             (start.end_offset(), end.offset())
         }
@@ -496,9 +504,7 @@ fn initial(cursor: Walk<'_>, count: u32, around: bool) -> (Walk<'_>, Walk<'_>) {
     // Where the operator's start goes on past a sentence of punctuation
     // alone at the cursor, onto one position (or onto an empty row, for an
     // item or two), nvim keeps the anchor.
-    let keeps = cursor.precedes(&start)
-        && punctuation(&cursor)
-        && (start.same(&end) || (start.empty() && items <= 2));
+    let keeps = cursor.precedes(&start) && punctuation(&cursor) && start.same(&end);
     // A sentence of one char taken alone grows by an item when there are
     // more to take, or blanks after it.
     let mut after = cursor.copy();
@@ -507,7 +513,19 @@ fn initial(cursor: Walk<'_>, count: u32, around: bool) -> (Walk<'_>, Walk<'_>) {
         end = grow_forward(cursor.copy(), 1);
     }
     if keeps {
-        return (cursor, end);
+        // The one position starts the next item: an empty row is itself (and
+        // takes one more if the mark has blanks after it), a sentence goes
+        // on over its blanks.
+        let mut next = cursor.copy();
+        let blanks = next.next() && next.row == cursor.row && next.blank();
+        let more = match start.empty() {
+            true => items.saturating_sub(2 - u64::from(blanks)),
+            false => items,
+        };
+        return match more {
+            0 => (cursor, end),
+            _ => (cursor, grow_forward(end, more)),
+        };
     }
     // On a sentence of punctuation alone whose operator's range is one
     // position before it, the cursor goes back from there a sentence per
@@ -811,6 +829,12 @@ impl<'a> Walk<'a> {
     fn ch(&self) -> Option<char> {
         (!self.empty() && !self.past_end)
             .then(|| self.line.grapheme(self.ix).chars().next().unwrap_or(' '))
+    }
+
+    /// The base char of the grapheme at the position (the last one of its
+    /// row, past the end).
+    fn ch_before(&self) -> Option<char> {
+        (!self.empty()).then(|| self.line.grapheme(self.ix).chars().next().unwrap_or(' '))
     }
 
     fn copy(&self) -> Walk<'a> {

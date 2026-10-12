@@ -541,3 +541,23 @@ fn visual_sentences_from_a_row_end() {
         ("visual", Some((2, 3)), (1, 0))
     );
 }
+
+#[test]
+fn visual_sentences_of_punctuation_runs_and_row_ends() {
+    // Recorded from nvim: punctuation before a run of empty rows doesn't
+    // keep the anchor, consecutive punctuation sentences take the next with
+    // its blanks, and equal endpoints at a row's end take its last mark.
+    let cases = [
+        (". \n\n\n B ", "visd", ". \n B "),
+        ("! ! B.", "visd", "B."),
+        ("! \n\nB.", "v2isd", ""),
+        ("Ab.", "v$o$isd", "Ab"),
+    ];
+    for (text, keys, left) in cases {
+        assert_eq!(takes(text, (0, 0), keys).0, left, "{text:?} {keys}");
+    }
+    assert_eq!(
+        selects("Ab.", (0, 0), "v$o$is"),
+        ("visual", Some((0, 3)), (0, 2))
+    );
+}

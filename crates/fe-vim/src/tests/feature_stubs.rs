@@ -54,13 +54,16 @@ const OPERATORS: [(Operator, &str); 3] = [
 
 const TEXT: &str = "Some text. More (text) [here]\n\n<a>`x`</a> end\nlast row";
 
-/// A vim with one change made (so there's something to undo), in a visual
-/// mode if `visual`.
+/// A vim with one change made (so there's something to undo), on an interior
+/// column of a populated row, with distinct anchor and cursor if `visual`.
 fn vim(visual: bool) -> HeadlessVim {
     let mut vim = HeadlessVim::new(TEXT, (0, 0));
-    vim.feed("xjl").unwrap();
+    vim.feed("x3l").unwrap();
+    assert_eq!(vim.cursor(), (0, 3), "fixture: interior of a populated row");
     if visual {
         vim.feed("vl").unwrap();
+        assert_eq!(vim.visual_anchor(), Some((0, 3)), "fixture: anchor");
+        assert_eq!(vim.cursor(), (0, 4), "fixture: cursor apart from anchor");
     }
     vim
 }

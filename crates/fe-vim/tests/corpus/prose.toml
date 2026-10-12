@@ -694,3 +694,34 @@ name = "v2k_dollar_asd_before_empty_row"
 buffer = "Ab. \n\n Cd."
 cursor = [2, 3]
 keys = "v2k$asd"
+
+# punctuation runs before empty rows and equal endpoints at a row's end.
+[[case]]
+name = "visd_punctuation_before_empty_run"
+buffer = ". \n\n\n B "
+cursor = [0, 0]
+keys = "visd"
+
+[[case]]
+name = "visd_consecutive_punctuation"
+buffer = "! ! B."
+cursor = [0, 0]
+keys = "visd"
+
+[[case]]
+name = "v2isd_punctuation_blank_before_empty_row"
+buffer = "! \n\nB."
+cursor = [0, 0]
+keys = "v2isd"
+
+[[case]]
+name = "vis_row_end_equal_endpoints"
+buffer = "Ab."
+cursor = [0, 0]
+keys = "v$o$is"
+
+[[case]]
+name = "v_dollar_o_dollar_isd"
+buffer = "Ab."
+cursor = [0, 0]
+keys = "v$o$isd"

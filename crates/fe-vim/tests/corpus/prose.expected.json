@@ -2480,6 +2480,176 @@
           ]
         }
       }
+    },
+    {
+      "name": "visd_punctuation_before_empty_run",
+      "buffer": ". \n\n\n B ",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "visd",
+      "expect": {
+        "buffer": ". \n B ",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\n\n",
+            "linewise": false
+          },
+          "1": {
+            "text": "\n\n",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "visd_consecutive_punctuation",
+      "buffer": "! ! B.",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "visd",
+      "expect": {
+        "buffer": "B.",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "! ! ",
+            "linewise": false
+          },
+          "-": {
+            "text": "! ! ",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "v2isd_punctuation_blank_before_empty_row",
+      "buffer": "! \n\nB.",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v2isd",
+      "expect": {
+        "buffer": "",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "! \n\nB.",
+            "linewise": false
+          },
+          "1": {
+            "text": "! \n\nB.",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "vis_row_end_equal_endpoints",
+      "buffer": "Ab.",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v$o$is",
+      "expect": {
+        "buffer": "Ab.",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          3
+        ]
+      }
+    },
+    {
+      "name": "v_dollar_o_dollar_isd",
+      "buffer": "Ab.",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v$o$isd",
+      "expect": {
+        "buffer": "Ab",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": ".",
+            "linewise": false
+          },
+          "-": {
+            "text": ".",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            0,
+            3
+          ]
+        }
+      }
     }
   ]
 }
