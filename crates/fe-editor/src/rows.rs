@@ -128,6 +128,14 @@ impl EditorModel {
         if blocks.is_empty() || at_edge {
             return;
         }
+        // Swapping rows of the same text leaves the text as it was, so
+        // there's nothing to do.
+        if blocks.iter().all(|block| {
+            let other = self.swapped_unit(block, up);
+            rows_text(text, other) == rows_text(text, block.rows.clone())
+        }) {
+            return;
+        }
         let selections = self.selections();
         let mut edits = Vec::new();
         let mut moved = Vec::with_capacity(selections.len());
@@ -136,17 +144,7 @@ impl EditorModel {
             // The unit swapped with: the row past the block, or the fold
             // it's in.
             let (first, last) = (block.first(), block.last());
-            let other = if up {
-                let row = first - 1;
-                let start = self
-                    .display
-                    .hidden_rows(row)
-                    .map_or(row, |hidden| hidden.start - 1);
-                start..=row
-            } else {
-                let row = last + 1;
-                row..=self.fold_end(row)
-            };
+            let other = self.swapped_unit(block, up);
             let (top, bottom) = if up {
                 (*other.start(), last)
             } else {
@@ -207,6 +205,21 @@ impl EditorModel {
             }
         }
         self.apply_row_edits(edits, moved, folds);
+    }
+
+    /// The rows a block swaps with when moved up or down.
+    fn swapped_unit(&self, block: &Block, up: bool) -> RangeInclusive<u32> {
+        if up {
+            let row = block.first() - 1;
+            let start = self
+                .display
+                .hidden_rows(row)
+                .map_or(row, |hidden| hidden.start - 1);
+            start..=row
+        } else {
+            let row = block.last() + 1;
+            row..=self.fold_end(row)
+        }
     }
 
     /// Inserts a copy of each block's rows below it, moving its selections

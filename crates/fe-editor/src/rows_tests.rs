@@ -111,8 +111,6 @@ fn move_rows() {
     one_step("a|\nb", "move_rows_down", "b\na|");
     // The break the selection covered is now before it.
     one_step("a\n[b\n]c", "move_rows_down", "a\nc\n[b]");
-    one_step("a\n\n|", "move_rows_up", "a\n|\n");
-    one_step("a\n|\n", "move_rows_down", "a\n\n|");
     // A selection ending at the last row's start, which it doesn't touch,
     // stays on its text.
     one_step("[a\n]b", "move_rows_down", "b\n[a]");
@@ -126,6 +124,20 @@ fn move_rows() {
     ] {
         let (model, effect) = dispatch(marked, name);
         assert_eq!((render(&model), effect), (marked.into(), Effect::Nothing));
+    }
+
+    // Swapping identical rows changes nothing: no effect, no transaction.
+    for (marked, name) in [
+        ("|a\na", "move_rows_down"),
+        ("a\n|a", "move_rows_up"),
+        ("|\n", "move_rows_down"),
+        ("\n|", "move_rows_up"),
+        ("a\n\n|", "move_rows_up"),
+        ("a\n|\n", "move_rows_down"),
+    ] {
+        let (mut model, effect) = dispatch(marked, name);
+        assert_eq!((render(&model), effect), (marked.into(), Effect::Nothing));
+        assert_eq!(model.undo().unwrap(), None, "{marked}");
     }
 
     // Blocks move together, each past its own row.
