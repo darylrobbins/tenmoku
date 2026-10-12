@@ -137,11 +137,24 @@ fn replay_extents_are_checked() {
 
 #[test]
 fn a_block_over_a_long_row_is_quick() {
-    let row = format!("{}7", "x".repeat(100_000));
-    let text = format!("{row}\n{row}");
-    let mut vim = HeadlessVim::new(&text, (0, 0));
-    let started = std::time::Instant::now();
-    vim.feed("<C-v>j<C-a>").unwrap();
-    assert_eq!(vim.text(), text);
-    assert!(started.elapsed().as_secs() < 5);
+    // Compares the fastest sample of a 10x longer row, so absolute load drops out:
+    // the ratio is ~10 for linear work and ~100 for quadratic. Short and long runs
+    // alternate so they see the same load.
+    fn run(len: usize) -> std::time::Duration {
+        let row = format!("{}7", "x".repeat(len));
+        let text = format!("{row}\n{row}");
+        let mut vim = HeadlessVim::new(&text, (0, 0));
+        let started = std::time::Instant::now();
+        vim.feed("<C-v>j<C-a>").unwrap();
+        let elapsed = started.elapsed();
+        assert_eq!(vim.text(), text);
+        elapsed
+    }
+    let mut short = std::time::Duration::MAX;
+    let mut long = std::time::Duration::MAX;
+    for _ in 0..6 {
+        short = short.min(run(10_000));
+        long = long.min(run(100_000));
+    }
+    assert!(long < short * 50, "10x the row took {long:?} vs {short:?}");
 }
