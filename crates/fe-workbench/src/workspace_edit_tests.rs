@@ -77,7 +77,13 @@ impl Lsp {
             edit: WorkspaceEdit::new(changes),
         };
         let fake = self.fake.clone();
-        thread::spawn(move || fake.request::<ApplyWorkspaceEdit>(params).unwrap())
+        // The fake's usual 10 s would race the tests' own 10 s waits for the
+        // edit to reach the workbench, under load.
+        thread::spawn(move || {
+            let launch = fake.launches();
+            (fake.request_within::<ApplyWorkspaceEdit>(launch, Duration::from_secs(120), params))
+                .unwrap()
+        })
     }
 
     /// `changes`, each a file's edits, decoded against what `server` has

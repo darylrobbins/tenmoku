@@ -653,10 +653,21 @@ impl FakeServer {
         launch: usize,
         params: R::Params,
     ) -> Result<Value, FakeError> {
+        self.request_within::<R>(launch, WAIT, params)
+    }
+
+    /// As [`request_at`](Self::request_at), giving up after `wait` of real
+    /// time instead of the usual 10 s: for a test whose own wait is longer.
+    pub fn request_within<R: Request>(
+        &self,
+        launch: usize,
+        wait: Duration,
+        params: R::Params,
+    ) -> Result<Value, FakeError> {
         let socket = self.lock().sessions[launch - 1].socket.clone();
         let reply = async move { socket.request::<Raw<R>>(params).await }.fuse();
         // A watchdog for the test, so real time whatever the fake's clock.
-        let timeout = SystemClock.sleep(WAIT).fuse();
+        let timeout = SystemClock.sleep(wait).fuse();
         futures::pin_mut!(reply, timeout);
         async_io::block_on(async {
             futures::select_biased! {
@@ -669,7 +680,7 @@ impl FakeServer {
                 }),
                 _ = timeout => Err(FakeError {
                     code: None,
-                    message: format!("no answer to {} in {WAIT:?}", R::METHOD),
+                    message: format!("no answer to {} in {wait:?}", R::METHOD),
                 }),
             }
         })
