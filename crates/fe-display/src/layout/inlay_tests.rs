@@ -458,21 +458,22 @@ impl TextMeasure for Double {
     }
 }
 
-#[test]
-fn long_row_autoscroll_shows_the_caret_when_text_and_inlay_both_shape_wider_than_measured() {
+/// Lays out a long row with `inlay` at 40, the caret at `head`, and checks the
+/// caret is shown.
+fn caret_shown_when_text_and_inlay_both_shape_wider_than_measured(head: usize) {
     // Both the buffer's "x" and the inlay's "W" measure 10 and are shaped
     // at 20, so no scroll worked out from the index alone shows the caret.
     let buffer = Buffer::new(&"x".repeat(30_000));
     let display = DisplayMap::new(buffer.current(), 4);
     let selections = [ResolvedSelection {
-        range: 60..60,
+        range: head..head,
         reversed: false,
     }];
     let input = FrameInput {
         display: &display,
         tab_size: 4,
         selections: &selections,
-        primary_head: 60,
+        primary_head: head,
         scroll: Vec2::default(),
         autoscroll: true,
         width: WIDTH,
@@ -503,4 +504,14 @@ fn long_row_autoscroll_shows_the_caret_when_text_and_inlay_both_shape_wider_than
     let caret = frame.cursors.first().expect("the caret is laid out");
     assert!(caret.x >= GUTTER, "{caret:?}");
     assert!(caret.x + CURSOR_WIDTH <= WIDTH, "{caret:?}");
+}
+
+#[test]
+fn long_row_autoscroll_shows_the_caret_when_text_and_inlay_both_shape_wider_than_measured() {
+    caret_shown_when_text_and_inlay_both_shape_wider_than_measured(60);
+}
+
+#[test]
+fn long_row_autoscroll_shows_the_caret_far_past_an_inlay_when_both_shape_wider_than_measured() {
+    caret_shown_when_text_and_inlay_both_shape_wider_than_measured(8000);
 }
