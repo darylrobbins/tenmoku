@@ -9,9 +9,9 @@
 //! rows and tabs from these.
 //!
 //! Depends on GPUI and kiln-core (theme data, and [`TextField`]'s editing
-//! model). Written for kiln, except [`TextField`], adapted from GPUI's
-//! Apache-2.0 input example (see its header); nothing is copied from
-//! gpui-kit.
+//! model). Written for kiln, except [`TextField`], which is based on GPUI's
+//! Apache-2.0 input example (see its header); none of gpui-kit is used in
+//! it.
 
 mod activity_rail;
 mod assets;

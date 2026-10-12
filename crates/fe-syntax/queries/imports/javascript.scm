@@ -1,3 +1,6 @@
+;; imports query, ours; written for T168, capture convention: @module is the
+;; string naming the imported module
+
 (import_statement source: (string) @module)
 (export_statement source: (string) @module)
 ; (A call with more than one argument is left out in imports.rs.)
