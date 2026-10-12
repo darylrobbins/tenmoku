@@ -51,6 +51,22 @@ pub struct Diagnostic {
     pub data: Option<serde_json::Value>,
 }
 
+impl Diagnostic {
+    /// A diagnostic over `range` saying `message`, with nothing else: the
+    /// host sets the fields it has, to send it back in a request.
+    pub fn new(range: Range<usize>, message: impl Into<String>) -> Self {
+        Self {
+            range,
+            severity: None,
+            message: message.into(),
+            source: None,
+            code: None,
+            tags: Vec::new(),
+            data: None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Severity {
     Error,

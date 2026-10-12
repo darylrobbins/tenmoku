@@ -97,6 +97,7 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
+    pin::Pin,
     rc::Rc,
     sync::{Arc, Mutex, PoisonError, Weak, mpsc},
     time::{Duration, Instant},
@@ -485,6 +486,8 @@ pub(crate) struct Lsp {
     root_save_pending: bool,
     /// Resolves the root for the next manager.
     _root: Option<Task<()>>,
+    /// The code actions being asked for.
+    pub(crate) code_actioning: Option<Task<()>>,
     _tasks: Vec<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -621,6 +624,7 @@ impl Lsp {
             root_retrying: false,
             root_save_pending: false,
             _root: None,
+            code_actioning: None,
             _tasks: Vec::new(),
             _subscriptions: Vec::new(),
         }
@@ -1495,6 +1499,14 @@ impl Workbench {
         editors
     }
 
+    /// The code actions client of the server `buffer` is open on, if it
+    /// has one.
+    pub(crate) fn lsp_code_actioner(&self, buffer: BufferId) -> Option<CodeActioner> {
+        let manager = self.lsp.manager.as_ref()?;
+        lock(manager).server_of(buffer)?;
+        Some(CodeActioner(manager.clone()))
+    }
+
     /// Sets the status item for the active editor's server, or removes it.
     fn show_lsp_status(&mut self, cx: &mut Context<Self>) {
         let buffer = self
@@ -1597,6 +1609,44 @@ impl Workbench {
             retiring.retain(|watch| !watch.is_done());
             retiring.push(watch);
         }
+    }
+}
+
+/// A buffer's server's code actions, through the workbench's manager.
+#[derive(Clone)]
+pub(crate) struct CodeActioner(Arc<Mutex<LspManager>>);
+
+pub(crate) type Answer<T> = Pin<Box<dyn Future<Output = Result<T, fe_lsp::LspError>> + Send>>;
+
+impl CodeActioner {
+    /// The actions for `range` of `buffer` at `version`, with the
+    /// diagnostics shown over it. Sent under the lock; awaited without it.
+    pub(crate) fn ask(
+        &self,
+        buffer: BufferId,
+        version: Version,
+        range: std::ops::Range<usize>,
+        diagnostics: Vec<fe_lsp::Diagnostic>,
+    ) -> Answer<Vec<fe_lsp::CodeAction>> {
+        Box::pin(lock(&self.0).code_actions(buffer, version, range, diagnostics))
+    }
+
+    /// `action` with the edit its server resolves.
+    pub(crate) fn resolve(&self, action: &fe_lsp::CodeAction) -> Answer<fe_lsp::CodeAction> {
+        Box::pin(lock(&self.0).resolve_code_action(action))
+    }
+
+    /// `action`'s edit, decoded.
+    pub(crate) fn edits(
+        &self,
+        action: &fe_lsp::CodeAction,
+    ) -> Result<Vec<fe_lsp::FileEdits>, fe_lsp::LspError> {
+        lock(&self.0).code_action_edits(action)
+    }
+
+    /// Has the server run `action`'s command, if it has one.
+    pub(crate) fn run(&self, action: &fe_lsp::CodeAction) -> Answer<()> {
+        Box::pin(lock(&self.0).run_code_action_command(action))
     }
 }
 
