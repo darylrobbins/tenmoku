@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use super::parse;
 use crate::*;
@@ -134,11 +134,36 @@ fn grouped_insertions_through_one_borrow_keep_the_fold_through_undo_and_redo() {
     }
 }
 
+/// CPU time this thread has used. Unlike wall clock it doesn't grow while the thread is
+/// descheduled, which is what heavy machine load does to a timing.
+fn thread_cpu_time() -> Duration {
+    #[repr(C)]
+    struct Timespec {
+        tv_sec: i64,
+        tv_nsec: i64,
+    }
+    unsafe extern "C" {
+        fn clock_gettime(clock: i32, out: *mut Timespec) -> i32;
+    }
+    #[cfg(target_os = "macos")]
+    const CLOCK_THREAD_CPUTIME_ID: i32 = 16;
+    #[cfg(not(target_os = "macos"))]
+    const CLOCK_THREAD_CPUTIME_ID: i32 = 3;
+    let mut now = Timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `now` is a valid, writable timespec for the call to fill in.
+    let status = unsafe { clock_gettime(CLOCK_THREAD_CPUTIME_ID, &mut now) };
+    assert_eq!(status, 0, "clock_gettime failed");
+    Duration::new(now.tv_sec as u64, now.tv_nsec as u32)
+}
+
 /// Records `batches` one-char batches through one `buffer_mut` borrow, syncs a folded
-/// split, and returns how long that took. Checks the folds and text length on every run.
+/// split, and returns the CPU time that took. Checks the folds and text length on every run.
 fn time_recording(batches: usize) -> Duration {
     let (mut a, mut b) = folded();
-    let started = Instant::now();
+    let started = thread_cpu_time();
     {
         let mut guard = a.buffer_mut();
         let buffer: &mut Buffer = &mut guard;
@@ -148,7 +173,7 @@ fn time_recording(batches: usize) -> Duration {
         }
     }
     b.sync_display();
-    let took = started.elapsed();
+    let took = thread_cpu_time() - started;
     assert_eq!(b.display().folds(), FOLD);
     assert_eq!(b.text().len(), TEXT.len() + batches);
     took
@@ -156,9 +181,9 @@ fn time_recording(batches: usize) -> Duration {
 
 #[test]
 fn many_batches_recorded_together_take_linear_work() {
-    // A single timing per size is at the mercy of machine load: a burst landing on one size's
-    // run skews the ratio either way. So the sizes alternate for several rounds, which exposes
-    // both to the same load, and each size is judged by its fastest run, the one least disturbed.
+    // Timed in thread CPU time, not wall clock, so a loaded machine descheduling the thread
+    // doesn't count; the sizes still alternate for several rounds and each is judged by its
+    // fastest run, which sheds the cache and frequency noise load leaves in CPU time.
     // Linear work gives about 10x between the sizes and quadratic about 100x, so 50x separates
     // them with headroom for the noise that remains.
     const SMALL: usize = 1_000;
