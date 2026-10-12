@@ -25,10 +25,12 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+pub use find::{Direction, FIND_BLOCK, FindOutcome, FindQuery, find};
 pub use index::{IndexState, LineIndex, Progress, STRIDE, Step};
 pub use source::FileText;
 use stamp::Stamp;
 
+mod find;
 mod index;
 mod source;
 mod stamp;
