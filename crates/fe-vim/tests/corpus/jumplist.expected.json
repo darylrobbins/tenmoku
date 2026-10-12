@@ -1,0 +1,1921 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "back_after_G",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        2,
+        1
+      ],
+      "keys": "G<C-o>",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          2,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "back_twice",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        2,
+        1
+      ],
+      "keys": "Ggg<C-o><C-o>",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          2,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "back_twice_then_tab",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        2,
+        1
+      ],
+      "keys": "Ggg<C-o><C-o><Tab>",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          7,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "back_twice_then_ctrl_i",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        2,
+        1
+      ],
+      "keys": "Ggg<C-o><C-o><C-i>",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          7,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "back_twice_then_forward_twice",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        2,
+        1
+      ],
+      "keys": "Ggg<C-o><C-o><Tab><Tab>",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "back_past_oldest",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        2,
+        1
+      ],
+      "keys": "Ggg<C-o><C-o><C-o>",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          2,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "forward_past_newest",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        2,
+        1
+      ],
+      "keys": "Ggg<C-o><Tab><Tab>",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "forward_without_going_back",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        2,
+        1
+      ],
+      "keys": "G<Tab>",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          7,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "back_with_no_jumps",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        2,
+        1
+      ],
+      "keys": "<C-o>",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          2,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "forward_with_no_jumps",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        2,
+        1
+      ],
+      "keys": "<C-i>",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          2,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_back",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3G5G7G2<C-o>",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_back_to_oldest",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3G5G7G3<C-o>",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_back_past_oldest",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3G5G7G4<C-o>",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          6,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_forward",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3G5G7G3<C-o>2<Tab>",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_forward_past_newest",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3G5G7G3<C-o>4<Tab>",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "back_after_back_and_a_jump",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "5Ggg<C-o>gg<C-o><C-o>",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "jump_from_middle_goes_to_end",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "5Ggg<C-o><C-o>G<C-o><C-o>",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "searches",
+      "buffer": "alpha fox\nbravo\ncharlie hotel\ndelta fox\necho\nfoxtrot hotel\ngolf",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/fox<CR>/hotel<CR><C-o><C-o>",
+      "expect": {
+        "buffer": "alpha fox\nbravo\ncharlie hotel\ndelta fox\necho\nfoxtrot hotel\ngolf",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "hotel",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "search_next",
+      "buffer": "alpha fox\nbravo\ncharlie hotel\ndelta fox\necho\nfoxtrot hotel\ngolf",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/fox<CR>nn<C-o><C-o><C-o>",
+      "expect": {
+        "buffer": "alpha fox\nbravo\ncharlie hotel\ndelta fox\necho\nfoxtrot hotel\ngolf",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "fox",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "star",
+      "buffer": "alpha fox\nbravo\ncharlie hotel\ndelta fox\necho\nfoxtrot hotel\ngolf",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "*<C-o><Tab>",
+      "expect": {
+        "buffer": "alpha fox\nbravo\ncharlie hotel\ndelta fox\necho\nfoxtrot hotel\ngolf",
+        "cursor": [
+          3,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<fox\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "percent_rows",
+      "buffer": "fn main() {\n    let x = (1, 2);\n    if x.0 {\n        go(x);\n    }\n}\nfn other() {}",
+      "cursor": [
+        0,
+        10
+      ],
+      "keys": "%<C-o><Tab>",
+      "expect": {
+        "buffer": "fn main() {\n    let x = (1, 2);\n    if x.0 {\n        go(x);\n    }\n}\nfn other() {}",
+        "cursor": [
+          5,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "percent_and_G",
+      "buffer": "fn main() {\n    let x = (1, 2);\n    if x.0 {\n        go(x);\n    }\n}\nfn other() {}",
+      "cursor": [
+        0,
+        10
+      ],
+      "keys": "%G<C-o><C-o><C-o>",
+      "expect": {
+        "buffer": "fn main() {\n    let x = (1, 2);\n    if x.0 {\n        go(x);\n    }\n}\nfn other() {}",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "percent_same_row_back",
+      "buffer": "fn main() {\n    let x = (1, 2);\n    if x.0 {\n        go(x);\n    }\n}\nfn other() {}",
+      "cursor": [
+        1,
+        12
+      ],
+      "keys": "%<C-o>",
+      "expect": {
+        "buffer": "fn main() {\n    let x = (1, 2);\n    if x.0 {\n        go(x);\n    }\n}\nfn other() {}",
+        "cursor": [
+          1,
+          17
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "mark_jump",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "majjjj'a<C-o>",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          5,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "a": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "mark_jump_exact",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "majjjj`a<C-o><Tab>",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "a": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "mark_jumps_back_and_forth",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "maGmb'a`b<C-o><C-o><C-o><Tab>",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          7,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "a": [
+            1,
+            2
+          ],
+          "b": [
+            7,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "jump_mark_after_back",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "5Ggg<C-o>''",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "back_after_jump_mark",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "5Ggg''<C-o><C-o>",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "jump_mark_after_back_twice",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "5Ggg<C-o><C-o>''",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "jump_mark_after_forward",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "5Ggg<C-o><C-o><Tab>``",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "m_quote_adds_a_jump",
+      "buffer": "ab\nabcdef\nabc\nabcdefgh\nx\ny\nz\nw",
+      "cursor": [
+        1,
+        5
+      ],
+      "keys": "Gkm'gg<C-o><C-o>",
+      "expect": {
+        "buffer": "ab\nabcdef\nabc\nabcdefgh\nx\ny\nz\nw",
+        "cursor": [
+          1,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "m_quote_past_oldest",
+      "buffer": "ab\nabcdef\nabc\nabcdefgh\nx\ny\nz\nw",
+      "cursor": [
+        1,
+        5
+      ],
+      "keys": "Gkm'gg<C-o><C-o><C-o>",
+      "expect": {
+        "buffer": "ab\nabcdef\nabc\nabcdefgh\nx\ny\nz\nw",
+        "cursor": [
+          1,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "same_row_twice",
+      "buffer": "abcdef\nabcdef\nabcdef\nabcdef\nabcdef\nabcdef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "Ggg$G<C-o>",
+      "expect": {
+        "buffer": "abcdef\nabcdef\nabcdef\nabcdef\nabcdef\nabcdef",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "same_row_twice_back_past",
+      "buffer": "abcdef\nabcdef\nabcdef\nabcdef\nabcdef\nabcdef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "Ggg$G<C-o><C-o>",
+      "expect": {
+        "buffer": "abcdef\nabcdef\nabcdef\nabcdef\nabcdef\nabcdef",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "same_row_twice_forward",
+      "buffer": "abcdef\nabcdef\nabcdef\nabcdef\nabcdef\nabcdef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "Ggg$G<C-o><Tab>",
+      "expect": {
+        "buffer": "abcdef\nabcdef\nabcdef\nabcdef\nabcdef\nabcdef",
+        "cursor": [
+          5,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "same_place_twice_count",
+      "buffer": "abcdef\nabcdef\nabcdef\nabcdef\nabcdef\nabcdef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3lG0G2<C-o>",
+      "expect": {
+        "buffer": "abcdef\nabcdef\nabcdef\nabcdef\nabcdef\nabcdef",
+        "cursor": [
+          5,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "same_place_twice_back",
+      "buffer": "abcdef\nabcdef\nabcdef\nabcdef\nabcdef\nabcdef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3lG0G<C-o>",
+      "expect": {
+        "buffer": "abcdef\nabcdef\nabcdef\nabcdef\nabcdef\nabcdef",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "newest_on_this_row_replaced",
+      "buffer": "abcdef\nabcdef\nabcdef\nabcdef\nabcdef\nabcdef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3lG0G$<C-o><Tab>",
+      "expect": {
+        "buffer": "abcdef\nabcdef\nabcdef\nabcdef\nabcdef\nabcdef",
+        "cursor": [
+          5,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "from_the_row_of_an_older_entry",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "5G6Ggg4Gdd3<C-o>",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfive\nsix\nseven\neight",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "four\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "four\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "from_the_row_of_an_older_entry_then",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "5G6Ggg4Gdd3<C-o><C-o><Tab>",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfive\nsix\nseven\neight",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "four\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "four\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "dd_entry_row",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "5GggjddjG<C-o><C-o><C-o>",
+      "expect": {
+        "buffer": "one\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "two\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "dd_entry_row_past_oldest",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "5GggjddjG<C-o><C-o><C-o><C-o>",
+      "expect": {
+        "buffer": "one\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "two\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "dd_entry_row_count",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "5GggjddjG3<C-o><Tab>",
+      "expect": {
+        "buffer": "one\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "two\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "dd_entry_row_column",
+      "buffer": "ab\nabcdef\nabc\nabcdefgh\nx\ny\nz\nw",
+      "cursor": [
+        1,
+        5
+      ],
+      "keys": "Gggjdd<C-o><C-o>",
+      "expect": {
+        "buffer": "ab\nabc\nabcdefgh\nx\ny\nz\nw",
+        "cursor": [
+          6,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abcdef\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "abcdef\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "dd_entry_row_then_down",
+      "buffer": "ab\nabcdef\nabc\nabcdefgh\nx\ny\nz\nw",
+      "cursor": [
+        3,
+        6
+      ],
+      "keys": "ggGkkkdd<C-o><C-o>j",
+      "expect": {
+        "buffer": "ab\nabcdef\nabc\nabcdefgh\ny\nz\nw",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "x\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "dd_last_row_entry",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "5GGggGddgg<C-o><C-o>",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven",
+        "cursor": [
+          6,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "eight\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "eight\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "dG_entry_past_last_row",
+      "buffer": "ab\nabcdef\nabc\nabcdefgh\nx\ny\nz\nw",
+      "cursor": [
+        1,
+        5
+      ],
+      "keys": "dG<C-o>",
+      "expect": {
+        "buffer": "ab",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abcdef\nabc\nabcdefgh\nx\ny\nz\nw\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "abcdef\nabc\nabcdefgh\nx\ny\nz\nw\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "ex_d_entry_row",
+      "buffer": "ab\nabcdef\nabc\nabcdefgh\nx\ny\nz\nw",
+      "cursor": [
+        1,
+        5
+      ],
+      "keys": "Gkkkk:2d<CR>jgg<C-o><C-o><C-o>",
+      "expect": {
+        "buffer": "ab\nabc\nabcdefgh\nx\ny\nz\nw",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abcdef\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "abcdef\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "put_in_above",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "5GggOx<Esc><C-o><C-o>",
+      "expect": {
+        "buffer": "x\none\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "put_in_above_then_forward",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "5GggOx<Esc><C-o><C-o><Tab>",
+      "expect": {
+        "buffer": "x\none\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          5,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "rows_put_above",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "5GggyjP<C-o><C-o>",
+      "expect": {
+        "buffer": "one\ntwo\none\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one\ntwo\n",
+            "linewise": true
+          },
+          "0": {
+            "text": "one\ntwo\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "cc_over_entry_rows",
+      "buffer": "abcdef\nabcdef\nabcdef\nabcdef\nabcdef\nabcdef",
+      "cursor": [
+        2,
+        4
+      ],
+      "keys": "Gggj3cc<Esc>G3<C-o>",
+      "expect": {
+        "buffer": "abcdef\n\nabcdef\nabcdef",
+        "cursor": [
+          2,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abcdef\nabcdef\nabcdef\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "abcdef\nabcdef\nabcdef\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "cut_joins_entry_row",
+      "buffer": "abcdef\nabcdef\nabcdef\nabcdef\nabcdef\nabcdef",
+      "cursor": [
+        2,
+        4
+      ],
+      "keys": "Gggj3ld/f<CR>G2<C-o>",
+      "expect": {
+        "buffer": "abcdef\nabcdef\nabcdef\nabcdef\nabcdef",
+        "cursor": [
+          4,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "f\nabcde",
+            "linewise": false
+          },
+          "/": {
+            "text": "f",
+            "linewise": false
+          },
+          "1": {
+            "text": "f\nabcde",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "cut_joins_entry_row_past",
+      "buffer": "abcdef\nabcdef\nabcdef\nabcdef\nabcdef\nabcdef",
+      "cursor": [
+        2,
+        4
+      ],
+      "keys": "Gggj3ld/f<CR>G3<C-o>",
+      "expect": {
+        "buffer": "abcdef\nabcdef\nabcdef\nabcdef\nabcdef",
+        "cursor": [
+          4,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "f\nabcde",
+            "linewise": false
+          },
+          "/": {
+            "text": "f",
+            "linewise": false
+          },
+          "1": {
+            "text": "f\nabcde",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "cut_moves_entry_up",
+      "buffer": "abcdef\nabcdef\nabcdef\nabcdef\nabcdef\nabcdef",
+      "cursor": [
+        3,
+        4
+      ],
+      "keys": "Gggj3ld/f<CR>G3<C-o>",
+      "expect": {
+        "buffer": "abcdef\nabcdef\nabcdef\nabcdef\nabcdef",
+        "cursor": [
+          2,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "f\nabcde",
+            "linewise": false
+          },
+          "/": {
+            "text": "f",
+            "linewise": false
+          },
+          "1": {
+            "text": "f\nabcde",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "goal_column_after_back",
+      "buffer": "ab\nabcdef\nabc\nabcdefgh\nx\ny\nz\nw",
+      "cursor": [
+        1,
+        5
+      ],
+      "keys": "G<C-o>j",
+      "expect": {
+        "buffer": "ab\nabcdef\nabc\nabcdefgh\nx\ny\nz\nw",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "column_clamped",
+      "buffer": "ab\nabcdef\nabc\nabcdefgh\nx\ny\nz\nw",
+      "cursor": [
+        1,
+        5
+      ],
+      "keys": "Gggjjdd<C-o><C-o>",
+      "expect": {
+        "buffer": "ab\nabcdef\nabcdefgh\nx\ny\nz\nw",
+        "cursor": [
+          1,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "abc\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "substitute_adds_a_jump",
+      "buffer": "ab\nabcdef\nabc\nabcdefgh\nx\ny\nz\nw",
+      "cursor": [
+        1,
+        5
+      ],
+      "keys": "Gkkkk:s/a/b/<CR>jgg3<C-o>",
+      "expect": {
+        "buffer": "ab\nabcdef\nabc\nbbcdefgh\nx\ny\nz\nw",
+        "cursor": [
+          1,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_adds_a_jump",
+      "buffer": "ab\nabcdef\nabc\nabcdefgh\nx\ny\nz\nw",
+      "cursor": [
+        1,
+        5
+      ],
+      "keys": "Gkkkk:g/x/s/x/q/<CR>jgg3<C-o>",
+      "expect": {
+        "buffer": "ab\nabcdef\nabc\nabcdefgh\nq\ny\nz\nw",
+        "cursor": [
+          1,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "colon_number_adds_none",
+      "buffer": "ab\nabcdef\nabc\nabcdefgh\nx\ny\nz\nw",
+      "cursor": [
+        1,
+        5
+      ],
+      "keys": "Gkkkk:5<CR>jgg3<C-o>",
+      "expect": {
+        "buffer": "ab\nabcdef\nabc\nabcdefgh\nx\ny\nz\nw",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "hundred_entries",
+      "buffer": "r0\nr1\nr2\nr3\nr4\nr5\nr6\nr7\nr8\nr9\nr10\nr11\nr12\nr13\nr14\nr15\nr16\nr17\nr18\nr19\nr20\nr21\nr22\nr23\nr24\nr25\nr26\nr27\nr28\nr29\nr30\nr31\nr32\nr33\nr34\nr35\nr36\nr37\nr38\nr39\nr40\nr41\nr42\nr43\nr44\nr45\nr46\nr47\nr48\nr49\nr50\nr51\nr52\nr53\nr54\nr55\nr56\nr57\nr58\nr59\nr60\nr61\nr62\nr63\nr64\nr65\nr66\nr67\nr68\nr69\nr70\nr71\nr72\nr73\nr74\nr75\nr76\nr77\nr78\nr79\nr80\nr81\nr82\nr83\nr84\nr85\nr86\nr87\nr88\nr89\nr90\nr91\nr92\nr93\nr94\nr95\nr96\nr97\nr98\nr99\nr100\nr101\nr102\nr103\nr104\nr105\nr106\nr107\nr108\nr109\nr110\nr111\nr112\nr113\nr114\nr115\nr116\nr117\nr118\nr119",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2G3G4G5G6G7G8G9G10G11G12G13G14G15G16G17G18G19G20G21G22G23G24G25G26G27G28G29G30G31G32G33G34G35G36G37G38G39G40G41G42G43G44G45G46G47G48G49G50G51G52G53G54G55G56G57G58G59G60G61G62G63G64G65G66G67G68G69G70G71G72G73G74G75G76G77G78G79G80G81G82G83G84G85G86G87G88G89G90G91G92G93G94G95G96G97G98G99G100G101G102G103G104G105G106G107G108G109G110G99<C-o>",
+      "expect": {
+        "buffer": "r0\nr1\nr2\nr3\nr4\nr5\nr6\nr7\nr8\nr9\nr10\nr11\nr12\nr13\nr14\nr15\nr16\nr17\nr18\nr19\nr20\nr21\nr22\nr23\nr24\nr25\nr26\nr27\nr28\nr29\nr30\nr31\nr32\nr33\nr34\nr35\nr36\nr37\nr38\nr39\nr40\nr41\nr42\nr43\nr44\nr45\nr46\nr47\nr48\nr49\nr50\nr51\nr52\nr53\nr54\nr55\nr56\nr57\nr58\nr59\nr60\nr61\nr62\nr63\nr64\nr65\nr66\nr67\nr68\nr69\nr70\nr71\nr72\nr73\nr74\nr75\nr76\nr77\nr78\nr79\nr80\nr81\nr82\nr83\nr84\nr85\nr86\nr87\nr88\nr89\nr90\nr91\nr92\nr93\nr94\nr95\nr96\nr97\nr98\nr99\nr100\nr101\nr102\nr103\nr104\nr105\nr106\nr107\nr108\nr109\nr110\nr111\nr112\nr113\nr114\nr115\nr116\nr117\nr118\nr119",
+        "cursor": [
+          10,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "hundred_entries_past_oldest",
+      "buffer": "r0\nr1\nr2\nr3\nr4\nr5\nr6\nr7\nr8\nr9\nr10\nr11\nr12\nr13\nr14\nr15\nr16\nr17\nr18\nr19\nr20\nr21\nr22\nr23\nr24\nr25\nr26\nr27\nr28\nr29\nr30\nr31\nr32\nr33\nr34\nr35\nr36\nr37\nr38\nr39\nr40\nr41\nr42\nr43\nr44\nr45\nr46\nr47\nr48\nr49\nr50\nr51\nr52\nr53\nr54\nr55\nr56\nr57\nr58\nr59\nr60\nr61\nr62\nr63\nr64\nr65\nr66\nr67\nr68\nr69\nr70\nr71\nr72\nr73\nr74\nr75\nr76\nr77\nr78\nr79\nr80\nr81\nr82\nr83\nr84\nr85\nr86\nr87\nr88\nr89\nr90\nr91\nr92\nr93\nr94\nr95\nr96\nr97\nr98\nr99\nr100\nr101\nr102\nr103\nr104\nr105\nr106\nr107\nr108\nr109\nr110\nr111\nr112\nr113\nr114\nr115\nr116\nr117\nr118\nr119",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2G3G4G5G6G7G8G9G10G11G12G13G14G15G16G17G18G19G20G21G22G23G24G25G26G27G28G29G30G31G32G33G34G35G36G37G38G39G40G41G42G43G44G45G46G47G48G49G50G51G52G53G54G55G56G57G58G59G60G61G62G63G64G65G66G67G68G69G70G71G72G73G74G75G76G77G78G79G80G81G82G83G84G85G86G87G88G89G90G91G92G93G94G95G96G97G98G99G100G101G102G103G104G105G106G107G108G109G110G100<C-o>",
+      "expect": {
+        "buffer": "r0\nr1\nr2\nr3\nr4\nr5\nr6\nr7\nr8\nr9\nr10\nr11\nr12\nr13\nr14\nr15\nr16\nr17\nr18\nr19\nr20\nr21\nr22\nr23\nr24\nr25\nr26\nr27\nr28\nr29\nr30\nr31\nr32\nr33\nr34\nr35\nr36\nr37\nr38\nr39\nr40\nr41\nr42\nr43\nr44\nr45\nr46\nr47\nr48\nr49\nr50\nr51\nr52\nr53\nr54\nr55\nr56\nr57\nr58\nr59\nr60\nr61\nr62\nr63\nr64\nr65\nr66\nr67\nr68\nr69\nr70\nr71\nr72\nr73\nr74\nr75\nr76\nr77\nr78\nr79\nr80\nr81\nr82\nr83\nr84\nr85\nr86\nr87\nr88\nr89\nr90\nr91\nr92\nr93\nr94\nr95\nr96\nr97\nr98\nr99\nr100\nr101\nr102\nr103\nr104\nr105\nr106\nr107\nr108\nr109\nr110\nr111\nr112\nr113\nr114\nr115\nr116\nr117\nr118\nr119",
+        "cursor": [
+          109,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "hundred_entries_and_back",
+      "buffer": "r0\nr1\nr2\nr3\nr4\nr5\nr6\nr7\nr8\nr9\nr10\nr11\nr12\nr13\nr14\nr15\nr16\nr17\nr18\nr19\nr20\nr21\nr22\nr23\nr24\nr25\nr26\nr27\nr28\nr29\nr30\nr31\nr32\nr33\nr34\nr35\nr36\nr37\nr38\nr39\nr40\nr41\nr42\nr43\nr44\nr45\nr46\nr47\nr48\nr49\nr50\nr51\nr52\nr53\nr54\nr55\nr56\nr57\nr58\nr59\nr60\nr61\nr62\nr63\nr64\nr65\nr66\nr67\nr68\nr69\nr70\nr71\nr72\nr73\nr74\nr75\nr76\nr77\nr78\nr79\nr80\nr81\nr82\nr83\nr84\nr85\nr86\nr87\nr88\nr89\nr90\nr91\nr92\nr93\nr94\nr95\nr96\nr97\nr98\nr99\nr100\nr101\nr102\nr103\nr104\nr105\nr106\nr107\nr108\nr109\nr110\nr111\nr112\nr113\nr114\nr115\nr116\nr117\nr118\nr119",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2G3G4G5G6G7G8G9G10G11G12G13G14G15G16G17G18G19G20G21G22G23G24G25G26G27G28G29G30G31G32G33G34G35G36G37G38G39G40G41G42G43G44G45G46G47G48G49G50G51G52G53G54G55G56G57G58G59G60G61G62G63G64G65G66G67G68G69G70G71G72G73G74G75G76G77G78G79G80G81G82G83G84G85G86G87G88G89G90G91G92G93G94G95G96G97G98G99G100G101G102G103G104G105G106G107G108G109G110G99<C-o>99<Tab>",
+      "expect": {
+        "buffer": "r0\nr1\nr2\nr3\nr4\nr5\nr6\nr7\nr8\nr9\nr10\nr11\nr12\nr13\nr14\nr15\nr16\nr17\nr18\nr19\nr20\nr21\nr22\nr23\nr24\nr25\nr26\nr27\nr28\nr29\nr30\nr31\nr32\nr33\nr34\nr35\nr36\nr37\nr38\nr39\nr40\nr41\nr42\nr43\nr44\nr45\nr46\nr47\nr48\nr49\nr50\nr51\nr52\nr53\nr54\nr55\nr56\nr57\nr58\nr59\nr60\nr61\nr62\nr63\nr64\nr65\nr66\nr67\nr68\nr69\nr70\nr71\nr72\nr73\nr74\nr75\nr76\nr77\nr78\nr79\nr80\nr81\nr82\nr83\nr84\nr85\nr86\nr87\nr88\nr89\nr90\nr91\nr92\nr93\nr94\nr95\nr96\nr97\nr98\nr99\nr100\nr101\nr102\nr103\nr104\nr105\nr106\nr107\nr108\nr109\nr110\nr111\nr112\nr113\nr114\nr115\nr116\nr117\nr118\nr119",
+        "cursor": [
+          109,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ninety_nine_entries",
+      "buffer": "r0\nr1\nr2\nr3\nr4\nr5\nr6\nr7\nr8\nr9\nr10\nr11\nr12\nr13\nr14\nr15\nr16\nr17\nr18\nr19\nr20\nr21\nr22\nr23\nr24\nr25\nr26\nr27\nr28\nr29\nr30\nr31\nr32\nr33\nr34\nr35\nr36\nr37\nr38\nr39\nr40\nr41\nr42\nr43\nr44\nr45\nr46\nr47\nr48\nr49\nr50\nr51\nr52\nr53\nr54\nr55\nr56\nr57\nr58\nr59\nr60\nr61\nr62\nr63\nr64\nr65\nr66\nr67\nr68\nr69\nr70\nr71\nr72\nr73\nr74\nr75\nr76\nr77\nr78\nr79\nr80\nr81\nr82\nr83\nr84\nr85\nr86\nr87\nr88\nr89\nr90\nr91\nr92\nr93\nr94\nr95\nr96\nr97\nr98\nr99\nr100\nr101\nr102\nr103\nr104\nr105\nr106\nr107\nr108\nr109\nr110\nr111\nr112\nr113\nr114\nr115\nr116\nr117\nr118\nr119",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2G3G4G5G6G7G8G9G10G11G12G13G14G15G16G17G18G19G20G21G22G23G24G25G26G27G28G29G30G31G32G33G34G35G36G37G38G39G40G41G42G43G44G45G46G47G48G49G50G51G52G53G54G55G56G57G58G59G60G61G62G63G64G65G66G67G68G69G70G71G72G73G74G75G76G77G78G79G80G81G82G83G84G85G86G87G88G89G90G91G92G93G94G95G96G97G98G99G100G99<C-o>",
+      "expect": {
+        "buffer": "r0\nr1\nr2\nr3\nr4\nr5\nr6\nr7\nr8\nr9\nr10\nr11\nr12\nr13\nr14\nr15\nr16\nr17\nr18\nr19\nr20\nr21\nr22\nr23\nr24\nr25\nr26\nr27\nr28\nr29\nr30\nr31\nr32\nr33\nr34\nr35\nr36\nr37\nr38\nr39\nr40\nr41\nr42\nr43\nr44\nr45\nr46\nr47\nr48\nr49\nr50\nr51\nr52\nr53\nr54\nr55\nr56\nr57\nr58\nr59\nr60\nr61\nr62\nr63\nr64\nr65\nr66\nr67\nr68\nr69\nr70\nr71\nr72\nr73\nr74\nr75\nr76\nr77\nr78\nr79\nr80\nr81\nr82\nr83\nr84\nr85\nr86\nr87\nr88\nr89\nr90\nr91\nr92\nr93\nr94\nr95\nr96\nr97\nr98\nr99\nr100\nr101\nr102\nr103\nr104\nr105\nr106\nr107\nr108\nr109\nr110\nr111\nr112\nr113\nr114\nr115\nr116\nr117\nr118\nr119",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "oldest_dropped_by_alternating",
+      "buffer": "r0\nr1\nr2\nr3\nr4\nr5\nr6\nr7\nr8\nr9\nr10\nr11\nr12\nr13\nr14\nr15\nr16\nr17\nr18\nr19\nr20\nr21\nr22\nr23\nr24\nr25\nr26\nr27\nr28\nr29\nr30\nr31\nr32\nr33\nr34\nr35\nr36\nr37\nr38\nr39\nr40\nr41\nr42\nr43\nr44\nr45\nr46\nr47\nr48\nr49\nr50\nr51\nr52\nr53\nr54\nr55\nr56\nr57\nr58\nr59\nr60\nr61\nr62\nr63\nr64\nr65\nr66\nr67\nr68\nr69\nr70\nr71\nr72\nr73\nr74\nr75\nr76\nr77\nr78\nr79\nr80\nr81\nr82\nr83\nr84\nr85\nr86\nr87\nr88\nr89\nr90\nr91\nr92\nr93\nr94\nr95\nr96\nr97\nr98\nr99\nr100\nr101\nr102\nr103\nr104\nr105\nr106\nr107\nr108\nr109\nr110\nr111\nr112\nr113\nr114\nr115\nr116\nr117\nr118\nr119",
+      "cursor": [
+        50,
+        0
+      ],
+      "keys": "1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G2<C-o>",
+      "expect": {
+        "buffer": "r0\nr1\nr2\nr3\nr4\nr5\nr6\nr7\nr8\nr9\nr10\nr11\nr12\nr13\nr14\nr15\nr16\nr17\nr18\nr19\nr20\nr21\nr22\nr23\nr24\nr25\nr26\nr27\nr28\nr29\nr30\nr31\nr32\nr33\nr34\nr35\nr36\nr37\nr38\nr39\nr40\nr41\nr42\nr43\nr44\nr45\nr46\nr47\nr48\nr49\nr50\nr51\nr52\nr53\nr54\nr55\nr56\nr57\nr58\nr59\nr60\nr61\nr62\nr63\nr64\nr65\nr66\nr67\nr68\nr69\nr70\nr71\nr72\nr73\nr74\nr75\nr76\nr77\nr78\nr79\nr80\nr81\nr82\nr83\nr84\nr85\nr86\nr87\nr88\nr89\nr90\nr91\nr92\nr93\nr94\nr95\nr96\nr97\nr98\nr99\nr100\nr101\nr102\nr103\nr104\nr105\nr106\nr107\nr108\nr109\nr110\nr111\nr112\nr113\nr114\nr115\nr116\nr117\nr118\nr119",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "oldest_dropped_past",
+      "buffer": "r0\nr1\nr2\nr3\nr4\nr5\nr6\nr7\nr8\nr9\nr10\nr11\nr12\nr13\nr14\nr15\nr16\nr17\nr18\nr19\nr20\nr21\nr22\nr23\nr24\nr25\nr26\nr27\nr28\nr29\nr30\nr31\nr32\nr33\nr34\nr35\nr36\nr37\nr38\nr39\nr40\nr41\nr42\nr43\nr44\nr45\nr46\nr47\nr48\nr49\nr50\nr51\nr52\nr53\nr54\nr55\nr56\nr57\nr58\nr59\nr60\nr61\nr62\nr63\nr64\nr65\nr66\nr67\nr68\nr69\nr70\nr71\nr72\nr73\nr74\nr75\nr76\nr77\nr78\nr79\nr80\nr81\nr82\nr83\nr84\nr85\nr86\nr87\nr88\nr89\nr90\nr91\nr92\nr93\nr94\nr95\nr96\nr97\nr98\nr99\nr100\nr101\nr102\nr103\nr104\nr105\nr106\nr107\nr108\nr109\nr110\nr111\nr112\nr113\nr114\nr115\nr116\nr117\nr118\nr119",
+      "cursor": [
+        50,
+        0
+      ],
+      "keys": "1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G5G1G3<C-o>",
+      "expect": {
+        "buffer": "r0\nr1\nr2\nr3\nr4\nr5\nr6\nr7\nr8\nr9\nr10\nr11\nr12\nr13\nr14\nr15\nr16\nr17\nr18\nr19\nr20\nr21\nr22\nr23\nr24\nr25\nr26\nr27\nr28\nr29\nr30\nr31\nr32\nr33\nr34\nr35\nr36\nr37\nr38\nr39\nr40\nr41\nr42\nr43\nr44\nr45\nr46\nr47\nr48\nr49\nr50\nr51\nr52\nr53\nr54\nr55\nr56\nr57\nr58\nr59\nr60\nr61\nr62\nr63\nr64\nr65\nr66\nr67\nr68\nr69\nr70\nr71\nr72\nr73\nr74\nr75\nr76\nr77\nr78\nr79\nr80\nr81\nr82\nr83\nr84\nr85\nr86\nr87\nr88\nr89\nr90\nr91\nr92\nr93\nr94\nr95\nr96\nr97\nr98\nr99\nr100\nr101\nr102\nr103\nr104\nr105\nr106\nr107\nr108\nr109\nr110\nr111\nr112\nr113\nr114\nr115\nr116\nr117\nr118\nr119",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "tab_drops_newest_on_cursor_row",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "GG<Tab>k<C-o>",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "failed_back_drops_newest_on_cursor_row",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "GG5<C-o>k<C-o>",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_i_drops_newest_on_cursor_row",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3G5G7G2k<C-i><C-o>",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "newest_kept_after_going_back",
+      "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3G5G7G<C-o>2j<Tab><C-o>",
+      "expect": {
+        "buffer": "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "globals_add_one_entry_each",
+      "buffer": "a\nx\nc\nd\ne\nf\ng\nh",
+      "cursor": [
+        2,
+        1
+      ],
+      "keys": "G:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>:g/x/<CR>gg2<C-o>",
+      "expect": {
+        "buffer": "a\nx\nc\nd\ne\nf\ng\nh",
+        "cursor": [
+          7,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_from_deleted_last_row",
+      "buffer": "abcdef\nabcdef\nabcdef\nzzzzzz",
+      "cursor": [
+        3,
+        2
+      ],
+      "keys": ":g/z/d<CR><C-o>",
+      "expect": {
+        "buffer": "abcdef\nabcdef\nabcdef",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "zzzzzz\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "z",
+            "linewise": false
+          },
+          "1": {
+            "text": "zzzzzz\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "global_keeps_entry_column",
+      "buffer": "abcdef\nabcdef\nabcdef\nabcdef",
+      "cursor": [
+        1,
+        5
+      ],
+      "keys": ":g/abcdef/s/abcdef/x/<CR>kk0i0123456789<Esc>j<C-o>",
+      "expect": {
+        "buffer": "x\n0123456789x\nx\nx",
+        "cursor": [
+          1,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "abcdef",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "entries_past_last_row_are_one_row",
+      "buffer": "abcdef\nabcdef\nabcdef\nabcdef\nabcdef\nabcdef",
+      "cursor": [
+        1,
+        4
+      ],
+      "keys": "4G6Gggjjj3ddgg<C-o>3<C-o>",
+      "expect": {
+        "buffer": "abcdef\nabcdef\nabcdef",
+        "cursor": [
+          2,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abcdef\nabcdef\nabcdef\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "abcdef\nabcdef\nabcdef\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "entries_past_last_row_count",
+      "buffer": "abcdef\nabcdef\nabcdef\nabcdef\nabcdef\nabcdef",
+      "cursor": [
+        1,
+        4
+      ],
+      "keys": "4G6Gggjjj3ddgg<C-o>2<C-o>",
+      "expect": {
+        "buffer": "abcdef\nabcdef\nabcdef",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abcdef\nabcdef\nabcdef\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "abcdef\nabcdef\nabcdef\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "entries_past_last_row_count_e19",
+      "buffer": "abcdef\nabcdef\nabcdef\nabcdef\nabcdef\nabcdef",
+      "cursor": [
+        1,
+        4
+      ],
+      "keys": "4G6Gggjjj3ddgg2<C-o>",
+      "expect": {
+        "buffer": "abcdef\nabcdef\nabcdef",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abcdef\nabcdef\nabcdef\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "abcdef\nabcdef\nabcdef\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_in_global_normal",
+      "buffer": "abcdef\nx\nabcdef\nabcdef\nabcdef\nabcdef",
+      "cursor": [
+        2,
+        4
+      ],
+      "keys": "Ggg:g/x/normal! <lt>C-o><CR>",
+      "oracle_keys": "Ggg:g/x/normal! <C-v><C-o><CR>",
+      "expect": {
+        "buffer": "abcdef\nx\nabcdef\nabcdef\nabcdef\nabcdef",
+        "cursor": [
+          5,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_in_global_normal_then_back",
+      "buffer": "abcdef\nx\nabcdef\nabcdef\nabcdef\nabcdef",
+      "cursor": [
+        2,
+        4
+      ],
+      "keys": "Ggg:g/x/normal! <lt>C-o><CR><C-o>",
+      "oracle_keys": "Ggg:g/x/normal! <C-v><C-o><CR><C-o>",
+      "expect": {
+        "buffer": "abcdef\nx\nabcdef\nabcdef\nabcdef\nabcdef",
+        "cursor": [
+          2,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_in_global_normal_then_back_past",
+      "buffer": "abcdef\nx\nabcdef\nabcdef\nabcdef\nabcdef",
+      "cursor": [
+        2,
+        4
+      ],
+      "keys": "Ggg:g/x/normal! <lt>C-o><CR><C-o><C-o>",
+      "oracle_keys": "Ggg:g/x/normal! <C-v><C-o><CR><C-o><C-o>",
+      "expect": {
+        "buffer": "abcdef\nx\nabcdef\nabcdef\nabcdef\nabcdef",
+        "cursor": [
+          2,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_in_global_normal_then_forward",
+      "buffer": "abcdef\nx\nabcdef\nabcdef\nabcdef\nabcdef",
+      "cursor": [
+        2,
+        4
+      ],
+      "keys": "Ggg:g/x/normal! <lt>C-o><CR><Tab>",
+      "oracle_keys": "Ggg:g/x/normal! <C-v><C-o><CR><Tab>",
+      "expect": {
+        "buffer": "abcdef\nx\nabcdef\nabcdef\nabcdef\nabcdef",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "count_ctrl_o_in_global_normal",
+      "buffer": "abcdef\nx\nabcdef\nabcdef\nabcdef\nabcdef",
+      "cursor": [
+        2,
+        4
+      ],
+      "keys": "Ggg:g/x/normal! 2<lt>C-o><CR>",
+      "oracle_keys": "Ggg:g/x/normal! 2<C-v><C-o><CR>",
+      "expect": {
+        "buffer": "abcdef\nx\nabcdef\nabcdef\nabcdef\nabcdef",
+        "cursor": [
+          2,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_in_global_normal_too_far",
+      "buffer": "abcdef\nx\nabcdef\nabcdef\nabcdef\nabcdef",
+      "cursor": [
+        2,
+        4
+      ],
+      "keys": "Ggg:g/x/normal! 3<lt>C-o><CR>",
+      "oracle_keys": "Ggg:g/x/normal! 3<C-v><C-o><CR>",
+      "expect": {
+        "buffer": "abcdef\nx\nabcdef\nabcdef\nabcdef\nabcdef",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "jump_then_ctrl_o_in_global_normal",
+      "buffer": "abcdef\nx\nabcdef\nabcdef\nabcdef\nabcdef",
+      "cursor": [
+        2,
+        4
+      ],
+      "keys": "Ggg:g/x/normal! G<lt>C-o><CR><C-o>",
+      "oracle_keys": "Ggg:g/x/normal! G<C-v><C-o><CR><C-o>",
+      "expect": {
+        "buffer": "abcdef\nx\nabcdef\nabcdef\nabcdef\nabcdef",
+        "cursor": [
+          2,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_in_normal_outside_global",
+      "buffer": "abcdef\nx\nabcdef\nabcdef\nabcdef\nabcdef",
+      "cursor": [
+        2,
+        4
+      ],
+      "keys": "Ggg:normal! <lt>C-o><CR><C-o>",
+      "oracle_keys": "Ggg:normal! <C-v><C-o><CR><C-o>",
+      "expect": {
+        "buffer": "abcdef\nx\nabcdef\nabcdef\nabcdef\nabcdef",
+        "cursor": [
+          2,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "ctrl_o_in_global_normal_too_far_then_back",
+      "buffer": "abcdef\nx\nabcdef\nabcdef\nabcdef\nabcdef",
+      "cursor": [
+        2,
+        4
+      ],
+      "keys": "Ggg:g/x/normal! 3<lt>C-o><CR><C-o><C-o>",
+      "oracle_keys": "Ggg:g/x/normal! 3<C-v><C-o><CR><C-o><C-o>",
+      "expect": {
+        "buffer": "abcdef\nx\nabcdef\nabcdef\nabcdef\nabcdef",
+        "cursor": [
+          2,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_in_global_normal_too_far_then_forward",
+      "buffer": "abcdef\nx\nabcdef\nabcdef\nabcdef\nabcdef",
+      "cursor": [
+        2,
+        4
+      ],
+      "keys": "Ggg:g/x/normal! 3<lt>C-o><CR><Tab>",
+      "oracle_keys": "Ggg:g/x/normal! 3<C-v><C-o><CR><Tab>",
+      "expect": {
+        "buffer": "abcdef\nx\nabcdef\nabcdef\nabcdef\nabcdef",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_o_in_global_normal_much_too_far_then_back",
+      "buffer": "abcdef\nx\nabcdef\nabcdef\nabcdef\nabcdef",
+      "cursor": [
+        2,
+        4
+      ],
+      "keys": "Ggg:g/x/normal! 9<lt>C-o><CR><C-o>",
+      "oracle_keys": "Ggg:g/x/normal! 9<C-v><C-o><CR><C-o>",
+      "expect": {
+        "buffer": "abcdef\nx\nabcdef\nabcdef\nabcdef\nabcdef",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "hundred_entries_past_oldest_then_back",
+      "buffer": "r0\nr1\nr2\nr3\nr4\nr5\nr6\nr7\nr8\nr9\nr10\nr11\nr12\nr13\nr14\nr15\nr16\nr17\nr18\nr19\nr20\nr21\nr22\nr23\nr24\nr25\nr26\nr27\nr28\nr29\nr30\nr31\nr32\nr33\nr34\nr35\nr36\nr37\nr38\nr39\nr40\nr41\nr42\nr43\nr44\nr45\nr46\nr47\nr48\nr49\nr50\nr51\nr52\nr53\nr54\nr55\nr56\nr57\nr58\nr59\nr60\nr61\nr62\nr63\nr64\nr65\nr66\nr67\nr68\nr69\nr70\nr71\nr72\nr73\nr74\nr75\nr76\nr77\nr78\nr79\nr80\nr81\nr82\nr83\nr84\nr85\nr86\nr87\nr88\nr89\nr90\nr91\nr92\nr93\nr94\nr95\nr96\nr97\nr98\nr99\nr100\nr101\nr102\nr103\nr104\nr105\nr106\nr107\nr108\nr109\nr110\nr111\nr112\nr113\nr114\nr115\nr116\nr117\nr118\nr119",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2G3G4G5G6G7G8G9G10G11G12G13G14G15G16G17G18G19G20G21G22G23G24G25G26G27G28G29G30G31G32G33G34G35G36G37G38G39G40G41G42G43G44G45G46G47G48G49G50G51G52G53G54G55G56G57G58G59G60G61G62G63G64G65G66G67G68G69G70G71G72G73G74G75G76G77G78G79G80G81G82G83G84G85G86G87G88G89G90G91G92G93G94G95G96G97G98G99G100G101G102G103G104G105G106G107G108G109G110G100<C-o>k<C-o>",
+      "expect": {
+        "buffer": "r0\nr1\nr2\nr3\nr4\nr5\nr6\nr7\nr8\nr9\nr10\nr11\nr12\nr13\nr14\nr15\nr16\nr17\nr18\nr19\nr20\nr21\nr22\nr23\nr24\nr25\nr26\nr27\nr28\nr29\nr30\nr31\nr32\nr33\nr34\nr35\nr36\nr37\nr38\nr39\nr40\nr41\nr42\nr43\nr44\nr45\nr46\nr47\nr48\nr49\nr50\nr51\nr52\nr53\nr54\nr55\nr56\nr57\nr58\nr59\nr60\nr61\nr62\nr63\nr64\nr65\nr66\nr67\nr68\nr69\nr70\nr71\nr72\nr73\nr74\nr75\nr76\nr77\nr78\nr79\nr80\nr81\nr82\nr83\nr84\nr85\nr86\nr87\nr88\nr89\nr90\nr91\nr92\nr93\nr94\nr95\nr96\nr97\nr98\nr99\nr100\nr101\nr102\nr103\nr104\nr105\nr106\nr107\nr108\nr109\nr110\nr111\nr112\nr113\nr114\nr115\nr116\nr117\nr118\nr119",
+        "cursor": [
+          108,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "hundred_entries_far_past_oldest_then_back",
+      "buffer": "r0\nr1\nr2\nr3\nr4\nr5\nr6\nr7\nr8\nr9\nr10\nr11\nr12\nr13\nr14\nr15\nr16\nr17\nr18\nr19\nr20\nr21\nr22\nr23\nr24\nr25\nr26\nr27\nr28\nr29\nr30\nr31\nr32\nr33\nr34\nr35\nr36\nr37\nr38\nr39\nr40\nr41\nr42\nr43\nr44\nr45\nr46\nr47\nr48\nr49\nr50\nr51\nr52\nr53\nr54\nr55\nr56\nr57\nr58\nr59\nr60\nr61\nr62\nr63\nr64\nr65\nr66\nr67\nr68\nr69\nr70\nr71\nr72\nr73\nr74\nr75\nr76\nr77\nr78\nr79\nr80\nr81\nr82\nr83\nr84\nr85\nr86\nr87\nr88\nr89\nr90\nr91\nr92\nr93\nr94\nr95\nr96\nr97\nr98\nr99\nr100\nr101\nr102\nr103\nr104\nr105\nr106\nr107\nr108\nr109\nr110\nr111\nr112\nr113\nr114\nr115\nr116\nr117\nr118\nr119",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2G3G4G5G6G7G8G9G10G11G12G13G14G15G16G17G18G19G20G21G22G23G24G25G26G27G28G29G30G31G32G33G34G35G36G37G38G39G40G41G42G43G44G45G46G47G48G49G50G51G52G53G54G55G56G57G58G59G60G61G62G63G64G65G66G67G68G69G70G71G72G73G74G75G76G77G78G79G80G81G82G83G84G85G86G87G88G89G90G91G92G93G94G95G96G97G98G99G100G101G102G103G104G105G106G107G108G109G110G101<C-o>k<C-o>",
+      "expect": {
+        "buffer": "r0\nr1\nr2\nr3\nr4\nr5\nr6\nr7\nr8\nr9\nr10\nr11\nr12\nr13\nr14\nr15\nr16\nr17\nr18\nr19\nr20\nr21\nr22\nr23\nr24\nr25\nr26\nr27\nr28\nr29\nr30\nr31\nr32\nr33\nr34\nr35\nr36\nr37\nr38\nr39\nr40\nr41\nr42\nr43\nr44\nr45\nr46\nr47\nr48\nr49\nr50\nr51\nr52\nr53\nr54\nr55\nr56\nr57\nr58\nr59\nr60\nr61\nr62\nr63\nr64\nr65\nr66\nr67\nr68\nr69\nr70\nr71\nr72\nr73\nr74\nr75\nr76\nr77\nr78\nr79\nr80\nr81\nr82\nr83\nr84\nr85\nr86\nr87\nr88\nr89\nr90\nr91\nr92\nr93\nr94\nr95\nr96\nr97\nr98\nr99\nr100\nr101\nr102\nr103\nr104\nr105\nr106\nr107\nr108\nr109\nr110\nr111\nr112\nr113\nr114\nr115\nr116\nr117\nr118\nr119",
+        "cursor": [
+          107,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    }
+  ]
+}

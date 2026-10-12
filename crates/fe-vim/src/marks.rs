@@ -3,7 +3,9 @@
 //! ([`Motion::Mark`]): to its row's first non-blank, linewise, or to the
 //! mark itself, exclusive. `''` and `` `` `` go to the jump mark, where the
 //! last jump left from (`:help jump-motions`), and `'<`, `'>`, `` `< `` and
-//! `` `> `` to the last visual extent's ends.
+//! `` `> `` to the last visual extent's ends. Each jump that sets the jump
+//! mark also adds where it left from to the jumplist, which
+//! [`crate::jumplist`]'s keys go back and forward through.
 
 use std::{
     collections::BTreeMap,
@@ -26,6 +28,12 @@ use fe_editor::EditorModel;
 
 /// What jumping to a mark that isn't set (or whose row was deleted) says.
 pub(crate) const NOT_SET: &str = "E20: Mark not set";
+
+/// What going to a jumplist entry past the last row says.
+pub(crate) const INVALID_ROW: &str = "E19: Mark has invalid line number";
+
+/// How many entries the jumplist keeps, as nvim's: the oldest go.
+const JUMPS: usize = 100;
 
 /// Whether `m{ch}` sets a mark: `a` to `z`, and `'` and `` ` `` (the jump
 /// mark).
@@ -483,6 +491,59 @@ impl Place {
             }
         })
     }
+
+    /// Where it is as a jumplist entry, which a deleted row doesn't delete,
+    /// as nvim keeps one: [`Place::position`], or once its row was deleted,
+    /// the row that took its place at the same column. `None` past the last
+    /// row, where no row took it (or where it can't be resolved).
+    fn spot(&self, snapshot: &BufferSnapshot) -> Option<(u32, usize)> {
+        if let Some(at) = self.position(snapshot) {
+            return Some(at);
+        }
+        let (newest, oldest) = (self.row.version(), self.start.version());
+        if newest > snapshot.version() || oldest.min(newest) < snapshot.oldest_version() {
+            return None;
+        }
+        // Its row's start went where the deletion was: the start of the row
+        // after it, or the end of the one before when that was the last.
+        let text = snapshot.text();
+        let point = text.offset_to_point(snapshot.resolve(&self.row));
+        let row = match point.column {
+            0 => point.row,
+            _ => point.row + 1,
+        };
+        (row < text.row_count()).then_some((row, self.column))
+    }
+
+    /// Joined to the row above by a cut, keeping its column from where its
+    /// row's start goes.
+    fn joined(snapshot: &BufferSnapshot, row: u32, column: usize) -> Self {
+        let mut place = Place::on(snapshot, row, column);
+        place.keeps_column = true;
+        place.end = End::Kept;
+        place.life.kept = true;
+        place
+    }
+}
+
+/// A jumplist entry: where a jump left from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Entry {
+    /// Followed as a mark is, though a deleted row doesn't delete it (see
+    /// [`Place::spot`]).
+    At(Place),
+    /// Past the last row, where the rows it was on and those after went: no
+    /// row ever takes it again.
+    Past,
+}
+
+impl Entry {
+    fn spot(&self, snapshot: &BufferSnapshot) -> Option<(u32, usize)> {
+        match self {
+            Entry::At(place) => place.spot(snapshot),
+            Entry::Past => None,
+        }
+    }
 }
 
 /// The marks one editor's vim state holds: `a` to `z`, and the jump mark.
@@ -496,6 +557,17 @@ pub(crate) struct Marks {
     previous: Option<Place>,
     /// The buffer's edit batches, from the first mark set on.
     feed: Option<Feed>,
+    /// The jumplist (`:help jumplist`), oldest first: where each jump that
+    /// set the jump mark left from, at most [`JUMPS`] of them. Like nvim's,
+    /// an earlier entry on a later one's row stays until the list is used
+    /// ([`Marks::travel`]).
+    list: Vec<Entry>,
+    /// The entry `<C-o>` and `<C-i>` last went to, or the list's length when
+    /// neither has since the last jump.
+    at: usize,
+    /// While a `:g` runs its commands, their jumps add nothing (`:help
+    /// jumplist`).
+    keeping: bool,
 }
 
 impl Marks {
@@ -518,11 +590,16 @@ impl Marks {
         if batches.is_empty() {
             return;
         }
+        let entries = self.list.iter_mut().filter_map(|entry| match entry {
+            Entry::At(place) => Some(place),
+            Entry::Past => None,
+        });
         let places = self
             .named
             .values_mut()
             .chain(self.jump.iter_mut())
-            .chain(self.previous.iter_mut());
+            .chain(self.previous.iter_mut())
+            .chain(entries);
         for place in places {
             place.advance(&batches);
         }
@@ -532,9 +609,148 @@ impl Marks {
     }
 
     /// Sets the jump mark, keeping the one before until the command
-    /// [`settle`]s.
+    /// [`settle`]s, and adds `from` to the jumplist.
     pub(crate) fn jumped(&mut self, from: Place) {
+        self.add(from.clone());
         self.previous = self.jump.replace(from);
+    }
+
+    /// Adds `from` to the end of the jumplist, past which `<C-o>` starts
+    /// again.
+    fn add(&mut self, from: Place) {
+        if self.keeping {
+            return;
+        }
+        self.list.push(Entry::At(from));
+        if self.list.len() > JUMPS {
+            self.list.remove(0);
+        }
+        self.at = self.list.len();
+    }
+
+    /// Sets the jump mark to `place` as a command's last word on it, adding
+    /// nothing to the jumplist: [`settle`] leaves it.
+    pub(crate) fn set_jump(&mut self, place: Place) {
+        self.previous = Some(place.clone());
+        self.jump = Some(place);
+    }
+
+    /// Adds where a `:g` began to the jumplist, before it runs its commands
+    /// (whose own jumps then add nothing, [`Marks::keep_jumps`]), so the
+    /// entry follows what they do.
+    pub(crate) fn add_jump(&mut self, from: Place) {
+        self.add(from);
+    }
+
+    /// While `keep`, jumps add nothing to the jumplist, as while nvim's
+    /// `:g` runs its commands.
+    pub(crate) fn keep_jumps(&mut self, keep: bool) {
+        self.keeping = keep;
+    }
+
+    /// Goes `count` entries back (`back`, `<C-o>`) or forward (`<C-i>`)
+    /// through the jumplist from the cursor at `from`, as nvim does. First an
+    /// earlier entry on a later one's row goes, and from past the newest
+    /// entry, the newest if it's on the cursor's row. Going back from there
+    /// adds where it goes from (sets the jump mark there), so `<C-i>` comes
+    /// back; while a `:g` runs ([`Marks::keep_jumps`]) it adds nothing, but
+    /// counts as if it had. It returns the entry's row and byte column
+    /// (which may lie past its row's end), or `Some(None)` for one past the
+    /// last row (E19); past either end of the list, `None`, with the jump
+    /// mark and cursor as they were (though once the count fits the list as
+    /// it was, the entry added and the step onto it stay, as nvim's do).
+    pub(crate) fn travel(
+        &mut self,
+        snapshot: &BufferSnapshot,
+        from: usize,
+        back: bool,
+        count: u32,
+    ) -> Option<Option<(u32, usize)>> {
+        self.advance();
+        // Entries past the last row are all on the row after it, as nvim's
+        // line numbers are.
+        let past = snapshot.text().row_count();
+        let rows: Vec<u32> = self
+            .list
+            .iter()
+            .map(|entry| entry.spot(snapshot).map_or(past, |(row, _)| row))
+            .collect();
+        let mut at = self.at;
+        let mut kept = Vec::with_capacity(self.list.len());
+        for (ix, entry) in std::mem::take(&mut self.list).into_iter().enumerate() {
+            let later = rows[ix + 1..].contains(&rows[ix]);
+            match later {
+                true if ix < self.at => at -= 1,
+                true => {}
+                false => kept.push(entry),
+            }
+        }
+        self.list = kept;
+        self.at = at;
+        // Not gone back yet, the newest entry goes if it's on the cursor's
+        // row, even if going then fails.
+        let row = snapshot.text().offset_to_point(from).row;
+        let newest = self.list.last().and_then(|entry| entry.spot(snapshot));
+        if self.at == self.list.len() && newest.is_some_and(|(newest, _)| newest == row) {
+            self.list.pop();
+            self.at = self.list.len();
+        }
+        let count = count.max(1) as usize;
+        if back && self.at == self.list.len() {
+            // A count past the oldest entry changes nothing. Else, as nvim's,
+            // it adds where it goes from (nothing while a `:g` runs) and
+            // steps onto the newest entry for good, even if the count then
+            // reaches past the oldest (the oldest entry gone to make room).
+            self.at.checked_sub(count)?;
+            let here = (!self.keeping).then(|| Place::at(snapshot, from));
+            if let Some(here) = &here {
+                self.list.push(Entry::At(here.clone()));
+                if self.list.len() > JUMPS {
+                    self.list.remove(0);
+                }
+            }
+            self.at = self.list.len() - 1;
+            self.at = self.at.checked_sub(count)?;
+            if let Some(here) = here {
+                self.previous = self.jump.replace(here);
+            }
+        } else {
+            self.at = match back {
+                true => self.at.checked_sub(count)?,
+                false => self
+                    .at
+                    .checked_add(count)
+                    .filter(|&at| at < self.list.len())?,
+            };
+        }
+        let found = self.list[self.at].spot(snapshot);
+        if found.is_none() {
+            // It goes nowhere, so nothing gives the jump mark back.
+            self.previous = None;
+        }
+        Some(found)
+    }
+
+    /// Before the rows from `first` through `last` go: their jumplist
+    /// entries go to the row after them, which takes their place, at the
+    /// same column, as nvim's do; past the last row if none does, or onto
+    /// the only row left if every row goes.
+    fn displace(&mut self, snapshot: &BufferSnapshot, first: u32, last: u32) {
+        self.advance();
+        let rows = snapshot.text().row_count();
+        for entry in &mut self.list {
+            let Some((row, column)) = entry.spot(snapshot) else {
+                continue;
+            };
+            if !(first..=last).contains(&row) {
+                continue;
+            }
+            *entry = match () {
+                _ if last + 1 < rows => Entry::At(Place::on(snapshot, last + 1, column)),
+                _ if first == 0 => Entry::At(Place::joined(snapshot, 0, column)),
+                _ => Entry::Past,
+            };
+        }
     }
 
     /// Before a linewise change over the rows from `first` through `last`,
@@ -542,6 +758,9 @@ impl Marks {
     /// go, and those on the first stay through the change's taking its line
     /// break.
     pub(crate) fn changing(&mut self, snapshot: &BufferSnapshot, first: u32, last: u32) {
+        if last > first {
+            self.displace(snapshot, first + 1, last);
+        }
         let change = |place: &Place| match place.position(snapshot)? {
             // Typing replaces its text: anchored before it.
             (row, column) if row == first => {
@@ -598,6 +817,7 @@ impl Marks {
     /// Before a linewise delete of the rows from `first` through `last`:
     /// their marks go, as nvim's do.
     pub(crate) fn deleting(&mut self, snapshot: &BufferSnapshot, first: u32, last: u32) {
+        self.displace(snapshot, first, last);
         self.update(|place| match place.position(snapshot)? {
             (row, _) if (first..=last).contains(&row) => None,
             _ => Some(place.clone()),
@@ -633,16 +853,20 @@ impl Marks {
         if first == last {
             return;
         }
+        // Jumplist entries on the rows between go with the last row's text.
+        self.advance();
+        for entry in &mut self.list {
+            if let Some((row, column)) = entry.spot(snapshot)
+                && row > first
+                && row < last
+            {
+                *entry = Entry::At(Place::joined(snapshot, last, column));
+            }
+        }
         self.update(|place| match place.position(snapshot)? {
             (row, column) if row == first => Some(Place::through(snapshot, row, last, column)),
             // Its row is joined, never deleted.
-            (row, column) if row == last => {
-                let mut place = Place::on(snapshot, row, column);
-                place.keeps_column = true;
-                place.end = End::Kept;
-                place.life.kept = true;
-                Some(place)
-            }
+            (row, column) if row == last => Some(Place::joined(snapshot, row, column)),
             _ => Some(place.clone()),
         });
     }
@@ -652,17 +876,28 @@ impl Marks {
     /// that may change the text calls it first, so a mark on the last row
     /// that rows were put in after is deleted with its row as any other.
     pub(crate) fn follow(&mut self, snapshot: &BufferSnapshot) {
+        // A jumplist entry whose row was deleted stays, on the row that took
+        // its place.
+        self.advance();
+        for entry in &mut self.list {
+            *entry = match entry.spot(snapshot) {
+                Some((row, column)) => Entry::At(Place::on(snapshot, row, column)),
+                None => Entry::Past,
+            };
+        }
         let follow = |place: &Place| {
             let (row, column) = place.position(snapshot)?;
             Some(Place::on(snapshot, row, column))
         };
         self.update(follow);
-        if self.named.is_empty() && self.jump.is_none() && self.previous.is_none() {
+        let entries = self.list.iter().any(|entry| matches!(entry, Entry::At(_)));
+        if self.named.is_empty() && self.jump.is_none() && self.previous.is_none() && !entries {
             self.feed = None;
         }
     }
 
-    /// Each mark becomes what `f` makes of it, or goes.
+    /// Each mark becomes what `f` makes of it, or goes; a jumplist entry
+    /// `f` would delete stays as it is.
     fn update(&mut self, f: impl Fn(&Place) -> Option<Place>) {
         self.advance();
         let named = std::mem::take(&mut self.named);
@@ -671,7 +906,14 @@ impl Marks {
             .filter_map(|(name, place)| Some((name, f(&place)?)))
             .collect();
         self.jump = self.jump.as_ref().and_then(&f);
-        self.previous = self.previous.as_ref().and_then(f);
+        self.previous = self.previous.as_ref().and_then(&f);
+        for entry in &mut self.list {
+            if let Entry::At(place) = entry
+                && let Some(moved) = f(place)
+            {
+                *place = moved;
+            }
+        }
     }
 }
 
@@ -798,7 +1040,11 @@ pub(crate) fn set(
         'a'..='z' => {
             marks.named.insert(name, place);
         }
-        _ => marks.jump = Some(place),
+        // `m'` adds a jump, as nvim's does.
+        _ => {
+            marks.add(place.clone());
+            marks.jump = Some(place);
+        }
     }
     Ok(Dispatched::new(Effect::Nothing))
 }

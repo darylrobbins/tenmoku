@@ -214,6 +214,15 @@ pub(super) fn run(
     };
     let group = Group::begin(target, actor);
     let busy = Busy::start();
+    // Its jumplist entry, where it began, follows what its commands do;
+    // their own jumps add none.
+    target.state.marks.watch(target.model);
+    let from = target.model.primary_selection().head();
+    target
+        .state
+        .marks
+        .add_jump(Place::at(target.model.snapshot(), from));
+    target.state.marks.keep_jumps(true);
     let mut marks = Marks::new(target, marked, home.0);
     let mut visited = None;
     let mut outcome = Ok(());
@@ -244,6 +253,7 @@ pub(super) fn run(
         }
     }
     drop(busy);
+    target.state.marks.keep_jumps(false);
     let transactions: Vec<TransactionId> = group.end(target).into_iter().collect();
     // As in nvim, the jump mark is where the cursor was before, followed
     // to where its row went (deleted, to the row that took its place):
@@ -258,8 +268,7 @@ pub(super) fn run(
         text.clip_offset(text.row_start(row) + column, fe_text::Bias::Left),
     );
     target.state.marks.watch(target.model);
-    target.state.marks.jumped(place.clone());
-    target.state.marks.jumped(place);
+    target.state.marks.set_jump(place);
     if let (true, Some(row)) = (print, visited) {
         let caret = first_non_blank(text, row.min(text.row_count() - 1));
         target.model.set_selections([operator::caret(caret)]);
