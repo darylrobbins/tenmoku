@@ -2792,6 +2792,98 @@
           }
         }
       }
+    },
+    {
+      "name": "e_keeps_a_match_before_a_slow_one",
+      "buffer": "x\nb aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/b\\|\\%(a\\|.\\)*c/e<CR>",
+      "expect": {
+        "buffer": "x\nb aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "b\\|\\%(a\\|.\\)*c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "counted_s_keeps_a_match_before_a_slow_one",
+      "buffer": "x\nbb aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2/b\\|\\%(a\\|.\\)*c/s<CR>",
+      "expect": {
+        "buffer": "x\nbb aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "b\\|\\%(a\\|.\\)*c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "question_s_keeps_a_match_before_a_slow_one",
+      "buffer": "x\nb aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "?b\\|\\%(a\\|.\\)*c?s<CR>",
+      "expect": {
+        "buffer": "x\nb aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "b\\|\\%(a\\|.\\)*c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "question_e_takes_an_empty_match_before_a_slow_one",
+      "buffer": "x\nb aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "?b\\|\\>\\|\\%(a\\|.\\)*c?e<CR>",
+      "expect": {
+        "buffer": "x\nb aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "b\\|\\>\\|\\%(a\\|.\\)*c",
+            "linewise": false
+          }
+        }
+      }
     }
   ]
 }

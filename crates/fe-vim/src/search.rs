@@ -1,6 +1,7 @@
 //! Search patterns: Vim's pattern language, translated to a [`regex::Regex`]
 //! and matched one row at a time. The crate docs list what translates.
 
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
@@ -74,7 +75,7 @@ impl Deadline {
         Self::within(time_limit())
     }
 
-    fn within(limit: Duration) -> Self {
+    pub(crate) fn within(limit: Duration) -> Self {
         let now = Instant::now();
         Self {
             end: now.checked_add(limit).unwrap_or(now),
@@ -306,7 +307,7 @@ impl Pattern {
         self.try_find_by(text, from, forward, &Deadline::new())
     }
 
-    fn try_find_by(
+    pub(crate) fn try_find_by(
         &self,
         text: &Text,
         from: usize,
@@ -317,41 +318,38 @@ impl Pattern {
             return self.forward(text, from, false, deadline);
         }
         let at = text.offset_to_point(text.clip_offset(from.min(text.len()), Bias::Left));
-        let column = at.column as usize;
         let rows = text.row_count();
+        // `from`'s row is listed only as far as `from`, unless the search
+        // wraps back to it.
+        let from = text.point_to_offset(at);
+        let mut here = RowList::new(text, at.row);
+        let before = here.list_until(self, deadline, |_, unlisted| unlisted >= from)?;
+        if let Some(found) = before.iter().rev().find(|found| found.start < from) {
+            return Ok(Some(found.clone()));
+        }
         let mut buf = String::new();
-        let (start, hay) = row_text(text, at.row, &mut buf);
         let shift = |range: Range<usize>, start: usize| start + range.start..start + range.end;
-        let mut before = None;
-        let mut last = None;
-        for found in self.matches(hay, deadline) {
-            if found.start < column {
-                before = Some(found.clone());
-            }
-            last = Some(found);
-        }
-        deadline.check()?;
-        if let Some(found) = before {
-            return Ok(Some(shift(found, start)));
-        }
-        // What `from`'s row offers once the search wraps back to it.
-        let wrapped = last.map(|found| shift(found, start));
         for row in (0..at.row).rev().chain((at.row + 1..rows).rev()) {
             let (start, hay) = row_text(text, row, &mut buf);
             let found = self.matches(hay, deadline).last();
-            deadline.check()?;
+            if deadline.expired() {
+                return Err(Interrupted);
+            }
             if let Some(found) = found {
                 return Ok(Some(shift(found, start)));
             }
         }
-        Ok(wrapped)
+        Ok(here
+            .list_until(self, deadline, |_, _| false)?
+            .last()
+            .cloned())
     }
 
     /// The forward walk of [`Pattern::find`] and [`Pattern::find_from`]:
     /// `inclusive` takes a match at `from`; otherwise, as in Vim, the search
     /// starts a whole character on from `from` (from wherever in a character
     /// it is), and from the row's last character that's the next row.
-    fn forward(
+    pub(crate) fn forward(
         &self,
         text: &Text,
         from: usize,
@@ -417,13 +415,14 @@ impl Pattern {
     /// again, so once a match comes back the rest is counted round, not
     /// searched. After the first search, each row's matches are listed
     /// once and stepped through, so the work is bounded by the text's
-    /// matches and rows, not the count. Past [`time_limit`] (counted from
-    /// this call) it gives up and returns `None`.
+    /// matches and rows, not the count, and a row's matches are listed only
+    /// as far as a step needs. Past [`time_limit`] (counted from this call)
+    /// it gives up and returns `None`.
     pub fn nth(&self, text: &Text, from: usize, forward: bool, count: usize) -> Option<usize> {
         self.nth_by(text, from, forward, count, &Deadline::new())
     }
 
-    fn nth_by(
+    pub(crate) fn nth_by(
         &self,
         text: &Text,
         from: usize,
@@ -442,7 +441,7 @@ impl Pattern {
         let mut found = vec![first];
         for step in 1..count {
             let at = *found.last().expect("one match was found");
-            let next = rows.step(at, forward);
+            let next = rows.step(at, forward).ok()?;
             if deadline.expired() {
                 return None;
             }
@@ -511,82 +510,179 @@ impl Pattern {
     }
 }
 
-/// The rows [`Pattern::nth`] has searched: each row's matches, listed
-/// once, as starts and where a search from each start resumes.
+/// The rows [`Pattern::nth`] has searched: each row's matches, listed as
+/// far as a step has needed.
 struct Rows<'a> {
     pattern: &'a Pattern,
     text: &'a Text,
     deadline: &'a Deadline,
-    listed: HashMap<u32, Listed>,
+    listed: HashMap<u32, RowList<'a>>,
 }
 
-/// A row's end and its matches' starts, each with where a forward search
-/// from it begins: a whole character on.
-struct Listed {
-    end: usize,
-    starts: Vec<(usize, usize)>,
-}
-
-impl Rows<'_> {
-    fn row(&mut self, row: u32) -> &Listed {
-        let (pattern, text, deadline) = (self.pattern, self.text, self.deadline);
-        self.listed.entry(row).or_insert_with(|| {
-            let mut buf = String::new();
-            let (start, hay) = row_text(text, row, &mut buf);
-            let starts = pattern
-                .matches(hay, deadline)
-                .map(|found| {
-                    let past = found.start + unit(&hay[found.start..]).unwrap_or(0);
-                    (start + found.start, start + past)
-                })
-                .collect();
-            Listed {
-                end: start + hay.len(),
-                starts,
-            }
-        })
+impl<'a> Rows<'a> {
+    /// `row`, its matches listed until `enough` holds
+    /// ([`RowList::list_until`]): `Err` if the deadline ran out first, or
+    /// had already, listed or not.
+    fn row(
+        &mut self,
+        row: u32,
+        enough: impl Fn(&[Range<usize>], usize) -> bool,
+    ) -> Result<&RowList<'a>, Interrupted> {
+        let text = self.text;
+        let list = self
+            .listed
+            .entry(row)
+            .or_insert_with(|| RowList::new(text, row));
+        list.list_until(self.pattern, self.deadline, enough)?;
+        Ok(list)
     }
 
     /// Where [`Pattern::find`] goes from the match starting at `at`, by
     /// the same rules, from the rows' lists.
-    fn step(&mut self, at: usize, forward: bool) -> usize {
+    fn step(&mut self, at: usize, forward: bool) -> Result<usize, Interrupted> {
         let from_row = self.text.offset_to_point(at).row;
         let rows = self.text.row_count();
-        let deadline = self.deadline;
-        let here = self.row(from_row);
-        if deadline.expired() {
-            return at;
-        }
-        let ix = here.starts.partition_point(|&(start, _)| start < at);
+        // Listed as far as `at`: every match before it, and its own.
+        let here = self.row(from_row, |_, unlisted| unlisted > at)?;
+        let ix = here.listed().partition_point(|found| found.start < at);
         if forward {
-            let past = here.starts.get(ix).map_or(at, |&(_, past)| past);
-            if past < here.end
-                && let Some(&(next, _)) = here.starts[ix..].iter().find(|&&(s, _)| s >= past)
-            {
-                return next;
+            let past = match ix < here.listed().len() {
+                true => here.past(ix),
+                false => at,
+            };
+            if past < here.end() {
+                let here = self.row(from_row, |found, _| starts_from(found, past))?;
+                if let Some(next) = here.listed()[ix..].iter().find(|found| found.start >= past) {
+                    return Ok(next.start);
+                }
             }
             for row in (from_row + 1..rows).chain(0..=from_row) {
-                if let Some(&(next, _)) = self.row(row).starts.first() {
-                    return next;
-                }
-                if self.deadline.expired() {
-                    return at;
+                if let Some(next) = self
+                    .row(row, |found, _| !found.is_empty())?
+                    .listed()
+                    .first()
+                {
+                    return Ok(next.start);
                 }
             }
         } else {
-            if ix > 0 {
-                return here.starts[ix - 1].0;
+            if let Some(ix) = ix.checked_sub(1) {
+                return Ok(here.listed()[ix].start);
             }
             for row in (0..from_row).rev().chain((from_row..rows).rev()) {
-                if let Some(&(next, _)) = self.row(row).starts.last() {
-                    return next;
-                }
-                if self.deadline.expired() {
-                    return at;
+                if let Some(next) = self.row(row, |_, _| false)?.listed().last() {
+                    return Ok(next.start);
                 }
             }
         }
-        at
+        Ok(at)
+    }
+}
+
+/// Whether the last of `found` starts at or after `at`, so that no match
+/// listed after it can come before.
+pub(crate) fn starts_from(found: &[Range<usize>], at: usize) -> bool {
+    found.last().is_some_and(|found| found.start >= at)
+}
+
+/// One row's matches, as [`Pattern::matches`] finds them, listed only as
+/// far as a caller has needed: a search that wants an early match never
+/// waits on a later one, which a pattern that backtracks through the rest
+/// of the row can take past the deadline to find or rule out. The row is
+/// read once, and its text kept while matches are left to list.
+pub(crate) struct RowList<'a> {
+    /// The row's offset in the text, and its end.
+    start: usize,
+    end: usize,
+    hay: Cow<'a, str>,
+    /// The matches listed, as ranges in the text, and where a forward
+    /// search from each one's start begins: a whole character on.
+    found: Vec<Range<usize>>,
+    past: Vec<usize>,
+    /// Where the row's next search starts, `None` once it has none left.
+    resume: Option<usize>,
+}
+
+impl<'a> RowList<'a> {
+    /// `row` of `text`, read but with no match listed yet.
+    pub(crate) fn new(text: &'a Text, row: u32) -> Self {
+        let (start, hay) = row_kept(text, row);
+        Self {
+            start,
+            end: start + hay.len(),
+            hay,
+            found: Vec::new(),
+            past: Vec::new(),
+            resume: Some(0),
+        }
+    }
+
+    /// The row's end, as an offset in the text.
+    pub(crate) fn end(&self) -> usize {
+        self.end
+    }
+
+    /// The matches listed so far, in order.
+    pub(crate) fn listed(&self) -> &[Range<usize>] {
+        &self.found
+    }
+
+    /// Where a forward search from the start of listed match `ix` begins.
+    pub(crate) fn past(&self, ix: usize) -> usize {
+        self.past[ix]
+    }
+
+    /// Whether every one of the row's matches is listed.
+    #[cfg(test)]
+    pub(crate) fn done(&self) -> bool {
+        self.resume.is_none()
+    }
+
+    /// Lists the row's matches on until `enough` holds, or the row has none
+    /// left, and gives them all. `enough` is given the matches listed and
+    /// where any match not listed yet starts, at the earliest (the next
+    /// search's start), so a search that wants a match before some place
+    /// can stop once none is left there. `Err` if `deadline` has run out,
+    /// which it reads first, or runs out before then, read again after
+    /// every regex call: a call that overran it, whether it found a match
+    /// or nothing more, counts for nothing, and the row isn't taken as done.
+    pub(crate) fn list_until(
+        &mut self,
+        pattern: &Pattern,
+        deadline: &Deadline,
+        enough: impl Fn(&[Range<usize>], usize) -> bool,
+    ) -> Result<&[Range<usize>], Interrupted> {
+        if deadline.expired() {
+            return Err(Interrupted);
+        }
+        if let Some(at) = self.resume
+            && !enough(&self.found, self.start + at)
+        {
+            let mut matches = pattern.matches_from(&self.hay, at, deadline);
+            loop {
+                let found = matches.next();
+                if deadline.expired() {
+                    return Err(Interrupted);
+                }
+                let Some(found) = found else {
+                    self.resume = None;
+                    break;
+                };
+                let past = found.start + unit(&self.hay[found.start..]).unwrap_or(0);
+                self.found
+                    .push(self.start + found.start..self.start + found.end);
+                self.past.push(self.start + past);
+                self.resume = matches.at;
+                match self.resume {
+                    Some(at) if !enough(&self.found, self.start + at) => {}
+                    _ => break,
+                }
+            }
+            if self.resume.is_none() {
+                self.hay = Cow::Borrowed("");
+            }
+        }
+        Ok(&self.found)
     }
 }
 
@@ -770,25 +866,6 @@ pub(crate) fn first_in_row(
     Ok(found.map(|range| start + range.start..start + range.end))
 }
 
-/// Every match on `row` (offset ranges in the text), in order, for a caller
-/// that steps through rows under one `deadline`: `Err` if it ran out before
-/// the row was listed, never part of it.
-pub(crate) fn all_in_row(
-    text: &Text,
-    row: u32,
-    pattern: &Pattern,
-    deadline: &Deadline,
-) -> Result<Vec<Range<usize>>, Interrupted> {
-    let mut buf = String::new();
-    let (start, hay) = row_text(text, row, &mut buf);
-    let found = pattern.matches(hay, deadline);
-    let found = found
-        .map(|range| start + range.start..start + range.end)
-        .collect();
-    deadline.check()?;
-    Ok(found)
-}
-
 /// The matches on `row` that reach `window` (offsets in the text), in
 /// order, at most `cap` of them. They are the matches [`matches_in`] finds
 /// on the row, searched from its start: a non-empty one reaches the window
@@ -842,15 +919,7 @@ thread_local! {
 /// `row`'s offset and text, without its line break: borrowed from `text`
 /// when it lies in one chunk, else gathered into `buf`.
 pub(crate) fn row_text<'a>(text: &'a Text, row: u32, buf: &'a mut String) -> (usize, &'a str) {
-    #[cfg(test)]
-    ROWS_SEARCHED.with(|rows| rows.set(rows.get() + 1));
-    let start = text.row_start(row);
-    let end = if row + 1 < text.row_count() {
-        text.row_start(row + 1) - 1
-    } else {
-        text.len()
-    };
-    let mut chunks = text.chunks_in_range(start..end);
+    let (start, mut chunks) = row_chunks(text, row);
     match (chunks.next(), chunks.next()) {
         (None, _) => (start, ""),
         (Some(only), None) => (start, only),
@@ -862,6 +931,33 @@ pub(crate) fn row_text<'a>(text: &'a Text, row: u32, buf: &'a mut String) -> (us
             (start, buf.as_str())
         }
     }
+}
+
+/// [`row_text`] to keep: borrowed from `text` when it lies in one chunk,
+/// else gathered.
+fn row_kept(text: &Text, row: u32) -> (usize, Cow<'_, str>) {
+    let (start, mut chunks) = row_chunks(text, row);
+    let hay = match (chunks.next(), chunks.next()) {
+        (None, _) => Cow::Borrowed(""),
+        (Some(only), None) => Cow::Borrowed(only),
+        (Some(first), Some(second)) => {
+            Cow::Owned([first, second].into_iter().chain(chunks).collect())
+        }
+    };
+    (start, hay)
+}
+
+/// `row`'s offset and the chunks of its text, without its line break.
+fn row_chunks(text: &Text, row: u32) -> (usize, impl Iterator<Item = &str>) {
+    #[cfg(test)]
+    ROWS_SEARCHED.with(|rows| rows.set(rows.get() + 1));
+    let start = text.row_start(row);
+    let end = if row + 1 < text.row_count() {
+        text.row_start(row + 1) - 1
+    } else {
+        text.len()
+    };
+    (start, text.chunks_in_range(start..end))
 }
 
 /// The length of the character `text` starts with, a whole one as Vim
@@ -2404,9 +2500,12 @@ mod tests {
     fn rows_step_polls_the_clock_through_listed_rows() {
         let text = Text::new("a\na\na");
         let pattern = Pattern::parse("a").unwrap();
-        let listed = |row: u32| Listed {
-            end: row as usize * 2 + 1,
-            starts: vec![(row as usize * 2, row as usize * 2 + 1)],
+        let listed = |row: u32| {
+            let mut list = RowList::new(&text, row);
+            list.list_until(&pattern, &Deadline::new(), |_, _| false)
+                .unwrap();
+            assert!(list.done());
+            list
         };
         for (from, forward) in [(0, true), (4, false)] {
             let deadline = Deadline::within(Duration::ZERO);
@@ -2416,7 +2515,11 @@ mod tests {
                 deadline: &deadline,
                 listed: (0..3).map(|row| (row, listed(row))).collect(),
             };
-            assert_eq!(rows.step(from, forward), from, "forward {forward}");
+            assert_eq!(
+                rows.step(from, forward),
+                Err(Interrupted),
+                "forward {forward}"
+            );
         }
         let deadline = Deadline::within(Duration::ZERO);
         assert_eq!(pattern.nth_by(&text, 0, true, 3, &deadline), None);
@@ -2455,7 +2558,7 @@ mod tests {
                 listed: HashMap::new(),
             };
             ROWS_SEARCHED.set(0);
-            assert_eq!(rows.step(from, forward), from);
+            assert_eq!(rows.step(from, forward), Err(Interrupted));
             assert_eq!(ROWS_SEARCHED.get(), 1, "from {from}, forward {forward}");
         }
     }
@@ -2493,3 +2596,7 @@ mod tests {
         ));
     }
 }
+
+#[cfg(test)]
+#[path = "tests/search_incremental.rs"]
+mod incremental_tests;

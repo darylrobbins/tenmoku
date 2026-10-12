@@ -681,3 +681,32 @@ name = "no_match_with_an_offset"
 buffer = "a foo b"
 cursor = [0, 0]
 keys = "/zzz/e<CR>"
+
+# A match found before a slow search for the next one is kept: after the
+# b, the second branch backtracks through the a's for longer than the time
+# limit (T565).
+[[case]]
+name = "e_keeps_a_match_before_a_slow_one"
+buffer = "x\nb aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+cursor = [0, 0]
+keys = "/b\\|\\%(a\\|.\\)*c/e<CR>"
+
+[[case]]
+name = "counted_s_keeps_a_match_before_a_slow_one"
+buffer = "x\nbb aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+cursor = [0, 0]
+keys = "2/b\\|\\%(a\\|.\\)*c/s<CR>"
+
+# Going back, a row is searched only as far as the cursor: no match left to
+# find on it could come before (T565 review F2).
+[[case]]
+name = "question_s_keeps_a_match_before_a_slow_one"
+buffer = "x\nb aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+cursor = [1, 1]
+keys = "?b\\|\\%(a\\|.\\)*c?s<CR>"
+
+[[case]]
+name = "question_e_takes_an_empty_match_before_a_slow_one"
+buffer = "x\nb aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+cursor = [1, 1]
+keys = "?b\\|\\>\\|\\%(a\\|.\\)*c?e<CR>"

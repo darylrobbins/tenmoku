@@ -27,7 +27,7 @@ use fe_text::{Bias, Text};
 use crate::{
     Search, SearchOffset,
     motion::{Cursor, Line},
-    search::{self, Deadline, Interrupted, Pattern},
+    search::{Deadline, Interrupted, Pattern, RowList, starts_from},
 };
 
 /// The offset `text` (what follows a search's closing delimiter) gives:
@@ -60,7 +60,9 @@ pub(crate) fn parse(text: &str) -> Option<SearchOffset> {
 /// the search ran out of time. `n` and `N` that would leave the cursor on
 /// `from` without going round an end of the text go one match further, as
 /// nvim's do (an offset cut short at an end of the text can leave them
-/// there); with a line offset they stay.
+/// there); with a line offset they stay. One deadline,
+/// [`time_limit`](crate::search::time_limit) from the call, covers every
+/// search it makes.
 pub(crate) fn land(
     cursor: &mut Cursor,
     pattern: &Pattern,
@@ -68,15 +70,16 @@ pub(crate) fn land(
     search: Search,
     count: usize,
 ) -> bool {
-    if !place(cursor, pattern, from, search, count) {
+    let deadline = Deadline::new();
+    if !place(cursor, pattern, from, search, count, &deadline) {
         return false;
     }
     let lines = matches!(search.offset, SearchOffset::Lines(_));
     if search.again && !lines && cursor.offset() == from {
-        let wrapped =
-            nth_match(cursor.text, pattern, from, search, count).is_none_or(|(_, wrapped)| wrapped);
+        let wrapped = nth_match(cursor.text, pattern, from, search, count, &deadline)
+            .is_none_or(|(_, wrapped)| wrapped);
         if !wrapped {
-            return place(cursor, pattern, from, search, count + 1);
+            return place(cursor, pattern, from, search, count + 1, &deadline);
         }
     }
     true
@@ -89,16 +92,16 @@ fn place(
     from: usize,
     search: Search,
     count: usize,
+    deadline: &Deadline,
 ) -> bool {
     let text = cursor.text;
     let forward = search.forward;
     let base = match search.offset {
-        SearchOffset::End(_) => {
-            nth_match(text, pattern, from, search, count).map(|(found, _)| last_char(text, found))
-        }
-        SearchOffset::Start(n) => by_start(text, pattern, from, forward, n, count),
+        SearchOffset::End(_) => nth_match(text, pattern, from, search, count, deadline)
+            .map(|(found, _)| last_char(text, found)),
+        SearchOffset::Start(n) => by_start(text, pattern, from, forward, n, count, deadline),
         SearchOffset::None | SearchOffset::Lines(_) => {
-            by_start(text, pattern, from, forward, 0, count)
+            by_start(text, pattern, from, forward, 0, count, deadline)
         }
     };
     let Some(base) = base else {
@@ -126,17 +129,18 @@ fn by_start(
     forward: bool,
     n: i32,
     count: usize,
+    deadline: &Deadline,
 ) -> Option<usize> {
     let first = match taken_back(text, from, n) {
-        Some(at) => return pattern.nth(text, at, forward, count),
+        Some(at) => return pattern.nth_by(text, at, forward, count, deadline),
         // From off the start or the end, the search takes the text's first
         // match going forward and its last going back.
-        None if forward => pattern.find_from(text, 0)?.start,
-        None => pattern.find(text, 0, false)?.start,
+        None if forward => pattern.forward(text, 0, true, deadline).ok()??.start,
+        None => pattern.try_find_by(text, 0, false, deadline).ok()??.start,
     };
     match count {
         0 | 1 => Some(first),
-        _ => pattern.nth(text, first, forward, count - 1),
+        _ => pattern.nth_by(text, first, forward, count - 1, deadline),
     }
 }
 
@@ -149,14 +153,16 @@ fn by_start(
 /// landed (with an `e` offset, its last character, so an empty match finds
 /// itself again). Once a match comes back the rest
 /// of the count goes round, not searched, so the work is bounded by the
-/// text's matches and rows, not the count. `None` if nothing matches, or
-/// past [`search::time_limit`].
-fn nth_match(
+/// text's matches and rows, not the count, and each row's matches are
+/// listed only as far as a step needs. `None` if nothing matches, or past
+/// `deadline`.
+pub(crate) fn nth_match(
     text: &Text,
     pattern: &Pattern,
     from: usize,
     search: Search,
     count: usize,
+    deadline: &Deadline,
 ) -> Option<(Range<usize>, bool)> {
     let (by_end, n) = match search.offset {
         SearchOffset::End(n) => (true, n),
@@ -168,7 +174,7 @@ fn nth_match(
         pattern,
         forward: search.forward,
         by_end,
-        deadline: Deadline::new(),
+        deadline,
         rows: HashMap::new(),
         lines: HashMap::new(),
     };
@@ -194,6 +200,9 @@ fn nth_match(
             }
         };
         let (next, crossed) = next.ok()??;
+        if walk.deadline.expired() {
+            return None;
+        }
         wrapped |= crossed;
         if let Some(&first) = seen.get(&next.start) {
             let cycle = &found[first..];
@@ -205,8 +214,8 @@ fn nth_match(
     Some((found.pop()?, wrapped))
 }
 
-/// A search's matches row by row, each row listed once, for going from
-/// match to match.
+/// A search's matches row by row, each row read once and its matches listed
+/// as far as a step has needed, for going from match to match.
 struct Walk<'a> {
     text: &'a Text,
     pattern: &'a Pattern,
@@ -214,25 +223,39 @@ struct Walk<'a> {
     /// Whether matches compare by their last character (an `e` offset) or
     /// their start.
     by_end: bool,
-    deadline: Deadline,
-    rows: HashMap<u32, Vec<Range<usize>>>,
+    deadline: &'a Deadline,
+    rows: HashMap<u32, RowList<'a>>,
     lines: HashMap<u32, Line>,
 }
 
-impl Walk<'_> {
-    /// `row`'s matches, as [`search::matches_in`] lists them, under the
-    /// walk's one deadline: `Err` once that has passed, the clock read for
-    /// every row, listed already or not. The whole row is listed, even past
-    /// the match wanted; listing only as far as needed is T565.
-    fn matches(&mut self, row: u32) -> Result<&[Range<usize>], Interrupted> {
-        if self.deadline.expired() {
-            return Err(Interrupted);
-        }
-        if !self.rows.contains_key(&row) {
-            let found = search::all_in_row(self.text, row, self.pattern, &self.deadline)?;
-            self.rows.insert(row, found);
-        }
-        Ok(&self.rows[&row])
+impl<'a> Walk<'a> {
+    /// `row`'s matches, listed until `enough` holds of them or the row has
+    /// none left ([`RowList::list_until`]), under the walk's one deadline:
+    /// `Err` once that has passed, the clock read for every row, listed
+    /// already or not.
+    fn matches(
+        &mut self,
+        row: u32,
+        enough: impl Fn(&[Range<usize>], usize) -> bool,
+    ) -> Result<&[Range<usize>], Interrupted> {
+        let text = self.text;
+        self.rows
+            .entry(row)
+            .or_insert_with(|| RowList::new(text, row))
+            .list_until(self.pattern, self.deadline, enough)
+    }
+
+    /// `row`'s first match, if it has one.
+    fn first(&mut self, row: u32) -> Result<Option<Range<usize>>, Interrupted> {
+        Ok(self
+            .matches(row, |found, _| !found.is_empty())?
+            .first()
+            .cloned())
+    }
+
+    /// `row`'s last match, if it has one: all of them listed.
+    fn last(&mut self, row: u32) -> Result<Option<Range<usize>>, Interrupted> {
+        Ok(self.matches(row, |_, _| false)?.last().cloned())
     }
 
     fn line(&mut self, row: u32) -> &Line {
@@ -259,14 +282,14 @@ impl Walk<'_> {
         let rows = self.text.row_count();
         if self.forward {
             for row in 0..rows {
-                if let Some(found) = self.matches(row)?.first() {
-                    return Ok(Some(found.clone()));
+                if let Some(found) = self.first(row)? {
+                    return Ok(Some(found));
                 }
             }
         } else {
             for row in (0..rows).rev() {
-                if let Some(found) = self.matches(row)?.last() {
-                    return Ok(Some(found.clone()));
+                if let Some(found) = self.last(row)? {
+                    return Ok(Some(found));
                 }
             }
         }
@@ -289,9 +312,18 @@ impl Walk<'_> {
         let (start, end) = (line.start, line.start + line.text.len());
         let after = line.starts.partition_point(|&at| at <= origin - start);
         let next = start + line.starts.get(after).copied().unwrap_or(end - start);
+        // A row is listed only as far as the match wanted: going forward,
+        // until it is listed; going back, until no match left to list can
+        // come before `origin`, by its start (or by its end, which is at
+        // or after its start).
+        let ends_past =
+            |found: &[Range<usize>], at| found.last().is_some_and(|found| found.end > at);
         if self.forward {
             if next < end {
-                let found = self.matches(row)?;
+                let found = match by_end {
+                    true => self.matches(row, |found, _| ends_past(found, next))?,
+                    false => self.matches(row, |found, _| starts_from(found, next))?,
+                };
                 let ix = match by_end {
                     true => found.partition_point(|found| found.end <= next),
                     false => found.partition_point(|found| found.start < next),
@@ -302,19 +334,26 @@ impl Walk<'_> {
             }
             return self.first_after(row);
         }
-        let found = self.matches(row)?;
-        let ix = match by_end {
-            true if origin > start => found.partition_point(|found| found.end <= origin),
-            true => 0,
-            false => found.partition_point(|found| found.start < origin),
+        let (found, ix) = match by_end {
+            true if origin > start => {
+                let found = self.matches(row, |found, unlisted| {
+                    unlisted > origin || ends_past(found, origin)
+                })?;
+                (found, found.partition_point(|found| found.end <= origin))
+            }
+            true => (self.matches(row, |_, _| true)?, 0),
+            false => {
+                let found = self.matches(row, |_, unlisted| unlisted >= origin)?;
+                (found, found.partition_point(|found| found.start < origin))
+            }
         };
         if let Some(ix) = ix.checked_sub(1) {
             return Ok(Some((found[ix].clone(), false)));
         }
         let earlier = (0..row).rev().map(|row| (row, false));
         for (row, wrapped) in earlier.chain((row..rows).rev().map(|row| (row, true))) {
-            if let Some(found) = self.matches(row)?.last() {
-                return Ok(Some((found.clone(), wrapped)));
+            if let Some(found) = self.last(row)? {
+                return Ok(Some((found, wrapped)));
             }
         }
         Ok(None)
@@ -324,9 +363,11 @@ impl Walk<'_> {
     /// finds them going forward: the next on its row, else the first on a
     /// later row, round the text.
     fn after(&mut self, found: &Range<usize>) -> Result<Option<(Range<usize>, bool)>, Interrupted> {
-        let row = self.text.offset_to_point(found.start).row;
-        let matches = self.matches(row)?;
-        let ix = matches.partition_point(|next| next.start <= found.start);
+        let (row, at) = (self.text.offset_to_point(found.start).row, found.start);
+        let matches = self.matches(row, |found, _| {
+            found.last().is_some_and(|last| last.start > at)
+        })?;
+        let ix = matches.partition_point(|next| next.start <= at);
         if let Some(next) = matches.get(ix) {
             return Ok(Some((next.clone(), false)));
         }
@@ -339,8 +380,8 @@ impl Walk<'_> {
         let rows = self.text.row_count();
         let later = (row + 1..rows).map(|row| (row, false));
         for (row, wrapped) in later.chain((0..=row).map(|row| (row, true))) {
-            if let Some(found) = self.matches(row)?.first() {
-                return Ok(Some((found.clone(), wrapped)));
+            if let Some(found) = self.first(row)? {
+                return Ok(Some((found, wrapped)));
             }
         }
         Ok(None)
