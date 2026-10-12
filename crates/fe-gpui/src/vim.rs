@@ -3,9 +3,9 @@
 //! `docs/decisions/vim-engine.md`, §9 and §10.
 //!
 //! With vim on, a focused editor's key context is
-//! `editor vim_mode=<mode>`, plus `vim_pending` and `vim_pending_kind`
-//! while a command is incomplete; [`crate::keymap`] reads them as
-//! `vim.mode`, `vim.pending` and `vim.pending_kind`. A keystroke in normal,
+//! `editor vim_enabled vim_mode=<mode>`, plus `vim_pending` and
+//! `vim_pending_kind` while a command is incomplete; [`crate::keymap`] reads
+//! them as `vim.enabled`, `vim.mode`, `vim.pending` and `vim.pending_kind`. A keystroke in normal,
 //! operator-pending or a visual mode goes:
 //!
 //! 1. to the keymap, as always, unless a command is pending. A match runs,
@@ -59,6 +59,10 @@ pub(crate) const KEY: &str = "vim.key";
 pub(crate) const VISUAL_EXIT: &str = "vim.visual_exit";
 /// Flips the switch, for this session.
 pub(crate) const TOGGLE: &str = "vim.toggle";
+/// The flag an editor's frame carries while vim is on, in every mode: the
+/// editor's keys that would take vim's, such as `escape`, apply only
+/// without it (`editor && !vim.enabled`).
+pub(crate) const ENABLED: &str = "vim.enabled";
 
 /// The line break `Enter` types: in insert mode, through
 /// [`VimState::line_break`].
@@ -295,7 +299,7 @@ pub(crate) fn stamp(stack: ContextStack, state: Option<&VimState>) -> ContextSta
                 frame.flags.retain(|flag| !flag.starts_with("vim."));
                 frame.values.retain(|key, _| !key.starts_with("vim."));
                 if let Some(state) = state {
-                    frame = state.stamp(frame);
+                    frame = state.stamp(frame).flag(ENABLED);
                 }
             }
             frame
@@ -305,7 +309,7 @@ pub(crate) fn stamp(stack: ContextStack, state: Option<&VimState>) -> ContextSta
 
 /// `state`'s keys on the editor's GPUI key context, in GPUI's spelling.
 pub(crate) fn add_to_key_context(context: &mut KeyContext, state: &VimState) {
-    let frame = state.stamp(fe_command::ContextFrame::new(""));
+    let frame = state.stamp(fe_command::ContextFrame::new("")).flag(ENABLED);
     let gpui_key = |key: &str| key.replacen("vim.", GPUI_PREFIX, 1);
     for flag in &frame.flags {
         context.add(gpui_key(flag));

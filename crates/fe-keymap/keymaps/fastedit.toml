@@ -162,6 +162,40 @@ keys = "secondary-a"
 command = "editor.select_all"
 context = "editor"
 
+# Multi-cursor, as VS Code binds it, with vim off: with vim on, its keys
+# (escape, ctrl-d and the rest) stay vim's in every mode. Completion's
+# escape, later, wins while its menu shows.
+
+[[bindings]]
+keys = { macos = "cmd-alt-up", default = "alt-shift-up" }
+command = "editor.add_cursor_above"
+context = "editor && !vim.enabled"
+
+[[bindings]]
+keys = { macos = "cmd-alt-down", default = "alt-shift-down" }
+command = "editor.add_cursor_below"
+context = "editor && !vim.enabled"
+
+[[bindings]]
+keys = "secondary-d"
+command = "editor.select_next_occurrence"
+context = "editor && !vim.enabled"
+
+[[bindings]]
+keys = "secondary-shift-l"
+command = "editor.select_all_occurrences"
+context = "editor && !vim.enabled"
+
+[[bindings]]
+keys = "alt-shift-i"
+command = "editor.split_selection_into_lines"
+context = "editor && !vim.enabled"
+
+[[bindings]]
+keys = "escape"
+command = "editor.single_selection"
+context = "editor && !vim.enabled"
+
 [[bindings]]
 keys = "backspace"
 command = "editor.backspace"

@@ -135,6 +135,33 @@ impl FrameLayout {
         (end <= at.x && at.x < end + space).then_some(row.end)
     }
 
+    /// How many columns, each a space wide, a window position is past the
+    /// end of a buffer row this frame shows, to the nearest; 0 short of the
+    /// end or off the frame's rows. A box selection's column goes that far.
+    pub(crate) fn columns_past_row_end(&mut self, position: Point<Pixels>) -> usize {
+        let at = self.to_frame(position);
+        let Self {
+            frame,
+            long_rows,
+            glyph_widths,
+            ..
+        } = self;
+        let display_row = ((at.y + frame.scroll.y) / frame.line_height).floor();
+        let Some(row) = u32::try_from(display_row as i64)
+            .ok()
+            .and_then(|display_row| frame.row(display_row))
+            .filter(|row| row.last)
+        else {
+            return 0;
+        };
+        let end = frame.view_x(row.x_for_offset(row.end, long_rows, glyph_widths));
+        let space = glyph_widths.char_width(' ');
+        if at.x <= end || space <= 0. {
+            return 0;
+        }
+        ((at.x - end) / space).round() as usize
+    }
+
     /// The window bounds of a caret at `offset`, if its row is on screen.
     pub(crate) fn caret_bounds(&mut self, offset: usize) -> Option<Bounds<Pixels>> {
         let caret = self

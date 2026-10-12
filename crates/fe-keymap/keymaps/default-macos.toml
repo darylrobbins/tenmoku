@@ -149,6 +149,36 @@ command = "editor.select_all"
 context = "editor"
 
 [[bindings]]
+keys = "cmd-alt-up"
+command = "editor.add_cursor_above"
+context = "editor && !vim.enabled"
+
+[[bindings]]
+keys = "cmd-alt-down"
+command = "editor.add_cursor_below"
+context = "editor && !vim.enabled"
+
+[[bindings]]
+keys = "cmd-d"
+command = "editor.select_next_occurrence"
+context = "editor && !vim.enabled"
+
+[[bindings]]
+keys = "cmd-shift-l"
+command = "editor.select_all_occurrences"
+context = "editor && !vim.enabled"
+
+[[bindings]]
+keys = "alt-shift-i"
+command = "editor.split_selection_into_lines"
+context = "editor && !vim.enabled"
+
+[[bindings]]
+keys = "escape"
+command = "editor.single_selection"
+context = "editor && !vim.enabled"
+
+[[bindings]]
 keys = "backspace"
 command = "editor.backspace"
 context = "editor"

@@ -155,12 +155,14 @@ struct Hover {
 }
 
 /// What a mouse drag extends: characters, or whole words or rows starting
-/// from the range first clicked.
+/// from the range first clicked, or an alt-shift-drag's box from the
+/// (buffer row, display column) it started at.
 #[derive(Clone)]
 enum Drag {
     Chars,
     Words(Range<usize>),
     Rows(Range<usize>),
+    Box((u32, usize)),
 }
 
 impl EditorView {
@@ -546,6 +548,22 @@ impl EditorView {
             self.changed(cx);
             return;
         }
+        if event.click_count == 1 && alt_only(&event.modifiers) {
+            self.drag = if event.modifiers.shift {
+                // A box, from here to wherever the pointer goes.
+                let anchor = self.box_point_at(event.position);
+                let select = |model: &mut EditorModel| model.select_box(anchor, anchor);
+                self.split_session(fe_vim::Splits::Moves, select, cx);
+                Some(Drag::Box(anchor))
+            } else {
+                let toggle = |model: &mut EditorModel| model.toggle_caret(offset);
+                self.split_session(fe_vim::Splits::Moves, toggle, cx);
+                None
+            };
+            self.sync_completion(cx);
+            self.changed(cx);
+            return;
+        }
         let click = |model: &mut EditorModel| match event.click_count {
             2 => {
                 let word = model.word_range_at(offset);
@@ -569,9 +587,9 @@ impl EditorView {
         // The word or row as selected now, which the split may have moved.
         let selected = |model: &EditorModel| model.primary_selection().range;
         self.drag = Some(match self.split_session(fe_vim::Splits::Moves, click, cx) {
-            Drag::Chars => Drag::Chars,
             Drag::Words(_) => Drag::Words(selected(&self.model)),
             Drag::Rows(_) => Drag::Rows(selected(&self.model)),
+            drag => drag,
         });
         self.sync_completion(cx);
         self.changed(cx);
@@ -801,6 +819,16 @@ impl EditorView {
             self.vim_mouse_drag(drag, event.position, cx);
             return;
         }
+        if let Drag::Box(anchor) = drag {
+            let head = self.box_point_at(event.position);
+            self.split_session(
+                fe_vim::Splits::Moves,
+                |model| model.select_box(anchor, head),
+                cx,
+            );
+            self.changed(cx);
+            return;
+        }
         let offset = self.offset_for_position(event.position);
         self.split_session(
             fe_vim::Splits::Moves,
@@ -810,6 +838,7 @@ impl EditorView {
                         model.extend_primary_to(offset);
                         return;
                     }
+                    Drag::Box(_) => return,
                     Drag::Words(origin) => (origin, model.word_range_at(offset)),
                     Drag::Rows(origin) => (origin, model.line_range_at(offset)),
                 };
@@ -824,6 +853,20 @@ impl EditorView {
             cx,
         );
         self.changed(cx);
+    }
+
+    /// The buffer row and display column (in chars) under a window position,
+    /// in the last frame, for a box selection. Past a row's end the column
+    /// goes on, a space's width at a time, so a box can be wider than the
+    /// row.
+    fn box_point_at(&mut self, position: Point<Pixels>) -> (u32, usize) {
+        let offset = self.offset_for_position(position);
+        let text = self.model.text();
+        let row = text.offset_to_point(offset).row;
+        let expanded = self.model.expanded_row(row);
+        let column = expanded.char_column(expanded.to_display(offset - text.row_start(row)));
+        let past = (self.layout.as_mut()).map_or(0, |layout| layout.columns_past_row_end(position));
+        (row, column + past)
     }
 
     fn on_mouse_up(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -911,6 +954,9 @@ impl EditorView {
                 }
             }
             Drag::Rows(origin) => self.select_visual(VisualKind::Line, origin.start, at),
+            // Begun in insert mode, which a key has since left: vim's modes
+            // have no box.
+            Drag::Box(_) => return,
         }
         self.changed(cx);
     }
@@ -1007,6 +1053,12 @@ impl EditorView {
 
 /// The offset of `range`'s last byte, which vim's cursor takes at its
 /// grapheme, or its start if it's empty.
+/// Whether `modifiers` are alt, and maybe shift, alone: an alt-click adds
+/// or removes a caret, and an alt-shift-drag selects a box.
+fn alt_only(modifiers: &Modifiers) -> bool {
+    modifiers.alt && !modifiers.control && !modifiers.platform && !modifiers.function
+}
+
 fn last_of(range: &Range<usize>) -> usize {
     range.end.saturating_sub(1).max(range.start)
 }
@@ -1209,3 +1261,6 @@ mod hover_tests;
 
 #[cfg(test)]
 mod completion_tests;
+
+#[cfg(test)]
+mod multi_cursor_tests;

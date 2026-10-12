@@ -70,6 +70,36 @@ const OLD_TABLE: &[(&str, &str, Option<&str>)] = &[
     ("shift-pageup", "editor.select_page_up", Some("editor")),
     ("shift-pagedown", "editor.select_page_down", Some("editor")),
     ("cmd-a", "editor.select_all", Some("editor")),
+    (
+        "cmd-alt-up",
+        "editor.add_cursor_above",
+        Some("editor && !vim.enabled"),
+    ),
+    (
+        "cmd-alt-down",
+        "editor.add_cursor_below",
+        Some("editor && !vim.enabled"),
+    ),
+    (
+        "cmd-d",
+        "editor.select_next_occurrence",
+        Some("editor && !vim.enabled"),
+    ),
+    (
+        "cmd-shift-l",
+        "editor.select_all_occurrences",
+        Some("editor && !vim.enabled"),
+    ),
+    (
+        "alt-shift-i",
+        "editor.split_selection_into_lines",
+        Some("editor && !vim.enabled"),
+    ),
+    (
+        "escape",
+        "editor.single_selection",
+        Some("editor && !vim.enabled"),
+    ),
     ("backspace", "editor.backspace", Some("editor")),
     ("shift-backspace", "editor.backspace", Some("editor")),
     ("delete", "editor.delete", Some("editor")),
@@ -159,7 +189,7 @@ fn default_keymap_matches_the_old_table(cx: &mut TestAppContext) {
     let store = KeymapStore::load(DEFAULT_MACOS, None, None);
     assert_eq!(store.diagnostics(), []);
     let bindings = store.keymap().bindings();
-    assert_eq!(bindings.len(), 144);
+    assert_eq!(bindings.len(), 150);
     for (binding, &(keys, command, context)) in bindings.iter().zip(OLD_TABLE) {
         assert_eq!(binding.keys, KeySequence::parse(keys).unwrap(), "{command}");
         assert_eq!(binding.command.as_str(), command, "{keys}");
