@@ -10,7 +10,8 @@ Release builds on an M3 Max MacBook Pro (120 Hz built-in display), measured
 cargo bench -p fe-syntax                          # parse, reparse, highlight (~8 min)
 cargo bench -p fe-syntax -- 10k                   # just the 10k-line cases
 cargo bench -p fe-syntax --bench flat             # highlighting huge flat files (~2 min)
-cargo bench -p fe-buffer                          # load and edit (M1)
+cargo bench -p fe-buffer                          # load and edit (M1) (~2.5 min)
+cargo bench -p fe-display                         # keystroke re-wrap, wrap slices (~2 min)
 cargo bench -p fe-project --bench tree            # project tree open, expand, apply (~1 min)
 cargo bench -p fe-project --bench finder          # Cmd-P walk and queries over 100k paths (~1 min)
 cargo bench -p fe-project --bench search          # project search over 10k files, 40 MB (~1 min)
@@ -332,6 +333,81 @@ Game Memory template didn't finish a recording on this machine.
   showing ASCII in one font fills one A8 texture.
 - The path intermediate texture is created at the window's size but never
   rendered into (the editor draws no paths), so it costs nothing.
+
+## Buffer (`cargo bench -p fe-buffer`)
+
+M1's budgets, from the header of `crates/fe-buffer/benches/buffer.rs`: a
+100 MB / 1M-line file loads well inside the 500 ms "interactive" budget; a
+keystroke edit in it is far below a frame (8 ms p99 end to end); snapshots
+are O(1); anchor resolution scales with the edits since the anchor. The
+budgets are stated for Apple Silicon. This run is on helium, not the Mac, and
+no Mac run of this bench is recorded here yet, so the helium numbers are
+compared with the budgets as stated.
+
+- **Machine:** helium (Linux x86_64, AMD Ryzen 9 5900X, 12 cores / 24
+  threads), release build in a private `CARGO_TARGET_DIR`.
+- **Commit:** `2b8248f`. **Date:** 2026-10-12.
+- **Load average** (`/proc/loadavg`, 1 minute): 45.93 at the start of the
+  run, 27.64 at the end. Other lanes were building, so these numbers are
+  pessimistic and noisy.
+
+"median" is criterion's median estimate; "fastest" is the smallest of
+times/iters over the 100 samples in `new/sample.json`.
+
+| Case | helium median | helium fastest | Budget | Verdict |
+|---|---|---|---|---|
+| `load/100MB` | 49.1 ms | 40.5 ms | well inside 500 ms | meets (10% of it) |
+| `load/100MB crlf` | 204 ms | 198 ms | well inside 500 ms | meets, but 41% of it: "well inside" is thinner |
+| `edit/keystroke in 100MB` | 1.76 µs | 1.42 µs | far below 8 ms | meets (0.02%) |
+| `edit/100 cursors in 100MB` | 122 µs | 106 µs | far below 8 ms | meets (1.5%) |
+| `snapshot/clone` | 13.8 ns | 13.5 ns | O(1) | meets: 14 ns, and the case has no size input to scale |
+| `convert/offset to LSP point in 100MB` | 699 ns | 528 ns | none stated | n/a |
+| `convert/LSP point to offset in 100MB` | 1.60 µs | 1.24 µs | none stated | n/a |
+| `anchors/resolve 10k through 100 edits, one by one` | 14.3 ms | 9.89 ms | scales with edits since the anchor | see below |
+| `anchors/resolve 10k through 100 edits, batched` | 1.51 ms | 1.42 ms | scales with edits since the anchor | see below |
+| `undo/keystroke after 100 later edits` | 16.0 µs | 12.6 µs | far below 8 ms | meets (0.2%) |
+
+- **Nothing misses its budget**, so no follow-up is filed. The 8 ms budget is
+  p99 end to end; these are the buffer's share only, in medians, and the
+  rest of the keystroke path is in the Typing latency section below.
+- **Anchors:** 10k anchors through 100 edits cost about 1.4 µs each one by
+  one and 0.15 µs each batched, 9 to 10 times cheaper. The bench uses a
+  single edit count, so it shows the cost is small but not that it scales
+  with the edits since the anchor; that needs a second edit count, which
+  isn't filed.
+- **CRLF load** is four times the LF load. It is inside the budget, and the
+  budget for it is the same 500 ms, but on a loaded or slower machine it is
+  the case to watch.
+
+## Display map (`cargo bench -p fe-display`)
+
+Budgets, from the header of `crates/fe-display/benches/display.rs`, on a
+1M-line file (Apple Silicon): a keystroke re-wraps only its row, far inside
+the 8 ms p99 keystroke-to-paint budget; a new wrap width wraps one slice of
+`WRAP_SLICE_BYTES` around the viewport per frame, which has to stay well
+inside a frame (8.3 ms at 120 Hz). As above, the budgets are stated for
+Apple Silicon and the helium numbers are compared with them as stated.
+
+- **Machine:** helium (Linux x86_64, AMD Ryzen 9 5900X, 12 cores / 24
+  threads), release build in a private `CARGO_TARGET_DIR`.
+- **Commit:** `2b8248f`. **Date:** 2026-10-12.
+- **Load average** (`/proc/loadavg`, 1 minute): 25.10 at the start of the
+  run, 21.20 at the end, from other lanes building.
+
+| Case | helium median | helium fastest | Budget | Verdict |
+|---|---|---|---|---|
+| `wrap/set width + one slice, 1M lines` | 571 µs | 479 µs | well inside 8.3 ms (T10: under 2 ms) | meets (7% of a frame) |
+| `wrap/one slice, 1M lines` | 1.06 ms | 553 µs | well inside 8.3 ms | meets (13% of a frame) |
+| `wrap/all pending rows in slices, 1M lines at 80 columns` | 827 ms | 620 ms | none: the whole file, spread over frames | n/a |
+| `sync/keystroke, 1M lines unwrapped` | 3.73 µs | 3.47 µs | far inside 8 ms | meets (0.05%) |
+| `sync/keystroke, 1M lines wrapped` | 13.4 µs | 12.8 µs | far inside 8 ms | meets (0.2%) |
+
+- **Nothing misses its budget**, so no follow-up is filed.
+- `one slice` is slower than `set width + one slice` in the median, and its
+  fastest sample (553 µs) is half its median, so it is noisy under this
+  load. Both are far inside a frame.
+- `all pending rows` is the whole 1M-line file wrapped in slices, about 0.8 s
+  in total, spread over frames; it has no budget and is here for the record.
 
 ## Syntax (`cargo bench -p fe-syntax`)
 
