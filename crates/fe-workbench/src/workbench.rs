@@ -13,9 +13,9 @@ use fe_editor::EditorModel;
 use fe_gpui::{EditorSettings, EditorTheme, EditorView, SettingsEvent, commands::RunCommand};
 use fe_ui::{ROW_HEIGHT, UiTheme};
 use gpui::{
-    App, AppContext as _, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement as _, IntoElement, ParentElement as _, PromptButton, PromptLevel, Render,
-    Styled as _, Subscription, WeakEntity, Window, WindowBounds, div, px,
+    App, AppContext as _, Context, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle,
+    Focusable, InteractiveElement as _, IntoElement, ParentElement as _, PromptButton, PromptLevel,
+    Render, Styled as _, Subscription, WeakEntity, Window, WindowBounds, div, px,
 };
 
 use crate::{
@@ -1770,6 +1770,8 @@ impl Render for Workbench {
         });
         // Above the status bar, or where it would be.
         let status_bar = self.status_bar_visible || self.status_bar.read(cx).line_open();
+        let drop_border = self.ui.accent;
+        let drop_wash = drop_border.opacity(0.12);
         let bottom = if status_bar { ROW_HEIGHT } else { px(0.) } + px(8.);
         div()
             .on_action(cx.listener(Self::on_run_command))
@@ -1778,6 +1780,22 @@ impl Render for Workbench {
             .on_modifiers_changed(EditorView::modifiers_changed)
             .size_full()
             .child(self.shell.clone())
+            .child(
+                // Over the panes, so an editor's mouse-up doesn't swallow the
+                // drop; without occluding, so nothing else loses the mouse.
+                // A translucent wash while files are dragged over the window.
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .on_drop(cx.listener(|workbench, paths: &ExternalPaths, window, cx| {
+                        workbench.drop_external(paths, window.mouse_position(), window, cx)
+                    }))
+                    .drag_over::<ExternalPaths>(move |style, _, _, _| {
+                        style.bg(drop_wash).border_2().border_color(drop_border)
+                    }),
+            )
             .child(
                 // The window's height, for toasts to fit in, bottom first.
                 div()
@@ -1838,6 +1856,9 @@ pub(crate) fn open_panel_failed(error: &str) -> (&'static str, String) {
 
 #[path = "vim_host.rs"]
 mod vim_host;
+
+#[path = "external_drop.rs"]
+mod external_drop;
 
 // Nothing shows a toast yet: the next card routes messages to it.
 #[cfg_attr(
