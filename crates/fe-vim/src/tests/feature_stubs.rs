@@ -4,7 +4,9 @@
 use serde::{Serialize, de::DeserializeOwned};
 
 use super::invocation;
-use crate::{HeadlessVim, Motion, OperateArgs, Operator, SelectArgs, Target, TextObject, context};
+use crate::{
+    HeadlessVim, Motion, MoveArgs, OperateArgs, Operator, SelectArgs, Target, TextObject, context,
+};
 
 /// The prose card's motions and objects (T415), which now work: only their
 /// names are checked here.
@@ -50,6 +52,16 @@ const OPERATORS: [(Operator, &str); 3] = [
     (Operator::Rot13, "rot13"),
     (Operator::Format, "format"),
     (Operator::FormatKeep, "format_keep"),
+];
+
+/// The `g` operators, over a motion.
+const G_OPERATORS: [Operator; 6] = [
+    Operator::Lowercase,
+    Operator::Uppercase,
+    Operator::ToggleCase,
+    Operator::Rot13,
+    Operator::Format,
+    Operator::FormatKeep,
 ];
 
 const TEXT: &str = "Some text. More (text) [here]\n\n<a>`x`</a> end\nlast row";
@@ -103,8 +115,24 @@ fn round_trips<T: Serialize + DeserializeOwned + PartialEq + std::fmt::Debug>(
 
 #[test]
 fn new_variants_change_nothing() {
-    // T416's line motions work: only their names are checked.
     for (motion, name) in MOTIONS {
+        for extend in [false, true] {
+            let args = MoveArgs {
+                motion,
+                extend,
+                count: None,
+            };
+            changes_nothing(extend, "vim.move", args, &format!("move {name}"));
+        }
+        for operator in G_OPERATORS {
+            let args = OperateArgs {
+                operator,
+                target: Target::Motion(motion),
+                count: None,
+                register: None,
+            };
+            changes_nothing(false, "vim.operate", args, &format!("{operator:?} {name}"));
+        }
         round_trips(motion, name);
     }
     for (object, name) in OBJECTS {

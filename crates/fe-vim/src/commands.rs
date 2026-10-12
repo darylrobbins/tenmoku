@@ -9,8 +9,8 @@ use fe_editor::{EditorModel, commands::EditorHost};
 use crate::{
     CommandLineArgs, CountArgs, InsertArgs, MarkArgs, MoveArgs, OperateArgs, PlayArgs, PutArgs,
     RecordArgs, Registers, ReplaceCharArgs, SelectArgs, SubmitArgs, SwapArgs, VimState, VisualArgs,
-    cmdline, edit, feature, history, insert, jump, line_motions, macros, marks, motion, operator,
-    repeat, replace, substitute, visual,
+    cmdline, edit, feature, history, insert, jump, macros, marks, motion, operator, repeat,
+    replace, substitute, visual,
 };
 
 /// Catches the marks up with the text before a command that may change it
@@ -92,10 +92,7 @@ pub fn registry() -> Registry<VimCommands> {
             "vim.move",
             "Vim Move",
             |target: &mut VimTarget<'_>, _: &Actor, args: MoveArgs| {
-                let motion = line_motions::moved(&args);
-                line_motions::with_view(target, motion, |target| {
-                    Ok::<_, CommandError>(run_move(target, args))
-                })
+                Ok::<_, CommandError>(run_move(target, args))
             },
         )
         .expect("vim command IDs are valid and distinct")
@@ -109,10 +106,7 @@ pub fn registry() -> Registry<VimCommands> {
             "vim.operate",
             "Vim Operate",
             |target: &mut VimTarget<'_>, actor: &Actor, args: OperateArgs| {
-                let motion = line_motions::operated(&args);
-                line_motions::with_view(target, motion, |target| {
-                    run_operate(target, actor, args)
-                })
+                run_operate(target, actor, args)
             },
         )
         .expect("vim command IDs are valid and distinct")
@@ -292,13 +286,10 @@ pub fn registry() -> Registry<VimCommands> {
             "vim.repeat",
             "Vim Repeat",
             |target: &mut VimTarget<'_>, actor: &Actor, args: CountArgs| {
-                let motion = line_motions::repeated(target.state, args);
-                line_motions::with_view(target, motion, |target| {
-                    follow(target);
-                    let repeated = repeat::repeat(target, actor, args);
-                    marks::settle(target);
-                    repeated
-                })
+                follow(target);
+                let repeated = repeat::repeat(target, actor, args);
+                marks::settle(target);
+                repeated
             },
         )
         .expect("vim command IDs are valid and distinct")
@@ -457,7 +448,7 @@ pub fn registry() -> Registry<VimCommands> {
             "vim.select",
             "Vim Select Text Object",
             |target: &mut VimTarget<'_>, _: &Actor, args: SelectArgs| {
-                line_motions::with_view(target, None, |target| visual::select_object(target, args))
+                visual::select_object(target, args)
             },
         )
         .expect("vim command IDs are valid and distinct")
