@@ -20,6 +20,14 @@
 # Whether long lines wrap at the window's edge.
 # soft_wrap = false
 
+# Format a file with its language server before saving it. A server that
+# doesn't answer within a second is skipped and the file saves unformatted.
+# format_on_save = false
+
+# Type the closing bracket or quote when typing an opening one, type over it,
+# and delete both with backspace.
+# auto_close_pairs = true
+
 [vim]
 # Whether the editor starts in vim's normal mode, where keys run vim commands.
 # enabled = false

@@ -3,6 +3,11 @@
     "EditorSettings": {
       "description": "Settings for the text editor.",
       "properties": {
+        "auto_close_pairs": {
+          "default": true,
+          "description": "Type the closing bracket or quote when typing an opening one, type over\nit, and delete both with backspace. Off, typing inserts only what's\ntyped.",
+          "type": "boolean"
+        },
         "font_family": {
           "description": "The font family. Unset, the first installed of JetBrains Mono, SF Mono,\nMenlo, DejaVu Sans Mono, Ubuntu Mono, Liberation Mono and Noto Sans Mono.",
           "minLength": 1,
@@ -18,6 +23,11 @@
           "maximum": 72.0,
           "minimum": 6.0,
           "type": "number"
+        },
+        "format_on_save": {
+          "default": false,
+          "description": "Format a file with its language server before saving it. A server that\ndoesn't answer within a second is skipped and the file saves unformatted.",
+          "type": "boolean"
         },
         "line_height": {
           "default": 1.6,
@@ -334,7 +344,9 @@
     "editor": {
       "$ref": "#/$defs/EditorSettings",
       "default": {
+        "auto_close_pairs": true,
         "font_size": 13.0,
+        "format_on_save": false,
         "line_height": 1.6,
         "soft_wrap": false,
         "tab_size": 4

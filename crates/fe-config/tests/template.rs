@@ -20,8 +20,10 @@ fn template_is_all_defaults() {
     assert_eq!(
         keys,
         [
+            "auto_close_pairs",
             "font_family",
             "font_size",
+            "format_on_save",
             "line_height",
             "soft_wrap",
             "tab_size"

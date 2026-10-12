@@ -151,6 +151,13 @@ pub struct EditorSettings {
     /// Whether long lines wrap at the window's edge. `alt-z` toggles it per
     /// editor.
     pub soft_wrap: bool,
+    /// Format a file with its language server before saving it. A server that
+    /// doesn't answer within a second is skipped and the file saves unformatted.
+    pub format_on_save: bool,
+    /// Type the closing bracket or quote when typing an opening one, type over
+    /// it, and delete both with backspace. Off, typing inserts only what's
+    /// typed.
+    pub auto_close_pairs: bool,
 }
 
 impl Default for EditorSettings {
@@ -161,6 +168,8 @@ impl Default for EditorSettings {
             line_height: 1.6,
             tab_size: 4,
             soft_wrap: false,
+            format_on_save: false,
+            auto_close_pairs: true,
         }
     }
 }
