@@ -56,7 +56,8 @@ impl From<SaveError> for io::Error {
 }
 
 /// A save to run anywhere, made by [`EditorModel::prepare_save`]: the text
-/// to write and the file it was read from.
+/// to write and the file it was read from. A clone saves the same text.
+#[derive(Clone)]
 pub struct SaveJob {
     path: PathBuf,
     snapshot: SaveSnapshot,
@@ -92,6 +93,13 @@ impl SaveJob {
 
     pub fn snapshot(&self) -> &SaveSnapshot {
         &self.snapshot
+    }
+
+    /// The same save, over the file even if it changed on disk since it
+    /// was read: to retry a job refused with [`SaveError::ChangedOnDisk`].
+    pub fn overwriting(mut self) -> Self {
+        self.overwrite = true;
+        self
     }
 
     /// Saves atomically: writes a new file beside the target and renames it

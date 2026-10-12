@@ -4,7 +4,7 @@
 
 use std::{fs, path::Path};
 
-use gpui::{Keystroke, TestAppContext};
+use gpui::TestAppContext;
 
 use super::lsp::Lsp;
 
@@ -29,10 +29,16 @@ impl Lsp {
 
     /// Saves the active buffer, then draws a frame without letting any
     /// task but the background's run. Typing would run them all, so the
-    /// edit is made beforehand.
+    /// edit is made beforehand. cmd-s records its save in a foreground
+    /// task, so the buffer is saved here, at once, as headless hosts do.
     fn save_and_hold(&mut self) {
-        self.cx.update(|window, cx| {
-            window.dispatch_keystroke(Keystroke::parse("cmd-s").unwrap(), cx);
+        let editor = self
+            .workbench
+            .read_with(&self.cx, |w, cx| w.active_editor(cx).cloned())
+            .expect("a tab is shown");
+        editor.update(&mut self.cx, |view, cx| {
+            view.model_mut().save().expect("saves");
+            cx.notify();
         });
         self.hold();
     }

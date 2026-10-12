@@ -33,6 +33,10 @@ thread_local! {
 /// Shows the hover popover at the caret ([`crate::hover`]).
 pub const SHOW_HOVER: &str = "editor.show_hover";
 
+/// Saves the buffer: fe-editor's command, which the view runs off the main
+/// thread ([`EditorView::save_from_command`]).
+const SAVE: &str = "editor.save";
+
 /// fe-editor's commands, and the view's own: in the editor's context, and
 /// the completion menu's in its own ([`completion_menu`]). The
 /// view's do nothing to the model: once one has dispatched, the view does
@@ -222,10 +226,10 @@ impl EditorView {
     pub(crate) fn on_run_command(
         &mut self,
         run: &RunCommand,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.run_command(run.0.clone(), cx);
+        self.run_command(run.0.clone(), Some(window), cx);
     }
 
     /// Runs `invocation` on this editor, in its context: the stack it was
@@ -236,7 +240,16 @@ impl EditorView {
     /// editor's frame stamped from its vim state, and in insert mode an
     /// editor command other than text input splits the session
     /// ([`fe_vim::VimState::split_session`]).
-    fn run_command(&mut self, invocation: Invocation, cx: &mut Context<Self>) {
+    ///
+    /// Given the window, the view takes [`SAVE`] over from fe-editor's
+    /// synchronous command: it saves off the main thread
+    /// ([`EditorView::save_from_command`]).
+    fn run_command(
+        &mut self,
+        invocation: Invocation,
+        window: Option<&mut Window>,
+        cx: &mut Context<Self>,
+    ) {
         let in_editor = ContextPredicate::identifier(fe_editor::commands::CONTEXT);
         let mut invocation = if in_editor.eval(&invocation.context) {
             invocation
@@ -259,8 +272,16 @@ impl EditorView {
         };
         let meta = registry.get(&invocation.command);
         let mutates = meta.is_some_and(|meta| meta.mutates_buffer);
+        let saves = window.is_some() && invocation.command.as_str() == SAVE;
         let mut dispatch = |model: &mut fe_editor::EditorModel| {
-            registry.dispatch(&mut EditorTarget::new(model, &mut host), &invocation)
+            if saves {
+                // The view saves once it has dispatched.
+                registry
+                    .validate(&invocation)
+                    .map(|_| Dispatched::new(Effect::Nothing))
+            } else {
+                registry.dispatch(&mut EditorTarget::new(model, &mut host), &invocation)
+            }
         };
         let mut split = false;
         let result = match &mut self.vim {
@@ -308,6 +329,11 @@ impl EditorView {
         }
         match self.dispatched(result, &invocation, mutates, cx) {
             Ok(()) if invocation.command.as_str() == SHOW_HOVER => self.show_hover(cx),
+            Ok(()) if saves => {
+                if let Some(window) = window {
+                    self.save_from_command(window, cx);
+                }
+            }
             Ok(()) => {
                 if !self.run_completion_command(invocation.command.as_str(), cx) {
                     self.sync_completion(cx);
@@ -377,7 +403,7 @@ impl EditorView {
             .expect("valid command ID")
             .args(Value::from_iter([("text", text)]))
             .source(Source::Keyboard);
-        self.run_command(invocation, cx);
+        self.run_command(invocation, None, cx);
         self.completion_typed(text, cx);
     }
 }

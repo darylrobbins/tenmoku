@@ -1982,6 +1982,8 @@ dependencies = [
  "fe-keymap",
  "fe-syntax",
  "fe-vim",
+ "fe-workbench",
+ "futures",
  "gpui-pre",
  "gpui-pre-platform",
  "image",

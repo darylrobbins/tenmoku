@@ -21,6 +21,8 @@ kiln-platform.workspace = true
 # EditorView is a pane item (pane_item.rs).
 kiln-shell.workspace = true
 gpui.workspace = true
+# Saves report back and wait for each other (pane_item.rs).
+futures.workspace = true
 log.workspace = true
 unicode-segmentation.workspace = true
 
@@ -35,6 +37,9 @@ image.workspace = true
 kiln-platform = { workspace = true, features = ["test-support"] }
 # Invocations recorded in tests go through JSON, as a macro or log would.
 serde_json.workspace = true
+# The save tests read a file as the workbench's loader does. Only fe-buffer
+# types cross between it and this crate.
+fe-workbench.workspace = true
 tempfile.workspace = true
 
 # Keystroke-to-frame latency by stage, headless (PERF.md, "Typing latency").

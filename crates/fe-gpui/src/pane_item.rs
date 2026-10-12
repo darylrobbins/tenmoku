@@ -5,18 +5,23 @@
 //! [`EditorModel`](fe_editor::EditorModel).
 
 use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    fmt,
     hash::{DefaultHasher, Hash as _, Hasher as _},
+    io,
     path::{Path, PathBuf},
 };
 
-use fe_buffer::{Bias, Buffer};
-use fe_editor::EditorModel;
+use fe_buffer::{Bias, Buffer, BufferId};
+use fe_editor::{EditorModel, SaveError, SaveJob, Saved};
 
 use fe_command::{Invocation, Value};
 use fe_vim::VimState;
+use futures::{FutureExt as _, channel::oneshot, future::Shared};
 use gpui::{
-    AnyView, App, AppContext as _, Context, Entity, Global, PromptButton, PromptLevel,
-    SharedString, Task, Window,
+    AnyView, AnyWindowHandle, App, AppContext as _, AsyncApp, Context, Entity, Global,
+    PromptButton, PromptLevel, SharedString, Task, WeakEntity, Window,
 };
 use kiln_shell::{CloseAnswer, PaneItem, StatusItem, StatusSide};
 
@@ -160,6 +165,194 @@ impl EditorView {
     }
 }
 
+/// The buttons of the prompt before a save overwrites a file that changed
+/// on disk.
+const OVERWRITE_BUTTONS: [&str; 2] = ["Overwrite", "Cancel"];
+
+/// The answer to [`OVERWRITE_BUTTONS`] that saves over the file.
+const OVERWRITE: usize = 0;
+
+/// A save the user wouldn't let overwrite a file that changed on disk:
+/// `not saved: main.rs changed on disk`.
+#[derive(Debug)]
+struct NotSaved(String);
+
+impl fmt::Display for NotSaved {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "not saved: {} changed on disk", self.0)
+    }
+}
+
+impl std::error::Error for NotSaved {}
+
+thread_local! {
+    /// The last save asked for of each buffer being saved, which the next
+    /// one waits for. GPUI runs on one thread.
+    static SAVES: RefCell<HashMap<BufferId, RunningSave>> = RefCell::default();
+    static NEXT_SAVE: Cell<u64> = const { Cell::new(0) };
+}
+
+struct RunningSave {
+    generation: u64,
+    /// Resolves, cancelled, once the save is over.
+    over: Shared<oneshot::Receiver<()>>,
+}
+
+/// Ends a save in [`SAVES`] when it's over or dropped, unless a later save
+/// of the buffer has taken its place.
+struct SaveGuard {
+    buffer: BufferId,
+    generation: u64,
+    _over: oneshot::Sender<()>,
+}
+
+impl Drop for SaveGuard {
+    fn drop(&mut self) {
+        let (buffer, generation) = (self.buffer, self.generation);
+        SAVES
+            .try_with(|saves| {
+                let mut saves = saves.borrow_mut();
+                if saves
+                    .get(&buffer)
+                    .is_some_and(|save| save.generation == generation)
+                {
+                    saves.remove(&buffer);
+                }
+            })
+            .ok();
+    }
+}
+
+/// Saving off the main thread.
+impl EditorView {
+    /// Saves the buffer: prepares the save here, writes the file on the
+    /// background executor, then records it here, so the buffer is clean
+    /// unless edited meanwhile. One save of a buffer runs at a time: one
+    /// asked for while another runs waits for it, then saves the text as it
+    /// is then.
+    ///
+    /// A file that changed on disk since it was read or saved asks whether
+    /// to overwrite it: Overwrite saves over it, Cancel fails the save with
+    /// `not saved: <name> changed on disk`. Other failures are the I/O
+    /// error. The save goes on if the task is dropped. Its prompts show in
+    /// `window`.
+    pub fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<gpui::Result<()>> {
+        let buffer = self.model.buffer().id();
+        let generation = NEXT_SAVE.replace(NEXT_SAVE.get() + 1);
+        let (over, done) = oneshot::channel();
+        let running = RunningSave {
+            generation,
+            over: done.shared(),
+        };
+        let previous = SAVES.with_borrow_mut(|saves| saves.insert(buffer, running));
+        let guard = SaveGuard {
+            buffer,
+            generation,
+            _over: over,
+        };
+        // With none running, the text as it is now; typing from here on is
+        // unsaved.
+        let job = previous.is_none().then(|| self.model.prepare_save(false));
+        let window = window.window_handle();
+        let (send, result) = oneshot::channel();
+        cx.spawn(async move |this, cx| {
+            if let Some(previous) = previous {
+                previous.over.await.ok();
+            }
+            let saved = save_asking(&this, job, window, cx).await;
+            drop(guard);
+            this.update(cx, |_, cx| cx.notify()).ok();
+            send.send(saved).ok();
+        })
+        .detach();
+        cx.foreground_executor().spawn(async move {
+            result
+                .await
+                .unwrap_or_else(|_| Err(io::Error::other("the save was dropped").into()))
+        })
+    }
+
+    /// Whether a save of the buffer is running or waiting, in this editor
+    /// or another over the same buffer.
+    pub fn is_saving(&self) -> bool {
+        let buffer = self.model.buffer().id();
+        SAVES.with_borrow(|saves| saves.contains_key(&buffer))
+    }
+
+    /// `editor.save` from a key or menu: [`EditorView::save`], showing why
+    /// it failed, unless the user cancelled it.
+    pub(crate) fn save_from_command(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let saved = self.save(window, cx);
+        let name = file_name(self.model.path());
+        let window = window.window_handle();
+        cx.spawn(async move |_, cx| {
+            let Err(error) = saved.await else {
+                return;
+            };
+            if error.downcast_ref::<NotSaved>().is_some() {
+                return;
+            }
+            let detail = format!("{error:#}");
+            let answer = cx.update_window(window, |_, window, cx| {
+                window.prompt(
+                    PromptLevel::Critical,
+                    &format!("“{name}” couldn’t be saved."),
+                    Some(&detail),
+                    &["OK"],
+                    cx,
+                )
+            });
+            if let Ok(answer) = answer {
+                answer.await.ok();
+            }
+        })
+        .detach();
+    }
+}
+
+/// A save of `this`'s buffer, from `job` if it was prepared, else of the
+/// text as it is now. If the file changed on disk and the user, asked in
+/// `window`, says to overwrite it, the same text is saved over it: what was
+/// typed since stays unsaved.
+async fn save_asking(
+    this: &WeakEntity<EditorView>,
+    job: Option<io::Result<SaveJob>>,
+    window: AnyWindowHandle,
+    cx: &mut AsyncApp,
+) -> gpui::Result<()> {
+    let job = match job {
+        Some(job) => job,
+        None => this.update(cx, |view, _| view.model.prepare_save(false))?,
+    }?;
+    let name = file_name(Some(job.path()));
+    let saved = match run(job.clone(), cx).await {
+        Err(SaveError::ChangedOnDisk) => {
+            let answer = cx.update_window(window, |_, window, cx| {
+                window.prompt(
+                    PromptLevel::Warning,
+                    &format!("“{name}” changed on disk since it was opened."),
+                    Some("Overwrite it with your version?"),
+                    &OVERWRITE_BUTTONS,
+                    cx,
+                )
+            })?;
+            if answer.await != Ok(OVERWRITE) {
+                return Err(NotSaved(name).into());
+            }
+            run(job.overwriting(), cx).await
+        }
+        saved => saved,
+    };
+    let saved = saved.map_err(io::Error::from)?;
+    this.update(cx, |view, _| view.model.finish_save(saved))?;
+    Ok(())
+}
+
+/// Runs `job` on the background executor.
+async fn run(job: SaveJob, cx: &mut AsyncApp) -> Result<Saved, SaveError> {
+    cx.background_spawn(async move { job.run() }).await
+}
+
 impl PaneItem for EditorView {
     const KIND: &'static str = "fastedit.editor";
 
@@ -215,12 +408,14 @@ impl PaneItem for EditorView {
         hasher.finish()
     }
 
-    /// What `editor.save` does: [`EditorModel::save`](fe_editor::EditorModel::save),
-    /// which is synchronous, so the task is ready at once.
-    fn save(&mut self, _: &mut Window, cx: &mut Context<Self>) -> Option<Task<gpui::Result<()>>> {
-        let saved = self.model.save().map_err(Into::into);
-        cx.notify();
-        Some(Task::ready(saved))
+    /// [`EditorView::save`]: off the main thread, asking before it
+    /// overwrites a file changed on disk.
+    fn save(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<gpui::Result<()>>> {
+        Some(EditorView::save(self, window, cx))
     }
 
     fn path(&self, _: &App) -> Option<&Path> {
@@ -405,3 +600,7 @@ pub(crate) fn status_items(editor: &EditorView) -> Vec<StatusItem> {
 #[cfg(test)]
 #[path = "pane_item_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "pane_item_save_tests.rs"]
+mod save_tests;
