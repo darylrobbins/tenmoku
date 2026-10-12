@@ -109,17 +109,22 @@ fn other_rows_and_tabs_unchanged() {
     assert_eq!(frame.inlay, None);
 }
 
-/// A long row of 9000 `x`, with "XYZ" at offset 40, laid out at `scroll_x`
+/// A long row of 9000 `x`, with `inlay` at offset 40, laid out at `scroll_x`
 /// with the caret at `head`; `long_rows` is the frame's, to map with.
-fn lay_out_long_inlay(
+fn lay_out_long_inlay_with<M: TextMeasure<Style = &'static str>>(
+    measure: &mut M,
+    inlay: (usize, &str),
     head: usize,
     scroll_x: f32,
     autoscroll: bool,
     long_rows: &mut LongRows,
-) -> (Frame<Line>, Buffer) {
+) -> (Frame<M::Line>, Buffer) {
     let buffer = Buffer::new(&"x".repeat(9000));
     let display = DisplayMap::new(buffer.current(), 4);
-    let selections = parse("|").1;
+    let selections = [ResolvedSelection {
+        range: head..head,
+        reversed: false,
+    }];
     let input = FrameInput {
         display: &display,
         tab_size: 4,
@@ -138,21 +143,37 @@ fn lay_out_long_inlay(
         },
     };
     let inlay = Inlay {
-        offset: 40,
-        text: "XYZ".to_string(),
+        offset: inlay.0,
+        text: inlay.1.to_string(),
         style: "ghost",
     };
     let frame = layout_frame_with_inlay(
         &input,
         &BlockMap::default(),
         Some(&inlay),
-        &mut Mono,
+        measure,
         long_rows,
         &mut Mono,
         |_| Vec::new(),
         |_| Vec::new(),
     );
     (frame, buffer)
+}
+
+fn lay_out_long_inlay(
+    head: usize,
+    scroll_x: f32,
+    autoscroll: bool,
+    long_rows: &mut LongRows,
+) -> (Frame<Line>, Buffer) {
+    lay_out_long_inlay_with(
+        &mut Mono,
+        (40, "XYZ"),
+        head,
+        scroll_x,
+        autoscroll,
+        long_rows,
+    )
 }
 
 #[test]
@@ -194,11 +215,100 @@ fn long_row_autoscroll_counts_the_inlay_before_the_caret() {
     let text_width = WIDTH - GUTTER;
     assert_eq!(frame.scroll.x, 630. - text_width + 4. * CELL);
     let caret = frame.cursors[0];
-    assert!(caret.x + CURSOR_WIDTH <= WIDTH - 4. * CELL + 0.5);
+    assert!(caret.x <= WIDTH - 4. * CELL + 0.5, "{caret:?}");
 
-    // An inlay outside the shown slice adds nothing: the caret is far right.
+    // An inlay too far back to shape with the slice adds nothing: the caret is far right.
     let mut long_rows = LongRows::default();
-    let (frame, _) = lay_out_long_inlay(8000, 0., true, &mut long_rows);
+    let (frame, _) = lay_out_long_inlay(8900, 0., true, &mut long_rows);
     assert!(!frame.rows[0].line.text.contains("XYZ"));
-    assert_eq!(frame.scroll.x, 80000. - text_width + 4. * CELL);
+    assert_eq!(frame.scroll.x, 89000. - text_width + 4. * CELL);
+}
+
+#[test]
+fn long_row_autoscroll_shows_the_caret_past_a_wide_inlay() {
+    // The inlay is wider than the view: the caret is either scrolled past
+    // it, or the inlay is scrolled away and the caret is where it is
+    // without; either way it's on screen.
+    let wide = "W".repeat(100);
+    let mut long_rows = LongRows::default();
+    let (frame, _) = lay_out_long_inlay_with(&mut Mono, (40, &wide), 60, 0., true, &mut long_rows);
+    let caret = frame.cursors.first().expect("the caret is laid out");
+    assert!(caret.x >= GUTTER, "{caret:?}");
+    assert!(caret.x + CURSOR_WIDTH <= WIDTH, "{caret:?}");
+}
+
+#[test]
+fn long_row_scroll_limit_counts_an_inlay_the_clamp_brings_into_the_slice() {
+    // An excessive scroll, with the inlay near the row's end: the slice
+    // proposed for it leaves the inlay out, the clamped one holds it, and
+    // the furthest scroll allows for its width.
+    let mut long_rows = LongRows::default();
+    let (frame, _) =
+        lay_out_long_inlay_with(&mut Mono, (8990, "XYZ"), 0, 1e9, false, &mut long_rows);
+    let row = &frame.rows[0];
+    assert!(row.line.text.contains("XYZ"));
+    let text_width = WIDTH - GUTTER;
+    assert_eq!(frame.scroll.x, 90030. - text_width + 4. * CELL);
+}
+
+/// Draws "X" after an "x" half as wide: text measured alone is wider than
+/// the same text in a row.
+struct Ctx;
+
+struct CtxLine(Line);
+
+fn ctx_advance(text: &str, ix: usize, ch: char) -> f32 {
+    if ch == 'X' && text[..ix].ends_with('x') {
+        CELL / 2.
+    } else {
+        advance(ch)
+    }
+}
+
+impl MeasuredLine for CtxLine {
+    fn width(&self) -> f32 {
+        self.x_for_index(self.0.text.len())
+    }
+
+    fn x_for_index(&self, index: usize) -> f32 {
+        let text = &self.0.text;
+        text[..index]
+            .char_indices()
+            .map(|(ix, ch)| ctx_advance(text, ix, ch))
+            .sum()
+    }
+
+    fn index_for_x(&self, x: f32) -> usize {
+        let text = &self.0.text;
+        let mut left = 0.;
+        for (ix, ch) in text.char_indices() {
+            let width = ctx_advance(text, ix, ch);
+            if x < left + width / 2. {
+                return ix;
+            }
+            left += width;
+        }
+        text.len()
+    }
+}
+
+impl TextMeasure for Ctx {
+    type Style = &'static str;
+    type Line = CtxLine;
+
+    fn shape(&mut self, text: &str, runs: &[StyleRun<&'static str>]) -> CtxLine {
+        CtxLine(Mono.shape(text, runs))
+    }
+}
+
+#[test]
+fn long_row_autoscroll_uses_the_inlay_as_measured_in_the_row() {
+    // "XYZ" is 30 wide alone but 25 after an "x", as it is in the row.
+    let mut long_rows = LongRows::default();
+    let (frame, _) = lay_out_long_inlay_with(&mut Ctx, (40, "XYZ"), 60, 0., true, &mut long_rows);
+    let row = &frame.rows[0];
+    assert_eq!(row.inlay_width, 25.);
+    // The caret is at x 625 with the inlay, 4 ems from the right edge.
+    let text_width = WIDTH - GUTTER;
+    assert_eq!(frame.scroll.x, 625. - text_width + 4. * CELL);
 }

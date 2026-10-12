@@ -207,6 +207,30 @@ impl RowIndex {
         }
     }
 
+    /// `slice` with its start moved left to the unit boundary at or left of
+    /// `offset`, if it stays within [`MAX_SHAPED_ROW_BYTES`] that way: for
+    /// text shaped in the slice that's laid out in the row's coordinates,
+    /// such as an inlay.
+    pub fn extend_to(
+        &mut self,
+        slice: &RowSlice,
+        offset: usize,
+        measure: &mut dyn CharWidth,
+    ) -> RowSlice {
+        if offset >= slice.range.start {
+            return slice.clone();
+        }
+        let start = self.locate(offset, measure);
+        if slice.range.end - start.offset > MAX_SHAPED_ROW_BYTES {
+            return slice.clone();
+        }
+        RowSlice {
+            range: start.offset..slice.range.end,
+            start_x: start.x,
+            start_column: start.column,
+        }
+    }
+
     /// `slice` with its end moved right by at least `by`, to the first unit
     /// boundary that far along, clamped to the row and to
     /// [`RowIndex::slice_limit`]. For a slice shaped narrower than the index

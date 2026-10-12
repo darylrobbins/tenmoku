@@ -705,179 +705,225 @@ pub fn layout_frame_with_inlay<M: TextMeasure>(
         })
         .collect();
 
-    // Horizontally, keep the cursor inside the text area too. Wrapped rows
-    // fit, so they don't scroll. Long rows are as wide as their index
-    // measures them, though only a slice is shaped.
-    if wrapped {
-        scroll.x = 0.;
-    } else {
-        let text_width = f64::from(text_width);
-        let margin = f64::from(em) * 4.;
-        let slice_margin = f64::from(em * SLICE_MARGIN_EMS);
-        // What the inlay adds to a long row's width: its own width, if its
-        // row is long and it's in the slice shaped for a view at `scroll_x`.
-        let inlay_text_width = inlay.map(|inlay| {
-            let runs = [StyleRun {
-                len: inlay.text.len(),
-                style: inlay.style.clone(),
-            }];
-            f64::from(measure.shape(&inlay.text, &runs).width())
-        });
-        let inlay_in_slice = |long_rows: &mut LongRows,
-                              widths: &mut dyn CharWidth,
-                              row: &DisplayRow,
-                              scroll_x: f64| {
-            let (Some(inlay), Some(width)) = (inlay, inlay_text_width) else {
-                return 0.;
-            };
-            if !contains(row.range.clone(), row.last, inlay.offset) {
-                return 0.;
-            }
-            let view = scroll_x..scroll_x + text_width;
-            let slice = long_rows
-                .index(source, text, row.buffer_row, tab_size, widths)
-                .slice(view, slice_margin, widths);
-            if (slice.range.start..=slice.range.end).contains(&inlay.offset) {
-                width
+    // Long rows are as wide as their index measures them, though only a
+    // slice is shaped for the view; the slice depends on the horizontal
+    // scroll, and what it holds of the inlay on how far that is. So the
+    // scroll is settled against slices shaped at it, and the caret placed
+    // by the row as it's laid out.
+    let view_width = f64::from(text_width);
+    let margin = f64::from(em) * 4.;
+    let slice_margin = f64::from(em * SLICE_MARGIN_EMS);
+    let mut shape_long = |measure: &mut M,
+                          long_rows: &mut LongRows,
+                          widths: &mut dyn CharWidth,
+                          row: u32,
+                          display_row: &DisplayRow,
+                          scroll_x: f64| {
+        let view = scroll_x..scroll_x + view_width;
+        let index = long_rows.index(source, text, display_row.buffer_row, tab_size, widths);
+        let mut slice = index.slice(view.clone(), slice_margin, widths);
+        // An inlay in the row is shaped with the slice whenever it fits, so
+        // that the slice's place in the row doesn't decide the row's width.
+        if let Some(inlay) = inlay
+            && contains(display_row.range.clone(), display_row.last, inlay.offset)
+        {
+            slice = index.extend_to(&slice, inlay.offset, widths);
+        }
+        let mut shape_slice = |measure: &mut M, slice: &RowSlice| {
+            let spans = highlights(slice.range.clone());
+            shape_row(
+                measure,
+                row,
+                display_row.clone(),
+                Some(slice.clone()),
+                &spans,
+            )
+        };
+        let mut layout = shape_slice(measure, &slice);
+        // Where the shaper draws the slice narrower than the index
+        // measures it (contextual forms the index doesn't know), its
+        // text ends short of the view. Widen it by twice the
+        // shortfall, in index units per shaped unit over the slice,
+        // which covers the view and margin if the text added is
+        // drawn at least half as wide, relative to the index, as the
+        // slice's. Nothing shaped so far bounds how narrow the text
+        // after it is drawn, so if the text still ends short of the
+        // view's right edge, the third and last shape takes as much
+        // as a slice may hold: up to the row's end or
+        // `MAX_SHAPED_ROW_BYTES`, whichever is nearer. Shaping stays
+        // bounded whatever the shaper does; text drawn so narrow that
+        // even that ends short of the view leaves the rest of the
+        // view blank for the frame.
+        let shaped = f64::from(layout.line.width());
+        let short = view.end + slice_margin - (slice.start_x + shaped);
+        let limit = if short > 0. {
+            index.slice_limit(slice.range.start, widths)
+        } else {
+            slice.range.end
+        };
+        if slice.range.end < limit {
+            slice = if shaped > 0. {
+                let indexed = index.x_for_offset(slice.range.end, widths) - slice.start_x;
+                index.widen(&slice, 2. * short * indexed / shaped, widths)
             } else {
-                0.
-            }
-        };
-        let long_head = laid_out.iter().find_map(|row| match row {
-            Err((_, row)) if contains(row.range.clone(), row.last, primary_head) => Some(row),
-            _ => None,
-        });
-        // The caret's x in a long row at `scroll_x`: past the inlay, the row
-        // is wider by it.
-        let long_head_x = |long_rows: &mut LongRows,
-                           widths: &mut dyn CharWidth,
-                           row: &DisplayRow,
-                           scroll_x: f64| {
-            let x = long_rows
-                .index(source, text, row.buffer_row, tab_size, widths)
-                .x_for_offset(primary_head, widths);
-            let past = inlay.is_some_and(|inlay| primary_head > inlay.offset);
-            if past {
-                x + inlay_in_slice(long_rows, widths, row, scroll_x)
-            } else {
-                x
-            }
-        };
-        let follow = |x: f64, mut scroll_x: f64| {
-            if x < scroll_x + margin {
-                scroll_x = x - margin;
-            }
-            if x > scroll_x + text_width - margin {
-                scroll_x = x - text_width + margin;
-            }
-            scroll_x
-        };
-        let mut scroll_x = f64::from(scroll.x);
-        if autoscroll {
-            if let Some(row) = long_head {
-                // Scroll to the caret as the index places it; if the inlay
-                // is in the slice there, scroll to the caret past it, and
-                // keep that if the inlay's still in the slice.
-                let plain_x = long_rows
-                    .index(source, text, row.buffer_row, tab_size, widths)
-                    .x_for_offset(primary_head, widths);
-                let plain = follow(plain_x, scroll_x);
-                let shifted = follow(long_head_x(long_rows, widths, row, plain), scroll_x);
-                scroll_x =
-                    if shifted != plain && long_head_x(long_rows, widths, row, shifted) > plain_x {
-                        shifted
-                    } else {
-                        plain
-                    };
-            } else if let Some(x) = laid_out.iter().find_map(|row| match row {
-                Ok(row) if row.contains(primary_head) => {
-                    Some(row.x_for_offset(primary_head, long_rows, widths))
+                // Text shaped to nothing gives no ratio.
+                RowSlice {
+                    range: slice.range.start..limit,
+                    ..slice
                 }
-                _ => None,
-            }) {
-                scroll_x = follow(x, scroll_x);
+            };
+            layout = shape_slice(measure, &slice);
+            if slice.start_x + f64::from(layout.line.width()) < view.end && slice.range.end < limit
+            {
+                slice.range.end = limit;
+                layout = shape_slice(measure, &slice);
             }
         }
+        layout
+    };
+    // Every long row shaped for a view at `scroll_x`.
+    let mut shape_all =
+        |measure: &mut M, long_rows: &mut LongRows, widths: &mut dyn CharWidth, scroll_x: f64| {
+            laid_out
+                .iter()
+                .map(|row| match row {
+                    Ok(_) => None,
+                    Err((row, display_row)) => Some(shape_long(
+                        measure,
+                        long_rows,
+                        widths,
+                        *row,
+                        display_row,
+                        scroll_x,
+                    )),
+                })
+                .collect::<Vec<_>>()
+        };
+    // The furthest the rows allow scrolling, by the width of each as laid
+    // out: a long row's, with the inlay in its slice measured there.
+    let max_scroll = |long_rows: &mut LongRows,
+                      widths: &mut dyn CharWidth,
+                      long: &[Option<RowLayout<M::Line>>]| {
         let mut widest = 0_f64;
-        for row in &laid_out {
-            let width = match row {
-                Ok(row) => f64::from(row.line.width()),
-                Err((_, row)) => {
-                    let width = long_rows
+        for (row, shaped) in laid_out.iter().zip(long) {
+            let width = match (row, shaped) {
+                (Ok(row), _) => f64::from(row.line.width()),
+                (Err((_, row)), shaped) => {
+                    long_rows
                         .index(source, text, row.buffer_row, tab_size, widths)
-                        .width(widths);
-                    width + inlay_in_slice(long_rows, widths, row, scroll_x)
+                        .width(widths)
+                        + shaped.as_ref().map_or(0., |shaped| shaped.inlay_width)
                 }
             };
             widest = widest.max(width);
         }
-        let max_scroll_x = (widest - text_width + margin).max(0.);
-        scroll.x = scroll_x.clamp(0., max_scroll_x) as f32;
-    }
+        (widest - view_width + margin).max(0.)
+    };
+    // Shapes the long rows at `scroll_x`, as far as the rows allow; scrolling
+    // back can change what's in the slice, so shapes again for that.
+    let mut settle = |measure: &mut M,
+                      long_rows: &mut LongRows,
+                      widths: &mut dyn CharWidth,
+                      mut scroll_x: f64| {
+        if inlay.is_none() {
+            // Widths don't depend on the slice: shape once, where it ends up.
+            let unshaped: Vec<Option<RowLayout<M::Line>>> = laid_out.iter().map(|_| None).collect();
+            let scroll_x = scroll_x.clamp(0., max_scroll(long_rows, widths, &unshaped));
+            return (scroll_x, shape_all(measure, long_rows, widths, scroll_x));
+        }
+        let wanted = scroll_x;
+        let mut long = shape_all(measure, long_rows, widths, scroll_x);
+        for _ in 0..3 {
+            let clamped = wanted.clamp(0., max_scroll(long_rows, widths, &long));
+            if clamped == scroll_x {
+                break;
+            }
+            scroll_x = clamped;
+            long = shape_all(measure, long_rows, widths, scroll_x);
+        }
+        let scroll_x = wanted.clamp(0., max_scroll(long_rows, widths, &long));
+        (scroll_x, long)
+    };
+
+    // Horizontally, keep the cursor inside the text area too. Wrapped rows
+    // fit, so they don't scroll.
+    let follow = |x: f64, mut scroll_x: f64| {
+        if x < scroll_x + margin {
+            scroll_x = x - margin;
+        }
+        if x > scroll_x + view_width - margin {
+            scroll_x = x - view_width + margin;
+        }
+        scroll_x
+    };
+    let wanted = if wrapped { 0. } else { f64::from(scroll.x) };
+    let head_long = laid_out.iter().position(
+        |row| matches!(row, Err((_, row)) if contains(row.range.clone(), row.last, primary_head)),
+    );
+    let (scroll_x, long) = if wrapped || !autoscroll {
+        settle(measure, long_rows, widths, wanted)
+    } else if let Some(ix) = head_long {
+        let Err((_, display_row)) = &laid_out[ix] else {
+            unreachable!()
+        };
+        // Try the scroll to the caret as the index places it, then to
+        // where it's laid out there (the inlay may be in the slice), then
+        // to the left of the view, where an inlay too wide to scroll past
+        // is left behind. Keep the first that shows the caret as laid out
+        // there, with its margin, or failing that at all.
+        let plain_x = long_rows
+            .index(source, text, display_row.buffer_row, tab_size, widths)
+            .x_for_offset(primary_head, widths);
+        let mut tried = Vec::new();
+        let mut next = follow(plain_x, wanted);
+        for attempt in 0..3 {
+            let (scroll_x, long) = settle(measure, long_rows, widths, next);
+            let x = long[ix].as_ref().map_or(plain_x, |row| {
+                row.x_for_offset(primary_head, long_rows, widths)
+            });
+            let margined = follow(x, scroll_x) == scroll_x;
+            let visible = x >= scroll_x && x <= scroll_x + view_width;
+            tried.push((scroll_x, long, margined, visible));
+            if margined || inlay.is_none() {
+                break;
+            }
+            next = if attempt == 0 {
+                follow(x, wanted)
+            } else {
+                plain_x - margin
+            };
+        }
+        let best = tried
+            .iter()
+            .position(|tried| tried.2)
+            .or_else(|| tried.iter().position(|tried| tried.3))
+            .unwrap_or(0);
+        let (scroll_x, long, ..) = tried.swap_remove(best);
+        (scroll_x, long)
+    } else {
+        let head_x = laid_out.iter().find_map(|row| match row {
+            Ok(row) if row.contains(primary_head) => {
+                Some(row.x_for_offset(primary_head, long_rows, widths))
+            }
+            _ => None,
+        });
+        settle(
+            measure,
+            long_rows,
+            widths,
+            head_x.map_or(wanted, |x| follow(x, wanted)),
+        )
+    };
+    scroll.x = scroll_x as f32;
 
     let scroll_x = f64::from(scroll.x);
-    let view = scroll_x..scroll_x + f64::from(text_width);
-    let slice_margin = f64::from(em * SLICE_MARGIN_EMS);
     let rows: Vec<_> = laid_out
         .into_iter()
-        .map(|row| match row {
-            Ok(row) => row,
-            Err((row, display_row)) => {
-                let index = long_rows.index(source, text, display_row.buffer_row, tab_size, widths);
-                let mut slice = index.slice(view.clone(), slice_margin, widths);
-                let mut shape_slice = |slice: &RowSlice| {
-                    let spans = highlights(slice.range.clone());
-                    shape_row(
-                        measure,
-                        row,
-                        display_row.clone(),
-                        Some(slice.clone()),
-                        &spans,
-                    )
-                };
-                let mut layout = shape_slice(&slice);
-                // Where the shaper draws the slice narrower than the index
-                // measures it (contextual forms the index doesn't know), its
-                // text ends short of the view. Widen it by twice the
-                // shortfall, in index units per shaped unit over the slice,
-                // which covers the view and margin if the text added is
-                // drawn at least half as wide, relative to the index, as the
-                // slice's. Nothing shaped so far bounds how narrow the text
-                // after it is drawn, so if the text still ends short of the
-                // view's right edge, the third and last shape takes as much
-                // as a slice may hold: up to the row's end or
-                // `MAX_SHAPED_ROW_BYTES`, whichever is nearer. Shaping stays
-                // bounded whatever the shaper does; text drawn so narrow that
-                // even that ends short of the view leaves the rest of the
-                // view blank for the frame.
-                let shaped = f64::from(layout.line.width());
-                let short = view.end + slice_margin - (slice.start_x + shaped);
-                let limit = if short > 0. {
-                    index.slice_limit(slice.range.start, widths)
-                } else {
-                    slice.range.end
-                };
-                if slice.range.end < limit {
-                    slice = if shaped > 0. {
-                        let indexed = index.x_for_offset(slice.range.end, widths) - slice.start_x;
-                        index.widen(&slice, 2. * short * indexed / shaped, widths)
-                    } else {
-                        // Text shaped to nothing gives no ratio.
-                        RowSlice {
-                            range: slice.range.start..limit,
-                            ..slice
-                        }
-                    };
-                    layout = shape_slice(&slice);
-                    if slice.start_x + f64::from(layout.line.width()) < view.end
-                        && slice.range.end < limit
-                    {
-                        slice.range.end = limit;
-                        layout = shape_slice(&slice);
-                    }
-                }
-                layout
-            }
+        .zip(long)
+        .map(|(row, shaped)| match (row, shaped) {
+            (Ok(row), _) => row,
+            (Err(_), Some(shaped)) => shaped,
+            (Err(_), None) => unreachable!("long rows are shaped"),
         })
         .collect();
     let containing = |offset: usize| rows.iter().find(|row| row.contains(offset));
