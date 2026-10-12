@@ -576,49 +576,49 @@ keys = ":/d4/,/end/sort n<CR>u"
 name = "sort_one_line_ignores_arguments"
 buffer = "b\na"
 cursor = [1, 0]
-keys = ":1sort z<CR>j"
+keys = "qa:1sort z<CR>Ax<Esc>qu@a"
 
 [[case]]
 name = "sort_one_line_ignores_missing_search"
 buffer = "b\na"
 cursor = [1, 0]
-keys = ":2sort //<CR>k"
+keys = "qa:2sort //<CR>Ax<Esc>qu@a"
 
 [[case]]
 name = "sort_zero_line_ignores_arguments"
 buffer = "b\na"
 cursor = [0, 0]
-keys = ":0sort z<CR>j"
+keys = "qa:0sort z<CR>Ax<Esc>qu@a"
 
 [[case]]
 name = "sort_zero_line_ignores_two_number_kinds"
 buffer = "b\na"
 cursor = [0, 0]
-keys = ":0sort nn<CR>j"
+keys = "qa:0sort nn<CR>Ax<Esc>qu@a"
 
 [[case]]
 name = "sort_zero_line_ignores_pattern"
 buffer = "b\na"
 cursor = [0, 0]
-keys = ":0sort /a<CR>j"
+keys = "qa:0sort /a<CR>Ax<Esc>qu@a"
 
 [[case]]
 name = "sort_past_end_bad_argument"
 buffer = "b\na"
 cursor = [0, 0]
-keys = ":3sort z<CR>j"
+keys = "qa:3sort z<CR>Ax<Esc>qu@a"
 
 [[case]]
 name = "sort_past_end_two_number_kinds"
 buffer = "b\na"
 cursor = [0, 0]
-keys = ":3sort nn<CR>j"
+keys = "qa:3sort nn<CR>Ax<Esc>qu@a"
 
 [[case]]
 name = "sort_past_end_unterminated_pattern"
 buffer = "b\na"
 cursor = [0, 0]
-keys = ":3sort /a<CR>j"
+keys = "qa:3sort /a<CR>Ax<Esc>qu@a"
 
 [[case]]
 name = "sort_two_number_kinds"

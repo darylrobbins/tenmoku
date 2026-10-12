@@ -1897,15 +1897,20 @@
         1,
         0
       ],
-      "keys": ":1sort z<CR>j",
+      "keys": "qa:1sort z<CR>Ax<Esc>qu@a",
       "expect": {
-        "buffer": "b\na",
+        "buffer": "b\nax",
         "cursor": [
           1,
-          0
+          1
         ],
         "mode": "n",
-        "registers": {}
+        "registers": {
+          "a": {
+            "text": ":1sort z\rAx\u001b",
+            "linewise": false
+          }
+        }
       }
     },
     {
@@ -1915,15 +1920,20 @@
         1,
         0
       ],
-      "keys": ":2sort //<CR>k",
+      "keys": "qa:2sort //<CR>Ax<Esc>qu@a",
       "expect": {
-        "buffer": "b\na",
+        "buffer": "b\nax",
         "cursor": [
-          0,
-          0
+          1,
+          1
         ],
         "mode": "n",
-        "registers": {}
+        "registers": {
+          "a": {
+            "text": ":2sort //\rAx\u001b",
+            "linewise": false
+          }
+        }
       }
     },
     {
@@ -1933,15 +1943,20 @@
         0,
         0
       ],
-      "keys": ":0sort z<CR>j",
+      "keys": "qa:0sort z<CR>Ax<Esc>qu@a",
       "expect": {
-        "buffer": "b\na",
+        "buffer": "bx\na",
         "cursor": [
-          1,
-          0
+          0,
+          1
         ],
         "mode": "n",
-        "registers": {}
+        "registers": {
+          "a": {
+            "text": ":0sort z\rAx\u001b",
+            "linewise": false
+          }
+        }
       }
     },
     {
@@ -1951,15 +1966,20 @@
         0,
         0
       ],
-      "keys": ":0sort nn<CR>j",
+      "keys": "qa:0sort nn<CR>Ax<Esc>qu@a",
       "expect": {
-        "buffer": "b\na",
+        "buffer": "bx\na",
         "cursor": [
-          1,
-          0
+          0,
+          1
         ],
         "mode": "n",
-        "registers": {}
+        "registers": {
+          "a": {
+            "text": ":0sort nn\rAx\u001b",
+            "linewise": false
+          }
+        }
       }
     },
     {
@@ -1969,15 +1989,20 @@
         0,
         0
       ],
-      "keys": ":0sort /a<CR>j",
+      "keys": "qa:0sort /a<CR>Ax<Esc>qu@a",
       "expect": {
-        "buffer": "b\na",
+        "buffer": "bx\na",
         "cursor": [
-          1,
-          0
+          0,
+          1
         ],
         "mode": "n",
-        "registers": {}
+        "registers": {
+          "a": {
+            "text": ":0sort /a\rAx\u001b",
+            "linewise": false
+          }
+        }
       }
     },
     {
@@ -1987,15 +2012,20 @@
         0,
         0
       ],
-      "keys": ":3sort z<CR>j",
+      "keys": "qa:3sort z<CR>Ax<Esc>qu@a",
       "expect": {
         "buffer": "b\na",
         "cursor": [
-          1,
+          0,
           0
         ],
         "mode": "n",
-        "registers": {}
+        "registers": {
+          "a": {
+            "text": ":3sort z\rAx\u001b",
+            "linewise": false
+          }
+        }
       }
     },
     {
@@ -2005,15 +2035,20 @@
         0,
         0
       ],
-      "keys": ":3sort nn<CR>j",
+      "keys": "qa:3sort nn<CR>Ax<Esc>qu@a",
       "expect": {
         "buffer": "b\na",
         "cursor": [
-          1,
+          0,
           0
         ],
         "mode": "n",
-        "registers": {}
+        "registers": {
+          "a": {
+            "text": ":3sort nn\rAx\u001b",
+            "linewise": false
+          }
+        }
       }
     },
     {
@@ -2023,15 +2058,20 @@
         0,
         0
       ],
-      "keys": ":3sort /a<CR>j",
+      "keys": "qa:3sort /a<CR>Ax<Esc>qu@a",
       "expect": {
         "buffer": "b\na",
         "cursor": [
-          1,
+          0,
           0
         ],
         "mode": "n",
-        "registers": {}
+        "registers": {
+          "a": {
+            "text": ":3sort /a\rAx\u001b",
+            "linewise": false
+          }
+        }
       }
     },
     {

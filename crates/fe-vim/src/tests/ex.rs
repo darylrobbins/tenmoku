@@ -306,3 +306,27 @@ fn ex_line_commands_land_past_rows_put_in_while_measuring() {
         assert_eq!(landed, (at.0 + 1, at.1), "{keys}");
     }
 }
+
+#[test]
+fn sort_ignores_arguments_on_zero_or_one_line_and_fails_past_the_end() {
+    // A range of at most one line (or line 0) sorts nothing, so its
+    // arguments are never read; past the last line it's E16.
+    for keys in [
+        ":1sort z<CR>",
+        ":2sort //<CR>",
+        ":0sort z<CR>",
+        ":0sort nn<CR>",
+        ":0sort /a<CR>",
+    ] {
+        let mut vim = HeadlessVim::new("b\na", (0, 0));
+        vim.feed(keys).unwrap();
+        assert_eq!(vim.state().message(), None, "{keys}");
+        assert_eq!(vim.text(), "b\na", "{keys}");
+    }
+    for keys in [":3sort z<CR>", ":3sort nn<CR>", ":3sort /a<CR>"] {
+        let mut vim = HeadlessVim::new("b\na", (0, 0));
+        vim.feed(keys).unwrap();
+        assert_eq!(vim.state().message(), Some("E16: Invalid range"), "{keys}");
+        assert_eq!(vim.text(), "b\na", "{keys}");
+    }
+}
