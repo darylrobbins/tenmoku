@@ -6,10 +6,28 @@
 //! and return `None` for any it doesn't own; the first feature to answer
 //! `Some` wins, in [`FEATURES`] order. Its `register` adds its commands to
 //! vim's registry after vim's own.
+//!
+//! A feature adds a motion, text object or operator as a variant of
+//! [`Motion`](crate::Motion), [`TextObject`] or [`Operator`](crate::Operator)
+//! in `args.rs`, whose dispatch arms (`motion::motion`,
+//! `text_object::select`, `operator::operate`, the visual operators, and
+//! `Motion::class`, `Motion::is_jump` and `Target::writes_numbered`) call
+//! into its module, where the behaviour lives. Its keys reach them through
+//! its hooks: `key` or `g` commit a motion with [`Pending::motion`], start
+//! an operator with [`Pending::with_operator`] or commit one with
+//! [`Pending::operate`] (a doubled one, `gUU`, over
+//! [`Motion::Line`](crate::Motion::Line)); `object` maps the char after `i`
+//! or `a` to a text object. The variants for the M7 breadth cards are
+//! already in place, each delegating to its stub module ([`prose`],
+//! [`line_motions`], [`delimiters`], [`g_operators`]; [`jumplist`] takes
+//! keys only).
 
 use fe_command::Registry;
 
-use crate::{Pending, Step, VimCommands, VimKey, folds, increment, jump, scroll};
+use crate::{
+    Pending, Step, TextObject, VimCommands, VimKey, delimiters, folds, g_operators, increment,
+    jump, jumplist, line_motions, prose, scroll,
+};
 
 /// One feature's hooks into the reducer and the registry.
 pub(crate) struct Feature {
@@ -20,6 +38,9 @@ pub(crate) struct Feature {
     pub(crate) g: fn(&Pending, VimKey) -> Option<Step>,
     /// The key after `z`; `None` if the feature takes no `z` key.
     pub(crate) z: Option<fn(&Pending, VimKey) -> Option<Step>>,
+    /// The char after `i` or `a` (`true` for `i`) in operator-pending or a
+    /// visual mode that the reducer maps to no text object.
+    pub(crate) object: fn(&Pending, char, bool) -> Option<TextObject>,
     /// Adds its commands to vim's registry.
     pub(crate) register: fn(&mut Registry<VimCommands>),
 }
@@ -30,15 +51,21 @@ impl Feature {
         key: |_, _| None,
         g: |_, _| None,
         z: None,
+        object: |_, _, _| None,
         register: |_| {},
     };
 }
 
-pub(crate) const FEATURES: [&Feature; 4] = [
+pub(crate) const FEATURES: [&Feature; 9] = [
     &increment::FEATURE,
     &folds::FEATURE,
     &scroll::FEATURE,
     &jump::FEATURE,
+    &prose::FEATURE,
+    &line_motions::FEATURE,
+    &delimiters::FEATURE,
+    &g_operators::FEATURE,
+    &jumplist::FEATURE,
 ];
 
 /// The first feature's answer to a key the reducer would reject.
@@ -66,6 +93,14 @@ pub(crate) fn z(pending: &Pending, key: VimKey) -> Option<Step> {
         .iter()
         .filter_map(|feature| feature.z)
         .find_map(|z| z(pending, key))
+}
+
+/// The first feature's text object for the char after `i` (`inner`) or
+/// `a`.
+pub(crate) fn object(pending: &Pending, ch: char, inner: bool) -> Option<TextObject> {
+    FEATURES
+        .iter()
+        .find_map(|feature| (feature.object)(pending, ch, inner))
 }
 
 /// Runs every feature's `register`.

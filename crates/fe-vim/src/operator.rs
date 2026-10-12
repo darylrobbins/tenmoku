@@ -18,7 +18,7 @@ use fe_text::Text;
 
 use crate::{
     Change, JumpMotion, Motion, MoveArgs, OperateArgs, Operator, PutArgs, RangeClass, Register,
-    Registers, Target, VimState, VimTarget, Write, cmdline, history, insert, marks,
+    Registers, Target, VimState, VimTarget, Write, cmdline, g_operators, history, insert, marks,
     motion::{self, Cursor},
     text_object, visual,
 };
@@ -448,8 +448,8 @@ fn keeping_last_change<R>(
 }
 
 /// `vim.operate`: over a motion or text object in normal mode, or over the
-/// selection in a visual mode (see `visual::operate`). `~ u U J r{char}` act
-/// only on a selection.
+/// selection in a visual mode (see `visual::operate`). Over a motion or
+/// object, an operator but `d y c > <` is `g_operators::operate`'s.
 pub(crate) fn operate(
     target: &mut VimTarget<'_>,
     actor: &Actor,
@@ -521,10 +521,7 @@ fn operate_over(
         args.operator,
         Operator::Delete | Operator::Yank | Operator::Change | Operator::Indent | Operator::Outdent
     ) {
-        return Err(CommandError::new(format!(
-            "{:?} acts only on a visual selection",
-            args.operator
-        )));
+        return keeping_last_change(target, |target| g_operators::operate(target, actor, args));
     }
     keeping_last_change(target, |target| {
         operate_unless_failing(target, actor, args, None)

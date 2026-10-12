@@ -14,6 +14,7 @@ use crate::{
     },
     feature,
     jump::JumpPrefix,
+    marks,
 };
 
 /// The whole incomplete command: counts, `"{reg}`, an operator and a prefix
@@ -215,6 +216,35 @@ impl Pending {
         self.block
     }
 
+    /// The operator waiting for its target.
+    #[allow(dead_code, reason = "for the feature modules' hooks")]
+    pub(crate) fn operator(&self) -> Option<Operator> {
+        self.operator
+    }
+
+    /// Starts `operator` (`gU`): waits for its target, the count ended.
+    #[allow(dead_code, reason = "for the feature modules' hooks")]
+    pub(crate) fn with_operator(mut self, operator: Operator) -> Step {
+        self.end_count();
+        self.operator = Some(operator);
+        Step::Wait(self)
+    }
+
+    /// Commits `operator` over `target`, replacing any pending one, as an
+    /// operator key in a visual mode does (`gUU` over [`Motion::Line`]).
+    #[allow(dead_code, reason = "for the feature modules' hooks")]
+    pub(crate) fn operate(mut self, operator: Operator, target: Target) -> Step {
+        self.operator = Some(operator);
+        self.commit(target)
+    }
+
+    /// Commits `motion`: `vim.move`, or `vim.operate` with the pending
+    /// operator.
+    #[allow(dead_code, reason = "for the feature modules' hooks")]
+    pub(crate) fn motion(self, motion: Motion) -> Step {
+        self.commit(Target::Motion(motion))
+    }
+
     /// The same pending input, awaiting a jump's chars.
     pub(crate) fn jumping(self, jump: JumpPrefix) -> Self {
         Self {
@@ -263,15 +293,18 @@ impl Pending {
 
     /// `/` or `?` with no prefix waiting for a key: `vim.command_line`,
     /// carrying the count, register and operator. Anything else comes back
-    /// as it was. [`step`] doesn't read them: only a
-    /// [`VimState`](crate::VimState) has a command line to open.
+    /// as it was, and so does `?` after `g?`, for a feature's hook (`g??`).
+    /// [`step`] doesn't read them: only a [`VimState`](crate::VimState) has
+    /// a command line to open.
     pub(crate) fn command_line(mut self, key: VimKey) -> Result<Step, Self> {
         let kind = match key {
             VimKey::Char('/') => CommandLineKind::SearchForward,
             VimKey::Char('?') => CommandLineKind::SearchBackward,
             _ => return Err(self),
         };
-        if self.prefix.is_some() {
+        if self.prefix.is_some()
+            || (kind == CommandLineKind::SearchBackward && self.operator == Some(Operator::Rot13))
+        {
             return Err(self);
         }
         self.end_count();
@@ -327,7 +360,7 @@ impl Pending {
                 Motion::TillForward(_) => Motion::TillForward(ch),
                 _ => Motion::TillBackward(ch),
             })),
-            Prefix::Object { inner } => match text_object(ch, inner) {
+            Prefix::Object { inner } => match self.text_object(ch, inner) {
                 Some(text_object) if self.visual => {
                     self.end_count();
                     invocation(
@@ -356,10 +389,10 @@ impl Pending {
                 )
             }
             // A count is dropped.
-            Prefix::SetMark if ch.is_ascii_lowercase() || matches!(ch, '\'' | '`') => {
+            Prefix::SetMark if marks::settable(ch) => {
                 invocation("vim.set_mark", MarkArgs { name: ch })
             }
-            Prefix::Mark { exact } if ch.is_ascii_lowercase() || "'`<>".contains(ch) => {
+            Prefix::Mark { exact } if marks::jumpable(ch) => {
                 self.commit(Target::Motion(Motion::Mark(MarkMotion { name: ch, exact })))
             }
             Prefix::Record if ch.is_ascii_alphabetic() => {
@@ -379,6 +412,12 @@ impl Pending {
             },
             _ => self.unmatched(prefix, key),
         }
+    }
+
+    /// The text object `ch` names after `i` (`inner`) or `a`: one of the
+    /// reducer's own, else the first feature's.
+    fn text_object(&self, ch: char, inner: bool) -> Option<TextObject> {
+        text_object(ch, inner).or_else(|| feature::object(self, ch, inner))
     }
 
     /// A key a prefix doesn't take: after `g` the features may, else it

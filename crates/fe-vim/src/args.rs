@@ -10,8 +10,12 @@ use std::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::{line_motions, prose};
+
 /// `d y c > <`, and over a visual selection only, `~ u U J r{char}`, and
-/// over a block `I` and `A`.
+/// over a block `I` and `A`. `rot13`, `format` and `format_keep` (`g?`, `gq`
+/// and `gw`) belong to `g_operators.rs`, which also owns `gu gU g~`
+/// (`lowercase`, `uppercase` and `toggle_case`) over a motion or object.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Operator {
@@ -33,6 +37,12 @@ pub enum Operator {
     /// row's end, after `$`), the typed text then going in on every row of
     /// it, short rows padded with spaces.
     Append,
+    /// `g?`.
+    Rot13,
+    /// `gq`.
+    Format,
+    /// `gw`.
+    FormatKeep,
 }
 
 /// A motion, by its keys: `h l k j` are `left right up down`; `w b e` are
@@ -50,7 +60,12 @@ pub enum Operator {
 /// before they run, so `vim.move` and `vim.operate` take them but nothing
 /// else sees them. `mark` is `'{name}` and `` `{name} `` (`exact`): `{"mark":
 /// {"name": "a", "exact": true}}`. `jump` is `gs{c1}{c2}` and `gS{c1}{c2}`:
-/// `{"jump": {"chars": "ab", "forward": true}}`.
+/// `{"jump": {"chars": "ab", "forward": true}}`. `paragraph_forward`
+/// `paragraph_backward` `sentence_forward` `sentence_backward` are `} { ) (`
+/// (`prose.rs`); `word_end_backward` `big_word_end_backward`
+/// `next_line_first_non_blank` `prev_line_first_non_blank` `column`
+/// `window_top` `window_middle` `window_bottom` `display_down` `display_up`
+/// are `ge gE + - | H M L gj gk` (`line_motions.rs`; `_` is `line`).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Motion {
@@ -95,6 +110,20 @@ pub enum Motion {
         offset: usize,
         exact: bool,
     },
+    ParagraphForward,
+    ParagraphBackward,
+    SentenceForward,
+    SentenceBackward,
+    WordEndBackward,
+    BigWordEndBackward,
+    NextLineFirstNonBlank,
+    PrevLineFirstNonBlank,
+    Column,
+    WindowTop,
+    WindowMiddle,
+    WindowBottom,
+    DisplayDown,
+    DisplayUp,
 }
 
 /// `'{name}`, or `` `{name} `` if `exact`, as a motion: to the first
@@ -247,6 +276,20 @@ impl Motion {
                 true => RangeClass::Exclusive,
                 false => RangeClass::Linewise,
             },
+            Self::ParagraphForward
+            | Self::ParagraphBackward
+            | Self::SentenceForward
+            | Self::SentenceBackward => prose::class(self),
+            Self::WordEndBackward
+            | Self::BigWordEndBackward
+            | Self::NextLineFirstNonBlank
+            | Self::PrevLineFirstNonBlank
+            | Self::Column
+            | Self::WindowTop
+            | Self::WindowMiddle
+            | Self::WindowBottom
+            | Self::DisplayDown
+            | Self::DisplayUp => line_motions::class(self),
         }
     }
 
@@ -254,6 +297,12 @@ impl Motion {
     /// (`''`) to where it left from: `gg G % / ? n N * #`, `'` and `` ` ``,
     /// and `gs` and `gS`.
     pub fn is_jump(self) -> bool {
+        if self.is_prose() {
+            return prose::is_jump(self);
+        }
+        if self.is_line_motion() {
+            return line_motions::is_jump(self);
+        }
         matches!(
             self,
             Self::DocumentStart
@@ -270,9 +319,41 @@ impl Motion {
                 | Self::Jump(_)
         )
     }
+
+    /// Whether `prose.rs` owns it.
+    fn is_prose(self) -> bool {
+        matches!(
+            self,
+            Self::ParagraphForward
+                | Self::ParagraphBackward
+                | Self::SentenceForward
+                | Self::SentenceBackward
+        )
+    }
+
+    /// Whether `line_motions.rs` owns it.
+    fn is_line_motion(self) -> bool {
+        matches!(
+            self,
+            Self::WordEndBackward
+                | Self::BigWordEndBackward
+                | Self::NextLineFirstNonBlank
+                | Self::PrevLineFirstNonBlank
+                | Self::Column
+                | Self::WindowTop
+                | Self::WindowMiddle
+                | Self::WindowBottom
+                | Self::DisplayDown
+                | Self::DisplayUp
+        )
+    }
 }
 
 /// `iw aw iW aW i( a( i{ a{ i" a" i' a'` (`ib` and `iB` are `i(` and `i{`).
+/// `inner_paragraph` `a_paragraph` `inner_sentence` `a_sentence` are `ip ap
+/// is as` (`prose.rs`); `inner_bracket` `a_bracket` `inner_angle`
+/// `a_angle` `inner_tag` `a_tag` `inner_backtick` `a_backtick` are `` i[ a[
+/// i< a< it at i` a` `` (`delimiters.rs`).
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TextObject {
@@ -288,6 +369,18 @@ pub enum TextObject {
     ADoubleQuote,
     InnerSingleQuote,
     ASingleQuote,
+    InnerParagraph,
+    AParagraph,
+    InnerSentence,
+    ASentence,
+    InnerBracket,
+    ABracket,
+    InnerAngle,
+    AAngle,
+    InnerTag,
+    ATag,
+    InnerBacktick,
+    ABacktick,
 }
 
 /// What an operator acts on.
@@ -312,6 +405,13 @@ impl Target {
     /// (`:help quote_number`): `%`, `/`, `?` and `` ` ``, and `gs` and `gS`
     /// as `` ` ``.
     pub fn writes_numbered(self) -> bool {
+        match self {
+            Self::Motion(motion) if motion.is_prose() => return prose::writes_numbered(motion),
+            Self::Motion(motion) if motion.is_line_motion() => {
+                return line_motions::writes_numbered(motion);
+            }
+            _ => {}
+        }
         matches!(
             self,
             Self::Motion(

@@ -15,7 +15,8 @@ use fe_text::Text;
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
-    Mode, Motion, MoveArgs, VimState, VimTarget, cmdline, jump, marks, search, state::Goals, visual,
+    Mode, Motion, MoveArgs, VimState, VimTarget, cmdline, jump, line_motions, marks, prose, search,
+    state::Goals, visual,
 };
 
 /// `vim.move`: [`apply`], once a search motion passes
@@ -340,6 +341,20 @@ pub(crate) fn motion(
             cursor.enter(row.saturating_add(count - 1).min(last_row));
             cursor.ix = cursor.line.first_non_blank();
         }
+        Motion::ParagraphForward
+        | Motion::ParagraphBackward
+        | Motion::SentenceForward
+        | Motion::SentenceBackward => return prose::motion(cursor, args, goal, tab),
+        Motion::WordEndBackward
+        | Motion::BigWordEndBackward
+        | Motion::NextLineFirstNonBlank
+        | Motion::PrevLineFirstNonBlank
+        | Motion::Column
+        | Motion::WindowTop
+        | Motion::WindowMiddle
+        | Motion::WindowBottom
+        | Motion::DisplayDown
+        | Motion::DisplayUp => return line_motions::motion(cursor, args, goal, tab),
     }
     // nvim fails an operator whose `b` can't move at all, or would step
     // back from an empty first row (from a non-empty one, it just stops at

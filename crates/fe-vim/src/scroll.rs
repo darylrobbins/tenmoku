@@ -53,6 +53,7 @@ pub(crate) const FEATURE: Feature = Feature {
     g: |_, _| None,
     z: Some(z),
     register,
+    ..Feature::NONE
 };
 
 /// What `vim.scroll` does, by its keys.

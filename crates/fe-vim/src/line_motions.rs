@@ -1,0 +1,41 @@
+//! Line and screen motions: `ge gE _ + - | H M L gj gk` (a feature module;
+//! see [`crate::feature`]). `_` is [`Motion::Line`].
+//!
+//! A stub: no key reaches them yet. Each fails as a failed motion does,
+//! changing nothing.
+
+use crate::{
+    MoveArgs,
+    args::{Motion, RangeClass},
+    feature::Feature,
+    motion::Cursor,
+};
+
+pub(crate) const FEATURE: Feature = Feature::NONE;
+
+/// `motion`'s class as an operator's target ([`Motion::class`]).
+pub(crate) fn class(_motion: Motion) -> RangeClass {
+    RangeClass::Exclusive
+}
+
+/// Whether `motion` is a jump ([`Motion::is_jump`]).
+pub(crate) fn is_jump(_motion: Motion) -> bool {
+    false
+}
+
+/// Whether a delete over `motion` writes register `1` even within a row
+/// ([`crate::Target::writes_numbered`]).
+pub(crate) fn writes_numbered(_motion: Motion) -> bool {
+    false
+}
+
+/// Moves one caret by `args.motion`, as `motion::motion` does: `Ok` holds
+/// the goal column it keeps, `Err` the goal to keep when it fails.
+pub(crate) fn motion(
+    _cursor: &mut Cursor,
+    _args: MoveArgs,
+    goal: Option<usize>,
+    _tab: usize,
+) -> Result<Option<usize>, Option<usize>> {
+    Err(goal)
+}

@@ -72,6 +72,13 @@ for _, case in ipairs(vim.json.decode(read(input))) do
     vim.fn.setreg(reg, {})
   end
   vim.fn.setcharsearch({ char = "" })
+  -- Nor a jumplist, file marks or history from earlier cases: the buffer
+  -- is wiped, but these belong to the session.
+  vim.cmd("clearjumps")
+  vim.cmd("delmarks A-Z0-9")
+  for _, history in ipairs({ "search", "cmd", "input" }) do
+    vim.fn.histdel(history)
+  end
 
   vim.api.nvim_buf_set_lines(0, 0, -1, false, vim.split(case.buffer, "\n", { plain = true }))
   if case.window_rows then

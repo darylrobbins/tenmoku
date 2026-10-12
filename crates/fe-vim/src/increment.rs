@@ -36,6 +36,7 @@ pub(crate) const FEATURE: Feature = Feature {
     g,
     z: None,
     register,
+    ..Feature::NONE
 };
 
 /// `vim.increment`'s args: `<C-a>` (`delta` 1) and `<C-x>` (`delta` -1), and

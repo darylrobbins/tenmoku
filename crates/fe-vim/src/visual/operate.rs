@@ -257,6 +257,9 @@ fn operate_as_wide(
     args: OperateArgs,
     columns: Option<(usize, Option<usize>)>,
 ) -> Result<Dispatched<TransactionId>, CommandError> {
+    if matches!(args.operator, Operator::Format | Operator::FormatKeep) {
+        return crate::g_operators::format_selection(target, actor, args);
+    }
     target.model.sync_display();
     let Some(ends) = ends(target.model, target.state) else {
         return Err(CommandError::new("no visual selection to operate on"));
@@ -398,7 +401,12 @@ fn operate_as_wide(
             edit::join(target, actor, CountArgs { count: join })?
         }
         Operator::Insert | Operator::Append => unreachable!("refused but over a block"),
-        Operator::ToggleCase | Operator::Lowercase | Operator::Uppercase | Operator::Replace(_) => {
+        Operator::Format | Operator::FormatKeep => unreachable!("g_operators' own"),
+        Operator::ToggleCase
+        | Operator::Lowercase
+        | Operator::Uppercase
+        | Operator::Rot13
+        | Operator::Replace(_) => {
             let range = ends.range(&text, if lines { VisualKind::Line } else { ends.kind });
             let land = match args.operator {
                 Operator::Replace(_) => range.start,
@@ -469,7 +477,7 @@ fn join_landings(text: &Text, first: u32, rows: u32) -> Vec<Landing> {
         .collect()
 }
 
-/// `~`, `u`, `U` or `r{char}` over `range`: each grapheme's first character
+/// `~`, `u`, `U`, `g?` or `r{char}` over `range`: each grapheme's first character
 /// recased, or each grapheme but line breaks replaced; the caret goes to
 /// `land`.
 fn recase(
@@ -505,11 +513,12 @@ fn recase(
     Dispatched::new(Effect::Changed).with_transactions(transaction.into_iter().collect())
 }
 
-/// `ch` as `~`, `u` or `U` leave it, by nvim's tables.
+/// `ch` as `~`, `u`, `U` or `g?` leave it, by nvim's tables.
 pub(super) fn recased(ch: char, operator: Operator) -> char {
     match operator {
         Operator::Lowercase => edit::lowered(ch),
         Operator::Uppercase => edit::raised(ch),
+        Operator::Rot13 => crate::g_operators::rot13(ch),
         _ => edit::toggled(ch),
     }
 }

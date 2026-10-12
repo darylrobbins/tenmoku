@@ -401,13 +401,15 @@ pub(super) fn operate_block(
                 (cut.range.clone(), with)
             })
             .collect(),
-        Operator::ToggleCase | Operator::Lowercase | Operator::Uppercase => cut_rows()
-            .filter_map(|cut| {
-                let old = text.slice_to_string(cut.range.clone());
-                let new = recased_text(&old, args.operator);
-                (new != old).then(|| (cut.range.clone(), new))
-            })
-            .collect(),
+        Operator::ToggleCase | Operator::Lowercase | Operator::Uppercase | Operator::Rot13 => {
+            cut_rows()
+                .filter_map(|cut| {
+                    let old = text.slice_to_string(cut.range.clone());
+                    let new = recased_text(&old, args.operator);
+                    (new != old).then(|| (cut.range.clone(), new))
+                })
+                .collect()
+        }
         Operator::Indent | Operator::Outdent => {
             let by = tab.saturating_mul(args.count.unwrap_or(1).max(1) as usize);
             let indent = args.operator == Operator::Indent;
@@ -498,6 +500,7 @@ pub(super) fn operate_block(
             return Ok(Dispatched::new(Effect::Changed));
         }
         Operator::Yank | Operator::Join => Vec::new(),
+        Operator::Format | Operator::FormatKeep => unreachable!("g_operators' own"),
     };
     let corner = block.corner(&text, tab);
     let begins = vec![history::pair(&text, corner)];
@@ -556,7 +559,7 @@ fn block_row(
     })
 }
 
-/// `text` with each grapheme's first character as `~`, `u` or `U` leave it.
+/// `text` with each grapheme's first character as `~`, `u`, `U` or `g?` leave it.
 pub(super) fn recased_text(text: &str, operator: Operator) -> String {
     use unicode_segmentation::UnicodeSegmentation;
     text.graphemes(true)

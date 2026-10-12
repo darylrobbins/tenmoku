@@ -7,9 +7,10 @@ use std::ops::Range;
 use fe_text::Text;
 
 use crate::{
-    TextObject,
+    TextObject, delimiters,
     motion::{Class, Cursor, PAIRS, Quotes, Rules, Scan, nth_unmatched, unmatched},
     operator::Span,
+    prose,
 };
 
 /// What `object` covers around the caret at `offset`, `count` times.
@@ -30,6 +31,11 @@ pub(crate) fn select(text: &Text, offset: usize, object: TextObject, count: u32)
         InnerSingleQuote | ASingleQuote => {
             quotes(text, offset, b'\'', count, object == InnerSingleQuote)
         }
+        InnerParagraph | AParagraph | InnerSentence | ASentence => {
+            prose::select(text, offset, object, count)
+        }
+        InnerBracket | ABracket | InnerAngle | AAngle | InnerTag | ATag | InnerBacktick
+        | ABacktick => delimiters::select(text, offset, object, count),
     }
 }
 

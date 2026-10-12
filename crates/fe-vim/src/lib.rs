@@ -26,10 +26,17 @@
 //!
 //! Keys and commands that live in a module of their own register through
 //! `feature::FEATURES`: the reducer asks each feature about a key it would
-//! otherwise reject, a key after `g` it doesn't take and (once some feature
-//! has one) a key after `z`, and [`registry`] runs each feature's `register`.
-//! Each such module's docs describe its keys, its commands and any
-//! divergence from nvim.
+//! otherwise reject, a key after `g` it doesn't take, (once some feature
+//! has one) a key after `z`, and the char after `i` or `a` that names none
+//! of its text objects; [`registry`] runs each feature's `register`. A
+//! feature's motions, text objects and operators are variants of
+//! [`Motion`], [`TextObject`] and [`Operator`] whose behaviour lives in its
+//! module. The feature modules' docs describe their keys, their commands
+//! and any divergence from nvim: `increment`, `folds`, `scroll`, `jump`,
+//! and the stubs for the breadth still to come, `prose` (`{ } ( )`, `ip ap
+//! is as`), `line_motions` (`ge gE + - | H M L gj gk`), `delimiters` (``i[
+//! a[ i< a< it at i` a` ``), `g_operators` (`gu gU g~ g? gq gw`) and
+//! `jumplist` (`<C-o> <C-i>`).
 //!
 //! An insert session (`i a I A o O`, or the change operator `c`) is one
 //! `fe_buffer` transaction with the actor's origin, opened by the command
@@ -707,20 +714,25 @@
 mod args;
 mod cmdline;
 mod commands;
+mod delimiters;
 mod edit;
 mod ex;
 mod feature;
 pub mod folds;
+mod g_operators;
 mod headless;
 mod history;
 pub mod increment;
 mod insert;
 pub mod jump;
+mod jumplist;
 mod key;
+mod line_motions;
 mod macros;
 mod marks;
 mod motion;
 mod operator;
+mod prose;
 mod reducer;
 mod register;
 mod repeat;

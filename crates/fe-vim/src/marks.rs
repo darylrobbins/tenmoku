@@ -27,6 +27,18 @@ use fe_editor::EditorModel;
 /// What jumping to a mark that isn't set (or whose row was deleted) says.
 pub(crate) const NOT_SET: &str = "E20: Mark not set";
 
+/// Whether `m{ch}` sets a mark: `a` to `z`, and `'` and `` ` `` (the jump
+/// mark).
+pub(crate) fn settable(ch: char) -> bool {
+    ch.is_ascii_lowercase() || matches!(ch, '\'' | '`')
+}
+
+/// Whether `'{ch}` and `` `{ch} `` go to a mark: `a` to `z`, `'` and `` ` ``
+/// (the jump mark), and `<` and `>`.
+pub(crate) fn jumpable(ch: char) -> bool {
+    ch.is_ascii_lowercase() || "'`<>".contains(ch)
+}
+
 /// Where a mark is, kept as nvim keeps one: a byte column on a row. The row
 /// follows rows put in or taken out above it, and edits within it leave the
 /// column alone; joined to the row above, the mark goes along with its
