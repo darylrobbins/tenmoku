@@ -454,6 +454,8 @@ fn an_idle_cursor_redraws_when_the_window_changes_activation(cx: &mut TestAppCon
 
 #[gpui::test]
 fn unfocused_while_the_window_is_inactive(cx: &mut TestAppContext) {
+    // The pty's threads wake the view's event task.
+    cx.executor().allow_parking();
     let dir = tempfile::tempdir().unwrap();
     let options = TerminalOptions::new(dir.path());
     let (view, cx) =
