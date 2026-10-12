@@ -1,6 +1,6 @@
 //! The window shell: the editor panes, with the dock (the project panel,
-//! search, the outline or the git changes) on the right and the terminal
-//! below.
+//! search, the outline, the git changes, references or the problems) on the
+//! right and the terminal below.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -24,7 +24,7 @@ use crate::{
     ProjectPanel, QuickOpen, ReferencesPanel, SearchPanel, StatusBar,
     config_problems::{self, ConfigProblemsPicker},
     disk_sync::DiskSync,
-    dock::{self, DockEvent, DockOp},
+    dock::{self, DockEvent, DockOp, ProblemsOp, ProblemsPanel},
     git::GitState,
     go_to_line::GoToLine,
     language_picker::LanguagePicker,
@@ -270,6 +270,9 @@ pub struct Workbench {
     _layout_hooks: Vec<Subscription>,
     /// Keeps the open buffers in step with their files on disk.
     pub(crate) disk_sync: DiskSync,
+    /// An editor a problem opened in, left in vim's insert or replace mode,
+    /// and the problem's start: see [`Workbench::land_problem`].
+    pub(crate) problem_landing: Option<(WeakEntity<EditorView>, usize)>,
 }
 
 impl EventEmitter<RootChanged> for Workbench {}
@@ -307,6 +310,8 @@ impl Workbench {
         });
         let terminal_subscriptions = Self::follow_terminal(&terminal, &terminal_dock, window, cx);
         let panel = cx.new(|cx| ProjectPanel::new(launch.root, ui, cx));
+        let problems = cx.weak_entity();
+        let problems = cx.new(|cx| ProblemsPanel::new(problems, &theme, ui, cx));
         let pane = cx.new(|cx| {
             let mut pane = Pane::new(theme, settings, ui, cx);
             match launch.file {
@@ -329,6 +334,7 @@ impl Workbench {
                 outline.clone(),
                 changes.clone(),
                 references,
+                problems,
                 ui,
                 cx,
             )
@@ -471,6 +477,7 @@ impl Workbench {
             bounds: None,
             _layout_hooks: Vec::new(),
             disk_sync: DiskSync::new(window, cx),
+            problem_landing: None,
         };
         // Under test, the chrome's window moves are recorded, not made.
         #[cfg(test)]
@@ -896,7 +903,12 @@ impl Workbench {
     }
 
     /// Makes `pane` the active pane, which files open in, and focuses it.
-    fn activate(&mut self, pane: Entity<Pane>, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn activate(
+        &mut self,
+        pane: Entity<Pane>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let weak = pane.downgrade();
         self.quick_open
             .update(cx, |picker, _| picker.delegate.set_pane(weak.clone()));
@@ -1070,7 +1082,7 @@ impl Workbench {
 
     /// Observes each open editor, and stops observing closed ones. A newly
     /// observed editor gets its diff base, and its file, if it has one, is
-    /// recorded as opened recently.
+    /// recorded as opened recently. The problems are listed again.
     fn track_editors(&mut self, cx: &mut Context<Self>) {
         let editors = self.open_editors(cx);
         let open: HashSet<EntityId> = editors.iter().map(Entity::entity_id).collect();
@@ -1087,6 +1099,7 @@ impl Workbench {
             }
         }
         self.git.update(cx, |git, cx| git.track(&editors, cx));
+        self.sync_problems(cx);
     }
 
     #[cfg(test)]
@@ -1108,10 +1121,12 @@ impl Workbench {
             .collect()
     }
 
-    /// Notifies every other editor sharing `editor`'s buffer, so an edit in
-    /// one pane shows in the others on the next frame. Each keeps its own
-    /// selections, scroll and folds.
+    /// Lists the problems again, and notifies every other editor sharing
+    /// `editor`'s buffer, so an edit in one pane shows in the others on the
+    /// next frame. Each keeps its own selections, scroll and folds.
     fn editor_changed(&mut self, editor: Entity<EditorView>, cx: &mut Context<Self>) {
+        // A diagnostic arriving or clearing notifies, as an edit does.
+        self.sync_problems(cx);
         if self.echoes.remove(&editor.entity_id()) {
             return;
         }
@@ -1800,6 +1815,13 @@ impl Workbench {
             } else {
                 dock::op(run, cx)
             };
+            // `problems.show` is the dock's; the other problems commands
+            // the workbench's.
+            if let Some(DockOp::Problems(op)) = op
+                && op != ProblemsOp::Show
+            {
+                return self.run_problems_op(op, window, cx);
+            }
             let done = op.is_some_and(|op| self.run_dock_op(op, window, cx));
             if !done {
                 cx.propagate();
@@ -1832,6 +1854,7 @@ impl Render for Workbench {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         window.set_window_title(&self.active.read(cx).title(cx));
         let followed = self.follow_active_editor(window, cx);
+        self.land_problem(window, cx);
         self.save_layout(window, cx);
         self.shell.update(cx, |shell, _| {
             // Not from its cache in a frame that gave it another editor: a

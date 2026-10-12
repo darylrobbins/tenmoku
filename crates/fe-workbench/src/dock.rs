@@ -1,13 +1,15 @@
 //! The right dock: one panel at a time, the project tree, project search,
-//! the outline, the git changes or find references' results, under a title
-//! row naming it, and picked from the activity rail on the window's right
-//! edge, which stays when the dock hides. Switching keeps each panel's state. The
-//! References button joins the rail once that panel has shown.
+//! the outline, the git changes, find references' results or the problems,
+//! under a title row naming it, and picked from the activity rail on the
+//! window's right edge, which stays when the dock hides. Switching keeps each
+//! panel's state. The References and Problems buttons join the rail once
+//! their panel has shown.
 //!
 //! Its commands, and the search panel's, are those of [`init`]'s registry:
 //! the dock's in the workbench's [`crate::KEY_CONTEXT`], the search options'
 //! in the search panel's [`search_panel::KEY_CONTEXT`], and
-//! `text_input.submit` in its input's. Their handlers only name an op: the
+//! `text_input.submit` in its input's, and the problems commands
+//! ([`problems_panel::commands`]). Their handlers only name an op: the
 //! workbench, or the search panel, then does it with the window at hand.
 
 use std::rc::Rc;
@@ -23,6 +25,11 @@ use crate::{
     search_panel::{self, SearchPanel},
 };
 
+#[path = "problems_panel.rs"]
+pub(crate) mod problems_panel;
+
+pub(crate) use problems_panel::{ProblemsOp, ProblemsPanel};
+
 /// A panel the dock shows: fastedit's name for the [`PanelId`]s it
 /// registers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -32,11 +39,12 @@ pub enum DockPanel {
     Outline,
     Changes,
     References,
+    Problems,
 }
 
 impl DockPanel {
-    /// The panels the rail always has, in its order; References follows
-    /// once it has shown.
+    /// The panels the rail always has, in its order; References and
+    /// Problems follow once they have shown.
     pub const ALL: [DockPanel; 4] = [
         DockPanel::Project,
         DockPanel::Search,
@@ -51,6 +59,7 @@ impl DockPanel {
             DockPanel::Outline => "Outline",
             DockPanel::Changes => "Changes",
             DockPanel::References => "References",
+            DockPanel::Problems => "Problems",
         }
     }
 
@@ -62,12 +71,13 @@ impl DockPanel {
             DockPanel::Outline => "outline",
             DockPanel::Changes => "changes",
             DockPanel::References => "references",
+            DockPanel::Problems => "problems",
         })
     }
 
     /// The panel registered as `id`.
     fn of(id: PanelId) -> Option<Self> {
-        [DockPanel::References]
+        [DockPanel::References, DockPanel::Problems]
             .into_iter()
             .chain(DockPanel::ALL)
             .find(|panel| panel.id() == id)
@@ -81,6 +91,7 @@ impl DockPanel {
             DockPanel::Outline => "outline.show",
             DockPanel::Changes => "git.show_changes",
             DockPanel::References => "nav.find_references",
+            DockPanel::Problems => problems_panel::SHOW,
         }
     }
 
@@ -92,6 +103,7 @@ impl DockPanel {
             DockPanel::Outline => DockOp::ShowOutline,
             DockPanel::Changes => DockOp::ShowChanges,
             DockPanel::References => DockOp::ShowReferences,
+            DockPanel::Problems => DockOp::Problems(ProblemsOp::Show),
         }
     }
 }
@@ -104,6 +116,8 @@ pub(crate) fn panel_icon(panel: DockPanel) -> Icon {
         DockPanel::Outline => Icon::ListTree,
         DockPanel::Changes => Icon::GitBranch,
         DockPanel::References => Icon::FileSymlink,
+        // The bundle has no warning sign: an error's cross.
+        DockPanel::Problems => Icon::X,
     }
 }
 
@@ -146,6 +160,8 @@ dock_item!(OutlinePanel, DockPanel::Outline, true, false);
 dock_item!(GitPanel, DockPanel::Changes, true, true);
 // On the rail once it has shown.
 dock_item!(ReferencesPanel, DockPanel::References, false, false);
+// On the rail once it has shown; focused when shown, for its commands.
+dock_item!(ProblemsPanel, DockPanel::Problems, false, true);
 
 /// A rail button was clicked; the workbench runs [`Dock::rail_op`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -153,7 +169,7 @@ pub(crate) enum DockEvent {
     Rail(DockPanel),
 }
 
-/// The right dock: kiln-shell's [`DockState`] over fastedit's five panels,
+/// The right dock: kiln-shell's [`DockState`] over fastedit's six panels,
 /// whose rail clicks run the op the panel's key would.
 pub struct Dock {
     state: DockState,
@@ -162,18 +178,21 @@ pub struct Dock {
     outline: Entity<OutlinePanel>,
     changes: Entity<GitPanel>,
     references: Entity<ReferencesPanel>,
+    problems: Entity<ProblemsPanel>,
     #[cfg(test)]
     ops: Vec<DockOp>,
 }
 
 impl Dock {
     /// Shows `project` first.
+    #[expect(clippy::too_many_arguments, reason = "one per panel, then the theme")]
     pub fn new(
         project: Entity<ProjectPanel>,
         search: Entity<SearchPanel>,
         outline: Entity<OutlinePanel>,
         changes: Entity<GitPanel>,
         references: Entity<ReferencesPanel>,
+        problems: Entity<ProblemsPanel>,
         ui: UiTheme,
         cx: &App,
     ) -> Self {
@@ -185,6 +204,7 @@ impl Dock {
         state.add_panel(outline.clone(), cx);
         state.add_panel(changes.clone(), cx);
         state.add_panel(references.clone(), cx);
+        state.add_panel(problems.clone(), cx);
         Self {
             state,
             project,
@@ -192,6 +212,7 @@ impl Dock {
             outline,
             changes,
             references,
+            problems,
             #[cfg(test)]
             ops: Vec::new(),
         }
@@ -231,6 +252,10 @@ impl Dock {
 
     pub fn references(&self) -> &Entity<ReferencesPanel> {
         &self.references
+    }
+
+    pub(crate) fn problems(&self) -> &Entity<ProblemsPanel> {
+        &self.problems
     }
 
     /// The dock's state, in kiln-shell.
@@ -280,6 +305,9 @@ impl Dock {
             DockOp::ShowOutline => DockPanel::Outline,
             DockOp::ShowReferences => DockPanel::References,
             DockOp::ShowChanges => DockPanel::Changes,
+            DockOp::Problems(ProblemsOp::Show) => DockPanel::Problems,
+            // The workbench's to do.
+            DockOp::Problems(_) => return false,
             DockOp::RefreshChanges => {
                 self.changes.update(cx, GitPanel::refresh);
                 return true;
@@ -401,6 +429,9 @@ pub(crate) enum DockOp {
     ToggleWholeWord,
     /// Enter in the search panel's input: [`TextInput::submit`].
     Submit,
+    /// A problems command: `problems.show` is the dock's to do, the others
+    /// the workbench's.
+    Problems(ProblemsOp),
 }
 
 /// The [`CommandTarget`] of dock commands: the op to do.
@@ -450,8 +481,10 @@ pub(crate) fn registry() -> Registry<DockCommands> {
             Submit,
         ),
     ];
+    let problems = (problems_panel::commands().into_iter())
+        .map(|(id, title, context, op)| (id, title, context, Problems(op)));
     let mut registry = Registry::new();
-    for (id, title, context, op) in commands {
+    for (id, title, context, op) in commands.into_iter().chain(problems) {
         registry
             .register(id, title, move |target: &mut Option<DockOp>, _: &Actor| {
                 *target = Some(op);
