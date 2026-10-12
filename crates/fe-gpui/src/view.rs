@@ -246,7 +246,7 @@ impl EditorView {
         }
         let text = self.model.text().slice_to_string(range);
         if self.last_primary.as_deref() != Some(text.as_str()) {
-            cx.write_to_primary(gpui::ClipboardItem::new_string(text.clone()));
+            write_primary_text(cx, text.clone());
             self.last_primary = Some(text);
         }
     }
@@ -266,7 +266,7 @@ impl EditorView {
             .layout
             .as_ref()
             .is_some_and(|layout| layout.over_text(event.position, window));
-        let Some(text) = cx.read_from_primary().and_then(|item| item.text()) else {
+        let Some(text) = read_primary_text(cx) else {
             return;
         };
         if !over_text || text.is_empty() {
@@ -1134,13 +1134,34 @@ impl Focusable for EditorView {
     }
 }
 
+/// Writes `text` to the primary selection. GPUI has one on Linux and FreeBSD
+/// only; elsewhere this does nothing.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn write_primary_text(cx: &mut App, text: String) {
+    cx.write_to_primary(gpui::ClipboardItem::new_string(text));
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+fn write_primary_text(_: &mut App, _: String) {}
+
+/// The primary selection's text, where GPUI has one (Linux and FreeBSD).
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+fn read_primary_text(cx: &App) -> Option<String> {
+    cx.read_from_primary().and_then(|item| item.text())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+fn read_primary_text(_: &App) -> Option<String> {
+    None
+}
+
 mod find;
 mod ime;
 
 #[cfg(test)]
 mod ime_tests;
 
-#[cfg(test)]
+#[cfg(all(test, any(target_os = "linux", target_os = "freebsd")))]
 mod primary_selection_tests;
 
 #[cfg(test)]
