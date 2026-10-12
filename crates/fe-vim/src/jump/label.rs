@@ -94,8 +94,9 @@ fn on_row(line: &Line, [c1, c2]: [char; 2]) -> Vec<usize> {
 /// direction), with the label it gets once the char after it is typed as
 /// `{c2}` (`<Space>` for a blank or the row's end), in its group: the
 /// targets of that pair in `rows`, labelled after an operator if
-/// `op_pending`. A match its group doesn't take (inside a same-char run)
-/// or would jump to has none, and is left out. In text order.
+/// `op_pending`. The label is `None` for the match its group would jump
+/// straight to. A match its group doesn't take (inside a same-char run) is
+/// left out. In text order.
 pub fn preview(
     text: &Text,
     rows: Range<u32>,
@@ -103,11 +104,11 @@ pub fn preview(
     c1: char,
     forward: bool,
     op_pending: bool,
-) -> Vec<(usize, Label)> {
+) -> Vec<(usize, Option<Label>)> {
     let rows = rows.start..rows.end.min(text.row_count());
     let typed = Typed::new(c1);
     // Each group's labels, by offset.
-    let mut groups: HashMap<char, HashMap<usize, Label>> = HashMap::new();
+    let mut groups: HashMap<char, HashMap<usize, Option<Label>>> = HashMap::new();
     let mut found = Vec::new();
     for row in rows.clone() {
         let line = Line::new(text, row);
@@ -131,9 +132,7 @@ pub fn preview(
                 let targets = targets(text, rows.clone(), caret, [c1, c2], forward);
                 let labeled = label(targets.len(), op_pending);
                 let labels = targets.into_iter().zip(labeled.labels);
-                labels
-                    .filter_map(|(offset, label)| Some((offset, label?)))
-                    .collect()
+                labels.collect()
             });
             if let Some(&label) = group.get(&offset) {
                 found.push((offset, label));

@@ -12,7 +12,7 @@ use crate::{EditorSettings, init, vim::set_vim_enabled};
 
 /// `rows` rows of `row`, drawn in an editor `width` wide and `visible` rows
 /// tall, with vim on.
-fn editor<'a>(
+pub(super) fn editor<'a>(
     cx: &'a mut TestAppContext,
     row: &str,
     rows: usize,
@@ -43,7 +43,7 @@ fn abs(cx: &mut TestAppContext) -> (Entity<EditorView>, &mut VisualTestContext) 
 }
 
 /// Draws a frame; its line height.
-fn draw(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> f32 {
+pub(super) fn draw(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> f32 {
     cx.update(|window, cx| window.draw(cx).clear(cx));
     view.read_with(cx, |view, _| {
         view.layout.as_ref().unwrap().frame.line_height
@@ -51,7 +51,7 @@ fn draw(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> f32 {
 }
 
 /// What the last frame painted for the jump, in order.
-fn paints() -> Vec<JumpPaint> {
+pub(super) fn paints() -> Vec<JumpPaint> {
     JUMP_PAINTS.with(|paints| paints.borrow().clone())
 }
 
@@ -65,7 +65,7 @@ fn backdrops(paints: &[JumpPaint]) -> Vec<(Bounds<Pixels>, Hsla)> {
 }
 
 /// The labels the last frame laid out: bounds and state.
-fn laid_out(
+pub(super) fn laid_out(
     view: &Entity<EditorView>,
     cx: &mut VisualTestContext,
 ) -> Vec<(Bounds<Pixels>, JumpLabelState)> {
@@ -84,7 +84,7 @@ fn laid_out(
 type LabelPaint = (Bounds<Pixels>, Hsla, Option<(Hsla, FontWeight)>);
 
 /// Each label paint.
-fn label_paints(paints: &[JumpPaint]) -> Vec<LabelPaint> {
+pub(super) fn label_paints(paints: &[JumpPaint]) -> Vec<LabelPaint> {
     (paints.iter())
         .filter_map(|paint| match *paint {
             JumpPaint::Label {
@@ -207,7 +207,10 @@ fn labels_use_theme_slots(cx: &mut TestAppContext) {
 
     cx.simulate_keystrokes("g s a");
     draw(&view, cx);
-    let labels = laid_out(&view, cx);
+    // A direct target is a marker, not a label.
+    let labels: Vec<_> = (laid_out(&view, cx).into_iter())
+        .filter(|(_, state)| *state != JumpLabelState::Direct)
+        .collect();
     let painted = label_paints(&paints());
     assert!(!labels.is_empty());
     assert_eq!(painted.len(), labels.len());
@@ -227,7 +230,9 @@ fn labels_use_theme_slots(cx: &mut TestAppContext) {
         let expected = match state {
             JumpLabelState::Live => (*bounds, live, bold),
             JumpLabelState::Concealed => (*bounds, preview, None),
-            JumpLabelState::Preview => panic!("a preview label while labels wait"),
+            JumpLabelState::Preview | JumpLabelState::Direct => {
+                panic!("a {state:?} label while labels wait")
+            }
         };
         assert_eq!(*paint, expected);
     }

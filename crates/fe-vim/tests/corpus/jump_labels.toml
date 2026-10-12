@@ -8,7 +8,8 @@
 # jump), keys in vim notation (a space typed as itself), then under
 # [case.expect] the cursor, the buffer (if the keys change it), vim.mode
 # and the labels the overlay shows after the keys, as [row, column, label,
-# state] in text order (state preview, live or concealed). Where pages hold
+# state] in text order (state preview, direct, live or concealed; a direct
+# one, the match its {c2} jumps straight to, has label ""). Where pages hold
 # too many to list, `live` lists the live ones and `concealed` counts the
 # rest.
 #
@@ -428,7 +429,7 @@ keys = "gsa"
 [case.expect]
 cursor = [0, 0]
 mode = "normal"
-labels = [[0, 6, "s", "preview"]]
+labels = [[0, 3, "", "direct"], [0, 6, "s", "preview"], [0, 9, "", "direct"]]
 
 [[case]]
 name = "preview_after_operator"
@@ -439,7 +440,7 @@ keys = "dgsa"
 [case.expect]
 cursor = [0, 0]
 mode = "operator_pending"
-labels = [[0, 3, "s", "preview"], [0, 6, "f", "preview"]]
+labels = [[0, 3, "s", "preview"], [0, 6, "f", "preview"], [0, 9, "", "direct"]]
 
 [[case]]
 name = "same_char_pair_at_run_starts"

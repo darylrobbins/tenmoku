@@ -52,6 +52,7 @@ struct Expect {
 fn state_name(state: JumpLabelState) -> &'static str {
     match state {
         JumpLabelState::Preview => "preview",
+        JumpLabelState::Direct => "direct",
         JumpLabelState::Live => "live",
         JumpLabelState::Concealed => "concealed",
     }

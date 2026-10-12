@@ -628,6 +628,9 @@ pub struct JumpLabel {
 pub enum JumpLabelState {
     /// After `{c1}`: the label the match would get once `{c2}` is typed.
     Preview,
+    /// After `{c1}`: the match typing its `{c2}` jumps straight to; its
+    /// `text` is empty.
+    Direct,
     /// Waiting: typing it goes there.
     Live,
     /// On another page: `<Space>` or `<BS>` reaches it.
@@ -646,7 +649,8 @@ impl VimState {
 
     /// The labels a host paints in `rows` of `model`'s text while a jump is
     /// pending: after `{c1}`, the label each match would get in its
-    /// `{c2}` group ([`label::preview`]); while labels wait, the current
+    /// `{c2}` group ([`label::preview`]), or a direct marker on the one
+    /// that `{c2}` jumps straight to; while labels wait, the current
     /// page's, then the other pages' as concealed. A target jumped to has
     /// none. `None` with no jump pending.
     pub fn jump_overlay(&self, model: &EditorModel, rows: Range<u32>) -> Option<JumpOverlay> {
@@ -680,10 +684,17 @@ impl VimState {
                 let op = self.pending.has_operator();
                 label::preview(text, rows, caret, c1, prefix.forward, op)
                     .into_iter()
-                    .map(|(offset, label)| JumpLabel {
-                        offset,
-                        text: label.ch.to_string(),
-                        state: JumpLabelState::Preview,
+                    .map(|(offset, label)| match label {
+                        Some(label) => JumpLabel {
+                            offset,
+                            text: label.ch.to_string(),
+                            state: JumpLabelState::Preview,
+                        },
+                        None => JumpLabel {
+                            offset,
+                            text: String::new(),
+                            state: JumpLabelState::Direct,
+                        },
                     })
                     .collect()
             }

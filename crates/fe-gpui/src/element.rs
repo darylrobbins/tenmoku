@@ -24,7 +24,7 @@ use gpui::{
     ModifiersChangedEvent, MouseDownEvent, MouseEvent, MouseExitEvent, MouseMoveEvent,
     MouseUpEvent, PathBuilder, PinchEvent, Pixels, Point, ScrollWheelEvent, SharedString, Style,
     TextAlign, TextRun, TextSystem, UnderlineStyle, WeakEntity, Window, WindowId, WindowTextSystem,
-    fill, outline, point, px, relative, size,
+    fill, outline, point, px, quad, relative, size, transparent_black,
 };
 
 use crate::{EditorTheme, EditorView, FrameTiming};
@@ -1675,10 +1675,13 @@ pub(crate) struct JumpLabelLayout {
 /// text stays readable while the labels stand out.
 const JUMP_BACKDROP_ALPHA: f32 = 0.3;
 
+/// The width of a direct target's border.
+const JUMP_DIRECT_BORDER: Pixels = px(2.);
+
 /// While vim has a jump pending, its labels on the frame's rows
 /// ([`fe_vim::VimState::jump_overlay`]), each a block over its target's
 /// char, and a backdrop once a char is typed. At most [`MAX_MATCHES`]
-/// labels, live and preview ones before concealed ones, so a jump over more
+/// labels, live, preview and direct ones before concealed ones, so a jump over more
 /// targets still shows the labels it waits for. `None` with no jump
 /// pending. Labels off to a side of a scrolled line are left out.
 fn jump_layout(layout: &mut FrameLayout, view: &EditorView) -> Option<JumpLayout> {
@@ -1734,6 +1737,12 @@ pub(crate) enum JumpPaint {
         fill: Hsla,
         glyph: Option<(Hsla, FontWeight)>,
     },
+    /// A direct target's marker: a border around its char's block, no fill.
+    Direct {
+        bounds: Bounds<Pixels>,
+        color: Hsla,
+        width: Pixels,
+    },
     /// A block caret, painted over the backdrop.
     BlockCaret {
         bounds: Bounds<Pixels>,
@@ -1751,7 +1760,9 @@ thread_local! {
 /// A pending jump over the text: the backdrop, if any, then each label, an
 /// opaque box with its glyph in bold in the theme's `jump_label_foreground`.
 /// A live label's box is `jump_label`; a preview's is `jump_label_preview`,
-/// and so is a concealed one's, which has no glyph.
+/// and so is a concealed one's, which has no glyph. A direct target, the one
+/// its `{c2}` jumps straight to, is no label but a [`JUMP_DIRECT_BORDER`]
+/// border of `jump_label` around its char, so the char shows through.
 fn paint_jump(
     backdrop: Option<Bounds<Pixels>>,
     labels: &[(Bounds<Pixels>, SharedString, JumpLabelState)],
@@ -1775,9 +1786,31 @@ fn paint_jump(
         ..gpui::font(theme.font_family.clone())
     };
     for (rect, label, state) in labels {
+        if *state == JumpLabelState::Direct {
+            let color = theme.jump_label;
+            window.paint_quad(quad(
+                *rect,
+                px(0.),
+                transparent_black(),
+                JUMP_DIRECT_BORDER,
+                color,
+                BorderStyle::Solid,
+            ));
+            #[cfg(test)]
+            JUMP_PAINTS.with(|paints| {
+                paints.borrow_mut().push(JumpPaint::Direct {
+                    bounds: *rect,
+                    color,
+                    width: JUMP_DIRECT_BORDER,
+                })
+            });
+            continue;
+        }
         let fill_color = match state {
             JumpLabelState::Live => theme.jump_label,
-            JumpLabelState::Preview | JumpLabelState::Concealed => theme.jump_label_preview,
+            JumpLabelState::Preview | JumpLabelState::Concealed | JumpLabelState::Direct => {
+                theme.jump_label_preview
+            }
         };
         window.paint_quad(fill(*rect, fill_color));
         let glyph = (*state != JumpLabelState::Concealed)
@@ -1892,6 +1925,9 @@ mod jump_tests;
 
 #[cfg(test)]
 mod jump_style_tests;
+
+#[cfg(test)]
+mod jump_direct_tests;
 
 #[cfg(test)]
 mod bracket_tests;
