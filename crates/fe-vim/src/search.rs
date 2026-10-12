@@ -734,6 +734,22 @@ pub fn matches_in(
     found
 }
 
+/// The first match on `row` (an offset range in the text), for an ex
+/// command that reads rows one by one under one `deadline`: `Err` if it
+/// ran out before the row could be told, never a miss in its place.
+pub(crate) fn first_in_row(
+    text: &Text,
+    row: u32,
+    pattern: &Pattern,
+    deadline: &Deadline,
+) -> Result<Option<Range<usize>>, Interrupted> {
+    let mut buf = String::new();
+    let (start, hay) = row_text(text, row, &mut buf);
+    let found = pattern.matches(hay, deadline).next();
+    deadline.check()?;
+    Ok(found.map(|range| start + range.start..start + range.end))
+}
+
 /// The matches on `row` that reach `window` (offsets in the text), in
 /// order, at most `cap` of them. They are the matches [`matches_in`] finds
 /// on the row, searched from its start: a non-empty one reaches the window

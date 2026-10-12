@@ -16,7 +16,7 @@ use crate::{
     motion::{self, Cursor},
     operator::{self, row_end},
     register::Write,
-    search::{self, Pattern},
+    search::{self, Deadline, Interrupted, Pattern},
 };
 
 /// The line command `name` names, given what follows it, or `None` if it's
@@ -648,33 +648,35 @@ pub(super) fn sort(
     let text = target.model.text().clone();
     let tab = target.model.tab_size().max(1);
     let lines: Vec<String> = rows.clone().map(|row| text.row_to_string(row)).collect();
+    // Every key is read before anything changes: past the time limit,
+    // nothing does, as for `:s`.
+    let deadline = Deadline::new();
     let keys: Vec<Key> = rows
         .clone()
         .zip(&lines)
         .map(|(row, line)| {
             let key = match &pattern {
                 None => line.as_str(),
-                Some(pattern) => {
-                    match search::matches_in(&text, row..row + 1, pattern, 1).first() {
-                        Some(found) => {
-                            let start = text.row_start(row);
-                            let found = found.start - start..found.end - start;
-                            match by_match {
-                                true => &line[found],
-                                false => &line[found.end..],
-                            }
+                Some(pattern) => match search::first_in_row(&text, row, pattern, &deadline)? {
+                    Some(found) => {
+                        let start = text.row_start(row);
+                        let found = found.start - start..found.end - start;
+                        match by_match {
+                            true => &line[found],
+                            false => &line[found.end..],
                         }
-                        None => "",
                     }
-                }
+                    None => "",
+                },
             };
-            match (numeric, ignore_case) {
+            Ok(match (numeric, ignore_case) {
                 (true, _) => Key::Number(number(key)),
                 (false, true) => Key::Text(key.bytes().map(|b| b.to_ascii_lowercase()).collect()),
                 (false, false) => Key::Text(key.as_bytes().to_vec()),
-            }
+            })
         })
-        .collect();
+        .collect::<Result<_, Interrupted>>()
+        .map_err(|interrupted| ExError::Pattern(interrupted.to_string()))?;
     let mut order: Vec<usize> = (0..lines.len()).collect();
     order.sort_by(|&a, &b| keys[a].cmp(&keys[b]));
     if *reverse {

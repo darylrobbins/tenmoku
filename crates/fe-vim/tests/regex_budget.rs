@@ -114,3 +114,32 @@ fn the_limit_covers_the_whole_command_across_rows() {
     assert_eq!(vim.text(), text);
     assert_eq!(vim.state().message(), Some("Interrupted"));
 }
+
+/// Ex commands that read rows by a pattern before they change anything
+/// (`:g`, `:g!`, `:v`, a `/pattern/` or `?pattern?` address, `:sort` by a
+/// pattern) stop with `Interrupted` past the limit, changing nothing; they
+/// never take a row the limit cut short for one that doesn't match.
+#[test]
+fn ex_pattern_reads_stop_at_the_limit() {
+    let _guard = limited(Duration::ZERO);
+    for keys in [
+        ":g/x/d<CR>",
+        ":g!/x/d<CR>",
+        ":v/x/d<CR>",
+        ":/y/d<CR>",
+        ":?y?d<CR>",
+        ":sort /./<CR>",
+        ":sort r /./<CR>",
+    ] {
+        let text = "x\ny\nb\na";
+        let mut vim = HeadlessVim::new(text, (0, 0));
+        vim.feed(keys).unwrap();
+        assert_eq!(vim.text(), text, "{keys}");
+        assert_eq!(vim.cursor(), (0, 0), "{keys}");
+        assert_eq!(vim.state().message(), Some("Interrupted"), "{keys}");
+        assert!(
+            !matches!(vim.model_mut().undo(), Ok(Some(_))),
+            "{keys}: an undo step"
+        );
+    }
+}
