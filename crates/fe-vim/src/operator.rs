@@ -18,7 +18,8 @@ use fe_text::Text;
 
 use crate::{
     Change, JumpMotion, Motion, MoveArgs, OperateArgs, Operator, PutArgs, RangeClass, Register,
-    Registers, Target, VimState, VimTarget, Write, cmdline, g_operators, history, insert, marks,
+    Registers, Target, VimState, VimTarget, Write, cmdline, g_operators, history, insert,
+    line_motions, marks,
     motion::{self, Cursor},
     text_object, visual,
 };
@@ -86,17 +87,29 @@ pub(crate) fn land(
     snapshot: &BufferSnapshot,
     heads: impl IntoIterator<Item = usize>,
 ) {
+    landed_at(model, snapshot, heads);
+}
+
+/// [`land`], returning where each caret went, before carets that met
+/// merged.
+pub(crate) fn landed_at(
+    model: &mut EditorModel,
+    snapshot: &BufferSnapshot,
+    heads: impl IntoIterator<Item = usize>,
+) -> Vec<usize> {
     let anchors: Vec<Anchor> = heads
         .into_iter()
         .map(|head| snapshot.anchor_after(head))
         .collect();
-    let heads = model.snapshot().resolve_many(&anchors);
     let text = model.text().clone();
-    model.set_selections(
-        heads
-            .into_iter()
-            .map(|head| caret(Cursor::at(&text, head).offset())),
-    );
+    let heads: Vec<usize> = model
+        .snapshot()
+        .resolve_many(&anchors)
+        .into_iter()
+        .map(|head| Cursor::at(&text, head).offset())
+        .collect();
+    model.set_selections(heads.iter().map(|&head| caret(head)));
+    heads
 }
 
 /// What [`MEASURING`] runs.
@@ -207,9 +220,13 @@ pub(crate) fn motion_span(
         count,
     };
     if motion::motion(&mut cursor, args, last_find, None, tab).is_err() {
-        // A failed `b` leaves the caret where it got to.
+        // A failed `b` leaves the caret where it got to, as do `ge gE gj gk`
+        // if they moved it.
         return match motion {
             Motion::WordBackward | Motion::BigWordBackward => Span::Move(cursor.offset()),
+            motion if line_motions::moves_when_failing(motion) && cursor.offset() != head => {
+                Span::Move(cursor.offset())
+            }
             _ => Span::Failed,
         };
     }
@@ -404,27 +421,83 @@ fn moved_to(span: &Span) -> Option<usize> {
     }
 }
 
-/// Nothing to act on: only the carets [`moved_to`] moves, move.
+/// The goal a `gj` or `gk` that failed having moved the caret from `head`
+/// keeps where it left it, as nvim keeps its curswant.
+pub(crate) fn kept_goal(
+    text: &Text,
+    head: usize,
+    motion: Motion,
+    count: Option<u32>,
+    tab: usize,
+) -> Option<usize> {
+    let mut cursor = Cursor::at(text, head);
+    cursor.op = true;
+    let args = MoveArgs {
+        motion,
+        extend: false,
+        count,
+    };
+    motion::motion(&mut cursor, args, None, None, tab)
+        .err()
+        .flatten()
+}
+
+/// Once an operator put its carets, by caret at `landed` (the very heads it
+/// gave the model, as [`landed_at`] returns them, so any carets that merged
+/// share one): the goal a failed
+/// `gj` or `gk` keeps there (`kept`, by caret), saved for the carets as
+/// they merged. The others' goals are set afresh.
+pub(crate) fn keep_goals(
+    model: &EditorModel,
+    state: &mut VimState,
+    landed: &[usize],
+    kept: &[Option<usize>],
+) {
+    let kept: Vec<(usize, usize)> = landed
+        .iter()
+        .zip(kept)
+        .filter_map(|(&at, goal)| Some((at, (*goal)?)))
+        .collect();
+    if kept.is_empty() {
+        return;
+    }
+    let goals = model
+        .selections()
+        .iter()
+        .map(|selection| {
+            let goal = kept.iter().find(|(at, _)| *at == selection.head());
+            (selection.head(), goal.map(|(_, goal)| *goal))
+        })
+        .collect();
+    state.goals = Some((model.snapshot().version(), goals));
+}
+
+/// Nothing to act on: only the carets [`moved_to`] moves, move, each
+/// keeping the goal in `kept` if it has one there.
 fn move_only(
     model: &mut EditorModel,
     state: &mut VimState,
     text: &Text,
     before: &[ResolvedSelection],
     spans: &[Span],
+    kept: &[Option<usize>],
 ) -> Dispatched<TransactionId> {
-    let carets = before
+    let carets: Vec<ResolvedSelection> = before
         .iter()
         .zip(spans)
         .map(|(selection, span)| match moved_to(span) {
             Some(offset) => caret(Cursor::at(text, offset).offset()),
             None => selection.clone(),
-        });
+        })
+        .collect();
+    let landed: Vec<usize> = carets.iter().map(ResolvedSelection::head).collect();
     model.set_selections(carets);
     let moved = model.selections() != before;
     // An operator over nothing still sets the goal column afresh; a failed
     // one doesn't.
     if moved || spans.iter().any(|span| moved_to(span).is_some()) {
         state.goals = None;
+        keep_goals(model, state, &landed, kept);
     }
     Dispatched::new(if moved {
         Effect::Changed
@@ -590,12 +663,16 @@ fn operate_unless_failing(
         state.last_find = Some(find);
     }
     // A `'` motion's mark, whose row's first non-blank a yank's caret goes
-    // to if it's above.
-    let mark = match measured {
+    // to if it's above; `-` goes to the row it lands on as one does.
+    let mark = |head: usize| match measured {
         Target::Motion(Motion::MarkAt {
             offset,
             exact: false,
         }) => Some(offset),
+        Target::Motion(Motion::PrevLineFirstNonBlank) => {
+            let up = args.count.unwrap_or(1).max(1);
+            Some(text.row_start(text.offset_to_point(head).row.saturating_sub(up)))
+        }
         _ => None,
     };
     // Each caret's span, and where a charwise one started, for a yank's
@@ -638,7 +715,7 @@ fn operate_unless_failing(
                 (Span::Lines { .. }, Target::Motion(Motion::MatchPair)) if args.count.is_none() => {
                     motion::match_pair(&text, head).map(|found| found.offset.min(head))
                 }
-                (Span::Lines { .. }, _) => mark.map(|offset| {
+                (Span::Lines { .. }, _) => mark(head).map(|offset| {
                     let mut cursor = Cursor::at(&text, offset);
                     cursor.ix = cursor.line.first_non_blank();
                     cursor.offset().min(head)
@@ -667,6 +744,18 @@ fn operate_unless_failing(
                 let cursor = Cursor::at(&text, selection.head());
                 Some(cursor.line.goal_column(cursor.ix, tab))
             })
+        })
+        .collect();
+    // Where a failed `gj` or `gk` moved a caret, it keeps the motion's goal.
+    let kept: Vec<Option<usize>> = before
+        .iter()
+        .zip(&spans)
+        .map(|(selection, span)| match (span, measured) {
+            (Span::Move(_), Target::Motion(motion @ (Motion::DisplayDown | Motion::DisplayUp))) => {
+                let head = Cursor::at(&text, selection.head()).offset();
+                kept_goal(&text, head, motion, args.count, tab)
+            }
+            _ => None,
         })
         .collect();
     let row = |text: &Text, offset: usize| text.offset_to_point(offset).row;
@@ -711,7 +800,7 @@ fn operate_unless_failing(
             .iter()
             .all(|span| matches!(span, Span::Failed | Span::Move(_)))
         {
-            return Ok(move_only(model, state, &text, &before, &spans));
+            return Ok(move_only(model, state, &text, &before, &spans, &kept));
         }
         for span in &spans {
             if let Span::Lines { rows, .. } = span {
@@ -763,7 +852,7 @@ fn operate_unless_failing(
             })
             .collect();
         if rows.iter().all(Option::is_none) {
-            return Ok(move_only(model, state, &text, &before, &spans));
+            return Ok(move_only(model, state, &text, &before, &spans, &kept));
         }
         state.goals = None;
         let mut shifted: Vec<u32> = rows
@@ -814,7 +903,8 @@ fn operate_unless_failing(
                 on_row(&after, at, goal, tab, false)
             })
             .collect();
-        land(model, &snapshot, carets);
+        let landed = landed_at(model, &snapshot, carets);
+        keep_goals(model, state, &landed, &kept);
         let effect = match transaction.is_some() || model.selections() != before {
             true => Effect::Changed,
             false => Effect::Nothing,
@@ -827,7 +917,7 @@ fn operate_unless_failing(
         .map(|span| Op::new(&text, span, yank))
         .collect();
     if ops.iter().all(Option::is_none) {
-        return Ok(move_only(model, state, &text, &before, &spans));
+        return Ok(move_only(model, state, &text, &before, &spans, &kept));
     }
     state.goals = None;
     // The registers take the primary (last) caret's text; if its target
@@ -857,7 +947,7 @@ fn operate_unless_failing(
 
     match args.operator {
         Operator::Yank => {
-            let carets = before
+            let carets: Vec<usize> = before
                 .iter()
                 .zip(&ops)
                 .zip(&spans)
@@ -865,7 +955,7 @@ fn operate_unless_failing(
                 .zip(&starts)
                 .map(|((((selection, op), span), goal), start)| {
                     let head = selection.head();
-                    caret(match (op, span) {
+                    match (op, span) {
                         (Some(op), _) if op.linewise => match (*op.rows.start(), start) {
                             (_, Some(start)) => Cursor::at(&text, *start).offset(),
                             (first, None) if first == row(&text, head) => head,
@@ -876,9 +966,11 @@ fn operate_unless_failing(
                             Some(offset) => Cursor::at(&text, offset).offset(),
                             None => head,
                         },
-                    })
-                });
-            model.set_selections(carets);
+                    }
+                })
+                .collect();
+            model.set_selections(carets.iter().map(|&at| caret(at)));
+            keep_goals(model, state, &carets, &kept);
             let moved = model.selections() != before;
             Ok(Dispatched::new(if moved {
                 Effect::Changed
@@ -949,7 +1041,8 @@ fn operate_unless_failing(
                     }
                 })
                 .collect();
-            land(model, &snapshot, carets);
+            let landed = landed_at(model, &snapshot, carets);
+            keep_goals(model, state, &landed, &kept);
             Ok(Dispatched::new(Effect::Changed)
                 .with_transactions(transaction.into_iter().collect()))
         }
