@@ -139,17 +139,25 @@ impl Global for Settings {}
 
 /// The user's settings file's `lsp` table, for every window of the app:
 /// kept at its last good value while the file has errors, whatever the
-/// host's own reads of the file give a window.
+/// host's own reads of the file give a window, and whether the window has
+/// a root or a manager. It follows the file itself, not the effective
+/// settings reloads, which skip an edit a project's setting masks.
 struct UserLayer {
     /// The file, kept apart from the layer so comparing it never waits on a
     /// read holding the layer's lock.
     path: PathBuf,
     layer: Arc<Mutex<LspLayer>>,
+    /// Reads the layer again for each change of the file.
+    _changes: Task<()>,
+    /// What the watcher would send a change to.
+    #[cfg(test)]
+    changed: async_channel::Sender<()>,
 }
 
 impl Global for UserLayer {}
 
-/// The app's layer for the user's file `path`.
+/// The app's layer for the user's file `path`, read off the main thread
+/// now and whenever the file changes.
 fn user_layer(cx: &mut App, path: PathBuf) -> Arc<Mutex<LspLayer>> {
     if let Some(user) = cx.try_global::<UserLayer>()
         && user.path == path
@@ -157,9 +165,43 @@ fn user_layer(cx: &mut App, path: PathBuf) -> Arc<Mutex<LspLayer>> {
         return user.layer.clone();
     }
     let layer = Arc::new(Mutex::new(LspLayer::user(path.clone())));
+    let (sender, changes) = async_channel::unbounded::<()>();
+    // Started off the main thread, and dropped there when the task is
+    // cancelled, as the project's watcher is ([`Workbench::watch_project`]).
+    let (release, released) = async_channel::bounded::<()>(1);
+    let watched = path.clone();
+    let wake = sender.clone();
+    cx.background_spawn(async move {
+        if cfg!(test) {
+            return;
+        }
+        let watcher = fe_config::ConfigWatcher::new(vec![watched.clone()], move |_| {
+            wake.send_blocking(()).ok();
+        })
+        .inspect_err(|error| log::warn!("not watching {}: {error}", watched.display()))
+        .ok();
+        released.recv().await.ok();
+        drop(watcher);
+    })
+    .detach();
+    // The first read comes with the layer.
+    sender.send_blocking(()).ok();
+    let held = layer.clone();
+    let task = cx.spawn(async move |cx| {
+        let _release = release;
+        while changes.recv().await.is_ok() {
+            while changes.try_recv().is_ok() {}
+            let layer = held.clone();
+            cx.background_spawn(async move { lock(&layer).read() })
+                .await;
+        }
+    });
     cx.set_global(UserLayer {
         path,
         layer: layer.clone(),
+        _changes: task,
+        #[cfg(test)]
+        changed: sender,
     });
     layer
 }
@@ -665,9 +707,9 @@ impl Workbench {
         lsp._root = None;
         lsp.project = None;
         lsp.project_path = None;
-        lsp.user = None;
         lsp.gate_open = false;
         lsp._project_changes = None;
+        lsp.user = settings_path(cx).map(|path| user_layer(cx, path));
         let Some(root) = self.root.clone() else {
             return;
         };
@@ -705,8 +747,6 @@ impl Workbench {
         lsp.project = Some(Arc::new(Mutex::new(LspLayer::project(path.clone()))));
         lsp.project_path = Some(path);
         lsp.user = settings_path(cx).map(|path| user_layer(cx, path));
-        self.read_user_layer(cx);
-        let lsp = &mut self.lsp;
         let host = cx.try_global::<Launcher>().map(|host| host.0.clone());
         #[cfg(test)]
         {
@@ -850,17 +890,6 @@ impl Workbench {
         }));
     }
 
-    /// Reads the app's user layer off the main thread, whatever the root's
-    /// trust, so it holds the file's last good table by the time a root is
-    /// trusted, not the defaults a file broken since would give.
-    fn read_user_layer(&self, cx: &mut Context<Self>) {
-        let Some(user) = self.lsp.user.clone() else {
-            return;
-        };
-        cx.background_spawn(async move { lock(&user).read() })
-            .detach();
-    }
-
     /// Reads the user's and the root's project settings files off the main
     /// thread, then lays the project's `lsp` table over the user's, hands
     /// them to the manager and lets servers start, unless the root, its
@@ -947,7 +976,6 @@ impl Workbench {
         if self.root_trusted() {
             return self.read_trusted_settings(cx);
         }
-        self.read_user_layer(cx);
         if let Some(manager) = self.lsp.manager.clone() {
             lock(&manager).update_settings(settings);
             #[cfg(test)]
@@ -1699,6 +1727,14 @@ impl Workbench {
     pub(crate) fn lsp_project_changed(&self) {
         if let Some(sender) = &self.lsp.project_changed {
             sender.send_blocking(()).ok();
+        }
+    }
+
+    /// Tells the app its user settings file changed, as its watcher would
+    /// outside tests.
+    pub(crate) fn lsp_user_changed(&self, cx: &App) {
+        if let Some(user) = cx.try_global::<UserLayer>() {
+            user.changed.send_blocking(()).ok();
         }
     }
 

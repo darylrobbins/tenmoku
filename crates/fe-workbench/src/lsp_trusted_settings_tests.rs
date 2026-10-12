@@ -75,6 +75,14 @@ fn project_changed(s: &mut Lsp) {
     s.workbench.read_with(&s.cx, |w, _| w.lsp_project_changed());
 }
 
+/// Tells `s`'s app its user settings file changed, as its watcher would,
+/// and lets the read land.
+fn user_changed(s: &mut Lsp) {
+    let workbench = s.workbench.clone();
+    workbench.update(&mut s.cx, |w, cx| w.lsp_user_changed(cx));
+    s.draw();
+}
+
 /// The settings `launch` was last sent in `workspace/didChangeConfiguration`.
 fn changed_configuration(fake: &FakeServer, launch: usize) -> Option<Value> {
     fake.records_of(launch).iter().rev().find_map(|r| match r {
@@ -412,8 +420,10 @@ fn the_user_layer_follows_the_file_while_untrusted(cx: &mut TestAppContext) {
     // breaks before the root is first trusted.
     let mut s = Lsp::untrusted(cx);
     s.write_user_settings("lsp.enabled = false\n");
+    user_changed(&mut s);
     reload(&mut s);
     s.write_user_settings("lsp.enabled = \n");
+    user_changed(&mut s);
     let fresh = Settings::clone(
         SettingsStore::load(Some(user_path(&s)), Some(project_path(&s))).settings(),
     );
@@ -430,10 +440,13 @@ fn a_disabling_edit_while_untrusted_reaches_the_user_layer(cx: &mut TestAppConte
     let mut s = Lsp::untrusted(cx);
     let mut other = s.another_rooted(&s.root.clone());
     s.write_user_settings("lsp.enabled = true\n");
+    user_changed(&mut s);
     reload(&mut other);
     s.write_user_settings("lsp.enabled = false\n");
+    user_changed(&mut s);
     reload(&mut other);
     s.write_user_settings("lsp.enabled = \n");
+    user_changed(&mut s);
     let fresh = Settings::clone(
         SettingsStore::load(Some(user_path(&s)), Some(project_path(&s))).settings(),
     );
@@ -457,4 +470,46 @@ fn starting_a_manager_does_not_wait_on_a_user_file_read(cx: &mut TestAppContext)
     workbench.update(&mut s.cx, |w, cx| w.lsp_start_manager(root, cx));
     drop(guard);
     s.draw();
+}
+
+#[gpui::test]
+fn a_rootless_window_keeps_the_user_layer_current(cx: &mut TestAppContext) {
+    let mut s = Lsp::untrusted(cx);
+    let launch = crate::Launch {
+        root: None,
+        file: None,
+    };
+    let (rootless, rootless_cx) = crate::tests::lsp::window(&mut s.cx, launch);
+    rootless_cx.run_until_parked();
+    assert!(
+        rootless
+            .read_with(&rootless_cx, |w, _| w.lsp_user_layer())
+            .is_some()
+    );
+    // A valid disabling value read while only the rootless window is
+    // delivered it holds through the file breaking, before a root is
+    // trusted.
+    s.write_user_settings("lsp.enabled = false\n");
+    user_changed(&mut s);
+    s.write_user_settings("lsp.enabled = \n");
+    user_changed(&mut s);
+    s.set_trust(true);
+    assert!(!handed(&mut s).enabled);
+}
+
+#[gpui::test]
+fn a_disabling_edit_masked_by_the_project_reaches_the_user_layer(cx: &mut TestAppContext) {
+    let mut s = Lsp::untrusted(cx);
+    s.write_user_settings("lsp.enabled = true\n");
+    write_project(&s.root, "lsp.enabled = false\n");
+    reload(&mut s);
+    // The edit changes no effective setting: no reload is delivered.
+    s.write_user_settings("lsp.enabled = false\n");
+    user_changed(&mut s);
+    s.write_user_settings("lsp.enabled = \n");
+    user_changed(&mut s);
+    write_project(&s.root, "");
+    reload(&mut s);
+    s.set_trust(true);
+    assert!(!handed(&mut s).enabled);
 }

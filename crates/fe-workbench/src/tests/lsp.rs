@@ -212,7 +212,10 @@ fn init(cx: &mut TestAppContext) {
 
 /// A workbench for `launch` in a window of its own, focused, nothing in
 /// the background landed yet.
-fn window(cx: &mut TestAppContext, launch: Launch) -> (Entity<Workbench>, VisualTestContext) {
+pub(crate) fn window(
+    cx: &mut TestAppContext,
+    launch: Launch,
+) -> (Entity<Workbench>, VisualTestContext) {
     init(cx);
     let window = cx.add_window(move |window, cx| {
         let theme = EditorTheme::default_dark(cx);
