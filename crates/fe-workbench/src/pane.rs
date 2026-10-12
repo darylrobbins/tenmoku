@@ -202,6 +202,12 @@ impl Pane {
         self.opening.as_deref() == Some(path)
     }
 
+    /// Every file the pane is reading to show, or waiting for the host to
+    /// read: each lands in a tab, older reads too.
+    pub(crate) fn reading(&self) -> impl Iterator<Item = &Path> {
+        (self.reads.keys().map(PathBuf::as_path)).chain(self.opening.as_deref())
+    }
+
     /// Where the caret will be once the file being read lands: at the
     /// revealed offset, else the start of a file opened plainly. `None` if
     /// no file is being read, or the reveal is by row and column, which

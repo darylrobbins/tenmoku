@@ -238,7 +238,7 @@ impl Lsp {
     /// The workbench, its root not trusted yet, with fakes following
     /// `rust` and `python`, installed as the host's launcher, and the
     /// manual clock.
-    fn with_scripts(cx: &mut TestAppContext, rust: Script, python: Script) -> Self {
+    pub(crate) fn with_scripts(cx: &mut TestAppContext, rust: Script, python: Script) -> Self {
         Self::with_first_window(cx, rust, python, false)
     }
 

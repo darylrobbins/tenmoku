@@ -57,8 +57,14 @@
 //!   came from its identity, and has the set reject that identity from then
 //!   on. A new manager's ids start over, so its editors' sets are emptied.
 //! - **Commands.** `lsp.restart` and `lsp.show_log`, in the workbench's
-//!   context, act on the active editor's server. Their handlers only name
-//!   the op: the workbench does it.
+//!   context, act on the active editor's server. `lsp.rename`,
+//!   `lsp.code_actions`, `lsp.format_document` and `lsp.format_selection`,
+//!   in the editor's, are each done in a module of their own
+//!   (`lsp_rename`, `lsp_code_actions`, `lsp_format`). Their handlers only
+//!   name the op: the workbench does it.
+//! - **Workspace edits.** A server's `workspace/applyEdit`
+//!   ([`LspEvent::ApplyEdit`]) is applied on the main thread, all or
+//!   nothing (`workspace_edit`), and answered applied, or failed with why.
 //! - **Navigation.** Each manager comes with an [`LspNavigation`] in
 //!   [`Workbench::navigation`] at [`PRECEDENCE`], over search's 0: go to
 //!   definition, find references and workspace symbols come from a
@@ -1402,12 +1408,48 @@ impl Workbench {
                     });
                 }
             }
+            LspEvent::ApplyEdit {
+                server,
+                label,
+                edits,
+                reply,
+            } => {
+                let name = (lsp.servers.get(&server))
+                    .map_or_else(|| format!("{server:?}"), |(name, _)| name.clone());
+                let label = label.unwrap_or_else(|| "an edit".to_owned());
+                // Claimed before anything changes, so the server never
+                // hears it wasn't applied when it was. Not claimable, it
+                // was answered not applied already: it timed out, or the
+                // session ended.
+                let Some(reply) = reply.claim() else {
+                    log::info!("dropped {name}'s {label}: it's no longer awaited");
+                    return;
+                };
+                match self.apply_file_edits(edits, cx) {
+                    Ok(applied) => {
+                        log::debug!(
+                            "applied {name}'s {label}: {} edits in {} files",
+                            applied.edits,
+                            applied.files
+                        );
+                        reply.applied();
+                    }
+                    Err(error) => {
+                        log::info!("didn't apply {name}'s {label}: {error}");
+                        reply.failed(error);
+                    }
+                }
+            }
             _ => {}
         }
     }
 
     /// The open editors showing `buffer`.
-    fn editors_of(&self, buffer: BufferId, cx: &App) -> Vec<gpui::Entity<fe_gpui::EditorView>> {
+    pub(crate) fn editors_of(
+        &self,
+        buffer: BufferId,
+        cx: &App,
+    ) -> Vec<gpui::Entity<fe_gpui::EditorView>> {
         let mut editors = self.open_editors(cx);
         editors.retain(|editor| editor.read(cx).model().buffer().id() == buffer);
         editors
@@ -1453,8 +1495,21 @@ impl Workbench {
         });
     }
 
-    /// Restarts the active editor's server, or opens its log in a tab.
+    /// Does `op`: each feature's in its own module.
     pub(crate) fn run_lsp_op(&mut self, op: LspOp, window: &mut Window, cx: &mut Context<Self>) {
+        match op {
+            LspOp::Restart => self.run_server_op(false, window, cx),
+            LspOp::ShowLog => self.run_server_op(true, window, cx),
+            LspOp::Rename => self.rename_symbol(window, cx),
+            LspOp::CodeActions => self.show_code_actions(window, cx),
+            LspOp::FormatDocument => self.format_active(false, window, cx),
+            LspOp::FormatSelection => self.format_active(true, window, cx),
+        }
+    }
+
+    /// Restarts the active editor's server, or opens its log in a tab if
+    /// `log`.
+    fn run_server_op(&mut self, log: bool, window: &mut Window, cx: &mut Context<Self>) {
         let buffer = self
             .active_editor(cx)
             .map(|editor| editor.read(cx).model().buffer().id());
@@ -1467,8 +1522,8 @@ impl Workbench {
             return;
         };
         let mut manager = lock(&manager);
-        match op {
-            LspOp::Restart => match manager.restart(&name, &root) {
+        match log {
+            false => match manager.restart(&name, &root) {
                 Ok(Some(restarted)) => {
                     // Until its own status comes.
                     lsp.servers
@@ -1482,7 +1537,7 @@ impl Workbench {
                 Ok(None) => log::info!("{name} isn't restarted: it doesn't apply here now"),
                 Err(error) => log::error!("can't restart {name}: {error}"),
             },
-            LspOp::ShowLog => {
+            true => {
                 let log = Buffer::from_file_contents(&manager.log(&name, &root));
                 self.pane()
                     .update(cx, |pane, cx| pane.add(EditorModel::new(log, None), cx));
@@ -1649,7 +1704,7 @@ fn diagnostic(item: fe_lsp::Diagnostic) -> (std::ops::Range<usize>, Diagnostic) 
 /// `path` fully resolved, so through no `..` or symlink, its own
 /// included; `None` if it can't be (a dangling symlink too). A file that
 /// doesn't exist yet is resolved by its folder.
-fn resolve(path: &Path) -> Option<PathBuf> {
+pub(crate) fn resolve(path: &Path) -> Option<PathBuf> {
     match fs::symlink_metadata(path) {
         Ok(_) => fs::canonicalize(path).ok(),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -1666,6 +1721,10 @@ fn resolve(path: &Path) -> Option<PathBuf> {
 pub(crate) enum LspOp {
     Restart,
     ShowLog,
+    Rename,
+    CodeActions,
+    FormatDocument,
+    FormatSelection,
 }
 
 /// The [`CommandTarget`] of the LSP commands: the op to do.
@@ -1692,19 +1751,49 @@ pub(crate) fn init(cx: &mut App) {
 }
 
 pub(crate) fn registry() -> Registry<LspCommands> {
+    let (workbench, editor) = (crate::KEY_CONTEXT, fe_editor::commands::CONTEXT);
     let commands = [
-        ("lsp.restart", "Restart Language Server", LspOp::Restart),
-        ("lsp.show_log", "Language Server Log", LspOp::ShowLog),
+        (
+            "lsp.restart",
+            "Restart Language Server",
+            LspOp::Restart,
+            workbench,
+        ),
+        (
+            "lsp.show_log",
+            "Language Server Log",
+            LspOp::ShowLog,
+            workbench,
+        ),
+        ("lsp.rename", "Rename Symbol…", LspOp::Rename, editor),
+        (
+            "lsp.code_actions",
+            "Code Actions…",
+            LspOp::CodeActions,
+            editor,
+        ),
+        (
+            "lsp.format_document",
+            "Format Document",
+            LspOp::FormatDocument,
+            editor,
+        ),
+        (
+            "lsp.format_selection",
+            "Format Selection",
+            LspOp::FormatSelection,
+            editor,
+        ),
     ];
     let mut registry = Registry::new();
-    for (id, title, op) in commands {
+    for (id, title, op, context) in commands {
         registry
             .register(id, title, move |target: &mut Option<LspOp>, _: &Actor| {
                 *target = Some(op);
                 Ok(Dispatched::new(Effect::Notify))
             })
             .expect("LSP command IDs are valid and distinct")
-            .context(ContextPredicate::identifier(crate::KEY_CONTEXT));
+            .context(ContextPredicate::identifier(context));
     }
     registry
 }
@@ -1795,6 +1884,23 @@ impl Workbench {
     /// Delivers `event` as if it came through the channel.
     pub(crate) fn lsp_deliver(&mut self, generation: u64, event: LspEvent, cx: &mut Context<Self>) {
         self.lsp_event(generation, event, cx);
+    }
+
+    /// `edit` decoded by the manager against the documents `server` has
+    /// open, as a rename's answer is. Blocks until the server's thread has.
+    pub(crate) fn lsp_decode_edit(
+        &self,
+        server: ServerId,
+        edit: lsp_types::WorkspaceEdit,
+    ) -> Result<Vec<fe_lsp::FileEdits>, fe_lsp::LspError> {
+        let manager = self.lsp.manager.as_ref().expect("a manager");
+        let decoded = lock(manager).decode_workspace_edit(server, edit);
+        futures::executor::block_on(decoded)
+    }
+
+    /// Stops `server`, as a restart or a settings change would.
+    pub(crate) fn lsp_stop(&self, server: ServerId) {
+        lock(self.lsp.manager.as_ref().expect("a manager")).stop(server);
     }
 
     /// What the server `name` for the root has logged.

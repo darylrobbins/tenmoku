@@ -44,10 +44,17 @@ struct Started {
 
 impl Started {
     fn new() -> Self {
+        Self::answering_shutdown(true)
+    }
+
+    /// As [`new`](Self::new), the fake answering `shutdown` only if
+    /// `answer`: otherwise a stop waits for it as long as the clock stands.
+    fn answering_shutdown(answer: bool) -> Self {
         let fake = FakeServer::new(Script {
             initialize: InitializeReply::Result(Box::new(initialize_result(Some(
                 PositionEncodingKind::UTF16,
             )))),
+            answer_shutdown: answer,
             ..Script::default()
         });
         let clock = Arc::new(ManualClock::new());
@@ -621,6 +628,70 @@ fn apply_edit_round_trip() {
     // An edit with nothing in it is applied, with no event.
     let asked = s.apply(json!({ "changes": {} }));
     assert_eq!(asked.join().unwrap(), json!({ "applied": true }));
+}
+
+/// A claimed reply is the host's to answer: the timeout waits for it, and
+/// a claim dropped unanswered answers not applied. The session's end
+/// answers every reply it handed out that isn't claimed.
+#[test]
+fn apply_edit_claimed_and_session_end() {
+    // A stop that ends the session and then waits for `shutdown`.
+    let mut s = Started::answering_shutdown(false);
+    let text = "alpha beta\n";
+    let mut buffer = Buffer::new("");
+    let open = s.open(&mut buffer, "open.rs", text);
+    let version = s.version(&open);
+    let edit = json!({ "documentChanges": [{
+        "textDocument": { "uri": open, "version": version },
+        "edits": [text_edit(text, 0..5, "gamma")],
+    }]});
+    let next_reply = |s: &Started| {
+        s.next("ApplyEdit", |event| match event {
+            LspEvent::ApplyEdit { reply, .. } => Some(reply),
+            _ => None,
+        })
+    };
+
+    // Claimed, then the timeout: the server waits for the claim's answer.
+    let asked = s.apply(edit.clone());
+    let reply = next_reply(&s);
+    let claim = reply.claim().expect("unanswered");
+    assert!(reply.is_answered());
+    assert!(reply.claim().is_none(), "claimed twice");
+    s.clock.wait_for_sleep(APPLY_TIMEOUT);
+    s.clock.advance(APPLY_TIMEOUT);
+    // The timeout doesn't answer it, nor does a late answer through the
+    // reply.
+    reply.failed("too late");
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(!asked.is_finished());
+    claim.applied();
+    assert_eq!(asked.join().unwrap(), json!({ "applied": true }));
+
+    // Timed out first: nothing to claim.
+    let asked = s.apply(edit.clone());
+    let reply = next_reply(&s);
+    s.clock.wait_for_sleep(APPLY_TIMEOUT);
+    s.clock.advance(APPLY_TIMEOUT);
+    assert_eq!(asked.join().unwrap()["applied"], json!(false));
+    assert!(reply.claim().is_none());
+
+    // A claim dropped unanswered.
+    let asked = s.apply(edit.clone());
+    drop(next_reply(&s).claim().expect("unanswered"));
+    assert_eq!(asked.join().unwrap()["applied"], json!(false));
+
+    // The session ends while the host holds the reply, the server still
+    // there, waiting to shut down: answered failed, and there's nothing
+    // to claim.
+    let asked = s.apply(edit);
+    let reply = next_reply(&s);
+    s.manager.stop(s.server);
+    assert_eq!(
+        asked.join().unwrap(),
+        json!({ "applied": false, "failureReason": "the server's session ended" })
+    );
+    assert!(reply.claim().is_none());
 }
 
 /// One timed out before the actor took it is answered not applied, and

@@ -23,7 +23,11 @@
 //!   actor, which decodes it and sends it to the sink as
 //!   [`LspEvent::ApplyEdit`](crate::LspEvent::ApplyEdit), or answers
 //!   `applied: false` if it's refused. The host answers through its
-//!   [`ApplyReply`]; an edit with nothing in it is applied at once. The
+//!   [`ApplyReply`], or [claims](ApplyReply::claim) it first, so the
+//!   timeout no longer answers for it while it applies the edit; an edit
+//!   with nothing in it is applied at once. When the session ends, crashed
+//!   or stopped, the replies it handed out are answered failed, so none is
+//!   applied after. The
 //!   actor decodes against each document as last handed to the server
 //!   (`server::Handed`), not as its newest version, whose notes may still
 //!   wait in the outbox. An applyEdit that timed out before the actor got
@@ -318,8 +322,9 @@ type Slot = Mutex<Option<oneshot::Sender<ApplyWorkspaceEditResponse>>>;
 
 /// The host's answer to a `workspace/applyEdit`, sent with
 /// [`LspEvent::ApplyEdit`](crate::LspEvent::ApplyEdit). Clones share it,
-/// and the first answer is the one the server gets. Dropped unanswered, or
-/// unanswered after 5 s, it answers `applied: false`.
+/// and the first answer is the one the server gets, or the host
+/// [claims](Self::claim) it. Dropped unanswered, unanswered after 5 s, or
+/// unanswered when the server's session ends, it answers `applied: false`.
 #[derive(Clone)]
 pub struct ApplyReply(Arc<Slot>);
 
@@ -341,12 +346,67 @@ impl ApplyReply {
         answer(&self.0, not_applied(reason));
     }
 
+    /// Takes the answer over, unless it has been answered or claimed: the
+    /// timeout and the session's end no longer answer it, and the server
+    /// waits for the claim's answer. The host claims it before it starts
+    /// changing anything, so the server never hears `applied: false` for
+    /// an edit that was applied.
+    pub fn claim(&self) -> Option<ApplyClaim> {
+        let mut slot = lock(&self.0);
+        slot.take_if(|answer| !answer.is_canceled()).map(ApplyClaim)
+    }
+
     /// Whether it has been answered, or no longer can be: it timed out, or
-    /// the server's session ended. An answer then reaches nothing.
+    /// the server's session ended, or it was claimed. An answer then
+    /// reaches nothing.
     pub fn is_answered(&self) -> bool {
         lock(&self.0)
             .as_ref()
             .is_none_or(oneshot::Sender::is_canceled)
+    }
+}
+
+/// A reply handed to the host, held weakly, so the host dropping every
+/// [`ApplyReply`] still answers it.
+pub(crate) struct HandedReply(std::sync::Weak<Slot>);
+
+impl HandedReply {
+    pub(crate) fn of(reply: &ApplyReply) -> Self {
+        Self(Arc::downgrade(&reply.0))
+    }
+
+    /// Whether the host may still answer it.
+    pub(crate) fn is_open(&self) -> bool {
+        (self.0.upgrade()).is_some_and(|slot| !ApplyReply(slot).is_answered())
+    }
+
+    /// Answers it failed, for `reason`, unless it's answered or claimed.
+    pub(crate) fn fail(self, reason: &str) {
+        if let Some(slot) = self.0.upgrade() {
+            answer(&slot, not_applied(reason));
+        }
+    }
+}
+
+/// A `workspace/applyEdit`'s answer, [claimed](ApplyReply::claim) by the
+/// host: only it answers now. Dropped unanswered, it answers `applied:
+/// false`.
+#[derive(Debug)]
+pub struct ApplyClaim(oneshot::Sender<ApplyWorkspaceEditResponse>);
+
+impl ApplyClaim {
+    /// The edit was applied.
+    pub fn applied(self) {
+        let _ = self.0.send(ApplyWorkspaceEditResponse {
+            applied: true,
+            failure_reason: None,
+            failed_change: None,
+        });
+    }
+
+    /// The edit wasn't applied, for `reason`.
+    pub fn failed(self, reason: impl Into<String>) {
+        let _ = self.0.send(not_applied(reason));
     }
 }
 
@@ -437,11 +497,9 @@ impl Edits {
                         answer(&slot, not_applied("not answered in time"));
                     }
                     // Taken by the timeout, or by an answer that has been
-                    // sent; dropped, nothing will come.
-                    match answered.now_or_never() {
-                        Some(Ok(answer)) => answer,
-                        _ => not_answered(),
-                    }
+                    // sent, and here now; or by a claim, which answers
+                    // when it's done; or dropped, and nothing will come.
+                    answered.await.unwrap_or_else(|oneshot::Canceled| not_answered())
                 }
             }
         }

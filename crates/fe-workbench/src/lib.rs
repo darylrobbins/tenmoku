@@ -20,6 +20,9 @@ mod go_to_line;
 mod language_picker;
 pub mod loader;
 mod lsp;
+mod lsp_code_actions;
+mod lsp_format;
+mod lsp_rename;
 mod nav;
 mod nav_picker;
 mod open;
@@ -40,6 +43,7 @@ mod title_bar;
 mod toolbar_picker;
 mod trust;
 mod workbench;
+mod workspace_edit;
 
 use std::rc::Rc;
 

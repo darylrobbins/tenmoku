@@ -96,7 +96,7 @@ use crate::registration::Registrations;
 use crate::requests::{Issue, Orphans, Out, Settled};
 use crate::restart::{Carry, Kill, SharedCrashes, Verdict, Waited};
 use crate::router::{ClientState, Signal, client_router};
-use crate::workspace_edit::{Asked, Edits, decode};
+use crate::workspace_edit::{Asked, Edits, HandedReply, decode};
 
 /// How long `initialize` may take before the start counts as failed.
 pub(crate) const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(30);
@@ -609,6 +609,7 @@ impl Server {
             },
             diagnostics,
             edits,
+            asked: Vec::new(),
             handed: Handed::default(),
             tick: None,
             drain_queued: false,
@@ -766,6 +767,9 @@ struct Actor {
     diagnostics: Rc<Inbox>,
     /// `workspace/applyEdit`s the router read, to decode.
     edits: Rc<Edits>,
+    /// The replies of those handed to the host this session: answered
+    /// failed when it ends, so none of them is applied after.
+    asked: Vec<HandedReply>,
     /// What the server has of each open document.
     handed: Handed,
     /// When readiness next has something to do on its own, and the timer.
@@ -1209,6 +1213,9 @@ impl Actor {
     /// each document the server had open cleared, and of each whose
     /// `didClose` is still in the outbox, which is never sent now.
     fn end_session(&mut self) {
+        for reply in self.asked.drain(..) {
+            reply.fail("the server's session ended");
+        }
         let mut ended: Vec<_> = (self.documents.iter_mut())
             .filter_map(|(&buffer, document)| Some((buffer, document.end_session()?)))
             .collect();
@@ -1277,12 +1284,16 @@ impl Actor {
                 reply.failed(why);
             }
             Ok(edits) if edits.is_empty() => reply.applied(),
-            Ok(edits) => self.link.report(LspEvent::ApplyEdit {
-                server: self.link.server,
-                label: params.label,
-                edits,
-                reply,
-            }),
+            Ok(edits) => {
+                self.asked.retain(HandedReply::is_open);
+                self.asked.push(HandedReply::of(&reply));
+                self.link.report(LspEvent::ApplyEdit {
+                    server: self.link.server,
+                    label: params.label,
+                    edits,
+                    reply,
+                });
+            }
         }
     }
 

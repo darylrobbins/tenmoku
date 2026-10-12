@@ -107,10 +107,14 @@ pub(crate) enum Palette {
     Symbols,
     ConfigProblems,
     GoToLine,
+    /// The new name for `lsp.rename`.
+    Rename,
+    /// `lsp.code_actions`' list.
+    CodeActions,
 }
 
 impl Palette {
-    const ALL: [Palette; 7] = [
+    const ALL: [Palette; 9] = [
         Palette::QuickOpen,
         Palette::Language,
         Palette::Toolbar,
@@ -118,6 +122,8 @@ impl Palette {
         Palette::Symbols,
         Palette::ConfigProblems,
         Palette::GoToLine,
+        Palette::Rename,
+        Palette::CodeActions,
     ];
 
     /// Its id in the modal layer.
@@ -130,6 +136,8 @@ impl Palette {
             Palette::Symbols => "symbols",
             Palette::ConfigProblems => "config_problems",
             Palette::GoToLine => "go_to_line",
+            Palette::Rename => "rename",
+            Palette::CodeActions => "code_actions",
         })
     }
 
@@ -1602,6 +1610,12 @@ impl Workbench {
         }
         self.leave_hidden_panel(window, cx);
         done
+    }
+
+    /// The launch file the host is reading, until it lands: it opens in a
+    /// tab then, whatever the pane has shown since.
+    pub(crate) fn launch_reading(&self) -> Option<&Path> {
+        self.launch_read.as_ref().map(|(path, _)| path.as_path())
     }
 
     /// Opens the host's read of the launch file, `Ok(None)` being a new
