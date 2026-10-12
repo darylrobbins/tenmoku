@@ -679,6 +679,16 @@ keys = "ctrl-["
 command = "vim.normal_mode"
 context = "editor && vim.mode == insert"
 
+[[bindings]]
+keys = "escape"
+command = "vim.normal_mode"
+context = "editor && vim.mode == replace"
+
+[[bindings]]
+keys = "ctrl-["
+command = "vim.normal_mode"
+context = "editor && vim.mode == replace"
+
 # In-file find: the pane's find bar (`find_bar`) and the editor it searches.
 
 [[bindings]]

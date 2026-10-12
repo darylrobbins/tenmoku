@@ -237,14 +237,19 @@ impl EditorView {
     /// if the editor's frame is in it, or else the editor's frame alone. An
     /// ID the editor doesn't know propagates, still in that context, to the
     /// app's commands. With vim on, vim's IDs run through its registry, the
-    /// editor's frame stamped from its vim state, and in insert mode an
-    /// editor command other than text input splits the session
-    /// ([`fe_vim::VimState::split_session`]).
+    /// editor's frame stamped from its vim state, and in insert or replace
+    /// mode an editor command other than text input splits the session
+    /// ([`fe_vim::VimState::split_session`]). In replace mode typed text and
+    /// `editor.backspace` overwrite and put back
+    /// ([`fe_vim::VimState::replace_text`]), and `vim.normal_mode` is
+    /// replace mode's `Esc`, `vim.replace_normal_mode`. While a macro
+    /// records, what runs is recorded as the keys it was
+    /// ([`EditorView::record_typing`]).
     ///
     /// Given the window, the view takes [`SAVE`] over from fe-editor's
     /// synchronous command: it saves off the main thread
     /// ([`EditorView::save_from_command`]).
-    fn run_command(
+    pub(crate) fn run_command(
         &mut self,
         invocation: Invocation,
         window: Option<&mut Window>,
@@ -258,11 +263,21 @@ impl EditorView {
         };
         self.sync_vim(cx);
         if self.vim.is_some() && vim::registry().get(&invocation.command).is_some() {
+            self.record_vim_command(&invocation);
+            if invocation.command.as_str() == vim::NORMAL_MODE && self.typing_mode() == Some(true) {
+                invocation.command = vim::REPLACE_NORMAL_MODE
+                    .parse()
+                    .expect("a valid command ID");
+            }
             invocation.context = vim::stamp(invocation.context, self.vim.as_ref());
             self.run_vim(&invocation, cx);
             return;
         }
         let registry = EDITOR_COMMANDS.with(Rc::clone);
+        let replace = self.typing_mode();
+        if replace.is_some() && registry.validate(&invocation).is_ok() {
+            self.record_typing(&invocation);
+        }
         let page_rows = self.page_rows();
         let syntax = synced_syntax(&self.syntax, &self.model);
         let mut host = ViewHost {
@@ -287,12 +302,21 @@ impl EditorView {
         let result = match &mut self.vim {
             // In insert mode, `Enter` is a typed line break, and any other
             // editor command but text input splits the session (§9.8). An
-            // invocation the registry would refuse does neither.
-            Some(state) if state.mode() == fe_vim::Mode::Insert && meta.is_some() => {
+            // invocation the registry would refuse does neither. So in
+            // replace mode, where typing and `<BS>` are fe-vim's.
+            Some(state) if replace.is_some() && meta.is_some() => {
                 match registry.validate(&invocation) {
                     Err(error) => Err(error),
                     Ok(_) => match invocation.command.as_str() {
                         vim::NEWLINE => vim::line_break(state, &mut self.model, &invocation),
+                        vim::INSERT if replace == Some(true) => {
+                            let text = invocation.args.get("text").and_then(Value::as_str);
+                            let text = text.unwrap_or_default();
+                            vim::replace_text(state, &mut self.model, &invocation, text)
+                        }
+                        vim::BACKSPACE if replace == Some(true) => {
+                            vim::replace_backspace(state, &mut self.model, &invocation)
+                        }
                         // Edit nothing, or as typing does, so the session
                         // goes on.
                         SHOW_HOVER => dispatch(&mut self.model),
@@ -390,11 +414,29 @@ impl EditorView {
         match SCROLLED.take() {
             Some(top_row) => self.scroll_to_top_row(top_row),
             // A scroll that kept the top row still moved the caret, which
-            // mustn't scroll the view back.
-            None if ok && asked => self.pin_top_row(),
+            // mustn't scroll the view back; so a motion that asked (`H`)
+            // and left it in view. One that took it out of view (`G`, `'a`)
+            // scrolls it in.
+            None if ok && asked && self.shows_caret() => self.pin_top_row(),
             None => {}
         }
         Ok(())
+    }
+
+    /// Whether the primary caret's display row is among the rows the view
+    /// shows, as many as fit whole: from the display row a vim scroll put
+    /// first since the last frame, or else that frame's first row, partway
+    /// down a wrapped row as it may be. A command that kept the view
+    /// ([`EditorView::pin_top_row`]) leaves either.
+    fn shows_caret(&self) -> bool {
+        let Some(layout) = &self.layout else {
+            return false;
+        };
+        let frame = &layout.frame;
+        let top = self.scrolled_display_top.unwrap_or(frame.first_row);
+        let display = self.model.display();
+        let caret = display.row_for_offset(self.model.primary_selection().head());
+        (top..top.saturating_add(frame.visible_rows())).contains(&caret)
     }
 
     /// Types `text` at every caret, as `editor.insert` from the keyboard.
@@ -404,6 +446,9 @@ impl EditorView {
             .args(Value::from_iter([("text", text)]))
             .source(Source::Keyboard);
         self.run_command(invocation, None, cx);
-        self.completion_typed(text, cx);
+        // Replace mode overwrites: nothing to complete.
+        if self.typing_mode() != Some(true) {
+            self.completion_typed(text, cx);
+        }
     }
 }

@@ -51,6 +51,11 @@ pub struct EditorView {
     /// The buffer row a vim scroll put first since the last frame, which
     /// the next dispatch sees as the top until a frame is laid out.
     pub(crate) scrolled_top: Option<u32>,
+    /// The display row such a scroll put first, until a frame is laid out:
+    /// where the view starts, which [`EditorView::pin_top_row`] leaves be,
+    /// as it leaves the pixel offset, even partway down a wrapped row.
+    /// Without one, the last frame's first row.
+    pub(crate) scrolled_display_top: Option<u32>,
     /// What the last frame laid out, for hit testing and IME.
     pub(crate) layout: Option<crate::element::FrameLayout>,
     drag: Option<Drag>,
@@ -76,6 +81,12 @@ pub struct EditorView {
     pub(crate) vim: Option<fe_vim::VimState>,
     /// The vim switch's generation this view last synced with.
     pub(crate) vim_generation: u64,
+    /// A macro's keys are being fed ([`EditorView::replay_vim`]): the
+    /// typing paths they go through don't record them again.
+    pub(crate) vim_replaying: bool,
+    /// An editor command a recording can't hold was logged since the
+    /// recording began ([`EditorView::record_typing`]).
+    pub(crate) vim_unrecorded_logged: bool,
     /// The pointer is over the fold column, so the chevrons of folds that
     /// are open show too.
     pub(crate) fold_column_hovered: bool,
@@ -176,6 +187,7 @@ impl EditorView {
             scroll: Point::default(),
             autoscroll: true,
             scrolled_top: None,
+            scrolled_display_top: None,
             layout: None,
             drag: None,
             composition: None,
@@ -189,6 +201,8 @@ impl EditorView {
             frame_timings: FrameTimings::default(),
             vim: None,
             vim_generation: 0,
+            vim_replaying: false,
+            vim_unrecorded_logged: false,
             fold_column_hovered: false,
             hover: None,
             hover_blur: None,
@@ -480,6 +494,7 @@ impl EditorView {
         let display_row = self.model.display().row_for_buffer_row(top_row);
         self.scroll.y = px(frame.line_height * frame.block_map.screen_row(display_row) as f32);
         self.scrolled_top = Some(top_row);
+        self.scrolled_display_top = Some(display_row);
         self.autoscroll = false;
     }
 

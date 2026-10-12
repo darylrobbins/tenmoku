@@ -619,6 +619,16 @@ command = "vim.key"
 context = "editor && vim.mode == normal"
 
 [[bindings]]
+keys = "ctrl-a"
+command = "vim.key"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-x"
+command = "vim.key"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
 keys = "ctrl-y"
 command = "vim.key"
 context = "editor && vim.mode == normal"
@@ -669,6 +679,16 @@ command = "vim.key"
 context = "editor && vim.visual"
 
 [[bindings]]
+keys = "ctrl-a"
+command = "vim.key"
+context = "editor && vim.visual"
+
+[[bindings]]
+keys = "ctrl-x"
+command = "vim.key"
+context = "editor && vim.visual"
+
+[[bindings]]
 keys = "ctrl-y"
 command = "vim.key"
 context = "editor && vim.visual"
@@ -690,6 +710,16 @@ context = "editor && vim.mode == insert"
 keys = "ctrl-["
 command = "vim.normal_mode"
 context = "editor && vim.mode == insert"
+
+[[bindings]]
+keys = "escape"
+command = "vim.normal_mode"
+context = "editor && vim.mode == replace"
+
+[[bindings]]
+keys = "ctrl-["
+command = "vim.normal_mode"
+context = "editor && vim.mode == replace"
 
 # In-file find: the pane's find bar (`find_bar`) and the editor it searches.
 

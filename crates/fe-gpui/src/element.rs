@@ -27,7 +27,10 @@ use gpui::{
     fill, outline, point, px, quad, relative, size, transparent_black,
 };
 
-use crate::{EditorTheme, EditorView, FrameTiming};
+use crate::{
+    EditorTheme, EditorView, FrameTiming,
+    vim::{CaretShape, UNDERLINE_HEIGHT},
+};
 
 mod decorations;
 use decorations::{Decorations, Layer};
@@ -775,7 +778,8 @@ impl Element for EditorElement {
         let accepts_text = view.accepts_text();
         let column_hovered = view.fold_column_hovered;
         let mut layout = layout.take().expect("prepaint ran");
-        let block = view.block_cursor();
+        let shape = view.caret_shape();
+        let block = shape != CaretShape::Bar;
         let focused = focus.is_focused(window);
         // Not in an inactive window: modifiers released in another app, as
         // after cmd-tab, never reach it.
@@ -804,7 +808,21 @@ impl Element for EditorElement {
                         .map(|s| s.head())
                         .collect(),
                 };
-                block_carets(&mut layout, text, heads.into_iter())
+                let carets = block_carets(&mut layout, text, heads.into_iter());
+                match shape {
+                    // Replace and operator-pending mode's: a bar under the
+                    // grapheme the block covers (§9 item 7).
+                    CaretShape::Underline => (carets.into_iter())
+                        .map(|block| {
+                            let height = px(UNDERLINE_HEIGHT).min(block.size.height);
+                            Bounds::new(
+                                point(block.origin.x, block.bottom() - height),
+                                size(block.size.width, height),
+                            )
+                        })
+                        .collect(),
+                    _ => carets,
+                }
             }
             true => {
                 let mut carets: Vec<_> = (layout.frame.cursors.iter())
@@ -852,6 +870,8 @@ impl Element for EditorElement {
                 labels,
             )
         });
+        // The underline paints over the text, as the bar does.
+        let block = shape == CaretShape::Block;
         // Over a backdrop, so it isn't dimmed; under the text otherwise.
         let block_on_top = block
             && jump
@@ -1074,6 +1094,7 @@ impl Element for EditorElement {
         self.view.update(cx, |view, _| {
             view.layout = Some(layout);
             view.scrolled_top = None;
+            view.scrolled_display_top = None;
             view.viewport_height_changed();
             view.frame_timings.record(timing);
             view.drop_stale_hover(hover_shown);

@@ -1,5 +1,6 @@
 //! The status bar along the window's bottom edge: the active item's
-//! items, for an editor its vim mode, with vim on, on the left, and its
+//! items, for an editor its vim mode, with vim on, on the left (and
+//! `recording @a` beside it while a macro records), and its
 //! cursor, selections, indentation, encoding, line endings and language on
 //! the right ([`fe_gpui::pane_item::status`]); and whatever items a host
 //! sets.
@@ -84,9 +85,12 @@ impl From<StatusItem> for kiln_shell::StatusItem {
 /// the vim mode on the left, the others on the right, in this order. A host
 /// item set with one of them shows in that item's place.
 impl StatusItem {
-    /// `NORMAL`, `INSERT`, `VISUAL`, `VISUAL LINE` or `VISUAL BLOCK`, only
-    /// with vim on: on the left, priority 0.
+    /// `NORMAL`, `INSERT`, `REPLACE`, `VISUAL`, `VISUAL LINE` or `VISUAL
+    /// BLOCK`, only with vim on: on the left, priority 0.
     pub const VIM_MODE: &str = built_in::VIM_MODE;
+    /// `recording @a` while vim records a macro into register `a`: on the
+    /// left, priority 5, beside the mode.
+    pub const VIM_RECORDING: &str = "vim_recording";
     /// Vim's last message, such as `E486: Pattern not found: zzz`, until
     /// the next key in the editor: on the left, priority 10.
     pub const VIM_MESSAGE: &str = built_in::VIM_MESSAGE;
@@ -190,9 +194,29 @@ impl StatusBar {
         self.item.as_ref().map(|item| item.id())
     }
 
-    /// Every item to draw, sorted.
+    /// Every item to draw, sorted: the item's, with the editor's macro
+    /// recording, and the host's over them.
     fn items(&self, cx: &App) -> Vec<kiln_shell::StatusItem> {
-        self.items.items_for(self.item.as_deref(), cx)
+        let Some(item) = self.item.as_deref() else {
+            return self.items.items_for(None, cx);
+        };
+        let recording = self
+            .editor
+            .as_ref()
+            .and_then(|editor| editor.upgrade())
+            .and_then(|editor| editor.read(cx).vim_state()?.recording())
+            .map(|register| {
+                StatusItem {
+                    id: StatusItem::VIM_RECORDING.into(),
+                    side: StatusSide::Left,
+                    priority: 5,
+                    text: format!("recording @{register}").into(),
+                    command: None,
+                }
+                .into()
+            });
+        self.items
+            .merged(item.status_items(cx).into_iter().chain(recording))
     }
 }
 

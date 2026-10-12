@@ -49,6 +49,7 @@ mod toolbar_history;
 mod tree_keys;
 mod tree_style;
 mod vim_line;
+mod vim_recording;
 mod window_frame;
 
 use std::{cell::Cell, path::Path, rc::Rc};

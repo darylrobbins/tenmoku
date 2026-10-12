@@ -594,8 +594,9 @@ context = "ReferencesPanel"
 # same frame. In normal and visual mode the arrows are vim's motions
 # (`h l k j`), and the editing keys are vim's (`vim.key` hands the keystroke
 # to vim) rather than the editor's. A vim ctrl key bound to anything else,
-# off macOS ctrl-v (paste), ctrl-q (quit), ctrl-y (redo), ctrl-f (find) and
-# ctrl-b (the dock), is bound to `vim.key` too, so it reaches vim; one bound
+# off macOS ctrl-v (paste), ctrl-q (quit), ctrl-a (select all), ctrl-x
+# (cut), ctrl-y (redo), ctrl-f (find) and ctrl-b (the dock), is bound to
+# `vim.key` too, so it reaches vim; one bound
 # to nothing, such as ctrl-r, reaches it unmatched, as every one does on macOS, where no `ctrl-` binding applies in the editor.
 [[bindings]]
 keys = "left"
@@ -688,6 +689,18 @@ context = "editor && vim.mode == normal"
 platform = "!macos"
 
 [[bindings]]
+keys = "ctrl-a"
+command = "vim.key"
+context = "editor && vim.mode == normal"
+platform = "!macos"
+
+[[bindings]]
+keys = "ctrl-x"
+command = "vim.key"
+context = "editor && vim.mode == normal"
+platform = "!macos"
+
+[[bindings]]
 keys = "ctrl-y"
 command = "vim.key"
 context = "editor && vim.mode == normal"
@@ -742,6 +755,18 @@ context = "editor && vim.visual"
 platform = "!macos"
 
 [[bindings]]
+keys = "ctrl-a"
+command = "vim.key"
+context = "editor && vim.visual"
+platform = "!macos"
+
+[[bindings]]
+keys = "ctrl-x"
+command = "vim.key"
+context = "editor && vim.visual"
+platform = "!macos"
+
+[[bindings]]
 keys = "ctrl-y"
 command = "vim.key"
 context = "editor && vim.visual"
@@ -754,7 +779,7 @@ context = "editor && vim.visual"
 platform = "!macos"
 
 # Insert mode keeps the editor's keys; `escape` and `ctrl-[` end the session
-# and return to normal mode.
+# and return to normal mode, in replace mode too.
 [[bindings]]
 keys = "escape"
 command = "vim.normal_mode"
@@ -764,6 +789,16 @@ context = "editor && vim.mode == insert"
 keys = "ctrl-["
 command = "vim.normal_mode"
 context = "editor && vim.mode == insert"
+
+[[bindings]]
+keys = "escape"
+command = "vim.normal_mode"
+context = "editor && vim.mode == replace"
+
+[[bindings]]
+keys = "ctrl-["
+command = "vim.normal_mode"
+context = "editor && vim.mode == replace"
 
 # In-file find: the pane's find bar (`find_bar`) and the editor it searches.
 

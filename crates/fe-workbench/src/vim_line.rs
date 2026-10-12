@@ -9,16 +9,19 @@
 //! line's text in the editor; [`CANCEL`] (Escape), a backspace on an empty
 //! line, and focus leaving the line for anything else run
 //! `vim.command_line_cancel`. A key ending the line focuses the editor
-//! again. Up and Down recall the line's history, as Vim's `<Up>` and
-//! `<Down>` do: the next older or newer entry starting with what was typed
-//! replaces the text (the caret staying at its end), and Down past the
-//! newest puts back what was typed ([`HistoryRecall`]). The [`fe_vim::HostCommand`] a submit may leave (`:w`) is for the
-//! host to run, not the line: the bar emits it as a [`VimHostCommand`].
+//! again, and first tells it the line's text and that key, which a macro
+//! recording takes ([`EditorView::record_command_line`]). Up and Down
+//! recall the line's history, as Vim's `<Up>` and `<Down>` do: the next
+//! older or newer entry starting with what was typed replaces the text (the
+//! caret staying at its end), and Down past the newest puts back what was
+//! typed ([`HistoryRecall`]). The [`fe_vim::HostCommand`] a submit may
+//! leave (`:w`) is for the host to run, not the line: the bar emits it as a
+//! [`VimHostCommand`].
 
 use fe_command::{Invocation, Value};
 use fe_gpui::{EditorView, commands::RunCommand, vim_registers};
 use fe_ui::{ROW_HEIGHT, TextInput, TextInputEvent};
-use fe_vim::{CommandLineKind, HistoryRecall, HostCommand, Mode, VimState};
+use fe_vim::{CommandLineKind, HistoryRecall, HostCommand, Mode, VimKey, VimState};
 use gpui::{
     AppContext as _, Context, Entity, EntityId, EventEmitter, Focusable as _,
     InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Styled as _,
@@ -208,9 +211,15 @@ impl StatusBar {
         }
     }
 
-    /// Ends the line by a key: submits `text`, or cancels with `None`, in
+    /// Ends the line by `key`: submits `text`, or cancels with `None`, in
     /// its editor, focused again.
-    fn end_line(&mut self, text: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+    fn end_line(
+        &mut self,
+        text: Option<String>,
+        key: VimKey,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         // Closed first, so neither the blur nor the editor's notifying
         // reads it as open.
         let Some((editor, _)) = self.line.open.take() else {
@@ -221,6 +230,14 @@ impl StatusBar {
             return;
         };
         window.focus(&editor.focus_handle(cx), cx);
+        // For a macro recording: what was typed, then the key.
+        let typed = text.clone().or_else(|| {
+            let input = self.line.input.as_ref()?;
+            Some(input.read(cx).text().to_owned())
+        });
+        editor.update(cx, |editor, _| {
+            editor.record_command_line(typed.as_deref().unwrap_or_default(), key)
+        });
         let submit = text.is_some();
         let invocation = match text {
             Some(text) => Invocation::of("vim.command_line_submit")
@@ -252,14 +269,14 @@ impl StatusBar {
         };
         if dock::op(run, cx) == Some(DockOp::Submit) {
             let text = input.read(cx).text().to_owned();
-            return self.end_line(Some(text), window, cx);
+            return self.end_line(Some(text), VimKey::Enter, window, cx);
         }
         if super::op(run, cx) == Some(StatusOp::CancelVimLine) {
-            return self.end_line(None, window, cx);
+            return self.end_line(None, VimKey::Esc, window, cx);
         }
         let edit: fn(&mut TextInput, &mut Context<TextInput>) = match picker::op(run, cx) {
             Some(PaletteOp::Backspace) if input.read(cx).text().is_empty() => {
-                return self.end_line(None, window, cx);
+                return self.end_line(None, VimKey::Backspace, window, cx);
             }
             Some(PaletteOp::Backspace) => TextInput::backspace,
             Some(PaletteOp::DeleteWordLeft) => TextInput::delete_word_left,

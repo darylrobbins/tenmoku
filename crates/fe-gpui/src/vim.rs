@@ -24,6 +24,25 @@
 //! that moves the caret, splits the session
 //! ([`VimState::split_session`]), as Vim's cursor keys do.
 //!
+//! Replace mode (`R`) takes keys as insert mode does, with the input
+//! handler registered, but typed text goes through
+//! [`VimState::replace_text`], overwriting, `editor.backspace` through
+//! [`VimState::replace_backspace`], and `escape` and `ctrl-[`
+//! (`vim.normal_mode`) run `vim.replace_normal_mode`. The caret is an
+//! underline there and in operator-pending mode ([`CaretShape`]).
+//!
+//! While `q` records a macro, every key that reaches the editor goes into
+//! it: the reducer records the keys it reads, and the editor the ones it
+//! takes itself ([`VimState::record_key`]): in insert and replace mode the
+//! text typed or committed by an input method (never what it's composing),
+//! `<CR>`, `<BS>`, `<Esc>` and the arrows, and the command line's text and
+//! the key that ended it, which the host's line reports
+//! ([`EditorView::record_command_line`]). An editor command with no vim key,
+//! such as `alt-backspace`, is left out, logged once a recording. `@` hands
+//! the keys back ([`VimState::take_replay`]), which the editor feeds
+//! through the same paths, the command line's into a line it doesn't show,
+//! with no keystroke dispatched ([`EditorView::replay_vim`]).
+//!
 //! In the visual modes (`v`, `V`, `ctrl-v` or `ctrl-q`) the model's
 //! selection is the visual extent, which `fe-vim` keeps it as; each frame
 //! also makes it so again before its layout ([`EditorView::sync_visual`]),
@@ -67,6 +86,39 @@ pub(crate) const ENABLED: &str = "vim.enabled";
 /// The line break `Enter` types: in insert mode, through
 /// [`VimState::line_break`].
 pub(crate) const NEWLINE: &str = "editor.newline";
+/// Typed text: in replace mode, through [`VimState::replace_text`].
+pub(crate) const INSERT: &str = "editor.insert";
+/// `<BS>`: in replace mode, through [`VimState::replace_backspace`].
+pub(crate) const BACKSPACE: &str = "editor.backspace";
+/// Insert mode's `Esc` and `ctrl-[`, and replace mode's as the keymap binds
+/// them: there the editor runs [`REPLACE_NORMAL_MODE`] for it.
+pub(crate) const NORMAL_MODE: &str = "vim.normal_mode";
+/// Replace mode's `Esc` in `fe-vim`.
+pub(crate) const REPLACE_NORMAL_MODE: &str = "vim.replace_normal_mode";
+
+/// The editor commands a recording holds in vim notation, as the keys the
+/// keymap binds them to: in insert and replace mode, the arrows.
+const MOVES: [(&str, VimKey); 4] = [
+    ("editor.move_left", VimKey::Left),
+    ("editor.move_right", VimKey::Right),
+    ("editor.move_up", VimKey::Up),
+    ("editor.move_down", VimKey::Down),
+];
+
+/// How the carets paint (§9 item 7).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CaretShape {
+    /// Between graphemes: with vim off, and in insert mode.
+    Bar,
+    /// Over the grapheme: in normal and the visual modes.
+    Block,
+    /// Under the grapheme, [`UNDERLINE_HEIGHT`] tall: in replace and
+    /// operator-pending mode.
+    Underline,
+}
+
+/// How tall the underline caret is.
+pub(crate) const UNDERLINE_HEIGHT: f32 = 2.;
 /// The editor commands that type, besides [`NEWLINE`]: in insert mode they
 /// join the session, as the input methods' edits do, where any other editor
 /// command splits it ([`VimState::split_session`]).
@@ -340,6 +392,51 @@ pub(crate) fn line_break(
     Ok(Dispatched::new(Effect::Changed).with_transactions(transactions))
 }
 
+/// The `vim.move` motion the keymap binds `key`'s arrow to in normal and
+/// the visual modes.
+fn arrow_motion(key: VimKey) -> Option<&'static str> {
+    Some(match key {
+        VimKey::Left => "left",
+        VimKey::Right => "right",
+        VimKey::Up => "up",
+        VimKey::Down => "down",
+        _ => return None,
+    })
+}
+
+/// Types `text` in replace mode ([`VimState::replace_text`]), acting as
+/// `invocation`'s actor, as [`line_break`] does: a character at a time, as
+/// typed keys and a macro's replay of them go in, so text an input method
+/// commits at once overwrites what its replay does, even where a joiner in
+/// it joins the text after it.
+pub(crate) fn replace_text(
+    state: &VimState,
+    model: &mut EditorModel,
+    invocation: &Invocation,
+    text: &str,
+) -> Result<Dispatched<TransactionId>, DispatchError> {
+    let origin = fe_editor::commands::origin(&invocation.actor);
+    let ((), transactions) = model.run_as(origin, |model| {
+        // A `\r\n` is one line break, as `replace_text` takes it whole.
+        for ch in text.replace("\r\n", "\n").chars() {
+            state.replace_text(model, ch.encode_utf8(&mut [0; 4]));
+        }
+    });
+    Ok(Dispatched::new(Effect::Changed).with_transactions(transactions))
+}
+
+/// `<BS>` in replace mode ([`VimState::replace_backspace`]), acting as
+/// `invocation`'s actor.
+pub(crate) fn replace_backspace(
+    state: &VimState,
+    model: &mut EditorModel,
+    invocation: &Invocation,
+) -> Result<Dispatched<TransactionId>, DispatchError> {
+    let origin = fe_editor::commands::origin(&invocation.actor);
+    let ((), transactions) = model.run_as(origin, |model| state.replace_backspace(model));
+    Ok(Dispatched::new(Effect::Changed).with_transactions(transactions))
+}
+
 /// The key the reducer reads for `keystroke`, if any: none with `cmd`;
 /// `ctrl-[` is `<Esc>` and `ctrl-<letter>` is `<C-letter>`; `escape`,
 /// `enter`, `backspace`, `tab` and the arrows are those keys; otherwise the
@@ -411,9 +508,19 @@ impl EditorView {
     }
 
     /// Whether typing and input methods insert text: with vim off, or in
-    /// insert mode.
+    /// insert or replace mode.
     pub(crate) fn accepts_text(&self) -> bool {
-        self.vim_mode().is_none_or(|mode| mode == "insert")
+        self.vim.is_none() || self.typing_mode().is_some()
+    }
+
+    /// With vim in insert mode `Some(false)`, in replace mode `Some(true)`,
+    /// and otherwise `None`: the modes where keys type, not vim's.
+    pub(crate) fn typing_mode(&self) -> Option<bool> {
+        match self.vim.as_ref()?.mode() {
+            fe_vim::Mode::Insert => Some(false),
+            fe_vim::Mode::Replace => Some(true),
+            _ => None,
+        }
     }
 
     /// In a visual mode, makes the model's selection the visual extent
@@ -452,7 +559,7 @@ impl EditorView {
         let Some(state) = &mut self.vim else {
             return;
         };
-        if state.mode() == fe_vim::Mode::Insert {
+        if matches!(state.mode(), fe_vim::Mode::Insert | fe_vim::Mode::Replace) {
             return;
         }
         // One `escape` drops the whole command; in a visual mode it may
@@ -474,9 +581,127 @@ impl EditorView {
         self.run_vim(&exit.context(context), cx);
     }
 
-    /// Whether carets paint as blocks: in every vim mode but insert.
+    /// Whether carets paint as blocks: in every vim mode but insert,
+    /// replace and operator-pending ([`EditorView::caret_shape`]).
+    #[cfg(test)]
     pub(crate) fn block_cursor(&self) -> bool {
-        self.vim_mode().is_some_and(|mode| mode != "insert")
+        self.caret_shape() == CaretShape::Block
+    }
+
+    /// How the carets paint: a bar with vim off and in insert mode, an
+    /// underline in replace and operator-pending mode, otherwise a block.
+    pub(crate) fn caret_shape(&self) -> CaretShape {
+        match self.vim_mode() {
+            None | Some("insert") => CaretShape::Bar,
+            Some("replace" | "operator_pending") => CaretShape::Underline,
+            Some(_) => CaretShape::Block,
+        }
+    }
+
+    /// Records `key`, one the editor took itself in insert or replace mode
+    /// or on the command line, if a macro is recording
+    /// ([`VimState::record_key`]); and so counts it, as a replay's keys
+    /// are counted. Not while a replay feeds its keys through the typing
+    /// paths, which records each of them once itself.
+    fn record_vim_key(&mut self, key: VimKey) {
+        if self.vim_replaying {
+            return;
+        }
+        if let Some(state) = &mut self.vim {
+            state.record_key(key);
+        }
+    }
+
+    /// Records the keys of `invocation`, one of vim's run from the keymap
+    /// or elsewhere, that `fe-vim`'s reducer didn't read: insert and
+    /// replace mode's `Esc` (`vim.normal_mode`), and the arrows' moves in
+    /// normal and the visual modes (`vim.move`), as `<Left>` and so on.
+    pub(crate) fn record_vim_command(&mut self, invocation: &Invocation) {
+        let args = &invocation.args;
+        let counted = args.get("count").is_some_and(|count| !count.is_null());
+        let key = match invocation.command.as_str() {
+            NORMAL_MODE if self.typing_mode().is_some() => Some(VimKey::Esc),
+            "vim.move" if self.typing_mode().is_none() && !counted => {
+                let motion = args.get("motion").and_then(|motion| motion.as_str());
+                [VimKey::Left, VimKey::Right, VimKey::Up, VimKey::Down]
+                    .into_iter()
+                    .find(|&key| motion.is_some() && arrow_motion(key) == motion)
+            }
+            _ => None,
+        };
+        if let Some(key) = key {
+            self.record_vim_key(key);
+        }
+    }
+
+    /// Records `invocation`, an editor command run in insert or replace
+    /// mode, as the keys typed: its text (a line break as `<CR>`),
+    /// `editor.newline` as `<CR>`, `editor.backspace` as `<BS>` and the
+    /// arrows' moves as `<Left>` and so on. Any other has no vim notation:
+    /// a recording skips it, and says so once.
+    pub(crate) fn record_typing(&mut self, invocation: &Invocation) {
+        let command = invocation.command.as_str();
+        let keys: Vec<VimKey> = match command {
+            INSERT => {
+                let text = invocation.args.get("text").and_then(|text| text.as_str());
+                (text.unwrap_or_default().chars())
+                    .filter(|&ch| ch != '\r')
+                    .map(|ch| match ch {
+                        '\n' => VimKey::Enter,
+                        ch => VimKey::Char(ch),
+                    })
+                    .collect()
+            }
+            NEWLINE => vec![VimKey::Enter],
+            BACKSPACE => vec![VimKey::Backspace],
+            command => match MOVES.iter().find(|(id, _)| *id == command) {
+                Some(&(_, key)) => vec![key],
+                None => {
+                    let recording = self.vim.as_ref().and_then(VimState::recording);
+                    if recording.is_some()
+                        && !self.vim_replaying
+                        && !std::mem::replace(&mut self.vim_unrecorded_logged, true)
+                    {
+                        log::warn!(
+                            "a macro can't record {command}, which has no vim key: it's left out"
+                        );
+                    }
+                    Vec::new()
+                }
+            },
+        };
+        for key in keys {
+            self.record_vim_key(key);
+        }
+    }
+
+    /// Records what the command line took for a recording: `text`, the
+    /// line's as it ends, then `end`, the key that ended it (`<CR>`, `<Esc>`
+    /// or `<BS>` on an empty line). Typed after the line's prefill, which a
+    /// replay starts it with too: any of that taken out as `<BS>`s first.
+    /// The host's line calls it just before it submits or cancels.
+    pub fn record_command_line(&mut self, text: &str, end: VimKey) {
+        let Some(state) = &self.vim else {
+            return;
+        };
+        if !matches!(state.mode(), fe_vim::Mode::CmdLine(_)) {
+            return;
+        }
+        let prefill = state.command_line_prefill();
+        let kept = prefill
+            .chars()
+            .zip(text.chars())
+            .take_while(|(a, b)| a == b)
+            .count();
+        let taken = prefill.chars().count() - kept;
+        let typed: Vec<VimKey> = (0..taken)
+            .map(|_| VimKey::Backspace)
+            .chain(text.chars().skip(kept).map(VimKey::Char))
+            .chain([end])
+            .collect();
+        for key in typed {
+            self.record_vim_key(key);
+        }
     }
 
     /// A keystroke the keymap left for the editor, in normal,
@@ -542,8 +767,15 @@ impl EditorView {
     /// moment: no keystroke is dispatched, which could leave GPUI's
     /// propagation flag stopped. A `@` inside the macro leaves keys that
     /// are fed before the rest. A key that fails drops the rest of the
-    /// replay ([`VimState::stop_replay`]).
+    /// replay ([`VimState::stop_replay`]). The command line's keys edit a
+    /// line kept here, which isn't shown, and its `<CR>` or `<Esc>`
+    /// submits it.
     fn replay_vim(&mut self, cx: &mut Context<Self>) {
+        if self.vim_replaying {
+            // A key of the replay under way ran this: the loop below takes
+            // what it left.
+            return;
+        }
         let Some(state) = &mut self.vim else {
             return;
         };
@@ -551,18 +783,10 @@ impl EditorView {
         if queue.is_empty() {
             return;
         }
+        self.vim_replaying = true;
+        let mut line = None;
         while let Some(key) = queue.pop_front() {
-            let in_cmdline = self.replay_key(key, cx).then(|| {
-                self.vim
-                    .as_ref()
-                    .is_some_and(|state| matches!(state.mode(), fe_vim::Mode::CmdLine(_)))
-            });
-            if in_cmdline != Some(false) {
-                if in_cmdline == Some(true) {
-                    log::warn!(
-                        "a macro replay stops at the command line: its keys can't be replayed"
-                    );
-                }
+            if !self.replay_key(key, &mut line, cx) {
                 queue.clear();
                 if let Some(state) = &mut self.vim {
                     state.stop_replay();
@@ -576,48 +800,106 @@ impl EditorView {
                 queue.push_front(key);
             }
         }
+        self.vim_replaying = false;
+        if line.is_some() {
+            log::warn!("a macro replay ended with the command line open: its text is dropped");
+        }
         cx.notify();
     }
 
-    /// Feeds one replayed `key`. Returns whether it worked.
-    fn replay_key(&mut self, key: VimKey, cx: &mut Context<Self>) -> bool {
+    /// Feeds one replayed `key`, `line` holding the command line's text
+    /// while it's open. Returns whether it worked.
+    fn replay_key(
+        &mut self,
+        key: VimKey,
+        line: &mut Option<String>,
+        cx: &mut Context<Self>,
+    ) -> bool {
         self.sync_visual();
         let Some(state) = &mut self.vim else {
             return false;
         };
-        match state.mode() {
-            fe_vim::Mode::Insert => {
+        let mode = state.mode();
+        if !matches!(mode, fe_vim::Mode::CmdLine(_)) {
+            *line = None;
+        }
+        match mode {
+            fe_vim::Mode::Insert | fe_vim::Mode::Replace => {
                 state.record_key(key);
-                match key {
-                    VimKey::Char(ch) => self.type_text(ch.encode_utf8(&mut [0; 4]), cx),
+                let command = match key {
+                    VimKey::Char(ch) => {
+                        self.type_text(ch.encode_utf8(&mut [0; 4]), cx);
+                        return true;
+                    }
                     // `<C-j>` (`<NL>`) is `<CR>` here.
-                    VimKey::Enter | VimKey::Ctrl('j') => {
-                        let newline = Invocation::of(NEWLINE)
-                            .expect("a valid command ID")
-                            .source(Source::Keyboard);
-                        if let Some(state) = &self.vim {
-                            let result = line_break(state, &mut self.model, &newline);
-                            if self.dispatched(result, &newline, true, cx).is_err() {
-                                return false;
-                            }
-                        }
-                    }
-                    VimKey::Backspace => {
-                        self.model.backspace();
-                        self.changed(cx);
-                    }
+                    VimKey::Enter | VimKey::Ctrl('j') => NEWLINE,
+                    VimKey::Backspace => BACKSPACE,
                     VimKey::Esc => {
-                        let normal = Invocation::of("vim.normal_mode")
+                        let normal = match mode {
+                            fe_vim::Mode::Replace => REPLACE_NORMAL_MODE,
+                            _ => NORMAL_MODE,
+                        };
+                        let normal = Invocation::of(normal)
                             .expect("a valid command ID")
                             .source(Source::Keyboard);
                         let context = stamp(fe_editor::commands::context(), self.vim.as_ref());
                         return self.run_vim_once(&normal.context(context), cx);
                     }
-                    _ => return false,
-                }
+                    key => match MOVES.iter().find(|(_, moved)| *moved == key) {
+                        Some(&(command, _)) => command,
+                        None => return false,
+                    },
+                };
+                let invocation = Invocation::of(command)
+                    .expect("a valid command ID")
+                    .source(Source::Keyboard);
+                self.run_command(invocation, None, cx);
                 true
             }
-            fe_vim::Mode::CmdLine(_) => false,
+            fe_vim::Mode::CmdLine(_) => {
+                state.record_key(key);
+                let text = line.get_or_insert_with(|| state.command_line_prefill().to_owned());
+                let invocation = match key {
+                    VimKey::Char(ch) => {
+                        text.push(ch);
+                        return true;
+                    }
+                    VimKey::Backspace if text.pop().is_some() => return true,
+                    // `<BS>` on an empty line, and `<C-c>`, cancel it. A
+                    // replay's `<Esc>` runs it, as in nvim (`:help c_<Esc>`).
+                    VimKey::Backspace | VimKey::Ctrl('c') => {
+                        Invocation::of("vim.command_line_cancel").expect("a valid command ID")
+                    }
+                    VimKey::Enter | VimKey::Ctrl('j') | VimKey::Esc => {
+                        Invocation::of("vim.command_line_submit")
+                            .expect("a valid command ID")
+                            .args(fe_command::Value::from_iter([("text", text.as_str())]))
+                    }
+                    _ => return false,
+                };
+                *line = None;
+                let context = stamp(fe_editor::commands::context(), self.vim.as_ref());
+                let invocation = invocation.source(Source::Keyboard).context(context);
+                let ok = self.run_vim_once(&invocation, cx);
+                // A file or window command (`:w`) is the host's line's to
+                // run, not a replay's.
+                if let Some(command) = self.take_vim_host_command() {
+                    log::warn!("a macro replay doesn't run {command:?}");
+                }
+                ok && self.vim.as_ref().is_some_and(|s| !s.failed())
+            }
+            // With nothing pending, the arrows are the keymap's `vim.move`s.
+            _ if state.pending().kind().is_none() && arrow_motion(key).is_some() => {
+                state.record_key(key);
+                let motion = arrow_motion(key).expect("an arrow");
+                let moved = Invocation::of("vim.move")
+                    .expect("a valid command ID")
+                    .args(fe_command::Value::from_iter([("motion", motion)]))
+                    .source(Source::Keyboard);
+                let context = stamp(fe_editor::commands::context(), self.vim.as_ref());
+                self.run_vim_once(&moved.context(context), cx)
+                    && self.vim.as_ref().is_some_and(|s| !s.failed())
+            }
             _ => match state.feed(key) {
                 Step::Wait(_) | Step::Cancel => self.vim.as_ref().is_some_and(|s| !s.failed()),
                 Step::Forward => false,
@@ -644,6 +926,10 @@ impl EditorView {
 
     /// [`EditorView::run_vim`] without the replay: for the replay's own keys.
     fn run_vim_once(&mut self, invocation: &Invocation, cx: &mut Context<Self>) -> bool {
+        if invocation.command.as_str() == "vim.record" {
+            // A new recording: what it can't hold is logged again.
+            self.vim_unrecorded_logged = false;
+        }
         let registry = registry();
         let Some(result) = self.dispatch_vim(&registry, invocation, cx) else {
             log::warn!("{} needs vim on", invocation.command);
@@ -712,3 +998,9 @@ mod viewport_resize_tests;
 
 #[cfg(test)]
 mod jump_setting_tests;
+
+#[cfg(test)]
+mod macro_tests;
+
+#[cfg(test)]
+mod replace_tests;
