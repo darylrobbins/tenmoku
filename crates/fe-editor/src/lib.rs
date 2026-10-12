@@ -26,6 +26,7 @@ pub mod decorations;
 pub mod diagnostics;
 mod disk;
 pub mod ghost_text;
+pub mod indent_guides;
 mod multi_cursor;
 pub mod occurrences;
 mod row_change_decorations;
