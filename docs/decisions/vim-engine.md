@@ -761,9 +761,10 @@ The user's decisions:
 - **Toggle: a `vim.enabled` setting plus a command.** The setting
   hot-reloads, and a palette command ("Toggle Vim Mode") flips it.
 
-Not designed yet: vim-style key-to-key remaps (`nnoremap H ^`). The keymap
-maps keys to commands, so they likely need a remap table inside `fe-vim`
-(a later card).
+Vim-style key-to-key remaps (`nnoremap H ^`) are designed in
+`docs/decisions/vim-remaps.md`: a remap table inside `fe-vim`, in front of
+`step`, written in the keymap TOML and a vimrc subset. It's waiting on the
+user's answers.
 
 ## 11. Unanswered
 
