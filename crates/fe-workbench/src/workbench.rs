@@ -10,7 +10,7 @@ use std::{
 use fe_buffer::Buffer;
 use fe_editor::EditorModel;
 use fe_gpui::{EditorSettings, EditorTheme, EditorView, SettingsEvent, commands::RunCommand};
-use fe_ui::UiTheme;
+use fe_ui::{ROW_HEIGHT, UiTheme};
 use gpui::{
     App, AppContext as _, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, ParentElement as _, PromptButton, PromptLevel, Render,
@@ -213,6 +213,8 @@ pub struct Workbench {
     /// To the status bar, whose vim line shows in its place even while
     /// it's hidden, and gives the host commands typed on it.
     _status_bar: [Subscription; 2],
+    /// The window's toasts, over the panes at the bottom right.
+    toasts: Entity<toast::ToastLayer>,
     /// What the panes' toolbar crumbs and "…" list.
     toolbar_picker: Entity<Picker<ToolbarPicker>>,
     /// Whether the panes show their toolbars.
@@ -326,6 +328,8 @@ impl Workbench {
         });
         let nav_state = Nav::new(launch_root.clone(), ui, cx);
         let status_bar = cx.new(|_| StatusBar::new(ui));
+        toast::init(cx);
+        let toasts = cx.new(|cx| toast::ToastLayer::new(ui, window, cx));
         let shell = cx.new(|cx| {
             let mut shell = Shell::new(KEY_CONTEXT, ui, window, cx).text_size(px(12.));
             shell.set_title(title_bar::name(launch_root.as_deref()), cx);
@@ -394,6 +398,7 @@ impl Workbench {
             _rail: rail,
             _modals: modals_changed,
             _status_bar: [status_bar_changed, vim_host_commands],
+            toasts,
             toolbar_picker,
             breadcrumbs: true,
             nav: NavButtons::default(),
@@ -967,6 +972,12 @@ impl Workbench {
     #[cfg(test)]
     pub(crate) fn git(&self) -> &Entity<GitState> {
         &self.git
+    }
+
+    /// The window's toasts.
+    #[cfg(test)]
+    pub(crate) fn toasts(&self) -> &Entity<toast::ToastLayer> {
+        &self.toasts
     }
 
     pub(crate) fn open_editors(&self, cx: &App) -> Vec<Entity<EditorView>> {
@@ -1580,6 +1591,9 @@ impl Workbench {
                 Some(Toggle::GoToLine) => return self.toggle_go_to_line(window, cx),
                 None => {}
             }
+            if toast::dismisses_all(run, cx) {
+                return self.toasts.update(cx, |toasts, cx| toasts.dismiss_all(cx));
+            }
             if config_problems::shows(run, cx) {
                 return self.show_config_problems(window, cx);
             }
@@ -1652,6 +1666,9 @@ impl Render for Workbench {
             #[cfg(test)]
             shell.set_client_tiling(self.client_tiling);
         });
+        // Above the status bar, or where it would be.
+        let status_bar = self.status_bar_visible || self.status_bar.read(cx).line_open();
+        let bottom = if status_bar { ROW_HEIGHT } else { px(0.) } + px(8.);
         div()
             .on_action(cx.listener(Self::on_run_command))
             // So a modifier pressed while a panel has focus reaches the
@@ -1659,6 +1676,19 @@ impl Render for Workbench {
             .on_modifiers_changed(EditorView::modifiers_changed)
             .size_full()
             .child(self.shell.clone())
+            .child(
+                // The window's height, for toasts to fit in, bottom first.
+                div()
+                    .absolute()
+                    .top(px(8.))
+                    .right(px(12.))
+                    .bottom(bottom)
+                    .flex()
+                    .flex_col()
+                    .justify_end()
+                    .items_end()
+                    .child(self.toasts.clone()),
+            )
     }
 }
 
@@ -1698,6 +1728,14 @@ pub(crate) fn open_panel_failed(error: &str) -> (&'static str, String) {
 
 #[path = "vim_host.rs"]
 mod vim_host;
+
+// Nothing shows a toast yet: the next card routes messages to it.
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "no caller of toast::show until the next card")
+)]
+#[path = "toast.rs"]
+pub(crate) mod toast;
 
 #[cfg(test)]
 #[path = "close_tests.rs"]
