@@ -1,5 +1,35 @@
 {
   "$defs": {
+    "AutoSave": {
+      "description": "`editor.auto_save`.",
+      "oneOf": [
+        {
+          "const": "off",
+          "description": "Files save only when you save them.",
+          "type": "string"
+        },
+        {
+          "const": "after_delay",
+          "description": "Save a changed file `auto_save_delay` ms after the last edit; in vim\ninsert mode, once insert mode ends.",
+          "type": "string"
+        },
+        {
+          "const": "on_focus_change",
+          "description": "Save a changed file when its editor loses focus or the window does.",
+          "type": "string"
+        },
+        {
+          "const": "on_window_change",
+          "description": "Save changed files when the window loses focus.",
+          "type": "string"
+        },
+        {
+          "const": "on_insert_leave",
+          "description": "With vim on, save a changed file when insert mode ends and after each\nnormal-mode change; with vim off, as `on_focus_change`.",
+          "type": "string"
+        }
+      ]
+    },
     "EditorSettings": {
       "description": "Settings for the text editor.",
       "properties": {
@@ -7,6 +37,19 @@
           "default": true,
           "description": "Type the closing bracket or quote when typing an opening one, type over\nit, and delete both with backspace. Off, typing inserts only what's\ntyped.",
           "type": "boolean"
+        },
+        "auto_save": {
+          "$ref": "#/$defs/AutoSave",
+          "default": "off",
+          "description": "When a changed file saves itself."
+        },
+        "auto_save_delay": {
+          "default": 1000,
+          "description": "How long after the last edit, in milliseconds, `after_delay` saves.\nUsed only by `after_delay`.",
+          "format": "uint64",
+          "maximum": 60000,
+          "minimum": 100,
+          "type": "integer"
         },
         "font_family": {
           "description": "The font family. Unset, the first installed of JetBrains Mono, SF Mono,\nMenlo, DejaVu Sans Mono, Ubuntu Mono, Liberation Mono and Noto Sans Mono.",
@@ -345,6 +388,8 @@
       "$ref": "#/$defs/EditorSettings",
       "default": {
         "auto_close_pairs": true,
+        "auto_save": "off",
+        "auto_save_delay": 1000,
         "font_size": 13.0,
         "format_on_save": false,
         "line_height": 1.6,

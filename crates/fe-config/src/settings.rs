@@ -158,6 +158,31 @@ pub struct EditorSettings {
     /// it, and delete both with backspace. Off, typing inserts only what's
     /// typed.
     pub auto_close_pairs: bool,
+    /// When a changed file saves itself.
+    pub auto_save: AutoSave,
+    /// How long after the last edit, in milliseconds, `after_delay` saves.
+    /// Used only by `after_delay`.
+    #[schemars(range(min = 100, max = 60000))]
+    pub auto_save_delay: u64,
+}
+
+/// `editor.auto_save`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoSave {
+    /// Files save only when you save them.
+    #[default]
+    Off,
+    /// Save a changed file `auto_save_delay` ms after the last edit; in vim
+    /// insert mode, once insert mode ends.
+    AfterDelay,
+    /// Save a changed file when its editor loses focus or the window does.
+    OnFocusChange,
+    /// Save changed files when the window loses focus.
+    OnWindowChange,
+    /// With vim on, save a changed file when insert mode ends and after each
+    /// normal-mode change; with vim off, as `on_focus_change`.
+    OnInsertLeave,
 }
 
 impl Default for EditorSettings {
@@ -170,6 +195,8 @@ impl Default for EditorSettings {
             soft_wrap: false,
             format_on_save: false,
             auto_close_pairs: true,
+            auto_save: AutoSave::default(),
+            auto_save_delay: 1000,
         }
     }
 }

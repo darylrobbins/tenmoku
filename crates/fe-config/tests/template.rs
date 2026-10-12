@@ -21,6 +21,8 @@ fn template_is_all_defaults() {
         keys,
         [
             "auto_close_pairs",
+            "auto_save",
+            "auto_save_delay",
             "font_family",
             "font_size",
             "format_on_save",
