@@ -60,7 +60,7 @@ fn line_mode_and_routing() {
     assert_eq!(frame.get("vim.cmdline_kind"), Some("search_forward"));
     assert_eq!((vim.text().as_str(), vim.cursor()), ("abc dw x dw", (0, 0)));
     // A key the line doesn't take is forwarded.
-    assert_eq!(vim.feed("<Up>"), Err(FeedError::Forwarded(VimKey::Up)));
+    assert_eq!(vim.feed("<Left>"), Err(FeedError::Forwarded(VimKey::Left)));
     // `<BS>` deletes the last character; `?`'s line is `search_backward`.
     vim.feed("<BS><BS><CR>").unwrap();
     assert_eq!((vim.text().as_str(), vim.mode()), ("dw x dw", "normal"));

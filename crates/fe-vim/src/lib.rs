@@ -364,7 +364,7 @@
 //! `:sort`, `:set`, `:marks`, `:reg`, `:undo`, `:!`, `|` between commands,
 //! `:s`'s `c`, `r` and print flags, `\=` in its string, `:s\/`, `:s\?`
 //! and `:s\&`, the two-letter forms (`:sg`, `:si`, …), `g&`, `:~`,
-//! the line's history and completion, marks other than those above (`:'A`
+//! the line's completion, marks other than those above (`:'A`
 //! and `:'[` are E20 instead), `*` for `'<,'>`, and a count before
 //! `:` in a visual mode (nvim drops it too). These are E492, or, for a
 //! `|` after `:d`, E488.
@@ -571,8 +571,12 @@
 //! - A search motion's pattern is interned, so that the args holding it
 //!   stay `Copy`: each distinct pattern searched for (or deserialized) stays
 //!   in memory for the life of the process.
-//! - `;` chained searches (`/foo/;/bar`), search history and 'incsearch'
-//!   aren't supported: a line chaining searches fails, changing nothing.
+//! - `;` chained searches (`/foo/;/bar`) and 'incsearch' aren't
+//!   supported: a line chaining searches fails, changing nothing.
+//! - The command-line histories ([`Registers::recall`]) hold only lines
+//!   submitted with `<CR>`: nvim also keeps a line cancelled with `<Esc>`,
+//!   and adds the pattern of `*`, `#`, `:s`, `:g` and an ex address to the
+//!   search history. They aren't kept across runs (nvim's ShaDa).
 //! - `'<` and `'>` keep a byte column on a row anchored at its start, as
 //!   nvim's marks do: rows put in or taken out above move them, edits
 //!   within their row don't. nvim also moves marks on rows that a change
@@ -762,7 +766,7 @@ pub use insert::Splits;
 pub use key::{KeyError, VimKey, parse_keys};
 pub use marks::Mark;
 pub use reducer::{Pending, PendingKind, Step, step};
-pub use register::{Register, RegisterError, Registers, Write};
+pub use register::{HISTORY_MAX, HistoryRecall, Register, RegisterError, Registers, Write};
 pub use repeat::{Change, LastChange};
 pub use state::{Mode, VimState, context};
 pub use substitute::{Flags, Substitute};

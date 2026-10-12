@@ -1,0 +1,247 @@
+# Cases for fe-vim's oracle of the command-line histories (`:help
+# cmdline-history`, `:help c_<Up>`): `<Up>` and `<Down>` on `/`, `?` and
+# `:` lines, recall by the prefix typed, `<Down>` back to what was typed, an
+# edit starting a new prefix from the entry shown, `?` sharing `/`'s history
+# (an entry's delimiters swapped), a repeated line moved to the newest, `:`
+# history apart from the search history, offsets recalled with their
+# pattern, and recalls under an operator, in visual mode and after a visual
+# `:`'s prefill. No case cancels a line and then recalls: nvim keeps a
+# cancelled line, fe-vim doesn't. A failing search is a case's last key.
+# Hand-written: name, buffer (rows joined with \n, no trailing newline),
+# cursor = [row, byte column] and keys in vim notation. What nvim does with
+# each is recorded in history.expected.json by the ignored
+# `record_corpus_with_neovim` test; edit a case, then re-record.
+
+[[case]]
+name = "up"
+buffer = "x a b a b a b"
+cursor = [0, 0]
+keys = "/a<CR>/b<CR>0/<Up><CR>"
+
+[[case]]
+name = "up_up"
+buffer = "x a b a b a b"
+cursor = [0, 0]
+keys = "/a<CR>/b<CR>0/<Up><Up><CR>"
+
+[[case]]
+name = "up_past_the_oldest"
+buffer = "x a b a b a b"
+cursor = [0, 0]
+keys = "/a<CR>/b<CR>0/<Up><Up><Up><CR>"
+
+[[case]]
+name = "up_up_down"
+buffer = "x a b a b a b"
+cursor = [0, 0]
+keys = "/a<CR>/b<CR>0/<Up><Up><Down><CR>"
+
+[[case]]
+name = "down_back_to_nothing_typed"
+buffer = "x a b a b a b"
+cursor = [0, 0]
+keys = "/b<CR>/a<CR>0/<Up><Up><Down><Down><CR>"
+
+[[case]]
+name = "down_first"
+buffer = "x a b a b a b"
+cursor = [0, 0]
+keys = "/a<CR>/b<CR>0/<Down><Up><Up><CR>"
+
+[[case]]
+name = "prefix"
+buffer = "x foo fab far bar foo fab far bar"
+cursor = [0, 0]
+keys = "/foo<CR>/bar<CR>/far<CR>0/f<Up><CR>"
+
+[[case]]
+name = "prefix_up_up"
+buffer = "x foo fab far bar foo fab far bar"
+cursor = [0, 0]
+keys = "/foo<CR>/bar<CR>/far<CR>0/f<Up><Up><CR>"
+
+[[case]]
+name = "prefix_past_the_oldest"
+buffer = "x foo fab far bar foo fab far bar"
+cursor = [0, 0]
+keys = "/foo<CR>/bar<CR>/far<CR>0/f<Up><Up><Up><Down><CR>"
+
+[[case]]
+name = "prefix_down_back_to_typed"
+buffer = "x foo fab far bar foo fab far bar"
+cursor = [0, 0]
+keys = "/foo<CR>/bar<CR>/far<CR>0/fa<Up><Down>b<CR>"
+
+[[case]]
+name = "prefix_matching_nothing"
+buffer = "x foo fab far bar foo fab far bar"
+cursor = [0, 0]
+keys = "/foo<CR>/bar<CR>0/q<Up><Down><BS>ba<CR>"
+
+[[case]]
+name = "edit_then_up"
+buffer = "x foo fab far bar foo fab far bar"
+cursor = [0, 0]
+keys = "/foo<CR>/fab<CR>/far<CR>/bar<CR>0/<Up><Up><BS><Up><CR>"
+
+[[case]]
+name = "edit_then_down"
+buffer = "x foo fab far bar foo fab far bar"
+cursor = [0, 0]
+keys = "/foo<CR>/fab<CR>/far<CR>/bar<CR>0/<Up><Up><Up><BS><Down><CR>"
+
+[[case]]
+name = "edit_then_down_to_the_edit"
+buffer = "x foo fab far bar foo fab far bar"
+cursor = [0, 0]
+keys = "/foo<CR>/fab<CR>/far<CR>/bar<CR>0/<Up><Up><Up><BS><Down><Down><CR>"
+
+[[case]]
+name = "typed_after_recall"
+buffer = "x foo fab far bar foo fab far bar"
+cursor = [0, 0]
+keys = "/foo<CR>/fab<CR>/far<CR>/bar<CR>0/<Up><Up>x<Up><BS><CR>"
+
+[[case]]
+name = "repeated_search_moves_to_newest"
+buffer = "x foo fab far bar foo fab far bar"
+cursor = [0, 0]
+keys = "/foo<CR>/bar<CR>/foo<CR>0/<Up><Up><CR>"
+
+[[case]]
+name = "repeated_search_leaves_one"
+buffer = "x foo fab far bar foo fab far bar"
+cursor = [0, 0]
+keys = "/foo<CR>/bar<CR>/foo<CR>0/<Up><Up><Up><CR>"
+
+[[case]]
+name = "question_shares_slash"
+buffer = "x foo fab far bar foo fab far bar"
+cursor = [0, 0]
+keys = "/foo<CR>/bar<CR>$?<Up><Up><CR>"
+
+[[case]]
+name = "slash_shares_question"
+buffer = "x foo fab far bar foo fab far bar"
+cursor = [0, 32]
+keys = "?far<CR>?fab<CR>0/<Up><Up><CR>"
+
+[[case]]
+name = "question_after_slash_then_n"
+buffer = "x foo fab far bar foo fab far bar"
+cursor = [0, 0]
+keys = "/far<CR>$?<Up><CR>n"
+
+[[case]]
+name = "question_recalls_an_offset"
+buffer = "x foo fab far bar foo fab far bar"
+cursor = [0, 0]
+keys = "/foo/e<CR>$?<Up><CR>"
+
+[[case]]
+name = "slash_recalls_a_question_offset"
+buffer = "x foo fab far bar foo fab far bar"
+cursor = [0, 32]
+keys = "?bar?s+1<CR>0/<Up><CR>"
+
+[[case]]
+name = "question_escapes_a_question_mark"
+buffer = "x a?b y a?b z"
+cursor = [0, 0]
+keys = "/a?b<CR>$?<Up><CR>"
+
+[[case]]
+name = "slash_escapes_a_slash"
+buffer = "x a/b y a/b z"
+cursor = [0, 12]
+keys = "?a/b?e<CR>0/<Up><CR>"
+
+[[case]]
+name = "offset_recalled"
+buffer = "x foo fab far bar foo fab far bar"
+cursor = [0, 0]
+keys = "/foo/e<CR>0/<Up><CR>"
+
+[[case]]
+name = "offset_recalled_then_n"
+buffer = "x foo fab far bar foo fab far bar"
+cursor = [0, 0]
+keys = "/bar/s-1<CR>/foo<CR>0/<Up><Up><CR>n"
+
+[[case]]
+name = "lines_offset_recalled"
+buffer = "foo\nx\nfoo\ny\nz"
+cursor = [0, 0]
+keys = "/foo/+1<CR>gg/<Up><CR>"
+
+[[case]]
+name = "under_an_operator"
+buffer = "x foo fab far bar foo fab far bar"
+cursor = [0, 0]
+keys = "/far<CR>0d/<Up><CR>"
+
+[[case]]
+name = "in_visual_mode"
+buffer = "x foo fab far bar foo fab far bar"
+cursor = [0, 0]
+keys = "/far<CR>/fab<CR>0v/<Up><Up><CR>"
+
+[[case]]
+name = "ex_up"
+buffer = "x y\nx y\nx y"
+cursor = [0, 0]
+keys = ":s/x/z/<CR>j:<Up><CR>"
+
+[[case]]
+name = "ex_up_up"
+buffer = "x y\nx y\nx y"
+cursor = [0, 0]
+keys = ":s/x/z/<CR>:s/y/w/<CR>j:<Up><Up><CR>"
+
+[[case]]
+name = "ex_prefix"
+buffer = "x y\nx y\nx y"
+cursor = [0, 0]
+keys = ":s/x/z/<CR>:3<CR>:s/y/w/<CR>gg:3<CR>:s/x<Up><CR>"
+
+[[case]]
+name = "ex_down_back_to_typed"
+buffer = "a\nb\nc\nd"
+cursor = [0, 0]
+keys = ":3<CR>:1<CR>:<Up><Up><Down><Down>4<CR>"
+
+[[case]]
+name = "ex_repeated_moves_to_newest"
+buffer = "a\nb\nc\nd"
+cursor = [0, 0]
+keys = ":3<CR>:2<CR>:3<CR>:1<CR>:<Up><Up><Up><CR>"
+
+[[case]]
+name = "ex_apart_from_search"
+buffer = "a\nb\nc\nd"
+cursor = [0, 0]
+keys = "/c<CR>:<Up>4<CR>"
+
+[[case]]
+name = "search_apart_from_ex"
+buffer = "a\nb\nc\nd"
+cursor = [0, 0]
+keys = ":3<CR>/d<CR>gg:<Up><CR>/<Up><Up><CR>"
+
+[[case]]
+name = "ex_visual_prefill_as_prefix"
+buffer = "a x\nb x\nc x\nd x"
+cursor = [0, 0]
+keys = ":3<CR>Vj:s/x/y/<CR>ggVj:<Up><CR>"
+
+[[case]]
+name = "ex_failing_line_kept"
+buffer = "a\nb\nc\nd"
+cursor = [0, 0]
+keys = ":9<CR>"
+
+[[case]]
+name = "search_empty_line_left_out"
+buffer = "x foo fab far bar foo fab far bar"
+cursor = [0, 0]
+keys = "/far<CR>/foo<CR>/<CR>0/<Up><Up><CR>"

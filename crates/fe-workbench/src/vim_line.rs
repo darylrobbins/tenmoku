@@ -9,17 +9,20 @@
 //! line's text in the editor; [`CANCEL`] (Escape), a backspace on an empty
 //! line, and focus leaving the line for anything else run
 //! `vim.command_line_cancel`. A key ending the line focuses the editor
-//! again. The [`fe_vim::HostCommand`] a submit may leave (`:w`) is for the
+//! again. Up and Down recall the line's history, as Vim's `<Up>` and
+//! `<Down>` do: the next older or newer entry starting with what was typed
+//! replaces the text (the caret staying at its end), and Down past the
+//! newest puts back what was typed ([`HistoryRecall`]). The [`fe_vim::HostCommand`] a submit may leave (`:w`) is for the
 //! host to run, not the line: the bar emits it as a [`VimHostCommand`].
 
 use fe_command::{Invocation, Value};
-use fe_gpui::{EditorView, commands::RunCommand};
-use fe_ui::{ROW_HEIGHT, TextInput};
-use fe_vim::{CommandLineKind, HostCommand, Mode, VimState};
+use fe_gpui::{EditorView, commands::RunCommand, vim_registers};
+use fe_ui::{ROW_HEIGHT, TextInput, TextInputEvent};
+use fe_vim::{CommandLineKind, HistoryRecall, HostCommand, Mode, VimState};
 use gpui::{
     AppContext as _, Context, Entity, EntityId, EventEmitter, Focusable as _,
-    InteractiveElement as _, IntoElement, ParentElement as _, Styled as _, Subscription,
-    WeakEntity, Window, div, px,
+    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Styled as _,
+    Subscription, WeakEntity, Window, div, px,
 };
 
 use super::{StatusBar, StatusOp};
@@ -50,7 +53,10 @@ pub(super) struct VimLine {
     input: Option<Entity<TextInput>>,
     /// The editor whose line is open, and the line's prefix.
     open: Option<(WeakEntity<EditorView>, char)>,
+    /// Where Up and Down are in the open line's history.
+    recall: HistoryRecall,
     _blur: Option<Subscription>,
+    _changed: Option<Subscription>,
 }
 
 /// The kind of line `editor` has open, if any.
@@ -135,6 +141,13 @@ impl StatusBar {
                 let input = cx.new(|cx| TextInput::new("", &self.ui, cx));
                 let focus = input.focus_handle(cx);
                 self.line._blur = Some(cx.on_blur(&focus, window, Self::line_blurred));
+                // An edit makes what the line then holds the prefix the
+                // next Up or Down recalls by.
+                self.line._changed = Some(cx.subscribe(&input, |bar, _, event, _| {
+                    if *event == TextInputEvent::Changed {
+                        bar.line.recall.edited();
+                    }
+                }));
                 self.line.input = Some(input.clone());
                 input
             }
@@ -146,6 +159,7 @@ impl StatusBar {
             .to_owned();
         input.update(cx, |input, cx| input.set_text(prefill, cx));
         self.line.open = Some((editor.downgrade(), prefix(kind)));
+        self.line.recall = HistoryRecall::default();
         window.focus(&input.focus_handle(cx), cx);
         cx.notify();
     }
@@ -256,6 +270,41 @@ impl StatusBar {
         input.update(cx, edit);
     }
 
+    /// Up and Down (unmodified) replace the line's text with the next older
+    /// or newer entry of its history, through fe-vim's
+    /// [`fe_vim::Registers::recall`]; at either end the text stays, but for
+    /// Down past the newest, which puts back what was typed.
+    fn on_line_key(&mut self, event: &KeyDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+        let keystroke = &event.keystroke;
+        let older = match keystroke.key.as_str() {
+            "up" => true,
+            "down" => false,
+            _ => return,
+        };
+        if keystroke.modifiers.modified() {
+            return;
+        }
+        let Some(input) = self.line.input.clone() else {
+            return;
+        };
+        let editor = self
+            .line
+            .open
+            .as_ref()
+            .and_then(|(editor, _)| editor.upgrade());
+        let Some(kind) = editor.and_then(|editor| open_kind(editor.read(cx))) else {
+            return;
+        };
+        cx.stop_propagation();
+        let line = input.read(cx).text().to_owned();
+        let Some(registers) = vim_registers(cx) else {
+            return;
+        };
+        if let Some(text) = self.line.recall.step(registers, kind, &line, older) {
+            input.update(cx, |input, cx| input.set_text(text, cx));
+        }
+    }
+
     /// The line, while it's open: its prefix, then its input.
     pub(super) fn render_line(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
         let (_, prefix) = self.line.open.as_ref()?;
@@ -263,6 +312,7 @@ impl StatusBar {
         let line = div()
             .key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::on_line_command))
+            .on_key_down(cx.listener(Self::on_line_key))
             .on_mouse_down_out(cx.listener(|bar, _, window, cx| bar.clicked_out(window, cx)))
             .debug_selector(|| "vim-line".into())
             .flex()
@@ -303,6 +353,10 @@ fn run_in(
     let focus = editor.focus_handle(cx);
     focus.dispatch_action(&RunCommand(invocation), window, cx);
 }
+
+#[cfg(test)]
+#[path = "vim_line/history_tests.rs"]
+mod history_tests;
 
 #[cfg(test)]
 impl StatusBar {

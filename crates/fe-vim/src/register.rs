@@ -1,9 +1,15 @@
 //! Vim's registers, by `:help registers`. One [`Registers`] is shared by
 //! every editor in a host, and non-vim commands may reach it too.
 
+use std::{borrow::Cow, collections::VecDeque};
+
 use fe_editor::commands::EditorHost;
 
-use crate::{SearchOffset, substitute::LastSubstitute};
+use crate::{CommandLineKind, SearchOffset, substitute::LastSubstitute};
+
+/// How many lines each command-line history keeps: nvim's 'history'
+/// default.
+pub const HISTORY_MAX: usize = 10000;
 
 /// A register's text, and whether it holds whole lines (its text then ends
 /// in `\n`) or a block.
@@ -58,6 +64,11 @@ pub struct RegisterError(pub char);
 /// clipboard). `A-Z` append to `a-z`. The read-only `/` holds the last
 /// search pattern, which with its direction is the host's last search, as
 /// every editor shares it.
+///
+/// It keeps the command-line histories too (`:help cmdline-history`), which
+/// are as global as the last search: one for search lines, which `/` and
+/// `?` share, and one for ex lines ([`Registers::add_history`],
+/// [`Registers::recall`]).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Registers {
     numbered: [Option<Register>; 10],
@@ -78,6 +89,11 @@ pub struct Registers {
     /// What was last written to the clipboard, with its kind, so a read of
     /// the same text keeps it.
     clipboard_last: Option<Register>,
+    /// The search lines submitted, oldest first, each with the delimiter
+    /// of the line it was typed on (`/` or `?`).
+    search_history: VecDeque<(String, char)>,
+    /// The ex lines submitted, oldest first, each with `:`.
+    ex_history: VecDeque<(String, char)>,
 }
 
 /// The clipboard's name in [`Registers::unnamed`].
@@ -258,6 +274,66 @@ impl Registers {
         });
     }
 
+    /// Adds a line submitted on a command line of `kind` to its history,
+    /// as the newest entry: an earlier identical one (for a search, typed
+    /// with the same delimiter) is taken out, and past [`HISTORY_MAX`]
+    /// entries the oldest goes. An empty line adds nothing.
+    pub fn add_history(&mut self, kind: CommandLineKind, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        let delimiter = delimiter(kind);
+        let history = self.history_mut(kind);
+        history.retain(|(entry, typed)| !(entry == text && *typed == delimiter));
+        if history.len() >= HISTORY_MAX {
+            history.pop_front();
+        }
+        history.push_back((text.to_owned(), delimiter));
+    }
+
+    /// The history a line of `kind` recalls from, oldest first, each entry
+    /// as it was typed.
+    pub fn history(&self, kind: CommandLineKind) -> impl Iterator<Item = &str> {
+        let history = match kind {
+            CommandLineKind::Ex => &self.ex_history,
+            _ => &self.search_history,
+        };
+        history.iter().map(|(entry, _)| entry.as_str())
+    }
+
+    /// The next entry older (`older`) or newer than entry `from` (an index
+    /// into [`Registers::history`]; one past the newest or more is the
+    /// line as typed) that starts with `typed`, with its index, as `<Up>`
+    /// and `<Down>` recall it on a line of `kind`. A search entry typed on
+    /// the other kind of search line comes with its delimiters swapped:
+    /// `foo/e` recalled on a `?` line is `foo?e`, and `a?b` is `a\?b`.
+    pub fn recall(
+        &self,
+        kind: CommandLineKind,
+        typed: &str,
+        from: usize,
+        older: bool,
+    ) -> Option<(usize, Cow<'_, str>)> {
+        let history = match kind {
+            CommandLineKind::Ex => &self.ex_history,
+            _ => &self.search_history,
+        };
+        let matches = |&ix: &usize| history[ix].0.starts_with(typed);
+        let found = match older {
+            true => (0..from.min(history.len())).rev().find(matches),
+            false => (from.saturating_add(1)..history.len()).find(matches),
+        }?;
+        let (entry, typed_on) = &history[found];
+        Some((found, retarget(entry, *typed_on, delimiter(kind))))
+    }
+
+    fn history_mut(&mut self, kind: CommandLineKind) -> &mut VecDeque<(String, char)> {
+        match kind {
+            CommandLineKind::Ex => &mut self.ex_history,
+            _ => &mut self.search_history,
+        }
+    }
+
     fn write_clipboard(&mut self, value: &Register, host: &mut dyn EditorHost) {
         host.write_clipboard(value.text.clone());
         self.clipboard_last = Some(value.clone());
@@ -281,6 +357,84 @@ impl Registers {
         }
         name
     }
+}
+
+/// Where an open command line is in its history as `<Up>` and `<Down>`
+/// step through it, for a host's line: the entry it shows, and the text
+/// entries must start with, which is what the line held at the first step
+/// after it was opened or last edited.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HistoryRecall {
+    /// The entry shown, `None` for the line as typed.
+    at: Option<usize>,
+    typed: Option<String>,
+}
+
+impl HistoryRecall {
+    /// `<Up>` (`older`) or `<Down>` on a line of `kind` holding `line`: the
+    /// text the line should hold now, `None` to leave it. `<Down>` past the
+    /// newest entry puts back what was typed; `<Up>` past the oldest does
+    /// nothing.
+    pub fn step(
+        &mut self,
+        registers: &Registers,
+        kind: CommandLineKind,
+        line: &str,
+        older: bool,
+    ) -> Option<String> {
+        let typed = self.typed.get_or_insert_with(|| line.to_owned());
+        let from = self.at.unwrap_or(usize::MAX);
+        match registers.recall(kind, typed, from, older) {
+            Some((at, entry)) => {
+                self.at = Some(at);
+                Some(entry.into_owned())
+            }
+            None if older => None,
+            None => {
+                self.at = None;
+                Some(typed.clone())
+            }
+        }
+    }
+
+    /// The line was edited: the next step recalls entries starting with
+    /// what it then holds, from the entry it shows.
+    pub fn edited(&mut self) {
+        self.typed = None;
+    }
+}
+
+/// The delimiter a line of `kind` is typed after.
+fn delimiter(kind: CommandLineKind) -> char {
+    match kind {
+        CommandLineKind::SearchForward => '/',
+        CommandLineKind::SearchBackward => '?',
+        CommandLineKind::Ex => ':',
+    }
+}
+
+/// A search line typed after `from`, as recalled after `to`, as nvim
+/// recalls it: an unescaped `from` becomes `to`, and an unescaped `to` is
+/// escaped. What a backslash escapes stays as it is, even `\from`, and a
+/// collection gets no exception (`a[/]b` becomes `a[?]b`).
+fn retarget(text: &str, from: char, to: char) -> Cow<'_, str> {
+    if from == to || !text.contains([from, to]) {
+        return Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len() + 1);
+    let mut chars = text.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => {
+                out.push(ch);
+                out.extend(chars.next());
+            }
+            _ if ch == from => out.push(to),
+            _ if ch == to => out.extend(['\\', to]),
+            _ => out.push(ch),
+        }
+    }
+    Cow::Owned(out)
 }
 
 /// `old` with `new` appended, as nvim appends: whole lines if either is; to

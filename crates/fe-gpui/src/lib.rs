@@ -45,6 +45,7 @@ pub use timing::{FrameTiming, FrameTimings};
 pub use view::EditorView;
 pub use vim::{
     apply_vim_reload, set_vim_clipboard, set_vim_enabled, set_vim_jump_on_s, vim_enabled,
+    vim_registers,
 };
 
 /// Key context active while an editor is focused: the `fe-command`

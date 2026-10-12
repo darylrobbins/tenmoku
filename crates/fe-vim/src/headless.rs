@@ -10,8 +10,8 @@ use fe_editor::{
 };
 
 use crate::{
-    KeyError, Mode, Registers, Splits, Step, SubmitArgs, VimCommands, VimKey, VimState, VimTarget,
-    context, jump::JumpOverlay, parse_keys, registry,
+    HistoryRecall, KeyError, Mode, Registers, Splits, Step, SubmitArgs, VimCommands, VimKey,
+    VimState, VimTarget, context, jump::JumpOverlay, parse_keys, registry,
 };
 
 /// An [`EditorModel`] with a [`HeadlessHost`], a [`VimState`], registers
@@ -35,6 +35,8 @@ pub struct HeadlessVim {
     registry: Registry<VimCommands>,
     /// The command line's text, in `cmdline` mode.
     line: String,
+    /// Where `<Up>` and `<Down>` are in the line's history.
+    recall: HistoryRecall,
 }
 
 #[derive(Clone, Debug, PartialEq, thiserror::Error)]
@@ -67,6 +69,7 @@ impl HeadlessVim {
             registers: Registers::new(),
             registry: registry(),
             line: String::new(),
+            recall: HistoryRecall::default(),
         }
     }
 
@@ -86,8 +89,10 @@ impl HeadlessVim {
     /// `vim.replace_normal_mode`. Nor in `cmdline` mode: a character goes
     /// on the line, `<BS>` deletes its last (or on an empty line dispatches
     /// `vim.command_line_cancel`, as `<Esc>` does), `<CR>` dispatches
-    /// `vim.command_line_submit` with the line; any other key is forwarded.
-    /// In both, `<C-j>` (`<NL>`, a register's line break) is `<CR>`.
+    /// `vim.command_line_submit` with the line, and `<Up>` and `<Down>`
+    /// replace it with the next older or newer entry of its history that
+    /// starts with what was typed ([`HistoryRecall`]); any other key is
+    /// forwarded. In both, `<C-j>` (`<NL>`, a register's line break) is `<CR>`.
     /// Either way the key goes to [`VimState::record_key`] first.
     ///
     /// The keys a `@` leaves ([`VimState::take_replay`]) are fed next, as
@@ -203,9 +208,23 @@ impl HeadlessVim {
         let invocation = match key {
             VimKey::Char(ch) => {
                 self.line.push(ch);
+                self.recall.edited();
                 return Ok(());
             }
-            VimKey::Backspace if self.line.pop().is_some() => return Ok(()),
+            VimKey::Backspace if self.line.pop().is_some() => {
+                self.recall.edited();
+                return Ok(());
+            }
+            VimKey::Up | VimKey::Down => {
+                let Mode::CmdLine(kind) = self.state.mode() else {
+                    unreachable!("the line is open in cmdline mode")
+                };
+                let older = key == VimKey::Up;
+                if let Some(text) = self.recall.step(&self.registers, kind, &self.line, older) {
+                    self.line = text;
+                }
+                return Ok(());
+            }
             VimKey::Esc if !replayed => Invocation::of("vim.command_line_cancel"),
             VimKey::Backspace => Invocation::of("vim.command_line_cancel"),
             VimKey::Enter | VimKey::Ctrl('j') | VimKey::Esc => {
@@ -245,7 +264,8 @@ impl HeadlessVim {
 
     /// Runs one invocation as given, context included. One that opens a
     /// command line starts the line `feed` types on from
-    /// [`VimState::command_line_prefill`]; one that ends it empties it.
+    /// [`VimState::command_line_prefill`], at the end of its history; one
+    /// that ends it empties it.
     pub fn dispatch(
         &mut self,
         invocation: &Invocation,
@@ -267,6 +287,7 @@ impl HeadlessVim {
         if !was_open || !matches!(self.state.mode(), Mode::CmdLine(_)) {
             self.line.clear();
             self.line.push_str(self.state.command_line_prefill());
+            self.recall = HistoryRecall::default();
         }
         dispatched
     }

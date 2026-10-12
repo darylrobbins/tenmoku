@@ -91,13 +91,15 @@ pub(crate) fn cancel(state: &mut VimState) -> Handled {
 }
 
 /// `vim.command_line_submit`: back to the mode the line came from, then
-/// runs the line there.
+/// runs the line there. The line goes into its history first, so one that
+/// fails is kept too, as in nvim.
 pub(crate) fn submit(
     target: &mut VimTarget<'_>,
     actor: &fe_command::Actor,
     args: SubmitArgs,
 ) -> Handled {
     let line = close(target.state)?;
+    target.registers.add_history(line.args.kind, &args.text);
     match line.args.kind {
         CommandLineKind::SearchForward | CommandLineKind::SearchBackward => {
             search(target, actor, line.args, &args.text)

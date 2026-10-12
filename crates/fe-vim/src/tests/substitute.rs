@@ -5,7 +5,8 @@ use serde_json::json;
 
 use super::{invocation, registers};
 use crate::{
-    Ex, ExCommand, ExError, Flags, HeadlessVim, Substitute, context, search::ROWS_SEARCHED,
+    CommandLineKind, Ex, ExCommand, ExError, Flags, HeadlessVim, Substitute, context,
+    search::ROWS_SEARCHED,
 };
 
 /// `buffer` after `keys` from `cursor`.
@@ -198,7 +199,9 @@ fn flags_specials_and_bounds() {
         let mut vim = HeadlessVim::new("a b\na b", (0, 2));
         vim.feed(":s/b/B/<CR>/a<CR>").unwrap();
         let (text, cursor) = (vim.text(), vim.cursor());
-        let substitute = vim.registers().clone();
+        let mut substitute = vim.registers().clone();
+        // Only the ex history takes the line, as in nvim.
+        substitute.add_history(CommandLineKind::Ex, line);
         vim.feed(&format!(":{line}<CR>")).unwrap();
         assert_eq!(vim.state().message(), Some(error.to_string().as_str()));
         assert_eq!((vim.text(), vim.cursor()), (text, cursor), "{line}");

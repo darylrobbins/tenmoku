@@ -184,6 +184,13 @@ pub fn vim_enabled(cx: &App) -> bool {
     cx.try_global::<Vim>().is_some_and(|vim| vim.enabled)
 }
 
+/// The registers every editor shares, with the command-line histories a
+/// host's line recalls from ([`Registers::recall`]); `None` before any
+/// editor has used vim.
+pub fn vim_registers(cx: &App) -> Option<&Registers> {
+    cx.try_global::<Vim>().map(|vim| &vim.registers)
+}
+
 /// The switch's state: whether it's on, and its generation.
 fn switch(cx: &App) -> (bool, u64) {
     cx.try_global::<Vim>()
