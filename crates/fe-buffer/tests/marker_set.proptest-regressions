@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 41a97009993b7964b46bad10a0f6d2bcc73b464e9bcf5f52c7496fda7f4a768c # shrinks to initial = "", ops = [Edit([((0, 0), "a")]), Splice((0, 0), [(363760905461515319, 0), (478437048259832088, 0)])], queries = [(0, 0)]

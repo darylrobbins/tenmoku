@@ -30,6 +30,7 @@
 mod buffer;
 mod edit;
 mod log;
+mod marker;
 mod proposed;
 mod selection;
 mod snapshot;
@@ -41,6 +42,7 @@ pub use buffer::{
 };
 pub use edit::Edit;
 pub use fe_text::{Bias, DecodedFile, FileEncoding, LineEnding, Point, PointUtf16, Text};
+pub use marker::{MarkerError, MarkerId, MarkerSet};
 pub use proposed::{
     Conflict, DryRun, HunkId, HunkOutcome, HunkStatus, HunkView, Outcome, ProposalError,
     ProposedChange,

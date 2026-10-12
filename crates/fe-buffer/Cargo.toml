@@ -23,5 +23,9 @@ tempfile.workspace = true
 name = "buffer"
 harness = false
 
+[[bench]]
+name = "markers"
+harness = false
+
 [lints]
 workspace = true
