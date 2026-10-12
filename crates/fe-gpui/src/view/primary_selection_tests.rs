@@ -113,3 +113,67 @@ fn off_and_large(cx: &mut TestAppContext) {
     });
     assert_eq!(primary(cx).as_deref(), Some("old"));
 }
+
+fn middle_click(view: &Entity<EditorView>, offset: usize, cx: &mut VisualTestContext) {
+    let position = at(view, offset, cx);
+    cx.simulate_mouse_down(position, MouseButton::Middle, Modifiers::none());
+    cx.simulate_mouse_up(position, MouseButton::Middle, Modifiers::none());
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn middle_click_leaves_visual_mode(cx: &mut TestAppContext) {
+    for keys in ["v l l", "shift-v", "ctrl-v l"] {
+        let (view, cx) = editor("abcdef\nghijkl\n", true, cx);
+        cx.update(|_, cx| set_vim_enabled(cx, true));
+        cx.simulate_keystrokes(keys);
+        cx.run_until_parked();
+        // The visual selection took the primary selection; paste something else.
+        cx.update(|_, cx| cx.write_to_primary(ClipboardItem::new_string("XY".into())));
+        middle_click(&view, 7 + 3, cx);
+        // Another frame, which syncs a visual extent if vim still held one.
+        cx.run_until_parked();
+        view.update(cx, |view, _| {
+            assert_eq!(view.vim_mode(), Some("normal"), "{keys}");
+            assert_eq!(view.model().text().to_string(), "abcdef\nghiXYjkl\n");
+            assert_eq!(view.model().primary_selection().range.len(), 0, "{keys}");
+        });
+        // The next command doesn't act on the old extent.
+        cx.simulate_keystrokes("x");
+        cx.run_until_parked();
+        view.update(cx, |view, _| {
+            assert_eq!(
+                view.model().text().to_string(),
+                "abcdef\nghiXYkl\n",
+                "{keys}"
+            );
+        });
+    }
+}
+
+#[gpui::test]
+fn middle_click_after_unused_autoindent(cx: &mut TestAppContext) {
+    let (view, cx) = editor("    abc\ndef\nghi\n", true, cx);
+    cx.update(|_, cx| {
+        set_vim_enabled(cx, true);
+        cx.write_to_primary(ClipboardItem::new_string("XY".into()));
+    });
+    // `o` opens an indented row, left unused when the session ends.
+    cx.simulate_keystrokes("o");
+    cx.run_until_parked();
+    let before = view.read_with(cx, |view, _| view.model().text().to_string());
+    assert_eq!(before, "    abc\n    \ndef\nghi\n");
+    // The `g` of `ghi`, a later row than the autoindent.
+    middle_click(&view, before.len() - 4, cx);
+    view.update(cx, |view, _| {
+        assert_eq!(view.model().text().to_string(), "    abc\n\ndef\nXYghi\n");
+        assert_eq!(view.vim_mode(), Some("insert"));
+        assert_eq!(view.model().primary_selection().range, 15..15);
+    });
+    // Leaving insert mode and undoing takes back the paste alone.
+    cx.simulate_keystrokes("escape u");
+    cx.run_until_parked();
+    view.update(cx, |view, _| {
+        assert_eq!(view.model().text().to_string(), "    abc\n\ndef\nghi\n");
+    });
+}

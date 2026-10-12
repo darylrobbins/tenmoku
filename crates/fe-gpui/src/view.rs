@@ -282,9 +282,18 @@ impl EditorView {
         } else {
             self.offset_for_position(event.position)
         };
+        // Like a plain click, it leaves a visual mode, so vim's visual extent
+        // doesn't restore the old selection over the caret.
+        if vim {
+            self.cancel_vim(cx);
+        }
+        // Ending an insert session can drop unused autoindent before the
+        // click, so the offset follows the text, not its number.
+        let at = self.model.snapshot().anchor_before(offset);
         self.split_session(
             fe_vim::Splits::Edits,
             |model| {
+                let offset = model.snapshot().resolve(&at);
                 model.set_cursor(offset);
                 model.insert(&text);
             },
