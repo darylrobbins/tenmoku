@@ -2046,6 +2046,7 @@ dependencies = [
  "grep-searcher",
  "ignore",
  "libc",
+ "log",
  "notify",
  "regex-syntax",
  "tempfile",

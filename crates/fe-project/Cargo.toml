@@ -14,6 +14,7 @@ grep-regex.workspace = true
 grep-searcher.workspace = true
 ignore.workspace = true
 libc.workspace = true
+log.workspace = true
 notify.workspace = true
 # grep-regex's own parser (already in the lock through it), to read a
 # search pattern's inline flags and anchors.
