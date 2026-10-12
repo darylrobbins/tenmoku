@@ -50,6 +50,10 @@ enum Prefix {
     Z,
     /// `Z`, awaiting a feature's key.
     BigZ,
+    /// `[` or, if `forward`, `]`, awaiting a feature's key.
+    Bracket {
+        forward: bool,
+    },
     /// `f F t T`: the motion, its char to be filled in.
     Find(Motion),
     /// `i` or `a` after an operator.
@@ -83,6 +87,8 @@ pub enum PendingKind {
     Z,
     /// `Z`.
     BigZ,
+    /// `[` or `]`.
+    Bracket,
     Find,
     TextObject,
     Replace,
@@ -105,6 +111,7 @@ impl PendingKind {
             Self::G => "g",
             Self::Z => "z",
             Self::BigZ => "big_z",
+            Self::Bracket => "bracket",
             Self::Find => "find",
             Self::TextObject => "text_object",
             Self::Replace => "replace",
@@ -170,6 +177,7 @@ impl Pending {
             Some(Prefix::G) => PendingKind::G,
             Some(Prefix::Z) => PendingKind::Z,
             Some(Prefix::BigZ) => PendingKind::BigZ,
+            Some(Prefix::Bracket { .. }) => PendingKind::Bracket,
             Some(Prefix::Find(_)) => PendingKind::Find,
             Some(Prefix::Object { .. }) => PendingKind::TextObject,
             Some(Prefix::Replace) => PendingKind::Replace,
@@ -376,6 +384,10 @@ impl Pending {
         if prefix == Prefix::BigZ {
             return feature::big_z(&self, key).unwrap_or(Step::Cancel);
         }
+        if let Prefix::Bracket { forward } = prefix {
+            self.end_count();
+            return feature::bracket(&self, forward, key).unwrap_or(Step::Cancel);
+        }
         let ch = match key {
             VimKey::Char(ch) => ch,
             VimKey::Tab if matches!(prefix, Prefix::Find(_) | Prefix::Replace) => '\t',
@@ -533,6 +545,9 @@ pub fn step(mut pending: Pending, key: VimKey) -> Step {
         'z' if pending.operator.is_none() && feature::has_z() => Prefix::Z,
         'Z' if pending.operator.is_none() && !pending.visual && feature::has_big_z() => {
             Prefix::BigZ
+        }
+        '[' | ']' if pending.operator.is_none() && feature::has_bracket() => {
+            Prefix::Bracket { forward: ch == ']' }
         }
         'f' => Prefix::Find(Motion::FindForward(' ')),
         'F' => Prefix::Find(Motion::FindBackward(' ')),

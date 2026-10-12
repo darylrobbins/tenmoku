@@ -25,9 +25,12 @@
 use fe_command::Registry;
 
 use crate::{
-    Pending, Step, TextObject, VimCommands, VimKey, delimiters, folds, g_operators, increment,
-    jump, jumplist, line_motions, prose, quit_keys, scroll,
+    Pending, Step, TextObject, VimCommands, VimKey, changes, delimiters, folds, g_operators,
+    increment, jump, jumplist, line_motions, prose, quit_keys, scroll,
 };
+
+/// A feature's answer to the key after `[` or `]` (`true`).
+pub(crate) type BracketHook = fn(&Pending, bool, VimKey) -> Option<Step>;
 
 /// One feature's hooks into the reducer and the registry.
 pub(crate) struct Feature {
@@ -40,6 +43,9 @@ pub(crate) struct Feature {
     pub(crate) z: Option<fn(&Pending, VimKey) -> Option<Step>>,
     /// The key after `Z`; `None` if the feature takes no `Z` key.
     pub(crate) big_z: Option<fn(&Pending, VimKey) -> Option<Step>>,
+    /// The key after `[`, or after `]` (`forward`), with the count ended;
+    /// `None` if the feature takes no such key.
+    pub(crate) bracket: Option<BracketHook>,
     /// The char after `i` or `a` (`true` for `i`) in operator-pending or a
     /// visual mode that the reducer maps to no text object.
     pub(crate) object: fn(&Pending, char, bool) -> Option<TextObject>,
@@ -54,12 +60,13 @@ impl Feature {
         g: |_, _| None,
         z: None,
         big_z: None,
+        bracket: None,
         object: |_, _, _| None,
         register: |_| {},
     };
 }
 
-pub(crate) const FEATURES: [&Feature; 10] = [
+pub(crate) const FEATURES: [&Feature; 11] = [
     &increment::FEATURE,
     &folds::FEATURE,
     &scroll::FEATURE,
@@ -70,6 +77,7 @@ pub(crate) const FEATURES: [&Feature; 10] = [
     &g_operators::FEATURE,
     &jumplist::FEATURE,
     &quit_keys::FEATURE,
+    &changes::FEATURE,
 ];
 
 /// The first feature's answer to a key the reducer would reject.
@@ -110,6 +118,19 @@ pub(crate) fn big_z(pending: &Pending, key: VimKey) -> Option<Step> {
         .iter()
         .filter_map(|feature| feature.big_z)
         .find_map(|big_z| big_z(pending, key))
+}
+
+/// Whether some feature takes a key after `[` or `]`.
+pub(crate) fn has_bracket() -> bool {
+    FEATURES.iter().any(|feature| feature.bracket.is_some())
+}
+
+/// The first feature's answer to the key after `[` or `]` (`forward`).
+pub(crate) fn bracket(pending: &Pending, forward: bool, key: VimKey) -> Option<Step> {
+    FEATURES
+        .iter()
+        .filter_map(|feature| feature.bracket)
+        .find_map(|bracket| bracket(pending, forward, key))
 }
 
 /// The first feature's text object for the char after `i` (`inner`) or

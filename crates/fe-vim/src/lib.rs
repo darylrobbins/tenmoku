@@ -721,6 +721,8 @@
 //!   `<C-r>`.
 
 mod args;
+
+pub mod changes;
 mod cmdline;
 mod commands;
 mod delimiters;

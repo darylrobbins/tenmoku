@@ -4,6 +4,7 @@ use serde::Serialize;
 use crate::{HeadlessVim, Pending, Step, VimState, context, operator::MEASURING, parse_keys, step};
 
 mod block_insert_excursion;
+mod changes;
 mod clipboard;
 mod cmdline;
 mod commands;
