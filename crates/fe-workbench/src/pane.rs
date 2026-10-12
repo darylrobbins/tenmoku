@@ -14,7 +14,8 @@ use std::{
 
 use fe_buffer::{Bias, Buffer, ResolvedSelection};
 use fe_command::Source;
-use fe_editor::EditorModel;
+use fe_config::{EditorConfig, EndOfLine, IndentKind, IndentSize};
+use fe_editor::{EditorModel, IndentStyle};
 use fe_gpui::{EditorSettings, EditorTheme, EditorView, SettingsEvent, commands::RunCommand};
 use fe_ui::{
     Breadcrumbs, Crumb, CrumbKind, Icon, IconButton, TAB_HEIGHT, TOOLBAR_HEIGHT, TabBar, Tooltip,
@@ -300,7 +301,7 @@ impl Pane {
     }
 
     /// A tab per item, reusing the tab of an item still open.
-    fn sync_tabs(&mut self, cx: &App) {
+    fn sync_tabs(&mut self, cx: &mut App) {
         let old = std::mem::take(&mut self.tabs);
         self.tabs = (self.state.items().iter())
             .map(|item| {
@@ -311,6 +312,9 @@ impl Pane {
                     .unwrap_or_else(|| Tab::of(&**item, cx))
             })
             .collect();
+        for tab in &self.tabs {
+            configs::read(&tab.editor, cx);
+        }
     }
 
     /// Shows the tab for `path` if it's open; otherwise reads the file in the
@@ -553,6 +557,11 @@ impl Pane {
         for tab in &self.tabs {
             tab.editor
                 .update(cx, |editor, cx| editor.reload_settings(event, cx));
+            if let Some(width) = configs::get(tab.editor.entity_id(), cx).and_then(|c| c.tab_width)
+            {
+                tab.editor
+                    .update(cx, |editor, _| editor.model_mut().set_tab_size(width));
+            }
         }
         cx.notify();
     }
@@ -563,7 +572,7 @@ impl Pane {
             .position(|tab| tab.path.as_deref() == Some(path))
     }
 
-    fn new_editor(&self, mut model: EditorModel, cx: &mut Context<Self>) -> Entity<EditorView> {
+    fn new_editor(&mut self, mut model: EditorModel, cx: &mut Context<Self>) -> Entity<EditorView> {
         if model.tab_size() != self.settings.tab_size {
             model.set_tab_size(self.settings.tab_size);
         }
@@ -582,6 +591,100 @@ impl Pane {
             .text_color(self.ui.muted_text)
             .child(text)
             .into_any_element()
+    }
+}
+
+/// The `.editorconfig` properties of the editors open, read once per
+/// editor whichever pane it's in, so they follow it as its tab moves.
+mod configs {
+    use std::collections::HashMap;
+
+    use fe_config::{EditorConfig, editorconfig_for};
+    use fe_gpui::EditorView;
+    use gpui::{App, AppContext as _, Entity, EntityId, Global, WeakEntity};
+
+    use super::apply_config;
+
+    /// Kept for the settings reloads and the save card.
+    #[derive(Default)]
+    struct Configs {
+        /// `None` while the read runs.
+        editors: HashMap<EntityId, (WeakEntity<EditorView>, Option<EditorConfig>)>,
+    }
+
+    impl Global for Configs {}
+
+    pub(super) fn get(editor: EntityId, cx: &App) -> Option<EditorConfig> {
+        let configs = cx.try_global::<Configs>()?;
+        configs.editors.get(&editor)?.1
+    }
+
+    /// Starts reading `editor`'s file's properties in the background, unless
+    /// they're read or being read, and applies them once read, if the
+    /// editor is still open.
+    pub(super) fn read(editor: &Entity<EditorView>, cx: &mut App) {
+        let Some(path) = editor.read(cx).model().path().map(ToOwned::to_owned) else {
+            return;
+        };
+        let id = editor.entity_id();
+        let configs = cx.default_global::<Configs>();
+        configs
+            .editors
+            .retain(|_, (editor, _)| editor.upgrade().is_some());
+        if configs.editors.contains_key(&id) {
+            return;
+        }
+        configs.editors.insert(id, (editor.downgrade(), None));
+        let read = cx.background_spawn(async move { editorconfig_for(&path) });
+        let weak = editor.downgrade();
+        cx.spawn(async move |cx| {
+            let config = read.await;
+            cx.update(|cx| {
+                let Some(editor) = weak.upgrade() else {
+                    return;
+                };
+                cx.default_global::<Configs>()
+                    .editors
+                    .insert(id, (weak, Some(config)));
+                editor.update(cx, |editor, cx| {
+                    apply_config(editor.model_mut(), &config);
+                    cx.notify();
+                });
+            });
+        })
+        .detach();
+    }
+}
+
+/// Applies `config` to `model`: EditorConfig wins over the indentation
+/// detected and over the `editor.tab_size` setting.
+fn apply_config(model: &mut EditorModel, config: &EditorConfig) {
+    let spaces = |n: usize| IndentStyle::Spaces(u8::try_from(n).unwrap_or(u8::MAX).max(1));
+    let size = match config.indent_size {
+        Some(IndentSize::Columns(n)) => Some(n),
+        Some(IndentSize::Tab) => config.tab_width,
+        None => None,
+    };
+    match (config.indent_style, size) {
+        (Some(IndentKind::Tab), _) => model.set_indent_style(Some(IndentStyle::Tabs)),
+        (Some(IndentKind::Space), Some(n)) => model.set_indent_style(Some(spaces(n))),
+        (None, Some(n)) if matches!(model.indent_style(), Some(IndentStyle::Spaces(_))) => {
+            model.set_indent_style(Some(spaces(n)));
+        }
+        _ => {}
+    }
+    if let Some(width) = config.tab_width {
+        model.set_tab_size(width);
+    }
+    let ending = match config.end_of_line {
+        Some(EndOfLine::Lf) => Some(fe_buffer::LineEnding::Lf),
+        Some(EndOfLine::Crlf) => Some(fe_buffer::LineEnding::CrLf),
+        Some(EndOfLine::Cr) | None => None,
+    };
+    if let Some(ending) = ending
+        && model.buffer().line_ending() != ending
+    {
+        model.buffer_mut().set_line_ending(ending);
     }
 }
 
@@ -1078,3 +1181,7 @@ impl Pane {
         cx.emit(request);
     }
 }
+
+#[cfg(test)]
+#[path = "editorconfig_tests.rs"]
+mod editorconfig_tests;
