@@ -5,7 +5,7 @@
     feature = "javascript"
 ))]
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use fe_buffer::Buffer;
 use fe_syntax::{BracketPair, Syntax, bracket_pair, language_by_name};
@@ -68,15 +68,22 @@ fn wide_parent_is_linear() {
     let numbers: Vec<String> = (0..200_000).map(|n| n.to_string()).collect();
     let text = format!("[{}]", numbers.join(","));
     let buffer = Buffer::new(&text);
-    let mut syntax = Syntax::new(language_by_name("json").unwrap(), &buffer.snapshot());
-    let started = Instant::now();
-    syntax.finish(syntax.parse_job().run());
-    let parse_time = started.elapsed();
+    let snapshot = buffer.snapshot();
+    // Best of several interleaved runs: a load spike hits one sample, not the
+    // minimum of all of them, while quadratic pairing would fail every run.
+    let mut parse_time = Duration::MAX;
+    let mut pair_time = Duration::MAX;
+    for _ in 0..5 {
+        let mut syntax = Syntax::new(language_by_name("json").unwrap(), &snapshot);
+        let started = Instant::now();
+        syntax.finish(syntax.parse_job().run());
+        parse_time = parse_time.min(started.elapsed());
 
-    let started = Instant::now();
-    let found = pair(&syntax, 0);
-    let pair_time = started.elapsed();
-    assert_eq!(found, Some((0, text.len() - 1)));
+        let started = Instant::now();
+        let found = pair(&syntax, 0);
+        pair_time = pair_time.min(started.elapsed());
+        assert_eq!(found, Some((0, text.len() - 1)));
+    }
     assert!(
         pair_time * 20 < parse_time,
         "pairing took {pair_time:?}, parsing {parse_time:?}"
