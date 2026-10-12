@@ -30,10 +30,15 @@
 
 use std::{
     any::Any,
+    cmp::Reverse,
+    collections::BTreeMap,
     ops::{Deref, Range},
+    path::PathBuf,
 };
 
 use fe_buffer::{Anchor, Bias, BufferSnapshot, Version};
+
+use crate::EditorModel;
 
 /// How severe a diagnostic is, least first.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -320,3 +325,110 @@ impl<S: Copy + Eq + 'static, I: Copy + Eq + 'static> AnyDiagnosticSet for Diagno
         self
     }
 }
+
+/// How many diagnostics of each severity a buffer has.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DiagnosticCounts {
+    pub errors: usize,
+    pub warnings: usize,
+    pub infos: usize,
+    pub hints: usize,
+}
+
+/// One diagnostic as a problems list shows it: where it is, as a zero-based
+/// row and byte column, and what it says.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Problem {
+    pub range: Range<usize>,
+    pub row: u32,
+    pub column: u32,
+    pub severity: Severity,
+    pub message: String,
+    pub source: Option<String>,
+}
+
+/// The problems of one file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileProblems {
+    pub path: PathBuf,
+    pub problems: Vec<Problem>,
+}
+
+/// `files` as one group per file, by path, without the files that have no
+/// problems; a file listed more than once has its problems merged. A file's
+/// problems are by row, then column, then severity (most severe first).
+pub fn group_problems(files: Vec<(PathBuf, Vec<Problem>)>) -> Vec<FileProblems> {
+    let mut by_path: BTreeMap<PathBuf, Vec<Problem>> = BTreeMap::new();
+    for (path, problems) in files {
+        if !problems.is_empty() {
+            by_path.entry(path).or_default().extend(problems);
+        }
+    }
+    (by_path.into_iter())
+        .map(|(path, mut problems)| {
+            problems.sort_by_key(|p| (p.row, p.column, Reverse(p.severity)));
+            FileProblems { path, problems }
+        })
+        .collect()
+}
+
+impl EditorModel {
+    /// The range of the diagnostic starting strictly after `from` (`forward`)
+    /// or strictly before it, wrapping once around the buffer; at one start,
+    /// the most severe. `None` without diagnostics.
+    pub fn next_diagnostic(&self, from: usize, forward: bool) -> Option<Range<usize>> {
+        let entries = self.diagnostics();
+        // `entries` is by start, so the starts' runs are contiguous.
+        let best_at = |start: usize| {
+            (entries.iter().filter(|e| e.range.start == start))
+                .max_by_key(|e| (e.severity, Reverse(e.range.end)))
+                .map(|e| e.range.clone())
+        };
+        let start = if forward {
+            (entries.iter().map(|e| e.range.start))
+                .find(|&s| s > from)
+                .or_else(|| entries.first().map(|e| e.range.start))
+        } else {
+            (entries.iter().rev().map(|e| e.range.start))
+                .find(|&s| s < from)
+                .or_else(|| entries.last().map(|e| e.range.start))
+        }?;
+        best_at(start)
+    }
+
+    /// How many diagnostics there are of each severity.
+    pub fn diagnostic_counts(&self) -> DiagnosticCounts {
+        let mut counts = DiagnosticCounts::default();
+        for entry in self.diagnostics() {
+            match entry.severity {
+                Severity::Error => counts.errors += 1,
+                Severity::Warning => counts.warnings += 1,
+                Severity::Information => counts.infos += 1,
+                Severity::Hint => counts.hints += 1,
+            }
+        }
+        counts
+    }
+
+    /// The diagnostics as problems, by start.
+    pub fn problems(&self) -> Vec<Problem> {
+        let text = self.text();
+        (self.diagnostics().into_iter())
+            .map(|entry| {
+                let point = text.offset_to_point(entry.range.start);
+                Problem {
+                    range: entry.range.clone(),
+                    row: point.row,
+                    column: point.column,
+                    severity: entry.severity,
+                    message: entry.message.clone(),
+                    source: entry.source.clone(),
+                }
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
+#[path = "diagnostics_nav_tests.rs"]
+mod nav_tests;
