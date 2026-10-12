@@ -339,6 +339,7 @@ impl EditorView {
                     Effect::Nothing => {}
                 }
                 notify_observers(invocation, cx);
+                self.write_primary(cx);
             }
             Err(DispatchError::Failed {
                 error: CommandError(message),

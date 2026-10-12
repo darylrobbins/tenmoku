@@ -76,6 +76,11 @@ impl FrameLayout {
         }
     }
 
+    /// Whether a window position is over the text, not the gutter.
+    pub(crate) fn over_text(&self, position: Point<Pixels>, window: &Window) -> bool {
+        self.text.is_hovered_at(position, window)
+    }
+
     pub(crate) fn to_window(&self, point: Vec2) -> Point<Pixels> {
         self.origin + gpui::point(px(point.x), px(point.y))
     }

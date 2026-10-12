@@ -31,6 +31,9 @@ const SYNC_PARSE_BUDGET: Duration = Duration::from_millis(1);
 
 /// How much of the buffer's start is read for a shebang, when the path names
 /// no language.
+/// The most text written to the primary selection, in bytes.
+const PRIMARY_SELECTION_MAX: usize = 1 << 20;
+
 const DETECT_BYTES: usize = 512;
 
 #[cfg(test)]
@@ -53,6 +56,11 @@ pub struct EditorView {
     drag: Option<Drag>,
     /// Text being composed by an input method ([`ime`]).
     composition: Option<ime::Composition>,
+    /// Whether selections go to the Linux primary selection, which a middle
+    /// click pastes.
+    primary_selection: bool,
+    /// The text this view last wrote to the primary selection.
+    last_primary: Option<String>,
     /// The buffer's syntax tree, once its language is loaded.
     pub(crate) syntax: Option<SyntaxDriver<Task<()>>>,
     /// The language loading in the background.
@@ -166,6 +174,8 @@ impl EditorView {
             layout: None,
             drag: None,
             composition: None,
+            primary_selection: cfg!(target_os = "linux"),
+            last_primary: None,
             syntax: None,
             language_task: None,
             injected_task: None,
@@ -215,6 +225,73 @@ impl EditorView {
         let language = fe_syntax::detect_language_name(view.model.path(), &start);
         view.set_language(language, cx);
         view
+    }
+
+    /// Turns the Linux primary selection on or off: while on, the selection
+    /// is written to it and a middle click pastes from it.
+    pub fn set_primary_selection(&mut self, on: bool) {
+        self.primary_selection = on;
+    }
+
+    /// Writes the primary selection's text to the primary selection, unless
+    /// it's empty, over [`PRIMARY_SELECTION_MAX`] or already what this view
+    /// wrote last.
+    pub(crate) fn write_primary(&mut self, cx: &mut Context<Self>) {
+        if !self.primary_selection {
+            return;
+        }
+        let range = self.model.primary_selection().range;
+        if range.is_empty() || range.len() > PRIMARY_SELECTION_MAX {
+            return;
+        }
+        let text = self.model.text().slice_to_string(range);
+        if self.last_primary.as_deref() != Some(text.as_str()) {
+            cx.write_to_primary(gpui::ClipboardItem::new_string(text.clone()));
+            self.last_primary = Some(text);
+        }
+    }
+
+    /// A middle click: puts the caret where it was pressed and inserts the
+    /// primary selection there.
+    fn on_middle_down(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.primary_selection {
+            return;
+        }
+        let over_text = self
+            .layout
+            .as_ref()
+            .is_some_and(|layout| layout.over_text(event.position, window));
+        let Some(text) = cx.read_from_primary().and_then(|item| item.text()) else {
+            return;
+        };
+        if !over_text || text.is_empty() {
+            return;
+        }
+        window.focus(&self.focus, cx);
+        // A middle click ends a composition, typing nothing, as a click does.
+        self.composition = None;
+        self.drag = None;
+        let vim = self.vim_owns_mouse(cx);
+        let offset = if vim {
+            self.vim_offset_for_position(event.position)
+        } else {
+            self.offset_for_position(event.position)
+        };
+        self.split_session(
+            fe_vim::Splits::Edits,
+            |model| {
+                model.set_cursor(offset);
+                model.insert(&text);
+            },
+            cx,
+        );
+        self.sync_completion(cx);
+        self.changed(cx);
     }
 
     /// Highlights the buffer as the language called `name`, or as plain text
@@ -720,8 +797,10 @@ impl EditorView {
         self.changed(cx);
     }
 
-    fn on_mouse_up(&mut self, _: &MouseUpEvent, _: &mut Window, _: &mut Context<Self>) {
-        self.drag = None;
+    fn on_mouse_up(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+        if self.drag.take().is_some() {
+            self.write_primary(cx);
+        }
     }
 
     /// Whether vim takes the mouse's clicks and drags: with vim on, outside
@@ -1022,6 +1101,7 @@ impl Render for EditorView {
             .size_full()
             .cursor(CursorStyle::IBeam)
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
+            .on_mouse_down(MouseButton::Middle, cx.listener(Self::on_middle_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -1049,6 +1129,9 @@ mod ime;
 
 #[cfg(test)]
 mod ime_tests;
+
+#[cfg(test)]
+mod primary_selection_tests;
 
 #[cfg(test)]
 mod language_tests;
