@@ -23,21 +23,23 @@ mod hover;
 pub mod keymap;
 pub mod menu;
 pub mod pane_item;
+mod theme;
 mod timing;
 mod view;
 mod vim;
 
 pub use completion_menu::{CompletionFuture, CompletionProvider, ResolveFuture};
-pub use fe_config::{EditorSettings, SettingsEvent};
+pub use fe_config::{EditorSettings, SettingsEvent, theme::EditorPalette};
 use fe_editor::diagnostics::Severity;
 pub use fe_keymap;
 use fe_syntax::Highlight;
 pub use file_viewer::{FileViewer, FileViewerEvent};
-use gpui::{App, Hsla, Pixels, SharedString, px, rgb, rgba};
+use gpui::{App, Hsla, Pixels, SharedString, px};
 pub use hover::{HoverContent, HoverFuture, HoverProvider};
 
 pub use keymap::{default_keymap, keymap_report, set_user_keymap};
 pub use pane_item::set_restore_style;
+pub use theme::{ActivePalette, editor_palette, set_editor_palette};
 pub use timing::{FrameTiming, FrameTimings};
 pub use view::EditorView;
 pub use vim::{
@@ -71,7 +73,8 @@ pub fn current_keymap(cx: &App) -> std::sync::Arc<fe_keymap::Keymap> {
 }
 
 /// Colours and metrics for the editor. The metrics come from
-/// [`EditorSettings`]; the colours are hard-coded until themes land (M5).
+/// [`EditorSettings`], the colours from an [`EditorPalette`]
+/// ([`EditorTheme::from_palette`], [`EditorView::set_colors`]).
 #[derive(Clone, Debug, PartialEq)]
 pub struct EditorTheme {
     pub font_family: SharedString,
@@ -99,61 +102,15 @@ pub struct EditorTheme {
 }
 
 impl EditorTheme {
-    /// The dark theme with the default settings: the first installed font
+    /// fastedit Dark with the default settings: the first installed font
     /// of a preferred list.
     pub fn default_dark(cx: &App) -> Self {
         Self::from_settings(&EditorSettings::default(), cx)
     }
 
-    /// The dark theme with the font and metrics of `settings`.
+    /// fastedit Dark with the font and metrics of `settings`.
     pub fn from_settings(settings: &EditorSettings, cx: &App) -> Self {
-        let mut theme = Self {
-            font_family: SharedString::default(),
-            font_size: px(13.),
-            line_height: 1.6,
-            background: rgb(0x16181d).into(),
-            foreground: rgb(0xc8ccd4).into(),
-            gutter_foreground: rgb(0x4b5160).into(),
-            gutter_active_foreground: rgb(0xa0a7b4).into(),
-            active_line: rgba(0xffffff08).into(),
-            selection: rgba(0x4f7cc855).into(),
-            cursor: rgb(0x7aa2f7).into(),
-            error: rgb(0xe06c75).into(),
-            warning: rgb(0xe5c07b).into(),
-            information: rgb(0x61afef).into(),
-            hint: rgb(0x7f848e).into(),
-            popover_background: rgb(0x21252b).into(),
-            popover_border: rgb(0x3e4452).into(),
-            syntax: fe_syntax::resolve_theme(&[
-                ("attribute", rgb(0xd19a66).into()),
-                ("comment", rgb(0x5c6370).into()),
-                ("constant", rgb(0xd19a66).into()),
-                ("constructor", rgb(0xe5c07b).into()),
-                ("escape", rgb(0x56b6c2).into()),
-                ("function", rgb(0x61afef).into()),
-                ("function.macro", rgb(0x56b6c2).into()),
-                ("keyword", rgb(0xc678dd).into()),
-                ("label", rgb(0xe06c75).into()),
-                ("markup.heading", rgb(0xe06c75).into()),
-                ("markup.link", rgb(0x61afef).into()),
-                ("markup.link.url", rgb(0x56b6c2).into()),
-                ("markup.raw", rgb(0x98c379).into()),
-                ("module", rgb(0xe5c07b).into()),
-                ("number", rgb(0xd19a66).into()),
-                ("operator", rgb(0x56b6c2).into()),
-                ("property", rgb(0xe06c75).into()),
-                ("punctuation", rgb(0x7f848e).into()),
-                ("punctuation.special", rgb(0x56b6c2).into()),
-                ("string", rgb(0x98c379).into()),
-                ("string.special", rgb(0x56b6c2).into()),
-                ("string.special.key", rgb(0xe06c75).into()),
-                ("tag", rgb(0xe06c75).into()),
-                ("type", rgb(0xe5c07b).into()),
-                ("variable.builtin", rgb(0xe06c75).into()),
-            ]),
-        };
-        theme.set_metrics(settings, cx);
-        theme
+        Self::from_palette(EditorPalette::fastedit_dark(), settings, cx)
     }
 
     /// Takes the font family, size and line height from `settings`.
@@ -199,3 +156,5 @@ mod menu_tests;
 mod settings_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod theme_tests;

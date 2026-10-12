@@ -2,6 +2,7 @@
 //! [`Workbench`] in a window.
 
 mod perf;
+mod theme;
 
 use std::{
     collections::HashMap,
@@ -22,8 +23,11 @@ use gpui::{
     WindowId, point, px,
 };
 use kiln::{
-    Config, GlobalSettings, command::Value, core::layout::LayoutStore, shell::layout::WindowLayout,
-    ui::ThemeMode,
+    Config, GlobalSettings,
+    command::Value,
+    core::layout::LayoutStore,
+    prelude::{AppExt as _, WindowExt as _},
+    shell::layout::WindowLayout,
 };
 use kiln_platform::{Capabilities, WindowSpec, window_options};
 
@@ -81,11 +85,15 @@ fn load_settings(root: Option<&Path>) -> SettingsStore {
 /// - `settings`, from the user's file and the project's (which may only
 ///   turn language servers off), and the user's keymap, each watched and
 ///   reloaded when it changes, the keymap's issues logged after a reload;
-/// - kiln's dark theme, which fastedit's chrome has always had.
+/// - kiln's dark and light themes in the settings' `theme.mode`, with the
+///   user's `theme.toml` (and its `editor` and `syntax` tables,
+///   [`fe_config::theme::EXTENSIONS`]) in place of the one of its
+///   appearance, watched and reloaded when it changes.
 ///
 /// Diagnostics and reloads are logged as fastedit's own.
 fn config(settings: SettingsStore) -> Config {
     let app = fe_config::paths::app_id();
+    let mode = theme::mode(settings.settings().theme.mode);
     let config = Config::new(app.reverse_dns, app.display)
         .log_target("fastedit")
         .commands(|cx| {
@@ -99,7 +107,12 @@ fn config(settings: SettingsStore) -> Config {
         .menus(fe_keymap::menu::DEFAULT_MENUS_PATH, fe_keymap::MENUS)
         .menu_shortcut_context(fe_keymap::MENU_SHORTCUT_CONTEXT)
         .settings_store(settings.into_inner())
-        .theme_mode(ThemeMode::Dark);
+        .theme_mode(mode)
+        .theme_extensions(fe_config::theme::EXTENSIONS);
+    let config = match fe_config::paths::user_theme_path() {
+        Some(path) => config.user_theme(path),
+        None => config,
+    };
     match fe_keymap::user_keymap_path() {
         Some(path) => config.user_keymap(path),
         None => config,
@@ -136,9 +149,9 @@ fn current_settings(cx: &App) -> Arc<Settings> {
 }
 
 /// Applies each settings reload of kiln's config service to every
-/// window: vim when the file changed it, then each workbench's editors,
-/// status bar and language servers, with its root's project layer. The
-/// service has logged the reload and its diagnostics.
+/// window: the theme mode and vim when the file changed them, then each
+/// workbench's editors, status bar and language servers, with its root's
+/// project layer. The service has logged the reload and its diagnostics.
 fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
     cx.set_global(WindowSettings {
         launch_root,
@@ -157,7 +170,11 @@ fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
             (now.vim.enabled, before.vim.enabled),
             (unnamedplus(now), unnamedplus(before)),
         );
+        let mode = (now.theme.mode != before.theme.mode).then_some(now.theme.mode);
         let diagnostics = global.diagnostics().to_vec();
+        if let Some(mode) = mode {
+            cx.set_theme_mode(theme::mode(mode));
+        }
         fe_gpui::apply_vim_reload(cx, enabled, unnamed);
         fe_gpui::set_vim_jump_on_s(cx, jump_on_s);
         for window in cx.windows() {
@@ -245,7 +262,7 @@ fn watch_window(window: WindowHandle<Workbench>, settings: Arc<Settings>, cx: &m
 /// a little below and right of the active window.
 fn open_window_on(root: Option<PathBuf>, cx: &mut App) {
     let settings = current_settings(cx);
-    let theme = EditorTheme::from_settings(&settings.editor, cx);
+    let theme = theme::editor_theme(&settings.editor, cx);
     let capabilities = Capabilities::current();
     let (layout, entry) = match root.as_deref().and_then(layout_store) {
         Some(store) => match kiln::shell::layout::new_window(&store) {
@@ -317,6 +334,8 @@ fn new_workbench(
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<Workbench> {
+    // fastedit's windows aren't kiln `Root`s, which do this themselves.
+    window.follow_system_appearance(cx);
     let capabilities = Capabilities::current();
     let editor_settings = settings.editor.clone();
     let status_bar = settings.status_bar.visible;
@@ -401,6 +420,8 @@ fn main() {
         // Commands, keys, menus, in-window prompts where there are no
         // native alerts, and the config files watched from here on.
         kiln::init(cx, config(store));
+        // The editor's colours, from kiln's theme from now on.
+        theme::init(cx);
         fe_gpui::set_vim_enabled(cx, settings.vim.enabled);
         fe_gpui::set_vim_clipboard(cx, settings.vim.clipboard == VimClipboard::Unnamedplus);
         fe_gpui::set_vim_jump_on_s(cx, settings.vim.jump_on_s);
@@ -424,7 +445,7 @@ fn main() {
         })
         .detach();
 
-        let theme = EditorTheme::from_settings(&settings.editor, cx);
+        let theme = theme::editor_theme(&settings.editor, cx);
         fe_gpui::set_restore_style(cx, theme.clone(), settings.editor.clone());
         // A folder launch reopens its saved windows; a file launch opens
         // the file, in a window that saves its layout from now on.
