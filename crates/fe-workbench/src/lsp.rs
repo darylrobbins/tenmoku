@@ -383,6 +383,11 @@ pub(crate) fn shut_down_all_within(cx: &mut App, grace: Duration, force: Duratio
     Quit { forced, left }
 }
 
+/// A prepared rename's answer: its target, if there's one.
+pub(crate) type RenameAnswer = Result<Option<fe_lsp::rename::RenameTarget>, fe_lsp::LspError>;
+/// A rename's answer: the edits to make.
+pub(crate) type RenameEdits = Result<Vec<fe_lsp::FileEdits>, fe_lsp::LspError>;
+
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -462,6 +467,8 @@ pub(crate) struct Lsp {
     /// Every editor's hover and completion provider, following the
     /// manager.
     hover: Rc<LspHover>,
+    /// A rename's guard while one is running ([`Workbench::rename_symbol`]).
+    pub(crate) rename: std::rc::Weak<()>,
     /// The buffers whose files are being resolved.
     resolving: HashSet<BufferId>,
     /// The saves of each buffer whose file is being resolved or failed to
@@ -573,6 +580,7 @@ impl Lsp {
         let (sender, events) = async_channel::unbounded();
         Self {
             manager: None,
+            rename: std::rc::Weak::new(),
             watch: None,
             root: None,
             generation: 0,
@@ -1447,6 +1455,33 @@ impl Workbench {
             }
             _ => {}
         }
+    }
+
+    /// Asks what renaming at `offset` of `buffer` at `version` would
+    /// rename: `None` if there's no manager or no server for `buffer`.
+    pub(crate) fn lsp_prepare_rename(
+        &self,
+        buffer: BufferId,
+        version: Version,
+        offset: usize,
+    ) -> Option<std::pin::Pin<Box<dyn std::future::Future<Output = RenameAnswer> + Send>>> {
+        let manager = lock(self.lsp.manager.as_ref()?);
+        manager.server_of(buffer)?;
+        Some(Box::pin(manager.prepare_rename(buffer, version, offset)))
+    }
+
+    /// Asks for the edits renaming at `offset` of `buffer` at `version` to
+    /// `new_name`, as [`Self::lsp_prepare_rename`] does.
+    pub(crate) fn lsp_rename(
+        &self,
+        buffer: BufferId,
+        version: Version,
+        offset: usize,
+        new_name: String,
+    ) -> Option<std::pin::Pin<Box<dyn std::future::Future<Output = RenameEdits> + Send>>> {
+        let manager = lock(self.lsp.manager.as_ref()?);
+        manager.server_of(buffer)?;
+        Some(Box::pin(manager.rename(buffer, version, offset, new_name)))
     }
 
     /// The open editors showing `buffer`.
