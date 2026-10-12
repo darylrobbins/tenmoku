@@ -24,6 +24,9 @@
 //! - [`ScipIndex`] decodes a SCIP index (`index.scip`) into each file's
 //!   occurrences and each symbol's definition and reference sites, for
 //!   exact answers with no language server running.
+//! - [`ScipNavigation`] answers go-to-definition, references and workspace
+//!   symbols exactly from a [`ScipIndex`], checking each site against the
+//!   file's current text, so a stale index falls through to search.
 //!
 //! Like [`fe_project::search`], nothing here owns an executor: the caller
 //! runs [`build`] on a background thread of its own, and the workers are
@@ -37,6 +40,7 @@ mod index;
 mod provider;
 mod references;
 mod scip;
+mod scip_provider;
 mod search;
 
 pub use build::{
@@ -51,4 +55,5 @@ pub use provider::{
 };
 pub use references::ReferenceOptions;
 pub use scip::{ScipEncoding, ScipError, ScipIndex, ScipOccurrence, ScipSite, ScipSymbolInfo};
+pub use scip_provider::ScipNavigation;
 pub use search::{SearchNavigation, SearchStats};

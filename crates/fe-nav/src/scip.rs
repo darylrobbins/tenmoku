@@ -122,6 +122,8 @@ pub struct ScipIndex {
     documents: BTreeMap<Arc<Path>, ScipDocument>,
     symbols: HashMap<Arc<str>, Sites>,
     info: HashMap<Arc<str>, ScipSymbolInfo>,
+    /// Every document's language, as the indexer spelt it, each once.
+    languages: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -179,6 +181,11 @@ impl ScipIndex {
                 .push(document);
         }
         let mut this = Self::default();
+        for document in &index.documents {
+            if !this.languages.contains(&document.language) {
+                this.languages.push(document.language.clone());
+            }
+        }
         for (rel, documents) in by_path {
             this.add_document(Path::new(rel).into(), &documents);
         }
@@ -288,8 +295,15 @@ impl ScipIndex {
         self.documents.keys().map(|rel| &**rel)
     }
 
+    /// Every language the indexer gave a document, as it spelt it, each once:
+    /// those of each of a file's documents, where it split one.
+    pub fn languages(&self) -> impl Iterator<Item = &str> {
+        self.languages.iter().map(String::as_str)
+    }
+
     /// The language the indexer gave `rel`, as it spelt it (`None` for a
-    /// file not in the index; empty when it gave none).
+    /// file not in the index; empty when it gave none): its first
+    /// document's, where it split the file across several.
     pub fn language(&self, rel: &Path) -> Option<&str> {
         self.documents.get(rel).map(|doc| doc.language.as_str())
     }
@@ -341,6 +355,38 @@ impl ScipIndex {
             definition: occ.definition,
             scope: occ.scope,
         })
+    }
+
+    /// Every occurrence in `site`'s file spanning exactly `site`, each with
+    /// its bytes in `text`, the file's text: the several symbols an indexer
+    /// gave one span, such as an import alias's own symbol beside the symbol
+    /// it names. Empty when `site` isn't in `text`. They may come from
+    /// several of the index's documents for the file: each has its
+    /// [`ScipOccurrence::scope`], and only those of one scope were indexed
+    /// together.
+    pub fn occurrences_on(&self, site: &ScipSite, text: &Text) -> Vec<ScipOccurrence> {
+        let Some(doc) = self.documents.get(&site.rel) else {
+            return Vec::new();
+        };
+        let Some(range) = site.byte_range(text) else {
+            return Vec::new();
+        };
+        let span = (site.start, site.end);
+        let from = doc
+            .occurrences
+            .partition_point(|occ| (occ.start, occ.end) < span);
+        doc.occurrences[from..]
+            .iter()
+            .take_while(|occ| (occ.start, occ.end) == span)
+            .filter(|occ| occ.encoding == site.encoding)
+            .map(|occ| ScipOccurrence {
+                symbol: occ.symbol.clone(),
+                site: site.clone(),
+                range: range.clone(),
+                definition: occ.definition,
+                scope: occ.scope,
+            })
+            .collect()
     }
 
     /// Where `occurrence`'s symbol is defined: across the index for a
@@ -406,6 +452,12 @@ impl ScipIndex {
     /// The display name and kind the index gives the global `symbol`.
     pub fn symbol_info(&self, symbol: &str) -> Option<&ScipSymbolInfo> {
         self.info.get(symbol)
+    }
+
+    /// Whether the index has any global symbol: one occurring in a
+    /// document, or one it only describes (an external symbol, say).
+    pub fn has_global_symbols(&self) -> bool {
+        !self.symbols.is_empty() || !self.info.is_empty()
     }
 
     /// Every global symbol the index describes, in no particular order.
