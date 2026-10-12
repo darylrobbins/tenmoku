@@ -102,6 +102,12 @@ pub struct EditorTheme {
     pub jump_label_preview: Hsla,
     /// The glyph on a jump label's box.
     pub jump_label_foreground: Hsla,
+    /// The git change bar and row background of added rows.
+    pub change_added: Hsla,
+    /// The git change bar and row background of modified rows.
+    pub change_modified: Hsla,
+    /// The git change mark where rows were deleted.
+    pub change_deleted: Hsla,
     /// Text colour for each [`Highlight`], by [`Highlight::index`]; `None`
     /// uses `foreground`. Build it with [`fe_syntax::resolve_theme`].
     pub syntax: Vec<Option<Hsla>>,

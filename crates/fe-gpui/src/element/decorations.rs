@@ -34,20 +34,18 @@ const BAR_INSET: f32 = 1.;
 /// An underline's thickness, in pixels.
 const UNDERLINE: f32 = 1.;
 
-/// What each [`DecorationKind`] resolves its tint to, until the theme has
-/// slots for them.
+/// What each [`DecorationKind`] resolves its tint to.
 fn tint_color(theme: &EditorTheme, tint: Tint) -> Hsla {
     match tint {
-        Tint::Error | Tint::Removed => theme.error,
+        Tint::Error => theme.error,
         Tint::Warning => theme.warning,
-        Tint::Information | Tint::Modified => theme.information,
+        Tint::Information => theme.information,
+        Tint::Added => theme.change_added,
+        Tint::Modified => theme.change_modified,
+        Tint::Removed => theme.change_deleted,
         Tint::Hint => theme.hint,
         Tint::Accent => theme.cursor,
         Tint::Muted => theme.foreground,
-        Tint::Added => Hsla {
-            h: 130. / 360.,
-            ..theme.information
-        },
     }
 }
 

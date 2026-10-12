@@ -53,7 +53,7 @@ fn bundled_palettes() {
         let mut keys = EditorColors::KEYS.to_vec();
         keys.sort();
         assert_eq!(editor, keys);
-        assert_eq!(EditorColors::KEYS.len(), 16);
+        assert_eq!(EditorColors::KEYS.len(), 19);
         captures.push(
             file.extensions["syntax"]
                 .keys()

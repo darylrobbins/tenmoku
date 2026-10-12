@@ -62,6 +62,11 @@ popover_border = "#3a312a"
 jump_label = "#ff8fa3"
 jump_label_preview = "#7fd1c4"
 jump_label_foreground = "#1c1814"
+# The git change bar. These match the colours derived from `information`
+# (modified; added at hue 130) and `error` (deleted) before it had slots.
+change_added = "#7fb889"
+change_modified = "#7fa6b8"
+change_deleted = "#e0705f"
 
 # Highlight captures by dotted name. A capture without its own colour takes
 # the colour of its longest listed prefix: "function.method" uses "function".

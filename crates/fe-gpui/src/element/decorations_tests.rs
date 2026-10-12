@@ -6,15 +6,16 @@
 use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
 
 use fe_buffer::Buffer;
+use fe_config::{Color, EditorPalette};
 use fe_editor::{
     EditorModel,
     decorations::{Decoration, DecorationKind, DecorationProvider, GutterMark, Tint, overlaps},
 };
 use fe_vim::search::{FindQuery, Pattern};
-use gpui::{Bounds, Entity, Hsla, Pixels, TestAppContext, VisualTestContext, px};
+use gpui::{Bounds, Entity, Hsla, Pixels, TestAppContext, VisualTestContext, px, rgb};
 
 use super::*;
-use crate::{EditorTheme, EditorView, init};
+use crate::{EditorSettings, EditorTheme, EditorView, init};
 
 /// A provider handing out fixed decorations, noting each range it's asked
 /// for.
@@ -186,10 +187,7 @@ fn row_backgrounds_and_bars_cover_every_display_row(cx: &mut TestAppContext) {
         px(view.layout.as_ref().unwrap().frame.line_height)
     });
 
-    let added = Hsla {
-        h: 130. / 360.,
-        ..theme.information
-    };
+    let added = theme.change_added;
     let backgrounds = of_kind(&all, &DecorationKind::RowBackground);
     assert_eq!(backgrounds.len(), covered_rows.len());
     for ((bounds, color), (_, _, top)) in backgrounds.iter().zip(&covered_rows) {
@@ -211,7 +209,7 @@ fn row_backgrounds_and_bars_cover_every_display_row(cx: &mut TestAppContext) {
             (bounds.origin.y, bounds.size.height),
             (top + px(1.), height - px(2.))
         );
-        assert_eq!(*color, theme.information.opacity(0.8));
+        assert_eq!(*color, theme.change_modified.opacity(0.8));
     }
 
     // On row 4's top edge, centred on it.
@@ -551,7 +549,11 @@ fn after_line_text_needs_its_row_in_the_frame(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn tints_resolve_through_the_theme(cx: &mut TestAppContext) {
-    let theme = cx.update(|cx| EditorTheme::default_dark(cx));
+    let mut palette = EditorPalette::fastedit_dark().clone();
+    palette.editor.change_added = Color::rgb(0x112233);
+    palette.editor.change_modified = Color::rgb(0x223344);
+    palette.editor.change_deleted = Color::rgb(0x334455);
+    let theme = cx.update(|cx| EditorTheme::from_palette(&palette, &EditorSettings::default(), cx));
     let expected = [
         (Tint::Error, theme.error),
         (Tint::Warning, theme.warning),
@@ -559,15 +561,9 @@ fn tints_resolve_through_the_theme(cx: &mut TestAppContext) {
         (Tint::Hint, theme.hint),
         (Tint::Accent, theme.cursor),
         (Tint::Muted, theme.foreground),
-        (Tint::Modified, theme.information),
-        (Tint::Removed, theme.error),
-        (
-            Tint::Added,
-            Hsla {
-                h: 130. / 360.,
-                ..theme.information
-            },
-        ),
+        (Tint::Added, Hsla::from(rgb(0x112233))),
+        (Tint::Modified, Hsla::from(rgb(0x223344))),
+        (Tint::Removed, Hsla::from(rgb(0x334455))),
     ];
     for (tint, color) in expected {
         assert_eq!(tint_color(&theme, tint), color, "{tint:?}");
