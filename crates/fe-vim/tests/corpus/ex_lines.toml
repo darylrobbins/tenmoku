@@ -585,6 +585,42 @@ cursor = [1, 0]
 keys = ":2sort //<CR>k"
 
 [[case]]
+name = "sort_zero_line_ignores_arguments"
+buffer = "b\na"
+cursor = [0, 0]
+keys = ":0sort z<CR>j"
+
+[[case]]
+name = "sort_zero_line_ignores_two_number_kinds"
+buffer = "b\na"
+cursor = [0, 0]
+keys = ":0sort nn<CR>j"
+
+[[case]]
+name = "sort_zero_line_ignores_pattern"
+buffer = "b\na"
+cursor = [0, 0]
+keys = ":0sort /a<CR>j"
+
+[[case]]
+name = "sort_past_end_bad_argument"
+buffer = "b\na"
+cursor = [0, 0]
+keys = ":3sort z<CR>j"
+
+[[case]]
+name = "sort_past_end_two_number_kinds"
+buffer = "b\na"
+cursor = [0, 0]
+keys = ":3sort nn<CR>j"
+
+[[case]]
+name = "sort_past_end_unterminated_pattern"
+buffer = "b\na"
+cursor = [0, 0]
+keys = ":3sort /a<CR>j"
+
+[[case]]
 name = "sort_two_number_kinds"
 buffer = "b\na"
 cursor = [0, 0]

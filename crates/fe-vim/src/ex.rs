@@ -749,13 +749,20 @@ fn execute(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Result<Hand
     // As in nvim, `:sort` of one line ignores its arguments.
     let command = match command {
         Err(
-            ExError::InvalidArgument(_)
+            error @ (ExError::InvalidArgument(_)
             | ExError::TwoNumberKinds
             | ExError::MissingDelimiter(_)
-            | ExError::Unsupported(_),
-        ) if lines::is_sort(rest)
-            && lines.map_or(last, |(first, end)| end - first.max(1) + 1) == 1 =>
-        {
+            | ExError::Unsupported(_)),
+        ) if lines::is_sort(rest) => {
+            // The range is validated and normalized (line 0 is the first)
+            // as `:sort`'s own would be; no range sorts the whole text.
+            let (first, end) = match lines {
+                Some(_) => counted_lines(target, lines, None, last)?,
+                None => (1, last),
+            };
+            if end - first + 1 != 1 {
+                return Err(error);
+            }
             return Ok(Ok(Dispatched::new(Effect::Notify)));
         }
         command => command?,
