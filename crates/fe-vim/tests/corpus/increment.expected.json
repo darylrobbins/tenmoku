@@ -3158,6 +3158,118 @@
           ]
         }
       }
+    },
+    {
+      "name": "repeat_block_empty_final_row",
+      "buffer": "1 11\n1 11\n1 11\n\n1 11",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "<C-v>jl<C-a>jj.",
+      "expect": {
+        "buffer": "1 12\n1 12\n1 12\n\n1 11",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            1,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "repeat_block_empty_row_after_gap",
+      "buffer": "1 11\n1 11\n1 11\n1 11\n\n1 11",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "<C-v>jl<C-a>jjj.",
+      "expect": {
+        "buffer": "1 12\n1 12\n1 11\n1 12\n\n1 11",
+        "cursor": [
+          3,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            1,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "repeat_block_final_endpoint_in_tab",
+      "buffer": "1 1\n1 1\n1 1\n1\t1",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "<C-v>jl<C-a>jj.",
+      "expect": {
+        "buffer": "1 2\n1 2\n1 2\n1\t1",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            1,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "repeat_block_start_endpoint_in_tab",
+      "buffer": "9 11\n9 11\n9\t11\n9 11",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "<C-v>jl<C-a>jj.",
+      "expect": {
+        "buffer": "9 12\n9 12\n9\t11\n9 21",
+        "cursor": [
+          2,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            1,
+            4
+          ]
+        }
+      }
     }
   ]
 }

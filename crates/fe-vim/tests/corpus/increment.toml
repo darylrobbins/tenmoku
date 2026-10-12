@@ -822,3 +822,32 @@ name = "repeat_block_tab_endpoint_widening"
 buffer = "11\n11\n1\t1\n11"
 cursor = [0, 0]
 keys = "<C-v>j<C-a>jj."
+
+# The last replay row is empty: a block rebuilt from its endpoints would reach
+# back to column 0 and take the 1 there, not the saved columns' 11.
+[[case]]
+name = "repeat_block_empty_final_row"
+buffer = "1 11\n1 11\n1 11\n\n1 11"
+cursor = [0, 2]
+keys = "<C-v>jl<C-a>jj."
+
+# The same, the empty row first of a replay after a longer gap.
+[[case]]
+name = "repeat_block_empty_row_after_gap"
+buffer = "1 11\n1 11\n1 11\n1 11\n\n1 11"
+cursor = [0, 2]
+keys = "<C-v>jl<C-a>jjj."
+
+# The final replay row's column falls inside a tab, which a block widens to:
+# the saved width, not the widened one, decides which rows' numbers are taken.
+[[case]]
+name = "repeat_block_final_endpoint_in_tab"
+buffer = "1 1\n1 1\n1 1\n1\t1"
+cursor = [0, 2]
+keys = "<C-v>jl<C-a>jj."
+
+[[case]]
+name = "repeat_block_start_endpoint_in_tab"
+buffer = "9 11\n9 11\n9\t11\n9 11"
+cursor = [0, 3]
+keys = "<C-v>jl<C-a>jj."
