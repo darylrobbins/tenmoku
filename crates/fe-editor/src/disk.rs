@@ -97,7 +97,10 @@ impl SaveJob {
     /// Saves atomically: writes a new file beside the target and renames it
     /// over the original, so a failed save never truncates the file.
     ///
-    /// Unless the job overwrites, it first fails with
+    /// A path that exists but isn't a regular file fails first with an I/O
+    /// error, never as a change on disk.
+    ///
+    /// Unless the job overwrites, it then fails with
     /// [`SaveError::ChangedOnDisk`], writing nothing, if the file's stamp
     /// isn't the one it had when read, including a file that didn't exist
     /// then and does now. A file deleted since is saved. A buffer that
@@ -123,6 +126,7 @@ impl SaveJob {
             expected,
             overwrite,
         } = self;
+        ensure_regular(&path)?;
         let found = DiskStamp::of(&path)?;
         if !overwrite
             && found.is_some()
@@ -157,7 +161,10 @@ impl SaveJob {
         let stamp = DiskStamp::from_metadata(&temp.as_file().metadata()?)?;
         before_commit();
         // Narrows the window another writer has to the rename itself.
-        if !overwrite && (DiskStamp::of(&path)? != found || resolve(&path)? != target) {
+        ensure_regular(&path)?;
+        let now = resolve(&path)?;
+        ensure_regular(&now)?;
+        if !overwrite && (DiskStamp::of(&path)? != found || now != target) {
             return Err(SaveError::ChangedOnDisk);
         }
         // Dropping `temp` on any error above deletes it.
@@ -167,6 +174,33 @@ impl SaveJob {
             snapshot,
             stamp: Some(stamp),
         })
+    }
+}
+
+/// Fails with the I/O error a write would, if `path` (symlinks followed)
+/// exists and isn't a regular file: [`io::ErrorKind::IsADirectory`] for a
+/// directory, so a save never reports that as a change on disk.
+fn ensure_regular(path: &Path) -> io::Result<()> {
+    let file_type = match std::fs::metadata(path) {
+        Ok(metadata) => metadata.file_type(),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    if file_type.is_file() {
+        Ok(())
+    } else if file_type.is_dir() {
+        #[cfg(unix)]
+        return Err(io::Error::from_raw_os_error(21)); // EISDIR
+        #[cfg(not(unix))]
+        return Err(io::Error::new(
+            io::ErrorKind::IsADirectory,
+            "Is a directory",
+        ));
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "not a regular file",
+        ))
     }
 }
 
@@ -335,6 +369,43 @@ mod tests {
         assert!(matches!(result, Err(SaveError::ChangedOnDisk)));
         assert_eq!(std::fs::read_to_string(&a).unwrap(), "a");
         assert_eq!(std::fs::read_to_string(&b).unwrap(), "b");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_target_that_became_a_fifo_during_the_save_is_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b, link) = (
+            dir.path().join("a.txt"),
+            dir.path().join("b.txt"),
+            dir.path().join("link.txt"),
+        );
+        std::fs::write(&a, "a").unwrap();
+        std::fs::write(&b, "b").unwrap();
+        std::os::unix::fs::symlink(&a, &link).unwrap();
+
+        for overwrite in [false, true] {
+            let mut job = job(&link, "mine");
+            job.overwrite = overwrite;
+            let result = job.run_with(|| {
+                std::fs::remove_file(&a).unwrap();
+                let made = std::process::Command::new("mkfifo").arg(&a).status();
+                assert!(made.unwrap().success(), "mkfifo");
+            });
+            let error = match result {
+                Err(SaveError::Io(error)) => error,
+                _ => panic!("expected an I/O error, overwrite={overwrite}"),
+            };
+            assert_ne!(error.kind(), io::ErrorKind::Other, "{error}");
+            assert!(!std::fs::metadata(&a).unwrap().is_file());
+            assert_eq!(
+                std::fs::read_dir(dir.path()).unwrap().count(),
+                3,
+                "temp gone"
+            );
+            std::fs::remove_file(&a).unwrap();
+            std::fs::write(&a, "a").unwrap();
+        }
     }
 
     #[cfg(unix)]
