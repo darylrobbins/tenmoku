@@ -1,5 +1,6 @@
 //! The window shell: the editor panes, with the dock (the project panel,
-//! search, the outline or the git changes) on the right.
+//! search, the outline or the git changes) on the right and the terminal
+//! below.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -37,14 +38,15 @@ use crate::{
     picker::{self, Toggle},
     project_panel::{self, PanelEvent, PanelOp},
     status_bar::{self, StatusOp},
+    terminal_panel::{self, TERMINAL, TerminalPanel, TerminalPanelEvent},
     title_bar,
     toolbar_picker::ToolbarPicker,
     trust::{self, TrustChanged},
 };
 use fe_command::Value;
 use kiln_shell::{
-    CloseKind, CloseRequest, Closing, DockPosition, ItemHandle, ModalEvent, ModalId, ModalLayer,
-    PaneView as _, Shell,
+    CloseKind, CloseRequest, Closing, DockPosition, DockState, DockView as _, ItemHandle,
+    ModalEvent, ModalId, ModalLayer, PaneView as _, Shell,
     close::{self, Items, LiveItems},
     layout::{self, WindowLayout},
 };
@@ -145,6 +147,12 @@ pub struct RootChanged(pub PathBuf);
 pub struct Workbench {
     panel: Entity<ProjectPanel>,
     dock: Entity<Dock>,
+    /// The bottom dock, which shows the terminal, hidden at launch.
+    terminal_dock: Entity<kiln_shell::Dock>,
+    terminal: Entity<TerminalPanel>,
+    /// To the terminal's shell exiting, and to the bottom dock hiding it
+    /// with focus in it.
+    _terminal: [Subscription; 2],
     panes: PaneGroup,
     /// The pane files open in; its active tab is the active editor.
     active: Entity<Pane>,
@@ -271,6 +279,16 @@ impl Workbench {
             Some((path, None)) => Some(path.clone()),
             _ => None,
         };
+        let terminal = cx.new(|cx| TerminalPanel::new(terminal_dir(&launch), &theme, cx));
+        let terminal_dock = cx.new(|cx| {
+            let state = DockState::new(DockPosition::Bottom, ui)
+                .shortcut_contexts([KEY_CONTEXT, fe_gpui::KEY_CONTEXT]);
+            let mut dock = kiln_shell::Dock::with_state(state);
+            dock.add_panel(terminal.clone(), cx);
+            dock.dock_mut().set_visible(false);
+            dock
+        });
+        let terminal_subscriptions = Self::follow_terminal(&terminal, &terminal_dock, window, cx);
         let panel = cx.new(|cx| ProjectPanel::new(launch.root, ui, cx));
         let pane = cx.new(|cx| {
             let mut pane = Pane::new(theme, settings, ui, cx);
@@ -334,6 +352,7 @@ impl Workbench {
             let mut shell = Shell::new(KEY_CONTEXT, ui, window, cx).text_size(px(12.));
             shell.set_title(title_bar::name(launch_root.as_deref()), cx);
             shell.set_dock(DockPosition::Right, Some(dock.clone().into()), cx);
+            shell.set_dock(DockPosition::Bottom, Some(terminal_dock.clone().into()), cx);
             shell.set_status_bar(Some(status_bar.clone().into()), cx);
             shell
         });
@@ -365,6 +384,9 @@ impl Workbench {
         let mut workbench = Self {
             panel,
             dock,
+            terminal_dock,
+            terminal,
+            _terminal: terminal_subscriptions,
             panes: PaneGroup::new(pane.clone()),
             active: pane.clone(),
             peers: Peers::default(),
@@ -482,6 +504,56 @@ impl Workbench {
         )
     }
 
+    /// Subscribes to the terminal: when its shell exits the dock hides and
+    /// the active editor takes focus, as it does when the bottom dock's rail
+    /// hides the terminal with focus in it.
+    fn follow_terminal(
+        terminal: &Entity<TerminalPanel>,
+        dock: &Entity<kiln_shell::Dock>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> [Subscription; 2] {
+        let exited = cx.subscribe_in(
+            terminal,
+            window,
+            |workbench, _, TerminalPanelEvent::Exited, window, cx| {
+                workbench.terminal_dock.update(cx, |dock, cx| {
+                    dock.dock_mut().set_visible(false);
+                    cx.notify();
+                });
+                window.focus(&workbench.focus_handle(cx), cx);
+            },
+        );
+        let hid = cx.subscribe_in(
+            dock,
+            window,
+            |workbench, _, kiln_shell::dock::DockEvent::HidFocus, window, cx| {
+                window.focus(&workbench.focus_handle(cx), cx);
+            },
+        );
+        [exited, hid]
+    }
+
+    /// `terminal.toggle`: shows the bottom dock with the terminal, focused,
+    /// starting a session if none runs; focuses the terminal if the dock
+    /// shows but focus is elsewhere; hides the dock and focuses the active
+    /// editor if the terminal has focus.
+    fn toggle_terminal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let shown = self.terminal_dock.read(cx).is_visible();
+        if shown && self.terminal.read(cx).is_focused(window, cx) {
+            self.terminal_dock.update(cx, |dock, cx| {
+                dock.dock_mut().set_visible(false);
+                cx.notify();
+            });
+            window.focus(&self.focus_handle(cx), cx);
+            return;
+        }
+        self.terminal
+            .update(cx, |terminal, cx| terminal.start(window, cx));
+        self.terminal_dock
+            .update(cx, |dock, cx| dock.show(TERMINAL, window, cx));
+    }
+
     /// Subscribes to a root's Changes panel: its rows open as the project
     /// panel's do.
     fn follow_changes(
@@ -555,6 +627,8 @@ impl Workbench {
         let panel = cx.new(|cx| ProjectPanel::new(Some(root.clone()), ui, cx));
         let changes = cx.new(|cx| GitPanel::new(Some(root.clone()), ui, cx));
         let quick_open = Self::new_quick_open(Some(root.clone()), self.active.downgrade(), ui, cx);
+        // The next session starts in the new root; one running stays.
+        (self.terminal).update(cx, |terminal, _| terminal.set_cwd(root.clone()));
         self.root_subscription = Self::follow_root(&panel, window, cx);
         self.changes_subscription = Self::follow_changes(&changes, window, cx);
         self.git.update(cx, |git, _| git.close());
@@ -693,6 +767,15 @@ impl Workbench {
 
     pub fn panel(&self) -> &Entity<ProjectPanel> {
         &self.panel
+    }
+
+    /// The bottom dock, which shows the terminal.
+    pub fn terminal_dock(&self) -> &Entity<kiln_shell::Dock> {
+        &self.terminal_dock
+    }
+
+    pub fn terminal(&self) -> &Entity<TerminalPanel> {
+        &self.terminal
     }
 
     /// The right dock, which shows the project panel, search or the outline.
@@ -1567,6 +1650,8 @@ impl Workbench {
         }
         // Editors restored from a saved layout open as the panes' do.
         let theme = self.active.read(cx).theme().clone();
+        self.terminal
+            .update(cx, |terminal, cx| terminal.set_theme(&theme, cx));
         fe_gpui::set_restore_style(cx, theme, event.settings.editor.clone());
         self.reload_lsp_settings(&event.settings.lsp, cx);
     }
@@ -1617,6 +1702,9 @@ impl Workbench {
             }
             if pane_toolbar::toggles(run, cx) {
                 return self.toggle_breadcrumbs(cx);
+            }
+            if terminal_panel::toggles(run, cx) {
+                return self.toggle_terminal(window, cx);
             }
             let op = if outline_panel::shows(run, cx) {
                 Some(DockOp::ShowOutline)
@@ -1718,6 +1806,14 @@ impl Focusable for PaneArea {
             None => self.focus.clone(),
         }
     }
+}
+
+/// Where the terminal starts: the launch root, else the launch file's
+/// directory, else the home directory.
+fn terminal_dir(launch: &Launch) -> PathBuf {
+    let file_dir = || launch.file.as_ref()?.0.parent().map(Path::to_owned);
+    let home = || std::env::var_os("HOME").map(PathBuf::from);
+    (launch.root.clone().or_else(file_dir).or_else(home)).unwrap_or_else(|| PathBuf::from("/"))
 }
 
 /// The prompt shown when the open panel fails with `error`: see

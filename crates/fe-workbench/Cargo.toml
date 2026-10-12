@@ -21,6 +21,8 @@ fe-lsp.workspace = true
 fe-nav.workspace = true
 fe-project.workspace = true
 fe-syntax.workspace = true
+# The bottom dock's terminal.
+fe-terminal-view.workspace = true
 fe-ui.workspace = true
 kiln-platform.workspace = true
 # The window's chrome: the title bar, the frame and the menu bar.

@@ -1,6 +1,7 @@
 //! fastedit's window shell, for any host: [`Workbench`] puts the editor
 //! tabs ([`Pane`]s, split side by side or stacked in a [`PaneGroup`])
-//! beside the lazy file tree on the right dock ([`ProjectPanel`]).
+//! beside the lazy file tree on the right dock ([`ProjectPanel`]), and a
+//! terminal on the bottom one ([`TerminalPanel`]).
 //!
 //! Its commands (`workbench.close_tab`, `workbench.next_tab`,
 //! `workbench.previous_tab`, on the active pane, and the `pane.*` ones) are
@@ -34,6 +35,7 @@ mod quick_open;
 mod references_panel;
 mod search_panel;
 mod status_bar;
+mod terminal_panel;
 mod title_bar;
 mod toolbar_picker;
 mod trust;
@@ -62,6 +64,7 @@ pub use quick_open::QuickOpen;
 pub use references_panel::ReferencesPanel;
 pub use search_panel::SearchPanel;
 pub use status_bar::{StatusBar, StatusItem, StatusSide};
+pub use terminal_panel::TerminalPanel;
 pub use title_bar::{TITLE_BAR_HEIGHT, TRAFFIC_LIGHT_INSET, TRAFFIC_LIGHTS, titlebar_options};
 pub use trust::{TrustChanged, set_trust_file};
 pub use workbench::{Launch, RootChanged, WELCOME, Workbench, resolve_launch};
@@ -108,6 +111,7 @@ pub fn init(cx: &mut App) {
     project_panel::init(cx);
     references_panel::init(cx);
     status_bar::init(cx);
+    terminal_panel::init(cx);
     trust::init(cx);
 }
 
@@ -165,6 +169,7 @@ pub fn command_catalog() -> Box<dyn CommandCatalog> {
         Box::new(project_panel::registry()),
         Box::new(references_panel::registry()),
         Box::new(status_bar::registry()),
+        Box::new(terminal_panel::registry()),
         Box::new(trust::registry()),
         fe_gpui::commands::command_catalog(),
     ]))
@@ -187,6 +192,7 @@ fn command_list() -> Vec<CommandMeta> {
     list.extend(project_panel::registry().commands().cloned());
     list.extend(references_panel::registry().commands().cloned());
     list.extend(status_bar::registry().commands().cloned());
+    list.extend(terminal_panel::registry().commands().cloned());
     list.extend(trust::registry().commands().cloned());
     list.extend(fe_gpui::commands::command_list());
     list

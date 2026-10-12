@@ -817,7 +817,10 @@ fn the_default_keymap_binds_the_references_commands() {
             .collect::<Vec<_>>()
     };
     let one = |keys: &str, context: &str| vec![(keys.to_owned(), context.to_owned())];
-    assert_eq!(bound("nav.find_references"), one("shift-f12", "workbench"));
+    assert_eq!(
+        bound("nav.find_references"),
+        one("shift-f12", "workbench && !terminal")
+    );
     let panel = "ReferencesPanel";
     assert_eq!(bound("references_panel.select_prev"), one("up", panel));
     assert_eq!(bound("references_panel.select_next"), one("down", panel));

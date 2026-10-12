@@ -304,7 +304,7 @@ context = "workbench"
 [[bindings]]
 keys = "f12"
 command = "nav.goto_definition"
-context = "workbench"
+context = "workbench && !terminal"
 
 [[bindings]]
 keys = "cmd-t"
@@ -314,17 +314,17 @@ context = "workbench"
 [[bindings]]
 keys = "shift-f12"
 command = "nav.find_references"
-context = "workbench"
+context = "workbench && !terminal"
 
 [[bindings]]
 keys = "ctrl--"
 command = "nav.back"
-context = "workbench"
+context = "workbench && !terminal"
 
 [[bindings]]
 keys = "ctrl-shift--"
 command = "nav.forward"
-context = "workbench"
+context = "workbench && !terminal"
 
 [[bindings]]
 keys = "up"
@@ -394,6 +394,11 @@ context = "workbench"
 [[bindings]]
 keys = "cmd-shift-o"
 command = "outline.show"
+context = "workbench"
+
+[[bindings]]
+keys = "ctrl-`"
+command = "terminal.toggle"
 context = "workbench"
 
 [[bindings]]

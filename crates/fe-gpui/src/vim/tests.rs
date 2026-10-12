@@ -428,6 +428,7 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
                 context.as_deref(),
                 Some(
                     "workbench"
+                        | "workbench && !terminal"
                         | "picker"
                         | "text_input"
                         | "search_panel"
@@ -483,8 +484,9 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
 
     // No ctrl key without cmd applies in a vim editor: they're all vim's,
     // but for the workbench's Go Back and Go Forward (ctrl-minus and
-    // ctrl-shift-minus), which vim doesn't bind, and `ctrl-space`, which
-    // asks for completions only where text is typed: in insert mode.
+    // ctrl-shift-minus) and Toggle Terminal (ctrl-`), which vim doesn't
+    // bind, and `ctrl-space`, which asks for completions only where text is
+    // typed: in insert mode.
     let stack = ContextStack::new()
         .with(ContextFrame::new("workbench"))
         .with(ContextFrame::new("editor").set("vim.mode", "normal"));
@@ -503,7 +505,7 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
         .filter(|binding| binding.depth(&stack).is_some())
         .map(|binding| binding.keys.to_string())
         .collect();
-    assert_eq!(ctrl, ["ctrl--", "ctrl-shift--", "ctrl-space"]);
+    assert_eq!(ctrl, ["ctrl--", "ctrl-shift--", "ctrl-`", "ctrl-space"]);
 }
 
 #[gpui::test]
