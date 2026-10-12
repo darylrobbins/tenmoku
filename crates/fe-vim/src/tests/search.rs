@@ -118,6 +118,8 @@ fn motion_register_and_visual() {
     let search = Motion::Search(Search {
         pattern: SearchPattern::new("a\\|b"),
         forward: false,
+        offset: crate::SearchOffset::None,
+        again: false,
     });
     assert_eq!(
         serde_json::to_value(search).unwrap(),
@@ -137,6 +139,8 @@ fn search_commands_check_their_pattern() {
         Motion::Search(Search {
             pattern: SearchPattern::new(pattern),
             forward: true,
+            offset: crate::SearchOffset::None,
+            again: false,
         })
     };
     let moving = |pattern: &str| {
@@ -332,6 +336,8 @@ fn invalid_patterns_keep_the_last_search() {
     let backward = Motion::Search(Search {
         pattern: SearchPattern::new("a\\("),
         forward: false,
+        offset: crate::SearchOffset::None,
+        again: false,
     });
     let args = crate::MoveArgs {
         motion: backward,

@@ -571,6 +571,7 @@ pub(crate) fn move_cursor(model: &mut EditorModel, state: &mut VimState, args: M
     let text = model.text().clone();
     let tab = model.tab_size().max(1);
     let mut cursor = cursor_at(&text, ends.cursor);
+    cursor.visual = true;
     let goal = Some(ends.goal.unwrap_or_else(|| goal_of(&cursor, tab)));
     let n = args.count.unwrap_or(1).max(1) as usize;
     let vertical = match args.motion {

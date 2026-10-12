@@ -54,8 +54,10 @@ pub enum Operator {
 /// the row `count` percent down the text). `line` is the target of a doubled
 /// operator such as `dd`: `count` lines from the caret's, like Vim's `_`.
 /// `search` is what submitting `/` or `?` runs: `{"search": {"pattern":
-/// "foo", "forward": true}}`. `search_next` and `search_previous` are `n`
-/// and `N` over the last search and its direction, and `search_word_forward`
+/// "foo", "forward": true}}`, with an `offset` if it has one
+/// ([`SearchOffset`]). `search_next` and `search_previous` are `n`
+/// and `N` over the last search, its direction and offset, and
+/// `search_word_forward`
 /// and `search_word_backward` are `*` and `#`: they resolve to a `search`
 /// before they run, so `vim.move` and `vim.operate` take them but nothing
 /// else sees them. `mark` is `'{name}` and `` `{name} `` (`exact`): `{"mark":
@@ -174,13 +176,46 @@ impl<'de> Deserialize<'de> for JumpChars {
 
 /// `/` and `?` as a motion: the `count`th match of `pattern` (Vim's syntax,
 /// [`crate::search::Pattern`]) after the caret, or before it if not
-/// `forward`, wrapping round the text. A match at a row's end, on a row
-/// with text, is its last character, as in nvim.
+/// `forward`, wrapping round the text, then moved by `offset`. A match at a
+/// row's end, on a row with text, is its last character, as in nvim.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 pub struct Search {
     #[schemars(with = "String")]
     pub pattern: SearchPattern,
     pub forward: bool,
+    /// Left out when there's none: `{"offset": {"end": 1}}` is `/foo/e+1`.
+    #[serde(default, skip_serializing_if = "SearchOffset::is_none")]
+    pub offset: SearchOffset,
+    /// Whether it's `n` or `N` once resolved, which go one match further
+    /// rather than land back on the caret without going round an end of the
+    /// text (as an offset cut short there can), as nvim's do; `/<CR>` stays. Only `vim.move` and `vim.operate` set it, as
+    /// they run; it's never serialized.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub again: bool,
+}
+
+/// Where a search lands from its match (`:help search-offset`): `lines` is
+/// `+N` or `-N` (a bare `+` or `-` being 1, bare digits `+N`), N rows down or
+/// up at column 0, which makes the search linewise; `end` is `e`, `e+N` or
+/// `e-N`, N characters on from the match's last (or back), which makes it
+/// inclusive; `start` is `s` or `b`, `s+N` or `s-N`, N characters on from
+/// its first. Characters step across rows, an empty row counting as one,
+/// and stop at the text's ends.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchOffset {
+    #[default]
+    None,
+    Lines(i32),
+    End(i32),
+    Start(i32),
+}
+
+impl SearchOffset {
+    pub fn is_none(&self) -> bool {
+        *self == Self::None
+    }
 }
 
 /// A search pattern's text, interned so that [`Motion`] (and the args
@@ -240,9 +275,18 @@ impl Motion {
     /// Its class as an operator's target. `;` and `,` take the class of the
     /// find they repeat, which only the last find knows: alone they say
     /// [`RangeClass::Inclusive`], as `f` and `t` are. `%` with a count is
-    /// linewise.
+    /// linewise. A search with an `e` offset is inclusive and with a line
+    /// offset linewise; `n` and `N` take their offset once resolved.
     pub fn class(self) -> RangeClass {
         match self {
+            Self::Search(Search {
+                offset: SearchOffset::End(_),
+                ..
+            }) => RangeClass::Inclusive,
+            Self::Search(Search {
+                offset: SearchOffset::Lines(_),
+                ..
+            }) => RangeClass::Linewise,
             Self::Left
             | Self::Right
             | Self::WordForward

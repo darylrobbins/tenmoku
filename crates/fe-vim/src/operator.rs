@@ -238,10 +238,12 @@ pub(crate) fn motion_span(
         false => class,
     };
     match class {
+        // A search with a line offset lands at column 0, where a yank
+        // before the caret leaves it.
         RangeClass::Linewise => Span::Lines {
             rows: row(lo)..=row(hi),
             first_non_blank: false,
-            from: None,
+            from: matches!(motion, Motion::Search(_)).then_some(lo),
         },
         RangeClass::Inclusive => Span::Chars(lo..hi + grapheme_len(text, hi)),
         // `w` with an operator stops at the end of the last word it moved

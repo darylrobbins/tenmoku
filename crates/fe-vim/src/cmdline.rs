@@ -1,13 +1,23 @@
 //! The command line as a mode: `/`, `?` and `:` open it, the host owns and
 //! edits its text, and submitting it runs what it's for (a search, as a
 //! motion or an operator's target, or an ex command line, [`crate::Ex`]).
+//!
+//! A search line may end in an offset after the closing delimiter
+//! (`:help search-offset`, [`SearchOffset`]): `/foo/e+1`, `/foo/s-1` (or
+//! `b-1`), `/foo/+2`, `?foo?e`. `/<CR>` (and `?<CR>`) is the last pattern
+//! with the last offset, `//e` the last pattern with a new one, and `//`
+//! the last pattern with none. `n` and `N` keep the last offset; `*` and
+//! `#` drop it, as an ex address's pattern does, while `:s` and `:g` leave
+//! it. A `;` chained search (`/foo/;/bar`) or any other offset text fails
+//! with nothing changed. [`offset`] says where a search with an offset
+//! lands.
 
 use fe_buffer::TransactionId;
 use fe_command::{CommandError, Dispatched, Effect, Invocation, Source};
 
 use crate::{
-    CommandLineArgs, CommandLineKind, Mode, Motion, MoveArgs, OperateArgs, Pending, Step,
-    SubmitArgs, Target, VimKey, VimState, VimTarget,
+    CommandLineArgs, CommandLineKind, Mode, Motion, MoveArgs, OperateArgs, Pending, SearchOffset,
+    Step, SubmitArgs, Target, VimKey, VimState, VimTarget,
     args::{Search, SearchPattern},
     ex, insert, motion, operator,
     search::{self, Pattern},
@@ -23,6 +33,8 @@ pub(crate) struct CommandLine {
     pub(crate) from: Mode,
     pub(crate) prefill: String,
 }
+
+pub(crate) mod offset;
 
 type Handled = Result<Dispatched<TransactionId>, CommandError>;
 
@@ -95,10 +107,11 @@ pub(crate) fn submit(
 }
 
 /// A search's line: `vim.move` to the `count`th match (in a visual mode, the
-/// vim cursor), or `vim.operate` up to it, as [`check_search`] allows. An
-/// empty pattern is the last search's. A line that can't run (E35, an
-/// offset) changes nothing else and leaves a [`VimState::message`]. The
-/// line closing is at least a [`Effect::Notify`].
+/// vim cursor) moved by its offset, or `vim.operate` up to there, as
+/// [`check_search`] allows. An empty pattern is the last search's, with the
+/// last offset unless the line gives one. A line that can't run (E35, an
+/// offset fe-vim doesn't take) changes nothing else and leaves a
+/// [`VimState::message`]. The line closing is at least a [`Effect::Notify`].
 fn search(
     target: &mut VimTarget<'_>,
     actor: &fe_command::Actor,
@@ -106,13 +119,19 @@ fn search(
     text: &str,
 ) -> Handled {
     let forward = args.kind == CommandLineKind::SearchForward;
-    let (pattern, offset) = search::split_search(text, if forward { '/' } else { '?' });
-    if let Some(offset) = offset.filter(|offset| !offset.is_empty()) {
-        return failed(
-            target.state,
-            format!("search offsets not supported: {offset}"),
-        );
-    }
+    let (pattern, offset_text) = search::split_search(text, if forward { '/' } else { '?' });
+    let offset = match offset_text.map(offset::parse) {
+        None if pattern.is_empty() => target.registers.last_search_offset(),
+        None => SearchOffset::None,
+        Some(Some(offset)) => offset,
+        Some(None) => {
+            let text = offset_text.unwrap_or_default();
+            return failed(
+                target.state,
+                format!("search offsets not supported: {text}"),
+            );
+        }
+    };
     let pattern = match (pattern.is_empty(), target.registers.last_search()) {
         (false, _) => pattern,
         (true, Some((last, _))) => last.to_string(),
@@ -121,6 +140,8 @@ fn search(
     let motion = Motion::Search(Search {
         pattern: SearchPattern::new(&pattern),
         forward,
+        offset,
+        again: false,
     });
     let mut dispatched = match args.operator {
         Some(operator) => {
@@ -152,8 +173,8 @@ fn search(
 }
 
 /// Checks a search motion before it runs, wherever it comes from (`/`,
-/// `vim.move`, `vim.operate`, `.`): its pattern becomes the last search, as
-/// in nvim even if nothing matches, but not one fe-vim can't translate or
+/// `vim.move`, `vim.operate`, `.`): its pattern and offset become the last
+/// search, as in nvim even if nothing matches, but not one fe-vim can't translate or
 /// one that is invalid, which leave the last search and its direction. `Err` holds the error for [`VimState::message`]: the
 /// pattern's, `Interrupted` if the search passed [`search::set_time_limit`]'s
 /// limit (the cursor stays; the pattern is still the last search), or E486 if
@@ -175,6 +196,7 @@ pub(crate) fn check_search(
         Err(error) => return Err(error.to_string()),
     };
     target.registers.set_search(pattern, forward);
+    target.registers.set_search_offset(search.offset);
     target.state.highlight = Some(parsed.clone());
     let from = caret(target);
     // Past one match, a count goes round: any match will do.
@@ -196,9 +218,9 @@ fn caret(target: &mut VimTarget<'_>) -> usize {
 }
 
 /// `motion` as the search it runs: `n` and `N` are the last search, in its
-/// direction or against it, and `*` and `#` search for the keyword under or
-/// after the caret (or, with none on the rest of the row, the non-blank
-/// text there) as the last search. `Err` holds the message of one that
+/// direction or against it, with its offset, and `*` and `#` search for the
+/// keyword under or after the caret (or, with none on the rest of the row,
+/// the non-blank text there) as the last search, with no offset. `Err` holds the message of one that
 /// can't run (E35, E348). Any other motion comes back as it was. The flag
 /// is whether the search keeps the last search's direction (`n` and `N`).
 pub(crate) fn resolve(
@@ -211,8 +233,13 @@ pub(crate) fn resolve(
                 return Err("E35: No previous regular expression".to_string());
             };
             let forward = was_forward == (motion == Motion::SearchNext);
-            let pattern = SearchPattern::new(last);
-            return Ok((Motion::Search(Search { pattern, forward }), true));
+            let search = Search {
+                pattern: SearchPattern::new(last),
+                forward,
+                offset: target.registers.last_search_offset(),
+                again: true,
+            };
+            return Ok((Motion::Search(search), true));
         }
         Motion::SearchWordForward => true,
         Motion::SearchWordBackward => false,
@@ -225,6 +252,8 @@ pub(crate) fn resolve(
     let search = Search {
         pattern: SearchPattern::new(&pattern),
         forward,
+        offset: SearchOffset::None,
+        again: false,
     };
     Ok((Motion::SearchWord(search), false))
 }

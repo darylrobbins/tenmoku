@@ -3,7 +3,7 @@
 
 use fe_editor::commands::EditorHost;
 
-use crate::substitute::LastSubstitute;
+use crate::{SearchOffset, substitute::LastSubstitute};
 
 /// A register's text, and whether it holds whole lines (its text then ends
 /// in `\n`) or a block.
@@ -69,6 +69,8 @@ pub struct Registers {
     search: Option<Register>,
     /// Whether the last search went forward (`/`, not `?`).
     search_forward: bool,
+    /// The last search's offset, which `n` and `N` keep.
+    search_offset: SearchOffset,
     /// The last `:s`, which `:&` repeats; shared like the last search.
     pub(crate) substitute: LastSubstitute,
     /// `clipboard=unnamedplus`: registers named by no command are `+`.
@@ -219,10 +221,22 @@ impl Registers {
         Some((search.text.as_str(), self.search_forward))
     }
 
-    /// Makes `pattern` the last search, as `/` (`forward`) or `?` does.
+    /// The last search's offset (`/foo/e`), which `n` and `N` reuse.
+    pub fn last_search_offset(&self) -> SearchOffset {
+        self.search_offset
+    }
+
+    /// Makes `pattern` the last search, as `/` (`forward`) or `?` does. Its
+    /// offset stays, as `:s` and `:g` leave it.
     pub(crate) fn set_search(&mut self, pattern: &str, forward: bool) {
         self.search = Some(Register::new(pattern, false));
         self.search_forward = forward;
+    }
+
+    /// Makes `offset` the last search's, as `/` and `?` do (`*`, `#` and an
+    /// ex address's pattern drop it).
+    pub(crate) fn set_search_offset(&mut self, offset: SearchOffset) {
+        self.search_offset = offset;
     }
 
     /// Writes a recorded macro's `text` to `name`, `a-z` charwise, as

@@ -299,7 +299,9 @@ fn searched(target: &mut VimTarget<'_>, search: &LineSearch) -> Result<(String, 
             .pattern()
             .ok_or(ExError::NoPreviousSubstitute)?
             .to_string(),
-        LineSearch::LastSearch { .. } => last_search.ok_or(ExError::NoPreviousSearch)?,
+        LineSearch::LastSearch { .. } | LineSearch::Repeat { .. } => {
+            last_search.ok_or(ExError::NoPreviousSearch)?
+        }
         LineSearch::Pattern { pattern, .. } if pattern.is_empty() => {
             last_search.ok_or(ExError::NoPreviousSearch)?
         }

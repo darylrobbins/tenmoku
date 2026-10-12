@@ -770,6 +770,25 @@ pub(crate) fn first_in_row(
     Ok(found.map(|range| start + range.start..start + range.end))
 }
 
+/// Every match on `row` (offset ranges in the text), in order, for a caller
+/// that steps through rows under one `deadline`: `Err` if it ran out before
+/// the row was listed, never part of it.
+pub(crate) fn all_in_row(
+    text: &Text,
+    row: u32,
+    pattern: &Pattern,
+    deadline: &Deadline,
+) -> Result<Vec<Range<usize>>, Interrupted> {
+    let mut buf = String::new();
+    let (start, hay) = row_text(text, row, &mut buf);
+    let found = pattern.matches(hay, deadline);
+    let found = found
+        .map(|range| start + range.start..start + range.end)
+        .collect();
+    deadline.check()?;
+    Ok(found)
+}
+
 /// The matches on `row` that reach `window` (offsets in the text), in
 /// order, at most `cap` of them. They are the matches [`matches_in`] finds
 /// on the row, searched from its start: a non-empty one reaches the window

@@ -301,7 +301,7 @@ pub(crate) fn motion(
         Motion::BigWordBackward => cursor.words(Motion::WordBackward, count, true),
         Motion::BigWordEnd => cursor.words(Motion::WordEnd, count, true),
         // At a row's end, past its last character, the match is that
-        // character, as in nvim.
+        // character, as in nvim. The offset moves on from the match.
         Motion::Search(search) | Motion::SearchWord(search) => {
             let from = match args.motion {
                 Motion::SearchWord(_) => {
@@ -310,12 +310,10 @@ pub(crate) fn motion(
                 }
                 _ => cursor.offset(),
             };
-            let found = search::parsed(search.pattern)
-                .ok()
-                .and_then(|pattern| pattern.nth(cursor.text, from, search.forward, n));
-            match found {
-                Some(offset) => cursor.goto(offset),
-                None => return Err(goal),
+            let landed = search::parsed(search.pattern)
+                .is_ok_and(|pattern| cmdline::offset::land(cursor, &pattern, from, search, n));
+            if !landed {
+                return Err(goal);
             }
         }
         Motion::Jump(motion) => match jump::nth(cursor.text, cursor.offset(), motion, args.count) {
@@ -594,6 +592,8 @@ pub(crate) struct Cursor<'a> {
     pub(crate) line: Line,
     /// Moving for an operator: `l` may step onto the row's end.
     pub(crate) op: bool,
+    /// Moving a visual mode's cursor: a search may land on a row's end.
+    pub(crate) visual: bool,
     /// The row of the last word `w` moved over.
     pub(crate) word_row: u32,
     /// Whether `w` ran into the end of the text.
@@ -617,6 +617,7 @@ impl<'a> Cursor<'a> {
             ix: 0,
             line: Line::new(text, row),
             op: false,
+            visual: false,
             word_row: row,
             hit_end: false,
             stuck_at_start: false,

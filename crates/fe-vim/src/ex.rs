@@ -74,8 +74,8 @@ use fe_buffer::TransactionId;
 use fe_command::{Actor, CommandError, Dispatched, Effect};
 
 use crate::{
-    KeyError, Mode, Motion, MoveArgs, OperateArgs, Operator, Registers, Target, VimKey, VimTarget,
-    insert, marks,
+    KeyError, Mode, Motion, MoveArgs, OperateArgs, Operator, Registers, SearchOffset, Target,
+    VimKey, VimTarget, insert, marks,
     motion::{self, Cursor},
     operator,
     search::{self, Deadline, Pattern, PatternError},
@@ -146,6 +146,10 @@ pub enum LineSearch {
     /// end): the pattern becomes the last search, with its direction. An
     /// empty one is the last search's.
     Pattern { pattern: String, forward: bool },
+    /// `/` or `?` ending the line: the last search's pattern, which becomes
+    /// the last search with this direction as `//` does, but keeping the
+    /// last search's offset, as in nvim.
+    Repeat { forward: bool },
     /// `\/` or `\?`: the last search's pattern.
     LastSearch { forward: bool },
     /// `\&`: the last substitute's pattern, forward (E33 before one): it
@@ -676,10 +680,11 @@ impl<'a> Parser<'a> {
                 Some(delimiter @ ('/' | '?')) => {
                     let (pattern, after) = search::split_search(&rest[1..], delimiter);
                     self.at = self.line.len() - after.map_or(0, str::len);
-                    Part::Search(LineSearch::Pattern {
-                        pattern,
-                        forward: delimiter == '/',
-                    })
+                    let forward = delimiter == '/';
+                    match (pattern.is_empty(), after) {
+                        (true, None) => Part::Search(LineSearch::Repeat { forward }),
+                        _ => Part::Search(LineSearch::Pattern { pattern, forward }),
+                    }
                 }
                 _ if rest.starts_with("\\/") || rest.starts_with("\\?") => {
                     self.at += 2;
@@ -1031,7 +1036,9 @@ fn search_line(target: &mut VimTarget<'_>, search: &LineSearch, from: i64) -> Re
             Some(pattern) => (pattern.to_string(), true),
             None => return Err(ExError::NoPreviousSubstitute),
         },
-        LineSearch::LastSearch { forward } => (last_search()?, *forward),
+        LineSearch::LastSearch { forward } | LineSearch::Repeat { forward } => {
+            (last_search()?, *forward)
+        }
         LineSearch::Pattern { pattern, forward } if pattern.is_empty() => {
             (last_search()?, *forward)
         }
@@ -1039,15 +1046,17 @@ fn search_line(target: &mut VimTarget<'_>, search: &LineSearch, from: i64) -> Re
     };
     // As `/` and `?` do: the pattern becomes the last search even if
     // nothing matches or Vim rejects it, but not one fe-vim can't search.
-    let keep = matches!(
-        search,
-        LineSearch::Pattern { .. } | LineSearch::LastSubstitute
-    );
+    let keep = !matches!(search, LineSearch::LastSearch { .. });
+    // The address's own pattern drops the last search's offset (`//` too).
+    let drops_offset = matches!(search, LineSearch::Pattern { .. });
     let parsed = match Pattern::parse(&pattern) {
         Ok(parsed) => parsed,
         Err(error) => {
             if keep && matches!(error, PatternError::Invalid(_)) {
                 target.registers.set_search(&pattern, forward);
+                if drops_offset {
+                    target.registers.set_search_offset(SearchOffset::None);
+                }
                 target.state.highlight = None;
             }
             return Err(ExError::Pattern(error.to_string()));
@@ -1055,6 +1064,9 @@ fn search_line(target: &mut VimTarget<'_>, search: &LineSearch, from: i64) -> Re
     };
     if keep {
         target.registers.set_search(&pattern, forward);
+        if drops_offset {
+            target.registers.set_search_offset(SearchOffset::None);
+        }
     }
     target.state.highlight = Some(parsed.clone());
     let text = target.model.text();

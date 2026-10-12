@@ -193,7 +193,8 @@
 //! forwards the rest.
 //!
 //! Submitting a search runs `vim.move` with the motion `{"search":
-//! {"pattern": "…", "forward": true}}` ([`Motion::Search`]), or with an
+//! {"pattern": "…", "forward": true}}` ([`Motion::Search`], with an
+//! `offset` if it has one), or with an
 //! operator pending `vim.operate` with that target, with the carried count:
 //! the `count`th match after the caret (before it, for `?`), wrapping round
 //! the text, as [`search::Pattern::find`] finds them. In a visual mode it
@@ -201,16 +202,21 @@
 //! charwise, with `:help exclusive`'s rules (`d/^foo` from a row's first
 //! non-blank takes whole rows), and a delete writes register `1` even within
 //! a row, as after `%`. A match at a row's end, on a row with text, is its
-//! last character, as in nvim. The line's pattern ends at an unescaped `/`
-//! (`?` for `?`, where `\?` is a `?`) outside a collection (which `[`
-//! starts, or `\[` after `\V`); an empty one is the last search's. A
+//! last character, as in nvim (in a visual mode, the row's end). The line's
+//! pattern ends at an unescaped `/` (`?` for `?`, where `\?` is a `?`)
+//! outside a collection (which `[` starts, or `\[` after `\V`); an empty
+//! one is the last search's. What follows it is a search offset
+//! (`/foo/e+1`, `/foo/s-1`, `/foo/+2`; `:help search-offset`), which `n`
+//! and `N` keep: an `e` offset makes the target inclusive and a line offset
+//! linewise (`cmdline.rs` has the details). A
 //! search motion is checked however it comes (`/`, `vim.move` or
 //! `vim.operate` dispatched directly, `.`): like nvim, its pattern becomes
 //! the last search, with its direction, even when nothing matches; one fe-vim
 //! can't search (a translation error) or Vim rejects (an invalid pattern)
 //! isn't kept, and leaves the last search and its direction alone. A
 //! search that fails (E35 with no last pattern, E486 with no match, a
-//! pattern error, or a search offset) changes nothing else and leaves the
+//! pattern error, or an offset fe-vim doesn't take, a `;` chained search
+//! among them) changes nothing else and leaves the
 //! error in [`VimState::message`] for the host to show, until the next key.
 //! A count past the last match goes round, its work bounded by the text's
 //! matches, not the count.
@@ -565,8 +571,8 @@
 //! - A search motion's pattern is interned, so that the args holding it
 //!   stay `Copy`: each distinct pattern searched for (or deserialized) stays
 //!   in memory for the life of the process.
-//! - Search offsets (`/foo/e`), search history and 'incsearch' aren't
-//!   supported: a line with an offset fails, changing nothing.
+//! - `;` chained searches (`/foo/;/bar`), search history and 'incsearch'
+//!   aren't supported: a line chaining searches fails, changing nothing.
 //! - `'<` and `'>` keep a byte column on a row anchored at its start, as
 //!   nvim's marks do: rows put in or taken out above move them, edits
 //!   within their row don't. nvim also moves marks on rows that a change
@@ -746,8 +752,8 @@ mod visual;
 pub use args::{
     CommandLineArgs, CommandLineKind, CountArgs, InsertArgs, InsertAt, JumpChars, JumpMotion,
     MarkArgs, MarkMotion, Motion, MoveArgs, OperateArgs, Operator, PlayArgs, PutArgs, RangeClass,
-    RecordArgs, ReplaceCharArgs, Search, SearchPattern, SelectArgs, SubmitArgs, SwapArgs, Target,
-    TextObject, VisualArgs, VisualKind,
+    RecordArgs, ReplaceCharArgs, Search, SearchOffset, SearchPattern, SelectArgs, SubmitArgs,
+    SwapArgs, Target, TextObject, VisualArgs, VisualKind,
 };
 pub use commands::{VimCommands, VimTarget, registry};
 pub use ex::{Address, Base, Ex, ExCommand, ExError, HostCommand, LineSearch, Part};
