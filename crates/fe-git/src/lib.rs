@@ -1,13 +1,19 @@
-//! Git status and HEAD contents for a project, through gix (gitoxide).
+//! Git status and HEAD contents for a project, through gix (gitoxide); writes
+//! go through the `git` executable.
 //!
 //! [`Repo`] answers the two questions the Changes panel and the editor's
 //! changed-row highlighting ask of a repository: which files differ from HEAD
 //! ([`Repo::status`]) and what a file's text is at HEAD ([`Repo::head_text`]).
 //! Every path in and out is absolute. `Repo` is `Send + Sync`, so the workbench
-//! can run it on a background thread. Nothing here writes to the repository.
+//! can run it on a background thread. Reads use gix. Writes ([`Repo::stage`],
+//! [`Repo::unstage`], [`Repo::discard`], [`Repo::set_index_text`]) run `git`,
+//! because gix doesn't apply clean filters or autocrlf when staging; they block,
+//! so callers run them off the UI thread.
 
+mod cli;
 mod index;
 mod refs;
+mod stage;
 
 pub use index::SplitStatus;
 pub use refs::{Branch, Head};
@@ -27,6 +33,21 @@ const BINARY_PROBE_LEN: usize = 8000;
 pub enum GitError {
     #[error("git: {0}")]
     Gix(String),
+    /// No `git` executable on `PATH`.
+    #[error("git executable not found on PATH")]
+    GitMissing,
+    /// `git` ran and exited non-zero (`code` is `None` when a signal killed it).
+    #[error("git {} failed ({code:?}): {stderr}", args.join(" "))]
+    Command {
+        args: Vec<String>,
+        code: Option<i32>,
+        stderr: String,
+    },
+    /// A path that isn't inside the working tree.
+    #[error("{} is outside the working tree", .0.display())]
+    OutsideWorktree(PathBuf),
+    #[error("git: {0}")]
+    Io(String),
 }
 
 impl GitError {
