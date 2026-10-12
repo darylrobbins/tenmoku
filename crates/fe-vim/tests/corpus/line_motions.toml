@@ -1,0 +1,870 @@
+# Line and screen motion cases for fe-vim's oracle: ge gE over punctuation,
+# across and onto empty rows and at the text's start; _ + - with counts and
+# at the ends; | past a row's end and over a tab and a wide char; H M L in a
+# window 10 rows high (window_rows) on a 30-row buffer, with counts, after
+# <C-e>, dL, yH; gj gk and dgj on rows shorter than the window; each in
+# visual mode, and . after d+. A key that fails is a case's last key.
+# Hand-written (by a script): name, buffer (rows joined with \n, no trailing
+# newline), cursor = [row, byte column], keys in vim notation and
+# window_rows. What nvim does with each is recorded in
+# line_motions.expected.json by the ignored `record_corpus_with_neovim`
+# test; edit a case, then re-record.
+
+[[case]]
+name = "ge_punct"
+buffer = "foo.bar baz"
+cursor = [0, 8]
+keys = "ge"
+
+[[case]]
+name = "ge_count"
+buffer = "one two three four"
+cursor = [0, 14]
+keys = "2ge"
+
+[[case]]
+name = "gE_punct"
+buffer = "foo.bar baz.qux end"
+cursor = [0, 16]
+keys = "gE"
+
+[[case]]
+name = "gE_count_rows"
+buffer = "a.b c.d\ne.f"
+cursor = [1, 2]
+keys = "2gE"
+
+[[case]]
+name = "ge_across_rows"
+buffer = "abc\n  def"
+cursor = [1, 2]
+keys = "ge"
+
+[[case]]
+name = "ge_onto_empty_row"
+buffer = "abc\n\ndef"
+cursor = [2, 0]
+keys = "ge"
+
+[[case]]
+name = "ge_from_empty_row"
+buffer = "abc\n\ndef"
+cursor = [1, 0]
+keys = "ge"
+
+[[case]]
+name = "ge_over_blank_row"
+buffer = "abc\n   \ndef"
+cursor = [2, 0]
+keys = "ge"
+
+[[case]]
+name = "ge_from_blank"
+buffer = "foo   bar"
+cursor = [0, 4]
+keys = "ge"
+
+[[case]]
+name = "ge_mid_first_word"
+buffer = "foobar baz"
+cursor = [0, 3]
+keys = "ge"
+
+[[case]]
+name = "ge_to_start_blank"
+buffer = "  abc"
+cursor = [0, 2]
+keys = "ge"
+
+[[case]]
+name = "ge_count_past_start"
+buffer = "ab cd ef"
+cursor = [0, 6]
+keys = "9ge"
+
+[[case]]
+name = "ge_at_start_fails"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "ge"
+
+[[case]]
+name = "ge_keeps_going_with_x"
+buffer = "ab cd ef"
+cursor = [0, 6]
+keys = "gex"
+
+[[case]]
+name = "dge"
+buffer = "foo bar baz"
+cursor = [0, 8]
+keys = "dge"
+
+[[case]]
+name = "dgE_rows"
+buffer = "foo.bar\nbaz"
+cursor = [1, 1]
+keys = "dgE"
+
+[[case]]
+name = "v_ge"
+buffer = "foo bar baz"
+cursor = [0, 8]
+keys = "vge"
+
+[[case]]
+name = "v_gE"
+buffer = "a.b c.d e"
+cursor = [0, 8]
+keys = "v2gE"
+
+[[case]]
+name = "underscore"
+buffer = "  a\n  b\n    c"
+cursor = [0, 0]
+keys = "_"
+
+[[case]]
+name = "underscore_count"
+buffer = "  a\n  b\n    c"
+cursor = [0, 0]
+keys = "3_"
+
+[[case]]
+name = "underscore_count_last_row_fails"
+buffer = "  a\n  b\n    c"
+cursor = [2, 0]
+keys = "2_"
+
+[[case]]
+name = "plus"
+buffer = "a\n  b"
+cursor = [0, 0]
+keys = "+"
+
+[[case]]
+name = "plus_count_clamps"
+buffer = "a\n  b\n\tc"
+cursor = [0, 0]
+keys = "5+"
+
+[[case]]
+name = "plus_blank_row"
+buffer = "a\n   \nb"
+cursor = [0, 0]
+keys = "+"
+
+[[case]]
+name = "plus_last_row_fails"
+buffer = "a\n  b"
+cursor = [1, 2]
+keys = "+"
+
+[[case]]
+name = "minus"
+buffer = "  a\nb"
+cursor = [1, 0]
+keys = "-"
+
+[[case]]
+name = "minus_count_clamps"
+buffer = "  a\nb\nc"
+cursor = [2, 0]
+keys = "9-"
+
+[[case]]
+name = "minus_first_row_fails"
+buffer = "  a\nb"
+cursor = [0, 2]
+keys = "-"
+
+[[case]]
+name = "d_plus"
+buffer = "a\nb\nc\nd"
+cursor = [0, 0]
+keys = "d+"
+
+[[case]]
+name = "d_plus_dot"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = "d+."
+
+[[case]]
+name = "y_plus"
+buffer = "  a\n b\nc"
+cursor = [0, 2]
+keys = "y+"
+
+[[case]]
+name = "d2_minus"
+buffer = "a\nb\nc\nd"
+cursor = [3, 0]
+keys = "d2-"
+
+[[case]]
+name = "v_plus"
+buffer = "a\n  b\nc"
+cursor = [0, 0]
+keys = "v+"
+
+[[case]]
+name = "V_minus_count"
+buffer = "a\n  b\nc"
+cursor = [2, 0]
+keys = "V2-"
+
+[[case]]
+name = "bar"
+buffer = "abcdef"
+cursor = [0, 0]
+keys = "4|"
+
+[[case]]
+name = "bar_default"
+buffer = "abcdef"
+cursor = [0, 3]
+keys = "|"
+
+[[case]]
+name = "bar_past_end"
+buffer = "abc"
+cursor = [0, 0]
+keys = "99|"
+
+[[case]]
+name = "bar_goal_kept"
+buffer = "abc\nabcdefghijklmnopq"
+cursor = [0, 0]
+keys = "16|j"
+
+[[case]]
+name = "bar_tab"
+buffer = "\tabc"
+cursor = [0, 3]
+keys = "3|"
+
+[[case]]
+name = "bar_after_tab"
+buffer = "\tabc"
+cursor = [0, 0]
+keys = "6|"
+
+[[case]]
+name = "bar_wide"
+buffer = "a中b"
+cursor = [0, 0]
+keys = "3|"
+
+[[case]]
+name = "bar_wide_after"
+buffer = "a中b"
+cursor = [0, 0]
+keys = "4|"
+
+[[case]]
+name = "d_bar"
+buffer = "abcdef"
+cursor = [0, 5]
+keys = "d2|"
+
+[[case]]
+name = "d_bar_forward"
+buffer = "abcdef"
+cursor = [0, 1]
+keys = "d5|"
+
+[[case]]
+name = "v_bar"
+buffer = "abcdef"
+cursor = [0, 0]
+keys = "v4|"
+
+[[case]]
+name = "v_bar_past_end"
+buffer = "abc"
+cursor = [0, 0]
+keys = "v99|"
+
+[[case]]
+name = "H"
+buffer = "row 0\n  row 1 word\n    row 2 word word\nrow 3 word word word\n  row 4\n    row 5 word\nrow 6 word word\n  row 7 word word word\n    row 8\nrow 9 word\n  row 10 word word\n    row 11 word word word\nrow 12\n  row 13 word\n    row 14 word word\nrow 15 word word word\n  row 16\n    row 17 word\nrow 18 word word\n  row 19 word word word\n    row 20\nrow 21 word\n  row 22 word word\n    row 23 word word word\nrow 24\n  row 25 word\n    row 26 word word\nrow 27 word word word\n  row 28\n    row 29 word"
+cursor = [5, 3]
+keys = "H"
+window_rows = 10
+
+[[case]]
+name = "L"
+buffer = "row 0\n  row 1 word\n    row 2 word word\nrow 3 word word word\n  row 4\n    row 5 word\nrow 6 word word\n  row 7 word word word\n    row 8\nrow 9 word\n  row 10 word word\n    row 11 word word word\nrow 12\n  row 13 word\n    row 14 word word\nrow 15 word word word\n  row 16\n    row 17 word\nrow 18 word word\n  row 19 word word word\n    row 20\nrow 21 word\n  row 22 word word\n    row 23 word word word\nrow 24\n  row 25 word\n    row 26 word word\nrow 27 word word word\n  row 28\n    row 29 word"
+cursor = [5, 3]
+keys = "L"
+window_rows = 10
+
+[[case]]
+name = "M"
+buffer = "row 0\n  row 1 word\n    row 2 word word\nrow 3 word word word\n  row 4\n    row 5 word\nrow 6 word word\n  row 7 word word word\n    row 8\nrow 9 word\n  row 10 word word\n    row 11 word word word\nrow 12\n  row 13 word\n    row 14 word word\nrow 15 word word word\n  row 16\n    row 17 word\nrow 18 word word\n  row 19 word word word\n    row 20\nrow 21 word\n  row 22 word word\n    row 23 word word word\nrow 24\n  row 25 word\n    row 26 word word\nrow 27 word word word\n  row 28\n    row 29 word"
+cursor = [5, 3]
+keys = "M"
+window_rows = 10
+
+[[case]]
+name = "H_count"
+buffer = "row 0\n  row 1 word\n    row 2 word word\nrow 3 word word word\n  row 4\n    row 5 word\nrow 6 word word\n  row 7 word word word\n    row 8\nrow 9 word\n  row 10 word word\n    row 11 word word word\nrow 12\n  row 13 word\n    row 14 word word\nrow 15 word word word\n  row 16\n    row 17 word\nrow 18 word word\n  row 19 word word word\n    row 20\nrow 21 word\n  row 22 word word\n    row 23 word word word\nrow 24\n  row 25 word\n    row 26 word word\nrow 27 word word word\n  row 28\n    row 29 word"
+cursor = [5, 0]
+keys = "3H"
+window_rows = 10
+
+[[case]]
+name = "L_count"
+buffer = "row 0\n  row 1 word\n    row 2 word word\nrow 3 word word word\n  row 4\n    row 5 word\nrow 6 word word\n  row 7 word word word\n    row 8\nrow 9 word\n  row 10 word word\n    row 11 word word word\nrow 12\n  row 13 word\n    row 14 word word\nrow 15 word word word\n  row 16\n    row 17 word\nrow 18 word word\n  row 19 word word word\n    row 20\nrow 21 word\n  row 22 word word\n    row 23 word word word\nrow 24\n  row 25 word\n    row 26 word word\nrow 27 word word word\n  row 28\n    row 29 word"
+cursor = [5, 0]
+keys = "3L"
+window_rows = 10
+
+[[case]]
+name = "H_count_past_view"
+buffer = "row 0\n  row 1 word\n    row 2 word word\nrow 3 word word word\n  row 4\n    row 5 word\nrow 6 word word\n  row 7 word word word\n    row 8\nrow 9 word\n  row 10 word word\n    row 11 word word word\nrow 12\n  row 13 word\n    row 14 word word\nrow 15 word word word\n  row 16\n    row 17 word\nrow 18 word word\n  row 19 word word word\n    row 20\nrow 21 word\n  row 22 word word\n    row 23 word word word\nrow 24\n  row 25 word\n    row 26 word word\nrow 27 word word word\n  row 28\n    row 29 word"
+cursor = [5, 0]
+keys = "20H"
+window_rows = 10
+
+[[case]]
+name = "L_count_past_view"
+buffer = "row 0\n  row 1 word\n    row 2 word word\nrow 3 word word word\n  row 4\n    row 5 word\nrow 6 word word\n  row 7 word word word\n    row 8\nrow 9 word\n  row 10 word word\n    row 11 word word word\nrow 12\n  row 13 word\n    row 14 word word\nrow 15 word word word\n  row 16\n    row 17 word\nrow 18 word word\n  row 19 word word word\n    row 20\nrow 21 word\n  row 22 word word\n    row 23 word word word\nrow 24\n  row 25 word\n    row 26 word word\nrow 27 word word word\n  row 28\n    row 29 word"
+cursor = [5, 0]
+keys = "20L"
+window_rows = 10
+
+[[case]]
+name = "H_after_ctrl_e"
+buffer = "row 0\n  row 1 word\n    row 2 word word\nrow 3 word word word\n  row 4\n    row 5 word\nrow 6 word word\n  row 7 word word word\n    row 8\nrow 9 word\n  row 10 word word\n    row 11 word word word\nrow 12\n  row 13 word\n    row 14 word word\nrow 15 word word word\n  row 16\n    row 17 word\nrow 18 word word\n  row 19 word word word\n    row 20\nrow 21 word\n  row 22 word word\n    row 23 word word word\nrow 24\n  row 25 word\n    row 26 word word\nrow 27 word word word\n  row 28\n    row 29 word"
+cursor = [5, 0]
+keys = "<C-e><C-e><C-e>H"
+window_rows = 10
+
+[[case]]
+name = "M_after_ctrl_e"
+buffer = "row 0\n  row 1 word\n    row 2 word word\nrow 3 word word word\n  row 4\n    row 5 word\nrow 6 word word\n  row 7 word word word\n    row 8\nrow 9 word\n  row 10 word word\n    row 11 word word word\nrow 12\n  row 13 word\n    row 14 word word\nrow 15 word word word\n  row 16\n    row 17 word\nrow 18 word word\n  row 19 word word word\n    row 20\nrow 21 word\n  row 22 word word\n    row 23 word word word\nrow 24\n  row 25 word\n    row 26 word word\nrow 27 word word word\n  row 28\n    row 29 word"
+cursor = [5, 0]
+keys = "<C-e><C-e><C-e>M"
+window_rows = 10
+
+[[case]]
+name = "L_after_ctrl_e"
+buffer = "row 0\n  row 1 word\n    row 2 word word\nrow 3 word word word\n  row 4\n    row 5 word\nrow 6 word word\n  row 7 word word word\n    row 8\nrow 9 word\n  row 10 word word\n    row 11 word word word\nrow 12\n  row 13 word\n    row 14 word word\nrow 15 word word word\n  row 16\n    row 17 word\nrow 18 word word\n  row 19 word word word\n    row 20\nrow 21 word\n  row 22 word word\n    row 23 word word word\nrow 24\n  row 25 word\n    row 26 word word\nrow 27 word word word\n  row 28\n    row 29 word"
+cursor = [5, 0]
+keys = "<C-e><C-e><C-e>L"
+window_rows = 10
+
+[[case]]
+name = "H_near_end"
+buffer = "row 0\n  row 1 word\n    row 2 word word\nrow 3 word word word\n  row 4\n    row 5 word\nrow 6 word word\n  row 7 word word word\n    row 8\nrow 9 word\n  row 10 word word\n    row 11 word word word\nrow 12\n  row 13 word\n    row 14 word word\nrow 15 word word word\n  row 16\n    row 17 word\nrow 18 word word\n  row 19 word word word\n    row 20\nrow 21 word\n  row 22 word word\n    row 23 word word word\nrow 24\n  row 25 word\n    row 26 word word\nrow 27 word word word\n  row 28\n    row 29 word"
+cursor = [29, 0]
+keys = "H"
+window_rows = 10
+
+[[case]]
+name = "M_near_end"
+buffer = "row 0\n  row 1 word\n    row 2 word word\nrow 3 word word word\n  row 4\n    row 5 word\nrow 6 word word\n  row 7 word word word\n    row 8\nrow 9 word\n  row 10 word word\n    row 11 word word word\nrow 12\n  row 13 word\n    row 14 word word\nrow 15 word word word\n  row 16\n    row 17 word\nrow 18 word word\n  row 19 word word word\n    row 20\nrow 21 word\n  row 22 word word\n    row 23 word word word\nrow 24\n  row 25 word\n    row 26 word word\nrow 27 word word word\n  row 28\n    row 29 word"
+cursor = [29, 0]
+keys = "M"
+window_rows = 10
+
+[[case]]
+name = "L_keeps_column"
+buffer = "row 0\n  row 1 word\n    row 2 word word\nrow 3 word word word\n  row 4\n    row 5 word\nrow 6 word word\n  row 7 word word word\n    row 8\nrow 9 word\n  row 10 word word\n    row 11 word word word\nrow 12\n  row 13 word\n    row 14 word word\nrow 15 word word word\n  row 16\n    row 17 word\nrow 18 word word\n  row 19 word word word\n    row 20\nrow 21 word\n  row 22 word word\n    row 23 word word word\nrow 24\n  row 25 word\n    row 26 word word\nrow 27 word word word\n  row 28\n    row 29 word"
+cursor = [0, 5]
+keys = "L"
+window_rows = 10
+
+[[case]]
+name = "L_after_dollar"
+buffer = "row 0\n  row 1 word\n    row 2 word word\nrow 3 word word word\n  row 4\n    row 5 word\nrow 6 word word\n  row 7 word word word\n    row 8\nrow 9 word\n  row 10 word word\n    row 11 word word word\nrow 12\n  row 13 word\n    row 14 word word\nrow 15 word word word\n  row 16\n    row 17 word\nrow 18 word word\n  row 19 word word word\n    row 20\nrow 21 word\n  row 22 word word\n    row 23 word word word\nrow 24\n  row 25 word\n    row 26 word word\nrow 27 word word word\n  row 28\n    row 29 word"
+cursor = [3, 0]
+keys = "$L"
+window_rows = 10
+
+[[case]]
+name = "H_jump_mark"
+buffer = "row 0\n  row 1 word\n    row 2 word word\nrow 3 word word word\n  row 4\n    row 5 word\nrow 6 word word\n  row 7 word word word\n    row 8\nrow 9 word\n  row 10 word word\n    row 11 word word word\nrow 12\n  row 13 word\n    row 14 word word\nrow 15 word word word\n  row 16\n    row 17 word\nrow 18 word word\n  row 19 word word word\n    row 20\nrow 21 word\n  row 22 word word\n    row 23 word word word\nrow 24\n  row 25 word\n    row 26 word word\nrow 27 word word word\n  row 28\n    row 29 word"
+cursor = [7, 2]
+keys = "H``"
+window_rows = 10
+
+[[case]]
+name = "L_jump_mark_staying"
+buffer = "row 0\n  row 1 word\n    row 2 word word\nrow 3 word word word\n  row 4\n    row 5 word\nrow 6 word word\n  row 7 word word word\n    row 8\nrow 9 word\n  row 10 word word\n    row 11 word word word\nrow 12\n  row 13 word\n    row 14 word word\nrow 15 word word word\n  row 16\n    row 17 word\nrow 18 word word\n  row 19 word word word\n    row 20\nrow 21 word\n  row 22 word word\n    row 23 word word word\nrow 24\n  row 25 word\n    row 26 word word\nrow 27 word word word\n  row 28\n    row 29 word"
+cursor = [9, 2]
+keys = "Lx``"
+window_rows = 10
+
+[[case]]
+name = "dL"
+buffer = "row 0\n  row 1 word\n    row 2 word word\nrow 3 word word word\n  row 4\n    row 5 word\nrow 6 word word\n  row 7 word word word\n    row 8\nrow 9 word\n  row 10 word word\n    row 11 word word word\nrow 12\n  row 13 word\n    row 14 word word\nrow 15 word word word\n  row 16\n    row 17 word\nrow 18 word word\n  row 19 word word word\n    row 20\nrow 21 word\n  row 22 word word\n    row 23 word word word\nrow 24\n  row 25 word\n    row 26 word word\nrow 27 word word word\n  row 28\n    row 29 word"
+cursor = [2, 4]
+keys = "dL"
+window_rows = 10
+
+[[case]]
+name = "dH"
+buffer = "row 0\n  row 1 word\n    row 2 word word\nrow 3 word word word\n  row 4\n    row 5 word\nrow 6 word word\n  row 7 word word word\n    row 8\nrow 9 word\n  row 10 word word\n    row 11 word word word\nrow 12\n  row 13 word\n    row 14 word word\nrow 15 word word word\n  row 16\n    row 17 word\nrow 18 word word\n  row 19 word word word\n    row 20\nrow 21 word\n  row 22 word word\n    row 23 word word word\nrow 24\n  row 25 word\n    row 26 word word\nrow 27 word word word\n  row 28\n    row 29 word"
+cursor = [6, 1]
+keys = "dH"
+window_rows = 10
+
+[[case]]
+name = "yH"
+buffer = "row 0\n  row 1 word\n    row 2 word word\nrow 3 word word word\n  row 4\n    row 5 word\nrow 6 word word\n  row 7 word word word\n    row 8\nrow 9 word\n  row 10 word word\n    row 11 word word word\nrow 12\n  row 13 word\n    row 14 word word\nrow 15 word word word\n  row 16\n    row 17 word\nrow 18 word word\n  row 19 word word word\n    row 20\nrow 21 word\n  row 22 word word\n    row 23 word word word\nrow 24\n  row 25 word\n    row 26 word word\nrow 27 word word word\n  row 28\n    row 29 word"
+cursor = [7, 2]
+keys = "yH"
+window_rows = 10
+
+[[case]]
+name = "d_M"
+buffer = "row 0\n  row 1 word\n    row 2 word word\nrow 3 word word word\n  row 4\n    row 5 word\nrow 6 word word\n  row 7 word word word\n    row 8\nrow 9 word\n  row 10 word word\n    row 11 word word word\nrow 12\n  row 13 word\n    row 14 word word\nrow 15 word word word\n  row 16\n    row 17 word\nrow 18 word word\n  row 19 word word word\n    row 20\nrow 21 word\n  row 22 word word\n    row 23 word word word\nrow 24\n  row 25 word\n    row 26 word word\nrow 27 word word word\n  row 28\n    row 29 word"
+cursor = [0, 0]
+keys = "dM"
+window_rows = 10
+
+[[case]]
+name = "M_short_buffer"
+buffer = "row 0 text\n  row 1 text\n    row 2 text\nrow 3 text\n  row 4 text"
+cursor = [0, 0]
+keys = "M"
+window_rows = 10
+
+[[case]]
+name = "L_short_buffer"
+buffer = "row 0 text\n  row 1 text\n    row 2 text\nrow 3 text\n  row 4 text"
+cursor = [0, 0]
+keys = "L"
+window_rows = 10
+
+[[case]]
+name = "v_L"
+buffer = "row 0\n  row 1 word\n    row 2 word word\nrow 3 word word word\n  row 4\n    row 5 word\nrow 6 word word\n  row 7 word word word\n    row 8\nrow 9 word\n  row 10 word word\n    row 11 word word word\nrow 12\n  row 13 word\n    row 14 word word\nrow 15 word word word\n  row 16\n    row 17 word\nrow 18 word word\n  row 19 word word word\n    row 20\nrow 21 word\n  row 22 word word\n    row 23 word word word\nrow 24\n  row 25 word\n    row 26 word word\nrow 27 word word word\n  row 28\n    row 29 word"
+cursor = [2, 3]
+keys = "vL"
+window_rows = 10
+
+[[case]]
+name = "v_H_dollar"
+buffer = "row 0\n  row 1 word\n    row 2 word word\nrow 3 word word word\n  row 4\n    row 5 word\nrow 6 word word\n  row 7 word word word\n    row 8\nrow 9 word\n  row 10 word word\n    row 11 word word word\nrow 12\n  row 13 word\n    row 14 word word\nrow 15 word word word\n  row 16\n    row 17 word\nrow 18 word word\n  row 19 word word word\n    row 20\nrow 21 word\n  row 22 word word\n    row 23 word word word\nrow 24\n  row 25 word\n    row 26 word word\nrow 27 word word word\n  row 28\n    row 29 word"
+cursor = [8, 0]
+keys = "v$H"
+window_rows = 10
+
+[[case]]
+name = "V_M"
+buffer = "row 0\n  row 1 word\n    row 2 word word\nrow 3 word word word\n  row 4\n    row 5 word\nrow 6 word word\n  row 7 word word word\n    row 8\nrow 9 word\n  row 10 word word\n    row 11 word word word\nrow 12\n  row 13 word\n    row 14 word word\nrow 15 word word word\n  row 16\n    row 17 word\nrow 18 word word\n  row 19 word word word\n    row 20\nrow 21 word\n  row 22 word word\n    row 23 word word word\nrow 24\n  row 25 word\n    row 26 word word\nrow 27 word word word\n  row 28\n    row 29 word"
+cursor = [8, 0]
+keys = "VM"
+window_rows = 10
+
+[[case]]
+name = "dL_dot"
+buffer = "row 0\n  row 1 word\n    row 2 word word\nrow 3 word word word\n  row 4\n    row 5 word\nrow 6 word word\n  row 7 word word word\n    row 8\nrow 9 word\n  row 10 word word\n    row 11 word word word\nrow 12\n  row 13 word\n    row 14 word word\nrow 15 word word word\n  row 16\n    row 17 word\nrow 18 word word\n  row 19 word word word\n    row 20\nrow 21 word\n  row 22 word word\n    row 23 word word word\nrow 24\n  row 25 word\n    row 26 word word\nrow 27 word word word\n  row 28\n    row 29 word"
+cursor = [3, 0]
+keys = "2dL."
+window_rows = 10
+
+[[case]]
+name = "gj"
+buffer = "abc\nabcdef"
+cursor = [0, 2]
+keys = "gj"
+
+[[case]]
+name = "gk"
+buffer = "abc\nabcdef"
+cursor = [1, 4]
+keys = "gk"
+
+[[case]]
+name = "gj_count"
+buffer = "a\nb\nc\nd"
+cursor = [0, 0]
+keys = "3gj"
+
+[[case]]
+name = "gj_short_row"
+buffer = "abcdef\nab"
+cursor = [0, 5]
+keys = "gj"
+
+[[case]]
+name = "gj_keeps_goal"
+buffer = "abcdef\nab\nabcdef"
+cursor = [0, 5]
+keys = "gjgj"
+
+[[case]]
+name = "gj_dollar"
+buffer = "abcdef\nab\nabcdefgh"
+cursor = [0, 0]
+keys = "$gjgj"
+
+[[case]]
+name = "gj_tab"
+buffer = "\tabc\nabcdefgh"
+cursor = [0, 1]
+keys = "gj"
+
+[[case]]
+name = "gk_wide"
+buffer = "abcdef\na中b"
+cursor = [0, 2]
+keys = "jgkgj"
+
+[[case]]
+name = "gj_last_row_fails"
+buffer = "abc\ndef"
+cursor = [1, 1]
+keys = "gj"
+
+[[case]]
+name = "gk_first_row_fails"
+buffer = "abc\ndef"
+cursor = [0, 1]
+keys = "gk"
+
+[[case]]
+name = "gj_count_past_end_fails"
+buffer = "a\nb\nc"
+cursor = [0, 0]
+keys = "5gj"
+
+[[case]]
+name = "gk_count_past_start_fails"
+buffer = "a\nb\nc"
+cursor = [2, 0]
+keys = "5gk"
+
+[[case]]
+name = "dgj"
+buffer = "abc\ndef\nghi"
+cursor = [0, 1]
+keys = "dgj"
+
+[[case]]
+name = "dgj_from_col0"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "dgj"
+
+[[case]]
+name = "dgk"
+buffer = "abc\ndef\nghi"
+cursor = [2, 2]
+keys = "dgk"
+
+[[case]]
+name = "ygj"
+buffer = "abc\ndef\nghi"
+cursor = [0, 1]
+keys = "ygj"
+
+[[case]]
+name = "dgj_dot"
+buffer = "abc\ndef\nghi\njkl\nmno"
+cursor = [0, 1]
+keys = "dgj."
+
+[[case]]
+name = "v_gj"
+buffer = "abc\ndef\nghi"
+cursor = [0, 1]
+keys = "vgj"
+
+[[case]]
+name = "v_gk"
+buffer = "abc\ndef\nghi"
+cursor = [2, 1]
+keys = "vgk"
+
+[[case]]
+name = "v_gj_past_row_end"
+buffer = "abcdef\nab"
+cursor = [0, 4]
+keys = "vgj"
+
+[[case]]
+name = "v_gj_count_past_end"
+buffer = "a\nb\nc"
+cursor = [0, 0]
+keys = "v5gj"
+
+[[case]]
+name = "V_gj"
+buffer = "abc\ndef\nghi"
+cursor = [0, 1]
+keys = "Vgj"
+
+# Review round 1: counted ge gE stuck on an empty first row (the operator
+# cancels, the caret goes there), d9gj y9gj c9gj past the ends, y- landing
+# on the first non-blank, a visual cursor past the row's end, and _ - M in
+# charwise visual mode.
+
+[[case]]
+name = "d3ge_empty_first_row"
+buffer = "\nabc def\nxyz"
+cursor = [1, 4]
+keys = "d3ge"
+
+[[case]]
+name = "d3gE_empty_first_row"
+buffer = "\nabc def\nxyz"
+cursor = [1, 4]
+keys = "d3gE"
+
+[[case]]
+name = "y3ge_empty_first_row"
+buffer = "\nabc def\nxyz"
+cursor = [1, 4]
+keys = "y3ge"
+
+[[case]]
+name = "c3ge_empty_first_row"
+buffer = "\nabc def\nxyz"
+cursor = [1, 4]
+keys = "c3ge"
+
+[[case]]
+name = "3ge_empty_first_row"
+buffer = "\nabc def\nxyz"
+cursor = [1, 4]
+keys = "3ge"
+
+[[case]]
+name = "d2ge_from_one_char_word"
+buffer = "a bc"
+cursor = [0, 3]
+keys = "d2ge"
+
+[[case]]
+name = "d9ge_runs_into_start"
+buffer = "abc def\nxyz"
+cursor = [1, 1]
+keys = "d9ge"
+
+[[case]]
+name = "d2gE_onto_empty_first_row"
+buffer = "\nab.c d\nxyz"
+cursor = [1, 5]
+keys = "d2gE"
+
+[[case]]
+name = "d9gj_past_end"
+buffer = "abc\ndef\nghi"
+cursor = [0, 1]
+keys = "d9gj"
+
+[[case]]
+name = "y9gj_past_end"
+buffer = "abc\ndef\nghi"
+cursor = [0, 1]
+keys = "y9gj"
+
+[[case]]
+name = "c9gj_past_end"
+buffer = "abc\ndef\nghi"
+cursor = [0, 1]
+keys = "c9gj"
+
+[[case]]
+name = "d9gk_past_start"
+buffer = "abc\ndef\nghi"
+cursor = [2, 1]
+keys = "d9gk"
+
+[[case]]
+name = "y9gk_past_start"
+buffer = "abc\ndef\nghi"
+cursor = [2, 1]
+keys = "y9gk"
+
+[[case]]
+name = "c9gk_past_start"
+buffer = "abc\ndef\nghi"
+cursor = [2, 1]
+keys = "c9gk"
+
+[[case]]
+name = "d9gj_goal_kept"
+buffer = "abcdef\nab\nabcdef"
+cursor = [0, 4]
+keys = "d9gj"
+
+[[case]]
+name = "y_minus"
+buffer = "abc\n  def\nghi"
+cursor = [2, 1]
+keys = "y-"
+
+[[case]]
+name = "y2_minus"
+buffer = "  abc\n  def\nghi"
+cursor = [2, 1]
+keys = "y2-"
+
+[[case]]
+name = "y9_minus_clamps"
+buffer = "\tabc\n  def\nghi"
+cursor = [2, 2]
+keys = "y9-"
+
+[[case]]
+name = "y_minus_then_j"
+buffer = "abc\n  def\nghijkl\nmnopqr"
+cursor = [2, 5]
+keys = "y-jj"
+
+[[case]]
+name = "v_dollar_ge"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "v$ge"
+
+[[case]]
+name = "v_dollar_gE"
+buffer = "abc d.f"
+cursor = [0, 0]
+keys = "v$gE"
+
+[[case]]
+name = "v_dollar_2ge"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "v$2ge"
+
+[[case]]
+name = "v_dollar_2gE"
+buffer = "a.b c.d"
+cursor = [0, 0]
+keys = "v$2gE"
+
+[[case]]
+name = "v_dollar_ge_trailing_blanks"
+buffer = "abc def  "
+cursor = [0, 0]
+keys = "v$ge"
+
+[[case]]
+name = "v_dollar_ge_second_row"
+buffer = "abc def\nxy"
+cursor = [1, 0]
+keys = "v$ge"
+
+[[case]]
+name = "v_underscore"
+buffer = "  abc\n  def\nghi"
+cursor = [0, 4]
+keys = "v_"
+
+[[case]]
+name = "v_underscore_count"
+buffer = "  abc\n  def\nghi"
+cursor = [0, 4]
+keys = "v2_"
+
+[[case]]
+name = "v_minus"
+buffer = "abc\n  def\nghi"
+cursor = [2, 2]
+keys = "v-"
+
+[[case]]
+name = "v_minus_count"
+buffer = "abc\n  def\nghi"
+cursor = [2, 2]
+keys = "v2-"
+
+[[case]]
+name = "v_M"
+buffer = "row 0\n  row 1 word\n    row 2 word word\nrow 3 word word word\n  row 4\n    row 5 word\nrow 6 word word\n  row 7 word word word\n    row 8\nrow 9 word\n  row 10 word word\n    row 11 word word word\nrow 12\n  row 13 word\n    row 14 word word\nrow 15 word word word\n  row 16\n    row 17 word\nrow 18 word word\n  row 19 word word word\n    row 20\nrow 21 word\n  row 22 word word\n    row 23 word word word\nrow 24\n  row 25 word\n    row 26 word word\nrow 27 word word word\n  row 28\n    row 29 word"
+cursor = [1, 3]
+keys = "vM"
+window_rows = 10
+
+# Review round 2: `.` repeating a delete with a count that then fails part
+# way, moving the caret and changing nothing.
+
+[[case]]
+name = "dge_dot_count_stuck"
+buffer = "\nabc def"
+cursor = [1, 5]
+keys = "dge3."
+
+[[case]]
+name = "dgj_dot_count_past_end"
+buffer = "abc\ndef\nghi\njkl"
+cursor = [0, 1]
+keys = "dgj9."
+
+# Review round 5: gj gk into, out of and across an empty row.
+
+[[case]]
+name = "gj_onto_empty_row"
+buffer = "abc\n\nxyz"
+cursor = [0, 1]
+keys = "gj"
+
+[[case]]
+name = "gj_across_empty_row"
+buffer = "abc\n\nxyz"
+cursor = [0, 1]
+keys = "gjgj"
+
+[[case]]
+name = "gk_onto_empty_row"
+buffer = "abc\n\nxyz"
+cursor = [2, 2]
+keys = "gk"
+
+[[case]]
+name = "gk_across_empty_row"
+buffer = "abc\n\nxyz"
+cursor = [2, 2]
+keys = "gkgk"
+
+[[case]]
+name = "gj_from_empty_row"
+buffer = "abc\n\nxyz"
+cursor = [1, 0]
+keys = "gj"
+
+[[case]]
+name = "gj_count_over_empty_row"
+buffer = "abc\n\nxyz"
+cursor = [0, 2]
+keys = "2gj"
+
+[[case]]
+name = "v_gj_across_empty_row"
+buffer = "abc\n\nxyz"
+cursor = [0, 2]
+keys = "vgjgj"
+
+[[case]]
+name = "v_gj_onto_empty_row"
+buffer = "abc\n\nxyz"
+cursor = [0, 1]
+keys = "vgj"
+
+[[case]]
+name = "dgj_onto_empty_row"
+buffer = "abc\n\nxyz"
+cursor = [0, 1]
+keys = "dgj"
+
+[[case]]
+name = "dgj_from_empty_row"
+buffer = "abc\n\nxyz"
+cursor = [1, 0]
+keys = "dgj"
+
+[[case]]
+name = "dgk_onto_empty_row"
+buffer = "abc\n\nxyz"
+cursor = [2, 2]
+keys = "dgk"

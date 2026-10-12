@@ -173,6 +173,17 @@ pub(crate) fn operate(
     operator::sync(model);
     let text = model.text().clone();
     let covered = cover(model, state, &text, measured, args);
+    // Where a failed `gj` or `gk` moved a caret, it keeps the motion's goal.
+    let tab = model.tab_size().max(1);
+    let kept: Vec<Option<usize>> = covered
+        .iter()
+        .map(|covered| match (&covered.span, measured) {
+            (Span::Move(_), Target::Motion(motion @ (Motion::DisplayDown | Motion::DisplayUp))) => {
+                operator::kept_goal(&text, covered.head, motion, args.count, tab)
+            }
+            _ => None,
+        })
+        .collect();
     let resolved = covered
         .iter()
         .any(|covered| matches!(covered.span, Span::Chars(_) | Span::Lines { .. }));
@@ -180,13 +191,15 @@ pub(crate) fn operate(
     if !resolved {
         // A failed `b` still moves the caret, as for any operator.
         let before = model.selections();
-        let carets = covered
+        let carets: Vec<_> = covered
             .iter()
             .zip(&before)
             .map(|(covered, selection)| match covered.span {
                 Span::Move(offset) => operator::caret(Cursor::at(&text, offset).offset()),
                 _ => selection.clone(),
-            });
+            })
+            .collect();
+        let landed: Vec<usize> = carets.iter().map(|caret| caret.head()).collect();
         model.set_selections(carets);
         let moved = model.selections() != before;
         // A text object that isn't there sets the goal column afresh too,
@@ -194,6 +207,7 @@ pub(crate) fn operate(
         if moved || matches!(measured, Target::TextObject(_)) {
             state.goals = None;
         }
+        operator::keep_goals(model, state, &landed, &kept);
         return Ok(Dispatched::new(match moved {
             true => Effect::Changed,
             false => Effect::Nothing,
@@ -214,7 +228,15 @@ pub(crate) fn operate(
             })
             .collect();
         let heads = covered.iter().map(|covered| covered.head).collect();
-        return Ok(format(model, state, actor, args.operator, heads, targets));
+        return Ok(format(
+            model,
+            state,
+            actor,
+            args.operator,
+            heads,
+            targets,
+            &kept,
+        ));
     }
     let mut ranges = Vec::new();
     let carets: Vec<usize> = covered
@@ -249,8 +271,9 @@ pub(crate) fn operate(
     if let Some(id) = transaction {
         state.carets.record(id, begins);
     }
-    operator::land(model, &after, landings);
+    let landed = operator::landed_at(model, &after, landings);
     state.goals = None;
+    operator::keep_goals(model, state, &landed, &kept);
     Ok(Dispatched::new(Effect::Changed).with_transactions(transaction.into_iter().collect()))
 }
 
@@ -284,6 +307,7 @@ pub(crate) fn format_selection(
         args.operator,
         vec![head],
         vec![Rows::Over(rows, false)],
+        &[],
     );
     state.set_last_change(Change::Operate(args).into());
     if !state.replaying {
@@ -484,6 +508,7 @@ fn format(
     operator: Operator,
     heads: Vec<usize>,
     targets: Vec<Rows>,
+    kept: &[Option<usize>],
 ) -> Dispatched<TransactionId> {
     let text = model.text().clone();
     let tab = model.tab_size().max(1);
@@ -624,8 +649,9 @@ fn format(
         .iter()
         .map(|landing| after.resolve(landing))
         .collect();
-    operator::land(model, &after, carets);
+    let landed = operator::landed_at(model, &after, carets);
     state.goals = None;
+    operator::keep_goals(model, state, &landed, kept);
     Dispatched::new(Effect::Changed).with_transactions(transaction.into_iter().collect())
 }
 
