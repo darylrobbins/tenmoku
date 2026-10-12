@@ -29,6 +29,7 @@ pub mod ghost_text;
 mod multi_cursor;
 mod row_change_decorations;
 pub mod row_changes;
+pub mod scripted_ai;
 mod typing;
 mod viewer;
 

@@ -1,0 +1,63 @@
+# A scripted session against demo_text.txt: every verb, every AI seam.
+# Rows and columns are 1-based, columns in chars.
+
+# 1. Ghost text. Open a row at the end of main's loop: the new row copies
+#    the loop's indent, and the caret ends at 30:5.
+caret 29:6
+type \n
+# The AI suggests two rows at the caret.
+suggest let total: usize = counts.values().sum();\n    println!("{total} words");
+# The user types the start of it: the rest still shows.
+type let tot
+# Moving away hides it. Typing on a row above moves its anchor down with
+# the text but changes no row or column below...
+caret 24:12
+type  // A demo.
+# ...so back at the end of what was typed, the same rest shows again.
+caret 30:12
+# Take the next word, then the rest of the row, then all that's left.
+accept-word
+accept-line
+accept
+
+# 2. A streamed edit: a new function above top_words, written in chunks
+#    while the user types on both sides of it.
+caret 13:1
+stream
+push /// How many different words `counts` holds.\n
+wait 300
+# Before the stream's region: the region moves with the text.
+caret 3:49
+type , ignoring case
+push pub fn distinct_words(counts: &HashMap<String, usize>) -> usize {\n
+wait 300
+# At the region's end: the typing stays after it, and the next chunk lands
+# before the typing.
+caret 15:1
+type // Ranking.\n
+push     counts.len()\n}\n\n
+finish
+
+# 3. A proposal over word_counts' body (rows 5-10), above the stream: two
+#    hunks, rows 5 and 8.
+propose 5-10     let mut counts: HashMap<String, usize> = HashMap::new();\n    for word in text.split_whitespace() {\n        let word = word.to_lowercase();\n        *counts.entry(word).or_default() += 1;\n    }\n    counts\n
+# The user types above it: the hunks move down a row with the text.
+caret 1:1
+type // Word statistics.\n
+# Accepting is the user's edit; rejecting leaves the text.
+accept-hunk 2
+reject-hunk 1
+
+# 4. A suggestion the user turns down.
+caret 11:11
+suggest  // keyed by lowercase word
+dismiss
+
+# 5. Undo is grouped by origin. The user's undo takes back the accepted
+#    hunk, never the stream; redo puts it back.
+undo
+redo
+# One undo-ai takes back the whole stream, typing beside it kept; redo-ai
+# brings it back.
+undo-ai
+redo-ai

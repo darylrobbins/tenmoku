@@ -1,0 +1,30 @@
+use std::collections::HashMap;
+
+/// Counts how often each word appears in `text`.
+pub fn word_counts(text: &str) -> HashMap<String, usize> {
+    let mut counts = HashMap::new();
+    for word in text.split_whitespace() {
+        let word = word.to_lowercase();
+        *counts.entry(word).or_insert(0) += 1;
+    }
+    counts
+}
+
+/// The `n` most frequent words, most frequent first.
+pub fn top_words(counts: &HashMap<String, usize>, n: usize) -> Vec<(&str, usize)> {
+    let mut words: Vec<(&str, usize)> = counts
+        .iter()
+        .map(|(word, &count)| (word.as_str(), count))
+        .collect();
+    words.sort_by(|a, b| b.1.cmp(&a.1));
+    words.truncate(n);
+    words
+}
+
+fn main() {
+    let text = "the cat and the hat and the bat";
+    let counts = word_counts(text);
+    for (word, count) in top_words(&counts, 3) {
+        println!("{word}: {count}");
+    }
+}
