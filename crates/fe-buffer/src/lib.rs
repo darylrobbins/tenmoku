@@ -46,7 +46,7 @@ pub use buffer::{
     TransactionId, UndoError,
 };
 pub use edit::Edit;
-pub use fe_text::{Bias, DecodedFile, FileEncoding, LineEnding, Point, PointUtf16, Text};
+pub use fe_text::{Bias, DecodedFile, Encoding, FileEncoding, LineEnding, Point, PointUtf16, Text};
 pub use marker::{MarkerError, MarkerId, MarkerSet};
 pub use proposed::{
     Conflict, DryRun, HunkId, HunkOutcome, HunkStatus, HunkView, Outcome, ProposalError,

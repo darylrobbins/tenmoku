@@ -9,7 +9,9 @@ use fe_project::{FileMatches, LineMatch};
 use gpui::{Modifiers, TestAppContext};
 
 use super::{editor, find, line_row, project, result_center, run, searching, shown};
-use crate::search_panel::{ShownRow, decode_batch};
+use fe_buffer::{Encoding, FileEncoding};
+
+use crate::search_panel::{LineEnd, ShownRow, decode_batch, decode_legacy_line};
 
 #[gpui::test]
 fn a_match_in_a_bom_file_selects_the_word(cx: &mut TestAppContext) {
@@ -251,4 +253,39 @@ fn a_newline_settles_a_malformed_char_before_it() {
     let line = decoded_gbk(b"needle\x81", b"\n", vec![6..7], "needle\u{FFFD}");
     assert_eq!(line.ranges, [6..9]);
     assert_eq!(line.preview, "needle\u{FFFD}");
+}
+
+/// What `decode_legacy_line` makes of an ISO-2022-JP `line` that ends the
+/// file. Detection never picks ISO-2022-JP (7-bit text is valid UTF-8), so
+/// the line is decoded directly.
+fn decoded_iso_2022_jp(bytes: &[u8], ranges: Vec<Range<usize>>, preview: &str) -> LineMatch {
+    let mut line = LineMatch {
+        line_number: 1,
+        line_offset: 0,
+        ranges,
+        preview: preview.into(),
+        preview_start: 0,
+    };
+    let encoding = FileEncoding {
+        encoding: Encoding::for_label(b"iso-2022-jp").unwrap(),
+        bom: false,
+    };
+    decode_legacy_line(bytes, LineEnd::Eof, &mut line, encoding, &|| false).unwrap();
+    line
+}
+
+#[test]
+fn an_escape_cut_short_by_the_end_of_the_file_is_searched_to_its_end() {
+    // ESC "$" at the end of the file: U+FFFD for the ESC, then "$".
+    let line = decoded_iso_2022_jp(b"needle\x1B$", vec![0..6, 6..8], "needle\x1B$");
+    assert_eq!(line.ranges, [0..6, 6..10]);
+    assert_eq!(line.preview, "needle\u{FFFD}$");
+    // A match ending at the end of the file, on the "$".
+    let line = decoded_iso_2022_jp(b"needle\x1B$", vec![7..8], "needle\x1B$");
+    assert_eq!(line.ranges, [9..10]);
+    assert_eq!(line.preview, "needle\u{FFFD}$");
+    // ESC "(" the same.
+    let line = decoded_iso_2022_jp(b"needle\x1B(", vec![0..6, 7..8], "needle\x1B(");
+    assert_eq!(line.ranges, [0..6, 9..10]);
+    assert_eq!(line.preview, "needle\u{FFFD}(");
 }

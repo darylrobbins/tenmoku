@@ -745,7 +745,7 @@ fn drop_bom(line: &mut LineMatch, bom_len: usize) {
 /// units at both ends. `ends` says what `bytes` end at: the editor decodes
 /// through a line's `\n`, which settles the bytes before it as it does, so
 /// that is decoded too and left out of the preview.
-fn decode_legacy_line(
+pub(crate) fn decode_legacy_line(
     bytes: &[u8],
     ends: LineEnd,
     line: &mut LineMatch,
@@ -847,7 +847,7 @@ fn decode_legacy_line(
 
 /// What the bytes read of a line end at.
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum LineEnd {
+pub(crate) enum LineEnd {
     /// The end of the file.
     Eof,
     /// The line's `\n`, not among the bytes.
