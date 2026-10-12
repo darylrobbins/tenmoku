@@ -170,7 +170,7 @@ fn ignored_directories_go_last() {
 
 /// The directories `walk_builder` lists under `root`, the root included.
 fn listed(root: &Path) -> usize {
-    crate::listing::walk_builder(root)
+    crate::listing::walk_builder(root, |_| true)
         .build()
         .flatten()
         .filter(|entry| entry.file_type().is_some_and(|kind| kind.is_dir()))
