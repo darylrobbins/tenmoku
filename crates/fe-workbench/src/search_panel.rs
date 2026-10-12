@@ -318,6 +318,7 @@ impl SearchPanel {
                 .try_into()
                 .unwrap_or(u32::MAX),
             columns: line.ranges.first().cloned().unwrap_or_default(),
+            within_row: false,
         };
         let path = file.path.clone();
         self.pane

@@ -186,6 +186,7 @@ fn search_open_then(
         let reveal = Reveal {
             row: 1,
             columns: 1..2,
+            within_row: false,
         };
         pane.update(cx, |pane, cx| {
             pane.open_at(root.join("src/multi.rs"), Some(reveal), window, cx)

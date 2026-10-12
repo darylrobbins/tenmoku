@@ -603,6 +603,9 @@ pub(crate) struct Reveal {
     /// only, and the editor at a lone `\r` too, so after one of those the
     /// row is off.
     pub columns: Range<usize>,
+    /// Clamp `columns` to the row's text, so a column past its end stops at
+    /// the end rather than running into the next row.
+    pub within_row: bool,
 }
 
 impl Reveal {
@@ -612,6 +615,7 @@ impl Reveal {
         Self {
             row: 0,
             columns: range,
+            within_row: false,
         }
     }
 
@@ -622,8 +626,14 @@ impl Reveal {
         editor.update(cx, |editor, cx| {
             let text = editor.model().text();
             let start = text.row_start(self.row);
-            let range = text.clip_offset(start + self.columns.start, Bias::Left)
-                ..text.clip_offset(start + self.columns.end, Bias::Right);
+            let limit = if self.within_row {
+                text.row_len(self.row) as usize
+            } else {
+                usize::MAX
+            };
+            let column = |column: usize| start + column.min(limit);
+            let range = text.clip_offset(column(self.columns.start), Bias::Left)
+                ..text.clip_offset(column(self.columns.end), Bias::Right);
             editor.select_and_reveal(range, cx);
         });
     }

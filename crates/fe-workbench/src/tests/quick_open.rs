@@ -23,7 +23,7 @@ fn project() -> tempfile::TempDir {
 }
 
 /// A workbench rooted at `root`, focused as the app focuses it.
-fn workbench_at<'a>(
+pub(crate) fn workbench_at<'a>(
     cx: &'a mut TestAppContext,
     root: Option<&Path>,
 ) -> (Entity<Workbench>, &'a mut VisualTestContext) {
@@ -42,7 +42,10 @@ fn workbench_at<'a>(
     (workbench, cx)
 }
 
-fn picker(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Entity<Picker<QuickOpen>> {
+pub(crate) fn picker(
+    workbench: &Entity<Workbench>,
+    cx: &mut VisualTestContext,
+) -> Entity<Picker<QuickOpen>> {
     workbench.read_with(cx, |workbench, _| workbench.quick_open().clone())
 }
 
@@ -61,17 +64,20 @@ fn counters(picker: &Entity<Picker<QuickOpen>>, cx: &mut VisualTestContext) -> (
     })
 }
 
-fn matches(picker: &Entity<Picker<QuickOpen>>, cx: &mut VisualTestContext) -> Vec<FinderMatch> {
+pub(crate) fn matches(
+    picker: &Entity<Picker<QuickOpen>>,
+    cx: &mut VisualTestContext,
+) -> Vec<FinderMatch> {
     picker.read_with(cx, |picker, _| picker.delegate.matches().to_vec())
 }
 
-fn paths(picker: &Entity<Picker<QuickOpen>>, cx: &mut VisualTestContext) -> Vec<String> {
+pub(crate) fn paths(picker: &Entity<Picker<QuickOpen>>, cx: &mut VisualTestContext) -> Vec<String> {
     let matches = matches(picker, cx);
     matches.into_iter().map(|found| found.path).collect()
 }
 
 /// What a complete index of `root` answers for `query`.
-fn expected(root: &Path, query: &str) -> Vec<FinderMatch> {
+pub(crate) fn expected(root: &Path, query: &str) -> Vec<FinderMatch> {
     let mut index = FinderIndex::new(root);
     FinderIndex::walk(root, Arc::new(AtomicBool::new(false)), |batch| {
         index.extend(batch)

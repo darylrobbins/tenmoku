@@ -432,6 +432,13 @@ impl EditorView {
         self.changed(cx);
     }
 
+    /// The buffer row first in view, and how many display rows the view
+    /// shows: `None` before the first frame.
+    pub fn viewport_rows(&self) -> Option<(u32, u32)> {
+        let frame = &self.layout.as_ref()?.frame;
+        Some((self.top_buffer_row()?, frame.visible_rows()))
+    }
+
     /// The buffer row first in view: where the last frame began, or a vim
     /// scroll since.
     fn top_buffer_row(&self) -> Option<u32> {

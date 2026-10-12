@@ -31,6 +31,7 @@ use gpui::{
 
 use crate::{
     Pane,
+    pane::Reveal,
     picker::{Picker, PickerDelegate},
 };
 
@@ -239,9 +240,9 @@ impl QuickOpen {
         let search = cx.background_spawn({
             let query = query.clone();
             async move {
-                lock(&index)
-                    .as_mut()
-                    .map_or_else(Vec::new, |index| index.query(&query, LIMIT))
+                lock(&index).as_mut().map_or_else(Vec::new, |index| {
+                    index.query(split_location(&query).0, LIMIT)
+                })
             }
         });
         self.querying = Some(cx.spawn(async move |picker, cx| {
@@ -338,9 +339,14 @@ impl PickerDelegate for QuickOpen {
             return false;
         }
         let path = root.join(&found.relative);
+        let reveal = split_location(&self.query).1.map(|(row, column)| Reveal {
+            row,
+            columns: column..column,
+            within_row: true,
+        });
         self.previous_focus = None;
         self.pane
-            .update(cx, |pane, cx| pane.open(path, window, cx))
+            .update(cx, |pane, cx| pane.open_at(path, reveal, window, cx))
             .is_ok()
     }
 
@@ -366,6 +372,40 @@ impl Drop for QuickOpen {
     }
 }
 
+/// Splits a trailing `:N` or `:N:C` (digits, both at least 1) off `query`:
+/// the rest, and the 0-based row and byte column to open at. Anything else,
+/// or nothing before the suffix, is the query whole.
+fn split_location(query: &str) -> (&str, Option<(u32, usize)>) {
+    fn number(text: &str) -> Option<u32> {
+        if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+            return None;
+        }
+        // Past u32 is still a number: the location clamps to the file.
+        Some(text.parse().unwrap_or(u32::MAX)).filter(|&number| number >= 1)
+    }
+    let whole = (query, None);
+    let Some((rest, last)) = query.rsplit_once(':') else {
+        return whole;
+    };
+    let Some(last) = number(last) else {
+        return whole;
+    };
+    if let Some((path, row)) = rest.rsplit_once(':')
+        && let Some(row) = number(row)
+        && !path.is_empty()
+    {
+        return (path, Some((row - 1, last as usize - 1)));
+    }
+    if rest.is_empty() {
+        return whole;
+    }
+    (rest, Some((last - 1, 0)))
+}
+
 fn lock(index: &Mutex<Option<FinderIndex>>) -> MutexGuard<'_, Option<FinderIndex>> {
     index.lock().unwrap_or_else(PoisonError::into_inner)
 }
+
+#[cfg(test)]
+#[path = "quick_open_line_tests.rs"]
+mod line_tests;

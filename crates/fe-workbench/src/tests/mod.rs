@@ -33,7 +33,7 @@ mod pane_cycle;
 mod pane_drag;
 mod pane_toolbar;
 mod project_panel;
-mod quick_open;
+pub(crate) mod quick_open;
 mod quick_open_races;
 mod references_landing;
 mod references_panel;
@@ -60,7 +60,7 @@ use crate::{Launch, ProjectPanel, Workbench};
 
 /// A workbench for `launch` in a headless window, run until parked, and how
 /// many entries its tree had loaded right after `Workbench::new` returned.
-fn open(
+pub(crate) fn open(
     cx: &mut TestAppContext,
     launch: Launch,
 ) -> (Entity<Workbench>, &mut VisualTestContext, usize) {

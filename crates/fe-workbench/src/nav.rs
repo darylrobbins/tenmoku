@@ -630,6 +630,7 @@ impl Workbench {
         let row = Reveal {
             row: location.row,
             columns: 0..0,
+            within_row: false,
         };
         let open = self.open_editors(cx).into_iter().find_map(|editor| {
             let model = editor.read(cx).model();
