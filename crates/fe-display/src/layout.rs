@@ -713,6 +713,9 @@ pub fn layout_frame_with_inlay<M: TextMeasure>(
     let view_width = f64::from(text_width);
     let margin = f64::from(em) * 4.;
     let slice_margin = f64::from(em * SLICE_MARGIN_EMS);
+    // The inlay's width as shaped: known from a row that held it, else from
+    // shaping it alone, which sees contextual forms the index can't.
+    let inlay_shaped: std::cell::Cell<Option<f64>> = std::cell::Cell::new(None);
     let mut shape_long = |measure: &mut M,
                           long_rows: &mut LongRows,
                           widths: &mut dyn CharWidth,
@@ -734,11 +737,15 @@ pub fn layout_frame_with_inlay<M: TextMeasure>(
                 // index's, where a view past the inlay is further left. If
                 // that takes the inlay in, it's the slice that fills the view.
                 let at = index.x_for_offset(inlay.offset, widths);
-                let by: f64 = inlay
-                    .text
-                    .chars()
-                    .map(|ch| f64::from(widths.char_width(ch)))
-                    .sum();
+                let by = inlay_shaped.get().unwrap_or_else(|| {
+                    let run = [StyleRun {
+                        len: inlay.text.len(),
+                        style: inlay.style.clone(),
+                    }];
+                    let by = f64::from(measure.shape(&inlay.text, &run).width());
+                    inlay_shaped.set(Some(by));
+                    by
+                });
                 let unshift = |x: f64| {
                     if x <= at { x } else { (x - by).max(at) }
                 };
@@ -799,6 +806,9 @@ pub fn layout_frame_with_inlay<M: TextMeasure>(
                 slice.range.end = limit;
                 layout = shape_slice(measure, &slice);
             }
+        }
+        if layout.inlay_width > 0. {
+            inlay_shaped.set(Some(layout.inlay_width));
         }
         layout
     };
@@ -904,7 +914,8 @@ pub fn layout_frame_with_inlay<M: TextMeasure>(
             });
             let margined = follow(x, scroll_x) == scroll_x;
             let visible = x >= scroll_x && x <= scroll_x + view_width;
-            tried.push((scroll_x, long, margined, visible));
+            let miss = (scroll_x - x).max(x - scroll_x - view_width).max(0.);
+            tried.push((scroll_x, long, margined, visible, miss));
             if margined || inlay.is_none() {
                 break;
             }
@@ -918,7 +929,12 @@ pub fn layout_frame_with_inlay<M: TextMeasure>(
             .iter()
             .position(|tried| tried.2)
             .or_else(|| tried.iter().position(|tried| tried.3))
-            .unwrap_or(0);
+            .unwrap_or_else(|| {
+                // None shows the caret: keep the one that comes nearest.
+                (0..tried.len())
+                    .min_by(|&a, &b| tried[a].4.total_cmp(&tried[b].4))
+                    .unwrap_or(0)
+            });
         let (scroll_x, long, ..) = tried.swap_remove(best);
         (scroll_x, long)
     } else {
