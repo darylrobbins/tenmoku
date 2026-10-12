@@ -18,6 +18,7 @@
 //!
 //! This crate must never depend on GPUI.
 
+mod brackets;
 mod comment;
 mod detect;
 mod driver;
@@ -30,6 +31,7 @@ mod outline;
 mod parse_limit;
 mod syntax;
 
+pub use brackets::{BracketPair, bracket_pair};
 pub use comment::{CommentTokens, comment_tokens};
 pub use detect::{detect_language_name, language_name_for_shebang};
 pub use driver::{Spawner, SyntaxDriver};
