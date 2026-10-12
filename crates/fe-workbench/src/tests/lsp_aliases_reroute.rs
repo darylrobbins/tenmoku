@@ -20,8 +20,17 @@ fn preload() {
 }
 
 /// Reloads `s`'s settings with each of `servers` serving its languages
-/// (`None`: disabled).
+/// (`None`: disabled), in the user's file too, which a trusted root's are
+/// read from.
 fn reload(s: &mut Lsp, servers: &[(&str, Option<&[&str]>)]) {
+    let mut file = String::new();
+    for &(name, languages) in servers {
+        file += &format!("[lsp.servers.{name}]\nenabled = {}\n", languages.is_some());
+        if let Some(languages) = languages {
+            file += &format!("languages = {languages:?}\n");
+        }
+    }
+    s.write_user_settings(&file);
     let mut settings = Settings::default();
     for &(name, languages) in servers {
         settings.lsp.servers.insert(

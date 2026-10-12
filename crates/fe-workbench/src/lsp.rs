@@ -8,6 +8,21 @@
 //!   first open file of their language (§3.2), and only once the root is
 //!   trusted ([`Workbench::root_trusted`]). A new root gets a new manager;
 //!   the old one's servers shut down.
+//! - **Trusted settings.** While the root is trusted, its manager gets the
+//!   project file's `[lsp]` table unfiltered: the root's
+//!   `.fastedit/settings.toml` read as a [`ProjectLsp`], which keeps its last
+//!   good table while the file has errors, laid over the filtered settings
+//!   the workbench was given, which keep the user file's. It's read on the
+//!   background executor when the root becomes trusted, when a manager
+//!   starts for a trusted root, at each reload, and when the file changes:
+//!   the workbench watches it while the root is trusted, as the app's store
+//!   narrows it and so reloads for no change to the keys it drops. Servers
+//!   are let start only once the first read is applied, so none launches
+//!   with the filtered settings first, and the documents opened before
+//!   then are opened again, under the trusted size limit. A read that lands
+//!   after the root, its trust or a newer read came is dropped. Untrusting
+//!   goes back to the filtered settings, which are also the ones
+//!   workbenches opened later start with.
 //! - **Paths.** The root and each file go to the manager resolved
 //!   ([`fs::canonicalize`], off the main thread: a file fully, so its own
 //!   symlink is followed; only a file that doesn't exist yet is resolved
@@ -82,7 +97,7 @@ use fe_buffer::{Buffer, BufferEvent, BufferId, Version};
 use fe_command::{
     Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Invocation, Registry,
 };
-use fe_config::settings::LspSettings;
+use fe_config::settings::{LspSettings, ProjectLsp};
 use fe_editor::completion::{CompletionItem, CompletionList, CompletionTrigger};
 use fe_editor::{
     EditorModel,
@@ -301,13 +316,35 @@ pub(crate) struct Lsp {
     /// Each server's latest `window/showMessage`, shown in place of its
     /// status until its next one.
     messages: HashMap<ServerId, String>,
-    /// The workbench's effective `[lsp]` settings, as last reloaded.
+    /// The workbench's effective `[lsp]` settings, as last reloaded: the
+    /// project layer's narrowed, for an untrusted root.
     settings: LspSettings,
+    /// The root's project settings file's `lsp` table, as last read for a
+    /// trusted root, kept at its last good value while the file has errors.
+    /// Shared with the reads, on the background executor.
+    project: Option<Arc<Mutex<ProjectLsp>>>,
+    /// Bumped with each read of the trusted settings and each trust
+    /// change, so a superseded read is dropped.
+    trusted_read: u64,
+    /// The manager has the trusted settings and lets servers start.
+    gate_open: bool,
+    /// Reads the trusted settings.
+    _trusted: Option<Task<()>>,
+    /// Holds the project settings file's watcher while the root is
+    /// trusted, and reads the trusted settings again when it reports a
+    /// change.
+    _project_changes: Option<Task<()>>,
+    /// What the watcher would send a change to.
+    #[cfg(test)]
+    project_changed: Option<async_channel::Sender<()>>,
     /// The item's text as last set.
     shown: Option<SharedString>,
     /// The manager was made with fe-lsp's own launcher.
     #[cfg(test)]
     local: bool,
+    /// The settings last handed to a manager.
+    #[cfg(test)]
+    handed: Option<LspSettings>,
     /// How many `Diagnostics` events the sinks have sent.
     #[cfg(test)]
     diagnostics_sent: Arc<std::sync::atomic::AtomicUsize>,
@@ -445,9 +482,18 @@ impl Lsp {
             servers: HashMap::new(),
             messages: HashMap::new(),
             settings: LspSettings::default(),
+            project: None,
+            trusted_read: 0,
+            gate_open: false,
+            _trusted: None,
+            _project_changes: None,
+            #[cfg(test)]
+            project_changed: None,
             shown: None,
             #[cfg(test)]
             local: false,
+            #[cfg(test)]
+            handed: None,
             #[cfg(test)]
             diagnostics_sent: Arc::default(),
             #[cfg(test)]
@@ -497,8 +543,9 @@ impl Workbench {
                 }
             }
         });
-        let trust = cx
-            .subscribe_self(|workbench, TrustChanged(trusted), _| workbench.apply_trust(*trusted));
+        let trust = cx.subscribe_self(|workbench, TrustChanged(trusted), cx| {
+            workbench.apply_trust(*trusted, cx)
+        });
         let root = cx.subscribe_self(|workbench, _: &RootChanged, cx| {
             workbench.new_lsp_manager(cx);
             cx.notify();
@@ -560,6 +607,9 @@ impl Workbench {
         lsp.generation += 1;
         lsp.root = None;
         lsp._root = None;
+        lsp.project = None;
+        lsp.gate_open = false;
+        lsp._project_changes = None;
         let Some(root) = self.root.clone() else {
             return;
         };
@@ -593,6 +643,8 @@ impl Workbench {
     fn start_lsp_manager(&mut self, root: PathBuf, cx: &mut Context<Self>) {
         let lsp = &mut self.lsp;
         lsp.root = Some(root.clone());
+        let project = ProjectLsp::new(fe_config::project_settings_path(&root));
+        lsp.project = Some(Arc::new(Mutex::new(project)));
         let host = cx.try_global::<Launcher>().map(|host| host.0.clone());
         #[cfg(test)]
         {
@@ -638,6 +690,10 @@ impl Workbench {
             None => LspManager::new(launcher, sink),
         };
         manager.update_settings(&lsp.settings);
+        #[cfg(test)]
+        {
+            lsp.handed = Some(lsp.settings.clone());
+        }
         manager.set_trust(|_| false);
         lsp.watch = Some(Watch {
             stopped,
@@ -650,26 +706,163 @@ impl Workbench {
         // Replaces the last manager's.
         self.navigation().add(Arc::new(navigation), PRECEDENCE);
         if self.root_trusted() {
-            self.apply_trust(true);
+            self.apply_trust(true, cx);
         }
     }
 
-    /// Lets servers start for the root, or stops them, as it's trusted.
-    fn apply_trust(&mut self, trusted: bool) {
-        let root = self.lsp.root.clone();
-        if let Some(manager) = &self.lsp.manager {
-            lock(manager).set_trust(move |path| trusted && Some(path) == root.as_deref());
+    /// Lets servers start for the root once its trusted settings are read,
+    /// or stops them and goes back to the filtered settings, as it's
+    /// trusted.
+    fn apply_trust(&mut self, trusted: bool, cx: &mut Context<Self>) {
+        self.lsp.trusted_read += 1;
+        if trusted {
+            self.watch_project(cx);
+            return self.read_trusted_settings(cx);
         }
+        let lsp = &mut self.lsp;
+        lsp.gate_open = false;
+        lsp._project_changes = None;
+        if let Some(manager) = lsp.manager.clone() {
+            let mut manager = lock(&manager);
+            manager.set_trust(|_| false);
+            manager.update_settings(&lsp.settings);
+            #[cfg(test)]
+            {
+                lsp.handed = Some(lsp.settings.clone());
+            }
+        }
+    }
+
+    /// Watches the root's project settings file while the root is trusted,
+    /// reading the trusted settings again when it changes: the app's store
+    /// narrows it, so a change to keys it drops reaches no reload. The
+    /// watcher starts off the main thread. Not in tests, which hand changes
+    /// to [`Workbench::lsp_project_changed`]: GPUI's test scheduler rejects
+    /// wakeups from the watcher's thread.
+    fn watch_project(&mut self, cx: &mut Context<Self>) {
+        let lsp = &mut self.lsp;
+        let Some(project) = &lsp.project else {
+            return;
+        };
+        if lsp._project_changes.is_some() {
+            return;
+        }
+        let path = lock(project).path().to_owned();
+        let (sender, changes) = async_channel::unbounded::<()>();
+        #[cfg(test)]
+        {
+            lsp.project_changed = Some(sender.clone());
+        }
+        let watcher = cx.background_spawn(async move {
+            if cfg!(test) {
+                return None;
+            }
+            fe_config::ConfigWatcher::new(vec![path.clone()], move |_| {
+                sender.send_blocking(()).ok();
+            })
+            .inspect_err(|error| log::warn!("not watching {}: {error}", path.display()))
+            .ok()
+        });
+        let generation = lsp.generation;
+        lsp._project_changes = Some(cx.spawn(async move |workbench, cx| {
+            let _watcher = watcher.await;
+            while changes.recv().await.is_ok() {
+                while changes.try_recv().is_ok() {}
+                let read = workbench.update(cx, |workbench, cx| {
+                    if workbench.lsp.generation == generation && workbench.root_trusted() {
+                        workbench.read_trusted_settings(cx);
+                    }
+                });
+                if read.is_err() {
+                    break;
+                }
+            }
+        }));
+    }
+
+    /// Reads the root's project settings file off the main thread, then
+    /// lays its `lsp` table over the filtered settings, hands them to the
+    /// manager and lets servers start, unless the root, its trust or a
+    /// newer read came first.
+    fn read_trusted_settings(&mut self, cx: &mut Context<Self>) {
+        let lsp = &mut self.lsp;
+        let (Some(_), Some(project)) = (&lsp.manager, lsp.project.clone()) else {
+            return;
+        };
+        lsp.trusted_read += 1;
+        let (read, generation) = (lsp.trusted_read, lsp.generation);
+        let layer = cx.background_spawn(async move {
+            let mut project = lock(&project);
+            project.read();
+            project.clone()
+        });
+        lsp._trusted = Some(cx.spawn(async move |workbench, cx| {
+            let layer = layer.await;
+            workbench
+                .update(cx, |workbench, cx| {
+                    workbench.apply_trusted_settings(read, generation, &layer, cx)
+                })
+                .ok();
+        }));
+    }
+
+    /// Applies the trusted settings, `project` laid over the filtered
+    /// ones, from read `read` for manager `generation`, if they're still
+    /// current, and lets servers start for the root.
+    ///
+    /// Opening the gate, the documents opened while it was shut are opened
+    /// again at the next frame: a document keeps the size limit it was
+    /// opened under, and the trusted settings may set another.
+    fn apply_trusted_settings(
+        &mut self,
+        read: u64,
+        generation: u64,
+        project: &ProjectLsp,
+        cx: &mut Context<Self>,
+    ) {
+        let lsp = &mut self.lsp;
+        if lsp.trusted_read != read || lsp.generation != generation || !self.trust.trusted() {
+            return;
+        }
+        let (Some(manager), root) = (lsp.manager.clone(), lsp.root.clone()) else {
+            return;
+        };
+        let settings = project.apply(&lsp.settings);
+        let mut manager = lock(&manager);
+        if !lsp.gate_open {
+            for &buffer in lsp.documents.keys() {
+                manager.close(buffer);
+            }
+            lsp.documents.clear();
+            lsp.owners.clear();
+            lsp.reserved.clear();
+            cx.notify();
+        }
+        manager.update_settings(&settings);
+        #[cfg(test)]
+        {
+            lsp.handed = Some(settings.clone());
+        }
+        manager.set_trust(move |path| Some(path) == root.as_deref());
+        lsp.gate_open = true;
     }
 
     /// Passes reloaded `[lsp]` settings on: the manager applies what
-    /// changed, and a manager for a new root starts with them. Workbenches
-    /// opened from now on start with them too.
-    pub(crate) fn reload_lsp_settings(&mut self, settings: &LspSettings, cx: &mut App) {
+    /// changed, the trusted settings read again for a trusted root, and a
+    /// manager for a new root starts with them. Workbenches opened from now
+    /// on start with them too, filtered, whatever this root's trust.
+    pub(crate) fn reload_lsp_settings(&mut self, settings: &LspSettings, cx: &mut Context<Self>) {
         set_lsp_settings(cx, settings.clone());
         self.lsp.settings = settings.clone();
-        if let Some(manager) = &self.lsp.manager {
-            lock(manager).update_settings(settings);
+        if self.root_trusted() {
+            return self.read_trusted_settings(cx);
+        }
+        if let Some(manager) = self.lsp.manager.clone() {
+            lock(&manager).update_settings(settings);
+            #[cfg(test)]
+            {
+                self.lsp.handed = Some(settings.clone());
+            }
         }
     }
 
@@ -1410,6 +1603,19 @@ pub(crate) fn op(run: &RunCommand, cx: &App) -> Option<LspOp> {
 
 #[cfg(test)]
 impl Workbench {
+    /// Tells the workbench its root's project settings file changed, as
+    /// its watcher would outside tests.
+    pub(crate) fn lsp_project_changed(&self) {
+        if let Some(sender) = &self.lsp.project_changed {
+            sender.send_blocking(()).ok();
+        }
+    }
+
+    /// The `[lsp]` settings last handed to a manager.
+    pub(crate) fn lsp_handed(&self) -> Option<LspSettings> {
+        self.lsp.handed.clone()
+    }
+
     /// Whether there's a manager, and it was made with fe-lsp's own
     /// launcher.
     pub(crate) fn lsp_manager(&self) -> Option<bool> {
@@ -1473,3 +1679,7 @@ impl Global for TestClock {}
 #[cfg(test)]
 #[path = "lsp_trust_tests.rs"]
 mod trust_tests;
+
+#[cfg(test)]
+#[path = "lsp_trusted_settings_tests.rs"]
+mod trusted_settings_tests;

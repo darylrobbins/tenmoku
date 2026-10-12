@@ -650,15 +650,30 @@ include override commands for `cargo check` and build scripts. So:
   (`user_settings_path()`), and host-registered specs. That covers `command`,
   `args`, `env`, `initialization_options`, `settings`, `languages`,
   `readiness` and `ready_ignores_progress`.
-- **Project layer.** It may only *narrow*: `lsp.enabled = false`, and
-  `lsp.servers.<name>.enabled = false`. Any other `lsp.*` key there is ignored,
-  with a `fe-config` diagnostic: "LSP settings in project files are ignored
-  until workspace trust exists".
+- **Project layer, untrusted.** It may only *narrow*: `lsp.enabled = false`,
+  and `lsp.servers.<name>.enabled = false`. Any other `lsp.*` key there is
+  ignored, with a `fe-config` diagnostic: "LSP settings in project files apply
+  only in trusted folders".
 - **Hot reload** applies the same filter, so editing the project file while
   open can't introduce a command either.
 - **Workspace trust.** Q7 was revised to (b) (§9, T177): language servers
-  start only in folders the user trusts. Lifting this filter per trusted root
-  is left to a later card; for now it applies even in trusted folders.
+  start only in folders the user trusts. In a trusted root, the project
+  layer's `lsp` keys apply as written (T65): the workbench lays the root's
+  project file's `lsp` table (`fe_config::settings::ProjectLsp`, which keeps
+  its last good table while the file has errors) over the filtered settings
+  it was given, which keep the user file's, and hands that root's
+  `LspManager` the result. It reads the file off the main thread when the
+  root becomes trusted, when a manager starts for a trusted root, at each
+  settings reload, and when the file changes: it watches the file while the
+  root is trusted, as the app's store narrows it and so reloads for no
+  change to the keys it drops. Servers start only once the first read is
+  applied, and documents opened before then are opened again, under the
+  trusted size limit. A read that lands after the root or its trust changed
+  is dropped; untrusting goes back to the filtered settings. The app-wide
+  `SettingsStore` keeps the filter, since trust is per root, and so do
+  workbenches opened later until their own root is trusted.
+  `fe_config::settings::trusted_lsp(user, project)` is the same over a fresh
+  store's settings.
 
 Starting a configured server on a repository can still run that repository's
 code by the server's own design. For example, rust-analyzer runs build scripts

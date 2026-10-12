@@ -139,7 +139,7 @@
       "type": "object"
     },
     "LspSettings": {
-      "description": "Settings for language servers (docs/decisions/lsp-client.md §3.3).\n\nA server's spec is executable configuration, so a project's settings\nfile may only turn servers off: `lsp.enabled = false` and\n`lsp.servers.<name>.enabled = false` apply from it, and every other\n`lsp` key there is ignored with a warning, until workspace trust exists.",
+      "description": "Settings for language servers (docs/decisions/lsp-client.md §3.3).\n\nA server's spec is executable configuration, so a project's settings\nfile may only turn servers off: `lsp.enabled = false` and\n`lsp.servers.<name>.enabled = false` apply from it, and every other\n`lsp` key there is ignored with a warning, except in a trusted folder,\nwhere its language servers get them all.",
       "properties": {
         "enabled": {
           "default": true,
@@ -350,7 +350,7 @@
         },
         "typescript_server": "typescript-go"
       },
-      "description": "Language servers. A project file may only turn them off."
+      "description": "Language servers. A project file may only turn them off, but in a\ntrusted folder its settings for them apply."
     },
     "status_bar": {
       "$ref": "#/$defs/StatusBarSettings",

@@ -35,7 +35,8 @@ pub struct Settings {
     /// The status bar.
     #[serde(default)]
     pub status_bar: StatusBarSettings,
-    /// Language servers. A project file may only turn them off.
+    /// Language servers. A project file may only turn them off, but in a
+    /// trusted folder its settings for them apply.
     pub lsp: LspSettings,
     /// The colour theme.
     #[serde(default)]
@@ -152,7 +153,8 @@ impl Default for EditorSettings {
 /// A server's spec is executable configuration, so a project's settings
 /// file may only turn servers off: `lsp.enabled = false` and
 /// `lsp.servers.<name>.enabled = false` apply from it, and every other
-/// `lsp` key there is ignored with a warning, until workspace trust exists.
+/// `lsp` key there is ignored with a warning, except in a trusted folder,
+/// where its language servers get them all.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct LspSettings {
@@ -328,7 +330,8 @@ pub type SettingsEvent = kiln_core::SettingsEvent<Settings>;
 /// table, which is empty until the file has loaded cleanly once, so a typo
 /// never resets a setting to its default. Warnings, such as unknown keys,
 /// don't reject a file. A project file's `lsp` keys may only turn servers
-/// off ([`LspSettings`]).
+/// off ([`LspSettings`]); [`trusted_lsp`] applies them all, for a trusted
+/// root.
 ///
 /// kiln-core's typed store for [`Settings`], with fastedit's checks:
 /// [`SettingsStore::into_inner`] gives it to kiln's config service.
@@ -404,9 +407,128 @@ fn schema_for(table: &Table) -> Arc<serde_json::Value> {
     Arc::new(schema)
 }
 
+/// The `lsp` settings of the user and project files for a trusted root:
+/// loaded and checked as [`SettingsStore::load`] does them, but with the
+/// project file's `lsp` keys applied as written, not narrowed. Either file
+/// may be absent or missing.
+///
+/// It reads the files, blocking: call it off the main thread. It's
+/// [`ProjectLsp::apply`] over a fresh store's settings; a workbench keeps a
+/// [`ProjectLsp`] instead, so an invalid project file keeps its last good
+/// table, and lays it over the settings the app's store has, which keep
+/// the user file's. [`SettingsStore`] keeps narrowing the project's keys,
+/// as it's the app's and trust is per root.
+pub fn trusted_lsp(user: Option<PathBuf>, project: Option<PathBuf>) -> LspSettings {
+    let filtered = SettingsStore::load(user, project.clone())
+        .settings()
+        .lsp
+        .clone();
+    let Some(project) = project else {
+        return filtered;
+    };
+    let mut layer = ProjectLsp::new(project);
+    layer.read();
+    layer.apply(&filtered)
+}
+
+/// A project file's `lsp` table, for a trusted root: checked as the
+/// settings store checks a file (TOML, serde, then the schema), and kept
+/// at its last good value while the file has errors, which is empty until
+/// it has read cleanly once. A missing file has an empty table.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProjectLsp {
+    path: PathBuf,
+    good: Table,
+}
+
+impl ProjectLsp {
+    /// `path`'s table, not read yet: empty.
+    pub fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            good: Table::new(),
+        }
+    }
+
+    /// The project's settings file.
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+
+    /// Reads the file again, blocking, keeping the last good table if it
+    /// has errors.
+    pub fn read(&mut self) {
+        let mut layer = kiln_core::load_layer(&self.path);
+        if layer.has_errors() {
+            return;
+        }
+        // The theme isn't the project's to set, so it can't reject the file.
+        layer.table.remove("theme");
+        if toml::Value::Table(layer.table.clone())
+            .try_into::<Settings>()
+            .is_err()
+        {
+            return;
+        }
+        if layer
+            .check_schema(&schema_for(&layer.table))
+            .iter()
+            .any(Diagnostic::is_error)
+        {
+            return;
+        }
+        self.good = match layer.table.remove("lsp") {
+            Some(toml::Value::Table(lsp)) => lsp,
+            _ => Table::new(),
+        };
+    }
+
+    /// `filtered`, the effective settings with the project's `lsp` keys
+    /// narrowed, with the project's `lsp` table laid over it as written.
+    /// If the two don't merge into valid settings, `filtered`.
+    pub fn apply(&self, filtered: &LspSettings) -> LspSettings {
+        if self.good.is_empty() {
+            return filtered.clone();
+        }
+        let mut table = match Table::try_from(filtered) {
+            Ok(table) => table,
+            Err(error) => {
+                log::error!("the LSP settings don't serialize to a table: {error}");
+                return filtered.clone();
+            }
+        };
+        crate::layers::merge(&mut table, &self.good);
+        let mut settings = Table::new();
+        settings.insert("lsp".into(), toml::Value::Table(table.clone()));
+        let errors = schema_errors(&settings);
+        if !errors.is_empty() {
+            log::warn!("the project's LSP settings don't apply: {errors}");
+            return filtered.clone();
+        }
+        toml::Value::Table(table)
+            .try_into()
+            .unwrap_or_else(|error| {
+                log::warn!("the project's LSP settings don't apply: {error}");
+                filtered.clone()
+            })
+    }
+}
+
+/// `table`'s schema errors, joined, or empty.
+fn schema_errors(table: &Table) -> String {
+    let mut layer = kiln_core::Layer::default();
+    layer.table = table.clone();
+    layer
+        .check_schema(&schema_for(table))
+        .iter()
+        .filter(|diagnostic| diagnostic.is_error())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
 /// The warning for each `lsp` key a project file sets that it may not.
-pub const UNTRUSTED_LSP: &str =
-    "LSP settings in project files are ignored until workspace trust exists";
+pub const UNTRUSTED_LSP: &str = "LSP settings in project files apply only in trusted folders";
 
 /// Drops every `lsp` key of a project layer's table except
 /// `lsp.enabled = false` and `lsp.servers.<name>.enabled = false`, with

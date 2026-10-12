@@ -199,7 +199,7 @@ fn project_layer_may_only_narrow() {
         };
         assert_eq!(
             UNTRUSTED_LSP,
-            "LSP settings in project files are ignored until workspace trust exists"
+            "LSP settings in project files apply only in trusted folders"
         );
         let project = dir.path().join("project.toml");
         for (line, key) in UNTRUSTED {

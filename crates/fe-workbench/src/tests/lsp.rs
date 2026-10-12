@@ -33,7 +33,9 @@ use lsp_types::{
     notification::{LogMessage, Notification, Progress, ShowMessage},
 };
 
-use crate::{Launch, StatusSide, Workbench, lsp::TestClock, set_server_launcher};
+use crate::{
+    Launch, StatusSide, Workbench, lsp::TestClock, open::ConfigDirOverride, set_server_launcher,
+};
 use fe_gpui::{EditorSettings, EditorTheme};
 
 /// Holds launches, as a slow launcher (a login shell, a container) does:
@@ -177,6 +179,9 @@ pub(crate) struct Lsp {
     dir: Rc<tempfile::TempDir>,
     /// The project's folder, resolved, as the manager has it.
     pub(crate) root: PathBuf,
+    /// The user's config folder, so a trusted root's settings never come
+    /// from the real one.
+    pub(crate) config: Rc<tempfile::TempDir>,
 }
 
 /// The project: `src/main.rs`, `src/lib.rs`, `src/other.rs` and
@@ -246,9 +251,12 @@ impl Lsp {
             gone: gone.clone(),
         });
         let manager_clock = clock.clone();
+        let config = Rc::new(tempfile::tempdir().unwrap());
+        let config_dir = config.path().to_owned();
         cx.update(|cx| {
             set_server_launcher(cx, launcher);
             cx.set_global(TestClock(manager_clock));
+            cx.set_global(ConfigDirOverride(Some(config_dir)));
         });
         let dir = Rc::new(project());
         let root = fs::canonicalize(dir.path()).unwrap();
@@ -264,6 +272,7 @@ impl Lsp {
             rust_gone: gone,
             dir,
             root,
+            config,
         };
         lsp.draw();
         lsp
@@ -291,6 +300,20 @@ impl Lsp {
     /// Another window's workbench for `launch`, with the same fakes, its
     /// root trusted.
     fn another_at(&mut self, launch: Launch) -> Self {
+        let mut lsp = self.another_untrusted_at(launch);
+        lsp.set_trust(true);
+        lsp
+    }
+
+    /// Another window's workbench rooted at `root`, with the same fakes,
+    /// its root's trust left as it is.
+    pub(crate) fn another_rooted(&mut self, root: &Path) -> Self {
+        self.another_untrusted_at(rooted(root))
+    }
+
+    /// Another window's workbench for `launch`, with the same fakes, its
+    /// root's trust left as it is.
+    fn another_untrusted_at(&mut self, launch: Launch) -> Self {
         let (workbench, cx) = window(&mut self.cx, launch);
         let mut lsp = Self {
             workbench,
@@ -303,10 +326,17 @@ impl Lsp {
             rust_gone: self.rust_gone.clone(),
             dir: self.dir.clone(),
             root: self.root.clone(),
+            config: self.config.clone(),
         };
         lsp.draw();
-        lsp.set_trust(true);
         lsp
+    }
+
+    /// Writes the user's `settings.toml`, which a trusted root's settings
+    /// are read from at the next reload.
+    pub(crate) fn write_user_settings(&self, text: &str) {
+        let path = self.config.path().join(fe_config::paths::SETTINGS_FILE);
+        fs::write(path, text).unwrap();
     }
 
     pub(crate) fn path(&self, name: &str) -> PathBuf {
@@ -728,8 +758,10 @@ fn restart_and_show_log(cx: &mut TestAppContext) {
     s.wait_item(Some("rust-analyzer: indexing Loading"));
 }
 
-/// Reloads `s`'s settings with `lsp.enabled` set to `enabled`.
+/// Reloads `s`'s settings with `lsp.enabled` set to `enabled`, in the
+/// user's file too, which a trusted root's are read from.
 fn reload(s: &mut Lsp, enabled: bool) {
+    s.write_user_settings(&format!("lsp.enabled = {enabled}\n"));
     let mut settings = Settings::default();
     settings.lsp.enabled = enabled;
     let event = SettingsEvent {
@@ -961,6 +993,9 @@ fn settings_are_per_window(cx: &mut TestAppContext) {
     let mut s = Lsp::new(cx);
     let mut t = s.another();
     reload(&mut s, false);
+    // A trusted root's settings are read from the files, which every
+    // window shares: put the user's back, so only s's in-memory ones differ.
+    s.write_user_settings("");
 
     // t's new root's manager starts with t's settings, not s's.
     let src = s.path("src");
