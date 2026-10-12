@@ -25,6 +25,7 @@ pub mod completion;
 pub mod decorations;
 pub mod diagnostics;
 pub mod ghost_text;
+mod row_change_decorations;
 pub mod row_changes;
 mod typing;
 mod viewer;
@@ -34,7 +35,7 @@ pub use viewer::{COPY_LIMIT, CopyError, Outcome, ViewerModel};
 
 use decorations::{Decoration, DecorationProvider, ProviderId};
 use diagnostics::{AnyDiagnosticSet, Diagnostic, DiagnosticEntry, DiagnosticSet};
-use row_changes::RowChange;
+use row_changes::{RowChange, RowChangeState};
 use typing::{Typed, TypingGroup};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -122,9 +123,8 @@ pub struct EditorModel {
     /// one.
     diagnostics: Option<Box<dyn AnyDiagnosticSet>>,
     /// The text [`EditorModel::row_changes`] compares against.
-    diff_base: Option<Arc<str>>,
-    /// The changes against `diff_base` for the snapshot at this version.
-    row_changes: RefCell<Option<(Version, Arc<[RowChange]>)>>,
+    /// The diff base and its per-version changes; shared with splits.
+    row_changes: Rc<RowChangeState>,
     /// Decoration providers, in registration order; shared with splits.
     decorations: Vec<(ProviderId, Rc<RefCell<dyn DecorationProvider>>)>,
     /// The run of typing the next keystroke may join, as one undo step.
@@ -141,7 +141,7 @@ impl EditorModel {
         let display = DisplayMap::new(&snapshot, 4);
         let mut history = History::new(buffer.subscribe(), &snapshot);
         let caught_up = history.join(snapshot.version());
-        Self {
+        let model = Self {
             buffer: Rc::new(RefCell::new(buffer)),
             history: Rc::new(RefCell::new(history)),
             caught_up,
@@ -158,12 +158,13 @@ impl EditorModel {
             origin: Origin::User,
             transactions: None,
             diagnostics: None,
-            diff_base: None,
-            row_changes: RefCell::new(None),
+            row_changes: RowChangeState::new(),
             decorations: Vec::new(),
             typing: None,
             clock: Rc::new(Instant::now),
-        }
+        };
+        model.row_changes.track(&model.caught_up);
+        model
     }
 
     pub fn open(path: impl AsRef<Path>) -> io::Result<Self> {
@@ -205,12 +206,12 @@ impl EditorModel {
             origin: Origin::User,
             transactions: None,
             diagnostics: self.diagnostics.as_ref().map(|set| set.boxed_clone()),
-            diff_base: self.diff_base.clone(),
-            row_changes: RefCell::new(None),
+            row_changes: Rc::clone(&self.row_changes),
             decorations: self.decorations.clone(),
             typing: None,
             clock: Rc::clone(&self.clock),
         };
+        model.row_changes.track(&model.caught_up);
         model.apply_wrap();
         model
     }
@@ -365,7 +366,17 @@ impl EditorModel {
     pub fn decorations(&self, range: Range<usize>) -> Vec<Decoration> {
         let mut all: Vec<(usize, Decoration)> = Vec::new();
         let mut out = Vec::new();
-        for (registered, (_, provider)) in self.decorations.iter().enumerate() {
+        // The changed-rows provider is shared state, not registry
+        // membership, so every split sees a base the moment it's set;
+        // below every registered provider.
+        let shared = self
+            .row_changes
+            .has_base()
+            .then(|| self.row_changes.provider())
+            .flatten()
+            .map(|provider| (ProviderId::next(), provider));
+        let registry = shared.into_iter().chain(self.decorations.iter().cloned());
+        for (registered, (_, provider)) in registry.enumerate() {
             provider
                 .borrow()
                 .decorations(&self.snapshot, range.clone(), &mut out);
@@ -379,10 +390,7 @@ impl EditorModel {
     /// file's text in git, say); `None` turns row changes off. Setting the
     /// same text again changes nothing.
     pub fn set_diff_base(&mut self, base: Option<Arc<str>>) {
-        if self.diff_base != base {
-            self.diff_base = base;
-            *self.row_changes.get_mut() = None;
-        }
+        self.row_changes.set_base(base);
     }
 
     /// The text as of the last catch-up against the diff base, as changed
@@ -390,24 +398,7 @@ impl EditorModel {
     /// when the base or the text is over 5 MiB. Diffed lazily, once per
     /// buffer version.
     pub fn row_changes(&self) -> Arc<[RowChange]> {
-        let Some(base) = &self.diff_base else {
-            return Arc::new([]);
-        };
-        let version = self.snapshot.version();
-        let mut cache = self.row_changes.borrow_mut();
-        if let Some((cached, changes)) = &*cache
-            && *cached == version
-        {
-            return changes.clone();
-        }
-        let text = self.text();
-        let changes = if text.len() > row_changes::MAX_DIFF_BYTES {
-            Arc::new([])
-        } else {
-            row_changes::diff_rows(base, &text.to_string())
-        };
-        *cache = Some((version, changes.clone()));
-        changes
+        self.row_changes.changes(&self.snapshot)
     }
 
     /// The diagnostics as the host applied them, if it keyed them by `S`

@@ -4,8 +4,16 @@
 //!
 //! [`EditorModel::row_changes`]: crate::EditorModel::row_changes
 
+use std::cell::RefCell;
+use std::cell::{Cell, OnceCell};
 use std::ops::Range;
+use std::rc::{Rc, Weak};
 use std::sync::Arc;
+
+use fe_buffer::{BufferSnapshot, Version};
+
+use crate::decorations::DecorationProvider;
+use crate::row_change_decorations::RowChangeDecorations;
 
 use imara_diff::{Algorithm, Diff, InternedInput, TokenSource};
 
@@ -30,6 +38,98 @@ pub struct RowChange {
     /// of the text.
     pub rows: Range<u32>,
     pub kind: RowChangeKind,
+}
+
+/// An editor's diff base and the changes against it for one buffer version,
+/// shared by its splits and by the decoration provider, so a version is
+/// diffed once whoever asks first.
+#[derive(Default)]
+pub(crate) struct RowChangeState {
+    inner: RefCell<Inner>,
+    /// The changed-rows decoration provider every model sharing this state
+    /// queries; it holds the state weakly.
+    provider: OnceCell<Rc<RefCell<dyn DecorationProvider>>>,
+    /// The version each model sharing this state is at; a diff is kept
+    /// while one of them is at its version.
+    live: RefCell<Vec<Weak<Cell<Version>>>>,
+}
+
+#[derive(Default)]
+struct Inner {
+    base: Option<Arc<str>>,
+    cached: Vec<(Version, Arc<[RowChange]>)>,
+}
+
+impl RowChangeState {
+    pub(crate) fn new() -> Rc<Self> {
+        let state = Rc::new(Self::default());
+        let provider = RowChangeDecorations::new(Rc::downgrade(&state));
+        let provider: Rc<RefCell<dyn DecorationProvider>> = Rc::new(RefCell::new(provider));
+        let _ = state.provider.set(provider);
+        state
+    }
+
+    /// The provider that turns the changes into decorations: the same one
+    /// for every model sharing this state, whichever set the base.
+    pub(crate) fn provider(&self) -> Option<Rc<RefCell<dyn DecorationProvider>>> {
+        self.provider.get().cloned()
+    }
+
+    /// Keeps the diff of whatever version `token` holds.
+    pub(crate) fn track(&self, token: &Rc<Cell<Version>>) {
+        self.live.borrow_mut().push(Rc::downgrade(token));
+    }
+
+    pub(crate) fn has_base(&self) -> bool {
+        self.inner.borrow().base.is_some()
+    }
+
+    /// Returns whether the base changed.
+    pub(crate) fn set_base(&self, base: Option<Arc<str>>) -> bool {
+        let mut inner = self.inner.borrow_mut();
+        if inner.base == base {
+            return false;
+        }
+        inner.base = base;
+        inner.cached.clear();
+        true
+    }
+
+    /// The changes in `snapshot`'s text against the base; empty without one.
+    pub(crate) fn changes(&self, snapshot: &BufferSnapshot) -> Arc<[RowChange]> {
+        let mut inner = self.inner.borrow_mut();
+        let Some(base) = inner.base.clone() else {
+            return Arc::new([]);
+        };
+        let version = snapshot.version();
+        if let Some((_, changes)) = inner.cached.iter().find(|(cached, _)| *cached == version) {
+            return changes.clone();
+        }
+        let text = snapshot.text();
+        let changes = if text.len() > MAX_DIFF_BYTES {
+            Arc::new([])
+        } else {
+            diff_rows(&base, &text.to_string())
+        };
+        inner.cached.push((version, changes.clone()));
+        let mut live = Vec::new();
+        self.live.borrow_mut().retain(|token| {
+            token.upgrade().is_some_and(|token| {
+                live.push(token.get());
+                true
+            })
+        });
+        inner
+            .cached
+            .retain(|(cached, _)| *cached == version || live.contains(cached));
+        changes
+    }
+}
+
+/// Diffs run on this thread.
+#[cfg(test)]
+pub(crate) fn diff_count() -> usize {
+    tests::DIFFS.with(std::cell::Cell::get)
 }
 
 /// Rows of a text, without their line terminators.
