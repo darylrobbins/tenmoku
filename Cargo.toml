@@ -97,6 +97,8 @@ chardetng = "0.1"
 image = { version = "0.25", default-features = false, features = ["png"] }
 libc = "0.2"
 log = "0.4"
+# EditorConfig lookup and glob matching (Apache-2.0, no dependencies).
+ec4rs = "1.2"
 # Command args, invocation records and their schemas (all already in the lock through gpui).
 schemars = "1"
 serde = { version = "1", features = ["derive"] }

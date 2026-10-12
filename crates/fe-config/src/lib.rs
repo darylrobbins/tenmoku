@@ -10,6 +10,7 @@
 //! reads the editor's colours from a kiln theme; kiln's config service
 //! selects and hot-reloads the theme itself.
 
+pub mod editorconfig;
 pub mod paths;
 pub mod settings;
 pub mod theme;
@@ -20,6 +21,7 @@ pub mod write;
 pub use kiln_core::{diagnostic, layers, trust, watch};
 
 pub use diagnostic::{Diagnostic, Severity};
+pub use editorconfig::{EditorConfig, EndOfLine, IndentKind, IndentSize, editorconfig_for};
 pub use layers::{Layer, load_layer, merge, parse_layer};
 pub use paths::{
     config_dir, config_dir_from, project_settings_path, user_settings_path, user_theme_path,
