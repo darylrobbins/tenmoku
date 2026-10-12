@@ -2,7 +2,7 @@
 
 /// Bytes allocated from malloc and not yet freed, across the process. Rust's
 /// allocator and tree-sitter's both use malloc, so a tree's size is the
-/// difference across parsing it. Zero off macOS.
+/// difference across parsing it. Zero except on macOS and on Linux with glibc.
 #[cfg(target_os = "macos")]
 pub(crate) fn allocated() -> usize {
     #[repr(C)]
@@ -22,7 +22,34 @@ pub(crate) fn allocated() -> usize {
     stats.size_in_use
 }
 
-#[cfg(not(target_os = "macos"))]
+/// On glibc, `uordblks` counts chunks in use from the heap arenas and
+/// `hblkhd` the large ones malloc gives their own mapping; a big tree has
+/// both.
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+pub(crate) fn allocated() -> usize {
+    #[repr(C)]
+    struct Mallinfo2 {
+        arena: usize,
+        ordblks: usize,
+        smblks: usize,
+        hblks: usize,
+        hblkhd: usize,
+        usmblks: usize,
+        fsmblks: usize,
+        uordblks: usize,
+        fordblks: usize,
+        keepcost: usize,
+    }
+    unsafe extern "C" {
+        fn mallinfo2() -> Mallinfo2;
+    }
+    // SAFETY: mallinfo2 takes nothing and returns its struct by value
+    // (glibc 2.33 and later).
+    let info = unsafe { mallinfo2() };
+    info.uordblks + info.hblkhd
+}
+
+#[cfg(not(any(target_os = "macos", all(target_os = "linux", target_env = "gnu"))))]
 pub(crate) fn allocated() -> usize {
     0
 }

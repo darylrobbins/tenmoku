@@ -9,12 +9,37 @@ use fe_buffer::{Buffer, Origin};
 use fe_syntax::Syntax;
 use fe_syntax::{TREE_BUDGET_BYTES, language_by_name, language_names};
 
-/// Tree bytes per source byte, from PERF.md, "Tree memory".
+/// Tree bytes per source byte, from PERF.md, "Tree memory" and "Tree memory
+/// by language".
 fn ratio(name: &str) -> usize {
     match name {
         "rust" => 40,
         "json" => 30,
         "markdown" => 85,
+        "python" => 44,
+        "javascript" => 36,
+        "typescript" => 40,
+        "tsx" => 35,
+        "toml" => 36,
+        "go" => 39,
+        "c" => 29,
+        "cpp" => 33,
+        "bash" => 45,
+        "html" => 20,
+        "css" => 26,
+        "yaml" => 54,
+        "java" => 27,
+        "ruby" => 69,
+        "lua" => 41,
+        "php" => 44,
+        "csharp" => 45,
+        "scala" => 54,
+        "xml" => 46,
+        "swift" => 49,
+        "kotlin" => 55,
+        "sql" => 42,
+        "dockerfile" => 24,
+        "make" => 33,
         _ => 40,
     }
 }

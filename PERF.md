@@ -999,3 +999,68 @@ apart between saves.
   platform watcher silently drops (FSEvents on the Mac). A save whose event is
   lost applies up to 3 s late, well over 200 ms. That applies on both
   platforms; these runs lost no events, so they don't exercise it.
+
+### Tree memory by language (`cargo bench -p fe-syntax --bench tree_ratio`)
+
+This continues "Tree memory", under "Flat files" above, for every language
+other than Rust, JSON and Markdown, and **supersedes its "every other
+language" row** (40×, not measured). Each language's source is its golden
+sample, `crates/fe-syntax/tests/golden/<name>.<ext>`, repeated whole to about
+4 MB. A few need help to parse without errors: later copies leave out Lua's
+shebang, Kotlin's package and imports and XML's prolog, and XML's copies sit
+in one root element. PHP is 50 copies (0.1 MB), because tree-sitter-php stops
+recognising heredocs after about 200 in a file; other languages measured at
+50 copies come within 0.2× of their 4 MB ratios. The tree's memory is the
+growth in malloc'd bytes across one parse, median of three, each in a fresh
+`Syntax`: `uordblks + hblkhd` from glibc's `mallinfo2` on Linux.
+
+- **Machine:** helium (Linux x86_64, glibc 2.43, AMD Ryzen 9 5900X, 12 cores /
+  24 threads), release build.
+- **Commit:** `f940dbb`. **Date:** 2026-10-12.
+- **Load average** (1 minute): 28.38 at the start of the run, 25.27 at the
+  end. Memory doesn't depend on load; an earlier run gave the same numbers.
+- **No macOS numbers were taken.** The bench measures there too, with
+  `malloc_zone_statistics`; the Mac run is still to do.
+
+The parse limit is `floor(300 MiB / ratio)`, with the ratio the measured one
+rounded up, and never below 20 (HTML measured 18.5×), so that no limit passes
+15 MiB. These are `RATIOS` in `crates/fe-syntax/src/parse_limit.rs`.
+
+| Language | Source | Tree | Tree / source | Ratio used | Parse limit |
+|---|---|---|---|---|---|
+| Python | 4.0 MB | 173 MB | 43.1× | 44× | 7,149,381 B (~6.8 MiB) |
+| JavaScript | 4.0 MB | 141 MB | 35.2× | 36× | 8,738,133 B (~8.3 MiB) |
+| TypeScript | 4.0 MB | 156 MB | 39.1× | 40× | 7,864,320 B (7.5 MiB) |
+| TSX | 4.0 MB | 137 MB | 34.3× | 35× | 8,987,794 B (~8.6 MiB) |
+| TOML | 4.0 MB | 141 MB | 35.3× | 36× | 8,738,133 B (~8.3 MiB) |
+| Go | 4.0 MB | 154 MB | 38.5× | 39× | 8,065,969 B (~7.7 MiB) |
+| C | 4.0 MB | 112 MB | 28.1× | 29× | 10,847,337 B (~10.3 MiB) |
+| C++ | 4.0 MB | 130 MB | 32.6× | 33× | 9,532,509 B (~9.1 MiB) |
+| Bash | 4.0 MB | 180 MB | 44.9× | 45× | 6,990,506 B (~6.7 MiB) |
+| HTML | 4.0 MB | 74 MB | 18.5× | 20× (floor) | 15,728,640 B (15 MiB) |
+| CSS | 4.0 MB | 101 MB | 25.1× | 26× | 12,098,953 B (~11.5 MiB) |
+| YAML | 4.0 MB | 215 MB | 53.7× | 54× | 5,825,422 B (~5.6 MiB) |
+| Java | 4.0 MB | 106 MB | 26.6× | 27× | 11,650,844 B (~11.1 MiB) |
+| Ruby | 4.0 MB | 272 MB | 68.1× | 69× | 4,559,026 B (~4.3 MiB) |
+| Lua | 4.0 MB | 161 MB | 40.3× | 41× | 7,672,507 B (~7.3 MiB) |
+| PHP | 0.1 MB | 4 MB | 43.1× | 44× | 7,149,381 B (~6.8 MiB) |
+| C# | 4.0 MB | 177 MB | 44.3× | 45× | 6,990,506 B (~6.7 MiB) |
+| Scala | 4.0 MB | 215 MB | 53.8× | 54× | 5,825,422 B (~5.6 MiB) |
+| XML | 4.0 MB | 184 MB | 45.9× | 46× | 6,838,539 B (~6.5 MiB) |
+| Swift | 4.0 MB | 192 MB | 48.1× | 49× | 6,419,853 B (~6.1 MiB) |
+| Kotlin | 4.0 MB | 218 MB | 54.5× | 55× | 5,719,505 B (~5.5 MiB) |
+| SQL | 4.0 MB | 168 MB | 42.0× | 42× | 7,489,828 B (~7.1 MiB) |
+| Dockerfile | 4.0 MB | 94 MB | 23.5× | 24× | 13,107,200 B (12.5 MiB) |
+| Make | 4.0 MB | 129 MB | 32.3× | 33× | 9,532,509 B (~9.1 MiB) |
+
+- **Twelve languages now have a lower limit than the old 40× default**
+  (Python, Bash, YAML, Ruby, Lua, PHP, C#, Scala, XML, Swift, Kotlin, SQL:
+  their trees would have passed 300 MB below 7.5 MiB); Ruby's is the lowest,
+  about 4.3 MiB. TypeScript's is unchanged, and the other eleven get a higher
+  one, up to HTML's 15 MiB.
+- **One sample per language.** Like Rust's and JSON's rows above, a file
+  denser in nodes than its sample costs more; the limits bound a typical
+  file's tree, not the worst.
+- **XML repeated whole, prolog and all, measured 72×** against 46× clean:
+  error recovery inflates a tree, so the bench measures only corpora that
+  parse without errors and reports any that don't.
