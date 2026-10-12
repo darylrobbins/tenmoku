@@ -624,6 +624,11 @@ impl Lsp {
         let (name, status) = self.servers.get(&server)?;
         Some((server, name, status))
     }
+
+    /// The manager, if there is one.
+    pub(crate) fn manager(&self) -> Option<Arc<Mutex<LspManager>>> {
+        self.manager.clone()
+    }
 }
 
 impl Workbench {
