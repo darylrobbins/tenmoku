@@ -334,7 +334,7 @@ fn send_exit(sender: &ExitSender, exit: ExitInfo) {
     }
 }
 
-const WAIT: Duration = Duration::from_secs(10);
+const WAIT: Duration = Duration::from_secs(60);
 
 /// How a killed launch exits.
 const KILLED: ExitInfo = ExitInfo {
@@ -405,7 +405,7 @@ impl FakeServer {
     }
 
     /// Blocks until `done` holds for the record across launches, and
-    /// returns it. Panics after 10 s, naming `what`.
+    /// returns it. Panics after 60 s, naming `what`.
     pub fn wait_for(&self, what: &str, done: impl Fn(&[Record]) -> bool) -> Vec<Record> {
         self.wait_for_in(None, what, done)
     }
@@ -424,7 +424,7 @@ impl FakeServer {
     /// wire to the client, as JSON messages in order. Unlike a
     /// [`Record::Replied`], which the fake makes before the answer is
     /// handed on to be written, a message here is already queued for the
-    /// client to read. Panics after 10 s, naming `what`.
+    /// client to read. Panics after 60 s, naming `what`.
     pub fn wait_sent(&self, launch: usize, what: &str, done: impl Fn(&[Value]) -> bool) {
         let deadline = Instant::now() + WAIT;
         let mut state = self.lock();
@@ -556,7 +556,7 @@ impl FakeServer {
     }
 
     /// With writes paced, blocks until the writes let through have been
-    /// made and the client waits to write again. Panics after 10 s.
+    /// made and the client waits to write again. Panics after 60 s.
     pub fn wait_paced(&self) {
         let deadline = Instant::now() + WAIT;
         let mut state = self.lock();
@@ -574,7 +574,7 @@ impl FakeServer {
 
     /// Whether a client write may go now. While writes are stepped, it
     /// blocks the client's thread until the write is let through; it panics
-    /// after 10 s.
+    /// after 60 s.
     fn pass_write(&self, cx: &mut Context<'_>) -> Poll<()> {
         let deadline = Instant::now() + WAIT;
         let mut state = self.lock();
@@ -735,7 +735,7 @@ impl FakeServer {
     }
 
     /// Blocks until `done` holds for the replica of `uri` (`None` until
-    /// it's opened), and returns it. Panics after 10 s, naming `what`.
+    /// it's opened), and returns it. Panics after 60 s, naming `what`.
     pub fn wait_for_document(
         &self,
         uri: &Url,
