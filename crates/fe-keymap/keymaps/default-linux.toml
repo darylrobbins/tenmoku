@@ -491,8 +491,9 @@ context = "ReferencesPanel"
 # same frame. In normal and visual mode the arrows are vim's motions
 # (`h l k j`), and the editing keys are vim's (`vim.key` hands the keystroke
 # to vim) rather than the editor's. A vim ctrl key bound to anything else,
-# here ctrl-v (paste) and ctrl-q (quit), is bound to `vim.key` too, so it
-# reaches vim; one bound to nothing, such as ctrl-r, reaches it unmatched.
+# here ctrl-v (paste), ctrl-q (quit), ctrl-y (redo), ctrl-f (find) and ctrl-b
+# (the dock), is bound to `vim.key` too, so it reaches vim; one bound to
+# nothing, such as ctrl-r, reaches it unmatched.
 
 [[bindings]]
 keys = "left"
@@ -583,6 +584,16 @@ command = "vim.key"
 context = "editor && vim.mode == normal"
 
 [[bindings]]
+keys = "ctrl-y"
+command = "vim.key"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-b"
+command = "vim.key"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
 keys = "enter"
 command = "vim.key"
 context = "editor && vim.visual"
@@ -619,6 +630,16 @@ context = "editor && vim.visual"
 
 [[bindings]]
 keys = "ctrl-q"
+command = "vim.key"
+context = "editor && vim.visual"
+
+[[bindings]]
+keys = "ctrl-y"
+command = "vim.key"
+context = "editor && vim.visual"
+
+[[bindings]]
+keys = "ctrl-b"
 command = "vim.key"
 context = "editor && vim.visual"
 
@@ -641,6 +662,18 @@ context = "editor && vim.mode == insert"
 keys = "ctrl-f"
 command = "find.show"
 context = "editor"
+
+# vim's ctrl-f (page down) beats `find.show` in normal and visual mode, so
+# it comes after it.
+[[bindings]]
+keys = "ctrl-f"
+command = "vim.key"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-f"
+command = "vim.key"
+context = "editor && vim.visual"
 
 [[bindings]]
 keys = "ctrl-g"

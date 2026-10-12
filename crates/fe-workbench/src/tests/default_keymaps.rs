@@ -92,7 +92,7 @@ fn linux_keymap_binds_the_macos_commands_with_ctrl() {
 #[test]
 fn vim_keeps_its_ctrl_keys_on_linux() {
     let linux = keymap(DEFAULT_LINUX);
-    for keys in ["ctrl-v", "ctrl-q"] {
+    for keys in ["ctrl-v", "ctrl-q", "ctrl-y", "ctrl-f", "ctrl-b"] {
         for vim in [("normal", false), ("visual", true)] {
             assert_eq!(
                 run(&linux, keys, Some(vim)).as_deref(),
@@ -105,6 +105,10 @@ fn vim_keeps_its_ctrl_keys_on_linux() {
             Some("vim.key")
         );
     }
+    assert_eq!(
+        run(&linux, "ctrl-y", Some(("insert", false))).as_deref(),
+        Some("editor.redo")
+    );
     assert_eq!(run(&linux, "ctrl-r", Some(("normal", false))), None);
 }
 

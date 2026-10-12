@@ -657,3 +657,6 @@ mod search_tests;
 
 #[cfg(test)]
 mod clipboard_tests;
+
+#[cfg(test)]
+mod scroll_tests;

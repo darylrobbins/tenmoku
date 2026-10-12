@@ -4,13 +4,13 @@
 //! editor's registry and lets any other ID propagate to the app's registry,
 //! which kiln owns; [`init`] adds vim's commands to it.
 
-use std::{ops::Range, ops::RangeInclusive, rc::Rc};
+use std::{cell::Cell, ops::Range, ops::RangeInclusive, rc::Rc};
 
 use fe_command::{
     Actor, CommandError, CommandId, CommandMeta, ContextPredicate, DispatchError, Dispatched,
     Effect, Invocation, Registry, Source, Value,
 };
-use fe_editor::commands::{Editor, EditorHost, EditorTarget};
+use fe_editor::commands::{Editor, EditorHost, EditorTarget, ScrollRequest, Viewport};
 use fe_keymap::{CatalogError, CommandCatalog};
 use fe_syntax::Syntax;
 use gpui::{App, ClipboardItem, Context, Window};
@@ -161,6 +161,18 @@ pub(crate) fn init(cx: &mut App) {
     kiln_platform::commands::register_app_commands(cx, register_vim_commands);
 }
 
+thread_local! {
+    /// What the last frame of the view about to dispatch showed: set by
+    /// [`EditorView::page_rows`], which every dispatch asks first.
+    pub(crate) static VIEWPORT: Cell<Option<Viewport>> = const { Cell::new(None) };
+    /// The first row a command asked to show, which the view takes in
+    /// [`EditorView::dispatched`].
+    static SCROLLED: Cell<Option<u32>> = const { Cell::new(None) };
+    /// Whether a command asked for the viewport, as every scroll does,
+    /// even one that leaves the top row alone.
+    static VIEWPORT_ASKED: Cell<bool> = const { Cell::new(false) };
+}
+
 /// The editor's side of a dispatch: the view's clipboard, viewport and
 /// syntax folds.
 pub(crate) struct ViewHost<'a> {
@@ -192,6 +204,17 @@ impl EditorHost for ViewHost<'_> {
         self.syntax
             .map(|syntax| fe_syntax::fold_ranges(syntax, rows))
             .unwrap_or_default()
+    }
+
+    fn viewport(&self) -> Option<Viewport> {
+        VIEWPORT_ASKED.set(true);
+        VIEWPORT.get()
+    }
+
+    fn scroll(&mut self, request: ScrollRequest) {
+        match request {
+            ScrollRequest::TopRow(row) => SCROLLED.set(Some(row)),
+        }
     }
 }
 
@@ -307,6 +330,7 @@ impl EditorView {
         mutates: bool,
         cx: &mut Context<Self>,
     ) -> Result<(), DispatchError> {
+        let ok = result.is_ok();
         match result {
             Ok(dispatched) => {
                 match dispatched.effect {
@@ -329,7 +353,19 @@ impl EditorView {
                     cx.notify();
                 }
             }
-            Err(error) => return Err(error),
+            Err(error) => {
+                SCROLLED.set(None);
+                VIEWPORT_ASKED.set(false);
+                return Err(error);
+            }
+        }
+        let asked = VIEWPORT_ASKED.take();
+        match SCROLLED.take() {
+            Some(top_row) => self.scroll_to_top_row(top_row),
+            // A scroll that kept the top row still moved the caret, which
+            // mustn't scroll the view back.
+            None if ok && asked => self.pin_top_row(),
+            None => {}
         }
         Ok(())
     }

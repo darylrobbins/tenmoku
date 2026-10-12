@@ -42,6 +42,9 @@ pub struct EditorView {
     pub(crate) scroll: Point<Pixels>,
     /// Scroll the primary cursor into view on the next frame.
     pub(crate) autoscroll: bool,
+    /// The buffer row a vim scroll put first since the last frame, which
+    /// the next dispatch sees as the top until a frame is laid out.
+    pub(crate) scrolled_top: Option<u32>,
     /// What the last frame laid out, for hit testing and IME.
     pub(crate) layout: Option<crate::element::FrameLayout>,
     drag: Option<Drag>,
@@ -151,6 +154,7 @@ impl EditorView {
             focus: cx.focus_handle(),
             scroll: Point::default(),
             autoscroll: true,
+            scrolled_top: None,
             layout: None,
             drag: None,
             marked: None,
@@ -330,7 +334,48 @@ impl EditorView {
         self.changed(cx);
     }
 
+    /// The buffer row first in view: where the last frame began, or a vim
+    /// scroll since.
+    fn top_buffer_row(&self) -> Option<u32> {
+        self.scrolled_top.or_else(|| {
+            let frame = &self.layout.as_ref()?.frame;
+            Some(self.model.display().row(frame.first_row).buffer_row)
+        })
+    }
+
+    /// What the view shows, in the text's rows as the vim engine counts
+    /// them; the rows are the frame's whole display rows.
+    fn viewport(&self) -> Option<fe_editor::commands::Viewport> {
+        let frame = &self.layout.as_ref()?.frame;
+        Some(fe_editor::commands::Viewport {
+            top_row: self.top_buffer_row()?,
+            rows: frame.visible_rows(),
+        })
+    }
+
+    /// Shows buffer row `top_row` first from the next frame, which leaves
+    /// the caret where it is even inside the autoscroll margin.
+    pub(crate) fn scroll_to_top_row(&mut self, top_row: u32) {
+        let Some(layout) = &self.layout else { return };
+        let frame = &layout.frame;
+        let display_row = self.model.display().row_for_buffer_row(top_row);
+        self.scroll.y = px(frame.line_height * frame.block_map.screen_row(display_row) as f32);
+        self.scrolled_top = Some(top_row);
+        self.autoscroll = false;
+    }
+
+    /// Keeps the view where it is through a vim scroll that left the top
+    /// row alone, as the caret moves: its pixel offset, even partway down
+    /// a wrapped row, stays as it is.
+    pub(crate) fn pin_top_row(&mut self) {
+        self.scrolled_top = self.top_buffer_row();
+        self.autoscroll = false;
+    }
+
+    /// The rows a page scrolls. Called as each dispatch starts, it also
+    /// hands the dispatch this view's viewport.
     pub(crate) fn page_rows(&self) -> u32 {
+        crate::commands::VIEWPORT.set(self.viewport());
         self.layout.as_ref().map_or(20, |layout| {
             layout.frame.visible_rows().saturating_sub(2).max(1)
         })

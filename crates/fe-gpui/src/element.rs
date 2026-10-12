@@ -808,6 +808,7 @@ impl Element for EditorElement {
         };
         self.view.update(cx, |view, _| {
             view.layout = Some(layout);
+            view.scrolled_top = None;
             view.frame_timings.record(timing);
             view.drop_stale_hover(hover_shown);
             #[cfg(test)]
