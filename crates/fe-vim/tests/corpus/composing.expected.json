@@ -3151,6 +3151,328 @@
           }
         }
       }
+    },
+    {
+      "name": "exact_star_group_ax",
+      "buffer": "ax",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\%(a\\|.\\)\\{0,}/[&]/<CR>",
+      "expect": {
+        "buffer": "[ax]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\%(a\\|.\\)\\{0,}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "exact_bounded_group_ax",
+      "buffer": "ax",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\%(a\\|.\\)\\{0,2}/[&]/<CR>",
+      "expect": {
+        "buffer": "[ax]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\%(a\\|.\\)\\{0,2}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "exact_lazy_group_a",
+      "buffer": "a",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\%(a\\|.\\)\\{-}/[&]/<CR>",
+      "expect": {
+        "buffer": "[]a",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\%(a\\|.\\)\\{-}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "exact_capture_star_mark",
+      "buffer": "á",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\(a\\|.\\)\\{0,}/[\\1]/<CR>",
+      "expect": {
+        "buffer": "[́]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(a\\|.\\)\\{0,}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "exact_empty_last_star",
+      "buffer": "ab",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\(a\\|b\\|\\)\\{0,}/[\\1]/<CR>",
+      "expect": {
+        "buffer": "[]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(a\\|b\\|\\)\\{0,}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "exact_count9_group",
+      "buffer": "abcdefghij",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\%(a\\|.\\)\\{9}/[&]/<CR>",
+      "expect": {
+        "buffer": "[abcdefghi]j",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\%(a\\|.\\)\\{9}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "exact_count9_open_group",
+      "buffer": "abcdefghijk",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\%(a\\|.\\)\\{9,}/[&]/<CR>",
+      "expect": {
+        "buffer": "[abcdefghijk]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\%(a\\|.\\)\\{9,}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "exact_count9_open_capture",
+      "buffer": "abcdefghijk",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\(a\\|.\\)\\{9,}/[\\1]/<CR>",
+      "expect": {
+        "buffer": "[k]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(a\\|.\\)\\{9,}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "beyond_star_capture_long",
+      "buffer": "axaxaxaxaxaxaxá",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\(a\\|.\\)\\{0,}/[\\1]/<CR>",
+      "expect": {
+        "buffer": "[á]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(a\\|.\\)\\{0,}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "beyond_star_group_dot",
+      "buffer": "axaxaxaxaxaxaxa",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\%(a\\|.\\)\\{0,}./[&]/<CR>",
+      "expect": {
+        "buffer": "[axaxaxaxaxaxaxa]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\%(a\\|.\\)\\{0,}.",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "beyond_lazy_group_x",
+      "buffer": "aaaaaaaaaaxa",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\%(a\\|.\\)\\{-}x/[&]/<CR>",
+      "expect": {
+        "buffer": "[aaaaaaaaaax]a",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\%(a\\|.\\)\\{-}x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "beyond_empty_first_plus",
+      "buffer": "abababab",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\(\\|a\\|b\\)\\{1,}/[\\1]/<CR>",
+      "expect": {
+        "buffer": "[]abababab",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(\\|a\\|b\\)\\{1,}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "beyond_empty_first_open",
+      "buffer": "abababab",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\(\\|a\\|b\\)\\{1,}/[&]<\\1>/<CR>",
+      "expect": {
+        "buffer": "[]<>abababab",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(\\|a\\|b\\)\\{1,}",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "beyond_empty_last_long",
+      "buffer": "abbabbabba",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/\\(a\\|b\\|\\)\\{0,}/[\\1]/<CR>",
+      "expect": {
+        "buffer": "[]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\(a\\|b\\|\\)\\{0,}",
+            "linewise": false
+          }
+        }
+      }
     }
   ]
 }

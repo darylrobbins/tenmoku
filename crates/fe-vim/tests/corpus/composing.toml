@@ -844,3 +844,90 @@ name = "count_group_marks_star_then_dot"
 buffer = "ábćdefgh́ij"
 cursor = [0, 0]
 keys = ":s/\\%(a\\|.\\)\\{0,}./[&]/<CR>"
+
+# Repeats of a group that ends in different ways, or whose first way is
+# empty, past what can be written as one regex: matched in nvim's order.
+
+[[case]]
+name = "exact_star_group_ax"
+buffer = "ax"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)\\{0,}/[&]/<CR>"
+
+[[case]]
+name = "exact_bounded_group_ax"
+buffer = "ax"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)\\{0,2}/[&]/<CR>"
+
+[[case]]
+name = "exact_lazy_group_a"
+buffer = "a"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)\\{-}/[&]/<CR>"
+
+[[case]]
+name = "exact_capture_star_mark"
+buffer = "á"
+cursor = [0, 0]
+keys = ":s/\\(a\\|.\\)\\{0,}/[\\1]/<CR>"
+
+[[case]]
+name = "exact_empty_last_star"
+buffer = "ab"
+cursor = [0, 0]
+keys = ":s/\\(a\\|b\\|\\)\\{0,}/[\\1]/<CR>"
+
+[[case]]
+name = "exact_count9_group"
+buffer = "abcdefghij"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)\\{9}/[&]/<CR>"
+
+[[case]]
+name = "exact_count9_open_group"
+buffer = "abcdefghijk"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)\\{9,}/[&]/<CR>"
+
+[[case]]
+name = "exact_count9_open_capture"
+buffer = "abcdefghijk"
+cursor = [0, 0]
+keys = ":s/\\(a\\|.\\)\\{9,}/[\\1]/<CR>"
+
+[[case]]
+name = "beyond_star_capture_long"
+buffer = "axaxaxaxaxaxaxá"
+cursor = [0, 0]
+keys = ":s/\\(a\\|.\\)\\{0,}/[\\1]/<CR>"
+
+[[case]]
+name = "beyond_star_group_dot"
+buffer = "axaxaxaxaxaxaxa"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)\\{0,}./[&]/<CR>"
+
+[[case]]
+name = "beyond_lazy_group_x"
+buffer = "aaaaaaaaaaxa"
+cursor = [0, 0]
+keys = ":s/\\%(a\\|.\\)\\{-}x/[&]/<CR>"
+
+[[case]]
+name = "beyond_empty_first_plus"
+buffer = "abababab"
+cursor = [0, 0]
+keys = ":s/\\(\\|a\\|b\\)\\{1,}/[\\1]/<CR>"
+
+[[case]]
+name = "beyond_empty_first_open"
+buffer = "abababab"
+cursor = [0, 0]
+keys = ":s/\\(\\|a\\|b\\)\\{1,}/[&]<\\1>/<CR>"
+
+[[case]]
+name = "beyond_empty_last_long"
+buffer = "abbabbabba"
+cursor = [0, 0]
+keys = ":s/\\(a\\|b\\|\\)\\{0,}/[\\1]/<CR>"

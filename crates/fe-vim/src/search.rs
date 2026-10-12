@@ -4,13 +4,15 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::ops::Range;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use fe_text::{Bias, Text};
 use regex::{CaptureLocations, Regex, RegexBuilder};
 use unicode_segmentation::UnicodeSegmentation;
+
+mod backtrack;
 
 use crate::args::SearchPattern;
 use crate::motion::{self, Class, Line};
@@ -19,12 +21,6 @@ use crate::motion::{self, Class, Line};
 const MAX_DEPTH: usize = 60;
 /// How many `\(` a pattern may hold, as in Vim.
 const MAX_GROUPS: usize = 9;
-/// How big, compiled, the regex of a pattern with a repeat of alternatives
-/// that end in different ways may be: each copy of a `.` or a class is
-/// tens of kilobytes (`\p{M}` is big), so a count of ten is already past
-/// `regex`'s default.
-const MAX_MIXED_COMPILED: usize = 64 << 20;
-
 /// How long one command may spend matching a pattern by default: nvim's
 /// `'redrawtime'`.
 pub const DEFAULT_TIME_LIMIT: Duration = Duration::from_secs(2);
@@ -94,6 +90,11 @@ impl Deadline {
         self.ran_out.get()
     }
 
+    /// Records that the operation had to stop, as an expired deadline does.
+    pub(crate) fn give_up(&self) {
+        self.ran_out.set(true);
+    }
+
     /// Whether it is past now: samples the clock, for loops that make no
     /// regex call to do it (stepping through listed matches, reading rows).
     pub(crate) fn expired(&self) -> bool {
@@ -118,13 +119,7 @@ impl Deadline {
 /// within one row.
 #[derive(Clone, Debug)]
 pub struct Pattern {
-    regex: Regex,
-    /// The `regex` capture groups behind each of a pattern's: slot 0 is the
-    /// whole match (group 1 for a Vim pattern, which [`Translator::pattern`]
-    /// wraps in a group followed by a boundary, 0 for a find bar's), slot `n`
-    /// `\(` number `n`. A group the translation had to write more than once
-    /// (see [`Translator`]) has a group for each copy, in the order written.
-    slots: Vec<Vec<usize>>,
+    engine: Engine,
     /// Whether the pattern begins with `\<` and ends with `\>` (and has no
     /// other), which are checked on each match by character class, as
     /// Vim does, not left to `regex`'s word boundaries.
@@ -132,6 +127,24 @@ pub struct Pattern {
     /// Whether a match must stand alone, between characters that aren't
     /// word characters (a [`FindQuery`]'s `whole_word`).
     whole: bool,
+}
+
+/// What matches a [`Pattern`].
+#[derive(Clone, Debug)]
+enum Engine {
+    Regex {
+        regex: Regex,
+        /// The `regex` capture groups behind each of a pattern's: slot 0 is
+        /// the whole match (group 1 for a Vim pattern, which
+        /// [`Translator::pattern`] wraps in a group followed by a boundary,
+        /// 0 for a find bar's), slot `n` `\(` number `n`. A group the
+        /// translation had to write more than once (see [`Translator`]) has
+        /// a group for each copy, in the order written.
+        slots: Vec<Vec<usize>>,
+    },
+    /// A pattern whose match priority one regex can't write
+    /// ([`Translator::inexact`]).
+    Backtrack(Arc<backtrack::Program>),
 }
 
 /// A find bar's query: what [`Pattern::from_query`] builds a pattern from.
@@ -187,13 +200,17 @@ impl Pattern {
             groups: 0,
             ignore_case,
             budget: 0,
-            mixed: false,
+            inexact: false,
         };
         let source = unique_names(&translator.pattern()?);
-        let mut builder = RegexBuilder::new(&source);
-        if translator.mixed {
-            builder.size_limit(MAX_MIXED_COMPILED);
+        if translator.inexact {
+            return Ok(Self {
+                engine: Engine::Backtrack(Arc::new(backtrack::compile(&tokens, ignore_case)?)),
+                word,
+                whole: false,
+            });
         }
+        let builder = RegexBuilder::new(&source);
         let regex = build(builder, |error| {
             // Past the nesting limit: its message's last line says so.
             PatternError::TooLarge(
@@ -218,8 +235,7 @@ impl Pattern {
             }
         }
         Ok(Self {
-            regex,
-            slots,
+            engine: Engine::Regex { regex, slots },
             word,
             whole: false,
         })
@@ -247,8 +263,7 @@ impl Pattern {
         })?;
         let slots = (0..regex.captures_len()).map(|at| vec![at]).collect();
         Ok(Self {
-            regex,
-            slots,
+            engine: Engine::Regex { regex, slots },
             word: (false, false),
             whole: query.whole_word,
         })
@@ -459,13 +474,18 @@ impl Pattern {
     ) -> RowMatches<'a> {
         RowMatches {
             deadline,
-            regex: &self.regex,
-            slots: &self.slots,
+            engine: &self.engine,
             word: self.word,
             whole: self.whole,
             hay,
             at: Some(at),
-            locs: self.regex.capture_locations(),
+            found: match &self.engine {
+                Engine::Regex { regex, .. } => Found::Regex(regex.capture_locations()),
+                Engine::Backtrack(_) => Found::Backtrack {
+                    slots: backtrack::empty_slots(),
+                    scratch: backtrack::Scratch::default(),
+                },
+            },
             groups: false,
             last_end: None,
         }
@@ -843,16 +863,14 @@ fn unit(text: &str) -> Option<usize> {
 /// See [`Pattern::matches`] and [`Pattern::substitutions`].
 pub(crate) struct RowMatches<'a> {
     deadline: &'a Deadline,
-    regex: &'a Regex,
-    /// [`Pattern`]'s `slots`.
-    slots: &'a [Vec<usize>],
+    engine: &'a Engine,
     word: (bool, bool),
     whole: bool,
     hay: &'a str,
     at: Option<usize>,
     /// The last match's groups, read through [`RowMatches::group`] if
     /// `groups`.
-    locs: CaptureLocations,
+    found: Found,
     groups: bool,
     /// For `:s`: where the last non-empty match ended, if one did.
     last_end: Option<Option<usize>>,
@@ -865,18 +883,32 @@ impl RowMatches<'_> {
         if !self.groups {
             return None;
         }
+        let (Engine::Regex { slots, .. }, Found::Regex(locs)) = (self.engine, &self.found) else {
+            let Found::Backtrack { slots, .. } = &self.found else {
+                unreachable!("an engine's own state");
+            };
+            return backtrack::group(slots, n);
+        };
         // A group written twice: the copy that took part last in the text,
         // which isn't the last one written (`\(a\|.\)\+` on "xa" ends on
         // the first copy). Of copies that end together, the later starting
         // one (an empty one) came last.
-        let (start, end) = self
-            .slots
+        let (start, end) = slots
             .get(n)?
             .iter()
-            .filter_map(|&at| self.locs.get(at))
+            .filter_map(|&at| locs.get(at))
             .max_by_key(|&(start, end)| (end, start))?;
         Some(start..end)
     }
+}
+
+/// What a [`RowMatches`] keeps of its last match.
+enum Found {
+    Regex(CaptureLocations),
+    Backtrack {
+        slots: backtrack::Slots,
+        scratch: backtrack::Scratch,
+    },
 }
 
 impl Iterator for RowMatches<'_> {
@@ -888,12 +920,20 @@ impl Iterator for RowMatches<'_> {
             if self.deadline.passed() {
                 return None;
             }
-            self.regex.captures_read_at(&mut self.locs, self.hay, at)?;
-            let (start, end) = self
-                .locs
-                .get(self.slots[0][0])
-                .expect("a match has its group");
-            let found = start..end;
+            let found = match (self.engine, &mut self.found) {
+                (Engine::Regex { regex, slots }, Found::Regex(locs)) => {
+                    regex.captures_read_at(locs, self.hay, at)?;
+                    let (start, end) = locs.get(slots[0][0]).expect("a match has its group");
+                    start..end
+                }
+                (Engine::Backtrack(program), Found::Backtrack { slots, scratch }) => {
+                    match program.find_at(self.hay, at, self.deadline, scratch, slots) {
+                        Ok(true) => backtrack::group(slots, 0).expect("a match has its span"),
+                        Ok(false) | Err(backtrack::GaveUp) => return None,
+                    }
+                }
+                _ => unreachable!("an engine's own state"),
+            };
             let next = if found.is_empty() {
                 unit(&self.hay[found.start..]).map_or(usize::MAX, |unit| found.start + unit)
             } else {
@@ -1708,9 +1748,10 @@ struct Translator<'a> {
     /// How many pieces have been translated, each once for every way the
     /// branch before it can end.
     budget: usize,
-    /// Whether a repeat of alternatives that end in different ways has been
-    /// written out.
-    mixed: bool,
+    /// Whether a repeat can't be written as one `regex` pattern in nvim's
+    /// order: the pattern is then matched by [`backtrack`], and the
+    /// translation is only checked for what it rejects.
+    inexact: bool,
 }
 
 /// A way through some of a pattern, in `regex` syntax, and how it ends:
@@ -2041,14 +2082,12 @@ impl Translator<'_> {
                 .iter()
                 .any(|path| path.text.contains("(?P<vimgroup") && matches_empty(&path.text));
         if atom.len() > 1 || empty_last {
-            (self.next, self.groups) = at;
-            let again = self.atom(opened, first, false, !bare)?.0;
-            (self.next, self.groups) = ends;
-            let mut trans = [Vec::new(), Vec::new()];
-            trans[usize::from(bare)] = join_paths(atom, true);
-            trans[usize::from(!bare)] = join_paths(again, true);
-            self.mixed = true;
-            return repeat_mixed(&trans, bare, (min, max), Repeat { lazy, empty_last });
+            // Nvim's order of trying the ways of such a repeat can't be
+            // written as one `regex` pattern: [`backtrack`] matches the
+            // pattern. What follows is translated as if the repeat ended as
+            // it began; the text is never used.
+            self.inexact = true;
+            return Ok(vec![nothing(bare)]);
         }
         // An atom that ends in different ways goes on as if it always ended
         // bare when it can, each time.
@@ -2265,41 +2304,9 @@ impl Translator<'_> {
     }
 }
 
-/// The longest a repeat's translation may get.
-const MAX_REPEAT_TEXT: usize = 100_000;
-/// The most ways, and the most text, a repeat written out in the order nvim
-/// tries things in may have before [`repeat_mixed`] writes it more compactly.
-const MAX_ORDERED_PATHS: usize = 12;
-const MAX_ORDERED_TEXT: usize = 24_000;
-/// How many times an unbounded repeat is written out in order before the
-/// rest is the compact form.
-const MAX_OPEN_TIMES: u32 = 4;
-/// The most times, counting the open-ended ones, [`ordered`] is tried for.
-const MAX_ORDERED_TIMES: u32 = 24;
-
 /// Whether `text`, a translation, can match the empty string.
 fn matches_empty(text: &str) -> bool {
     Regex::new(&format!("^(?:{})$", unique_names(text))).is_ok_and(|regex| regex.is_match(""))
-}
-
-/// `paths` with those that end the same way made one, their texts
-/// alternatives, in the order the ways first appear. That puts a way ahead
-/// of those that nvim tries before it, so it's only for [`repeat_compact`].
-fn by_end(paths: Vec<Path>) -> Vec<Path> {
-    let mut joined: Vec<(Vec<String>, bool)> = Vec::new();
-    for path in paths {
-        match joined.iter_mut().find(|(_, bare)| *bare == path.bare) {
-            Some((texts, _)) => texts.push(path.text),
-            None => joined.push((vec![path.text], path.bare)),
-        }
-    }
-    joined
-        .into_iter()
-        .map(|(texts, bare)| Path {
-            text: format!("(?:{})", texts.join("|")),
-            bare,
-        })
-        .collect()
 }
 
 fn nothing(bare: bool) -> Path {
@@ -2307,346 +2314,6 @@ fn nothing(bare: bool) -> Path {
         text: String::new(),
         bare,
     }
-}
-
-/// `paths`, if they stay within what [`repeat_mixed`] writes out in order.
-fn within_ordered(paths: Vec<Path>) -> Option<Vec<Path>> {
-    let text: usize = paths.iter().map(|path| path.text.len()).sum();
-    (paths.len() <= MAX_ORDERED_PATHS && text <= MAX_ORDERED_TEXT).then_some(paths)
-}
-
-/// Every way of `first` followed by one of `then` for how it ended, in the
-/// order nvim tries them: each way of `first` with all that can follow it
-/// before the next. Neighbours that end the same way are one path, and
-/// that's all that's merged, so the order is kept.
-fn compose(first: &[Path], then: impl Fn(bool) -> Option<Vec<Path>>) -> Option<Vec<Path>> {
-    let mut after: [Option<Vec<Path>>; 2] = [None, None];
-    let mut all = Vec::new();
-    for head in first {
-        let tails = match &mut after[usize::from(head.bare)] {
-            Some(tails) => tails,
-            slot => slot.insert(then(head.bare)?),
-        };
-        for tail in tails.iter() {
-            all.push(Path {
-                text: format!("{}{}", head.text, tail.text),
-                bare: tail.bare,
-            });
-        }
-    }
-    within_ordered(join_paths(all, true))
-}
-
-/// The ways through an atom repeated at least `must` times and then `may`
-/// more (`None`: any number), each the way nvim goes about it: `trans[c]` is
-/// the atom after a bare base (`c`) or not, and `from` how the last time
-/// ended. A greedy repeat tries another time before stopping, a lazy one
-/// stops first. An unbounded repeat is written out `open` times and then
-/// left to [`repeat_compact`]'s form. `None` if it comes to too much.
-fn ordered(
-    trans: &[Vec<Path>; 2],
-    from: bool,
-    (must, may, open): (u32, Option<u32>, u32),
-    kind: Repeat,
-) -> Option<Vec<Path>> {
-    let lazy = kind.lazy;
-    if must > 0 {
-        return compose(&trans[usize::from(from)], |end| {
-            ordered(trans, end, (must - 1, may, open), kind)
-        });
-    }
-    let (may, open) = match (may, open) {
-        (Some(0), _) => return Some(vec![nothing(from)]),
-        (None, 0) => {
-            let compact = [by_end(trans[0].clone()), by_end(trans[1].clone())];
-            return Some(any(&compact, from, kind));
-        }
-        (Some(may), open) => (Some(may - 1), open),
-        (None, open) => (None, open - 1),
-    };
-    let more = compose(&trans[usize::from(from)], |end| {
-        ordered(trans, end, (0, may, open), kind)
-    })?;
-    let all = if lazy {
-        std::iter::once(nothing(from)).chain(more).collect()
-    } else {
-        more.into_iter().chain([nothing(from)]).collect()
-    };
-    within_ordered(join_paths(all, true))
-}
-
-/// Any number of times, the compact form: the one-time ways between the two
-/// kinds of end are `ways[from][to]`, and what loops back where it began is
-/// each way that does, or goes across and back. Where nvim would try the two
-/// kinds of end in turn, this tries the way that ends on the other kind first.
-fn any(trans: &[Vec<Path>; 2], from: bool, kind: Repeat) -> Vec<Path> {
-    let lazy = kind.lazy;
-    let ways = |from: bool, to: bool| {
-        trans[usize::from(from)]
-            .iter()
-            .find(|path| path.bare == to)
-            .map(|path| path.text.clone())
-    };
-    let star = |text: &Option<String>| match text {
-        Some(text) => format!("(?:{text}){}", if lazy { "*?" } else { "*" }),
-        None => String::new(),
-    };
-    let other = !from;
-    let stay = ways(from, from);
-    let (across, back, stay_there) = (ways(from, other), ways(other, from), ways(other, other));
-    let across_back = across
-        .as_ref()
-        .zip(back.as_ref())
-        .map(|(across, back)| format!("{across}{}{back}", star(&stay_there)));
-    let looped: Vec<String> = stay.into_iter().chain(across_back).collect();
-    let looped = (!looped.is_empty()).then(|| looped.join("|"));
-    // Ending on the other kind takes another time: the way that does is
-    // tried first, as a greedy repeat tries another time before stopping.
-    let mut paths = Vec::new();
-    if let Some(across) = across {
-        paths.push(Path {
-            text: format!("{}{across}{}", star(&looped), star(&stay_there)),
-            bare: other,
-        });
-    }
-    paths.push(Path {
-        text: star(&looped),
-        bare: from,
-    });
-    if !kind.empty_last {
-        return paths;
-    }
-    // A time that matches nothing is the last, and its captures are set: one
-    // more time, for each way it can end, before stopping.
-    let mut last = Vec::new();
-    for path in paths {
-        let mut ends: Vec<(bool, Vec<&str>)> = Vec::new();
-        for way in &trans[usize::from(path.bare)] {
-            match ends.iter_mut().find(|(end, _)| *end == way.bare) {
-                Some((_, texts)) => texts.push(&way.text),
-                None => ends.push((way.bare, vec![&way.text])),
-            }
-        }
-        for (end, texts) in ends {
-            last.push(Path {
-                text: format!("{}(?:{})", path.text, texts.join("|")),
-                bare: end,
-            });
-        }
-        last.push(path);
-    }
-    last
-}
-
-/// How a repeat is tried.
-#[derive(Clone, Copy)]
-struct Repeat {
-    lazy: bool,
-    /// Whether the atom can match nothing and set captures when it does,
-    /// which ends the repeat there.
-    empty_last: bool,
-}
-
-/// An atom that ends in different ways, repeated `min` to `max` times, the
-/// first time after `bare` and each later one after how the one before
-/// ended: `trans[c]` is the atom's ways through after a bare base (`c`) or
-/// not, each for how it ends. The ways through come out for how the last
-/// time ended, as an atom's do, in the order nvim tries them while that
-/// takes few enough: past that (a long count, or an open-ended repeat's
-/// later times) they're merged by how they end, which keeps what can match
-/// but not always which way is tried first.
-///
-/// Known limit (T351 fixes it): past the ordered prefix, nvim's priority
-/// for an unbounded or large-count repeat of such a group, or of a group
-/// whose first way is empty (`\(\|a\|b\)\+`), isn't kept. The exits sit
-/// inside the cycle, so no single `regex` pattern can write the order.
-fn repeat_mixed(
-    trans: &[Vec<Path>; 2],
-    bare: bool,
-    (min, max): (u32, Option<u32>),
-    kind: Repeat,
-) -> Result<Vec<Path>, PatternError> {
-    let may = max.map(|max| max.saturating_sub(min));
-    // `ordered` recurses once for each time, so only a count it could finish
-    // within its limits is tried: it never gets past 12 ways anyway.
-    let times = min.saturating_add(may.unwrap_or(0));
-    for open in (0..=MAX_OPEN_TIMES).rev() {
-        if times > MAX_ORDERED_TIMES {
-            break;
-        }
-        if let Some(paths) = ordered(trans, bare, (min, may, open), kind) {
-            return Ok(paths);
-        }
-        if may.is_some() {
-            break;
-        }
-    }
-    repeat_compact(trans, bare, (min, max), kind)
-}
-
-/// A repeat's ways through, `[from][to]`: the text of those that start after
-/// a bare base (`from`) and end on one (`to`), or none.
-type Ways = [[Option<String>; 2]; 2];
-
-/// The repeat's text outgrew [`MAX_REPEAT_TEXT`].
-fn too_large() -> PatternError {
-    PatternError::TooLarge("a multi after alternatives that end in different ways".into())
-}
-
-fn alternatives(texts: Vec<String>) -> Option<String> {
-    match texts.len() {
-        0 => None,
-        1 => texts.into_iter().next(),
-        _ => Some(format!("(?:{})", texts.join("|"))),
-    }
-}
-
-fn no_ways() -> Ways {
-    [[None, None], [None, None]]
-}
-
-/// No time at all: each way ends as it began.
-fn no_time() -> Ways {
-    [[Some(String::new()), None], [None, Some(String::new())]]
-}
-
-/// `first`'s ways, then `then`'s, the ways through the kind of end first in
-/// `order` first.
-fn together(first: &Ways, then: &Ways, order: [usize; 2]) -> Result<Ways, PatternError> {
-    let mut ways = no_ways();
-    for from in 0..2 {
-        for to in 0..2 {
-            let texts = order
-                .into_iter()
-                .filter_map(|mid| match (&first[from][mid], &then[mid][to]) {
-                    (Some(first), Some(then)) => Some(format!("{first}{then}")),
-                    _ => None,
-                })
-                .collect();
-            ways[from][to] = alternatives(texts);
-        }
-    }
-    check_size(ways)
-}
-
-/// `first`'s ways or, failing them, `then`'s.
-fn either(first: &Ways, then: &Ways) -> Result<Ways, PatternError> {
-    let mut ways = no_ways();
-    for from in 0..2 {
-        for to in 0..2 {
-            let texts = [&first[from][to], &then[from][to]]
-                .into_iter()
-                .flatten()
-                .cloned()
-                .collect();
-            ways[from][to] = alternatives(texts);
-        }
-    }
-    check_size(ways)
-}
-
-fn check_size(ways: Ways) -> Result<Ways, PatternError> {
-    let size: usize = ways.iter().flatten().flatten().map(String::len).sum();
-    if size > MAX_REPEAT_TEXT {
-        return Err(too_large());
-    }
-    Ok(ways)
-}
-
-/// `once` taken exactly `times` times, by squaring so that its text grows
-/// with the square of the count and not exponentially.
-fn times(once: &Ways, mut times: u32, order: [usize; 2]) -> Result<Ways, PatternError> {
-    let mut result = no_time();
-    let mut square = once.clone();
-    while times > 0 {
-        if times & 1 == 1 {
-            result = together(&result, &square, order)?;
-        }
-        times >>= 1;
-        if times > 0 {
-            square = together(&square, &square, order)?;
-        }
-    }
-    Ok(result)
-}
-
-/// `once` taken up to `most` times, the most (or, `lazy`, the fewest) first.
-fn up_to(once: &Ways, most: u32, lazy: bool, order: [usize; 2]) -> Result<Ways, PatternError> {
-    if most == 0 {
-        return Ok(no_time());
-    }
-    let pick = |more: &Ways, fewer: &Ways| match lazy {
-        true => either(fewer, more),
-        false => either(more, fewer),
-    };
-    if most % 2 == 1 {
-        // 0 to `half`, and `half + 1` more to 2 * `half` + 1.
-        let half = most / 2;
-        let fewer = up_to(once, half, lazy, order)?;
-        let more = together(&times(once, half + 1, order)?, &fewer, order)?;
-        pick(&more, &fewer)
-    } else {
-        pick(
-            &times(once, most, order)?,
-            &up_to(once, most - 1, lazy, order)?,
-        )
-    }
-}
-
-/// [`repeat_mixed`] with the ways merged by how they end throughout.
-fn repeat_compact(
-    trans: &[Vec<Path>; 2],
-    bare: bool,
-    (min, max): (u32, Option<u32>),
-    kind: Repeat,
-) -> Result<Vec<Path>, PatternError> {
-    let lazy = kind.lazy;
-    let merged = [by_end(trans[0].clone()), by_end(trans[1].clone())];
-    let mut once = no_ways();
-    for (from, paths) in merged.iter().enumerate() {
-        for path in paths {
-            once[from][usize::from(path.bare)] = Some(path.text.clone());
-        }
-    }
-    // Which kind of end nvim's first choice leads to, which the ways through
-    // are tried in turn for.
-    let first = merged[usize::from(bare)]
-        .first()
-        .map_or(usize::from(bare), |path| usize::from(path.bare));
-    let order = [first, 1 - first];
-    let heads = times(&once, min, order)?;
-    let tails = match max {
-        Some(max) => Some(up_to(&once, max.saturating_sub(min), lazy, order)?),
-        None => None,
-    };
-    let mut all = Vec::new();
-    for end in [bare, !bare] {
-        let Some(head) = &heads[usize::from(bare)][usize::from(end)] else {
-            continue;
-        };
-        let rest = match &tails {
-            Some(tails) => [end, !end]
-                .into_iter()
-                .filter_map(|to| {
-                    tails[usize::from(end)][usize::from(to)]
-                        .clone()
-                        .map(|text| Path { text, bare: to })
-                })
-                .collect(),
-            None => any(&merged, end, kind),
-        };
-        for tail in rest {
-            all.push(Path {
-                text: format!("{head}{}", tail.text),
-                bare: tail.bare,
-            });
-        }
-    }
-    let all = by_end(all);
-    if all.iter().any(|path| path.text.len() > MAX_REPEAT_TEXT) {
-        return Err(too_large());
-    }
-    Ok(all)
 }
 
 /// `paths` with each run of neighbours that end the same way made one
@@ -2772,5 +2439,38 @@ mod tests {
             assert_eq!(rows.step(from, forward), from);
             assert_eq!(ROWS_SEARCHED.get(), 1, "from {from}, forward {forward}");
         }
+    }
+
+    /// A pattern matched by backtracking stops at the deadline, however
+    /// many ways the row can be tried.
+    #[test]
+    fn backtracking_stops_at_the_deadline() {
+        let pattern = Pattern::parse(r"\(a\|.\|a\)\{0,}c").unwrap();
+        assert!(matches!(pattern.engine, Engine::Backtrack(_)));
+        let hay = "a".repeat(60);
+        let deadline = Deadline::within(Duration::from_millis(20));
+        assert_eq!(pattern.matches(&hay, &deadline).next(), None);
+        assert!(deadline.ran_out());
+    }
+
+    /// A counted repeat of nothing, or of many distinct composing leaves,
+    /// is refused or compiled at once, not worked through.
+    #[test]
+    fn backtracking_patterns_are_bounded_to_build() {
+        for pattern in [
+            r"\%(a\|.\)*\%(\)\{4294967295}".to_string(),
+            r"\%(a\|.\)*\%(\%(\%(\)\{99999}\)\{99999}\)\{99999}".to_string(),
+        ] {
+            assert!(Pattern::parse(&pattern).is_ok(), "{pattern}");
+        }
+        let marks: String = ('\u{4e00}'..)
+            .take(3000)
+            .map(|ch| format!("{ch}\u{301}"))
+            .collect();
+        let many = format!(r"\%(a\|.\)*{marks}");
+        assert!(matches!(
+            Pattern::parse(&many),
+            Err(PatternError::TooLarge(_))
+        ));
     }
 }
