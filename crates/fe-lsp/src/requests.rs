@@ -60,9 +60,9 @@ pub(crate) fn timeout(method: &str, timeouts: &LspTimeouts) -> Option<Duration> 
         "textDocument/definition" => timeouts.definition,
         "workspace/symbol" => timeouts.workspace_symbol,
         "textDocument/references" => timeouts.references,
-        "textDocument/hover" => timeouts.hover,
+        "textDocument/hover" | "textDocument/codeAction" => timeouts.hover,
         "textDocument/completion" => timeouts.completion,
-        "completionItem/resolve" => timeouts.resolve,
+        "completionItem/resolve" | "codeAction/resolve" => timeouts.resolve,
         _ => return None,
     };
     Some(Duration::from_millis(ms.max(1)))

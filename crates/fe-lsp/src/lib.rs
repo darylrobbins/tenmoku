@@ -99,6 +99,7 @@ mod tests;
 #[cfg(any(test, feature = "test-support"))]
 pub use clock::ManualClock;
 pub use clock::{Clock, SystemClock};
+pub use code_action::{CodeAction, Payload};
 pub use completion::{CompletionEdit, CompletionItem, CompletionTrigger, Completions, kind_name};
 pub use diagnostics::{Diagnostic, DiagnosticTag, Severity};
 pub use document::{Admitted, Opened, SentDocument, SentVersion};

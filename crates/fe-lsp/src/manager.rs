@@ -108,6 +108,9 @@ pub struct KillSwitch {
     threads: Threads,
 }
 
+/// A reply, with the documents the server had open as it was sent.
+pub(crate) type WithOpened<T> = (Reply<T>, Opened);
+
 type Threads = Arc<Mutex<Vec<Done>>>;
 
 impl KillSwitch {
@@ -799,6 +802,41 @@ impl LspManager {
             Some(call::<R, _>(answer, params, move |_, reply| {
                 reply.map(|reply| (reply, opened))
             }))
+        });
+        // A server that has gone drops the command, and `answer` with it.
+        self.send(server, Command::WithDocuments(admit));
+        let answered = answered.map(|answer| answer.unwrap_or(Err(LspError::ServerDown)));
+        within(
+            answered,
+            self.timeout::<R>(),
+            &*self.clock,
+            Err(LspError::Timeout),
+        )
+    }
+
+    /// As [`request_with_documents`](Self::request_with_documents), but
+    /// only if `send` agrees, given the documents the server has open as
+    /// it's sent: `Ok(None)` if it doesn't.
+    pub(crate) fn request_with_documents_if<R: Request>(
+        &self,
+        server: ServerId,
+        params: R::Params,
+        send: impl FnOnce(&Opened) -> bool + Send + 'static,
+    ) -> impl Future<Output = Result<Option<WithOpened<R::Result>>, LspError>> + Send + 'static
+    {
+        let (answer, answered) = oneshot::channel();
+        let admit: WithDocuments = Box::new(move |opened| match opened {
+            Ok(opened) if send(&opened) => Some(call::<R, _>(answer, params, move |_, reply| {
+                reply.map(|reply| Some((reply, opened)))
+            })),
+            Ok(_) => {
+                let _ = answer.send(Ok(None));
+                None
+            }
+            Err(err) => {
+                let _ = answer.send(Err(err));
+                None
+            }
         });
         // A server that has gone drops the command, and `answer` with it.
         self.send(server, Command::WithDocuments(admit));

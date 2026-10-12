@@ -46,6 +46,9 @@ pub struct Diagnostic {
     /// A number is given as its decimal digits.
     pub code: Option<String>,
     pub tags: Vec<DiagnosticTag>,
+    /// What the server attached, as received: it comes back with the
+    /// diagnostic in a code action request.
+    pub data: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -118,6 +121,7 @@ pub(crate) fn decode(
                 tags: (diagnostic.tags.into_iter().flatten())
                     .filter_map(tag)
                     .collect(),
+                data: diagnostic.data,
             }
         })
         .collect()
