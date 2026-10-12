@@ -29,6 +29,7 @@ mod injection;
 mod language;
 mod outline;
 mod parse_limit;
+mod select;
 mod syntax;
 
 pub use brackets::{BracketPair, bracket_pair};
@@ -47,6 +48,7 @@ pub use outline::{
     outline_job, outline_supported, symbols, symbols_job, symbols_supported,
 };
 pub use parse_limit::TREE_BUDGET_BYTES;
+pub use select::larger_syntax_node;
 pub use syntax::{ParseJob, Parsed, Syntax};
 
 #[cfg(test)]
