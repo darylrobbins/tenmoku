@@ -18,7 +18,7 @@ use std::ops::Range;
 use fe_buffer::{Anchor, BufferSnapshot, ResolvedSelection, TransactionId};
 use fe_command::{Actor, CommandError, Dispatched, Effect};
 use fe_editor::{EditorModel, commands::origin};
-use fe_text::Text;
+use fe_text::{Bias, Text};
 
 use crate::{
     Change, CountArgs, Mode, Motion, MoveArgs, OperateArgs, Operator, PutArgs, Register, Registers,
@@ -110,6 +110,53 @@ impl LastVisual {
     pub(crate) fn marks(&self) -> ([Pos; 2], bool) {
         let ends = [self.start.clone(), self.end.clone()];
         (ends, self.kind == VisualKind::Line)
+    }
+}
+
+/// `'<` and `'>` as `gq` reflows rows: see [`reflowing`].
+pub(crate) struct Reflowing([Option<(Anchor, usize)>; 2]);
+
+/// Before `gq` reflows the rows from `first` through `last`, joining and
+/// breaking them only at blanks: where `'<` and `'>` on them are, which go
+/// with their text, as nvim's do, once [`reflowed`].
+pub(crate) fn reflowing(
+    state: &VimState,
+    snapshot: &BufferSnapshot,
+    first: u32,
+    last: u32,
+) -> Reflowing {
+    let text = snapshot.text();
+    let at = |pos: &Pos| {
+        let (row, column) = pos.position(snapshot);
+        if pos.past_end || !(first..=last).contains(&row) {
+            return None;
+        }
+        // On its row, at most at its end, and on a character's start.
+        let start = text.row_start(row);
+        let len = text.row_len(row) as usize;
+        let offset = text.clip_offset(start + column.min(len), Bias::Left);
+        Some((snapshot.anchor_before(offset), column - (offset - start)))
+    };
+    Reflowing(match &state.last_visual {
+        Some(marks) => [at(&marks.start), at(&marks.end)],
+        None => [None, None],
+    })
+}
+
+/// After `gq`'s reflow: `'<` and `'>` where their text went.
+pub(crate) fn reflowed(state: &mut VimState, snapshot: &BufferSnapshot, reflowing: Reflowing) {
+    let Some(marks) = state.last_visual.as_mut() else {
+        return;
+    };
+    let [start, end] = reflowing.0;
+    for (pos, at) in [(&mut marks.start, start), (&mut marks.end, end)] {
+        if let Some((anchor, past)) = at {
+            let moved = Pos::at(snapshot, snapshot.resolve(&anchor));
+            *pos = Pos {
+                column: moved.column + past,
+                ..moved
+            };
+        }
     }
 }
 

@@ -66,6 +66,9 @@ pub(crate) struct Place {
     /// Joined to the row above, it keeps its column, counted from where the
     /// row's start went, rather than its text.
     keeps_column: bool,
+    /// Reflowed (`gq`), it goes with its text onto whichever row that
+    /// lands on.
+    follows_text: bool,
 }
 
 /// One edit batch the buffer applied, as [`Life`] follows it.
@@ -405,6 +408,7 @@ impl Place {
             life: Life::new(snapshot, start, last_end),
             column,
             keeps_column: false,
+            follows_text: false,
         }
     }
 
@@ -466,6 +470,10 @@ impl Place {
             (point.row, point.column as usize)
         };
         Some(match point(at(&self.start)) {
+            _ if self.follows_text => {
+                let (row, column) = point(at(&self.exact));
+                (row, column + self.past)
+            }
             (_, 0) => (point(row).0, self.column),
             // Joined to the row above.
             (row, start) if self.keeps_column => (row, start + self.column),
@@ -592,6 +600,22 @@ impl Marks {
     pub(crate) fn deleting(&mut self, snapshot: &BufferSnapshot, first: u32, last: u32) {
         self.update(|place| match place.position(snapshot)? {
             (row, _) if (first..=last).contains(&row) => None,
+            _ => Some(place.clone()),
+        });
+    }
+
+    /// Before `gq` reflows the rows from `first` through `last`, joining
+    /// and breaking them only at blanks: as in nvim, their marks go with
+    /// their text, and their rows are never deleted.
+    pub(crate) fn reflowing(&mut self, snapshot: &BufferSnapshot, first: u32, last: u32) {
+        self.update(|place| match place.position(snapshot)? {
+            (row, column) if (first..=last).contains(&row) => {
+                let mut place = Place::on(snapshot, row, column);
+                place.follows_text = true;
+                place.end = End::Kept;
+                place.life.kept = true;
+                Some(place)
+            }
             _ => Some(place.clone()),
         });
     }

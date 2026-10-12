@@ -1,0 +1,1006 @@
+# Cases for the g operators (gu gU g~ g? gq gw) in fe-vim's oracle: the
+# case operators and rot13 over motions, objects, counts and their doubled
+# forms (both spellings), in v, V and ctrl-v, over non-ASCII letters, with
+# dot and u after; gq and gw over long, indented and several paragraphs'
+# rows, a word longer than 79 columns, the visual modes, marks, dot and u.
+# No motion or object of another breadth card. Each case: name, buffer
+# (rows joined with \n, no trailing newline), cursor = [row, byte column]
+# and keys in vim notation. What nvim does with each is recorded in
+# g_operators.expected.json by the ignored `record_corpus_with_neovim` test;
+# edit a case, then re-record.
+
+# gu gU g~ g? over w, $, j and k, iw and aw, and counts.
+[[case]]
+name = "gu_w"
+buffer = "Hello World Foo"
+cursor = [0, 3]
+keys = "guw"
+
+[[case]]
+name = "gU_w"
+buffer = "hello world foo"
+cursor = [0, 3]
+keys = "gUw"
+
+[[case]]
+name = "tilde_w"
+buffer = "Hello World"
+cursor = [0, 0]
+keys = "g~w"
+
+[[case]]
+name = "rot13_w"
+buffer = "Hello World"
+cursor = [0, 0]
+keys = "g?w"
+
+[[case]]
+name = "gu_dollar"
+buffer = "HELLO WORLD\nNEXT"
+cursor = [0, 6]
+keys = "gu$"
+
+[[case]]
+name = "gU_dollar"
+buffer = "hello world\nnext"
+cursor = [0, 3]
+keys = "gU$"
+
+[[case]]
+name = "tilde_dollar"
+buffer = "Hello World"
+cursor = [0, 2]
+keys = "g~$"
+
+[[case]]
+name = "rot13_dollar"
+buffer = "Hello World"
+cursor = [0, 2]
+keys = "g?$"
+
+[[case]]
+name = "gU_j"
+buffer = "  hello world\nsecond row\nthird"
+cursor = [0, 4]
+keys = "gUj"
+
+[[case]]
+name = "gu_k"
+buffer = "FIRST ROW\nSECOND ROW"
+cursor = [1, 3]
+keys = "guk"
+
+[[case]]
+name = "gu_k_short_row"
+buffer = "AB\nHELLO WORLD"
+cursor = [1, 8]
+keys = "guk"
+
+[[case]]
+name = "tilde_j"
+buffer = "Hello\nWorld\nagain"
+cursor = [0, 2]
+keys = "g~j"
+
+[[case]]
+name = "rot13_j"
+buffer = "abc\nxyz\nend"
+cursor = [0, 1]
+keys = "g?j"
+
+[[case]]
+name = "gU_j_last_row"
+buffer = "abc\ndef"
+cursor = [1, 1]
+keys = "gUj"
+
+[[case]]
+name = "gU_iw"
+buffer = "hello world"
+cursor = [0, 7]
+keys = "gUiw"
+
+[[case]]
+name = "gu_aw"
+buffer = "HELLO WORLD FOO"
+cursor = [0, 7]
+keys = "guaw"
+
+[[case]]
+name = "tilde_iw"
+buffer = "Hello World"
+cursor = [0, 7]
+keys = "g~iw"
+
+[[case]]
+name = "rot13_iw"
+buffer = "Hello World"
+cursor = [0, 7]
+keys = "g?iw"
+
+[[case]]
+name = "gU_count_w"
+buffer = "one two three four"
+cursor = [0, 0]
+keys = "gU2w"
+
+[[case]]
+name = "count_gu_w"
+buffer = "ONE TWO THREE FOUR"
+cursor = [0, 0]
+keys = "2guw"
+
+[[case]]
+name = "count_tilde_l"
+buffer = "abcdef"
+cursor = [0, 1]
+keys = "3g~l"
+
+[[case]]
+name = "rot13_count_e"
+buffer = "one two three"
+cursor = [0, 0]
+keys = "g?2e"
+
+[[case]]
+name = "gu_b"
+buffer = "ABC DEF"
+cursor = [0, 5]
+keys = "gub"
+
+[[case]]
+name = "gU_find"
+buffer = "abc def ghi"
+cursor = [0, 0]
+keys = "gUfe"
+
+[[case]]
+name = "gU_search"
+buffer = "abc def ghi"
+cursor = [0, 0]
+keys = "gU/gh<CR>"
+
+[[case]]
+name = "gU_w_over_row_end"
+buffer = "ab\ncd"
+cursor = [0, 0]
+keys = "gU3w"
+
+[[case]]
+name = "gU_h_column_0"
+buffer = "ab\ncd"
+cursor = [1, 0]
+keys = "gUh"
+
+[[case]]
+name = "tilde_0_first_row"
+buffer = "ab\ncd"
+cursor = [0, 0]
+keys = "g~0"
+
+[[case]]
+name = "gU_register_ignored"
+buffer = "abc def"
+cursor = [0, 0]
+keys = "\"agUw"
+
+[[case]]
+name = "gU_k_keeps_byte_column"
+buffer = "straße straße\nabcdefghij"
+cursor = [1, 9]
+keys = "gUk"
+
+[[case]]
+name = "failed_object_resets_goal"
+buffer = "abc def\nxy\nlonger row here"
+cursor = [0, 0]
+keys = "$gUibjj"
+
+# The doubled forms, both spellings, over count rows.
+[[case]]
+name = "guu"
+buffer = "Hello World\nNext Row"
+cursor = [0, 4]
+keys = "guu"
+
+[[case]]
+name = "gugu"
+buffer = "Hello World\nNext Row"
+cursor = [0, 4]
+keys = "gugu"
+
+[[case]]
+name = "count_guu"
+buffer = "Hello World\nNext Row\nThird"
+cursor = [0, 4]
+keys = "2guu"
+
+[[case]]
+name = "gu_count_u"
+buffer = "Hello World\nNext Row\nThird"
+cursor = [0, 4]
+keys = "gu2u"
+
+[[case]]
+name = "gUU_indented"
+buffer = "  hello world\nnext"
+cursor = [0, 6]
+keys = "gUU"
+
+[[case]]
+name = "gUU_before_indent"
+buffer = "  hello world\nnext"
+cursor = [0, 0]
+keys = "gUU"
+
+[[case]]
+name = "count_gUgU"
+buffer = "a\nb\nc\nd"
+cursor = [1, 0]
+keys = "3gUgU"
+
+[[case]]
+name = "tilde_tilde"
+buffer = "Hello\nWorld"
+cursor = [0, 2]
+keys = "g~~"
+
+[[case]]
+name = "tilde_g_tilde"
+buffer = "Hello\nWorld"
+cursor = [1, 2]
+keys = "g~g~"
+
+[[case]]
+name = "rot13_rot13"
+buffer = "Hello World"
+cursor = [0, 3]
+keys = "g??"
+
+[[case]]
+name = "count_rot13_g_rot13"
+buffer = "Hello World\nabc"
+cursor = [0, 3]
+keys = "2g?g?"
+
+[[case]]
+name = "count_past_end"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "5gUU"
+
+# In v, V and ctrl-v, over the selection.
+[[case]]
+name = "v_gu"
+buffer = "Hello World Foo"
+cursor = [0, 2]
+keys = "vwgu"
+
+[[case]]
+name = "v_gU_rows"
+buffer = "hello\nworld"
+cursor = [0, 2]
+keys = "vjgU"
+
+[[case]]
+name = "v_tilde"
+buffer = "Hello World"
+cursor = [0, 0]
+keys = "veg~"
+
+[[case]]
+name = "v_rot13"
+buffer = "Hello World"
+cursor = [0, 0]
+keys = "veg?"
+
+[[case]]
+name = "V_gU"
+buffer = "hello\nworld\nend"
+cursor = [0, 2]
+keys = "VjgU"
+
+[[case]]
+name = "V_rot13"
+buffer = "abc\nxyz"
+cursor = [1, 1]
+keys = "Vg?"
+
+[[case]]
+name = "block_gu"
+buffer = "ABCD\nEFGH\nIJKL"
+cursor = [0, 1]
+keys = "<C-v>jjlgu"
+
+[[case]]
+name = "block_rot13"
+buffer = "abcd\nefgh"
+cursor = [0, 1]
+keys = "<C-v>jlg?"
+
+[[case]]
+name = "block_tilde"
+buffer = "abcd\nefgh"
+cursor = [0, 1]
+keys = "<C-v>jlg~"
+
+# Non-ASCII letters: nvim's case tables; rot13 takes ASCII letters only.
+[[case]]
+name = "non_ascii_gU"
+buffer = "éàß straße ǆ"
+cursor = [0, 0]
+keys = "gUU"
+
+[[case]]
+name = "non_ascii_gu"
+buffer = "ÉÀ STRASSE Ǆ ΣΑΣ"
+cursor = [0, 0]
+keys = "guu"
+
+[[case]]
+name = "non_ascii_tilde"
+buffer = "éÀ ǅ ß Ω"
+cursor = [0, 0]
+keys = "g~~"
+
+[[case]]
+name = "non_ascii_rot13"
+buffer = "héllo wörld"
+cursor = [0, 0]
+keys = "g??"
+
+[[case]]
+name = "combining_gU"
+buffer = "école ok"
+cursor = [0, 0]
+keys = "gUiw"
+
+# Dot and undo after them.
+[[case]]
+name = "dot_gU_w"
+buffer = "one two three"
+cursor = [0, 0]
+keys = "gUww."
+
+[[case]]
+name = "dot_guu"
+buffer = "ONE\nTWO\nTHREE"
+cursor = [0, 0]
+keys = "guuj."
+
+[[case]]
+name = "dot_count_tilde_tilde"
+buffer = "ab\ncd\nef\ngh"
+cursor = [0, 0]
+keys = "2g~~jj."
+
+[[case]]
+name = "dot_rot13_j"
+buffer = "abc\ndef\nghi\njkl"
+cursor = [0, 0]
+keys = "g?jjj."
+
+[[case]]
+name = "dot_visual_tilde"
+buffer = "Hello World\nAnother Line"
+cursor = [0, 0]
+keys = "veg~j."
+
+[[case]]
+name = "undo_gU_w"
+buffer = "one two"
+cursor = [0, 4]
+keys = "gUwu"
+
+[[case]]
+name = "undo_guu"
+buffer = "  ONE TWO"
+cursor = [0, 6]
+keys = "guuu"
+
+[[case]]
+name = "undo_gU_k"
+buffer = "abc\ndef"
+cursor = [1, 2]
+keys = "gUku"
+
+[[case]]
+name = "undo_gU_b"
+buffer = "abc def"
+cursor = [0, 5]
+keys = "gUbu"
+
+[[case]]
+name = "undo_after_nothing_changed"
+buffer = "ABC def"
+cursor = [0, 0]
+keys = "xgUiwu"
+
+# gq and gw: long rows broken at blanks before column 80.
+[[case]]
+name = "gqq_long"
+buffer = "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29"
+cursor = [0, 5]
+keys = "gqq"
+
+[[case]]
+name = "gqq_prose"
+buffer = "Vim's gq operator joins the rows of each paragraph and breaks them again at blanks, so that no row runs past the text width, which nvim takes as 79 when it is zero."
+cursor = [0, 10]
+keys = "gqq"
+
+[[case]]
+name = "gww_long"
+buffer = "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29"
+cursor = [0, 80]
+keys = "gww"
+
+[[case]]
+name = "gww_on_break"
+buffer = "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29"
+cursor = [0, 73]
+keys = "gww"
+
+[[case]]
+name = "gww_in_dropped_blanks"
+buffer = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+cursor = [0, 42]
+keys = "gww"
+
+[[case]]
+name = "gqgq_long"
+buffer = "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29\nshort"
+cursor = [0, 0]
+keys = "gqgq"
+
+[[case]]
+name = "gwgw_long"
+buffer = "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29\nshort"
+cursor = [0, 30]
+keys = "gwgw"
+
+[[case]]
+name = "gqq_79_columns"
+buffer = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+cursor = [0, 0]
+keys = "gqq"
+
+[[case]]
+name = "gqq_80_columns"
+buffer = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+cursor = [0, 0]
+keys = "gqq"
+
+[[case]]
+name = "gqq_trailing_blanks"
+buffer = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa b "
+cursor = [0, 0]
+keys = "gqq"
+
+[[case]]
+name = "gqq_only_trailing_blanks_past"
+buffer = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa   "
+cursor = [0, 0]
+keys = "gqq"
+
+[[case]]
+name = "gqq_tab_between"
+buffer = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \t bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+cursor = [0, 0]
+keys = "gqq"
+
+[[case]]
+name = "gqq_wide_chars"
+buffer = "日本日本日本日本日本日本日本日本日本日本日本日本日本日本日本日本日本日本日本日本 xxxxxxxxxx"
+cursor = [0, 0]
+keys = "gqq"
+
+[[case]]
+name = "gqq_multibyte"
+buffer = "éééééééééééééééééééééééééééééééééééééééé üüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüü x"
+cursor = [0, 0]
+keys = "gqq"
+
+[[case]]
+name = "gqq_word_too_long"
+buffer = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx a b"
+cursor = [0, 0]
+keys = "gqq"
+
+[[case]]
+name = "gqq_word_too_long_between"
+buffer = "a xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx b"
+cursor = [0, 0]
+keys = "gqq"
+
+# gq and gw over rows: joined as J joins them, then broken.
+[[case]]
+name = "gqj_short"
+buffer = "short one\nshort two\nshort three"
+cursor = [0, 3]
+keys = "gqj"
+
+[[case]]
+name = "gqG_short"
+buffer = "short one\nshort two\nshort three"
+cursor = [0, 3]
+keys = "gqG"
+
+[[case]]
+name = "gqk"
+buffer = "short one\nshort two\nshort three"
+cursor = [1, 3]
+keys = "gqk"
+
+[[case]]
+name = "gwj"
+buffer = "short one\nshort two\nshort three"
+cursor = [1, 3]
+keys = "gwj"
+
+[[case]]
+name = "gwk_follows_text"
+buffer = "short one\nshort two\nshort three"
+cursor = [1, 3]
+keys = "gwk"
+
+[[case]]
+name = "gwk_in_dropped_indent"
+buffer = "abc\n    def"
+cursor = [1, 1]
+keys = "gwk"
+
+[[case]]
+name = "gqj_long_rows"
+buffer = "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29\nword0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29"
+cursor = [0, 0]
+keys = "gqj"
+
+[[case]]
+name = "gqk_long_rows"
+buffer = "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29\nword0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29"
+cursor = [1, 3]
+keys = "gqk"
+
+[[case]]
+name = "count_gqq"
+buffer = "a\nb\nc\nd"
+cursor = [0, 0]
+keys = "3gqq"
+
+[[case]]
+name = "gq_count_j"
+buffer = "a\nb\nc\nd"
+cursor = [0, 0]
+keys = "gq2j"
+
+[[case]]
+name = "gqj_trailing_blanks"
+buffer = "  abc  \n  def  "
+cursor = [0, 0]
+keys = "gqj"
+
+[[case]]
+name = "gqj_before_paren"
+buffer = "abc\n)def"
+cursor = [0, 0]
+keys = "gqj"
+
+[[case]]
+name = "gqj_two_spaces_kept"
+buffer = "one.  two\nthree"
+cursor = [0, 0]
+keys = "gqj"
+
+[[case]]
+name = "gqj_tab_in_row"
+buffer = "a\tb\nc"
+cursor = [0, 0]
+keys = "gqj"
+
+[[case]]
+name = "gq_search"
+buffer = "ab\ncd\nef\ngh"
+cursor = [0, 0]
+keys = "gq/ef<CR>"
+
+[[case]]
+name = "gq_inner_brace"
+buffer = "{\n  ab\n  cd\n}"
+cursor = [1, 3]
+keys = "gqi{"
+
+[[case]]
+name = "gw_inner_brace"
+buffer = "{\n  ab\n  cd\n}"
+cursor = [1, 3]
+keys = "gwi{"
+
+[[case]]
+name = "gqw_onto_empty_row"
+buffer = "ab\n\ncd"
+cursor = [0, 0]
+keys = "gqw"
+
+[[case]]
+name = "gq_count_w_over_empty_row"
+buffer = "ab\n\ncd\nef"
+cursor = [0, 1]
+keys = "gq2w"
+
+[[case]]
+name = "gq_count_w_over_empty_row_indented"
+buffer = "ab x \n\n \tcd\nef"
+cursor = [0, 4]
+keys = "gq2w"
+
+[[case]]
+name = "gq_count_B_onto_column_0"
+buffer = "x y\n\ndef"
+cursor = [2, 0]
+keys = "2gqB"
+
+[[case]]
+name = "gq_count_dollar_onto_empty_row"
+buffer = ")z\n\n  abc\ndef"
+cursor = [0, 0]
+keys = "gq2$"
+
+[[case]]
+name = "count_gww_counts_words"
+buffer = "a b\nc\nd"
+cursor = [0, 0]
+keys = "2gww"
+
+[[case]]
+name = "count_gwgw_counts_rows"
+buffer = "a b\nc\nd"
+cursor = [0, 0]
+keys = "2gwgw"
+
+# Indented rows: every row takes the first's indent, as spaces.
+[[case]]
+name = "gqq_indented"
+buffer = "    word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29"
+cursor = [0, 5]
+keys = "gqq"
+
+[[case]]
+name = "gqq_tab_indent"
+buffer = "\tword0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29"
+cursor = [0, 0]
+keys = "gqq"
+
+[[case]]
+name = "gqq_tab_indent_short"
+buffer = "\tabc"
+cursor = [0, 0]
+keys = "gqq"
+
+[[case]]
+name = "gww_tab_indent"
+buffer = "  \tabc"
+cursor = [0, 2]
+keys = "gww"
+
+[[case]]
+name = "gqj_indents_differ"
+buffer = "  first row\n      second row\nthird"
+cursor = [0, 0]
+keys = "gqG"
+
+[[case]]
+name = "gwk_tab_indents"
+buffer = "\tabc\n\tdef"
+cursor = [1, 2]
+keys = "gwk"
+
+[[case]]
+name = "gqq_indent_only"
+buffer = "          abc"
+cursor = [0, 0]
+keys = "gqq"
+
+# Several paragraphs: blank rows (empty or only blanks) part them.
+[[case]]
+name = "gqG_paragraphs"
+buffer = "aaa\n\nbbb\nccc\n\nddd"
+cursor = [0, 0]
+keys = "gqG"
+
+[[case]]
+name = "gqG_blank_row"
+buffer = "aaa\n   \nbbb\nccc"
+cursor = [0, 0]
+keys = "gqG"
+
+[[case]]
+name = "gqG_tab_row"
+buffer = "abc\n\t\nabc"
+cursor = [0, 0]
+keys = "gqG"
+
+[[case]]
+name = "gqG_long_paragraphs"
+buffer = "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29\nmore words\n\nVim's gq operator joins the rows of each paragraph and breaks them again at blanks, so that no row runs past the text width, which nvim takes as 79 when it is zero.\n\nend"
+cursor = [0, 0]
+keys = "gqG"
+
+[[case]]
+name = "gq_ends_on_blank_row"
+buffer = "aaa\nbbb\n\nccc"
+cursor = [0, 0]
+keys = "gq2j"
+
+[[case]]
+name = "gqj_blank_rows"
+buffer = "x\n\n\ny"
+cursor = [1, 0]
+keys = "gqj"
+
+[[case]]
+name = "gqq_blank_row"
+buffer = "  "
+cursor = [0, 0]
+keys = "gqq"
+
+[[case]]
+name = "gqq_empty"
+buffer = ""
+cursor = [0, 0]
+keys = "gqq"
+
+# In v, V and ctrl-v: the selection's rows; '< and '> go with their text.
+[[case]]
+name = "V_gq"
+buffer = "aaa\nbbb\nccc\nddd"
+cursor = [0, 1]
+keys = "Vjgq"
+
+[[case]]
+name = "V_gq_upward"
+buffer = "aaa\nbbb\nccc\nddd\neee"
+cursor = [2, 1]
+keys = "Vkgq"
+
+[[case]]
+name = "V_gw_upward"
+buffer = "aaa\nbbb\nccc\nddd\neee"
+cursor = [2, 1]
+keys = "Vkgw"
+
+[[case]]
+name = "v_gq"
+buffer = "abc\ndef\nghi"
+cursor = [0, 1]
+keys = "vjjgq"
+
+[[case]]
+name = "v_gw"
+buffer = "abc\ndef\nghi"
+cursor = [0, 1]
+keys = "vjjgw"
+
+[[case]]
+name = "v_gq_long"
+buffer = "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29\nabc"
+cursor = [1, 1]
+keys = "ggvjgq"
+
+[[case]]
+name = "block_gq"
+buffer = "abc\n\ndef\nghi"
+cursor = [0, 1]
+keys = "<C-v>jjjgq"
+
+[[case]]
+name = "block_gw"
+buffer = "abc\ndef\nghi"
+cursor = [0, 1]
+keys = "<C-v>jjlgw"
+
+[[case]]
+name = "block_mark_on_multibyte"
+buffer = "x\nabc straße"
+cursor = [1, 0]
+keys = "$<C-v>gq"
+
+# Marks go with their text.
+[[case]]
+name = "mark_broken_onto_next_row"
+buffer = "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29"
+cursor = [0, 0]
+keys = "085lma0gqq"
+
+[[case]]
+name = "mark_joined"
+buffer = "abc\nword0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29"
+cursor = [1, 1]
+keys = "makgqj"
+
+[[case]]
+name = "mark_below"
+buffer = "abc\n  def\nghi"
+cursor = [2, 1]
+keys = "makgqk"
+
+# Dot and undo after gq and gw.
+[[case]]
+name = "dot_gqq"
+buffer = "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29\nword0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29"
+cursor = [0, 0]
+keys = "gqqG."
+
+[[case]]
+name = "dot_gqj"
+buffer = "short one\nshort two\nshort three\nfour"
+cursor = [0, 3]
+keys = "gqj."
+
+[[case]]
+name = "dot_gwj"
+buffer = "a\nb\nc\nd\ne"
+cursor = [1, 0]
+keys = "gwjj."
+
+[[case]]
+name = "dot_V_gq"
+buffer = "aaa\nbbb\nccc\nddd\neee\nfff"
+cursor = [0, 1]
+keys = "Vjgqj."
+
+[[case]]
+name = "dot_V_gw"
+buffer = "aaa\nbbb\nccc\nddd\neee\nfff"
+cursor = [0, 1]
+keys = "Vjgwj."
+
+[[case]]
+name = "undo_gqq"
+buffer = "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29"
+cursor = [0, 5]
+keys = "gqqu"
+
+[[case]]
+name = "undo_gqk"
+buffer = "short one\nshort two\nshort three"
+cursor = [1, 3]
+keys = "gqku"
+
+[[case]]
+name = "undo_gwk"
+buffer = "short one\nshort two\nshort three"
+cursor = [1, 3]
+keys = "gwku"
+
+[[case]]
+name = "undo_V_gq"
+buffer = "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29"
+cursor = [0, 1]
+keys = "Vgqu"
+
+[[case]]
+name = "undo_gqq_nothing_changed"
+buffer = "abc"
+cursor = [0, 0]
+keys = "xgqqu"
+
+[[case]]
+name = "undo_gww_nothing_changed"
+buffer = "abc\n\ndef"
+cursor = [0, 0]
+keys = "xjgwwu"
+
+[[case]]
+name = "dot_gqj_undo"
+buffer = "aaa\nbbb\nccc\nddd"
+cursor = [0, 0]
+keys = "gqjj.u"
+
+[[case]]
+name = "dot_gqj_undo_redo"
+buffer = "aaa\nbbb\nccc\nddd"
+cursor = [0, 0]
+keys = "gqjj.u<C-r>"
+
+[[case]]
+name = "dot_gqq_undo_redo"
+buffer = "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29\nword0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29"
+cursor = [0, 0]
+keys = "gqqj.u<C-r>"
+
+[[case]]
+name = "dot_gUU_nothing_changed_undo"
+buffer = "abc\nDEF"
+cursor = [0, 0]
+keys = "gUUj.u"
+
+[[case]]
+name = "dot_gUU_nothing_changed_undo_redo"
+buffer = "abc\nDEF"
+cursor = [0, 0]
+keys = "gUUj.u<C-r>"
+
+[[case]]
+name = "dot_gUw_nothing_changed_undo"
+buffer = "abc\nDEF"
+cursor = [0, 0]
+keys = "gUwj.u"
+
+[[case]]
+name = "undo_v_gu_nothing_changed"
+buffer = "x12 3\n45"
+cursor = [0, 0]
+keys = "xvlguu"
+
+[[case]]
+name = "undo_v_gU_nothing_changed"
+buffer = "x12 3\n45"
+cursor = [0, 0]
+keys = "xvlgUu"
+
+[[case]]
+name = "undo_v_gtilde_nothing_changed"
+buffer = "x12 3\n45"
+cursor = [0, 0]
+keys = "xvlg~u"
+
+[[case]]
+name = "undo_v_grot_nothing_changed"
+buffer = "x12 3\n45"
+cursor = [0, 0]
+keys = "xvlg?u"
+
+[[case]]
+name = "undo_V_gu_nothing_changed"
+buffer = "x12 3\n45"
+cursor = [0, 0]
+keys = "xVlguu"
+
+[[case]]
+name = "undo_V_gU_nothing_changed"
+buffer = "x12 3\n45"
+cursor = [0, 0]
+keys = "xVlgUu"
+
+[[case]]
+name = "undo_V_gtilde_nothing_changed"
+buffer = "x12 3\n45"
+cursor = [0, 0]
+keys = "xVlg~u"
+
+[[case]]
+name = "undo_V_grot_nothing_changed"
+buffer = "x12 3\n45"
+cursor = [0, 0]
+keys = "xVlg?u"
+
+[[case]]
+name = "undo_ctrl_v_gu_nothing_changed"
+buffer = "x12 3\n45"
+cursor = [0, 0]
+keys = "x<C-v>lguu"
+
+[[case]]
+name = "undo_ctrl_v_gU_nothing_changed"
+buffer = "x12 3\n45"
+cursor = [0, 0]
+keys = "x<C-v>lgUu"
+
+[[case]]
+name = "undo_ctrl_v_gtilde_nothing_changed"
+buffer = "x12 3\n45"
+cursor = [0, 0]
+keys = "x<C-v>lg~u"
+
+[[case]]
+name = "undo_ctrl_v_grot_nothing_changed"
+buffer = "x12 3\n45"
+cursor = [0, 0]
+keys = "x<C-v>lg?u"
+
+[[case]]
+name = "dot_v_gU_nothing_changed_undo"
+buffer = "x12 3\n45"
+cursor = [0, 0]
+keys = "xvlgUj.u"

@@ -178,7 +178,7 @@ pub(crate) fn grapheme_len(text: &Text, offset: usize) -> usize {
 
 /// Resolves a motion target for the caret at `head`, as an operator takes
 /// it.
-fn motion_span(
+pub(crate) fn motion_span(
     text: &Text,
     head: usize,
     motion: Motion,

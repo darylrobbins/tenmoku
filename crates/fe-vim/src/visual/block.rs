@@ -504,7 +504,13 @@ pub(super) fn operate_block(
     };
     let corner = block.corner(&text, tab);
     let begins = vec![history::pair(&text, corner)];
-    let (transaction, snapshot) = operator::apply(model, edits, origin(actor));
+    // `u U ~ g?` make an undo step even when nothing changes, as in nvim.
+    let (transaction, snapshot) = match args.operator {
+        Operator::ToggleCase | Operator::Lowercase | Operator::Uppercase | Operator::Rot13 => {
+            crate::g_operators::apply(model, edits, actor)
+        }
+        _ => operator::apply(model, edits, origin(actor)),
+    };
     if let Some(id) = transaction {
         state.carets.record(id, begins);
     }

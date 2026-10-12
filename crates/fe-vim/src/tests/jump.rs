@@ -85,7 +85,7 @@ fn keys_commit_the_motion() {
     assert!(matches!(run("dgSa"), Step::Wait(_)));
     assert_eq!(run("gs<Esc>"), Step::Cancel);
     assert_eq!(run("gsa<Esc>"), Step::Cancel);
-    assert_eq!(run("gq"), Step::Cancel);
+    assert_eq!(run("gZ"), Step::Cancel);
 }
 
 #[test]

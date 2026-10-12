@@ -504,7 +504,11 @@ fn recase(
     }
     let carets_before = vec![history::pair(&text, land)];
     let landing = model.snapshot().anchor_before(land);
-    let (transaction, snapshot) = operator::apply(model, edits, origin(actor));
+    // An undo step even when nothing changes, as in nvim (but for `r`).
+    let (transaction, snapshot) = match operator {
+        Operator::Replace(_) => operator::apply(model, edits, origin(actor)),
+        _ => crate::g_operators::apply(model, edits, actor),
+    };
     operator::land(model, &snapshot, [snapshot.resolve(&landing)]);
     if let Some(id) = transaction {
         state.carets.record(id, carets_before);

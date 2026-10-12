@@ -1,0 +1,3479 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "gu_w",
+      "buffer": "Hello World Foo",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "guw",
+      "expect": {
+        "buffer": "Hello World Foo",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gU_w",
+      "buffer": "hello world foo",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "gUw",
+      "expect": {
+        "buffer": "helLO world foo",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "tilde_w",
+      "buffer": "Hello World",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "g~w",
+      "expect": {
+        "buffer": "hELLO World",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "rot13_w",
+      "buffer": "Hello World",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "g?w",
+      "expect": {
+        "buffer": "Uryyb World",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gu_dollar",
+      "buffer": "HELLO WORLD\nNEXT",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "gu$",
+      "expect": {
+        "buffer": "HELLO world\nNEXT",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gU_dollar",
+      "buffer": "hello world\nnext",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "gU$",
+      "expect": {
+        "buffer": "helLO WORLD\nnext",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "tilde_dollar",
+      "buffer": "Hello World",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "g~$",
+      "expect": {
+        "buffer": "HeLLO wORLD",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "rot13_dollar",
+      "buffer": "Hello World",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "g?$",
+      "expect": {
+        "buffer": "Heyyb Jbeyq",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gU_j",
+      "buffer": "  hello world\nsecond row\nthird",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "gUj",
+      "expect": {
+        "buffer": "  HELLO WORLD\nSECOND ROW\nthird",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gu_k",
+      "buffer": "FIRST ROW\nSECOND ROW",
+      "cursor": [
+        1,
+        3
+      ],
+      "keys": "guk",
+      "expect": {
+        "buffer": "first row\nsecond row",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gu_k_short_row",
+      "buffer": "AB\nHELLO WORLD",
+      "cursor": [
+        1,
+        8
+      ],
+      "keys": "guk",
+      "expect": {
+        "buffer": "ab\nhello world",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "tilde_j",
+      "buffer": "Hello\nWorld\nagain",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "g~j",
+      "expect": {
+        "buffer": "hELLO\nwORLD\nagain",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "rot13_j",
+      "buffer": "abc\nxyz\nend",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "g?j",
+      "expect": {
+        "buffer": "nop\nklm\nend",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gU_j_last_row",
+      "buffer": "abc\ndef",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "gUj",
+      "expect": {
+        "buffer": "abc\ndef",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gU_iw",
+      "buffer": "hello world",
+      "cursor": [
+        0,
+        7
+      ],
+      "keys": "gUiw",
+      "expect": {
+        "buffer": "hello WORLD",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gu_aw",
+      "buffer": "HELLO WORLD FOO",
+      "cursor": [
+        0,
+        7
+      ],
+      "keys": "guaw",
+      "expect": {
+        "buffer": "HELLO world FOO",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "tilde_iw",
+      "buffer": "Hello World",
+      "cursor": [
+        0,
+        7
+      ],
+      "keys": "g~iw",
+      "expect": {
+        "buffer": "Hello wORLD",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "rot13_iw",
+      "buffer": "Hello World",
+      "cursor": [
+        0,
+        7
+      ],
+      "keys": "g?iw",
+      "expect": {
+        "buffer": "Hello Jbeyq",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gU_count_w",
+      "buffer": "one two three four",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gU2w",
+      "expect": {
+        "buffer": "ONE TWO three four",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_gu_w",
+      "buffer": "ONE TWO THREE FOUR",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2guw",
+      "expect": {
+        "buffer": "one two THREE FOUR",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_tilde_l",
+      "buffer": "abcdef",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "3g~l",
+      "expect": {
+        "buffer": "aBCDef",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "rot13_count_e",
+      "buffer": "one two three",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "g?2e",
+      "expect": {
+        "buffer": "bar gjb three",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gu_b",
+      "buffer": "ABC DEF",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "gub",
+      "expect": {
+        "buffer": "ABC dEF",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gU_find",
+      "buffer": "abc def ghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gUfe",
+      "expect": {
+        "buffer": "ABC DEf ghi",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gU_search",
+      "buffer": "abc def ghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gU/gh<CR>",
+      "expect": {
+        "buffer": "ABC DEF ghi",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "gh",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "gU_w_over_row_end",
+      "buffer": "ab\ncd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gU3w",
+      "expect": {
+        "buffer": "AB\nCD",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gU_h_column_0",
+      "buffer": "ab\ncd",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "gUh",
+      "expect": {
+        "buffer": "ab\nCD",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "tilde_0_first_row",
+      "buffer": "ab\ncd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "g~0",
+      "expect": {
+        "buffer": "Ab\ncd",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gU_register_ignored",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "\"agUw",
+      "expect": {
+        "buffer": "ABC def",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gU_k_keeps_byte_column",
+      "buffer": "straße straße\nabcdefghij",
+      "cursor": [
+        1,
+        9
+      ],
+      "keys": "gUk",
+      "expect": {
+        "buffer": "STRAẞE STRAẞE\nABCDEFGHIJ",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "failed_object_resets_goal",
+      "buffer": "abc def\nxy\nlonger row here",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "$gUibjj",
+      "expect": {
+        "buffer": "abc def\nxy\nlonger row here",
+        "cursor": [
+          2,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "guu",
+      "buffer": "Hello World\nNext Row",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "guu",
+      "expect": {
+        "buffer": "hello world\nNext Row",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gugu",
+      "buffer": "Hello World\nNext Row",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "gugu",
+      "expect": {
+        "buffer": "hello world\nNext Row",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_guu",
+      "buffer": "Hello World\nNext Row\nThird",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "2guu",
+      "expect": {
+        "buffer": "hello world\nnext row\nThird",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gu_count_u",
+      "buffer": "Hello World\nNext Row\nThird",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "gu2u",
+      "expect": {
+        "buffer": "hello world\nnext row\nThird",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gUU_indented",
+      "buffer": "  hello world\nnext",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "gUU",
+      "expect": {
+        "buffer": "  HELLO WORLD\nnext",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gUU_before_indent",
+      "buffer": "  hello world\nnext",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gUU",
+      "expect": {
+        "buffer": "  HELLO WORLD\nnext",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_gUgU",
+      "buffer": "a\nb\nc\nd",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "3gUgU",
+      "expect": {
+        "buffer": "a\nB\nC\nD",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "tilde_tilde",
+      "buffer": "Hello\nWorld",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "g~~",
+      "expect": {
+        "buffer": "hELLO\nWorld",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "tilde_g_tilde",
+      "buffer": "Hello\nWorld",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "g~g~",
+      "expect": {
+        "buffer": "Hello\nwORLD",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "rot13_rot13",
+      "buffer": "Hello World",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "g??",
+      "expect": {
+        "buffer": "Uryyb Jbeyq",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_rot13_g_rot13",
+      "buffer": "Hello World\nabc",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "2g?g?",
+      "expect": {
+        "buffer": "Uryyb Jbeyq\nnop",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_past_end",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "5gUU",
+      "expect": {
+        "buffer": "ABC\nDEF\nGHI",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "v_gu",
+      "buffer": "Hello World Foo",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "vwgu",
+      "expect": {
+        "buffer": "Hello world Foo",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            0,
+            6
+          ]
+        }
+      }
+    },
+    {
+      "name": "v_gU_rows",
+      "buffer": "hello\nworld",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "vjgU",
+      "expect": {
+        "buffer": "heLLO\nWORld",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "v_tilde",
+      "buffer": "Hello World",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "veg~",
+      "expect": {
+        "buffer": "hELLO World",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "v_rot13",
+      "buffer": "Hello World",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "veg?",
+      "expect": {
+        "buffer": "Uryyb World",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_gU",
+      "buffer": "hello\nworld\nend",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "VjgU",
+      "expect": {
+        "buffer": "HELLO\nWORLD\nend",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_rot13",
+      "buffer": "abc\nxyz",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "Vg?",
+      "expect": {
+        "buffer": "abc\nklm",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_gu",
+      "buffer": "ABCD\nEFGH\nIJKL",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jjlgu",
+      "expect": {
+        "buffer": "AbcD\nEfgH\nIjkL",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            2,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_rot13",
+      "buffer": "abcd\nefgh",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jlg?",
+      "expect": {
+        "buffer": "aopd\nesth",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_tilde",
+      "buffer": "abcd\nefgh",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jlg~",
+      "expect": {
+        "buffer": "aBCd\neFGh",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "non_ascii_gU",
+      "buffer": "éàß straße ǆ",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gUU",
+      "expect": {
+        "buffer": "ÉÀẞ STRAẞE Ǆ",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "non_ascii_gu",
+      "buffer": "ÉÀ STRASSE Ǆ ΣΑΣ",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "guu",
+      "expect": {
+        "buffer": "éà strasse ǆ σασ",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "non_ascii_tilde",
+      "buffer": "éÀ ǅ ß Ω",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "g~~",
+      "expect": {
+        "buffer": "Éà Ǆ ẞ ω",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "non_ascii_rot13",
+      "buffer": "héllo wörld",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "g??",
+      "expect": {
+        "buffer": "uéyyb jöeyq",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "combining_gU",
+      "buffer": "école ok",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gUiw",
+      "expect": {
+        "buffer": "ÉCOLE ok",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_gU_w",
+      "buffer": "one two three",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gUww.",
+      "expect": {
+        "buffer": "ONE TWO three",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_guu",
+      "buffer": "ONE\nTWO\nTHREE",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "guuj.",
+      "expect": {
+        "buffer": "one\ntwo\nTHREE",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_count_tilde_tilde",
+      "buffer": "ab\ncd\nef\ngh",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2g~~jj.",
+      "expect": {
+        "buffer": "AB\nCD\nEF\nGH",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_rot13_j",
+      "buffer": "abc\ndef\nghi\njkl",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "g?jjj.",
+      "expect": {
+        "buffer": "nop\nqrs\ntuv\nwxy",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_visual_tilde",
+      "buffer": "Hello World\nAnother Line",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "veg~j.",
+      "expect": {
+        "buffer": "hELLO World\naNOTHer Line",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "undo_gU_w",
+      "buffer": "one two",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "gUwu",
+      "expect": {
+        "buffer": "one two",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "undo_guu",
+      "buffer": "  ONE TWO",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "guuu",
+      "expect": {
+        "buffer": "  ONE TWO",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "undo_gU_k",
+      "buffer": "abc\ndef",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "gUku",
+      "expect": {
+        "buffer": "abc\ndef",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "undo_gU_b",
+      "buffer": "abc def",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "gUbu",
+      "expect": {
+        "buffer": "abc def",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "undo_after_nothing_changed",
+      "buffer": "ABC def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xgUiwu",
+      "expect": {
+        "buffer": "BC def",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "A",
+            "linewise": false
+          },
+          "-": {
+            "text": "A",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "gqq_long",
+      "buffer": "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "gqq",
+      "expect": {
+        "buffer": "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11\nword12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22\nword23 word24 word25 word26 word27 word28 word29",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqq_prose",
+      "buffer": "Vim's gq operator joins the rows of each paragraph and breaks them again at blanks, so that no row runs past the text width, which nvim takes as 79 when it is zero.",
+      "cursor": [
+        0,
+        10
+      ],
+      "keys": "gqq",
+      "expect": {
+        "buffer": "Vim's gq operator joins the rows of each paragraph and breaks them again at\nblanks, so that no row runs past the text width, which nvim takes as 79 when it\nis zero.",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gww_long",
+      "buffer": "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29",
+      "cursor": [
+        0,
+        80
+      ],
+      "keys": "gww",
+      "expect": {
+        "buffer": "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11\nword12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22\nword23 word24 word25 word26 word27 word28 word29",
+        "cursor": [
+          1,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gww_on_break",
+      "buffer": "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29",
+      "cursor": [
+        0,
+        73
+      ],
+      "keys": "gww",
+      "expect": {
+        "buffer": "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11\nword12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22\nword23 word24 word25 word26 word27 word28 word29",
+        "cursor": [
+          0,
+          72
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gww_in_dropped_blanks",
+      "buffer": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa    bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "cursor": [
+        0,
+        42
+      ],
+      "keys": "gww",
+      "expect": {
+        "buffer": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "cursor": [
+          0,
+          39
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqgq_long",
+      "buffer": "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29\nshort",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gqgq",
+      "expect": {
+        "buffer": "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11\nword12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22\nword23 word24 word25 word26 word27 word28 word29\nshort",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gwgw_long",
+      "buffer": "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29\nshort",
+      "cursor": [
+        0,
+        30
+      ],
+      "keys": "gwgw",
+      "expect": {
+        "buffer": "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11\nword12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22\nword23 word24 word25 word26 word27 word28 word29\nshort",
+        "cursor": [
+          0,
+          30
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqq_79_columns",
+      "buffer": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gqq",
+      "expect": {
+        "buffer": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqq_80_columns",
+      "buffer": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gqq",
+      "expect": {
+        "buffer": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqq_trailing_blanks",
+      "buffer": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa b ",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gqq",
+      "expect": {
+        "buffer": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nb ",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqq_only_trailing_blanks_past",
+      "buffer": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa   ",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gqq",
+      "expect": {
+        "buffer": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa   ",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqq_tab_between",
+      "buffer": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \t bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gqq",
+      "expect": {
+        "buffer": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqq_wide_chars",
+      "buffer": "日本日本日本日本日本日本日本日本日本日本日本日本日本日本日本日本日本日本日本日本 xxxxxxxxxx",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gqq",
+      "expect": {
+        "buffer": "日本日本日本日本日本日本日本日本日本日本日本日本日本日本日本日本日本日本日本日本\nxxxxxxxxxx",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqq_multibyte",
+      "buffer": "éééééééééééééééééééééééééééééééééééééééé üüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüü x",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gqq",
+      "expect": {
+        "buffer": "éééééééééééééééééééééééééééééééééééééééé\nüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüü x",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqq_word_too_long",
+      "buffer": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx a b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gqq",
+      "expect": {
+        "buffer": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\na b",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqq_word_too_long_between",
+      "buffer": "a xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gqq",
+      "expect": {
+        "buffer": "a\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\nb",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqj_short",
+      "buffer": "short one\nshort two\nshort three",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "gqj",
+      "expect": {
+        "buffer": "short one short two\nshort three",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqG_short",
+      "buffer": "short one\nshort two\nshort three",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "gqG",
+      "expect": {
+        "buffer": "short one short two short three",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqk",
+      "buffer": "short one\nshort two\nshort three",
+      "cursor": [
+        1,
+        3
+      ],
+      "keys": "gqk",
+      "expect": {
+        "buffer": "short one short two\nshort three",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gwj",
+      "buffer": "short one\nshort two\nshort three",
+      "cursor": [
+        1,
+        3
+      ],
+      "keys": "gwj",
+      "expect": {
+        "buffer": "short one\nshort two short three",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gwk_follows_text",
+      "buffer": "short one\nshort two\nshort three",
+      "cursor": [
+        1,
+        3
+      ],
+      "keys": "gwk",
+      "expect": {
+        "buffer": "short one short two\nshort three",
+        "cursor": [
+          0,
+          13
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gwk_in_dropped_indent",
+      "buffer": "abc\n    def",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "gwk",
+      "expect": {
+        "buffer": "abc def",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqj_long_rows",
+      "buffer": "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29\nword0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gqj",
+      "expect": {
+        "buffer": "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11\nword12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22\nword23 word24 word25 word26 word27 word28 word29 word0 word1 word2 word3 word4\nword5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16\nword17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27\nword28 word29",
+        "cursor": [
+          5,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqk_long_rows",
+      "buffer": "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29\nword0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29",
+      "cursor": [
+        1,
+        3
+      ],
+      "keys": "gqk",
+      "expect": {
+        "buffer": "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11\nword12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22\nword23 word24 word25 word26 word27 word28 word29 word0 word1 word2 word3 word4\nword5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16\nword17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27\nword28 word29",
+        "cursor": [
+          5,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_gqq",
+      "buffer": "a\nb\nc\nd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3gqq",
+      "expect": {
+        "buffer": "a b c\nd",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gq_count_j",
+      "buffer": "a\nb\nc\nd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gq2j",
+      "expect": {
+        "buffer": "a b c\nd",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqj_trailing_blanks",
+      "buffer": "  abc  \n  def  ",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gqj",
+      "expect": {
+        "buffer": "  abc  def  ",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqj_before_paren",
+      "buffer": "abc\n)def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gqj",
+      "expect": {
+        "buffer": "abc)def",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqj_two_spaces_kept",
+      "buffer": "one.  two\nthree",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gqj",
+      "expect": {
+        "buffer": "one.  two three",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqj_tab_in_row",
+      "buffer": "a\tb\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gqj",
+      "expect": {
+        "buffer": "a\tb c",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gq_search",
+      "buffer": "ab\ncd\nef\ngh",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gq/ef<CR>",
+      "expect": {
+        "buffer": "ab cd\nef\ngh",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "ef",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "gq_inner_brace",
+      "buffer": "{\n  ab\n  cd\n}",
+      "cursor": [
+        1,
+        3
+      ],
+      "keys": "gqi{",
+      "expect": {
+        "buffer": "{\n  ab cd\n}",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gw_inner_brace",
+      "buffer": "{\n  ab\n  cd\n}",
+      "cursor": [
+        1,
+        3
+      ],
+      "keys": "gwi{",
+      "expect": {
+        "buffer": "{\n  ab cd\n}",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqw_onto_empty_row",
+      "buffer": "ab\n\ncd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gqw",
+      "expect": {
+        "buffer": "ab\n\ncd",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gq_count_w_over_empty_row",
+      "buffer": "ab\n\ncd\nef",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "gq2w",
+      "expect": {
+        "buffer": "ab\n\ncd\nef",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gq_count_w_over_empty_row_indented",
+      "buffer": "ab x \n\n \tcd\nef",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "gq2w",
+      "expect": {
+        "buffer": "ab x \n\n \tcd\nef",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gq_count_B_onto_column_0",
+      "buffer": "x y\n\ndef",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "2gqB",
+      "expect": {
+        "buffer": "x y\n\ndef",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gq_count_dollar_onto_empty_row",
+      "buffer": ")z\n\n  abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gq2$",
+      "expect": {
+        "buffer": ")z\n\n  abc\ndef",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_gww_counts_words",
+      "buffer": "a b\nc\nd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2gww",
+      "expect": {
+        "buffer": "a b\nc\nd",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_gwgw_counts_rows",
+      "buffer": "a b\nc\nd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "2gwgw",
+      "expect": {
+        "buffer": "a b c\nd",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqq_indented",
+      "buffer": "    word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "gqq",
+      "expect": {
+        "buffer": "    word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11\n    word12 word13 word14 word15 word16 word17 word18 word19 word20 word21\n    word22 word23 word24 word25 word26 word27 word28 word29",
+        "cursor": [
+          2,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqq_tab_indent",
+      "buffer": "\tword0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gqq",
+      "expect": {
+        "buffer": "    word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11\n    word12 word13 word14 word15 word16 word17 word18 word19 word20 word21\n    word22 word23 word24 word25 word26 word27 word28 word29",
+        "cursor": [
+          2,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqq_tab_indent_short",
+      "buffer": "\tabc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gqq",
+      "expect": {
+        "buffer": "    abc",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gww_tab_indent",
+      "buffer": "  \tabc",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "gww",
+      "expect": {
+        "buffer": "    abc",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqj_indents_differ",
+      "buffer": "  first row\n      second row\nthird",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gqG",
+      "expect": {
+        "buffer": "  first row second row third",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gwk_tab_indents",
+      "buffer": "\tabc\n\tdef",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "gwk",
+      "expect": {
+        "buffer": "    abc def",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqq_indent_only",
+      "buffer": "          abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gqq",
+      "expect": {
+        "buffer": "          abc",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqG_paragraphs",
+      "buffer": "aaa\n\nbbb\nccc\n\nddd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gqG",
+      "expect": {
+        "buffer": "aaa\n\nbbb ccc\n\nddd",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqG_blank_row",
+      "buffer": "aaa\n   \nbbb\nccc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gqG",
+      "expect": {
+        "buffer": "aaa\n   \nbbb ccc",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqG_tab_row",
+      "buffer": "abc\n\t\nabc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gqG",
+      "expect": {
+        "buffer": "abc\n\t\nabc",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqG_long_paragraphs",
+      "buffer": "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29\nmore words\n\nVim's gq operator joins the rows of each paragraph and breaks them again at blanks, so that no row runs past the text width, which nvim takes as 79 when it is zero.\n\nend",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gqG",
+      "expect": {
+        "buffer": "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11\nword12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22\nword23 word24 word25 word26 word27 word28 word29 more words\n\nVim's gq operator joins the rows of each paragraph and breaks them again at\nblanks, so that no row runs past the text width, which nvim takes as 79 when it\nis zero.\n\nend",
+        "cursor": [
+          8,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gq_ends_on_blank_row",
+      "buffer": "aaa\nbbb\n\nccc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gq2j",
+      "expect": {
+        "buffer": "aaa bbb\n\nccc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqj_blank_rows",
+      "buffer": "x\n\n\ny",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "gqj",
+      "expect": {
+        "buffer": "x\n\n\ny",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqq_blank_row",
+      "buffer": "  ",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gqq",
+      "expect": {
+        "buffer": "  ",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gqq_empty",
+      "buffer": "",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gqq",
+      "expect": {
+        "buffer": "",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "V_gq",
+      "buffer": "aaa\nbbb\nccc\nddd",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "Vjgq",
+      "expect": {
+        "buffer": "aaa bbb\nccc\nddd",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            6
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_gq_upward",
+      "buffer": "aaa\nbbb\nccc\nddd\neee",
+      "cursor": [
+        2,
+        1
+      ],
+      "keys": "Vkgq",
+      "expect": {
+        "buffer": "aaa\nbbb ccc\nddd\neee",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            6
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_gw_upward",
+      "buffer": "aaa\nbbb\nccc\nddd\neee",
+      "cursor": [
+        2,
+        1
+      ],
+      "keys": "Vkgw",
+      "expect": {
+        "buffer": "aaa\nbbb ccc\nddd\neee",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            6
+          ]
+        }
+      }
+    },
+    {
+      "name": "v_gq",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "vjjgq",
+      "expect": {
+        "buffer": "abc def ghi",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            0,
+            9
+          ]
+        }
+      }
+    },
+    {
+      "name": "v_gw",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "vjjgw",
+      "expect": {
+        "buffer": "abc def ghi",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            0,
+            9
+          ]
+        }
+      }
+    },
+    {
+      "name": "v_gq_long",
+      "buffer": "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29\nabc",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "ggvjgq",
+      "expect": {
+        "buffer": "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11\nword12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22\nword23 word24 word25 word26 word27 word28 word29 abc",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            2,
+            50
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_gq",
+      "buffer": "abc\n\ndef\nghi",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jjjgq",
+      "expect": {
+        "buffer": "abc\n\ndef ghi",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            2,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_gw",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jjlgw",
+      "expect": {
+        "buffer": "abc def ghi",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            0,
+            10
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_mark_on_multibyte",
+      "buffer": "x\nabc straße",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "$<C-v>gq",
+      "expect": {
+        "buffer": "x\nabc straße",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            1,
+            10
+          ],
+          ">": [
+            1,
+            10
+          ]
+        }
+      }
+    },
+    {
+      "name": "mark_broken_onto_next_row",
+      "buffer": "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "085lma0gqq",
+      "expect": {
+        "buffer": "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11\nword12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22\nword23 word24 word25 word26 word27 word28 word29",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "a": [
+            1,
+            11
+          ]
+        }
+      }
+    },
+    {
+      "name": "mark_joined",
+      "buffer": "abc\nword0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "makgqj",
+      "expect": {
+        "buffer": "abc word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11\nword12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22\nword23 word24 word25 word26 word27 word28 word29",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "a": [
+            0,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "mark_below",
+      "buffer": "abc\n  def\nghi",
+      "cursor": [
+        2,
+        1
+      ],
+      "keys": "makgqk",
+      "expect": {
+        "buffer": "abc def\nghi",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "a": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "dot_gqq",
+      "buffer": "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29\nword0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gqqG.",
+      "expect": {
+        "buffer": "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11\nword12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22\nword23 word24 word25 word26 word27 word28 word29\nword0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11\nword12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22\nword23 word24 word25 word26 word27 word28 word29",
+        "cursor": [
+          5,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_gqj",
+      "buffer": "short one\nshort two\nshort three\nfour",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "gqj.",
+      "expect": {
+        "buffer": "short one short two short three\nfour",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_gwj",
+      "buffer": "a\nb\nc\nd\ne",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "gwjj.",
+      "expect": {
+        "buffer": "a\nb c\nd e",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_V_gq",
+      "buffer": "aaa\nbbb\nccc\nddd\neee\nfff",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "Vjgqj.",
+      "expect": {
+        "buffer": "aaa bbb\nccc ddd\neee\nfff",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            6
+          ]
+        }
+      }
+    },
+    {
+      "name": "dot_V_gw",
+      "buffer": "aaa\nbbb\nccc\nddd\neee\nfff",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "Vjgwj.",
+      "expect": {
+        "buffer": "aaa bbb\nccc ddd\neee\nfff",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            6
+          ]
+        }
+      }
+    },
+    {
+      "name": "undo_gqq",
+      "buffer": "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "gqqu",
+      "expect": {
+        "buffer": "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "undo_gqk",
+      "buffer": "short one\nshort two\nshort three",
+      "cursor": [
+        1,
+        3
+      ],
+      "keys": "gqku",
+      "expect": {
+        "buffer": "short one\nshort two\nshort three",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "undo_gwk",
+      "buffer": "short one\nshort two\nshort three",
+      "cursor": [
+        1,
+        3
+      ],
+      "keys": "gwku",
+      "expect": {
+        "buffer": "short one\nshort two\nshort three",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "undo_V_gq",
+      "buffer": "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "Vgqu",
+      "expect": {
+        "buffer": "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            198
+          ]
+        }
+      }
+    },
+    {
+      "name": "undo_gqq_nothing_changed",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xgqqu",
+      "expect": {
+        "buffer": "bc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "undo_gww_nothing_changed",
+      "buffer": "abc\n\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xjgwwu",
+      "expect": {
+        "buffer": "bc\n\ndef",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dot_gqj_undo",
+      "buffer": "aaa\nbbb\nccc\nddd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gqjj.u",
+      "expect": {
+        "buffer": "aaa bbb\nccc\nddd",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_gqj_undo_redo",
+      "buffer": "aaa\nbbb\nccc\nddd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gqjj.u<C-r>",
+      "expect": {
+        "buffer": "aaa bbb\nccc ddd",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_gqq_undo_redo",
+      "buffer": "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29\nword0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22 word23 word24 word25 word26 word27 word28 word29",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gqqj.u<C-r>",
+      "expect": {
+        "buffer": "word0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11\nword12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22\nword23 word24 word25 word26 word27 word28 word29\nword0 word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11\nword12 word13 word14 word15 word16 word17 word18 word19 word20 word21 word22\nword23 word24 word25 word26 word27 word28 word29",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_gUU_nothing_changed_undo",
+      "buffer": "abc\nDEF",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gUUj.u",
+      "expect": {
+        "buffer": "ABC\nDEF",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_gUU_nothing_changed_undo_redo",
+      "buffer": "abc\nDEF",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gUUj.u<C-r>",
+      "expect": {
+        "buffer": "ABC\nDEF",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_gUw_nothing_changed_undo",
+      "buffer": "abc\nDEF",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gUwj.u",
+      "expect": {
+        "buffer": "ABC\nDEF",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "undo_v_gu_nothing_changed",
+      "buffer": "x12 3\n45",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xvlguu",
+      "expect": {
+        "buffer": "12 3\n45",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "undo_v_gU_nothing_changed",
+      "buffer": "x12 3\n45",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xvlgUu",
+      "expect": {
+        "buffer": "12 3\n45",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "undo_v_gtilde_nothing_changed",
+      "buffer": "x12 3\n45",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xvlg~u",
+      "expect": {
+        "buffer": "12 3\n45",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "undo_v_grot_nothing_changed",
+      "buffer": "x12 3\n45",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xvlg?u",
+      "expect": {
+        "buffer": "12 3\n45",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "undo_V_gu_nothing_changed",
+      "buffer": "x12 3\n45",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xVlguu",
+      "expect": {
+        "buffer": "12 3\n45",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "undo_V_gU_nothing_changed",
+      "buffer": "x12 3\n45",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xVlgUu",
+      "expect": {
+        "buffer": "12 3\n45",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "undo_V_gtilde_nothing_changed",
+      "buffer": "x12 3\n45",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xVlg~u",
+      "expect": {
+        "buffer": "12 3\n45",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "undo_V_grot_nothing_changed",
+      "buffer": "x12 3\n45",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xVlg?u",
+      "expect": {
+        "buffer": "12 3\n45",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "undo_ctrl_v_gu_nothing_changed",
+      "buffer": "x12 3\n45",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "x<C-v>lguu",
+      "expect": {
+        "buffer": "12 3\n45",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "undo_ctrl_v_gU_nothing_changed",
+      "buffer": "x12 3\n45",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "x<C-v>lgUu",
+      "expect": {
+        "buffer": "12 3\n45",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "undo_ctrl_v_gtilde_nothing_changed",
+      "buffer": "x12 3\n45",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "x<C-v>lg~u",
+      "expect": {
+        "buffer": "12 3\n45",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "undo_ctrl_v_grot_nothing_changed",
+      "buffer": "x12 3\n45",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "x<C-v>lg?u",
+      "expect": {
+        "buffer": "12 3\n45",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "dot_v_gU_nothing_changed_undo",
+      "buffer": "x12 3\n45",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "xvlgUj.u",
+      "expect": {
+        "buffer": "12 3\n45",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            1
+          ]
+        }
+      }
+    }
+  ]
+}

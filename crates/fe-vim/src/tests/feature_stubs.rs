@@ -144,15 +144,6 @@ fn new_variants_change_nothing() {
         changes_nothing(true, "vim.select", args, &format!("select {name}"));
         round_trips(object, name);
     }
-    for operator in G_OPERATORS {
-        let args = OperateArgs {
-            operator,
-            target: Target::Motion(Motion::WordForward),
-            count: None,
-            register: None,
-        };
-        changes_nothing(false, "vim.operate", args, &format!("{operator:?} w"));
-    }
     for (operator, name) in OPERATORS {
         round_trips(operator, name);
     }
