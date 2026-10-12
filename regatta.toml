@@ -86,6 +86,7 @@ push = true
 # deny.toml's permissive allowlist, so widening that allowlist is the one path that needs a
 # person. Regatta also always asks for regatta.toml and .github/workflows/**.
 max_changed_lines = 1000000
+max_changed_lines_by_complexity = { xs = 1000000, s = 1000000, m = 1000000, l = 1000000, xl = 1000000 }
 size_exclude = ["**/tests/**", "**/tests.rs", "**/testdata/**", "**/golden/**", "docs/**", "**/*.md", "**/proptest-regressions/**"]
 human_paths = ["deny.toml"]
 human_flags = []
