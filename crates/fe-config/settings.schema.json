@@ -316,6 +316,13 @@
           "default": false,
           "description": "true: `s` and `S` start the forward and backward jump, as leap and\nflash map them, instead of changing a char or a line (`cl` and `cc`\nstill do). `gs` and `gS` start it either way.",
           "type": "boolean"
+        },
+        "regex_time_limit": {
+          "default": 2000,
+          "description": "How long, in milliseconds, a vim search or :s may run on one command\nbefore it stops with Interrupted and changes nothing (nvim's\n'redrawtime' is the same default).",
+          "format": "uint64",
+          "minimum": 1,
+          "type": "integer"
         }
       },
       "type": "object"
@@ -371,7 +378,8 @@
       "default": {
         "clipboard": "",
         "enabled": false,
-        "jump_on_s": false
+        "jump_on_s": false,
+        "regex_time_limit": 2000
       },
       "description": "Vim mode."
     }

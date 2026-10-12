@@ -9,7 +9,7 @@ use std::{
     io,
     path::{Path, PathBuf},
     sync::Arc,
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use perf::Startup;
@@ -165,6 +165,7 @@ fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
         }
         let (now, before) = (global.settings(), global.previous());
         let jump_on_s = now.vim.jump_on_s;
+        let now_limit = now.vim.regex_time_limit;
         let unnamedplus = |s: &Settings| s.vim.clipboard == VimClipboard::Unnamedplus;
         let (enabled, unnamed) = (
             (now.vim.enabled, before.vim.enabled),
@@ -177,6 +178,7 @@ fn follow_settings(launch_root: Option<PathBuf>, cx: &mut App) {
         }
         fe_gpui::apply_vim_reload(cx, enabled, unnamed);
         fe_gpui::set_vim_jump_on_s(cx, jump_on_s);
+        fe_gpui::set_vim_time_limit(Duration::from_millis(now_limit));
         for window in cx.windows() {
             if let Some(window) = window.downcast::<Workbench>() {
                 settle(window, diagnostics.clone(), cx);
@@ -425,6 +427,7 @@ fn main() {
         fe_gpui::set_vim_enabled(cx, settings.vim.enabled);
         fe_gpui::set_vim_clipboard(cx, settings.vim.clipboard == VimClipboard::Unnamedplus);
         fe_gpui::set_vim_jump_on_s(cx, settings.vim.jump_on_s);
+        fe_gpui::set_vim_time_limit(Duration::from_millis(settings.vim.regex_time_limit));
         fe_workbench::set_lsp_settings(cx, settings.lsp.clone());
         // Toggle Vim Mode and Toggle Status Bar save to the user's file,
         // which the watcher then reloads.

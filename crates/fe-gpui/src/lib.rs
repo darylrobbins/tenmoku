@@ -37,6 +37,7 @@ pub use file_viewer::{FileViewer, FileViewerEvent};
 use gpui::{App, Hsla, Pixels, SharedString, px};
 pub use hover::{HoverContent, HoverFuture, HoverProvider};
 
+pub use fe_vim::search::set_time_limit as set_vim_time_limit;
 pub use keymap::{default_keymap, keymap_report, set_user_keymap};
 pub use pane_item::set_restore_style;
 pub use theme::{ActivePalette, editor_palette, set_editor_palette};

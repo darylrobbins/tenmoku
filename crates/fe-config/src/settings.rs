@@ -68,7 +68,7 @@ pub enum ThemeModeSetting {
 }
 
 /// Settings for vim mode.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct VimSettings {
     /// Whether the editor starts in vim's normal mode, where keys run vim
@@ -84,6 +84,23 @@ pub struct VimSettings {
     /// flash map them, instead of changing a char or a line (`cl` and `cc`
     /// still do). `gs` and `gS` start it either way.
     pub jump_on_s: bool,
+    /// How long, in milliseconds, a vim search or :s may run on one command
+    /// before it stops with Interrupted and changes nothing (nvim's
+    /// 'redrawtime' is the same default).
+    #[schemars(range(min = 1))]
+    pub regex_time_limit: u64,
+}
+
+impl Default for VimSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            clipboard: VimClipboard::default(),
+            jump_on_s: false,
+            // `fe_vim::search::DEFAULT_TIME_LIMIT`; fe-config doesn't depend on fe-vim.
+            regex_time_limit: 2000,
+        }
+    }
 }
 
 /// `vim.clipboard`.
