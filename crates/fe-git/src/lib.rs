@@ -3,13 +3,15 @@
 //!
 //! [`Repo`] answers the two questions the Changes panel and the editor's
 //! changed-row highlighting ask of a repository: which files differ from HEAD
-//! ([`Repo::status`]) and what a file's text is at HEAD ([`Repo::head_text`]).
+//! ([`Repo::status`]) and what a file's text is at HEAD ([`Repo::head_text`]);
+//! and which commit last changed each row of a file ([`Repo::blame`]).
 //! Every path in and out is absolute. `Repo` is `Send + Sync`, so the workbench
 //! can run it on a background thread. Reads use gix. Writes ([`Repo::stage`],
 //! [`Repo::unstage`], [`Repo::discard`], [`Repo::set_index_text`], [`Repo::commit`], [`Repo::switch`], [`Repo::create_branch`]) run `git`,
 //! because gix doesn't apply clean filters or autocrlf when staging; they block,
 //! so callers run them off the UI thread.
 
+mod blame;
 mod branch;
 mod cli;
 mod commit;
@@ -17,6 +19,7 @@ mod index;
 mod refs;
 mod stage;
 
+pub use blame::{BlameRun, CommitInfo};
 pub use branch::SwitchError;
 pub use commit::CommitError;
 pub use index::SplitStatus;
@@ -226,37 +229,23 @@ impl Repo {
     /// `None` when HEAD is unborn, `path` isn't in HEAD's tree or is outside the
     /// working tree, or the blob is binary.
     pub fn head_text(&self, path: &Path) -> Result<Option<String>, GitError> {
-        let Ok(rela_path) = path.strip_prefix(&self.workdir) else {
+        let Some(rela_path) = self.rela_path(path) else {
             return Ok(None);
         };
-        if rela_path.as_os_str().is_empty() {
-            return Ok(None);
-        }
         let repo = self.repo.to_thread_local();
         let mut head = repo.head().map_err(GitError::from_gix)?;
         if head.is_unborn() {
             return Ok(None);
         }
-        let tree = head
-            .peel_to_commit()
-            .map_err(GitError::from_gix)?
-            .tree()
-            .map_err(GitError::from_gix)?;
-        let Some(entry) = tree
-            .lookup_entry_by_path(rela_path)
-            .map_err(GitError::from_gix)?
-        else {
-            return Ok(None);
-        };
-        if !entry.mode().is_blob_or_symlink() {
-            return Ok(None);
-        }
-        let object = entry.object().map_err(GitError::from_gix)?;
-        let data = &object.data;
-        if data[..data.len().min(BINARY_PROBE_LEN)].contains(&0) {
-            return Ok(None);
-        }
-        Ok(Some(String::from_utf8_lossy(data).into_owned()))
+        let commit = head.peel_to_commit().map_err(GitError::from_gix)?;
+        commit_text(&commit, rela_path)
+    }
+
+    /// `path` relative to the working tree, `None` outside it or for the
+    /// working tree itself.
+    fn rela_path<'a>(&self, path: &'a Path) -> Option<&'a Path> {
+        let rela_path = path.strip_prefix(&self.workdir).ok()?;
+        (!rela_path.as_os_str().is_empty()).then_some(rela_path)
     }
 
     /// HEAD's commit id in hex, `None` when HEAD is unborn (or can't be read),
@@ -271,6 +260,42 @@ impl Repo {
             .ok()
             .map(|commit| commit.id.to_string())
     }
+}
+
+/// `rela_path`'s blob in `commit`'s tree, `None` when the tree has no blob or
+/// symlink there.
+fn commit_blob<'repo>(
+    commit: &gix::Commit<'repo>,
+    rela_path: &Path,
+) -> Result<Option<gix::Object<'repo>>, GitError> {
+    let tree = commit.tree().map_err(GitError::from_gix)?;
+    let Some(entry) = tree
+        .lookup_entry_by_path(rela_path)
+        .map_err(GitError::from_gix)?
+    else {
+        return Ok(None);
+    };
+    if !entry.mode().is_blob_or_symlink() {
+        return Ok(None);
+    }
+    entry.object().map(Some).map_err(GitError::from_gix)
+}
+
+/// The text of `rela_path`'s blob in `commit`'s tree, decoded as UTF-8
+/// (lossily); `None` when it isn't there or is binary.
+fn commit_text(commit: &gix::Commit<'_>, rela_path: &Path) -> Result<Option<String>, GitError> {
+    let Some(object) = commit_blob(commit, rela_path)? else {
+        return Ok(None);
+    };
+    if is_binary(&object.data) {
+        return Ok(None);
+    }
+    Ok(Some(String::from_utf8_lossy(&object.data).into_owned()))
+}
+
+/// Whether git would take `data` for binary: a NUL in its first 8000 bytes.
+fn is_binary(data: &[u8]) -> bool {
+    data[..data.len().min(BINARY_PROBE_LEN)].contains(&0)
 }
 
 /// What the status passes found for one path.

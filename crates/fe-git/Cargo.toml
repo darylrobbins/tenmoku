@@ -1,6 +1,6 @@
 [package]
 name = "fe-git"
-description = "Git status and HEAD contents for a project. Must not depend on GPUI."
+description = "Git status, HEAD contents and blame for a project. Must not depend on GPUI."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 gix.workspace = true
+imara-diff.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

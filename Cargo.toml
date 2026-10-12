@@ -56,10 +56,11 @@ sum-tree = { package = "gpui-pre-sum-tree", version = "=0.3.7" }
 ignore = "0.4"
 notify = "8"
 # Git status and HEAD blobs (fe-git): gitoxide, pure Rust, MIT OR Apache-2.0.
-# Only `status` (which brings the index, dirwalk and blob diff), `sha1`, and
-# `parallel` (without it ThreadSafeRepository holds `Rc`s and isn't Send): no
-# network, HTTP, TLS or credential features.
-gix = { version = "0.89", default-features = false, features = ["status", "sha1", "parallel"] }
+# Only `status` (which brings the index, dirwalk and blob diff), `blame`
+# (gix-blame, MIT OR Apache-2.0), `sha1`, and `parallel` (without it
+# ThreadSafeRepository holds `Rc`s and isn't Send): no network, HTTP, TLS or
+# credential features.
+gix = { version = "0.89", default-features = false, features = ["status", "blame", "sha1", "parallel"] }
 # Cmd-P fuzzy matching of project paths (MIT; no runtime dependencies by default).
 frizbee = "0.13"
 # Project search: ripgrep's searcher and regex matcher, without the `grep`
