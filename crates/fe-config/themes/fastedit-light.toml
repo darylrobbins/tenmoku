@@ -20,6 +20,9 @@ information = "#2f74d0"
 hint = "#9aa0aa"
 popover_background = "#f3f4f6"
 popover_border = "#dcdfe4"
+jump_label = "#a8005a"
+jump_label_preview = "#00727f"
+jump_label_foreground = "#ffffff"
 
 # Highlight captures by dotted name. A capture without its own colour takes
 # the colour of its longest listed prefix: "function.method" uses "function".

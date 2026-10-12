@@ -96,6 +96,12 @@ pub struct EditorTheme {
     /// The hover popover's.
     pub popover_background: Hsla,
     pub popover_border: Hsla,
+    /// A vim jump's live label's box.
+    pub jump_label: Hsla,
+    /// A vim jump's preview and concealed labels' box.
+    pub jump_label_preview: Hsla,
+    /// The glyph on a jump label's box.
+    pub jump_label_foreground: Hsla,
     /// Text colour for each [`Highlight`], by [`Highlight::index`]; `None`
     /// uses `foreground`. Build it with [`fe_syntax::resolve_theme`].
     pub syntax: Vec<Option<Hsla>>,

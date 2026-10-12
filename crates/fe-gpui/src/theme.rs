@@ -52,6 +52,9 @@ impl EditorTheme {
             hint: hsla(editor.hint),
             popover_background: hsla(editor.popover_background),
             popover_border: hsla(editor.popover_border),
+            jump_label: hsla(editor.jump_label),
+            jump_label_preview: hsla(editor.jump_label_preview),
+            jump_label_foreground: hsla(editor.jump_label_foreground),
             syntax: fe_syntax::resolve_theme(&syntax),
         }
     }

@@ -19,12 +19,12 @@ use fe_syntax::{Syntax, SyntaxDriver};
 use fe_vim::jump::JumpLabelState;
 use gpui::{
     App, Bounds, ContentMask, CursorStyle, DecorationRun, DispatchPhase, Element, ElementId,
-    ElementInputHandler, Entity, Font, FontId, Global, GlobalElementId, Hitbox, HitboxBehavior,
-    Hsla, InspectorElementId, IntoElement, LayoutId, LineLayout, ModifiersChangedEvent,
-    MouseDownEvent, MouseEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, PathBuilder,
-    PinchEvent, Pixels, Point, ScrollWheelEvent, SharedString, Style, TextAlign, TextRun,
-    TextSystem, UnderlineStyle, WeakEntity, Window, WindowId, WindowTextSystem, fill, point, px,
-    relative, size,
+    ElementInputHandler, Entity, Font, FontId, FontWeight, Global, GlobalElementId, Hitbox,
+    HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, LineLayout,
+    ModifiersChangedEvent, MouseDownEvent, MouseEvent, MouseExitEvent, MouseMoveEvent,
+    MouseUpEvent, PathBuilder, PinchEvent, Pixels, Point, ScrollWheelEvent, SharedString, Style,
+    TextAlign, TextRun, TextSystem, UnderlineStyle, WeakEntity, Window, WindowId, WindowTextSystem,
+    fill, point, px, relative, size,
 };
 
 use crate::{EditorTheme, EditorView, FrameTiming};
@@ -815,8 +815,18 @@ impl Element for EditorElement {
             let labels: Vec<_> = (jump.labels.iter())
                 .map(|label| (layout.bounds(label.rect), label.text.clone(), label.state))
                 .collect();
-            (layout.bounds(jump.backdrop), labels)
+            (
+                jump.backdrop.map(|backdrop| layout.bounds(backdrop)),
+                labels,
+            )
         });
+        // Over a backdrop, so it isn't dimmed; under the text otherwise.
+        let block_on_top = block
+            && jump
+                .as_ref()
+                .is_some_and(|(backdrop, _)| backdrop.is_some());
+        #[cfg(test)]
+        JUMP_PAINTS.with(|paints| paints.borrow_mut().clear());
         let frame = &layout.frame;
         let line_height = px(frame.line_height);
         #[cfg(test)]
@@ -868,7 +878,7 @@ impl Element for EditorElement {
                         decorations::note("selection");
                     }
                     // Under the text, so the glyph stays readable.
-                    if block {
+                    if block && !block_on_top {
                         for &caret in &carets {
                             window.paint_quad(fill(caret, theme.cursor.opacity(BLOCK_ALPHA)));
                             #[cfg(test)]
@@ -902,6 +912,19 @@ impl Element for EditorElement {
                     }
                     if let Some((backdrop, labels)) = &jump {
                         paint_jump(*backdrop, labels, &theme, window, cx);
+                    }
+                    if block_on_top {
+                        for &caret in &carets {
+                            window.paint_quad(fill(caret, theme.cursor.opacity(BLOCK_ALPHA)));
+                            #[cfg(test)]
+                            painted.push(caret);
+                            #[cfg(test)]
+                            JUMP_PAINTS.with(|paints| {
+                                paints
+                                    .borrow_mut()
+                                    .push(JumpPaint::BlockCaret { bounds: caret })
+                            });
+                        }
                     }
                     if !block {
                         for &caret in &carets {
@@ -1567,8 +1590,9 @@ fn match_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
 
 /// What a pending vim jump paints, in frame coordinates.
 pub(crate) struct JumpLayout {
-    /// Over the text area, dimming it.
-    pub(crate) backdrop: Rect,
+    /// Over the text area, dimming it once `{c1}` is typed; `None` before,
+    /// so the text the user reads to pick a target isn't dimmed.
+    pub(crate) backdrop: Option<Rect>,
     /// In text order.
     pub(crate) labels: Vec<JumpLabelLayout>,
 }
@@ -1583,17 +1607,18 @@ pub(crate) struct JumpLabelLayout {
     pub(crate) state: JumpLabelState,
 }
 
-/// How opaque the backdrop of the theme's background is over the text.
-const JUMP_BACKDROP_ALPHA: f32 = 0.6;
-/// How opaque a preview label is, the label `{c2}` would give its match.
-const JUMP_PREVIEW_ALPHA: f32 = 0.5;
-/// How opaque a concealed label's box is, a label on another page.
-const JUMP_CONCEALED_ALPHA: f32 = 0.3;
+/// How opaque the backdrop of the theme's background is over the text: the
+/// largest tenth that keeps body text at WCAG AA (4.5:1) in every bundled
+/// theme (Dark 6.0, Light 4.59, Ember 6.6; 0.4 drops Light to 3.5), so the
+/// text stays readable while the labels stand out.
+const JUMP_BACKDROP_ALPHA: f32 = 0.3;
 
 /// While vim has a jump pending, its labels on the frame's rows
 /// ([`fe_vim::VimState::jump_overlay`]), each a block over its target's
-/// char, at most [`MAX_MATCHES`] of them, and a backdrop. `None` with no
-/// jump pending. Labels off to a side of a scrolled line are left out.
+/// char, and a backdrop once a char is typed. At most [`MAX_MATCHES`]
+/// labels, live and preview ones before concealed ones, so a jump over more
+/// targets still shows the labels it waits for. `None` with no jump
+/// pending. Labels off to a side of a scrolled line are left out.
 fn jump_layout(layout: &mut FrameLayout, view: &EditorView) -> Option<JumpLayout> {
     let vim = view.vim.as_ref()?;
     let frame = &layout.frame;
@@ -1604,56 +1629,112 @@ fn jump_layout(layout: &mut FrameLayout, view: &EditorView) -> Option<JumpLayout
     let overlay = vim.jump_overlay(&view.model, rows)?;
     let text = view.model.text();
     let visible = frame.text_bounds();
-    let labels = (overlay.labels.into_iter())
+    let mut labels: Vec<(usize, JumpLabelLayout)> = (overlay.labels.into_iter())
         .filter_map(|label| {
             let rect = block_rect(layout, text, label.offset)?;
             let beside = rect.x + rect.width <= visible.x || rect.x >= visible.x + visible.width;
-            (!beside).then(|| JumpLabelLayout {
-                #[cfg(test)]
-                offset: label.offset,
-                rect,
-                text: label.text.into(),
-                state: label.state,
+            (!beside).then(|| {
+                let layout = JumpLabelLayout {
+                    #[cfg(test)]
+                    offset: label.offset,
+                    rect,
+                    text: label.text.into(),
+                    state: label.state,
+                };
+                (label.offset, layout)
             })
         })
-        .take(MAX_MATCHES)
         .collect();
+    if labels.len() > MAX_MATCHES {
+        // Stable: text order within each kind.
+        labels.sort_by_key(|(_, label)| label.state == JumpLabelState::Concealed);
+        labels.truncate(MAX_MATCHES);
+        labels.sort_by_key(|&(offset, _)| offset);
+    }
+    let typed = vim.jump_query().is_some_and(|query| !query.is_empty());
     Some(JumpLayout {
-        backdrop: layout.frame.text_bounds(),
-        labels,
+        backdrop: typed.then(|| layout.frame.text_bounds()),
+        labels: labels.into_iter().map(|(_, label)| label).collect(),
     })
 }
 
-/// A pending jump over the text: the backdrop, then each label, a box in
-/// the cursor colour with its glyph in the background colour, a preview's
-/// fainter, a concealed one's fainter still and without its glyph. The
-/// colours come from the theme's until it has slots for them.
+/// One thing a pending jump painted, in window coordinates, for the tests.
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum JumpPaint {
+    Backdrop {
+        bounds: Bounds<Pixels>,
+        color: Hsla,
+    },
+    /// A label's box and its glyph's colour and weight, if it has one.
+    Label {
+        bounds: Bounds<Pixels>,
+        fill: Hsla,
+        glyph: Option<(Hsla, FontWeight)>,
+    },
+    /// A block caret, painted over the backdrop.
+    BlockCaret {
+        bounds: Bounds<Pixels>,
+    },
+}
+
+#[cfg(test)]
+thread_local! {
+    /// What the last frame painted on this thread for a pending jump, in
+    /// order.
+    pub(crate) static JUMP_PAINTS: std::cell::RefCell<Vec<JumpPaint>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// A pending jump over the text: the backdrop, if any, then each label, an
+/// opaque box with its glyph in bold in the theme's `jump_label_foreground`.
+/// A live label's box is `jump_label`; a preview's is `jump_label_preview`,
+/// and so is a concealed one's, which has no glyph.
 fn paint_jump(
-    backdrop: Bounds<Pixels>,
+    backdrop: Option<Bounds<Pixels>>,
     labels: &[(Bounds<Pixels>, SharedString, JumpLabelState)],
     theme: &EditorTheme,
     window: &mut Window,
     cx: &mut App,
 ) {
-    window.paint_quad(fill(
-        backdrop,
-        theme.background.opacity(JUMP_BACKDROP_ALPHA),
-    ));
-    let font = gpui::font(theme.font_family.clone());
+    if let Some(backdrop) = backdrop {
+        let color = theme.background.opacity(JUMP_BACKDROP_ALPHA);
+        window.paint_quad(fill(backdrop, color));
+        #[cfg(test)]
+        JUMP_PAINTS.with(|paints| {
+            paints.borrow_mut().push(JumpPaint::Backdrop {
+                bounds: backdrop,
+                color,
+            })
+        });
+    }
+    let font = Font {
+        weight: FontWeight::BOLD,
+        ..gpui::font(theme.font_family.clone())
+    };
     for (rect, label, state) in labels {
-        let alpha = match state {
-            JumpLabelState::Live => 1.,
-            JumpLabelState::Preview => JUMP_PREVIEW_ALPHA,
-            JumpLabelState::Concealed => JUMP_CONCEALED_ALPHA,
+        let fill_color = match state {
+            JumpLabelState::Live => theme.jump_label,
+            JumpLabelState::Preview | JumpLabelState::Concealed => theme.jump_label_preview,
         };
-        window.paint_quad(fill(*rect, theme.cursor.opacity(alpha)));
-        if *state == JumpLabelState::Concealed {
+        window.paint_quad(fill(*rect, fill_color));
+        let glyph = (*state != JumpLabelState::Concealed)
+            .then_some((theme.jump_label_foreground, font.weight));
+        #[cfg(test)]
+        JUMP_PAINTS.with(|paints| {
+            paints.borrow_mut().push(JumpPaint::Label {
+                bounds: *rect,
+                fill: fill_color,
+                glyph,
+            })
+        });
+        let Some((color, _)) = glyph else {
             continue;
-        }
+        };
         let run = TextRun {
             len: label.len(),
             font: font.clone(),
-            color: theme.background.opacity(alpha),
+            color,
             background_color: None,
             underline: None,
             strikethrough: None,
@@ -1746,3 +1827,6 @@ mod tests;
 
 #[cfg(test)]
 mod jump_tests;
+
+#[cfg(test)]
+mod jump_style_tests;

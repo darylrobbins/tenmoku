@@ -86,6 +86,13 @@ colors! {
         /// Behind hover and completion popovers.
         popover_background,
         popover_border,
+        /// A vim jump's live label: the box of a label that picks its target.
+        jump_label,
+        /// A vim jump's preview label, the one `{c2}` would give its match,
+        /// and a concealed label's box, one on another page.
+        jump_label_preview,
+        /// The glyph on a jump label's box.
+        jump_label_foreground,
     }
 }
 

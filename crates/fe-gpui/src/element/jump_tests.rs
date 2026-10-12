@@ -56,7 +56,10 @@ fn labels_at_targets(cx: &mut TestAppContext) {
         let layout = view.layout.as_mut().unwrap();
         let jump = layout.jump.as_ref().expect("a jump is pending");
         let window = layout.bounds(layout.frame.text_bounds());
-        assert_eq!(layout.bounds(jump.backdrop), window);
+        assert_eq!(
+            jump.backdrop.map(|backdrop| layout.bounds(backdrop)),
+            Some(window)
+        );
         let offsets: Vec<usize> = jump.labels.iter().map(|label| label.offset).collect();
         let row = "ab ab ab ab ab ab\n".len();
         let targets: Vec<usize> = (0..10)
