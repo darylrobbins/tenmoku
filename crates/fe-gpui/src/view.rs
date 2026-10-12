@@ -451,6 +451,13 @@ impl EditorView {
         })
     }
 
+    /// Whether the last frame laid out a display row of buffer row `row`,
+    /// or `None` before one was drawn.
+    pub fn shows_buffer_row(&self, row: u32) -> Option<bool> {
+        let frame = &self.layout.as_ref()?.frame;
+        Some(frame.rows.iter().any(|laid| laid.buffer_row == row))
+    }
+
     /// Shows buffer row `top_row` first from the next frame, which leaves
     /// the caret where it is even inside the autoscroll margin.
     pub(crate) fn scroll_to_top_row(&mut self, top_row: u32) {

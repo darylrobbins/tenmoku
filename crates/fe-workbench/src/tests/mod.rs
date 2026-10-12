@@ -83,7 +83,7 @@ fn open(
 }
 
 /// A workbench rooted at `root`.
-fn open_root<'a>(
+pub(crate) fn open_root<'a>(
     cx: &'a mut TestAppContext,
     root: &Path,
 ) -> (Entity<Workbench>, &'a mut VisualTestContext) {

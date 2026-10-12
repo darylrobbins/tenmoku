@@ -23,6 +23,7 @@ use crate::{
     config_problems::{self, ConfigProblemsPicker},
     dock::{self, DockEvent, DockOp},
     git::GitState,
+    go_to_line::GoToLine,
     language_picker::LanguagePicker,
     lsp::{self, Lsp},
     nav::{self, Nav},
@@ -32,7 +33,8 @@ use crate::{
     pane_drag::TabDropped,
     pane_group::{self, Destination, Direction, PaneOp},
     pane_toolbar::{self, NavButtons, SymbolChain, ToolbarRequest},
-    persist, picker,
+    persist,
+    picker::{self, Toggle},
     project_panel::{self, PanelEvent, PanelOp},
     status_bar::{self, StatusOp},
     title_bar,
@@ -102,16 +104,18 @@ pub(crate) enum Palette {
     Definitions,
     Symbols,
     ConfigProblems,
+    GoToLine,
 }
 
 impl Palette {
-    const ALL: [Palette; 6] = [
+    const ALL: [Palette; 7] = [
         Palette::QuickOpen,
         Palette::Language,
         Palette::Toolbar,
         Palette::Definitions,
         Palette::Symbols,
         Palette::ConfigProblems,
+        Palette::GoToLine,
     ];
 
     /// Its id in the modal layer.
@@ -123,6 +127,7 @@ impl Palette {
             Palette::Definitions => "definitions",
             Palette::Symbols => "symbols",
             Palette::ConfigProblems => "config_problems",
+            Palette::GoToLine => "go_to_line",
         })
     }
 
@@ -160,6 +165,7 @@ pub struct Workbench {
     pub(crate) config_problems: Entity<Picker<ConfigProblemsPicker>>,
     /// To kiln's config diagnostics, which the status bar shows.
     _config_problems: Subscription,
+    go_to_line: Entity<Picker<GoToLine>>,
     /// The window's shell: the chrome, the dock, the status bar and the
     /// palettes' modal layer, around the panes.
     shell: Entity<Shell>,
@@ -310,6 +316,10 @@ impl Workbench {
             let delegate = ConfigProblemsPicker::new(config_problems, ui);
             Picker::new(delegate, "Filter config problems…", ui, cx)
         });
+        let go_to_line = cx.new(|cx| {
+            let delegate = GoToLine::new();
+            Picker::new(delegate, "Line or line:column…", ui, cx)
+        });
         let toolbar_picker = cx.new(|cx| {
             let delegate = ToolbarPicker::new(outline.downgrade(), ui);
             Picker::new(delegate, "Filter…", ui, cx)
@@ -361,6 +371,7 @@ impl Workbench {
             language_picker,
             config_problems,
             _config_problems: Self::follow_config_problems(window, cx),
+            go_to_line,
             shell,
             modals,
             palette: None,
@@ -1192,6 +1203,38 @@ impl Workbench {
         self.show_palette(Palette::Language, picker, window, cx);
     }
 
+    /// The go-to-line picker, shown by `go_to_line.toggle`.
+    #[cfg(test)]
+    pub(crate) fn go_to_line_picker(&self) -> &Entity<Picker<GoToLine>> {
+        &self.go_to_line
+    }
+
+    /// Whether the go-to-line picker shows.
+    #[cfg(test)]
+    pub(crate) fn go_to_line_open(&self) -> bool {
+        self.palette == Some(Palette::GoToLine)
+    }
+
+    /// Shows the go-to-line picker, focused, for the active editor, in
+    /// place of any other palette, or dismisses it if it shows. Nothing
+    /// without an active editor.
+    fn toggle_go_to_line(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.palette == Some(Palette::GoToLine) {
+            return self.dismiss_palette(window, cx);
+        }
+        let Some(editor) = self.active_editor(cx).cloned() else {
+            return;
+        };
+        self.dismiss_palette(window, cx);
+        let workbench = cx.entity().downgrade();
+        let picker = self.go_to_line.clone();
+        picker.update(cx, |picker, cx| {
+            picker.delegate.opened(&editor, workbench, cx);
+            picker.show(window, cx);
+        });
+        self.show_palette(Palette::GoToLine, picker, window, cx);
+    }
+
     /// Dismisses the palette that shows, as Escape would.
     pub(crate) fn dismiss_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.palette.take().is_some() {
@@ -1532,8 +1575,10 @@ impl Workbench {
             if let Some(trusted) = trust::op(run, cx) {
                 return self.set_root_trust(trusted, cx);
             }
-            if picker::toggles_quick_open(run, cx) {
-                return self.toggle_quick_open(window, cx);
+            match picker::toggled(run, cx) {
+                Some(Toggle::QuickOpen) => return self.toggle_quick_open(window, cx),
+                Some(Toggle::GoToLine) => return self.toggle_go_to_line(window, cx),
+                None => {}
             }
             if config_problems::shows(run, cx) {
                 return self.show_config_problems(window, cx);
