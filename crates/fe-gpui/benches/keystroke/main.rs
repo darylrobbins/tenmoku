@@ -14,8 +14,7 @@
 //!
 //! Not covered: delivering the OS event (`NSEvent` to GPUI), waiting for
 //! vsync, the compositor, scan-out and the GPU's own time, which need a
-//! real screen; and typing while a parse runs in the background, which is
-//! settled between keystrokes, untimed.
+//! real screen.
 //!
 //! Run with `cargo bench -p fe-gpui --bench keystroke` (about 20 seconds after
 //! the build); `-- --test` runs each case once, and `-- type/small` just one.

@@ -697,62 +697,98 @@ Cases: `type/small` types `x` inside a word in 60 lines of highlighted Rust;
 `type/10k-rust` the same in 10,002 lines, around line 5,000; `type/1m-plain`
 types `x` in 1M lines of plain text (33 MB, no language), mid-file;
 `move/10k-rust` presses `right` in the 10k-line Rust file, the path with no
-edit.
+edit; `type/during-parse` types `x` into about 5 MB of Rust (30,000
+functions), too big to reparse inside the frame's 1 ms budget, while the
+previous keystroke's reparse is still pending in the background (the harness
+asserts `needs_parse()` before each keystroke, and settles fully every 50
+samples); `move/long-row` presses `right` in the middle of one 10 MB row of
+plain ASCII.
 
-One run on an M3 Max MacBook Pro (36 GB, macOS 27.0), 2026-10-05 at
-`9c08650`, built into a private `CARGO_TARGET_DIR`. Other lanes were
-building: the load average was 21 to 27. p50 / p99 in milliseconds, over the
-measured samples of each case:
+Two runs, side by side, p50 / p99 in milliseconds over the measured samples
+of each case, each built into a private `CARGO_TARGET_DIR`:
 
-**`type/small`**, 5,100 samples:
+- **Mac** (baseline): an M3 Max MacBook Pro (36 GB, macOS 27.0), 2026-10-05
+  at `9c08650`, before the keymap engine. Other lanes were building: the
+  load average was 21 to 27.
+- **helium** (Linux, 24 cores, headless GPUI test window): 2026-10-11 at
+  `7570bb2` (current main plus the two new cases), load average 13 to 15
+  from other lanes. Not comparable with the Mac rows stage by stage: it is a
+  different machine, text system and renderer, and `present` in particular
+  is the Linux headless renderer's, not Metal's.
 
-| Stage | p50 | p99 |
-|---|---|---|
-| dispatch | 0.004 | 0.010 |
-| pre_layout | 0.010 | 0.017 |
-| prepaint | 0.161 | 0.204 |
-| paint | 0.079 | 0.097 |
-| draw_rest | 0.036 | 0.049 |
-| present | 0.022 | 0.058 |
-| **total** | **0.315** | **0.419** |
+**`type/small`**, 5,100 samples on the Mac, 600 on helium:
 
-**`type/10k-rust`**, 2,550 samples:
+| Stage | Mac p50 | Mac p99 | helium p50 | helium p99 |
+|---|---|---|---|---|
+| dispatch | 0.004 | 0.010 | 0.019 | 0.038 |
+| pre_layout | 0.010 | 0.017 | 0.038 | 0.058 |
+| prepaint | 0.161 | 0.204 | 0.310 | 0.538 |
+| paint | 0.079 | 0.097 | 0.092 | 0.110 |
+| draw_rest | 0.036 | 0.049 | 0.022 | 0.050 |
+| present | 0.022 | 0.058 | 4.159 | 5.193 |
+| **total** | **0.315** | **0.419** | **4.655** | **5.603** |
 
-| Stage | p50 | p99 |
-|---|---|---|
-| dispatch | 0.004 | 0.018 |
-| pre_layout | 0.584 | 0.939 |
-| prepaint | 0.171 | 0.255 |
-| paint | 0.084 | 0.106 |
-| draw_rest | 0.041 | 0.066 |
-| present | 0.028 | 0.103 |
-| **total** | **0.915** | **1.413** |
+**`type/10k-rust`**, 2,550 samples on the Mac, 550 on helium:
 
-**`type/1m-plain`**, 7,650 samples:
+| Stage | Mac p50 | Mac p99 | helium p50 | helium p99 |
+|---|---|---|---|---|
+| dispatch | 0.004 | 0.018 | 0.021 | 0.030 |
+| pre_layout | 0.584 | 0.939 | 0.016 | 1.092 |
+| prepaint | 0.171 | 0.255 | 0.343 | 0.386 |
+| paint | 0.084 | 0.106 | 0.100 | 0.113 |
+| draw_rest | 0.041 | 0.066 | 0.020 | 0.029 |
+| present | 0.028 | 0.103 | 0.292 | 2.590 |
+| **total** | **0.915** | **1.413** | **0.814** | **4.044** |
 
-| Stage | p50 | p99 |
-|---|---|---|
-| dispatch | 0.004 | 0.009 |
-| pre_layout | 0.002 | 0.003 |
-| prepaint | 0.048 | 0.062 |
-| paint | 0.087 | 0.104 |
-| draw_rest | 0.043 | 0.054 |
-| present | 0.021 | 0.048 |
-| **total** | **0.209** | **0.272** |
+**`type/1m-plain`**, 7,650 samples on the Mac, 600 on helium:
 
-**`move/10k-rust`**, 7,650 samples:
+| Stage | Mac p50 | Mac p99 | helium p50 | helium p99 |
+|---|---|---|---|---|
+| dispatch | 0.004 | 0.009 | 0.020 | 0.051 |
+| pre_layout | 0.002 | 0.003 | 0.013 | 0.025 |
+| prepaint | 0.048 | 0.062 | 0.066 | 0.104 |
+| paint | 0.087 | 0.104 | 0.111 | 0.130 |
+| draw_rest | 0.043 | 0.054 | 0.019 | 0.047 |
+| present | 0.021 | 0.048 | 4.602 | 5.298 |
+| **total** | **0.209** | **0.272** | **4.835** | **5.526** |
 
-| Stage | p50 | p99 |
-|---|---|---|
-| dispatch | 0.003 | 0.006 |
-| pre_layout | 0.002 | 0.005 |
-| prepaint | 0.048 | 0.068 |
-| paint | 0.084 | 0.105 |
-| draw_rest | 0.039 | 0.054 |
-| present | 0.022 | 0.051 |
-| **total** | **0.201** | **0.266** |
+**`move/10k-rust`**, 7,650 samples on the Mac, 600 on helium:
 
-Every case fits the budget, with a p50 between 5% and 23% of 4 ms and a p99
+| Stage | Mac p50 | Mac p99 | helium p50 | helium p99 |
+|---|---|---|---|---|
+| dispatch | 0.003 | 0.006 | 0.013 | 0.024 |
+| pre_layout | 0.002 | 0.005 | 0.013 | 0.026 |
+| prepaint | 0.048 | 0.068 | 0.119 | 0.170 |
+| paint | 0.084 | 0.105 | 0.097 | 0.122 |
+| draw_rest | 0.039 | 0.054 | 0.019 | 0.047 |
+| present | 0.022 | 0.051 | 4.552 | 5.261 |
+| **total** | **0.201** | **0.266** | **4.815** | **5.527** |
+
+**`type/during-parse`**, 400 samples on helium (new case, no Mac run yet):
+
+| Stage | Mac p50 | Mac p99 | helium p50 | helium p99 |
+|---|---|---|---|---|
+| dispatch | — | — | 0.026 | 0.043 |
+| pre_layout | — | — | 0.017 | 0.033 |
+| prepaint | — | — | 0.347 | 0.497 |
+| paint | — | — | 0.101 | 0.123 |
+| draw_rest | — | — | 0.032 | 0.066 |
+| present | — | — | 3.998 | 5.106 |
+| **total** | **—** | **—** | **4.529** | **5.481** |
+
+**`move/long-row`**, 50 samples on helium (new case, no Mac run yet):
+
+| Stage | Mac p50 | Mac p99 | helium p50 | helium p99 |
+|---|---|---|---|---|
+| dispatch | — | — | 72.464 | 74.917 |
+| pre_layout | — | — | 0.015 | 0.027 |
+| prepaint | — | — | 0.014 | 0.023 |
+| paint | — | — | 0.009 | 0.012 |
+| draw_rest | — | — | 0.018 | 0.031 |
+| present | — | — | 0.176 | 0.206 |
+| **total** | **—** | **—** | **72.684** | **75.144** |
+
+On the Mac, every case fits the budget, with a p50 between 5% and 23% of 4 ms and a p99
 between 3% and 18% of 8 ms, so no stage is over. The largest stage is
 `pre_layout` in `type/10k-rust`: the reparse of the edited Rust file, inside
 its 1 ms in-frame budget. An edit to highlighted text also costs about
@@ -761,10 +797,25 @@ plain text, from highlighting the visible rows again. The first keystroke after 
 editor opens is slower (2.1 ms for `type/small` in a `--test` run, mostly
 `dispatch` and `present`); criterion's warm-up keeps it out of the numbers.
 
-This is the baseline before the keymap engine (card 4b): re-run the bench
-after it lands and compare. The numbers leave out OS event delivery, waiting
-for vsync, the compositor, scan-out and the GPU's own time, which need a real
-screen, and typing while a background parse runs.
+The 2026-10-11 helium run is after the keymap engine, vim, LSP sync,
+diagnostics, find highlights and kiln landed. No case's p99 is near 8 ms
+(the highest is 5.6 ms, and all but `move/long-row` stay under 6 ms), but on
+helium that is mostly `present` (about 4 to 4.6 ms at p50 in the cases that
+are unchanged on screen apart from the caret, 0.3 ms in `type/10k-rust`),
+which is the Linux renderer and says nothing about Metal; the stages the
+editor owns (`dispatch` through `draw_rest`) total 0.2 to 0.8 ms at p50 in
+every case but `move/long-row`. Typing during a background parse costs the
+same as typing with none (`type/during-parse` against `type/small`: `prepaint`
+0.35 ms against 0.31 ms, `pre_layout` 0.02 ms against 0.04 ms), so M2's
+"UI never blocks on a parse" holds at 5 MB. The 3.9 ms p99 of
+`type/10k-rust` comes from `pre_layout` (1.1 ms, the in-frame reparse at its
+budget) and `present`. `move/long-row` is the outlier: `dispatch` is 72 ms at
+p50, 18 times the 4 ms target, from `EditorModel::row_at` copying the whole
+10 MB row on every arrow key; everything after `dispatch` is under 0.2 ms.
+That is the case to re-run after the row copy is fixed. A Mac run of the two
+new cases is still to do. The numbers leave out OS event delivery, waiting
+for vsync, the compositor, scan-out and the GPU's own time, which need a
+real screen.
 
 ## Large-file view (`cargo run --release -p fe-fileview --example first_screen` and `--example line_index`)
 

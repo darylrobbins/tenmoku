@@ -49,35 +49,61 @@ pub(crate) struct Case {
     pub(crate) language: Option<&'static str>,
     /// The keystroke timed, as `Keystroke::parse` reads it.
     pub(crate) keys: &'static str,
+    /// Whether each keystroke lands while the previous edit's reparse is
+    /// still pending in the background: [`Harness::reset`] doesn't settle
+    /// it, and [`Harness::keystroke`] asserts it's pending.
+    pub(crate) during_parse: bool,
 }
+
+/// Samples between full settles of a [`Case::during_parse`] case, which
+/// bounds the background work left pending.
+const SETTLE_EVERY: usize = 50;
 
 /// The cases the bench runs. Corpora are generated, so there are no fixture
 /// files.
-pub(crate) fn cases() -> [Case; 4] {
+pub(crate) fn cases() -> [Case; 6] {
     [
         Case {
             name: "type/small",
             corpus: || rust(10, 8),
             language: Some("rust"),
             keys: "x",
+            during_parse: false,
         },
         Case {
             name: "type/10k-rust",
             corpus: || rust(1667, 833),
             language: Some("rust"),
             keys: "x",
+            during_parse: false,
         },
         Case {
             name: "type/1m-plain",
             corpus: || plain(1_000_000, 500_000),
             language: None,
             keys: "x",
+            during_parse: false,
         },
         Case {
             name: "move/10k-rust",
             corpus: || rust(1667, 833),
             language: Some("rust"),
             keys: "right",
+            during_parse: false,
+        },
+        Case {
+            name: "type/during-parse",
+            corpus: || rust(30_000, 15_000),
+            language: Some("rust"),
+            keys: "x",
+            during_parse: true,
+        },
+        Case {
+            name: "move/long-row",
+            corpus: || long_row(10_000_000, 5_000_000),
+            language: None,
+            keys: "right",
+            during_parse: false,
         },
     ]
 }
@@ -99,6 +125,17 @@ fn rust(blocks: usize, caret_block: usize) -> (String, usize) {
              if doubled % 3 == 0 {{ doubled / 3 }} else {{ doubled + 1 }}\n}}\n\n"
         );
     }
+    (text, caret)
+}
+
+/// One row of `len` bytes of plain ASCII words, with the caret inside a
+/// word at `caret`.
+fn long_row(len: usize, caret: usize) -> (String, usize) {
+    const WORDS: &str = "lorem ipsum dolor sit amet ";
+    let mut text = WORDS.repeat(len / WORDS.len() + 1);
+    text.truncate(len);
+    // Not at a space, so the caret is inside a word.
+    let caret = caret - caret % WORDS.len() + 2;
     (text, caret)
 }
 
@@ -219,6 +256,10 @@ pub(crate) struct Harness {
     presents: Rc<Cell<bool>>,
     /// The keystroke [`Harness::reset`] undoes.
     last: Option<&'static str>,
+    /// See [`Case::during_parse`].
+    during_parse: bool,
+    /// Resets since the last full settle, for [`Case::during_parse`].
+    resets: usize,
     pub(crate) cx: HeadlessAppContext,
 }
 
@@ -279,10 +320,28 @@ impl Harness {
             notified,
             presents,
             last: None,
+            during_parse: case.during_parse,
+            resets: 0,
             cx,
         };
         harness.settle();
+        if harness.during_parse {
+            // Leaves a reparse pending for the first keystroke, as `reset`
+            // does for the rest.
+            harness.last = Some("x");
+            harness.dispatch_untimed("x");
+            harness.reset();
+        }
         harness
+    }
+
+    fn dispatch_untimed(&mut self, keys: &str) {
+        let keystroke = Keystroke::parse(keys).expect("a valid keystroke");
+        self.cx
+            .update_window(self.window.into(), |_, window, cx| {
+                window.dispatch_keystroke(keystroke, cx);
+            })
+            .expect("the window is open");
     }
 
     /// Dispatches `keys` and times it until the first frame that lays out
@@ -292,6 +351,12 @@ impl Harness {
     /// are driven if that one doesn't qualify.
     pub(crate) fn keystroke(&mut self, keys: &'static str) -> Result<Sample, NoFrame> {
         let keystroke = Keystroke::parse(keys).expect("a valid keystroke");
+        if self.during_parse {
+            let pending = self.cx.read_entity(&self.view, |view, _| {
+                view.syntax().is_some_and(|syntax| syntax.needs_parse())
+            });
+            assert!(pending, "no background parse is pending to type during");
+        }
         self.notified.set(None);
         let dispatched = Instant::now();
         self.cx
@@ -330,7 +395,8 @@ impl Harness {
     /// Undoes the last sampled keystroke, untimed, with `backspace` after a
     /// typed character or the opposite movement, then settles. The next
     /// keystroke starts from the same text, selections, scroll position and
-    /// highlights.
+    /// highlights. A [`Case::during_parse`] case doesn't settle, leaving the
+    /// reparse pending, except every [`SETTLE_EVERY`] resets.
     pub(crate) fn reset(&mut self) {
         let Some(keys) = self.last.take() else {
             return;
@@ -342,12 +408,26 @@ impl Harness {
             "down" => "up",
             _ => "backspace",
         };
+        if self.during_parse {
+            self.resets += 1;
+            if self.resets.is_multiple_of(SETTLE_EVERY) {
+                self.settle();
+            }
+        }
         self.cx
             .update_window(self.window.into(), |_, window, cx| {
                 window.dispatch_keystroke(Keystroke::parse(undo).expect("a valid keystroke"), cx);
             })
             .expect("the window is open");
-        self.settle();
+        if self.during_parse {
+            // One frame: the reparse is too big for the frame's budget, so
+            // it's moved to the background and left pending.
+            self.cx
+                .update_window(self.window.into(), |_, _, _| {})
+                .expect("the window is open");
+        } else {
+            self.settle();
+        }
     }
 
     /// Runs background work (language loads, parses moved off the frame)
