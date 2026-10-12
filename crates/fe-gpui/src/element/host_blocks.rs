@@ -7,7 +7,7 @@
 use std::ops::Range;
 
 use fe_display::{
-    Block, BlockMap, CharWidth, ExpandedRow, ScreenRow,
+    Block, CharWidth, ExpandedRow, ScreenRow,
     layout::{
         Frame, MAX_SHAPED_ROW_BYTES, MeasuredLine as _, Rect, RowLayout, StyleRun, TextMeasure,
         Vec2,
@@ -28,26 +28,34 @@ const HATCH_SPACING: f32 = 0.5;
 
 /// The view's blocks, each above the first display row of its buffer row,
 /// or after the last row for the row count, by their index in the view's
-/// list. One above a row a fold hides is left out.
-pub(super) fn block_map(view: &EditorView) -> BlockMap {
+/// list. One above a row a fold hides is left out. The frame's block map
+/// holds these and others ([`super::block_map`]).
+pub(super) fn blocks(view: &EditorView) -> impl Iterator<Item = Block> + '_ {
     let display = view.model.display();
     let rows = view.model.text().row_count();
-    let blocks = view.blocks.iter().enumerate().filter_map(|(ix, block)| {
-        let above = match block.above >= rows {
-            true => display.row_count(),
-            false => {
-                let row = display.row_for_buffer_row(block.above);
-                let shown = display.row(row);
-                (shown.buffer_row == block.above && shown.first).then_some(row)?
-            }
-        };
-        Some(Block {
-            above,
-            rows: block.rows,
-            id: ix as u64,
+    view.blocks
+        .iter()
+        .enumerate()
+        .filter_map(move |(ix, block)| {
+            let above = match block.above >= rows {
+                true => display.row_count(),
+                false => {
+                    let row = display.row_for_buffer_row(block.above);
+                    let shown = display.row(row);
+                    (shown.buffer_row == block.above && shown.first).then_some(row)?
+                }
+            };
+            Some(Block {
+                above,
+                rows: block.rows,
+                id: ix as u64,
+            })
         })
-    });
-    BlockMap::new(blocks)
+}
+
+/// The view's block a frame's block of `id` is, if it's one of the host's.
+fn host_block(view: &EditorView, id: u64) -> Option<&crate::view::HostBlock> {
+    view.blocks.get(usize::try_from(id).ok()?)
 }
 
 /// The display row laid out at `y` in the frame, if a row this frame shows
@@ -113,7 +121,7 @@ fn shown_lines(frame: &Frame<Line>, view: &EditorView) -> Vec<(usize, f32, Strin
     let mut out = Vec::new();
     for (ix, laid) in frame.blocks.iter().enumerate() {
         let Some(HostBlockKind::Lines { lines, .. }) =
-            view.blocks.get(laid.id as usize).map(|block| &block.kind)
+            host_block(view, laid.id).map(|block| &block.kind)
         else {
             continue;
         };
@@ -157,7 +165,7 @@ fn runs(text: &str, view: &EditorView) -> [StyleRun<Hsla>; 1] {
 /// Each grapheme cluster of `text`, as fe-display's long rows measure
 /// them ([`CharWidth::cluster_width`]): its bytes, and the x it starts and
 /// ends at from column 0.
-fn clusters<'a>(
+pub(super) fn clusters<'a>(
     text: &'a str,
     widths: &'a mut dyn CharWidth,
 ) -> impl Iterator<Item = (Range<usize>, f64, f64)> + 'a {
@@ -174,7 +182,7 @@ fn clusters<'a>(
 /// view scrolled to `scroll_x`, a view's width either side, as much of it
 /// as is shaped at once, cut between grapheme clusters: its bytes and the
 /// x it starts at, from column 0.
-fn slice(
+pub(super) fn slice(
     text: &str,
     frame: &Frame<Line>,
     scroll_x: f32,
@@ -207,22 +215,23 @@ pub(super) fn layout(
     widths: &mut dyn CharWidth,
     scroll_x: f32,
 ) -> Vec<Placed> {
-    let mut placed: Vec<Placed> = (frame.blocks.iter())
+    // Indexed as `frame.blocks`; others' blocks are left out.
+    let mut placed: Vec<Option<Placed>> = (frame.blocks.iter())
         .map(|laid| {
-            let block = view.blocks.get(laid.id as usize);
-            let kind = match block.map(|block| &block.kind) {
-                Some(HostBlockKind::Lines { tint, .. }) => PlacedKind::Lines {
+            let block = host_block(view, laid.id)?;
+            let kind = match &block.kind {
+                HostBlockKind::Lines { tint, .. } => PlacedKind::Lines {
                     band: tint_color(&view.theme, *tint).opacity(BAND_ALPHA),
                     lines: Vec::new(),
                 },
-                _ => PlacedKind::Filler,
+                HostBlockKind::Filler => PlacedKind::Filler,
             };
-            Placed {
+            Some(Placed {
                 #[cfg(test)]
-                id: block.map_or(0, |block| block.id),
+                id: block.id,
                 rect: laid.rect,
                 kind,
-            }
+            })
         })
         .collect();
     for (ix, y, text) in shown_lines(frame, view) {
@@ -240,11 +249,13 @@ pub(super) fn layout(
             #[cfg(test)]
             text: text.to_string(),
         };
-        if let PlacedKind::Lines { lines, .. } = &mut placed[ix].kind {
+        if let Some(PlacedKind::Lines { lines, .. }) =
+            placed[ix].as_mut().map(|placed| &mut placed.kind)
+        {
             lines.push(shown);
         }
     }
-    placed
+    placed.into_iter().flatten().collect()
 }
 
 /// A tint's colour, as the decorations resolve it.

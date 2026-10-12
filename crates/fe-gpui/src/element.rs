@@ -37,6 +37,13 @@ use decorations::{Decorations, Layer};
 mod host_blocks;
 #[cfg(test)]
 pub(crate) use host_blocks::PaintedBlock;
+mod proposal;
+
+/// The frame's blocks: the host's ([`host_blocks`]) and the proposals'
+/// hunks ([`proposal`]).
+fn block_map(view: &EditorView, hunks: &[proposal::Hunk]) -> fe_display::BlockMap {
+    fe_display::BlockMap::new(host_blocks::blocks(view).chain(proposal::blocks(hunks, view)))
+}
 
 /// What one frame laid out: kept by the view for hit testing and IME.
 pub(crate) struct FrameLayout {
@@ -73,6 +80,8 @@ pub(crate) struct FrameLayout {
     pub(crate) decorations: Decorations,
     /// The host's blocks in view ([`host_blocks`]).
     host_blocks: Vec<host_blocks::Placed>,
+    /// The proposals' hunks in view ([`proposal`]).
+    pub(crate) proposals: proposal::Layout,
     /// When prepaint started and how long it took, for [`FrameTiming`].
     prepaint_started: Instant,
     prepaint_took: Duration,
@@ -553,6 +562,7 @@ impl Element for EditorElement {
             // count them.
             view.sync_find(cx);
         });
+        let hunks = proposal::hunks(self.view.read(cx));
         // Wrap a slice of what's pending around the top of the viewport,
         // keeping the text at the top where it is unless the caret is about
         // to be scrolled into view, and ask for another frame to continue.
@@ -578,12 +588,12 @@ impl Element for EditorElement {
             // after the wrap place. A top inside a block keeps its place
             // above the display row below it.
             let screen_top = f32::from(view.scroll.y) / line_height_f32;
-            let blocks = host_blocks::block_map(view);
+            let blocks = block_map(view, &hunks);
             let display_top = blocks.to_display_top(screen_top);
             let in_block = screen_top - blocks.to_screen_top(display_top);
             let (pending, top) = view.model.wrap_pending_at(display_top);
             if !view.autoscroll {
-                let top = host_blocks::block_map(view).to_screen_top(top) + in_block;
+                let top = block_map(view, &hunks).to_screen_top(top) + in_block;
                 view.scroll.y = px(top.max(0.) * line_height_f32);
             }
             pending
@@ -636,7 +646,7 @@ impl Element for EditorElement {
             text: composition.text.replace(['\n', '\r'], " "),
             style: theme.foreground,
         });
-        let blocks = host_blocks::block_map(view);
+        let blocks = block_map(view, &hunks);
         let mut lay_out = |input: &FrameInput<Hsla>| {
             layout::layout_frame_with_inlay(
                 input,
@@ -709,7 +719,9 @@ impl Element for EditorElement {
         // rows don't scroll, so then only the blocks' lines do.
         let mut host_x = frame.scroll.x;
         if kept_scroll.is_none() && !input.autoscroll {
-            let widest = host_blocks::widest(&frame, view, &mut shaper, &mut glyph_widths);
+            let host = host_blocks::widest(&frame, view, &mut shaper, &mut glyph_widths);
+            let proposed = proposal::widest(&frame, &hunks, view, &mut shaper, &mut glyph_widths);
+            let widest = host.max(proposed);
             let text_width = f64::from(frame.width - frame.text_left);
             let reach = (widest - text_width + f64::from(em) * 4.).max(0.) as f32;
             let wanted = input.scroll.x.min(reach).max(0.);
@@ -730,6 +742,8 @@ impl Element for EditorElement {
             }
         }
         let placed = host_blocks::layout(&frame, view, &mut shaper, &mut glyph_widths, host_x);
+        let proposals =
+            proposal::layout(&frame, &hunks, view, &mut shaper, &mut glyph_widths, host_x);
         let composed = composition.map(|(offset, composition)| (offset, composition.text.clone()));
         let to_window = |rect: Rect| {
             Bounds::new(
@@ -776,6 +790,7 @@ impl Element for EditorElement {
             composition: composed,
             decorations: Decorations::default(),
             host_blocks: placed,
+            proposals,
             prepaint_started: started,
             prepaint_took: Duration::ZERO,
         };
@@ -946,6 +961,8 @@ impl Element for EditorElement {
         let mut painted_brackets = Vec::new();
         #[cfg(test)]
         let mut painted_blocks = Vec::new();
+        #[cfg(test)]
+        let mut painted_proposals = Vec::new();
 
         // In vim's normal mode nothing types: neither keys nor an input
         // method insert text.
@@ -961,6 +978,7 @@ impl Element for EditorElement {
             for &line in &frame.active_lines {
                 window.paint_quad(fill(layout.bounds(line), theme.active_line));
             }
+            proposal::paint_bands(&layout.proposals, &layout, window);
             let text_bounds = layout.bounds(frame.text_bounds());
             window.with_content_mask(
                 Some(ContentMask {
@@ -975,6 +993,14 @@ impl Element for EditorElement {
                         cx,
                         #[cfg(test)]
                         &mut painted_blocks,
+                    );
+                    proposal::paint(
+                        &layout.proposals,
+                        &layout,
+                        window,
+                        cx,
+                        #[cfg(test)]
+                        &mut painted_proposals,
                     );
                     layout.decorations.paint(Layer::Backgrounds, window, cx);
                     // Under the selection, which stays visible over a match.
@@ -1170,6 +1196,7 @@ impl Element for EditorElement {
                 view.painted_chevrons = painted_chevrons;
                 view.painted_brackets = painted_brackets;
                 view.painted_blocks = painted_blocks;
+                view.painted_proposals = painted_proposals;
                 let underlines = underlines.iter().map(|&(bounds, _)| bounds).collect();
                 view.painted_hover = (underlines, hover.is_some());
                 view.painted_squiggles = squiggles;

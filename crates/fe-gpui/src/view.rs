@@ -120,6 +120,8 @@ pub struct EditorView {
     pub(crate) line_operates: bool,
     /// The host's blocks between the rows ([`host::HostBlock`]).
     pub(crate) blocks: Vec<HostBlock>,
+    /// The proposed changes shown as diff blocks ([`proposal`]).
+    pub(crate) proposals: Vec<std::rc::Rc<std::cell::RefCell<fe_buffer::ProposedChange>>>,
     /// The top, in screen rows, the last frame reported or the host set
     /// ([`EditorView::report_scroll_top`]).
     pub(crate) reported_top: f32,
@@ -169,6 +171,15 @@ pub struct EditorView {
     /// The host's blocks the last frame painted.
     #[cfg(test)]
     pub(crate) painted_blocks: Vec<crate::element::PaintedBlock>,
+    /// The proposals' blocks the last frame painted: the hunk, its status,
+    /// the header's text and the block's box in window coordinates.
+    #[cfg(test)]
+    pub(crate) painted_proposals: Vec<(
+        fe_buffer::HunkId,
+        fe_buffer::HunkStatus,
+        String,
+        Bounds<Pixels>,
+    )>,
 }
 
 /// A word a bound click would run its command on: see [`EditorView::hover`].
@@ -232,6 +243,7 @@ impl EditorView {
             read_only: false,
             line_operates: false,
             blocks: Vec::new(),
+            proposals: Vec::new(),
             reported_top: 0.,
             top_set: None,
             #[cfg(test)]
@@ -260,6 +272,8 @@ impl EditorView {
             painted_completion: None,
             #[cfg(test)]
             painted_blocks: Vec::new(),
+            #[cfg(test)]
+            painted_proposals: Vec::new(),
         };
         crate::vim::register(&view.focus, cx);
         crate::hover::hide_on_escape(&mut view, cx);
@@ -1280,6 +1294,7 @@ fn read_primary_text(_: &App) -> Option<String> {
 mod find;
 mod host;
 mod ime;
+mod proposal;
 
 pub use host::{EditorViewEvent, HostBlock, HostBlockKind};
 
@@ -1321,3 +1336,6 @@ mod multi_cursor_tests;
 
 #[cfg(test)]
 mod diff_seams_tests;
+
+#[cfg(test)]
+mod proposal_tests;
