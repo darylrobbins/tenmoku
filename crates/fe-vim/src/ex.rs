@@ -70,6 +70,8 @@
 //! it reorders (there nvim's marks stay too). `'<` and `'>` on rows `:j`
 //! joins stay where `J` leaves them.
 
+use std::ops::Range;
+
 use fe_buffer::TransactionId;
 use fe_command::{Actor, CommandError, Dispatched, Effect};
 
@@ -248,6 +250,24 @@ pub enum HostCommand {
     QuitAll { force: bool },
     /// `:wa[ll]`: save every modified buffer (`:wa!` is the same).
     WriteAll,
+    /// A command named with a capital (`:help user-commands`) that fe-vim
+    /// has none of its own by: `:Gitsigns stage_hunk`, `:Git! commit`.
+    /// `range` is the buffer rows the line's range names (`None` with no
+    /// range); `args` the rest of the line, trimmed. The host answers `E492`
+    /// for one it doesn't know.
+    User {
+        name: String,
+        bang: bool,
+        range: Option<Range<u32>>,
+        args: String,
+    },
+    /// `:diffg[et]`: take the other buffer's side of `rows` (the cursor's
+    /// row with no range).
+    DiffGet { rows: Range<u32> },
+    /// `:diffpu[t]`: give `rows` to the other buffer.
+    DiffPut { rows: Range<u32> },
+    /// `:diffs[plit] {file}`: diff against `path` in a split.
+    DiffSplit { path: String },
 }
 
 impl crate::VimState {
@@ -411,6 +431,9 @@ fn command(
     if let Some(command) = host(name) {
         return host_command(command, range, after);
     }
+    if is_diff(name) {
+        return diff_command(name, after, check);
+    }
     if let Some(vglobal) = global::kind(name) {
         return global::parse(vglobal, after, check);
     }
@@ -420,6 +443,10 @@ fn command(
     if "substitute".starts_with(name) {
         check(true)?;
         return Ok(ExCommand::Substitute(Substitute::parse(after)?));
+    }
+    // After fe-vim's own capitalised commands, which would match above.
+    if rest.starts_with(|ch: char| ch.is_ascii_uppercase()) {
+        return user_command(rest, check);
     }
     let delete = DELETE.contains(&name);
     let nohlsearch = name.len() >= 3 && "nohlsearch".starts_with(name);
@@ -522,6 +549,70 @@ fn host(name: &str) -> Option<Build> {
         _ if is("wall", 2) => |_, _| HostCommand::WriteAll,
         _ => return None,
     })
+}
+
+/// `:diffget`, `:diffput` and `:diffsplit`; the rows are filled in when
+/// they run, from the range.
+fn diff_command(
+    name: &str,
+    after: &str,
+    check: impl FnOnce(bool) -> Result<(), ExError>,
+) -> Result<ExCommand, ExError> {
+    if after.starts_with('!') {
+        return Err(ExError::NoBang);
+    }
+    let args = trim_unescaped_end(after.trim_start_matches([' ', '\t']));
+    if is_diff_name(name, "diffsplit", 5) {
+        if args.is_empty() {
+            return Err(ExError::ArgumentRequired);
+        }
+        let path = unescape(args);
+        return Ok(ExCommand::Host(HostCommand::DiffSplit { path }));
+    }
+    check(true)?;
+    if !args.is_empty() {
+        return Err(ExError::Trailing(args.to_string()));
+    }
+    let rows = 0..0;
+    Ok(ExCommand::Host(match is_diff_name(name, "diffget", 5) {
+        true => HostCommand::DiffGet { rows },
+        false => HostCommand::DiffPut { rows },
+    }))
+}
+
+/// Whether `name` abbreviates `full` to at least `min` letters.
+fn is_diff_name(name: &str, full: &str, min: usize) -> bool {
+    name.len() >= min && full.starts_with(name)
+}
+
+/// Whether `name` is `:diffget`, `:diffput` or `:diffsplit`.
+fn is_diff(name: &str) -> bool {
+    is_diff_name(name, "diffget", 5)
+        || is_diff_name(name, "diffput", 6)
+        || is_diff_name(name, "diffsplit", 5)
+}
+
+/// A user command (`:help user-commands`) at the start of `rest`: a capital
+/// then letters and digits.
+fn user_command(
+    rest: &str,
+    check: impl FnOnce(bool) -> Result<(), ExError>,
+) -> Result<ExCommand, ExError> {
+    let end = rest
+        .find(|ch: char| !ch.is_ascii_alphanumeric())
+        .unwrap_or(rest.len());
+    let (name, after) = rest.split_at(end);
+    let (bang, args) = match after.strip_prefix('!') {
+        Some(args) => (true, args),
+        None => (false, after),
+    };
+    check(true)?;
+    Ok(ExCommand::Host(HostCommand::User {
+        name: name.to_string(),
+        bang,
+        range: None,
+        args: args.trim_matches([' ', '\t']).to_string(),
+    }))
 }
 
 /// A host command's line: no range, and an argument only `:e` takes
@@ -784,7 +875,18 @@ fn execute(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Result<Hand
             target.state.highlight = None;
             Ok(Dispatched::new(Effect::Notify))
         }
-        ExCommand::Host(command) => {
+        ExCommand::Host(mut command) => {
+            let rows = |target: &VimTarget<'_>| {
+                counted_lines(target, lines, None, last)
+                    .map(|(first, end)| row(first)..row(end) + 1)
+            };
+            match &mut command {
+                HostCommand::User { range, .. } if lines.is_some() => *range = Some(rows(target)?),
+                HostCommand::DiffGet { rows: at } | HostCommand::DiffPut { rows: at } => {
+                    *at = rows(target)?;
+                }
+                _ => {}
+            }
             target.state.host_command = Some(command);
             Ok(Dispatched::new(Effect::Notify))
         }

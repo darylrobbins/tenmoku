@@ -48,6 +48,8 @@ enum Prefix {
     G,
     /// `z`, awaiting a feature's key.
     Z,
+    /// `Z`, awaiting a feature's key.
+    BigZ,
     /// `f F t T`: the motion, its char to be filled in.
     Find(Motion),
     /// `i` or `a` after an operator.
@@ -79,6 +81,8 @@ pub enum PendingKind {
     G,
     /// `z`.
     Z,
+    /// `Z`.
+    BigZ,
     Find,
     TextObject,
     Replace,
@@ -100,6 +104,7 @@ impl PendingKind {
             Self::Operator => "operator",
             Self::G => "g",
             Self::Z => "z",
+            Self::BigZ => "big_z",
             Self::Find => "find",
             Self::TextObject => "text_object",
             Self::Replace => "replace",
@@ -164,6 +169,7 @@ impl Pending {
             Some(Prefix::Register | Prefix::Record | Prefix::Play) => PendingKind::Register,
             Some(Prefix::G) => PendingKind::G,
             Some(Prefix::Z) => PendingKind::Z,
+            Some(Prefix::BigZ) => PendingKind::BigZ,
             Some(Prefix::Find(_)) => PendingKind::Find,
             Some(Prefix::Object { .. }) => PendingKind::TextObject,
             Some(Prefix::Replace) => PendingKind::Replace,
@@ -367,6 +373,9 @@ impl Pending {
         if prefix == Prefix::Z {
             return feature::z(&self, key).unwrap_or(Step::Cancel);
         }
+        if prefix == Prefix::BigZ {
+            return feature::big_z(&self, key).unwrap_or(Step::Cancel);
+        }
         let ch = match key {
             VimKey::Char(ch) => ch,
             VimKey::Tab if matches!(prefix, Prefix::Find(_) | Prefix::Replace) => '\t',
@@ -522,6 +531,9 @@ pub fn step(mut pending: Pending, key: VimKey) -> Step {
         '"' if pending.operator.is_none() => Prefix::Register,
         'g' => Prefix::G,
         'z' if pending.operator.is_none() && feature::has_z() => Prefix::Z,
+        'Z' if pending.operator.is_none() && !pending.visual && feature::has_big_z() => {
+            Prefix::BigZ
+        }
         'f' => Prefix::Find(Motion::FindForward(' ')),
         'F' => Prefix::Find(Motion::FindBackward(' ')),
         't' => Prefix::Find(Motion::TillForward(' ')),

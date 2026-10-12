@@ -742,6 +742,7 @@ mod marks;
 mod motion;
 mod operator;
 mod prose;
+mod quit_keys;
 mod reducer;
 mod register;
 mod repeat;

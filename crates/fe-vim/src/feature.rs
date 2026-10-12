@@ -26,7 +26,7 @@ use fe_command::Registry;
 
 use crate::{
     Pending, Step, TextObject, VimCommands, VimKey, delimiters, folds, g_operators, increment,
-    jump, jumplist, line_motions, prose, scroll,
+    jump, jumplist, line_motions, prose, quit_keys, scroll,
 };
 
 /// One feature's hooks into the reducer and the registry.
@@ -38,6 +38,8 @@ pub(crate) struct Feature {
     pub(crate) g: fn(&Pending, VimKey) -> Option<Step>,
     /// The key after `z`; `None` if the feature takes no `z` key.
     pub(crate) z: Option<fn(&Pending, VimKey) -> Option<Step>>,
+    /// The key after `Z`; `None` if the feature takes no `Z` key.
+    pub(crate) big_z: Option<fn(&Pending, VimKey) -> Option<Step>>,
     /// The char after `i` or `a` (`true` for `i`) in operator-pending or a
     /// visual mode that the reducer maps to no text object.
     pub(crate) object: fn(&Pending, char, bool) -> Option<TextObject>,
@@ -51,12 +53,13 @@ impl Feature {
         key: |_, _| None,
         g: |_, _| None,
         z: None,
+        big_z: None,
         object: |_, _, _| None,
         register: |_| {},
     };
 }
 
-pub(crate) const FEATURES: [&Feature; 9] = [
+pub(crate) const FEATURES: [&Feature; 10] = [
     &increment::FEATURE,
     &folds::FEATURE,
     &scroll::FEATURE,
@@ -66,6 +69,7 @@ pub(crate) const FEATURES: [&Feature; 9] = [
     &delimiters::FEATURE,
     &g_operators::FEATURE,
     &jumplist::FEATURE,
+    &quit_keys::FEATURE,
 ];
 
 /// The first feature's answer to a key the reducer would reject.
@@ -93,6 +97,19 @@ pub(crate) fn z(pending: &Pending, key: VimKey) -> Option<Step> {
         .iter()
         .filter_map(|feature| feature.z)
         .find_map(|z| z(pending, key))
+}
+
+/// Whether some feature takes a key after `Z`.
+pub(crate) fn has_big_z() -> bool {
+    FEATURES.iter().any(|feature| feature.big_z.is_some())
+}
+
+/// The first feature's answer to the key after `Z`.
+pub(crate) fn big_z(pending: &Pending, key: VimKey) -> Option<Step> {
+    FEATURES
+        .iter()
+        .filter_map(|feature| feature.big_z)
+        .find_map(|big_z| big_z(pending, key))
 }
 
 /// The first feature's text object for the char after `i` (`inner`) or

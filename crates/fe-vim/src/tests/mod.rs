@@ -11,6 +11,7 @@ mod delimiters;
 mod edits;
 mod ex;
 mod ex_host;
+mod ex_user_commands;
 mod feature_stubs;
 mod find_query;
 mod folds;

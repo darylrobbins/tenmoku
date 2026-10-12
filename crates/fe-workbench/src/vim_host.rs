@@ -25,6 +25,8 @@ use crate::Pane;
 
 const E32: &str = "E32: No file name";
 const E37: &str = "E37: No write since last change (add ! to override)";
+const E99: &str = "E99: Current buffer is not in diff mode";
+const DIFFSPLIT: &str = "Not supported yet: :diffsplit";
 const RELOAD: &str = "Not supported yet: reloading a file from disk";
 
 impl Workbench {
@@ -61,6 +63,19 @@ impl Workbench {
             HostCommand::Edit { path: None, .. } => message(&editor, RELOAD, cx),
             HostCommand::QuitAll { force } => self.vim_quit_all(&editor, force, window, cx),
             HostCommand::WriteAll => self.vim_write_all(&editor, window, cx),
+            HostCommand::User {
+                name, bang, args, ..
+            } => {
+                let bang = if bang { "!" } else { "" };
+                let line = format!("{name}{bang} {args}");
+                message(
+                    &editor,
+                    format!("E492: Not an editor command: {}", line.trim_end()),
+                    cx,
+                );
+            }
+            HostCommand::DiffGet { .. } | HostCommand::DiffPut { .. } => message(&editor, E99, cx),
+            HostCommand::DiffSplit { .. } => message(&editor, DIFFSPLIT, cx),
         }
     }
 
