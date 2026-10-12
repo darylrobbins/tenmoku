@@ -28,13 +28,15 @@ use std::{
 
 use fe_buffer::FileEncoding;
 use fe_gpui::commands::RunCommand;
-use fe_project::{FileMatches, LineMatch, SearchError, SearchOptions, SearchQuery, SearchSummary};
+use fe_project::{
+    FileMatches, LineMatch, PathFilter, SearchError, SearchOptions, SearchQuery, SearchSummary,
+};
 use fe_ui::{HighlightedLabel, ROW_HEIGHT, TextInput, TextInputEvent, ToggleButton, UiTheme};
 use gpui::{
-    AnyElement, AppContext as _, Context, ElementId, Entity, InteractiveElement as _, IntoElement,
-    ParentElement as _, Render, ScrollHandle, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Subscription, Task, UniformListScrollHandle, WeakEntity, Window, div,
-    prelude::FluentBuilder as _, px, uniform_list,
+    AnyElement, AppContext as _, Context, ElementId, Entity, FocusHandle, InteractiveElement as _,
+    IntoElement, ParentElement as _, Render, ScrollHandle, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Subscription, Task, UniformListScrollHandle,
+    WeakEntity, Window, div, prelude::FluentBuilder as _, px, uniform_list,
 };
 
 use crate::{
@@ -62,6 +64,8 @@ enum Status {
     Searching,
     Done(SearchSummary),
     Failed(SearchError),
+    /// A glob in the include or exclude field doesn't parse.
+    BadGlob(String),
 }
 
 /// A result row: a file's header, or one of its matching lines.
@@ -74,7 +78,12 @@ enum ResultRow {
 pub struct SearchPanel {
     root: Option<PathBuf>,
     pane: WeakEntity<Pane>,
+    /// The panel's focus: the query's, or either filter's within it.
+    focus: FocusHandle,
     input: Entity<TextInput>,
+    /// The files to include and to exclude: comma-separated globs.
+    include: Entity<TextInput>,
+    exclude: Entity<TextInput>,
     regex: bool,
     match_case: bool,
     whole_word: bool,
@@ -94,7 +103,7 @@ pub struct SearchPanel {
     /// The row ranges the last frame built.
     #[cfg(test)]
     built: Vec<Range<usize>>,
-    _input: Subscription,
+    _inputs: [Subscription; 3],
 }
 
 impl SearchPanel {
@@ -107,15 +116,24 @@ impl SearchPanel {
         cx: &mut Context<Self>,
     ) -> Self {
         let input = cx.new(|cx| TextInput::new("Search", &ui, cx));
-        let submitted = cx.subscribe(&input, |panel, _, event, cx| {
-            if *event == TextInputEvent::Submitted {
-                panel.run(cx);
-            }
-        });
+        let include = cx.new(|cx| TextInput::new("files to include", &ui, cx));
+        let exclude = cx.new(|cx| TextInput::new("files to exclude", &ui, cx));
+        let submitted =
+            [(&input, false), (&include, true), (&exclude, true)].map(|(input, filter)| {
+                cx.subscribe(input, move |panel, _, event, cx| match event {
+                    TextInputEvent::Submitted => panel.run(cx),
+                    // Typing never searches the query, but a filter reruns.
+                    TextInputEvent::Changed if filter => panel.run(cx),
+                    TextInputEvent::Changed => {}
+                })
+            });
         Self {
             root,
             pane,
+            focus: cx.focus_handle(),
             input,
+            include,
+            exclude,
             regex: false,
             match_case: false,
             whole_word: false,
@@ -131,7 +149,7 @@ impl SearchPanel {
             ui,
             #[cfg(test)]
             built: Vec::new(),
-            _input: submitted,
+            _inputs: submitted,
         }
     }
 
@@ -142,8 +160,8 @@ impl SearchPanel {
 
 /// The panel's focus is its input's.
 impl gpui::Focusable for SearchPanel {
-    fn focus_handle(&self, cx: &gpui::App) -> gpui::FocusHandle {
-        self.input.focus_handle(cx)
+    fn focus_handle(&self, _: &gpui::App) -> gpui::FocusHandle {
+        self.focus.clone()
     }
 }
 
@@ -171,6 +189,24 @@ impl SearchPanel {
         }
     }
 
+    /// The path filter the include and exclude fields make.
+    fn filter(&self, root: &Path, cx: &gpui::App) -> Result<PathFilter, fe_project::GlobError> {
+        let globs = |input: &Entity<TextInput>| -> Vec<String> {
+            input
+                .read(cx)
+                .text()
+                .split(',')
+                .map(str::trim)
+                .filter(|glob| !glob.is_empty())
+                .map(str::to_owned)
+                .collect()
+        };
+        let (include, exclude) = (globs(&self.include), globs(&self.exclude));
+        let include: Vec<&str> = include.iter().map(String::as_str).collect();
+        let exclude: Vec<&str> = exclude.iter().map(String::as_str).collect();
+        PathFilter::new(root, &include, &exclude)
+    }
+
     /// Cancels the running search and starts a new one for the query,
     /// unless it's empty: that clears the results.
     pub fn run(&mut self, cx: &mut Context<Self>) {
@@ -184,6 +220,14 @@ impl SearchPanel {
             self.status = Status::NoFolder;
             return;
         };
+        let filter = match self.filter(&root, cx) {
+            Ok(filter) => filter,
+            Err(error) => {
+                self.status =
+                    Status::BadGlob(format!("Invalid glob {}: {}", error.glob, error.message));
+                return;
+            }
+        };
         self.status = Status::Searching;
         let options = self.options.clone();
         let cancel = self.cancel.clone();
@@ -191,7 +235,7 @@ impl SearchPanel {
         let search = cx.background_spawn(async move {
             let flag = cancel.clone();
             let cancelled = move || flag.load(Ordering::Relaxed);
-            fe_project::search(&root, &query, &options, cancel, |batch| {
+            fe_project::search_filtered(&root, &query, &options, &filter, cancel, |batch| {
                 publish(batch, &cancelled, |batch| {
                     sender.send_blocking((generation, batch)).ok();
                 });
@@ -287,6 +331,7 @@ impl SearchPanel {
             Status::NoFolder => "No folder open".into(),
             Status::Searching => "Searching…".into(),
             Status::Failed(error) => return Some((error.to_string().into(), true)),
+            Status::BadGlob(message) => return Some((message.clone().into(), true)),
             Status::Done(summary) if summary.truncated => {
                 format!("Showing the first {} results", self.options.max_matches)
             }
@@ -328,12 +373,17 @@ impl SearchPanel {
 
     /// Runs a search option, Enter or an input edit; others go on to the
     /// workbench.
-    fn on_run_command(&mut self, run: &RunCommand, _: &mut Window, cx: &mut Context<Self>) {
+    fn on_run_command(&mut self, run: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
         let option = match dock::op(run, cx) {
             Some(DockOp::ToggleRegex) => Some(SearchOption::Regex),
             Some(DockOp::ToggleCase) => Some(SearchOption::MatchCase),
             Some(DockOp::ToggleWholeWord) => Some(SearchOption::WholeWord),
-            Some(DockOp::Submit) => return self.input.update(cx, TextInput::submit),
+            Some(DockOp::Submit) => {
+                return self
+                    .focused_input(window, cx)
+                    .clone()
+                    .update(cx, TextInput::submit);
+            }
             _ => None,
         };
         if let Some(option) = option {
@@ -346,7 +396,15 @@ impl SearchPanel {
             Some(PaletteOp::Paste) => TextInput::paste,
             _ => return cx.propagate(),
         };
-        self.input.update(cx, edit);
+        self.focused_input(window, cx).update(cx, edit);
+    }
+
+    /// The field with focus: the query's unless another has it.
+    fn focused_input(&self, window: &Window, cx: &gpui::App) -> &Entity<TextInput> {
+        [&self.include, &self.exclude]
+            .into_iter()
+            .find(|input| gpui::Focusable::focus_handle(*input, cx).is_focused(window))
+            .unwrap_or(&self.input)
     }
 
     fn render_rows(&mut self, range: Range<usize>, cx: &mut Context<Self>) -> Vec<AnyElement> {
@@ -870,9 +928,13 @@ impl Drop for SearchPanel {
 }
 
 impl Render for SearchPanel {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         #[cfg(test)]
         self.built.clear();
+        // Focusing the panel as a whole focuses its query.
+        if self.focus.is_focused(window) {
+            window.focus(&gpui::Focusable::focus_handle(&self.input, cx), cx);
+        }
         let ui = self.ui;
         let toggles = [
             (SearchOption::Regex, ".*", self.regex),
@@ -893,6 +955,7 @@ impl Render for SearchPanel {
         .flex_1();
         div()
             .key_context(KEY_CONTEXT)
+            .track_focus(&self.focus)
             .on_action(cx.listener(Self::on_run_command))
             .w(PANEL_WIDTH)
             .h_full()
@@ -920,6 +983,14 @@ impl Render for SearchPanel {
                             .track_scroll(&self.toggles)
                             .children(toggles),
                     ),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .flex()
+                    .flex_col()
+                    .child(self.include.clone())
+                    .child(self.exclude.clone()),
             )
             .when_some(self.status(), |panel, (status, error)| {
                 let color = if error { ui.error_text } else { ui.muted_text };
@@ -984,6 +1055,14 @@ impl SearchPanel {
             .collect()
     }
 
+    pub(crate) fn include_input(&self) -> &Entity<TextInput> {
+        &self.include
+    }
+
+    pub(crate) fn exclude_input(&self) -> &Entity<TextInput> {
+        &self.exclude
+    }
+
     pub(crate) fn status_text(&self) -> Option<String> {
         self.status().map(|(text, _)| text.to_string())
     }
@@ -1018,3 +1097,7 @@ impl SearchPanel {
         self.toggles.bounds_for_item(ix)
     }
 }
+
+#[cfg(test)]
+#[path = "search_panel_filter_tests.rs"]
+mod filter_tests;
