@@ -502,6 +502,7 @@ pub fn registry() -> Registry<Editor> {
         )
         .context(ContextPredicate::identifier(CONTEXT));
     crate::multi_cursor::register(&mut registry);
+    crate::rows::register(&mut registry);
     registry
 }
 

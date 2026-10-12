@@ -104,6 +104,16 @@ fn every_editor_command_is_registered() {
         ]
         .map(|name| format!("editor.{name}")),
     );
+    // The row commands, which no key binds yet; each edits.
+    let rows = [
+        "indent",
+        "outdent",
+        "move_rows_up",
+        "move_rows_down",
+        "duplicate_rows",
+        "delete_rows",
+    ];
+    expected.extend(rows.map(|name| format!("editor.{name}")));
     assert_eq!(ids, expected);
     let mutating = [
         "backspace",
@@ -116,6 +126,12 @@ fn every_editor_command_is_registered() {
         "undo",
         "redo",
         "insert",
+        "indent",
+        "outdent",
+        "move_rows_up",
+        "move_rows_down",
+        "duplicate_rows",
+        "delete_rows",
     ];
     for meta in registry.commands() {
         let name = meta.id.as_str().strip_prefix("editor.").unwrap();

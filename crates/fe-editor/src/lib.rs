@@ -29,6 +29,7 @@ pub mod ghost_text;
 mod multi_cursor;
 mod row_change_decorations;
 pub mod row_changes;
+mod rows;
 pub mod scripted_ai;
 mod typing;
 mod viewer;
@@ -1007,9 +1008,15 @@ impl EditorModel {
         self.apply_with_carets(edits);
     }
 
-    /// Inserts spaces up to the next tab stop at each caret.
+    /// Inserts spaces up to the next tab stop at each caret, or if any
+    /// selection touches more than one row, indents the rows selections
+    /// touch ([`EditorModel::indent_rows`]).
     pub fn tab(&mut self) {
         self.sync_display();
+        if self.touches_many_rows() {
+            self.indent_rows();
+            return;
+        }
         let edits = self
             .selections()
             .into_iter()
