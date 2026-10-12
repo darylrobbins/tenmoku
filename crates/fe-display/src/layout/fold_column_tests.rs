@@ -62,18 +62,19 @@ fn centre(rect: Rect) -> Vec2 {
 #[test]
 fn the_column_pads_the_chevron() {
     let frame = lay_out(TEXT, 32.);
-    // em × (3 digits + 5.75).
-    assert_eq!(frame.text_left, 87.5);
+    // em × (3 digits + 6.75).
+    assert_eq!(frame.text_left, 97.5);
     let column = Rect {
-        x: 50.,
+        x: 60.,
         y: 0.,
         width: 37.5,
         height: 200.,
     };
     assert_eq!(frame.fold_column, column);
-    // Line numbers end at its left edge.
+    // Line numbers end 0.5 em left of the change lane, which is flush
+    // against its left edge.
     for (origin, line) in &frame.line_numbers {
-        assert_eq!(origin.x + line.width(), column.x);
+        assert_eq!(origin.x + line.width(), column.x - 10.);
     }
 
     // Row 2 is folded; rows 0 and 4 (display row 3) are candidates.

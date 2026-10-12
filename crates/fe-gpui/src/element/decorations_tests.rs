@@ -175,12 +175,13 @@ fn row_backgrounds_and_bars_cover_every_display_row(cx: &mut TestAppContext) {
         "row 1 wraps: {} display rows",
         covered_rows.len()
     );
-    let (text_area, gutter_x) = with_layout(&view, cx, |layout| {
+    let (text_area, lane) = with_layout(&view, cx, |layout| {
         (
             layout.bounds(layout.frame.text_bounds()),
-            layout.origin.x + px(layout.frame.fold_column.x),
+            layout.bounds(layout.frame.change_lane),
         )
     });
+    let gutter_x = lane.origin.x;
     let line_height = view.read_with(cx, |view, _| {
         px(view.layout.as_ref().unwrap().frame.line_height)
     });
@@ -198,12 +199,18 @@ fn row_backgrounds_and_bars_cover_every_display_row(cx: &mut TestAppContext) {
         assert_eq!(*color, added.opacity(0.08));
     }
 
+    // One bar down the run of rows, inset 1 px at each end.
     let bars = of_kind(&all, &BAR);
-    assert_eq!(bars.len(), covered_rows.len());
-    for ((bounds, color), (_, _, top)) in bars.iter().zip(&covered_rows) {
+    assert_eq!(bars.len(), 1);
+    for (bounds, color) in &bars {
+        let top = covered_rows[0].2;
+        let height = line_height * covered_rows.len() as f32;
         assert_eq!(bounds.origin.x, gutter_x);
-        assert_eq!(bounds.size.width, px(2.));
-        assert_eq!((bounds.origin.y, bounds.size.height), (*top, line_height));
+        assert_eq!(bounds.size.width, px(3.));
+        assert_eq!(
+            (bounds.origin.y, bounds.size.height),
+            (top + px(1.), height - px(2.))
+        );
         assert_eq!(*color, theme.information.opacity(0.8));
     }
 
@@ -214,8 +221,8 @@ fn row_backgrounds_and_bars_cover_every_display_row(cx: &mut TestAppContext) {
         deletions,
         [(
             Bounds::new(
-                gpui::point(gutter_x, row_4_top - px(1.)),
-                gpui::size(px(6.), px(2.))
+                gpui::point(gutter_x, row_4_top - px(1.5)),
+                gpui::size(lane.size.width, px(3.))
             ),
             theme.error.opacity(0.8)
         )]
@@ -611,5 +618,5 @@ fn a_deletion_past_the_end_sits_under_the_last_row(cx: &mut TestAppContext) {
     let line_height = shown[1].2 - shown[0].2;
     let deletions = of_kind(&placed(&view, cx), &DELETION);
     assert_eq!(deletions.len(), 1);
-    assert_eq!(deletions[0].0.top(), shown[1].2 + line_height - px(1.));
+    assert_eq!(deletions[0].0.top(), shown[1].2 + line_height - px(1.5));
 }

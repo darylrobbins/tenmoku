@@ -150,7 +150,7 @@ fn widening_to_the_caps_x_stops_at_the_cap() {
         assert_eq!(widened.range, 0..MAX_SHAPED_ROW_BYTES, "by {by}");
     }
 
-    // Laid out 1017.5 px wide (930 right of the gutter, with a 320 px margin
+    // Laid out 1027.5 px wide (930 right of the gutter, with a 320 px margin
     // each side), the slice of 125 `a`s is shaped 50 px wide. The first
     // widening is by twice the 1200 px shortfall times 1250 / 50: exactly to
     // the cap's x.
@@ -166,7 +166,7 @@ fn widening_to_the_caps_x_stops_at_the_cap() {
         primary_head: 0,
         scroll: Vec2::default(),
         autoscroll: false,
-        width: 1017.5,
+        width: 1027.5,
         height: 20.,
         line_height: 20.,
         em: CELL,

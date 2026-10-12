@@ -6,7 +6,10 @@
 
 use std::collections::HashMap;
 
-use fe_display::{CharWidth as _, layout::Rect};
+use fe_display::{
+    CharWidth as _,
+    layout::{Rect, RowLayout},
+};
 use fe_editor::decorations::{DecorationKind, GutterMark, Tint};
 use gpui::{App, Bounds, DecorationRun, Hsla, Pixels, TextRun, UnderlineStyle, Window, fill, px};
 
@@ -20,10 +23,14 @@ const HIGHLIGHT_ALPHA: f32 = 0.22;
 const GUTTER_ALPHA: f32 = 0.8;
 const AFTER_LINE_ALPHA: f32 = 0.6;
 
-/// A gutter bar's width, in pixels, rounded to device pixels.
-const BAR_WIDTH: f32 = 2.;
-/// A deletion mark's width and height, in pixels.
-const DELETION: (f32, f32) = (6., 2.);
+/// A gutter bar's width, and a deletion mark's height, in pixels, rounded
+/// to device pixels. Both sit in the frame's change lane
+/// ([`fe_display::layout::Frame::change_lane`]), clear of the line numbers
+/// and the chevrons, with rounded ends.
+const BAR_WIDTH: f32 = 3.;
+/// How far a gutter bar stops short of each end of its run of rows, in
+/// pixels, so the bars of two adjacent changes show a gap between them.
+const BAR_INSET: f32 = 1.;
 /// An underline's thickness, in pixels.
 const UNDERLINE: f32 = 1.;
 
@@ -51,6 +58,9 @@ pub(crate) struct Placed {
     /// In window coordinates. An underline's height is its thickness.
     pub(crate) bounds: Bounds<Pixels>,
     pub(crate) color: Hsla,
+    /// Half the smaller side of a gutter mark, rounding its ends; zero for
+    /// every other kind.
+    pub(crate) corner_radius: Pixels,
     /// An after-line decoration's text, shaped in `color`.
     text: Option<Line>,
 }
@@ -111,7 +121,7 @@ impl Decorations {
         let theme = &view.theme;
         let font = gpui::font(theme.font_family.clone());
         let text_bounds = frame.text_bounds();
-        let gutter_x = frame.fold_column.x;
+        let lane = frame.change_lane;
         let scale = window.scale_factor();
         let bar = (BAR_WIDTH * scale).round().max(1.) / scale;
         let space = glyph_widths.char_width(' ');
@@ -143,8 +153,26 @@ impl Decorations {
                     }
                 }
                 DecorationKind::Gutter(GutterMark::Bar) => {
-                    for row in rows {
-                        let rect = whole_row(row.row, gutter_x, bar);
+                    // One bar per run of rows shown one under the next: a
+                    // soft-wrapped row's pieces join the run, a block
+                    // between two rows ends it.
+                    let screen_row = |row: &RowLayout<Line>| frame.block_map.screen_row(row.row);
+                    let mut at = 0;
+                    while at < rows.len() {
+                        let first = &rows[at];
+                        let mut run = 1;
+                        while (rows.get(at + run))
+                            .is_some_and(|row| screen_row(row) == screen_row(first) + run as u32)
+                        {
+                            run += 1;
+                        }
+                        at += run;
+                        let rect = Rect {
+                            x: lane.x,
+                            y: frame.row_top(first.row) + BAR_INSET,
+                            width: bar,
+                            height: run as f32 * line_height - 2. * BAR_INSET,
+                        };
                         place(rect, tint.opacity(GUTTER_ALPHA), None);
                     }
                 }
@@ -162,12 +190,12 @@ impl Decorations {
                     let Some(edge) = edge else {
                         continue;
                     };
-                    let (width, height) = DELETION;
+                    // Across the lane, never toward the digits.
                     let rect = Rect {
-                        x: gutter_x,
-                        y: edge - height / 2.,
-                        width,
-                        height,
+                        x: lane.x,
+                        y: edge - bar / 2.,
+                        width: lane.width,
+                        height: bar,
                     };
                     place(rect, tint.opacity(GUTTER_ALPHA), None);
                 }
@@ -255,6 +283,10 @@ impl Decorations {
         }
         out.placed = (placed.into_iter())
             .map(|(kind, rect, color, text)| Placed {
+                corner_radius: match kind {
+                    DecorationKind::Gutter(_) => px(rect.width.min(rect.height) / 2.),
+                    _ => px(0.),
+                },
                 kind,
                 bounds: layout.bounds(rect),
                 color,
@@ -303,7 +335,8 @@ impl Decorations {
             }
             Layer::Gutter => {
                 for placed in of(|kind| matches!(kind, DecorationKind::Gutter(_))) {
-                    window.paint_quad(fill(placed.bounds, placed.color));
+                    let quad = fill(placed.bounds, placed.color).corner_radii(placed.corner_radius);
+                    window.paint_quad(quad);
                     painted = true;
                 }
             }
@@ -340,3 +373,7 @@ pub(super) fn note(stage: &'static str) {
 #[cfg(test)]
 #[path = "decorations_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "change_bar_tests.rs"]
+mod change_bar_tests;
