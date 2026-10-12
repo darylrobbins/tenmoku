@@ -16,14 +16,15 @@ use fe_display::{
     },
 };
 use fe_syntax::{Syntax, SyntaxDriver};
+use fe_vim::jump::JumpLabelState;
 use gpui::{
     App, Bounds, ContentMask, CursorStyle, DecorationRun, DispatchPhase, Element, ElementId,
     ElementInputHandler, Entity, Font, FontId, Global, GlobalElementId, Hitbox, HitboxBehavior,
     Hsla, InspectorElementId, IntoElement, LayoutId, LineLayout, ModifiersChangedEvent,
     MouseDownEvent, MouseEvent, MouseExitEvent, MouseMoveEvent, MouseUpEvent, PathBuilder,
-    PinchEvent, Pixels, Point, ScrollWheelEvent, Style, TextAlign, TextRun, TextSystem,
-    UnderlineStyle, WeakEntity, Window, WindowId, WindowTextSystem, fill, point, px, relative,
-    size,
+    PinchEvent, Pixels, Point, ScrollWheelEvent, SharedString, Style, TextAlign, TextRun,
+    TextSystem, UnderlineStyle, WeakEntity, Window, WindowId, WindowTextSystem, fill, point, px,
+    relative, size,
 };
 
 use crate::{EditorTheme, EditorView, FrameTiming};
@@ -52,6 +53,8 @@ pub(crate) struct FrameLayout {
     text: Hitbox,
     /// The search matches to paint ([`match_rects`]).
     matches: Vec<Rect>,
+    /// A pending vim jump's backdrop and labels ([`jump_layout`]).
+    pub(crate) jump: Option<JumpLayout>,
     /// When prepaint started and how long it took, for [`FrameTiming`].
     prepaint_started: Instant,
     prepaint_took: Duration,
@@ -557,10 +560,12 @@ impl Element for EditorElement {
             clickable,
             text,
             matches: Vec::new(),
+            jump: None,
             prepaint_started: started,
             prepaint_took: Duration::ZERO,
         };
         layout.matches = match_rects(&mut layout, view);
+        layout.jump = jump_layout(&mut layout, view);
         // The completion menu goes by its word's start in this frame, which
         // the view doesn't hold until paint.
         let word = self.view.read(cx).completion_word_start();
@@ -634,6 +639,12 @@ impl Element for EditorElement {
             let diagnostics = view.model.diagnostics();
             diagnostic_marks(&mut layout, view.model.text(), &diagnostics, &theme)
         };
+        let jump = layout.jump.as_ref().map(|jump| {
+            let labels: Vec<_> = (jump.labels.iter())
+                .map(|label| (layout.bounds(label.rect), label.text.clone(), label.state))
+                .collect();
+            (layout.bounds(jump.backdrop), labels)
+        });
         let frame = &layout.frame;
         let line_height = px(frame.line_height);
         #[cfg(test)]
@@ -705,6 +716,9 @@ impl Element for EditorElement {
                     }
                     for &(underline, color) in &underlines {
                         window.paint_quad(fill(underline, color));
+                    }
+                    if let Some((backdrop, labels)) = &jump {
+                        paint_jump(*backdrop, labels, &theme, window, cx);
                     }
                     if !block {
                         for &caret in &carets {
@@ -1133,37 +1147,37 @@ fn paint_chevron(chevron: Bounds<Pixels>, folded: bool, color: Hsla, window: &mu
 const BLOCK_ALPHA: f32 = 0.6;
 
 /// Vim's normal-mode cursor at each of `heads` on screen: a block over the
-/// grapheme after it, to the next grapheme boundary on its display row, or
-/// one space wide at a line's end.
+/// grapheme after it ([`block_rect`]).
 fn block_carets(
     layout: &mut FrameLayout,
     text: &Text,
     heads: impl Iterator<Item = usize>,
 ) -> Vec<Bounds<Pixels>> {
+    let blocks: Vec<Rect> = heads
+        .filter_map(|head| block_rect(layout, text, head))
+        .collect();
+    blocks.into_iter().map(|rect| layout.bounds(rect)).collect()
+}
+
+/// A block over the grapheme after `head`, to the next grapheme boundary on
+/// its display row, or one space wide at a line's end; `None` off screen.
+fn block_rect(layout: &mut FrameLayout, text: &Text, head: usize) -> Option<Rect> {
     let FrameLayout {
         frame,
         long_rows,
         glyph_widths,
         ..
     } = layout;
-    let mut blocks = Vec::new();
-    for head in heads {
-        let (Some(row), Some(bar)) = (
-            frame.row_containing(head),
-            frame.caret_bounds(head, long_rows, glyph_widths),
-        ) else {
-            continue;
-        };
-        let line = text.offset_to_point(head).row;
-        let line_end = text.row_start(line) + text.row_len(line) as usize;
-        // Measured on the head's row: a wrap point's caret is on the next.
-        let end = next_grapheme(text, head, row.end.min(line_end))
-            .map(|next| frame.view_x(row.x_for_offset(next, long_rows, glyph_widths)))
-            .filter(|&end| end > bar.x);
-        let width = end.map_or_else(|| glyph_widths.char_width(' '), |end| end - bar.x);
-        blocks.push(Rect { width, ..bar });
-    }
-    blocks.into_iter().map(|rect| layout.bounds(rect)).collect()
+    let row = frame.row_containing(head)?;
+    let bar = frame.caret_bounds(head, long_rows, glyph_widths)?;
+    let line = text.offset_to_point(head).row;
+    let line_end = text.row_start(line) + text.row_len(line) as usize;
+    // Measured on the head's row: a wrap point's caret is on the next.
+    let end = next_grapheme(text, head, row.end.min(line_end))
+        .map(|next| frame.view_x(row.x_for_offset(next, long_rows, glyph_widths)))
+        .filter(|&end| end > bar.x);
+    let width = end.map_or_else(|| glyph_widths.char_width(' '), |end| end - bar.x);
+    Some(Rect { width, ..bar })
 }
 
 /// The frame's selection rects. In a vim visual mode, an empty row the
@@ -1362,6 +1376,114 @@ fn match_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
     rects
 }
 
+/// What a pending vim jump paints, in frame coordinates.
+pub(crate) struct JumpLayout {
+    /// Over the text area, dimming it.
+    pub(crate) backdrop: Rect,
+    /// In text order.
+    pub(crate) labels: Vec<JumpLabelLayout>,
+}
+
+/// One label of a [`JumpLayout`]: a box over its target's char.
+pub(crate) struct JumpLabelLayout {
+    /// Its target's, for the tests.
+    #[cfg(test)]
+    pub(crate) offset: usize,
+    pub(crate) rect: Rect,
+    pub(crate) text: SharedString,
+    pub(crate) state: JumpLabelState,
+}
+
+/// How opaque the backdrop of the theme's background is over the text.
+const JUMP_BACKDROP_ALPHA: f32 = 0.6;
+/// How opaque a preview label is, the label `{c2}` would give its match.
+const JUMP_PREVIEW_ALPHA: f32 = 0.5;
+/// How opaque a concealed label's box is, a label on another page.
+const JUMP_CONCEALED_ALPHA: f32 = 0.3;
+
+/// While vim has a jump pending, its labels on the frame's rows
+/// ([`fe_vim::VimState::jump_overlay`]), each a block over its target's
+/// char, at most [`MAX_MATCHES`] of them, and a backdrop. `None` with no
+/// jump pending. Labels off to a side of a scrolled line are left out.
+fn jump_layout(layout: &mut FrameLayout, view: &EditorView) -> Option<JumpLayout> {
+    let vim = view.vim.as_ref()?;
+    let frame = &layout.frame;
+    let rows = match (frame.rows.first(), frame.rows.last()) {
+        (Some(first), Some(last)) => first.buffer_row..last.buffer_row + 1,
+        _ => 0..0,
+    };
+    let overlay = vim.jump_overlay(&view.model, rows)?;
+    let text = view.model.text();
+    let visible = frame.text_bounds();
+    let labels = (overlay.labels.into_iter())
+        .filter_map(|label| {
+            let rect = block_rect(layout, text, label.offset)?;
+            let beside = rect.x + rect.width <= visible.x || rect.x >= visible.x + visible.width;
+            (!beside).then(|| JumpLabelLayout {
+                #[cfg(test)]
+                offset: label.offset,
+                rect,
+                text: label.text.into(),
+                state: label.state,
+            })
+        })
+        .take(MAX_MATCHES)
+        .collect();
+    Some(JumpLayout {
+        backdrop: layout.frame.text_bounds(),
+        labels,
+    })
+}
+
+/// A pending jump over the text: the backdrop, then each label, a box in
+/// the cursor colour with its glyph in the background colour, a preview's
+/// fainter, a concealed one's fainter still and without its glyph. The
+/// colours come from the theme's until it has slots for them.
+fn paint_jump(
+    backdrop: Bounds<Pixels>,
+    labels: &[(Bounds<Pixels>, SharedString, JumpLabelState)],
+    theme: &EditorTheme,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    window.paint_quad(fill(
+        backdrop,
+        theme.background.opacity(JUMP_BACKDROP_ALPHA),
+    ));
+    let font = gpui::font(theme.font_family.clone());
+    for (rect, label, state) in labels {
+        let alpha = match state {
+            JumpLabelState::Live => 1.,
+            JumpLabelState::Preview => JUMP_PREVIEW_ALPHA,
+            JumpLabelState::Concealed => JUMP_CONCEALED_ALPHA,
+        };
+        window.paint_quad(fill(*rect, theme.cursor.opacity(alpha)));
+        if *state == JumpLabelState::Concealed {
+            continue;
+        }
+        let run = TextRun {
+            len: label.len(),
+            font: font.clone(),
+            color: theme.background.opacity(alpha),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        let line = window
+            .text_system()
+            .shape_line(label.clone(), theme.font_size, &[run], None);
+        line.paint(
+            rect.origin,
+            rect.size.height,
+            TextAlign::Center,
+            Some(rect.size.width),
+            window,
+            cx,
+        )
+        .ok();
+    }
+}
+
 /// The start of the grapheme `offset` is in, no further back than
 /// `row_start` or [`MAX_CLUSTER_BYTES`].
 fn grapheme_start(text: &Text, offset: usize, row_start: usize) -> usize {
@@ -1432,3 +1554,6 @@ fn styled_highlights(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod jump_tests;

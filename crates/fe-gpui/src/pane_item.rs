@@ -30,7 +30,8 @@ pub mod status {
     use gpui::SharedString;
 
     /// `NORMAL`, `INSERT`, `VISUAL`, `VISUAL LINE` or `VISUAL BLOCK`, only
-    /// with vim on: on the left, priority 0.
+    /// with vim on, or `JUMP` and the chars typed (`JUMP ab`) while a jump
+    /// is pending: on the left, priority 0.
     pub const VIM_MODE: &str = "vim_mode";
     /// Vim's last message, such as `E486: Pattern not found: zzz`, until
     /// the next key in the editor: on the left, priority 10.
@@ -106,6 +107,15 @@ pub mod status {
             "visual_line" => "VISUAL LINE".into(),
             "visual_block" => "VISUAL BLOCK".into(),
             other => other.to_uppercase().into(),
+        }
+    }
+
+    /// The bar's text while a jump is pending: `JUMP`, then what's typed
+    /// of its query ([`fe_vim::VimState::jump_query`]).
+    pub(super) fn jump_label(query: &str) -> SharedString {
+        match query {
+            "" => "JUMP".into(),
+            query => format!("JUMP {query}").into(),
         }
     }
 }
@@ -318,7 +328,7 @@ fn restore_style(cx: &App) -> (EditorTheme, EditorSettings) {
 }
 
 /// `editor`'s items: see [`status`].
-fn status_items(editor: &EditorView) -> Vec<StatusItem> {
+pub(crate) fn status_items(editor: &EditorView) -> Vec<StatusItem> {
     let model = &editor.model;
     let text = model.text();
     let selections = model.selections();
@@ -349,12 +359,11 @@ fn status_items(editor: &EditorView) -> Vec<StatusItem> {
         None => status::PLAIN_TEXT.into(),
     };
     let vim_mode = editor.vim_mode().map(|mode| {
-        StatusItem::new(
-            status::VIM_MODE,
-            StatusSide::Left,
-            0,
-            status::vim_mode_label(mode),
-        )
+        let text = match editor.vim_state().and_then(VimState::jump_query) {
+            Some(query) => status::jump_label(query),
+            None => status::vim_mode_label(mode),
+        };
+        StatusItem::new(status::VIM_MODE, StatusSide::Left, 0, text)
     });
     let vim_message = editor
         .vim_state()
