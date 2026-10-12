@@ -282,8 +282,9 @@ impl EditorView {
         } else {
             self.offset_for_position(event.position)
         };
-        // Like a plain click, it leaves a visual mode, so vim's visual extent
-        // doesn't restore the old selection over the caret.
+        // Like nvim (mouse=a), a middle-click paste leaves Visual mode for
+        // normal, so vim's visual extent doesn't restore the old selection
+        // over the caret.
         if vim {
             self.cancel_vim(cx);
         }
