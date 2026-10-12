@@ -114,4 +114,5 @@ pub use launcher::{
 pub use manager::{DEFAULT_MAX_FILE_BYTES, KillSwitch, LspManager};
 pub use navigation::LspNavigation;
 pub use requests::{ORPHANS_MAX, Reply};
+pub use signature_help::{Signature, SignatureContext, SignatureHelp, SignatureTrigger};
 pub use workspace_edit::{ApplyReply, EditTarget, FileEdits, decode_closed};
