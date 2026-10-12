@@ -27,6 +27,10 @@ use ignore::{
 
 use crate::listing;
 
+mod replace;
+
+pub use replace::Replacer;
+
 /// The most files in one batch handed to the sink.
 const BATCH_FILES: usize = 64;
 /// The most matches in one batch, unless a single file has more.
