@@ -450,7 +450,7 @@ impl EditorView {
 
     /// What the view shows, in the text's rows as the vim engine counts
     /// them; the rows are the frame's whole display rows.
-    fn viewport(&self) -> Option<fe_editor::commands::Viewport> {
+    pub(crate) fn viewport(&self) -> Option<fe_editor::commands::Viewport> {
         let frame = &self.layout.as_ref()?.frame;
         Some(fe_editor::commands::Viewport {
             top_row: self.top_buffer_row()?,

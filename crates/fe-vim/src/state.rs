@@ -114,6 +114,17 @@ pub struct VimState {
 }
 
 impl VimState {
+    /// The host's view now has `rows` rows: a counted 'scroll' set for
+    /// another height is dropped at once, as nvim's window does, so a
+    /// resize away and back can't revive it. A host calls this as its
+    /// height changes; `rows` is what [`EditorHost::viewport`] would report.
+    pub fn viewport_height_changed(&mut self, rows: u32) {
+        let rows = rows.max(1);
+        if self.scroll.is_some_and(|(_, set_for)| set_for != rows) {
+            self.scroll = None;
+        }
+    }
+
     pub fn new() -> Self {
         Self::default()
     }

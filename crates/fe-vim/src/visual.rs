@@ -686,6 +686,7 @@ pub(crate) fn jump_cursor(model: &mut EditorModel, state: &mut VimState, offset:
     };
     let text = model.text().clone();
     let tab = model.tab_size().max(1);
+    let offset = position(&text, offset);
     let goal = ends
         .goal
         .unwrap_or_else(|| goal_of(&cursor_at(&text, ends.cursor), tab));

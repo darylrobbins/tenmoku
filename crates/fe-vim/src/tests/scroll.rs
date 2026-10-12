@@ -324,3 +324,33 @@ fn visual_count_z_keeps_byte_and_goal_column() {
         assert_eq!(v.cursor(), (row + 1, 20), "{keys}j");
     }
 }
+
+#[test]
+fn visual_count_z_lands_on_a_grapheme_start() {
+    // Byte column 1 of row 1 is inside the decomposed é.
+    let mut v = HeadlessVim::new("abcde\ne\u{301}xxxxx", (0, 1));
+    v.set_window_rows(10);
+    v.feed("v2zt").unwrap();
+    assert_eq!(v.cursor(), (1, 0));
+    let model = v.model();
+    let range = model.primary_selection().range.clone();
+    let row_start = model.text().row_start(1);
+    // The selection takes the whole é and stops before the x.
+    assert_eq!(range, 1..row_start + 3);
+    v.feed("j").unwrap();
+    assert_eq!(v.cursor().0, 1, "last row");
+}
+
+#[test]
+fn host_resize_away_and_back_drops_counted_scroll() {
+    for plain in ["<C-d>", "<C-u>"] {
+        let mut v = vim((20, 0));
+        v.feed("3<C-d>").unwrap();
+        // What a host does: tell the state, not the headless wrapper.
+        v.state_mut().viewport_height_changed(4);
+        v.state_mut().viewport_height_changed(10);
+        let row = v.cursor().0;
+        v.feed(plain).unwrap();
+        assert_eq!(v.cursor().0.abs_diff(row), 5, "{plain}");
+    }
+}

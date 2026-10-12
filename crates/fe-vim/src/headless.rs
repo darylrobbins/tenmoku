@@ -366,13 +366,7 @@ impl HeadlessVim {
     /// cursor in it.
     pub fn set_window_rows(&mut self, rows: u32) {
         self.view.rows = rows.max(1);
-        if self
-            .state
-            .scroll
-            .is_some_and(|(_, set_for)| set_for != self.view.rows)
-        {
-            self.state.scroll = None;
-        }
+        self.state.viewport_height_changed(self.view.rows);
         self.follow_cursor();
     }
 

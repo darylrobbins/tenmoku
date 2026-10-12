@@ -9,7 +9,7 @@ use super::*;
 use crate::{EditorTheme, EditorView, init};
 
 /// An editor of `rows` rows, 10 of them tall, drawn, with vim `on`.
-fn editor(
+pub(super) fn editor(
     cx: &mut TestAppContext,
     rows: u32,
     on: bool,
@@ -45,7 +45,7 @@ fn editor_of(
 }
 
 /// Draws a frame: the first visible row, the line height and the rows that fit.
-fn draw(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> (u32, f32, u32) {
+pub(super) fn draw(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> (u32, f32, u32) {
     cx.update(|window, cx| window.draw(cx).clear(cx));
     view.read_with(cx, |view, _| {
         let frame = &view.layout.as_ref().unwrap().frame;
@@ -57,7 +57,7 @@ fn top(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> u32 {
     draw(view, cx).0
 }
 
-fn caret_row(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> u32 {
+pub(super) fn caret_row(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> u32 {
     view.read_with(cx, |view, _| {
         let model = view.model();
         model
@@ -67,7 +67,7 @@ fn caret_row(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> u32 {
     })
 }
 
-fn go_to_row(view: &Entity<EditorView>, row: u32, cx: &mut VisualTestContext) {
+pub(super) fn go_to_row(view: &Entity<EditorView>, row: u32, cx: &mut VisualTestContext) {
     view.update(cx, |view, cx| {
         let offset = view
             .model()

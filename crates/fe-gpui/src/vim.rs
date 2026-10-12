@@ -419,6 +419,18 @@ impl EditorView {
         }
     }
 
+    /// A frame was laid out: tells vim the view's height, so a counted
+    /// 'scroll' set for another one is dropped even if no scroll key ran
+    /// at the height between.
+    pub(crate) fn viewport_height_changed(&mut self) {
+        let Some(rows) = self.viewport().map(|view| view.rows) else {
+            return;
+        };
+        if let Some(state) = &mut self.vim {
+            state.viewport_height_changed(rows);
+        }
+    }
+
     /// Drops a pending command (as `escape` does), then leaves a visual
     /// mode through `vim.visual_exit`, so `gv` brings its extent back:
     /// before a click or a jump puts the caret somewhere else, so no count,
@@ -683,6 +695,9 @@ mod clipboard_tests;
 
 #[cfg(test)]
 mod scroll_tests;
+
+#[cfg(test)]
+mod viewport_resize_tests;
 
 #[cfg(test)]
 mod jump_setting_tests;
