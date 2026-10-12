@@ -418,3 +418,89 @@ fn long_row_autoscroll_shows_the_caret_past_an_inlay_shaped_wider_than_measured(
     assert!(caret.x >= GUTTER, "{caret:?}");
     assert!(caret.x + CURSOR_WIDTH <= WIDTH, "{caret:?}");
 }
+
+/// Draws every character twice as wide as it measures alone.
+struct Double;
+
+struct DoubleLine(Line);
+
+impl MeasuredLine for DoubleLine {
+    fn width(&self) -> f32 {
+        self.x_for_index(self.0.text.len())
+    }
+
+    fn x_for_index(&self, index: usize) -> f32 {
+        self.0.text[..index]
+            .chars()
+            .map(|ch| 2. * advance(ch))
+            .sum()
+    }
+
+    fn index_for_x(&self, x: f32) -> usize {
+        let mut left = 0.;
+        for (ix, ch) in self.0.text.char_indices() {
+            let width = 2. * advance(ch);
+            if x < left + width / 2. {
+                return ix;
+            }
+            left += width;
+        }
+        self.0.text.len()
+    }
+}
+
+impl TextMeasure for Double {
+    type Style = &'static str;
+    type Line = DoubleLine;
+
+    fn shape(&mut self, text: &str, runs: &[StyleRun<&'static str>]) -> DoubleLine {
+        DoubleLine(Mono.shape(text, runs))
+    }
+}
+
+#[test]
+fn long_row_autoscroll_shows_the_caret_when_text_and_inlay_both_shape_wider_than_measured() {
+    // Both the buffer's "x" and the inlay's "W" measure 10 and are shaped
+    // at 20, so no scroll worked out from the index alone shows the caret.
+    let buffer = Buffer::new(&"x".repeat(30_000));
+    let display = DisplayMap::new(buffer.current(), 4);
+    let selections = [ResolvedSelection {
+        range: 60..60,
+        reversed: false,
+    }];
+    let input = FrameInput {
+        display: &display,
+        tab_size: 4,
+        selections: &selections,
+        primary_head: 60,
+        scroll: Vec2::default(),
+        autoscroll: true,
+        width: WIDTH,
+        height: 100.,
+        line_height: LINE,
+        em: CELL,
+        styles: FrameStyles {
+            text: "text",
+            line_number: "number",
+            active_line_number: "active",
+        },
+    };
+    let inlay = Inlay {
+        offset: 40,
+        text: "W".repeat(8200),
+        style: "ghost",
+    };
+    let frame = layout_frame_with_inlay(
+        &input,
+        &BlockMap::default(),
+        Some(&inlay),
+        &mut Double,
+        &mut LongRows::default(),
+        &mut Mono,
+        |_| Vec::new(),
+        |_| Vec::new(),
+    );
+    let caret = frame.cursors.first().expect("the caret is laid out");
+    assert!(caret.x >= GUTTER, "{caret:?}");
+    assert!(caret.x + CURSOR_WIDTH <= WIDTH, "{caret:?}");
+}

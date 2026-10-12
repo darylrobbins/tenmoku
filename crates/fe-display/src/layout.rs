@@ -925,6 +925,37 @@ pub fn layout_frame_with_inlay<M: TextMeasure>(
                 plain_x - margin
             };
         }
+        // All missed, as when the row's text shapes wider than it is
+        // indexed too: reshape at where the caret was actually laid out,
+        // from the nearest miss, until it shows or the layout settles.
+        if !tried.iter().any(|tried| tried.3) {
+            let nearest = (0..tried.len())
+                .min_by(|&a, &b| tried[a].4.total_cmp(&tried[b].4))
+                .unwrap_or(0);
+            tried.swap(nearest, 0);
+            tried.truncate(1);
+            let mut scroll_x = tried[0].0;
+            for _ in 0..8 {
+                let (_, long, ..) = tried.last().expect("one was tried");
+                let x = long[ix].as_ref().map_or(plain_x, |row| {
+                    row.x_for_offset(primary_head, long_rows, widths)
+                });
+                let (shaped_scroll, long) = settle(measure, long_rows, widths, follow(x, scroll_x));
+                let x = long[ix].as_ref().map_or(plain_x, |row| {
+                    row.x_for_offset(primary_head, long_rows, widths)
+                });
+                let margined = follow(x, shaped_scroll) == shaped_scroll;
+                let visible = x >= shaped_scroll && x <= shaped_scroll + view_width;
+                let miss = (shaped_scroll - x)
+                    .max(x - shaped_scroll - view_width)
+                    .max(0.);
+                scroll_x = shaped_scroll;
+                tried.push((shaped_scroll, long, margined, visible, miss));
+                if visible {
+                    break;
+                }
+            }
+        }
         let best = tried
             .iter()
             .position(|tried| tried.2)
