@@ -63,7 +63,7 @@ pub const DEFAULT_MAX_FILE_BYTES: usize = 50 * 1024 * 1024;
 /// event sink.
 pub struct LspManager {
     launcher: Arc<dyn ServerLauncher>,
-    clock: Arc<dyn Clock>,
+    pub(crate) clock: Arc<dyn Clock>,
     sink: Sink,
     servers: HashMap<ServerId, Handle>,
     /// Every open document: where it's synced, and its subscription,
@@ -762,7 +762,7 @@ impl LspManager {
 
     /// Hands `admit` to the server `buffer` is synced to, or answers it
     /// `Unavailable` if there's none.
-    fn admit(&self, buffer: BufferId, version: Version, admit: Admit) {
+    pub(crate) fn admit(&self, buffer: BufferId, version: Version, admit: Admit) {
         match self.server_of(buffer) {
             Some(server) => self.send(
                 server,
