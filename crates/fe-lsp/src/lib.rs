@@ -28,7 +28,9 @@
 //! - A server's `textDocument/publishDiagnostics` are decoded on its
 //!   thread against the text it was published for, and so are the replies
 //!   to `textDocument/diagnostic`, which open documents are pulled with
-//!   when the server advertises `diagnosticProvider`. Both lists reach the
+//!   when the server advertises `diagnosticProvider` (or, for
+//!   typescript-language-server, to tsserver's own diagnostic requests:
+//!   [`PullDiagnostics`]). Both lists reach the
 //!   sink together as [`LspEvent::Diagnostics`] in byte ranges, with
 //!   [`LspEvent::DiagnosticsCleared`] when the document closes or the
 //!   session ends.
@@ -73,6 +75,7 @@ mod requests;
 mod restart;
 mod router;
 mod server;
+mod tsserver;
 
 #[cfg(any(test, feature = "test-support"))]
 #[path = "tests/fake.rs"]
@@ -92,8 +95,8 @@ pub use event::{LspError, LspEvent, ServerId, ServerStatus};
 pub use hover::Hover;
 pub use identity::{IncarnationId, SessionId};
 pub use launcher::{
-    ExitInfo, LOGIN_SHELL_TIMEOUT, LaunchCancel, LocalLauncher, LoginPath, ReadinessMode, ServerIo,
-    ServerLauncher, ServerProcess, ServerSpec, UnversionedDiagnostics,
+    ExitInfo, LOGIN_SHELL_TIMEOUT, LaunchCancel, LocalLauncher, LoginPath, PullDiagnostics,
+    ReadinessMode, ServerIo, ServerLauncher, ServerProcess, ServerSpec, UnversionedDiagnostics,
 };
 pub use manager::{DEFAULT_MAX_FILE_BYTES, KillSwitch, LspManager};
 pub use navigation::LspNavigation;

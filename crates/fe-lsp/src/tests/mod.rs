@@ -22,6 +22,7 @@ mod restart;
 mod router;
 mod status;
 mod sync;
+mod tsserver_diagnostics;
 
 use std::future::Future;
 use std::path::{Path, PathBuf};

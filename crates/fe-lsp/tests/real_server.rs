@@ -12,7 +12,8 @@
 //! The servers start from the built-in specs, through the `[lsp]` settings
 //! a user would write (`command` and `env`), and a launcher that wraps
 //! [`LocalLauncher`] to watch the wire ([`Tap`]): what `publishDiagnostics`
-//! and the replies to `textDocument/diagnostic` carry, how the process
+//! and the replies to `textDocument/diagnostic` (or to
+//! `typescript.tsserverRequest`'s diagnostic commands) carry, how the process
 //! went, and, to offer rust-analyzer only utf-16, a rewrite of
 //! `initialize`'s `positionEncodings`.
 
@@ -343,19 +344,29 @@ impl Server {
         }
     }
 
-    /// Whether a reply to fe-lsp's `textDocument/diagnostic` holds the
-    /// unsaved error, as the runs showed (§10).
-    fn pulls_diagnostics(self) -> bool {
+    /// Whether it advertises `diagnosticProvider`, for fe-lsp's
+    /// `textDocument/diagnostic`.
+    fn advertises_pull(self) -> bool {
         match self {
             Self::RustAnalyzer | Self::TypescriptGo => true,
-            // Neither advertises `diagnosticProvider`.
             Self::Pyright | Self::TypescriptLanguageServer => false,
         }
     }
 
+    /// Whether a reply to fe-lsp's pull holds the unsaved error, as the
+    /// runs showed (§10): to `textDocument/diagnostic`, or for
+    /// typescript-language-server, whose pushes carry no version, to one
+    /// of the three `typescript.tsserverRequest`s
+    /// (`PullDiagnostics::TsserverRequest`).
+    fn pulls_diagnostics(self) -> bool {
+        match self {
+            Self::RustAnalyzer | Self::TypescriptGo | Self::TypescriptLanguageServer => true,
+            Self::Pyright => false,
+        }
+    }
+
     /// Whether the unsaved error reaches the sink: decoded from a
-    /// versioned push or a pull. typescript-language-server's pushes carry
-    /// no version, so they're dropped (§4.1).
+    /// versioned push or a pull.
     fn shows_unsaved_error(self) -> bool {
         self.pulls_diagnostics() || self.versions_diagnostics() == Some(true)
     }
@@ -769,9 +780,8 @@ impl Session {
     /// adds an error without saving it, then watches the wire for
     /// [`DIAGNOSTICS_WITHIN`]: whether a `publishDiagnostics` holding a
     /// diagnostic for the file comes, and with a version
-    /// ([`Server::versions_diagnostics`]), and whether a reply to a
-    /// `textDocument/diagnostic` for it holds one
-    /// ([`Server::pulls_diagnostics`]). The error must also reach the sink
+    /// ([`Server::versions_diagnostics`]), and whether a reply to a pull
+    /// for it holds one ([`Server::pulls_diagnostics`]). The error must also reach the sink
     /// as [`LspEvent::Diagnostics`] at the edited version
     /// ([`Server::shows_unsaved_error`]).
     fn check_diagnostics_version(&self) {
@@ -790,7 +800,7 @@ impl Session {
         );
         assert_eq!(
             advertised,
-            self.server.pulls_diagnostics(),
+            self.server.advertises_pull(),
             "whether {} advertises diagnosticProvider",
             self.server.name(),
         );
@@ -1015,8 +1025,9 @@ struct Seen(Arc<Mutex<Wire>>);
 struct Wire {
     /// Each `textDocument/publishDiagnostics`, in order.
     diagnostics: Vec<Published>,
-    /// The document of each `textDocument/diagnostic` sent, by id.
-    pulls: HashMap<i64, Url>,
+    /// The document of each pull sent, by id, and its tsserver command if
+    /// it's a `typescript.tsserverRequest`.
+    pulls: HashMap<i64, (Url, Option<String>)>,
     /// Each reply to one, in order.
     pulled: Vec<PulledReply>,
     /// How the process went, once fe-lsp has seen it go.
@@ -1025,7 +1036,7 @@ struct Wire {
     kills: usize,
 }
 
-/// A reply to `textDocument/diagnostic` as it was read.
+/// A reply to a pull as it was read.
 struct PulledReply {
     uri: Url,
     /// How many diagnostics it held: none for an unchanged report or an
@@ -1102,7 +1113,7 @@ fn frame(bytes: &[u8]) -> Option<Range<usize>> {
 
 /// The client's side: holds back the first message, `initialize`, until
 /// it's whole, then sends it with `positionEncodings` set to `offer`.
-/// Notes the document of each `textDocument/diagnostic` it passes on.
+/// Notes the document of each pull it passes on.
 struct Offer {
     inner: Pin<Box<dyn AsyncWrite + Send>>,
     /// The first message so far, while it's held back.
@@ -1141,15 +1152,10 @@ impl AsyncWrite for Offer {
             this.written.extend_from_slice(&buf[..n]);
             while let Some(body) = frame(&this.written) {
                 if let Ok(message) = serde_json::from_slice::<Value>(&this.written[body.clone()])
-                    && message["method"] == "textDocument/diagnostic"
                     && let Some(id) = message["id"].as_i64()
-                    && let Ok(uri) = Url::parse(
-                        message["params"]["textDocument"]["uri"]
-                            .as_str()
-                            .unwrap_or_default(),
-                    )
+                    && let Some(pull) = pull_of(&message)
                 {
-                    this.seen.lock().pulls.insert(id, uri);
+                    this.seen.lock().pulls.insert(id, pull);
                 }
                 this.written.drain(..body.end);
             }
@@ -1185,6 +1191,21 @@ impl AsyncWrite for Offer {
         ready!(this.pay(cx))?;
         this.inner.as_mut().poll_close(cx)
     }
+}
+
+/// The document `message` pulls diagnostics for, and its tsserver command
+/// if it's a `typescript.tsserverRequest`; `None` if it's no pull.
+fn pull_of(message: &Value) -> Option<(Url, Option<String>)> {
+    let params = &message["params"];
+    let (uri, command) = match message["method"].as_str()? {
+        "textDocument/diagnostic" => (&params["textDocument"]["uri"], None),
+        "workspace/executeCommand" if params["command"] == "typescript.tsserverRequest" => {
+            let command = params["arguments"][0].as_str()?;
+            (&params["arguments"][1]["file"], Some(command.to_owned()))
+        }
+        _ => return None,
+    };
+    Some((Url::parse(uri.as_str()?).ok()?, command))
 }
 
 /// The server's side, passed through as it is, noting each
@@ -1224,11 +1245,24 @@ impl AsyncRead for Listen {
                 && let Some(id) = message["id"].as_i64()
             {
                 let mut seen = this.seen.lock();
-                if let Some(uri) = seen.pulls.remove(&id) {
-                    let items = message["result"]["items"].as_array().map_or(0, Vec::len);
-                    let what = match message.get("error") {
-                        Some(error) => format!("error {} {}", error["code"], error["message"]),
-                        None => format!("{} report, {items} items", message["result"]["kind"]),
+                if let Some((uri, command)) = seen.pulls.remove(&id) {
+                    let result = &message["result"];
+                    let items = match &command {
+                        None => result["items"].as_array(),
+                        Some(_) => result["body"].as_array(),
+                    };
+                    let items = items.map_or(0, Vec::len);
+                    let what = match (message.get("error"), &command) {
+                        (Some(error), _) => {
+                            let message = error["message"].as_str().unwrap_or_default();
+                            let first = message.lines().next().unwrap_or_default();
+                            format!("error {} {first}", error["code"])
+                        }
+                        (None, None) => format!("{} report, {items} items", result["kind"]),
+                        (None, Some(command)) => format!(
+                            "{command}: {} {}, {items} items",
+                            result["type"], result["success"],
+                        ),
                     };
                     seen.pulled.push(PulledReply { uri, items, what });
                 }

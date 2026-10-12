@@ -87,7 +87,7 @@ use crate::launcher::{
     ExitInfo, Flag, LaunchCancel, ServerIo, ServerLauncher, ServerProcess, ServerSpec,
     UnversionedDiagnostics,
 };
-use crate::pull::{Provider, Pulled, Puller};
+use crate::pull::{Pulled, Puller};
 use crate::readiness::Readiness;
 use crate::registration::Registrations;
 use crate::requests::{Issue, Orphans, Out, Settled};
@@ -595,7 +595,7 @@ impl Server {
                 versions: HashMap::new(),
                 outbox: VecDeque::new(),
                 sink: self.sink.clone(),
-                puller: Puller::new(self.clock.clone()),
+                puller: Puller::new(self.spec.pull_diagnostics, self.clock.clone()),
             },
             diagnostics,
             tick: None,
@@ -963,6 +963,12 @@ impl Actor {
         // If the loop has gone, `loop_done` says so.
         let _ = self.socket.emit(Taken);
         self.sent += 1;
+        // A tsserver pull's other requests, right behind its first, with
+        // nothing between them (tsserver.rs). They may take the queue a
+        // little past `QUEUED_MAX`.
+        for follower in self.link.puller.released() {
+            self.issue(follower);
+        }
     }
 
     fn notify(&mut self, note: Note) {
@@ -1231,7 +1237,15 @@ impl Actor {
             );
             return;
         };
-        if let Some(event) = document.pulled(pulled, &mut self.link) {
+        // The reply is decoded in the link's encoding: for the one call,
+        // the reply's own if it has one (tsserver's).
+        let session = self.link.encoding;
+        if let Some(encoding) = pulled.encoding() {
+            self.link.encoding = encoding;
+        }
+        let event = document.pulled(pulled, &mut self.link);
+        self.link.encoding = session;
+        if let Some(event) = event {
             self.link.report(event);
         }
     }
@@ -1413,9 +1427,7 @@ impl Actor {
             }
         };
         self.link.policy = SyncPolicy::from_capabilities(&result.capabilities);
-        self.link
-            .puller
-            .set_provider(Provider::from_capabilities(&result.capabilities));
+        self.link.puller.set_capabilities(&result.capabilities);
         self.link.encoding = encoding;
         let mut session = lock(&self.session);
         session.capabilities = Some(result.capabilities);

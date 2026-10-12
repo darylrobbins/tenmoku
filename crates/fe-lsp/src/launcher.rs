@@ -42,6 +42,7 @@ pub struct ServerSpec {
     /// Work-done progress token prefixes that don't hold back readiness.
     pub ready_ignores_progress: Vec<String>,
     pub unversioned_diagnostics: UnversionedDiagnostics,
+    pub pull_diagnostics: PullDiagnostics,
 }
 
 impl ServerSpec {
@@ -59,6 +60,7 @@ impl ServerSpec {
             readiness: ReadinessMode::default(),
             ready_ignores_progress: Vec::new(),
             unversioned_diagnostics: UnversionedDiagnostics::default(),
+            pull_diagnostics: PullDiagnostics::default(),
         }
     }
 }
@@ -80,6 +82,27 @@ pub enum UnversionedDiagnostics {
     /// Dropped: nothing fixes the text they were computed on.
     #[default]
     Drop,
+}
+
+/// How a server's diagnostics are pulled (§4.1, §7).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PullDiagnostics {
+    /// `textDocument/diagnostic`, when the server advertises
+    /// `diagnosticProvider`.
+    #[default]
+    Advertised,
+    /// tsserver's `syntacticDiagnosticsSync`, `semanticDiagnosticsSync` and
+    /// `suggestionDiagnosticsSync`, sent back to back through
+    /// `workspace/executeCommand` `typescript.tsserverRequest`, when the
+    /// server registers that command (typescript-language-server). Its
+    /// pushes merge tsserver's three kinds as they arrive, each of whatever
+    /// text it was computed on, so no version fixes them. But tsserver runs
+    /// no request queued after a `change` or `open` (its fence commands)
+    /// before that one, so the three are computed on the text of the
+    /// version sent before them. Checked by
+    /// `tests::tsserver_diagnostics::pulls_through_tsserver_request` and
+    /// recorded in docs/decisions/rq81bj4nvm-tsserver-diagnostics.md.
+    TsserverRequest,
 }
 
 /// A running server's transport. Client → server bytes go to `input`.

@@ -453,6 +453,7 @@ pub struct ServerSpec {
     pub readiness: ReadinessMode,     // ServerStatus | Progress; §3.4
     pub ready_ignores_progress: Vec<String>, // token prefixes; §3.4
     pub unversioned_diagnostics: UnversionedDiagnostics, // Drop; §4.1
+    pub pull_diagnostics: PullDiagnostics, // Advertised | TsserverRequest; §4.1
 }
 
 /// A running server's transport. Client → server bytes go to `input`.
@@ -1127,6 +1128,40 @@ incarnation of the URI:
    until a versioned publication replaces them. A server that never versions
    its publications therefore shows no diagnostics, a visible but safe
    failure, and card 7 then decides on a server-specific remedy.
+
+   **typescript-language-server's remedy: pull through tsserver** (T73,
+   2026-10-12; evidence in `docs/decisions/rq81bj4nvm-tsserver-diagnostics.md`).
+   It never versions its pushes, and no guarantee can be verified for them:
+   its `FileDiagnostics` keeps one list per tsserver event kind (syntax,
+   semantic, suggestion), replaces a kind as its event comes, never clears
+   them on a change, and publishes all three merged, debounced 50 ms, so one
+   publication can join kinds computed on different texts. Its pushes stay
+   dropped. Its spec has `pull_diagnostics: PullDiagnostics::TsserverRequest`
+   instead (the default, `Advertised`, is §7's `textDocument/diagnostic`):
+   - After the same triggers as §7's pulls, fe-lsp sends three
+     `workspace/executeCommand` requests back to back, nothing between them:
+     `{ command: "typescript.tsserverRequest", arguments: [<cmd>, { file: <uri> }] }`
+     for `syntacticDiagnosticsSync`, `semanticDiagnosticsSync` and
+     `suggestionDiagnosticsSync`. The server registers the command
+     (`executeCommandProvider`); a session whose server doesn't is never
+     pulled.
+   - The guarantee is tsserver's: `change`, `open`, `close` and `updateOpen`
+     are **fence** commands (`SingleTsServer.fenceCommands`), and no request
+     queued after one runs before it. typescript-language-server queues a
+     `change` as it reads each `didChange`, and `typescript.tsserverRequest`
+     queues its command as it reads the request, so all three are computed
+     on the text of the version sent before them.
+   - Each reply is tsserver's response object, its `body` the diagnostic
+     array. `start` and `end` are 1-based `{ line, offset }`, `offset` in
+     UTF-16 code units whatever encoding the session negotiated; they're
+     decoded in the ring's text for that version as utf-16. `category`
+     `error`, `warning`, `suggestion` and `message` become Error, Warning,
+     Hint and Information; `reportsUnnecessary` and `reportsDeprecated`
+     become the tags; `code` is kept and `source` is `typescript`. A
+     malformed entry is skipped and logged.
+   - The three together are one pulled list, merged with pushes as §7 says
+     (the pushes being dropped). If any fails, is cancelled or times out,
+     the pull is dropped, and the others are cancelled.
 5. **No current incarnation** (never opened, already closed, or a restart in
    progress). Ignore it. Workspace-wide diagnostics are out of M4 (§7).
 
@@ -1717,7 +1752,8 @@ Whether fastedit ever installs or bundles servers for users is Q2. The
 - document highlights, code lens, folding ranges, call and type hierarchy
 - workspace pull diagnostics (`workspace/diagnostic`), related documents,
   result ids and dynamic registration of `textDocument/diagnostic`
-- snippets, `workspace/executeCommand`, applying `workspace/applyEdit`
+- snippets, `workspace/executeCommand` (but for typescript-language-server's
+  diagnostics, §4.1), applying `workspace/applyEdit`
 - `workspace/didChangeWatchedFiles`
 - multi-root workspaces
 - diagnostics for files that aren't open (a problems panel)
@@ -1873,6 +1909,7 @@ Recommendation: **(a)**. The gate stays free of Node and network either way.
 Recommendation: **(c)**.
 
 **Decided (user, 2026-10-06): (c).** **Changed (user, 2026-10-11): (b).**
+(T305 was later done as T73, 2026-10-12: §4.1.)
 typescript-language-server never versions its diagnostics, so TypeScript and
 JavaScript files showed none under the default (§10). typescript-go answers
 `textDocument/diagnostic`, which T306 sends. typescript-language-server stays
@@ -2014,9 +2051,19 @@ would run its code once the workbench drives fe-lsp (T143).
     0.3 s after the edit).
   - **typescript-language-server** 6.0.1 advertises no `diagnosticProvider`
     and never sets `version` on its pushes. Unversioned publications are
-    dropped (§4.1), so TypeScript and JavaScript files show no diagnostics
-    under typescript-language-server (T305, parked). It is no longer the
-    default (Q5).
+    dropped (§4.1). It is no longer the default (Q5). **Since T73
+    (2026-10-12)** its diagnostics are pulled through
+    `typescript.tsserverRequest` (§4.1): on Linux the type error (TS2322)
+    reached the sink at the edited version 23 ms after the edit, by
+    `semanticDiagnosticsSync`, while its one push for the file still came
+    unversioned and was dropped. The server source behind it
+    (typescript-language-server 6.0.1 `lib/cli.mjs`, tsserver from
+    `typescript` 6.0.3): `FileDiagnostics` merges its three kinds into each
+    push without clearing them on a change; `SingleTsServer.fenceCommands`
+    is `change`, `close`, `open` and `updateOpen`; `TSServerRequestCommand`
+    maps the `file` URI to the open document's path and returns tsserver's
+    response object. Run and evidence in
+    `docs/decisions/rq81bj4nvm-tsserver-diagnostics.md`.
   - **typescript-go** 7.0.2 pushes none for source files and answers pulls:
     the type error (TS2322) was shown 8 ms after the edit. It refuses a
     pull whose `previousResultId` is `null` (`InvalidParams`), which

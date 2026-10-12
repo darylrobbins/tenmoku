@@ -8,7 +8,7 @@
 use fe_config::settings::{LspReadiness, LspServerSettings, LspSettings, TypescriptServer};
 use serde_json::Value;
 
-use crate::launcher::{ReadinessMode, ServerSpec};
+use crate::launcher::{PullDiagnostics, ReadinessMode, ServerSpec};
 
 /// The built-in servers, in the order a language's server is chosen.
 pub(crate) fn builtin_specs() -> Vec<ServerSpec> {
@@ -26,12 +26,17 @@ pub(crate) fn builtin_specs() -> Vec<ServerSpec> {
             ..spec("rust-analyzer", "rust-analyzer", &[], &["rust"])
         },
         spec("pyright", "pyright-langserver", &["--stdio"], &["python"]),
-        spec(
-            "typescript-language-server",
-            "typescript-language-server",
-            &["--stdio"],
-            &typescript,
-        ),
+        // Its pushes carry no version, so they're dropped (§4.1); its
+        // diagnostics are pulled through tsserver instead.
+        ServerSpec {
+            pull_diagnostics: PullDiagnostics::TsserverRequest,
+            ..spec(
+                "typescript-language-server",
+                "typescript-language-server",
+                &["--stdio"],
+                &typescript,
+            )
+        },
         spec("typescript-go", "tsc", &["--lsp", "--stdio"], &typescript),
     ]
 }

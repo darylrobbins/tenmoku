@@ -1,7 +1,9 @@
 //! Pull diagnostics (`textDocument/diagnostic`, docs/decisions/lsp-client.md
 //! §7), for servers whose `InitializeResult` has `diagnosticProvider`.
 //! Open documents only: no workspace diagnostics, related documents, result
-//! ids or dynamic registration.
+//! ids or dynamic registration. A spec with
+//! [`PullDiagnostics::TsserverRequest`] pulls through tsserver instead
+//! (tsserver.rs), the same way otherwise.
 //!
 //! - **When.** A document of a pulling server is pulled after its
 //!   `didOpen`, after each flushed `didChange` batch, after `didSave`, when
@@ -32,7 +34,7 @@
 //!   version has left the ring, it's left out until it's replaced.
 
 use std::collections::VecDeque;
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError};
 use std::time::Duration;
 
 use fe_buffer::{Bias, BufferId, Edit, Version};
@@ -43,7 +45,7 @@ use futures::stream::FuturesUnordered;
 use lsp_types::request::{DocumentDiagnosticRequest, Request};
 use lsp_types::{
     DiagnosticServerCapabilities, DocumentDiagnosticReport, DocumentDiagnosticReportResult,
-    ServerCapabilities, Url,
+    ExecuteCommandOptions, ServerCapabilities, Url,
 };
 use serde_json::{Value, json};
 
@@ -53,7 +55,9 @@ use crate::document::SentVersion;
 use crate::encoding::PositionEncoding;
 use crate::event::LspError;
 use crate::identity::{IncarnationId, SessionId};
+use crate::launcher::PullDiagnostics;
 use crate::requests::{Issue, Reply, call, within};
+use crate::tsserver::{self, Released};
 
 /// How long a pull may take before it's cancelled and dropped.
 pub(crate) const PULL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -99,33 +103,86 @@ pub(crate) struct Pulled {
     pub(crate) identity: (SessionId, IncarnationId),
     /// The LSP version the server had when it got the request.
     pub(crate) lsp_version: i32,
-    pub(crate) result: Result<DocumentDiagnosticReportResult, LspError>,
+    pub(crate) result: Result<Answer, LspError>,
+}
+
+impl Pulled {
+    /// The encoding its positions are in, if not the session's: tsserver
+    /// counts UTF-16 code units whatever was negotiated.
+    pub(crate) fn encoding(&self) -> Option<PositionEncoding> {
+        match self.result {
+            Ok(Answer::Tsserver(_)) => Some(PositionEncoding::Utf16),
+            _ => None,
+        }
+    }
+}
+
+/// What a pull got back.
+pub(crate) enum Answer {
+    /// The reply to `textDocument/diagnostic`.
+    Report(DocumentDiagnosticReportResult),
+    /// The diagnostics in tsserver's three replies, or why they're dropped
+    /// (tsserver.rs).
+    Tsserver(Result<Vec<lsp_types::Diagnostic>, String>),
+}
+
+/// How a session pulls.
+enum Via {
+    Diagnostic(Provider),
+    Tsserver,
 }
 
 /// A session's pulls: whether its server pulls, and the replies on their
 /// way back to the actor.
 pub(crate) struct Puller {
-    provider: Option<Provider>,
+    /// What the spec asks for.
+    mode: PullDiagnostics,
+    via: Option<Via>,
     replies: FuturesUnordered<BoxFuture<'static, Pulled>>,
+    /// A tsserver pull's later requests, once its first is sent.
+    released: Released,
     clock: Arc<dyn Clock>,
 }
 
 impl Puller {
-    /// Pulls nothing until [`set_provider`](Self::set_provider).
-    pub(crate) fn new(clock: Arc<dyn Clock>) -> Self {
+    /// Pulls nothing until [`set_capabilities`](Self::set_capabilities).
+    pub(crate) fn new(mode: PullDiagnostics, clock: Arc<dyn Clock>) -> Self {
         Self {
-            provider: None,
+            mode,
+            via: None,
             replies: FuturesUnordered::new(),
+            released: Released::default(),
             clock,
         }
     }
 
-    pub(crate) fn set_provider(&mut self, provider: Option<Provider>) {
-        self.provider = provider;
+    /// Pulls as `mode` asks, if the server offers it: `textDocument/diagnostic`
+    /// if it advertises `diagnosticProvider`, or tsserver's requests if it
+    /// registers `typescript.tsserverRequest`.
+    pub(crate) fn set_capabilities(&mut self, capabilities: &ServerCapabilities) {
+        self.via = match self.mode {
+            PullDiagnostics::Advertised => {
+                Provider::from_capabilities(capabilities).map(Via::Diagnostic)
+            }
+            PullDiagnostics::TsserverRequest => {
+                let registered = (capabilities.execute_command_provider.as_ref()).is_some_and(
+                    |ExecuteCommandOptions { commands, .. }| {
+                        commands.iter().any(|command| command == tsserver::COMMAND)
+                    },
+                );
+                registered.then_some(Via::Tsserver)
+            }
+        };
     }
 
     pub(crate) fn pulls(&self) -> bool {
-        self.provider.is_some()
+        self.via.is_some()
+    }
+
+    /// The requests that went out as their lead was sent, for the actor to
+    /// send right behind it (tsserver.rs).
+    pub(crate) fn released(&self) -> Vec<Issue> {
+        std::mem::take(&mut *self.released.lock().unwrap_or_else(PoisonError::into_inner))
     }
 
     /// The request pulling `uri`'s diagnostics, for the actor to send; its
@@ -138,17 +195,29 @@ impl Puller {
         identity: (SessionId, IncarnationId),
         lsp_version: i32,
     ) -> Option<Issue> {
-        let provider = self.provider.as_ref()?;
-        let mut params = json!({ "textDocument": { "uri": uri } });
-        if let Some(identifier) = &provider.identifier {
-            params["identifier"] = identifier.as_str().into();
-        }
-        let (answer, answered) = oneshot::channel();
-        let issue = call::<Pull, _>(answer, params, |_, reply| {
-            reply.map(|Reply { result, .. }| result)
-        });
-        // Timing out drops `answered`, which cancels the request.
-        let answered = answered.map(|answer| answer.unwrap_or(Err(LspError::ServerDown)));
+        let (issue, answered) = match self.via.as_ref()? {
+            Via::Diagnostic(provider) => {
+                let mut params = json!({ "textDocument": { "uri": uri } });
+                if let Some(identifier) = &provider.identifier {
+                    params["identifier"] = identifier.as_str().into();
+                }
+                let (answer, answered) = oneshot::channel();
+                let issue = call::<Pull, _>(answer, params, |_, reply| {
+                    reply.map(|Reply { result, .. }| Answer::Report(result))
+                });
+                let answered = answered.map(|answer| answer.unwrap_or(Err(LspError::ServerDown)));
+                (issue, answered.boxed())
+            }
+            Via::Tsserver => {
+                let (issue, replies) = tsserver::pull(uri, &self.released);
+                let uri = uri.clone();
+                let answered = replies.map(move |replies| {
+                    replies.map(|replies| Answer::Tsserver(tsserver::diagnostics(replies, &uri)))
+                });
+                (issue, answered.boxed())
+            }
+        };
+        // Timing out drops `answered`, which cancels the requests.
         let replied = within(
             answered,
             Some(PULL_TIMEOUT),
@@ -183,16 +252,18 @@ impl Puller {
 /// The items of a pull reply worth decoding: a `full` report's, or why
 /// it's dropped.
 pub(crate) fn full_items(
-    result: Result<DocumentDiagnosticReportResult, LspError>,
+    result: Result<Answer, LspError>,
 ) -> Result<Vec<lsp_types::Diagnostic>, String> {
+    use DocumentDiagnosticReportResult as Got;
     match result {
-        Ok(DocumentDiagnosticReportResult::Report(DocumentDiagnosticReport::Full(full))) => {
+        Ok(Answer::Report(Got::Report(DocumentDiagnosticReport::Full(full)))) => {
             Ok(full.full_document_diagnostic_report.items)
         }
-        Ok(DocumentDiagnosticReportResult::Report(DocumentDiagnosticReport::Unchanged(_))) => {
+        Ok(Answer::Report(Got::Report(DocumentDiagnosticReport::Unchanged(_)))) => {
             Err("an unchanged report".into())
         }
-        Ok(DocumentDiagnosticReportResult::Partial(_)) => Err("a partial result".into()),
+        Ok(Answer::Report(Got::Partial(_))) => Err("a partial result".into()),
+        Ok(Answer::Tsserver(items)) => items,
         Err(err) => Err(format!("an error ({err})")),
     }
 }
