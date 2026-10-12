@@ -252,7 +252,13 @@ fn a_words(mut cursor: Cursor, count: u32, big: bool) -> Option<Span> {
 /// caret, or the `count`th out from it. With none around the caret, the
 /// pair opening `count` deep in the brackets after it ([`next_bracket`]).
 /// Escaped brackets don't count.
-fn brackets(text: &Text, offset: usize, pair: (u8, u8), count: u32, inner: bool) -> Span {
+pub(crate) fn brackets(
+    text: &Text,
+    offset: usize,
+    pair: (u8, u8),
+    count: u32,
+    inner: bool,
+) -> Span {
     // The pair around: brackets in strings count. Its match: from outside
     // a string, brackets inside strings don't; from inside, only the
     // string's own do.
@@ -366,7 +372,7 @@ fn next_bracket(text: &Text, offset: usize, pair: (u8, u8), depth: u32) -> Optio
 /// first string.
 /// `a"` takes the blanks after, or with none, before; `2i"` takes the
 /// quotes only.
-fn quotes(text: &Text, offset: usize, quote: u8, count: u32, inner: bool) -> Span {
+pub(crate) fn quotes(text: &Text, offset: usize, quote: u8, count: u32, inner: bool) -> Span {
     let scan = Scan::new(text, text.offset_to_point(offset).row);
     let caret = offset - scan.start;
     let bytes = &scan.bytes;

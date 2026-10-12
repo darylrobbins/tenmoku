@@ -1,0 +1,5291 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "di_bracket_inside",
+      "buffer": "x = [a, b] + 1",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "di[",
+      "expect": {
+        "buffer": "x = [] + 1",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a, b",
+            "linewise": false
+          },
+          "-": {
+            "text": "a, b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "da_bracket_inside",
+      "buffer": "x = [a, b] + 1",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "da[",
+      "expect": {
+        "buffer": "x =  + 1",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "[a, b]",
+            "linewise": false
+          },
+          "-": {
+            "text": "[a, b]",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "yi_close_bracket_alias",
+      "buffer": "x = [a, b] + 1",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "yi]",
+      "expect": {
+        "buffer": "x = [a, b] + 1",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a, b",
+            "linewise": false
+          },
+          "0": {
+            "text": "a, b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ya_close_bracket_alias",
+      "buffer": "x = [a, b] + 1",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "ya]p",
+      "expect": {
+        "buffer": "x = [[a, b]a, b] + 1",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "[a, b]",
+            "linewise": false
+          },
+          "0": {
+            "text": "[a, b]",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ci_bracket",
+      "buffer": "f[old][b]",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "ci[new<Esc>",
+      "expect": {
+        "buffer": "f[new][b]",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "old",
+            "linewise": false
+          },
+          "-": {
+            "text": "old",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ca_bracket",
+      "buffer": "f[old][b]",
+      "cursor": [
+        0,
+        7
+      ],
+      "keys": "ca[()<Esc>",
+      "expect": {
+        "buffer": "f[old]()",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "[b]",
+            "linewise": false
+          },
+          "-": {
+            "text": "[b]",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "di_bracket_count_2",
+      "buffer": "[a [b c] d]",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "d2i[",
+      "expect": {
+        "buffer": "[]",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a [b c] d",
+            "linewise": false
+          },
+          "-": {
+            "text": "a [b c] d",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "da_bracket_count_2",
+      "buffer": "[a [b c] d]",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "2da[",
+      "expect": {
+        "buffer": "",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "[a [b c] d]",
+            "linewise": false
+          },
+          "-": {
+            "text": "[a [b c] d]",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "di_bracket_on_opening",
+      "buffer": "[ab] c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "di[",
+      "expect": {
+        "buffer": "[] c",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab",
+            "linewise": false
+          },
+          "-": {
+            "text": "ab",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "da_bracket_on_closing",
+      "buffer": "x[ab] c",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "da]",
+      "expect": {
+        "buffer": "x c",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "[ab]",
+            "linewise": false
+          },
+          "-": {
+            "text": "[ab]",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "di_bracket_finds_the_next_pair",
+      "buffer": "x [a] y",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "di[",
+      "expect": {
+        "buffer": "x [] y",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "di_bracket_whole_rows",
+      "buffer": "f[\n    a,\n    b,\n]",
+      "cursor": [
+        1,
+        4
+      ],
+      "keys": "di[",
+      "expect": {
+        "buffer": "f[\n]",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "    a,\n    b,\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "    a,\n    b,\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "da_bracket_across_rows",
+      "buffer": "x = [\n  1,\n]",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "da[",
+      "expect": {
+        "buffer": "x = ",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "[\n  1,\n]",
+            "linewise": false
+          },
+          "1": {
+            "text": "[\n  1,\n]",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "yi_bracket_across_rows_charwise",
+      "buffer": "[a,\n b]",
+      "cursor": [
+        1,
+        1
+      ],
+      "keys": "yi[P",
+      "expect": {
+        "buffer": "[a,\n ba,\n b]",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a,\n b",
+            "linewise": false
+          },
+          "0": {
+            "text": "a,\n b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "di_bracket_empty_inside_moves",
+      "buffer": "x [] y",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "di[",
+      "expect": {
+        "buffer": "x [] y",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "indent_inner_bracket",
+      "buffer": "[\n  a\n]",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": ">i[",
+      "expect": {
+        "buffer": "[\n      a\n]",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "di_bracket_brackets_in_a_string",
+      "buffer": "[a, \"]\", b]",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "di[",
+      "expect": {
+        "buffer": "[]",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a, \"]\", b",
+            "linewise": false
+          },
+          "-": {
+            "text": "a, \"]\", b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "di_bracket_missing",
+      "buffer": "abc",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "di[",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "di_bracket_count_too_large",
+      "buffer": "[a [b] c]",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "d3i[",
+      "expect": {
+        "buffer": "[a [b] c]",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_after_di_bracket",
+      "buffer": "[a] [b]",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "di[4l.",
+      "expect": {
+        "buffer": "[] []",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b",
+            "linewise": false
+          },
+          "-": {
+            "text": "b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "di_angle",
+      "buffer": "vec<int> x",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "di<lt>",
+      "expect": {
+        "buffer": "vec<> x",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "int",
+            "linewise": false
+          },
+          "-": {
+            "text": "int",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "da_angle_alias",
+      "buffer": "vec<int> x",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "da>",
+      "expect": {
+        "buffer": "vec x",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<int>",
+            "linewise": false
+          },
+          "-": {
+            "text": "<int>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ci_angle",
+      "buffer": "Map<K, V>",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "ci<lt>u8<Esc>",
+      "expect": {
+        "buffer": "Map<u8>",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "K, V",
+            "linewise": false
+          },
+          "-": {
+            "text": "K, V",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "yi_angle_count_2",
+      "buffer": "a<b<c>>",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "2yi<lt>P",
+      "expect": {
+        "buffer": "a<b<c>b<c>>",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b<c>",
+            "linewise": false
+          },
+          "0": {
+            "text": "b<c>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "di_angle_finds_the_next_pair",
+      "buffer": "x <a> b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "di<lt>",
+      "expect": {
+        "buffer": "x <> b",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "di_angle_on_opening",
+      "buffer": "<ab> c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "di>",
+      "expect": {
+        "buffer": "<> c",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ab",
+            "linewise": false
+          },
+          "-": {
+            "text": "ab",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ya_angle_across_rows",
+      "buffer": "<a\nb> c",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "ya<lt>P",
+      "expect": {
+        "buffer": "<a\nb><a\nb> c",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<a\nb>",
+            "linewise": false
+          },
+          "0": {
+            "text": "<a\nb>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "di_angle_missing",
+      "buffer": "a > b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "di<lt>",
+      "expect": {
+        "buffer": "a > b",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "di_backtick",
+      "buffer": "run `ls -l` now",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "di`",
+      "expect": {
+        "buffer": "run `` now",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "ls -l",
+            "linewise": false
+          },
+          "-": {
+            "text": "ls -l",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "da_backtick_takes_trailing_blanks",
+      "buffer": "run `ls -l` now",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "da`",
+      "expect": {
+        "buffer": "run now",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "`ls -l` ",
+            "linewise": false
+          },
+          "-": {
+            "text": "`ls -l` ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "da_backtick_takes_leading_blanks_at_end",
+      "buffer": "run `ls`",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "da`",
+      "expect": {
+        "buffer": "run",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " `ls`",
+            "linewise": false
+          },
+          "-": {
+            "text": " `ls`",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ci_backtick",
+      "buffer": "say `hi` there",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "ci`bye<Esc>",
+      "expect": {
+        "buffer": "say `bye` there",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "hi",
+            "linewise": false
+          },
+          "-": {
+            "text": "hi",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "yi_backtick_first_string_from_before",
+      "buffer": "x `a` y `b`",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "yi`P",
+      "expect": {
+        "buffer": "x `aa` y `b`",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "0": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "di_backtick_count_2_takes_quotes",
+      "buffer": "x `a` y",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "d2i`",
+      "expect": {
+        "buffer": "x  y",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "`a`",
+            "linewise": false
+          },
+          "-": {
+            "text": "`a`",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "di_backtick_on_closing",
+      "buffer": "`a` `b`",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "di`",
+      "expect": {
+        "buffer": "`a` ``",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b",
+            "linewise": false
+          },
+          "-": {
+            "text": "b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "di_backtick_missing",
+      "buffer": "no ticks",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "di`",
+      "expect": {
+        "buffer": "no ticks",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "di_backtick_one_row_only",
+      "buffer": "`a\nb`",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "di`",
+      "expect": {
+        "buffer": "`a\nb`",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit",
+      "buffer": "<p>hello</p>",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<p></p>",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "hello",
+            "linewise": false
+          },
+          "-": {
+            "text": "hello",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dat",
+      "buffer": "x <p>hello</p> y",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "dat",
+      "expect": {
+        "buffer": "x  y",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<p>hello</p>",
+            "linewise": false
+          },
+          "-": {
+            "text": "<p>hello</p>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "cit",
+      "buffer": "<p>hello</p>",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "citbye<Esc>",
+      "expect": {
+        "buffer": "<p>bye</p>",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "hello",
+            "linewise": false
+          },
+          "-": {
+            "text": "hello",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "yit_on_tag_name",
+      "buffer": "<div><p>x</p></div>",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "yitP",
+      "expect": {
+        "buffer": "<div><p>xx</p></div>",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "0": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_on_closing_tag",
+      "buffer": "<div><p>x</p></div>",
+      "cursor": [
+        0,
+        11
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<div><p></p></div>",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_between_tags",
+      "buffer": "<a><b>x</b> y <c>z</c></a>",
+      "cursor": [
+        0,
+        12
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a></a>",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<b>x</b> y <c>z</c>",
+            "linewise": false
+          },
+          "-": {
+            "text": "<b>x</b> y <c>z</c>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_count_2",
+      "buffer": "<a><b>x</b></a>",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "d2it",
+      "expect": {
+        "buffer": "<a></a>",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<b>x</b>",
+            "linewise": false
+          },
+          "-": {
+            "text": "<b>x</b>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dat_count_2",
+      "buffer": "<a><b>x</b></a> z",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "2dat",
+      "expect": {
+        "buffer": " z",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<a><b>x</b></a>",
+            "linewise": false
+          },
+          "-": {
+            "text": "<a><b>x</b></a>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_case_blind",
+      "buffer": "<DIV>x</div>",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<DIV></div>",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_skips_self_closing",
+      "buffer": "<p>a<br/>b</p>",
+      "cursor": [
+        0,
+        9
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<p></p>",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a<br/>b",
+            "linewise": false
+          },
+          "-": {
+            "text": "a<br/>b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_skips_unmatched_on_it",
+      "buffer": "<p>a<br>b</p>",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<p></p>",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a<br>b",
+            "linewise": false
+          },
+          "-": {
+            "text": "a<br>b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_skips_stray_closing",
+      "buffer": "<p>a</b>c</p>",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<p>a</b>c</p>",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_same_name_nests",
+      "buffer": "<a>1<a>2</a>3</a>",
+      "cursor": [
+        0,
+        13
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a></a>",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "1<a>2</a>3",
+            "linewise": false
+          },
+          "-": {
+            "text": "1<a>2</a>3",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_quoted_angle_in_attribute",
+      "buffer": "<a href=\"x>y\">link</a>",
+      "cursor": [
+        0,
+        15
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a href=\"x>y\"></a>",
+        "cursor": [
+          0,
+          14
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "link",
+            "linewise": false
+          },
+          "-": {
+            "text": "link",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_attributes_across_rows",
+      "buffer": "<a\n  href=1>x</a>",
+      "cursor": [
+        1,
+        9
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a\n  href=1></a>",
+        "cursor": [
+          1,
+          9
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_across_rows_charwise",
+      "buffer": "<ul>\n  <li>one</li>\n</ul>",
+      "cursor": [
+        1,
+        7
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<ul>\n  <li></li>\n</ul>",
+        "cursor": [
+          1,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one",
+            "linewise": false
+          },
+          "-": {
+            "text": "one",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_from_indent_starts_at_the_first_non_blank",
+      "buffer": "<ul>\n  <li>one</li>\n</ul>",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<ul>\n  <li></li>\n</ul>",
+        "cursor": [
+          1,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "one",
+            "linewise": false
+          },
+          "-": {
+            "text": "one",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dat_whole_rows_linewise",
+      "buffer": "<ul>\n  <li>one</li>\n</ul>\nz",
+      "cursor": [
+        1,
+        7
+      ],
+      "keys": "2dat",
+      "expect": {
+        "buffer": "z",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<ul>\n  <li>one</li>\n</ul>\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "<ul>\n  <li>one</li>\n</ul>\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "yat_across_rows",
+      "buffer": "<ul>\n  <li>one</li>\n</ul>",
+      "cursor": [
+        2,
+        1
+      ],
+      "keys": "yatP",
+      "expect": {
+        "buffer": "<ul>\n  <li>one</li>\n</ul><ul>\n  <li>one</li>\n</ul>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<ul>\n  <li>one</li>\n</ul>",
+            "linewise": false
+          },
+          "0": {
+            "text": "<ul>\n  <li>one</li>\n</ul>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_empty_element_moves",
+      "buffer": "<a><b></b></a>",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a><b></b></a>",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "cit_empty_element",
+      "buffer": "<a><b></b></a>",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "citx<Esc>",
+      "expect": {
+        "buffer": "<a><b>x</b></a>",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_unicode_names_fold",
+      "buffer": "<É>x</é>",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<É></é>",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_missing",
+      "buffer": "plain text",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "plain text",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_no_forward_search",
+      "buffer": "x <a>b</a>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "x <a>b</a>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_count_too_large",
+      "buffer": "<a><b>x</b></a>",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "d3it",
+      "expect": {
+        "buffer": "<a><b>x</b></a>",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_unclosed_outer",
+      "buffer": "<a><a>1</a>",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a><a>1</a>",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_after_cit",
+      "buffer": "<b>one</b>\n<b>two</b>",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "citX<Esc>j.",
+      "expect": {
+        "buffer": "<b>X</b>\n<b>X</b>",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two",
+            "linewise": false
+          },
+          "-": {
+            "text": "two",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dot_after_dat",
+      "buffer": "<i>a</i> <i>b</i>",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "datw.",
+      "expect": {
+        "buffer": " ",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<i>b</i>",
+            "linewise": false
+          },
+          "-": {
+            "text": "<i>b</i>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "vit",
+      "buffer": "<a><b>ab</b></a>",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "vit",
+      "expect": {
+        "buffer": "<a><b>ab</b></a>",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          6
+        ]
+      }
+    },
+    {
+      "name": "vit_repeated",
+      "buffer": "<a><b>ab</b></a>",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "vitit",
+      "expect": {
+        "buffer": "<a><b>ab</b></a>",
+        "cursor": [
+          0,
+          11
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          3
+        ]
+      }
+    },
+    {
+      "name": "vit_repeated_thrice",
+      "buffer": "<a><b>ab</b></a>",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "vititit",
+      "expect": {
+        "buffer": "<a><b>ab</b></a>",
+        "cursor": [
+          0,
+          15
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "vit_one_char_inside_takes_tags",
+      "buffer": "<a>x</a>",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "vit",
+      "expect": {
+        "buffer": "<a>x</a>",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "vat_repeated",
+      "buffer": "<a><b>ab</b></a>",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "vatat",
+      "expect": {
+        "buffer": "<a><b>ab</b></a>",
+        "cursor": [
+          0,
+          15
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "vat_then_it",
+      "buffer": "<a> <b>x</b> </a>",
+      "cursor": [
+        0,
+        7
+      ],
+      "keys": "vatit",
+      "expect": {
+        "buffer": "<a> <b>x</b> </a>",
+        "cursor": [
+          0,
+          12
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          3
+        ]
+      }
+    },
+    {
+      "name": "vit_counted",
+      "buffer": "<a><b>xyz</b></a>",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "v2it",
+      "expect": {
+        "buffer": "<a><b>xyz</b></a>",
+        "cursor": [
+          0,
+          12
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          3
+        ]
+      }
+    },
+    {
+      "name": "vit_from_a_selection",
+      "buffer": "<a><b>xyz</b></a>",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "vlit",
+      "expect": {
+        "buffer": "<a><b>xyz</b></a>",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          6
+        ]
+      }
+    },
+    {
+      "name": "vit_from_selection_shrinks",
+      "buffer": "<a><b>xyz</b></a>",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "vlllit",
+      "expect": {
+        "buffer": "<a><b>xyz</b></a>",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          6
+        ]
+      }
+    },
+    {
+      "name": "vit_from_the_closing_tag",
+      "buffer": "<a><b>xyz</b></a>",
+      "cursor": [
+        0,
+        9
+      ],
+      "keys": "vlit",
+      "expect": {
+        "buffer": "<a><b>xyz</b></a>",
+        "cursor": [
+          0,
+          12
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          3
+        ]
+      }
+    },
+    {
+      "name": "vit_empty_element",
+      "buffer": "<a><b></b></a>",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "vity",
+      "expect": {
+        "buffer": "<a><b></b></a>",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<",
+            "linewise": false
+          },
+          "0": {
+            "text": "<",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            6
+          ],
+          ">": [
+            0,
+            6
+          ]
+        }
+      }
+    },
+    {
+      "name": "vit_across_rows",
+      "buffer": "<a>\nx\n</a>",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "vity",
+      "expect": {
+        "buffer": "<a>\nx\n</a>",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "\nx\n",
+            "linewise": false
+          },
+          "0": {
+            "text": "\nx\n",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            3
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "vat_fails_at_the_text_start",
+      "buffer": "<a>x</a>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vlat",
+      "expect": {
+        "buffer": "<a>x</a>",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "va_bracket_repeated",
+      "buffer": "[[a]]",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "va[a[",
+      "expect": {
+        "buffer": "[[a]]",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "vi_bracket_grows_from_a_word",
+      "buffer": "x [ab cd] y",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "viwi[",
+      "expect": {
+        "buffer": "x [ab cd] y",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          3
+        ]
+      }
+    },
+    {
+      "name": "vi_bracket_repeated",
+      "buffer": "[[a b]]",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "vi[i[",
+      "expect": {
+        "buffer": "[[a b]]",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "name": "vi_angle",
+      "buffer": "f<a, b>",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "vi<lt>",
+      "expect": {
+        "buffer": "f<a, b>",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          2
+        ]
+      }
+    },
+    {
+      "name": "vi_bracket_empty_fails",
+      "buffer": "x [] y",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "vi[y",
+      "expect": {
+        "buffer": "x [] y",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "[",
+            "linewise": false
+          },
+          "0": {
+            "text": "[",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "va_backtick",
+      "buffer": "`a` `b`",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "va`",
+      "expect": {
+        "buffer": "`a` `b`",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          3
+        ]
+      }
+    },
+    {
+      "name": "vi_backtick_empty",
+      "buffer": "x `` y",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "vi`",
+      "expect": {
+        "buffer": "x `` y",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          3
+        ]
+      }
+    },
+    {
+      "name": "vi_backtick_repeated",
+      "buffer": "x `ab` y",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "vi`i`",
+      "expect": {
+        "buffer": "x `ab` y",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          2
+        ]
+      }
+    },
+    {
+      "name": "vit_from_indent_starts_at_the_first_non_blank",
+      "buffer": "<u>a\n  <a>b</a></u>",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "vit",
+      "expect": {
+        "buffer": "<u>a\n  <a>b</a></u>",
+        "cursor": [
+          1,
+          5
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          1,
+          5
+        ]
+      }
+    },
+    {
+      "name": "vit_wider_selection_from_indent",
+      "buffer": "<u>a\n  <a>b</a></u>",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "vlit",
+      "expect": {
+        "buffer": "<u>a\n  <a>b</a></u>",
+        "cursor": [
+          1,
+          9
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          3
+        ]
+      }
+    },
+    {
+      "name": "dit_closing_tags_of_any_name_count_back",
+      "buffer": "<u><a>1</a><b>2</a>3</u>",
+      "cursor": [
+        0,
+        19
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<u></u>",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<a>1</a><b>2</a>3",
+            "linewise": false
+          },
+          "-": {
+            "text": "<a>1</a><b>2</a>3",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d2it_counts_an_unmatched_tag",
+      "buffer": "<div><p>a<br>b</p></div>",
+      "cursor": [
+        0,
+        13
+      ],
+      "keys": "d2it",
+      "expect": {
+        "buffer": "<div><p></p></div>",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a<br>b",
+            "linewise": false
+          },
+          "-": {
+            "text": "a<br>b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_blanks_mid_row_dont_move",
+      "buffer": "<u>a  <a>b</a></u>",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<u></u>",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a  <a>b</a>",
+            "linewise": false
+          },
+          "-": {
+            "text": "a  <a>b</a>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ca_angle",
+      "buffer": "Map<K, V> x",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "ca<lt>T<Esc>",
+      "expect": {
+        "buffer": "MapT x",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<K, V>",
+            "linewise": false
+          },
+          "-": {
+            "text": "<K, V>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ca_backtick",
+      "buffer": "run `ls` now",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "ca`x<Esc>",
+      "expect": {
+        "buffer": "run xnow",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "`ls` ",
+            "linewise": false
+          },
+          "-": {
+            "text": "`ls` ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ya_backtick",
+      "buffer": "run `ls` now",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "ya`P",
+      "expect": {
+        "buffer": "run `ls` `ls` now",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "`ls` ",
+            "linewise": false
+          },
+          "0": {
+            "text": "`ls` ",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "cat",
+      "buffer": "x <b>hi</b> y",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "catz<Esc>",
+      "expect": {
+        "buffer": "x z y",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<b>hi</b>",
+            "linewise": false
+          },
+          "-": {
+            "text": "<b>hi</b>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_on_a_tag_with_a_tag_in_an_attribute",
+      "buffer": "<a attr=\"<b>x</b>\">y</a>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a attr=\"<b></b>\">y</a>",
+        "cursor": [
+          0,
+          12
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dat_on_a_tag_with_a_tag_in_an_attribute",
+      "buffer": "<a attr=\"<b>x</b>\">y</a>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dat",
+      "expect": {
+        "buffer": "<a attr=\"\">y</a>",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<b>x</b>",
+            "linewise": false
+          },
+          "-": {
+            "text": "<b>x</b>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d2it_on_a_tag_with_a_tag_in_an_attribute",
+      "buffer": "<a attr=\"<b>x</b>\">y</a>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d2it",
+      "expect": {
+        "buffer": "<a attr=\"<b>x</b>\"></a>",
+        "cursor": [
+          0,
+          19
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "y",
+            "linewise": false
+          },
+          "-": {
+            "text": "y",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_after_a_tag_in_an_attribute",
+      "buffer": "<a attr=\"<b>x</b>\">y</a>",
+      "cursor": [
+        0,
+        17
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a attr=\"<b>x</b>\"></a>",
+        "cursor": [
+          0,
+          19
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "y",
+            "linewise": false
+          },
+          "-": {
+            "text": "y",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "vit_on_a_tag_with_a_tag_in_an_attribute",
+      "buffer": "<a attr=\"<b>x</b>\">y</a>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vit",
+      "expect": {
+        "buffer": "<a attr=\"<b>x</b>\">y</a>",
+        "cursor": [
+          0,
+          12
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          12
+        ]
+      }
+    },
+    {
+      "name": "vit_repeated_on_a_tag_with_a_tag_in_an_attribute",
+      "buffer": "<a attr=\"<b>x</b>\">y</a>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vitit",
+      "expect": {
+        "buffer": "<a attr=\"<b>x</b>\">y</a>",
+        "cursor": [
+          0,
+          16
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          9
+        ]
+      }
+    },
+    {
+      "name": "dit_attributes_with_a_tag_across_rows",
+      "buffer": "<y\n(]<i>x</i>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<y\n(]<i></i>",
+        "cursor": [
+          1,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "vit_attributes_with_a_tag_across_rows",
+      "buffer": "<y\n(]<i>x</i>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vit",
+      "expect": {
+        "buffer": "<y\n(]<i>x</i>",
+        "cursor": [
+          1,
+          5
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          1,
+          5
+        ]
+      }
+    },
+    {
+      "name": "dat_attributes_with_a_tag_across_rows",
+      "buffer": "<y\n(]<i>x</i>",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "dat",
+      "expect": {
+        "buffer": "<y\n(]",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<i>x</i>",
+            "linewise": false
+          },
+          "-": {
+            "text": "<i>x</i>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d2it_on_a_closing_tag_in_an_attribute",
+      "buffer": "<b><a t=\"</b>\"><a t=\"</b>\">",
+      "cursor": [
+        0,
+        10
+      ],
+      "keys": "d2it",
+      "expect": {
+        "buffer": "<b></b>\"><a t=\"</b>\">",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<a t=\"",
+            "linewise": false
+          },
+          "-": {
+            "text": "<a t=\"",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_closing_tag_in_an_attribute_closes",
+      "buffer": "<a x=\"</a>\">y</a>",
+      "cursor": [
+        0,
+        12
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a x=\"</a>\">y</a>",
+        "cursor": [
+          0,
+          12
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_on_a_bare_lt_goes_on_to_the_next_tag",
+      "buffer": "<b>x<<i>z</i></b>",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<b>x<<i></i></b>",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "z",
+            "linewise": false
+          },
+          "-": {
+            "text": "z",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_on_a_bare_lt_goes_on_to_the_next_gt",
+      "buffer": "<b>x< y>z<i>w</i></b>",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<b></b>",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x< y>z<i>w</i>",
+            "linewise": false
+          },
+          "-": {
+            "text": "x< y>z<i>w</i>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_after_a_bare_lt_goes_on_to_the_next_tag",
+      "buffer": "<b>x< y<i>w</i></b>",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<b>x< y<i></i></b>",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "w",
+            "linewise": false
+          },
+          "-": {
+            "text": "w",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_after_a_bare_lt_goes_on_across_rows",
+      "buffer": "<b>x<y\n<i>z</i></b>",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<b>x<y\n<i></i></b>",
+        "cursor": [
+          1,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "z",
+            "linewise": false
+          },
+          "-": {
+            "text": "z",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_a_bare_lt_on_an_earlier_row_stays",
+      "buffer": "<b>x<y\nz</b>",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<b></b>",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x<y\nz",
+            "linewise": false
+          },
+          "1": {
+            "text": "x<y\nz",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_on_a_bare_closing_lt_goes_back",
+      "buffer": "<b>x</ <i>w</i></b>",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<b></b>",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x</ <i>w</i>",
+            "linewise": false
+          },
+          "-": {
+            "text": "x</ <i>w</i>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_on_a_bare_lt_with_no_gt_after",
+      "buffer": "<b>x<y",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<b>x<y",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_names_hold_lt",
+      "buffer": "<x<y>z</x<y>",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<x<y></x<y>",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "z",
+            "linewise": false
+          },
+          "-": {
+            "text": "z",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d3it_names_hold_lt",
+      "buffer": "<b><x<y>z</y></b>",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "d3it",
+      "expect": {
+        "buffer": "<b></b>",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<x<y>z</y>",
+            "linewise": false
+          },
+          "-": {
+            "text": "<x<y>z</y>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_closing_names_hold_lt_and_slash",
+      "buffer": "<i><b></</x>x</b></i>",
+      "cursor": [
+        0,
+        12
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<i><b></</x>x</b></i>",
+        "cursor": [
+          0,
+          12
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "d2it_bang_starts_no_tag",
+      "buffer": "<b><!x>z</b>",
+      "cursor": [
+        0,
+        7
+      ],
+      "keys": "d2it",
+      "expect": {
+        "buffer": "<b><!x>z</b>",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_closing_names_hold_bang",
+      "buffer": "<b></!x>z</b>",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<b></!x>z</b>",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_composed_lt_is_no_name",
+      "buffer": "<ͅ>x</Ι>",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<ͅ>x</Ι>",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_lone_composing_char_in_a_closing_name_folds",
+      "buffer": "<Ι>x</ͅ>",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<Ι></ͅ>",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_composed_chars_dont_fold",
+      "buffer": "<aͅ>x</Aͅ>",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<aͅ>x</Aͅ>",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_composed_chars_match_themselves",
+      "buffer": "<aͅ>x</aͅ>",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<aͅ></aͅ>",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_composed_char_matches_more_composing",
+      "buffer": "<á>x</á̂>",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<á></á̂>",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_composed_char_doesnt_match_less_composing",
+      "buffer": "<á̂>x</á>",
+      "cursor": [
+        0,
+        7
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<á̂>x</á>",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_composing_in_any_order",
+      "buffer": "<á̂>x</ấ>",
+      "cursor": [
+        0,
+        7
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<á̂></ấ>",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_composed_names_nest",
+      "buffer": "<á>a<á̂>x</á̂>b</á̂>",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<á></á̂>",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a<á̂>x</á̂>b",
+            "linewise": false
+          },
+          "-": {
+            "text": "a<á̂>x</á̂>b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_plain_char_doesnt_match_composed",
+      "buffer": "<a>x</aͅ>",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a>x</aͅ>",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_zero_width_joiner_composes",
+      "buffer": "<a‍b>x</A‍B>",
+      "cursor": [
+        0,
+        7
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍b>x</A‍B>",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_name_after_a_composed_lt",
+      "buffer": "<ͅa>x</a>",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<ͅa></a>",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d2it_composed_lt_doesnt_nest",
+      "buffer": "<a><ͅa>x</a></a>",
+      "cursor": [
+        0,
+        9
+      ],
+      "keys": "d2it",
+      "expect": {
+        "buffer": "<a></a></a>",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<ͅa>x",
+            "linewise": false
+          },
+          "-": {
+            "text": "<ͅa>x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_nameless_tag_fails",
+      "buffer": "<b><ͅ>y</b>",
+      "cursor": [
+        0,
+        7
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<b><ͅ>y</b>",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_nameless_tag_fails_past_an_unmatched_tag",
+      "buffer": "<b><ͅ><br>y</b>",
+      "cursor": [
+        0,
+        11
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<b><ͅ><br>y</b>",
+        "cursor": [
+          0,
+          11
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "d3it_counts_a_nameless_tag",
+      "buffer": "<i><b><ͅ>x</b></i>",
+      "cursor": [
+        0,
+        11
+      ],
+      "keys": "d3it",
+      "expect": {
+        "buffer": "<i></i>",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<b><ͅ>x</b>",
+            "linewise": false
+          },
+          "-": {
+            "text": "<b><ͅ>x</b>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "vit_nameless_tag_fails",
+      "buffer": "<ͅ>x",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "vit",
+      "expect": {
+        "buffer": "<ͅ>x",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          4
+        ]
+      }
+    },
+    {
+      "name": "dit_a_closing_tag_with_a_blank_counts_back",
+      "buffer": "<a>x</a b></a>",
+      "cursor": [
+        0,
+        10
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a>x</a b></a>",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_a_closing_tag_with_a_blank_after_the_caret",
+      "buffer": "<a>x</a b></a>",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a></a>",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x</a b>",
+            "linewise": false
+          },
+          "-": {
+            "text": "x</a b>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dat_a_closing_tag_with_a_blank_counts_back",
+      "buffer": "<a>x</a b></a>",
+      "cursor": [
+        0,
+        11
+      ],
+      "keys": "dat",
+      "expect": {
+        "buffer": "<a>x</a b></a>",
+        "cursor": [
+          0,
+          11
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "vit_a_closing_tag_with_a_blank_counts_back",
+      "buffer": "<a>x</a b></a>",
+      "cursor": [
+        0,
+        10
+      ],
+      "keys": "vit",
+      "expect": {
+        "buffer": "<a>x</a b></a>",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          10
+        ]
+      }
+    },
+    {
+      "name": "d2it_a_closing_tag_with_a_blank_counts_back",
+      "buffer": "<i><a>x</a b></a></i>",
+      "cursor": [
+        0,
+        13
+      ],
+      "keys": "d2it",
+      "expect": {
+        "buffer": "<i><a>x</a b></a></i>",
+        "cursor": [
+          0,
+          13
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_a_closing_tag_with_no_name_counts_back",
+      "buffer": "<a>x</ <b></a>",
+      "cursor": [
+        0,
+        7
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a>x</ <b></a>",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "vat_a_closing_tag_with_no_name_counts_back",
+      "buffer": "<a>x</ <b></a>",
+      "cursor": [
+        0,
+        7
+      ],
+      "keys": "vat",
+      "expect": {
+        "buffer": "<a>x</ <b></a>",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          7
+        ]
+      }
+    },
+    {
+      "name": "dit_empty_closing_tag_counts_back",
+      "buffer": "<a>x</></a>",
+      "cursor": [
+        0,
+        7
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a>x</></a>",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_a_closing_tag_over_rows_doesnt_count",
+      "buffer": "<a>x</a\nb></a>",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a></a>",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x</a\nb>",
+            "linewise": false
+          },
+          "1": {
+            "text": "x</a\nb>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_name_pattern_dot",
+      "buffer": "<a.b>x</axb>z</a.b>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a.b></axb>z</a.b>",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dat_name_pattern_dot",
+      "buffer": "<a.b>x</axb>z</a.b>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dat",
+      "expect": {
+        "buffer": "z</a.b>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<a.b>x</axb>",
+            "linewise": false
+          },
+          "-": {
+            "text": "<a.b>x</axb>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "vit_name_pattern_dot",
+      "buffer": "<a.b>x</axb>z</a.b>",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "vit",
+      "expect": {
+        "buffer": "<a.b>x</axb>z</a.b>",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          5
+        ]
+      }
+    },
+    {
+      "name": "dit_name_pattern_nests",
+      "buffer": "<a.b>x<axb>y</axb>z</a.b>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a.b></a.b>",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x<axb>y</axb>z",
+            "linewise": false
+          },
+          "-": {
+            "text": "x<axb>y</axb>z",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d2it_name_pattern",
+      "buffer": "<a.b><b>x</b></axb>",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "d2it",
+      "expect": {
+        "buffer": "<a.b></axb>",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<b>x</b>",
+            "linewise": false
+          },
+          "-": {
+            "text": "<b>x</b>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_name_pattern_nests_only_at_a_word_end",
+      "buffer": "<a.>x<a*>y</aa>z</aa>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a.></aa>z</aa>",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x<a*>y",
+            "linewise": false
+          },
+          "-": {
+            "text": "x<a*>y",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_name_pattern_star",
+      "buffer": "<a*>x</>y",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a*></>y",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_name_pattern_class",
+      "buffer": "<a\\d>x</A5>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a\\d></A5>",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_name_pattern_escaped_dot",
+      "buffer": "<a\\.b>x</axb>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a\\.b>x</axb>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "vitit_name_pattern_closing_tag_ends_at_its_first_gt",
+      "buffer": "<a.></a>>",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "vitit",
+      "expect": {
+        "buffer": "<a.></a>>",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "dit_plain_name_nests_only_at_a_word_end",
+      "buffer": "<a->x<a->y</a->z</a->",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a-></a->z</a->",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x<a->y",
+            "linewise": false
+          },
+          "-": {
+            "text": "x<a->y",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_invalid_name_pattern_fails",
+      "buffer": "<a[>x</a[>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a[>x</a[>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_invalid_name_pattern_is_passed_over",
+      "buffer": "<b><a[>x</a[></b>",
+      "cursor": [
+        0,
+        7
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<b></b>",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<a[>x</a[>",
+            "linewise": false
+          },
+          "-": {
+            "text": "<a[>x</a[>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d2it_invalid_name_pattern_counts",
+      "buffer": "<a[><b>x</b></a[>",
+      "cursor": [
+        0,
+        7
+      ],
+      "keys": "d2it",
+      "expect": {
+        "buffer": "<a[><b>x</b></a[>",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_tilde_name_fails",
+      "buffer": "<a~>x</a~>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a~>x</a~>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_group_name_fails",
+      "buffer": "<a\\(b>x</ab>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a\\(b>x</ab>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "vit_invalid_name_pattern_fails",
+      "buffer": "<a[>x</a[>",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "vit",
+      "expect": {
+        "buffer": "<a[>x</a[>",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          4
+        ]
+      }
+    },
+    {
+      "name": "dit_name_pattern_group",
+      "buffer": "<a\\(b\\)>x</ab>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a\\(b\\)></ab>",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_name_pattern_unnamed_group",
+      "buffer": "<a\\%(b\\)>x</ab>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a\\%(b\\)></ab>",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_name_pattern_branch_in_a_group_nests",
+      "buffer": "<a\\(b\\|c\\)>x<ab>y</ab>z</ac>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a\\(b\\|c\\)></ac>",
+        "cursor": [
+          0,
+          11
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x<ab>y</ab>z",
+            "linewise": false
+          },
+          "-": {
+            "text": "x<ab>y</ab>z",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "vit_name_pattern_branch_in_a_group",
+      "buffer": "<a\\(b\\|c\\)>x<ab>y</ab>z</ac>",
+      "cursor": [
+        0,
+        11
+      ],
+      "keys": "vit",
+      "expect": {
+        "buffer": "<a\\(b\\|c\\)>x<ab>y</ab>z</ac>",
+        "cursor": [
+          0,
+          22
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          11
+        ]
+      }
+    },
+    {
+      "name": "d2it_name_pattern_group",
+      "buffer": "<i><a\\(b\\)>x</ab></i>",
+      "cursor": [
+        0,
+        11
+      ],
+      "keys": "d2it",
+      "expect": {
+        "buffer": "<i></i>",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<a\\(b\\)>x</ab>",
+            "linewise": false
+          },
+          "-": {
+            "text": "<a\\(b\\)>x</ab>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_branch_outside_a_group_fails",
+      "buffer": "<a\\|b>x</b>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a\\|b>x</b>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_name_pattern_greedy_finds_a_nested_tag",
+      "buffer": "<a.*>x<a>y</a>z</a>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a.*></a>",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x<a>y</a>z",
+            "linewise": false
+          },
+          "-": {
+            "text": "x<a>y</a>z",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "vat_name_pattern_greedy_finds_a_nested_tag",
+      "buffer": "<a.*>x<a>y</a>z</a>",
+      "cursor": [
+        0,
+        6
+      ],
+      "keys": "vat",
+      "expect": {
+        "buffer": "<a.*>x<a>y</a>z</a>",
+        "cursor": [
+          0,
+          13
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          6
+        ]
+      }
+    },
+    {
+      "name": "dit_name_pattern_ends_before_a_gt",
+      "buffer": "<a.>x<a>>y</a>>z</a>>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a.></a>>z</a>>",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x<a>>y",
+            "linewise": false
+          },
+          "-": {
+            "text": "x<a>>y",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_name_pattern_ends_before_a_blank",
+      "buffer": "<a.>x<a >y</a >z</a >",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a.></a >z</a >",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x<a >y",
+            "linewise": false
+          },
+          "-": {
+            "text": "x<a >y",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_name_with_match_case_still_folds",
+      "buffer": "<a\\C>x</A>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a\\C></A>",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_name_with_nomagic_nests",
+      "buffer": "<a\\M>x<a>y</a>z</a>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a\\M></a>",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x<a>y</a>z",
+            "linewise": false
+          },
+          "-": {
+            "text": "x<a>y</a>z",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_name_with_very_nomagic_nests",
+      "buffer": "<a\\V>x<a>y</a>z</a>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a\\V></a>",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x<a>y</a>z",
+            "linewise": false
+          },
+          "-": {
+            "text": "x<a>y</a>z",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "vat_name_with_very_nomagic_nests",
+      "buffer": "<a\\V>x<a>y</a>z</a>",
+      "cursor": [
+        0,
+        5
+      ],
+      "keys": "vat",
+      "expect": {
+        "buffer": "<a\\V>x<a>y</a>z</a>",
+        "cursor": [
+          0,
+          18
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "dit_name_ending_very_magic_is_passed_over",
+      "buffer": "<b><a\\v>x</a></b>",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<b></b>",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<a\\v>x</a>",
+            "linewise": false
+          },
+          "-": {
+            "text": "<a\\v>x</a>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_name_with_very_magic_inside",
+      "buffer": "<b><a\\vb\\m>x</ab></b>",
+      "cursor": [
+        0,
+        11
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<b><a\\vb\\m></ab></b>",
+        "cursor": [
+          0,
+          11
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_name_pattern_collection_holds_a_branch",
+      "buffer": "<a[\\|]>x</a|>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a[\\|]></a|>",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_name_pattern_collection_holds_a_tilde",
+      "buffer": "<a[~]>x</a~>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a[~]></a~>",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_name_pattern_collection_starting_with_a_bracket",
+      "buffer": "<a[]b]>x</ab>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a[]b]></ab>",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_name_pattern_very_nomagic_bracket",
+      "buffer": "<a\\V[>x</a[>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a\\V[></a[>",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_name_pattern_very_nomagic_tilde",
+      "buffer": "<a\\V~>x</a~>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a\\V~></a~>",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_name_pattern_nomagic_collection",
+      "buffer": "<a\\M\\[b]>x</ab>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a\\M\\[b]></ab>",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_name_pattern_branch_after_a_collection_fails",
+      "buffer": "<a[\\(]\\|b>x</b>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a[\\(]\\|b>x</b>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_name_pattern_empty_collection_fails",
+      "buffer": "<a[]>x</a]>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a[]>x</a]>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_name_pattern_very_magic_tilde_fails",
+      "buffer": "<a\\v~>x</a~>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a\\v~>x</a~>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "d2it_name_pattern_collection",
+      "buffer": "<i><a[~]>x</a~></i>",
+      "cursor": [
+        0,
+        9
+      ],
+      "keys": "d2it",
+      "expect": {
+        "buffer": "<i></i>",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<a[~]>x</a~>",
+            "linewise": false
+          },
+          "-": {
+            "text": "<a[~]>x</a~>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "vit_name_pattern_collection",
+      "buffer": "<a[\\|]>x</a|>",
+      "cursor": [
+        0,
+        7
+      ],
+      "keys": "vit",
+      "expect": {
+        "buffer": "<a[\\|]>x</a|>",
+        "cursor": [
+          0,
+          12
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "dit_name_pattern_zwj_doesnt_fold",
+      "buffer": "<a‍b.>x</A‍Bx>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍b.>x</A‍Bx>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_name_pattern_zwj_folds_around",
+      "buffer": "<a‍b.>x</a‍Bx>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍b.></a‍Bx>",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "vit_name_pattern_zwj_doesnt_fold",
+      "buffer": "<a‍b.>x</A‍Bx>",
+      "cursor": [
+        0,
+        8
+      ],
+      "keys": "vit",
+      "expect": {
+        "buffer": "<a‍b.>x</A‍Bx>",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          8
+        ]
+      }
+    },
+    {
+      "name": "dit_name_pattern_modifier_doesnt_fold",
+      "buffer": "<a🏻.>x</A🏻x>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a🏻.>x</A🏻x>",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_name_pattern_modifier",
+      "buffer": "<a🏻.>x</a🏻x>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a🏻.></a🏻x>",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x",
+            "linewise": false
+          },
+          "-": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "dit_name_pattern_zwj_nests",
+      "buffer": "<a‍.>x<a‍z>y</a‍z>w</a‍x>",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a‍.></a‍x>",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x<a‍z>y</a‍z>w",
+            "linewise": false
+          },
+          "-": {
+            "text": "x<a‍z>y</a‍z>w",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "d2it_name_pattern_zwj",
+      "buffer": "<i><a‍b.>x</A‍Bx></i>",
+      "cursor": [
+        0,
+        11
+      ],
+      "keys": "d2it",
+      "expect": {
+        "buffer": "<i></i>",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<a‍b.>x</A‍Bx>",
+            "linewise": false
+          },
+          "-": {
+            "text": "<a‍b.>x</A‍Bx>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "va_bracket_ending_a_row_yanks",
+      "buffer": "[ab]\nx",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "va[y",
+      "expect": {
+        "buffer": "[ab]\nx",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "[ab]",
+            "linewise": false
+          },
+          "0": {
+            "text": "[ab]",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "va_bracket_alias_ending_a_row_deletes",
+      "buffer": "[ab]\nx",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "va]d",
+      "expect": {
+        "buffer": "\nx",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "[ab]",
+            "linewise": false
+          },
+          "-": {
+            "text": "[ab]",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "va_bracket_ending_a_row_mid_row",
+      "buffer": "x[ab]\ny",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "va[y",
+      "expect": {
+        "buffer": "x[ab]\ny",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "[ab]",
+            "linewise": false
+          },
+          "0": {
+            "text": "[ab]",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            0,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "va_angle_ending_a_row_yanks",
+      "buffer": "<ab>\nx",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "va<lt>y",
+      "expect": {
+        "buffer": "<ab>\nx",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<ab>",
+            "linewise": false
+          },
+          "0": {
+            "text": "<ab>",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "va_angle_ending_a_row_deletes",
+      "buffer": "<ab>\nx",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "va<lt>d",
+      "expect": {
+        "buffer": "\nx",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<ab>",
+            "linewise": false
+          },
+          "-": {
+            "text": "<ab>",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "va_angle_alias_ending_a_row_yanks",
+      "buffer": "<ab>\nx",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "va>y",
+      "expect": {
+        "buffer": "<ab>\nx",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<ab>",
+            "linewise": false
+          },
+          "0": {
+            "text": "<ab>",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "va_angle_alias_ending_a_row_deletes",
+      "buffer": "<ab>\nx",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "va>d",
+      "expect": {
+        "buffer": "\nx",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<ab>",
+            "linewise": false
+          },
+          "-": {
+            "text": "<ab>",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "va_bracket_repeated_ending_a_row",
+      "buffer": "[[a]\n]",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "va[a[y",
+      "expect": {
+        "buffer": "[[a]\n]",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "[[a]\n]",
+            "linewise": false
+          },
+          "0": {
+            "text": "[[a]\n]",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "vi_bracket_inside_ending_a_row",
+      "buffer": "[a\n]x",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "vi[d",
+      "expect": {
+        "buffer": "[]x",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\n",
+            "linewise": false
+          },
+          "1": {
+            "text": "a\n",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "dit_on_a_lt_in_a_closing_name_fails",
+      "buffer": "<x<y>z</x<y>",
+      "cursor": [
+        0,
+        9
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<x<y>z</x<y>",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dat_on_a_lt_in_a_closing_name_fails",
+      "buffer": "<x<y>z</x<y>",
+      "cursor": [
+        0,
+        9
+      ],
+      "keys": "dat",
+      "expect": {
+        "buffer": "<x<y>z</x<y>",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "vit_on_a_lt_in_a_closing_name_fails",
+      "buffer": "<x<y>z</x<y>",
+      "cursor": [
+        0,
+        9
+      ],
+      "keys": "vit",
+      "expect": {
+        "buffer": "<x<y>z</x<y>",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          9
+        ]
+      }
+    },
+    {
+      "name": "dit_past_a_lt_in_a_closing_name_fails",
+      "buffer": "<x<y>z</x<y>",
+      "cursor": [
+        0,
+        10
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<x<y>z</x<y>",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dit_on_a_lt_in_a_closing_name_goes_out",
+      "buffer": "<a><x<y>z</x<y></a>",
+      "cursor": [
+        0,
+        12
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a></a>",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<x<y>z</x<y>",
+            "linewise": false
+          },
+          "-": {
+            "text": "<x<y>z</x<y>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "vat_on_a_lt_in_a_closing_name_goes_out",
+      "buffer": "<a><x<y>z</x<y></a>",
+      "cursor": [
+        0,
+        12
+      ],
+      "keys": "vat",
+      "expect": {
+        "buffer": "<a><x<y>z</x<y></a>",
+        "cursor": [
+          0,
+          18
+        ],
+        "mode": "v",
+        "registers": {},
+        "visual": [
+          0,
+          0
+        ]
+      }
+    },
+    {
+      "name": "dit_a_run_of_lt",
+      "buffer": "<a>x<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<></a>",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "dit",
+      "expect": {
+        "buffer": "<a></a>",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<>",
+            "linewise": false
+          },
+          "-": {
+            "text": "x<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "yit_a_run_of_lt_without_gt",
+      "buffer": "<a>x<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<</a>",
+      "cursor": [
+        0,
+        3
+      ],
+      "keys": "yit",
+      "expect": {
+        "buffer": "<a>x<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<</a>",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "x<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<",
+            "linewise": false
+          },
+          "0": {
+            "text": "x<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "yit_count_over_pattern_names",
+      "buffer": "<b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b>x</axb></b>",
+      "cursor": [
+        0,
+        153
+      ],
+      "keys": "31yit",
+      "expect": {
+        "buffer": "<b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b>x</axb></b>",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b>x</axb>",
+            "linewise": false
+          },
+          "0": {
+            "text": "<a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b>x</axb>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "yit_count_2_over_pattern_names",
+      "buffer": "<b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b>x</axb></b>",
+      "cursor": [
+        0,
+        153
+      ],
+      "keys": "2yit",
+      "expect": {
+        "buffer": "<b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b>x</axb></b>",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "<a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b>x</axb>",
+            "linewise": false
+          },
+          "0": {
+            "text": "<a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b><a.b>x</axb>",
+            "linewise": false
+          }
+        }
+      }
+    }
+  ]
+}

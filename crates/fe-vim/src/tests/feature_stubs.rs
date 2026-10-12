@@ -108,6 +108,15 @@ fn new_variants_change_nothing() {
         round_trips(motion, name);
     }
     for (object, name) in OBJECTS {
+        // T417 made the delimiter objects work.
+        if name.ends_with("_bracket")
+            || name.ends_with("_angle")
+            || name.ends_with("_tag")
+            || name.ends_with("_backtick")
+        {
+            round_trips(object, name);
+            continue;
+        }
         for operator in [Operator::Delete, Operator::Yank, Operator::Change] {
             let args = OperateArgs {
                 operator,

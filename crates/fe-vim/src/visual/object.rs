@@ -91,7 +91,21 @@ pub(crate) fn select_object(
         let at = cursor_at(&text, ends.cursor);
         at.ix > 0 && at.class_on_row(at.ix - 1, big) == Some(Class::Blank)
     };
-    let (anchor, cursor) = if ends.anchor == ends.cursor && inner && after_blanks {
+    let (anchor, cursor) = if matches!(
+        args.text_object,
+        InnerBracket | ABracket | InnerAngle | AAngle | InnerTag | ATag | InnerBacktick | ABacktick
+    ) {
+        match crate::delimiters::select_visual(
+            &text,
+            ends.anchor,
+            ends.cursor,
+            args.text_object,
+            count,
+        ) {
+            Some(found) => found,
+            None => return failed(state),
+        }
+    } else if ends.anchor == ends.cursor && inner && after_blanks {
         let mut start = cursor_at(&text, ends.cursor);
         start.ix -= 1;
         let class = start.class_on_row(start.ix, big);
