@@ -11,6 +11,7 @@ use crate::{
     cmdline::{self, CommandLine},
     history::Carets,
     insert::{Closing, Session},
+    jump,
     macros::Macros,
     marks::Marks,
     replace::Replace,
@@ -108,6 +109,8 @@ pub struct VimState {
     /// view's rows then: a view of another height goes back to half its
     /// rows, as nvim's does (see [`crate::scroll`]).
     pub(crate) scroll: Option<(u32, u32)>,
+    /// The jump's labels waiting, the last jump and the `s` opt-in.
+    pub(crate) jump: jump::Jumps,
 }
 
 impl VimState {
@@ -260,10 +263,22 @@ impl VimState {
     /// host's line takes the keys, not this: `<Esc>` commits
     /// `vim.command_line_cancel`, for a host with no line, and every other
     /// key is forwarded.
+    ///
+    /// The jump's keys are read here too ([`crate::jump`]): `{c2}` with no
+    /// count commits `vim.jump`, `<CR>` as `{c1}` repeats the last jump's
+    /// chars, `s` and `S` start a jump when [`VimState::set_jump_on_s`] is
+    /// on (as `/` is taken, with no prefix pending), and while labels wait
+    /// every key goes to them first.
     pub fn feed(&mut self, key: VimKey) -> Step {
         self.message = None;
         self.failed = false;
         let replayed = self.macros.count();
+        if let Some(step) = jump::label_key(self, key) {
+            if let Step::Wait(pending) = &step {
+                self.pending = pending.clone();
+            }
+            return step;
+        }
         // `q` with nothing pending, in normal or a visual mode, ends a
         // recording (and isn't in it). A replay's `q` (after a count or a
         // register too, which it drops) does nothing, as nvim doesn't record
@@ -278,6 +293,10 @@ impl VimState {
                 return Step::Commit(stop.source(Source::Keyboard));
             }
         }
+        let before = self.pending.kind();
+        if before.is_none() {
+            self.macros.command_start();
+        }
         self.macros.record(key);
         let kind = match self.mode {
             Mode::Visual(kind) => Some(kind),
@@ -285,10 +304,11 @@ impl VimState {
             _ => None,
         };
         let pending = std::mem::take(&mut self.pending).in_visual(kind);
-        let result = match pending.command_line(key) {
-            Ok(opened) => opened,
+        let result = match jump::key(self, pending, key).or_else(|p| p.command_line(key)) {
+            Ok(step) => step,
             Err(pending) => step(pending, key),
         };
+        jump::fed(self, before, &result);
         match &result {
             Step::Wait(pending) => self.pending = pending.clone(),
             // `<Esc>` cancelling isn't an error in Vim.

@@ -214,6 +214,25 @@ pub(crate) fn corpus_dir() -> PathBuf {
     crate_dir().join("tests/corpus")
 }
 
+/// Corpus files that are fastedit's own spec, not recorded from nvim:
+/// `jump_labels.toml`, which `tests/jump_spec.rs` reads.
+const NOT_RECORDED: [&str; 1] = ["jump_labels"];
+
+/// The corpus files recorded from nvim, `tests/corpus/<area>.toml`, sorted.
+pub(crate) fn recorded_corpora() -> Vec<PathBuf> {
+    let mut corpora: Vec<PathBuf> = std::fs::read_dir(corpus_dir())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
+        .filter(|path| {
+            let stem = path.file_stem().unwrap().to_string_lossy();
+            !NOT_RECORDED.contains(&stem.as_ref())
+        })
+        .collect();
+    corpora.sort();
+    corpora
+}
+
 /// Reads a corpus file, rejecting cases the oracle can't record faithfully.
 pub(crate) fn parse_corpus(source: &str) -> Result<Vec<Case>, String> {
     let file: CorpusFile = toml::from_str(source).map_err(|error| error.to_string())?;

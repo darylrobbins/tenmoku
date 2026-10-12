@@ -1473,7 +1473,7 @@
         0,
         0
       ],
-      "keys": "dgsab.",
+      "keys": "dgsabs.",
       "oracle_keys": "dv/ab<CR>.",
       "expect": {
         "buffer": "b3ab4",
@@ -1513,7 +1513,7 @@
         0,
         9
       ],
-      "keys": "dgSab.",
+      "keys": "dgSabs.",
       "oracle_keys": "d?ab<CR>.",
       "expect": {
         "buffer": "1ab24",
@@ -1553,7 +1553,7 @@
         0,
         0
       ],
-      "keys": "dgsab2.",
+      "keys": "dgsabs2.",
       "oracle_keys": "dv/ab<CR>2.",
       "expect": {
         "buffer": "b4ab5",
@@ -1593,7 +1593,7 @@
         2,
         3
       ],
-      "keys": "dgSab.",
+      "keys": "dgSabs.",
       "oracle_keys": "d?ab<CR>.",
       "expect": {
         "buffer": "ab x\nz",
@@ -1633,7 +1633,7 @@
         0,
         0
       ],
-      "keys": "\"adgsab.",
+      "keys": "\"adgsabs.",
       "oracle_keys": "\"adv/ab<CR>.",
       "expect": {
         "buffer": "b\nthree ab",
@@ -1673,7 +1673,7 @@
         0,
         0
       ],
-      "keys": "cgsabQ<Esc>.",
+      "keys": "cgsabsQ<Esc>.",
       "oracle_keys": "cv/ab<CR>Q<Esc>.",
       "expect": {
         "buffer": "Qb z ab",
@@ -1713,7 +1713,7 @@
         0,
         0
       ],
-      "keys": "dgsab.u",
+      "keys": "dgsabs.u",
       "oracle_keys": "dv/ab<CR>.u",
       "expect": {
         "buffer": "b2ab3ab4",

@@ -1,11 +1,20 @@
 //! Macros (`docs/decisions/vim-engine.md` §4 and §9 item 6): `q{a-z}`
 //! records the keys typed into a register as text, and `@{a-z}` hands that
 //! text back as keys for the host to feed through its own path.
+//!
+//! A jump (`gs{c1}{c2}`) records what it resolved to rather than the keys
+//! typed: once it lands, directly, by autojump or by a label, the keys from
+//! its trigger through the one that picked it (paging keys, and an `<Esc>`
+//! after an autojump, included) are `{n}gs{c1}{c2}` (`gS` backward, and
+//! after `s` or `S` too), `n` the target's count from where it started, so
+//! the replay reaches the same match whatever the view shows. A key that
+//! falls through after an autojump is recorded after them, as itself. A
+//! cancelled jump leaves none of its command's keys.
 
 use fe_buffer::TransactionId;
 use fe_command::{CommandError, Dispatched, Effect};
 
-use crate::{PlayArgs, RecordArgs, VimKey, VimState, VimTarget};
+use crate::{JumpMotion, PlayArgs, RecordArgs, VimKey, VimState, VimTarget};
 
 /// The most keys one replay feeds, `@` inside it included: nvim plays until
 /// an error or `<C-c>`.
@@ -42,6 +51,12 @@ pub(crate) struct Macros {
     /// How many `:normal`s are running ([`Macros::hold`]): their keys
     /// aren't typed, so a recording doesn't get them.
     held: u32,
+    /// Where the command being read began in the recording's text: a
+    /// cancelled jump takes its keys back to here.
+    command_at: usize,
+    /// Where the jump being read began, at its trigger (`gs`, `gS`, `s` or
+    /// `S`): once it lands, its keys from here are the counted jump.
+    jump_at: Option<usize>,
 }
 
 /// A replay a `:normal` set aside while its keys run ([`Macros::hold`]).
@@ -80,13 +95,72 @@ impl Macros {
         self.replayed
     }
 
+    /// Whether the key being read was typed: not a replay's, nor a
+    /// `:normal`'s.
+    fn typed(&self) -> bool {
+        !self.replayed && self.held == 0
+    }
+
     /// Adds a typed key to the recording, if one is under way: a replay's
     /// keys aren't recorded, as nvim records the `@a` that played them.
     pub(crate) fn record(&mut self, key: VimKey) {
-        let typed = !self.replayed && self.held == 0;
+        let typed = self.typed();
         if let Some(recording) = self.recording.as_mut().filter(|_| typed) {
             encode(key, &mut recording.text);
         }
+    }
+
+    /// The key about to be recorded starts a command (nothing was
+    /// pending).
+    pub(crate) fn command_start(&mut self) {
+        self.jump_at = None;
+        if let Some(recording) = self.recording.as_ref().filter(|_| self.typed()) {
+            self.command_at = recording.text.len();
+        }
+    }
+
+    /// The last key recorded finished a jump's trigger, `trigger` keys long
+    /// (`gs` or `s`).
+    pub(crate) fn jump_start(&mut self, trigger: usize) {
+        if let Some(recording) = self.recording.as_ref().filter(|_| self.typed()) {
+            self.jump_at = Some(recording.text.len().saturating_sub(trigger));
+        }
+    }
+
+    /// The jump being read landed with `count` (`None` for a counted one,
+    /// whose count was typed before the trigger): its keys so far, from the
+    /// trigger, become `{count}gs{c1}{c2}` (`gS` backward), which replays
+    /// as that counted jump, showing no labels, from wherever it plays.
+    /// Landing again (a label after an autojump) writes it again.
+    pub(crate) fn jump_landed(&mut self, count: Option<u32>, jump: JumpMotion) {
+        if !self.typed() {
+            return;
+        }
+        let (Some(at), Some(recording)) = (self.jump_at, self.recording.as_mut()) else {
+            return;
+        };
+        recording.text.truncate(at.min(recording.text.len()));
+        if let Some(count) = count {
+            recording.text.push_str(&count.to_string());
+        }
+        recording
+            .text
+            .push_str(if jump.forward { "gs" } else { "gS" });
+        for ch in jump.chars.0 {
+            encode(VimKey::Char(ch), &mut recording.text);
+        }
+    }
+
+    /// The command being read, a jump, was cancelled: none of its keys
+    /// stay recorded.
+    pub(crate) fn jump_cancelled(&mut self) {
+        let typed = self.typed();
+        if let Some(recording) = self.recording.as_mut().filter(|_| typed) {
+            recording
+                .text
+                .truncate(self.command_at.min(recording.text.len()));
+        }
+        self.jump_at = None;
     }
 
     /// The keys queued for the host, which counts them as a replay's. Once
@@ -148,6 +222,8 @@ pub(crate) fn record(state: &mut VimState, args: RecordArgs) -> Handled {
         register: args.register,
         text: String::new(),
     });
+    state.macros.command_at = 0;
+    state.macros.jump_at = None;
     Ok(Dispatched::new(Effect::Changed))
 }
 

@@ -91,13 +91,10 @@ fn spot_check_matches_neovim() {
 /// its expected file).
 #[test]
 fn corpus_has_at_least_150_cases() {
-    let mut areas: Vec<String> = std::fs::read_dir(support::corpus_dir())
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
+    let areas: Vec<String> = support::recorded_corpora()
+        .iter()
         .map(|path| path.file_stem().unwrap().to_string_lossy().into_owned())
         .collect();
-    areas.sort();
     let cases: usize = areas.iter().map(|area| load(area).unwrap().len()).sum();
     assert!(cases >= 150, "{cases} cases in {areas:?}");
 }
@@ -200,12 +197,7 @@ fn record_corpus_with_neovim() {
 
     let dir = support::corpus_dir();
     let driver = support::crate_dir().join("tests/support/oracle.lua");
-    let mut corpora: Vec<_> = std::fs::read_dir(&dir)
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
-        .collect();
-    corpora.sort();
+    let corpora = support::recorded_corpora();
     assert!(!corpora.is_empty(), "no corpus files in {}", dir.display());
     let scratch = std::env::temp_dir().join(format!("fe-vim-oracle-{}", std::process::id()));
     std::fs::create_dir_all(&scratch).unwrap();

@@ -200,26 +200,36 @@ impl Pending {
     }
 
     /// The finished count: `2` of `2d3` once the typed one has ended.
-    #[allow(dead_code, reason = "for the feature modules' hooks")]
     pub(crate) fn count(&self) -> Option<u32> {
         self.count
     }
 
-    #[allow(dead_code, reason = "for the feature modules' hooks")]
     pub(crate) fn register(&self) -> Option<char> {
         self.register
+    }
+
+    /// The operator waiting for its target.
+    pub(crate) fn operator(&self) -> Option<Operator> {
+        self.operator
+    }
+
+    /// Whether a prefix (`g`, `f`, `"`, ...) waits for its key.
+    pub(crate) fn has_prefix(&self) -> bool {
+        self.prefix.is_some()
+    }
+
+    /// The jump awaiting its chars or a label, if one is.
+    pub(crate) fn jump(&self) -> Option<&JumpPrefix> {
+        match &self.prefix {
+            Some(Prefix::Jump(jump)) => Some(jump),
+            _ => None,
+        }
     }
 
     /// Whether the visual mode is blockwise.
     #[allow(dead_code, reason = "for the feature modules' hooks")]
     pub(crate) fn is_block(&self) -> bool {
         self.block
-    }
-
-    /// The operator waiting for its target.
-    #[allow(dead_code, reason = "for the feature modules' hooks")]
-    pub(crate) fn operator(&self) -> Option<Operator> {
-        self.operator
     }
 
     /// Starts `operator` (`gU`): waits for its target, the count ended.
@@ -245,8 +255,24 @@ impl Pending {
         self.commit(Target::Motion(motion))
     }
 
-    /// The same pending input, awaiting a jump's chars.
-    pub(crate) fn jumping(self, jump: JumpPrefix) -> Self {
+    /// A jump's labels awaited, after `register` and `operator`.
+    pub(crate) fn jump_labels(
+        register: Option<char>,
+        operator: Option<Operator>,
+        jump: JumpPrefix,
+    ) -> Self {
+        Self {
+            register,
+            operator,
+            prefix: Some(Prefix::Jump(jump)),
+            ..Self::default()
+        }
+    }
+
+    /// The same pending input, awaiting a jump's chars (or its label), the
+    /// count ended.
+    pub(crate) fn jumping(mut self, jump: JumpPrefix) -> Self {
+        self.end_count();
         Self {
             prefix: Some(Prefix::Jump(jump)),
             ..self

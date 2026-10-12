@@ -11,7 +11,7 @@ use fe_editor::{
 
 use crate::{
     KeyError, Mode, Registers, Splits, Step, SubmitArgs, VimCommands, VimKey, VimState, VimTarget,
-    context, parse_keys, registry,
+    context, jump::JumpOverlay, parse_keys, registry,
 };
 
 /// An [`EditorModel`] with a [`HeadlessHost`], a [`VimState`], registers
@@ -342,6 +342,19 @@ impl HeadlessVim {
 
     pub fn host_mut(&mut self) -> &mut HeadlessHost {
         &mut self.host
+    }
+
+    /// Lets `s` and `S` start the jump ([`VimState::set_jump_on_s`]).
+    pub fn set_jump_on_s(&mut self, on: bool) {
+        self.state.set_jump_on_s(on);
+    }
+
+    /// The labels a host would paint for a pending jump over the view's
+    /// rows ([`VimState::jump_overlay`]).
+    pub fn jump_overlay(&self) -> Option<JumpOverlay> {
+        let Viewport { top_row, rows } = self.view;
+        let rows = top_row..top_row.saturating_add(rows);
+        self.state.jump_overlay(&self.model, rows)
     }
 
     /// The first row the view shows.

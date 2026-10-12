@@ -1,0 +1,464 @@
+# The labelled jump session's cases: fastedit's own spec, after leap (nvim
+# has no jump, so nothing records them). jump_spec (tests/jump_spec.rs)
+# checks each.
+# Hand-written: name, buffer (rows joined with \n, no trailing newline),
+# cursor = [row, byte column], window_rows (the view's height; HeadlessVim
+# scrolls it to show the cursor, as nvim's window does), scroll (keys fed
+# first to scroll the view, if needed), jump_on_s (`s` and `S` start the
+# jump), keys in vim notation (a space typed as itself), then under
+# [case.expect] the cursor, the buffer (if the keys change it), vim.mode
+# and the labels the overlay shows after the keys, as [row, column, label,
+# state] in text order (state preview, live or concealed). Where pages hold
+# too many to list, `live` lists the live ones and `concealed` counts the
+# rest.
+#
+# A picked label is the counted motion, so what operators, registers, the
+# visual modes and `.` do with it is checked against nvim by jump.toml.
+
+[[case]]
+name = "autojump_labels_the_rest_in_view"
+buffer = "x ab\nx ab\nx ab\nx ab\nx ab\nx ab"
+cursor = [0, 0]
+window_rows = 4
+keys = "gsab"
+[case.expect]
+cursor = [0, 2]
+mode = "normal"
+labels = [[1, 2, "s", "live"], [2, 2, "f", "live"], [3, 2, "n", "live"]]
+
+[[case]]
+name = "autojump_then_label"
+buffer = "x ab\nx ab\nx ab\nx ab\nx ab\nx ab"
+cursor = [0, 0]
+window_rows = 4
+keys = "gsabf"
+[case.expect]
+cursor = [2, 2]
+mode = "normal"
+
+[[case]]
+name = "autojump_then_other_key_acts_as_itself"
+buffer = "x ab\nx ab\nx ab\nx ab\nx ab\nx ab"
+cursor = [0, 0]
+window_rows = 4
+keys = "gsabx"
+[case.expect]
+cursor = [0, 2]
+buffer = "x b\nx ab\nx ab\nx ab\nx ab\nx ab"
+mode = "normal"
+
+[[case]]
+name = "autojump_then_motion_key"
+buffer = "x ab\nx ab\nx ab\nx ab\nx ab\nx ab"
+cursor = [0, 0]
+window_rows = 4
+keys = "gsabj"
+[case.expect]
+cursor = [1, 2]
+mode = "normal"
+
+[[case]]
+name = "autojump_then_esc_stays"
+buffer = "x ab\nx ab\nx ab\nx ab\nx ab\nx ab"
+cursor = [0, 0]
+window_rows = 4
+keys = "gsab<Esc>"
+[case.expect]
+cursor = [0, 2]
+mode = "normal"
+
+[[case]]
+name = "single_target_goes_there"
+buffer = "x ab\nx cd"
+cursor = [0, 0]
+window_rows = 4
+keys = "gsab"
+[case.expect]
+cursor = [0, 2]
+mode = "normal"
+
+[[case]]
+name = "no_target_in_view_fails"
+buffer = "x\nx\nx\nx\nx\nab"
+cursor = [0, 0]
+window_rows = 3
+keys = "gsab"
+[case.expect]
+cursor = [0, 0]
+mode = "normal"
+
+[[case]]
+name = "counted_goes_past_the_view_without_labels"
+buffer = "x\nx\nx\nx\nx\nab"
+cursor = [0, 0]
+window_rows = 3
+keys = "1gsab"
+[case.expect]
+cursor = [5, 0]
+mode = "normal"
+
+[[case]]
+name = "counted_shows_no_labels"
+buffer = "x ab\nx ab\nx ab"
+cursor = [0, 0]
+window_rows = 4
+keys = "2gsab"
+[case.expect]
+cursor = [1, 2]
+mode = "normal"
+
+[[case]]
+name = "more_than_safe_labels_full_set"
+buffer = "ab ab ab ab ab\nab ab ab ab ab\nab ab ab ab ab\nab ab ab ab ab"
+cursor = [0, 0]
+window_rows = 4
+keys = "gsab"
+[case.expect]
+cursor = [0, 0]
+mode = "normal"
+labels = [
+  [0, 3, "s", "live"],
+  [0, 6, "f", "live"],
+  [0, 9, "n", "live"],
+  [0, 12, "j", "live"],
+  [1, 0, "k", "live"],
+  [1, 3, "l", "live"],
+  [1, 6, "h", "live"],
+  [1, 9, "o", "live"],
+  [1, 12, "d", "live"],
+  [2, 0, "w", "live"],
+  [2, 3, "e", "live"],
+  [2, 6, "i", "live"],
+  [2, 9, "m", "live"],
+  [2, 12, "b", "live"],
+  [3, 0, "u", "live"],
+  [3, 3, "y", "live"],
+  [3, 6, "v", "live"],
+  [3, 9, "r", "live"],
+  [3, 12, "g", "live"],
+]
+
+[[case]]
+name = "full_set_label"
+buffer = "ab ab ab ab ab\nab ab ab ab ab\nab ab ab ab ab\nab ab ab ab ab"
+cursor = [0, 0]
+window_rows = 4
+keys = "gsabj"
+[case.expect]
+cursor = [0, 12]
+mode = "normal"
+
+[[case]]
+name = "full_set_other_key_cancels"
+buffer = "ab ab ab ab ab\nab ab ab ab ab\nab ab ab ab ab\nab ab ab ab ab"
+cursor = [0, 0]
+window_rows = 4
+keys = "gsab1"
+[case.expect]
+cursor = [0, 0]
+mode = "normal"
+
+[[case]]
+name = "full_set_esc_changes_nothing"
+buffer = "ab ab ab ab ab\nab ab ab ab ab\nab ab ab ab ab\nab ab ab ab ab"
+cursor = [0, 0]
+window_rows = 4
+keys = "gsab<Esc>"
+[case.expect]
+cursor = [0, 0]
+mode = "normal"
+
+[[case]]
+name = "pages_first_live"
+buffer = "ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab\nab ab ab ab ab ab ab ab ab ab ab ab ab ab ab\nab ab ab ab ab ab ab ab ab ab ab ab ab ab ab\nab ab ab ab ab ab ab ab ab ab ab ab ab ab ab"
+cursor = [0, 0]
+window_rows = 4
+keys = "gsab"
+[case.expect]
+cursor = [0, 0]
+mode = "normal"
+live = [[0, 3, "s"], [0, 6, "f"], [0, 9, "n"], [0, 12, "j"], [0, 15, "k"], [0, 18, "l"], [0, 21, "h"], [0, 24, "o"], [0, 27, "d"], [0, 30, "w"], [0, 33, "e"], [0, 36, "i"], [0, 39, "m"], [0, 42, "b"], [1, 0, "u"], [1, 3, "y"], [1, 6, "v"], [1, 9, "r"], [1, 12, "g"], [1, 15, "t"], [1, 18, "a"], [1, 21, "q"], [1, 24, "p"], [1, 27, "c"], [1, 30, "x"], [1, 33, "z"], [1, 36, "/"], [1, 39, "S"], [1, 42, "F"], [2, 0, "N"], [2, 3, "J"], [2, 6, "K"], [2, 9, "L"], [2, 12, "H"], [2, 15, "O"], [2, 18, "D"], [2, 21, "W"], [2, 24, "E"], [2, 27, "I"], [2, 30, "M"], [2, 33, "B"], [2, 36, "U"], [2, 39, "Y"], [2, 42, "V"], [3, 0, "R"], [3, 3, "G"], [3, 6, "T"], [3, 9, "A"], [3, 12, "Q"], [3, 15, "P"], [3, 18, "C"], [3, 21, "X"], [3, 24, "Z"], [3, 27, "?"]]
+concealed = 5
+
+[[case]]
+name = "space_pages_forward"
+buffer = "ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab\nab ab ab ab ab ab ab ab ab ab ab ab ab ab ab\nab ab ab ab ab ab ab ab ab ab ab ab ab ab ab\nab ab ab ab ab ab ab ab ab ab ab ab ab ab ab"
+cursor = [0, 0]
+window_rows = 4
+keys = "gsab "
+[case.expect]
+cursor = [0, 0]
+mode = "normal"
+live = [[3, 30, "s"], [3, 33, "f"], [3, 36, "n"], [3, 39, "j"], [3, 42, "k"]]
+concealed = 54
+
+[[case]]
+name = "space_pages_then_label"
+buffer = "ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab\nab ab ab ab ab ab ab ab ab ab ab ab ab ab ab\nab ab ab ab ab ab ab ab ab ab ab ab ab ab ab\nab ab ab ab ab ab ab ab ab ab ab ab ab ab ab"
+cursor = [0, 0]
+window_rows = 4
+keys = "gsab f"
+[case.expect]
+cursor = [3, 33]
+mode = "normal"
+
+[[case]]
+name = "backspace_pages_back_round_to_the_last"
+buffer = "ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab\nab ab ab ab ab ab ab ab ab ab ab ab ab ab ab\nab ab ab ab ab ab ab ab ab ab ab ab ab ab ab\nab ab ab ab ab ab ab ab ab ab ab ab ab ab ab"
+cursor = [0, 0]
+window_rows = 4
+keys = "gsab<BS>n"
+[case.expect]
+cursor = [3, 36]
+mode = "normal"
+
+[[case]]
+name = "space_round_to_the_first"
+buffer = "ab ab ab ab ab ab ab ab ab ab ab ab ab ab ab\nab ab ab ab ab ab ab ab ab ab ab ab ab ab ab\nab ab ab ab ab ab ab ab ab ab ab ab ab ab ab\nab ab ab ab ab ab ab ab ab ab ab ab ab ab ab"
+cursor = [0, 0]
+window_rows = 4
+keys = "gsab  f"
+[case.expect]
+cursor = [0, 6]
+mode = "normal"
+
+[[case]]
+name = "backward_autojump"
+buffer = "ab x\nab x\nab x"
+cursor = [2, 3]
+window_rows = 4
+keys = "gSab"
+[case.expect]
+cursor = [2, 0]
+mode = "normal"
+labels = [[0, 0, "f", "live"], [1, 0, "s", "live"]]
+
+[[case]]
+name = "backward_label"
+buffer = "ab x\nab x\nab x"
+cursor = [2, 3]
+window_rows = 4
+keys = "gSabf"
+[case.expect]
+cursor = [0, 0]
+mode = "normal"
+
+[[case]]
+name = "operator_waits_with_full_labels"
+buffer = "1ab2ab3ab4"
+cursor = [0, 0]
+window_rows = 4
+keys = "dgsab"
+[case.expect]
+cursor = [0, 0]
+mode = "operator_pending"
+labels = [[0, 1, "s", "live"], [0, 4, "f", "live"], [0, 7, "n", "live"]]
+
+[[case]]
+name = "operator_label_deletes_through_target"
+buffer = "1ab2ab3ab4"
+cursor = [0, 0]
+window_rows = 4
+keys = "dgsabf"
+[case.expect]
+cursor = [0, 0]
+buffer = "b3ab4"
+mode = "normal"
+
+[[case]]
+name = "operator_backward_label_exclusive"
+buffer = "1ab2ab3ab4"
+cursor = [0, 9]
+window_rows = 4
+keys = "dgSabf"
+[case.expect]
+cursor = [0, 4]
+buffer = "1ab24"
+mode = "normal"
+
+[[case]]
+name = "operator_single_target_no_label"
+buffer = "1ab2"
+cursor = [0, 0]
+window_rows = 4
+keys = "dgsab"
+[case.expect]
+cursor = [0, 0]
+buffer = "b2"
+mode = "normal"
+
+[[case]]
+name = "operator_esc_changes_nothing"
+buffer = "1ab2ab3ab4"
+cursor = [0, 0]
+window_rows = 4
+keys = "dgsab<Esc>"
+[case.expect]
+cursor = [0, 0]
+mode = "normal"
+
+[[case]]
+name = "change_label"
+buffer = "1ab2ab3ab4"
+cursor = [0, 0]
+window_rows = 4
+keys = "cgsabfX<Esc>"
+[case.expect]
+cursor = [0, 0]
+buffer = "Xb3ab4"
+mode = "normal"
+
+[[case]]
+name = "visual_autojump_then_label_extends"
+buffer = "ab\nab\nab\nab"
+cursor = [0, 0]
+window_rows = 4
+keys = "vgsabf"
+[case.expect]
+cursor = [3, 0]
+mode = "visual"
+
+[[case]]
+name = "visual_line_label_then_delete"
+buffer = "ab\nab\nab\nab"
+cursor = [0, 0]
+window_rows = 4
+keys = "Vgsabsd"
+[case.expect]
+cursor = [0, 0]
+buffer = "ab"
+mode = "normal"
+
+[[case]]
+name = "scrolled_view_labels_what_it_shows"
+buffer = "x ab\nx ab\nx ab\nx ab\nx ab\nx ab\nx ab\nx ab"
+cursor = [2, 0]
+window_rows = 3
+scroll = "<C-e><C-e>"
+keys = "gsab"
+[case.expect]
+cursor = [2, 2]
+mode = "normal"
+labels = [[3, 2, "s", "live"], [4, 2, "f", "live"]]
+
+[[case]]
+name = "unscrolled_view_single_target"
+buffer = "x ab\nx ab\nx ab\nx ab\nx ab\nx ab\nx ab\nx ab"
+cursor = [2, 0]
+window_rows = 3
+keys = "gsab"
+[case.expect]
+cursor = [2, 2]
+mode = "normal"
+
+[[case]]
+name = "enter_repeats_last_chars"
+buffer = "x ab\nx ab\nx ab"
+cursor = [0, 0]
+window_rows = 4
+keys = "gsab<Esc>gs<CR>"
+[case.expect]
+cursor = [1, 2]
+mode = "normal"
+labels = [[2, 2, "s", "live"]]
+
+[[case]]
+name = "enter_takes_last_direction"
+buffer = "x ab\nx ab\nx ab"
+cursor = [0, 0]
+window_rows = 4
+keys = "gsab<Esc>gs<CR><Esc>gS<CR>"
+[case.expect]
+cursor = [2, 2]
+mode = "normal"
+
+[[case]]
+name = "opt_in_s_forward"
+buffer = "x ab\nx ab\nx ab"
+cursor = [0, 0]
+window_rows = 4
+jump_on_s = true
+keys = "sab"
+[case.expect]
+cursor = [0, 2]
+mode = "normal"
+labels = [[1, 2, "s", "live"], [2, 2, "f", "live"]]
+
+[[case]]
+name = "opt_in_S_backward"
+buffer = "x ab\nx ab\nx ab"
+cursor = [2, 0]
+window_rows = 4
+jump_on_s = true
+keys = "Sab"
+[case.expect]
+cursor = [1, 2]
+mode = "normal"
+labels = [[0, 2, "s", "live"]]
+
+[[case]]
+name = "opt_in_ds"
+buffer = "1ab2ab3ab4"
+cursor = [0, 0]
+window_rows = 4
+jump_on_s = true
+keys = "dsabf"
+[case.expect]
+cursor = [0, 0]
+buffer = "b3ab4"
+mode = "normal"
+
+[[case]]
+name = "opt_out_s_is_cl"
+buffer = "x ab"
+cursor = [0, 0]
+window_rows = 4
+keys = "sX<Esc>"
+[case.expect]
+cursor = [0, 0]
+buffer = "X ab"
+mode = "normal"
+
+[[case]]
+name = "preview_after_first_char"
+buffer = "ab ab ab ac"
+cursor = [0, 0]
+window_rows = 4
+keys = "gsa"
+[case.expect]
+cursor = [0, 0]
+mode = "normal"
+labels = [[0, 6, "s", "preview"]]
+
+[[case]]
+name = "preview_after_operator"
+buffer = "ab ab ab ac"
+cursor = [0, 0]
+window_rows = 4
+keys = "dgsa"
+[case.expect]
+cursor = [0, 0]
+mode = "operator_pending"
+labels = [[0, 3, "s", "preview"], [0, 6, "f", "preview"]]
+
+[[case]]
+name = "same_char_pair_at_run_starts"
+buffer = "x ==== ==\nx =="
+cursor = [0, 0]
+window_rows = 4
+keys = "gs=="
+[case.expect]
+cursor = [0, 2]
+mode = "normal"
+labels = [[0, 7, "s", "live"], [1, 2, "f", "live"]]
+
+[[case]]
+name = "space_takes_the_line_end"
+buffer = "ab\nab\nab"
+cursor = [0, 0]
+window_rows = 4
+keys = "gsb "
+[case.expect]
+cursor = [0, 1]
+mode = "normal"
+labels = [[1, 1, "s", "live"], [2, 1, "f", "live"]]

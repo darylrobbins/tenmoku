@@ -3,20 +3,46 @@
 //! `EditorTarget` doesn't carry.
 
 use fe_buffer::TransactionId;
-use fe_command::{Actor, CommandError, CommandTarget, ContextPredicate, Registry};
+use fe_command::{Actor, CommandError, CommandTarget, ContextPredicate, Dispatched, Registry};
 use fe_editor::{EditorModel, commands::EditorHost};
 
 use crate::{
     CommandLineArgs, CountArgs, InsertArgs, MarkArgs, MoveArgs, OperateArgs, PlayArgs, PutArgs,
     RecordArgs, Registers, ReplaceCharArgs, SelectArgs, SubmitArgs, SwapArgs, VimState, VisualArgs,
-    cmdline, edit, feature, history, insert, macros, marks, motion, operator, repeat, replace,
-    substitute, visual,
+    cmdline, edit, feature, history, insert, jump, macros, marks, motion, operator, repeat,
+    replace, substitute, visual,
 };
 
 /// Catches the marks up with the text before a command that may change it
 /// (see `marks::Marks::follow`).
 pub(crate) fn follow(target: &mut VimTarget<'_>) {
     target.state.marks.follow(target.model.snapshot());
+}
+
+/// What a committed `vim.move` runs.
+pub(crate) fn run_move(target: &mut VimTarget<'_>, args: MoveArgs) -> Dispatched<TransactionId> {
+    if let Some(failed) = jump::check_pick(target) {
+        return failed;
+    }
+    let moved = motion::move_command(target, args);
+    marks::settle(target);
+    moved
+}
+
+/// What a committed `vim.operate` runs.
+pub(crate) fn run_operate(
+    target: &mut VimTarget<'_>,
+    actor: &Actor,
+    args: OperateArgs,
+) -> Result<Dispatched<TransactionId>, CommandError> {
+    if let Some(failed) = jump::check_pick(target) {
+        return Ok(failed);
+    }
+    follow(target);
+    insert::adopt_closing(target.state);
+    let operated = operator::operate(target, actor, args);
+    marks::settle(target);
+    operated
 }
 
 /// What vim's commands run against: an editor's model, its host, its vim
@@ -66,9 +92,7 @@ pub fn registry() -> Registry<VimCommands> {
             "vim.move",
             "Vim Move",
             |target: &mut VimTarget<'_>, _: &Actor, args: MoveArgs| {
-                let moved = motion::move_command(target, args);
-                marks::settle(target);
-                Ok::<_, CommandError>(moved)
+                Ok::<_, CommandError>(run_move(target, args))
             },
         )
         .expect("vim command IDs are valid and distinct")
@@ -82,13 +106,7 @@ pub fn registry() -> Registry<VimCommands> {
             "vim.operate",
             "Vim Operate",
             |target: &mut VimTarget<'_>, actor: &Actor, args: OperateArgs| {
-                {
-                    follow(target);
-                    insert::adopt_closing(target.state);
-                    let operated = operator::operate(target, actor, args);
-                    marks::settle(target);
-                    operated
-                }
+                run_operate(target, actor, args)
             },
         )
         .expect("vim command IDs are valid and distinct")

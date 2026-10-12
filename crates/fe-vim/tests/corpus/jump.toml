@@ -11,8 +11,11 @@
 # equivalent search instead (`dv/ab<CR>` then `.`, `d?ab<CR>` for `gS`;
 # patterns with no regex specials, no upper case and no wrap), as nvim's
 # `.` repeats a mark motion to the same place where the jump finds the
-# match again. jump_matches_neovim drops mark z and register / from nvim's
-# side, which only the swap leaves.
+# match again. Without a count, a jump after an operator with several matches
+# in view waits for a label (tests/corpus/jump_labels.toml), so those cases
+# type the first label, `s`, which is the counted jump to the nearest.
+# jump_matches_neovim drops mark z and register / from nvim's side, which
+# only the swap leaves.
 # Hand-written: name, buffer (rows joined with \n, no trailing newline),
 # cursor = [row, byte column], keys in vim notation (a space typed as itself)
 # and oracle_keys. What nvim does with each is recorded in jump.expected.json
@@ -338,47 +341,47 @@ oracle_keys = ":call setpos(\"'z\",[0,3,2,0])<CR><C-v>$`zd"
 name = "dot_forward"
 buffer = "1ab2ab3ab4"
 cursor = [0, 0]
-keys = "dgsab."
+keys = "dgsabs."
 oracle_keys = "dv/ab<CR>."
 
 [[case]]
 name = "dot_backward"
 buffer = "1ab2ab3ab4"
 cursor = [0, 9]
-keys = "dgSab."
+keys = "dgSabs."
 oracle_keys = "d?ab<CR>."
 
 [[case]]
 name = "dot_counted"
 buffer = "1ab2ab3ab4ab5"
 cursor = [0, 0]
-keys = "dgsab2."
+keys = "dgsabs2."
 oracle_keys = "dv/ab<CR>2."
 
 [[case]]
 name = "dot_backward_rows"
 buffer = "ab x\nab y\nab z"
 cursor = [2, 3]
-keys = "dgSab."
+keys = "dgSabs."
 oracle_keys = "d?ab<CR>."
 
 [[case]]
 name = "dot_register_rows"
 buffer = "one ab\ntwo ab\nthree ab"
 cursor = [0, 0]
-keys = "\"adgsab."
+keys = "\"adgsabs."
 oracle_keys = "\"adv/ab<CR>."
 
 [[case]]
 name = "dot_change"
 buffer = "x ab y ab z ab"
 cursor = [0, 0]
-keys = "cgsabQ<Esc>."
+keys = "cgsabsQ<Esc>."
 oracle_keys = "cv/ab<CR>Q<Esc>."
 
 [[case]]
 name = "dot_undo"
 buffer = "1ab2ab3ab4"
 cursor = [0, 0]
-keys = "dgsab.u"
+keys = "dgsabs.u"
 oracle_keys = "dv/ab<CR>.u"

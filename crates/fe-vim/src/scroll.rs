@@ -154,7 +154,7 @@ fn register(registry: &mut Registry<VimCommands>) {
 
 /// The view a host without one is taken to have: `page_rows() + 2` rows
 /// from the first.
-fn viewport(host: &dyn EditorHost) -> Viewport {
+pub(crate) fn viewport(host: &dyn EditorHost) -> Viewport {
     host.viewport().unwrap_or(Viewport {
         top_row: 0,
         rows: host.page_rows().saturating_add(2),

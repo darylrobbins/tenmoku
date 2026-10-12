@@ -1,7 +1,8 @@
-//! Tests of the jump feature: `gs` and `gS` as a motion, and the pure
-//! matcher and labeler.
+//! Tests of the jump feature: `gs` and `gS` as a motion, the pure matcher
+//! and labeler, and the labelled session.
 use std::collections::HashSet;
 
+use fe_buffer::{Origin, ResolvedSelection};
 use fe_command::ContextFrame;
 use fe_text::Text;
 
@@ -9,7 +10,10 @@ use super::{commit, invocation, run};
 use crate::{
     HeadlessVim, JumpChars, JumpMotion, Motion, MoveArgs, OperateArgs, Operator, Step, Target,
     VimKey, VimState,
-    jump::label::{FULL, SAFE, label, targets},
+    jump::{
+        JumpLabelState,
+        label::{FULL, SAFE, label, targets},
+    },
     parse_keys,
 };
 
@@ -308,11 +312,13 @@ fn as_an_operator_target() {
 
 #[test]
 fn dot_finds_the_match_again() {
-    assert_eq!(feed("1ab2ab3ab4", (0, 0), "dgsab.").0, "b3ab4");
-    assert_eq!(feed("1ab2ab3ab4ab5", (0, 0), "dgsab2.").0, "b4ab5");
-    assert_eq!(feed("1ab2ab3ab4", (0, 9), "dgSab.").0, "1ab24");
+    // Several matches after an operator wait for a label: `s` is the
+    // nearest.
+    assert_eq!(feed("1ab2ab3ab4", (0, 0), "dgsabs.").0, "b3ab4");
+    assert_eq!(feed("1ab2ab3ab4ab5", (0, 0), "dgsabs2.").0, "b4ab5");
+    assert_eq!(feed("1ab2ab3ab4", (0, 9), "dgSabs.").0, "1ab24");
     // Undone as one change.
-    assert_eq!(feed("1ab2ab3ab4", (0, 0), "dgsab.u").0, "b2ab3ab4");
+    assert_eq!(feed("1ab2ab3ab4", (0, 0), "dgsabs.u").0, "b2ab3ab4");
 }
 
 #[test]
@@ -543,5 +549,520 @@ fn labeler_targets_are_the_matches_inside_the_rows_nearest_first() {
             got, want,
             "case {case}: {text:?} rows {first}..{end} caret {caret} {chars:?} forward {forward}"
         );
+    }
+}
+
+/// `rows` rows, each `row`.
+fn rows(count: usize, row: &str) -> String {
+    vec![row; count].join("\n")
+}
+
+/// `text` from `cursor` in a view of `window` rows, after `keys`.
+fn session(text: &str, cursor: (u32, usize), window: u32, keys: &str) -> HeadlessVim {
+    let mut vim = HeadlessVim::new(text, cursor);
+    vim.set_window_rows(window);
+    vim.feed(keys).unwrap();
+    vim
+}
+
+/// The labels shown, as (row, column, label, state).
+fn shown(vim: &HeadlessVim) -> Vec<((u32, usize), String, JumpLabelState)> {
+    let text = vim.model().text();
+    let overlay = vim.jump_overlay().unwrap_or_default();
+    overlay
+        .labels
+        .into_iter()
+        .map(|label| {
+            let point = text.offset_to_point(label.offset);
+            let at = (point.row, point.column as usize);
+            (at, label.text, label.state)
+        })
+        .collect()
+}
+
+/// The labels shown live, as (row, column, label).
+fn live(vim: &HeadlessVim) -> Vec<((u32, usize), String)> {
+    shown(vim)
+        .into_iter()
+        .filter(|(_, _, state)| *state == JumpLabelState::Live)
+        .map(|(at, text, _)| (at, text))
+        .collect()
+}
+
+#[test]
+fn session_autojumps_to_the_nearest_and_labels_the_rest_in_view() {
+    // Ten matches in view after the caret (one a row, in rows 0 to 9), 30
+    // more below it.
+    let text = rows(40, "x ab");
+    let vim = session(&text, (0, 0), 10, "gsab");
+    assert_eq!(vim.cursor(), (0, 2));
+    assert_eq!(vim.mark('\''), Some((0, 0)));
+    assert_eq!(vim.state().pending().kind(), Some(crate::PendingKind::Jump));
+    let safe: Vec<String> = SAFE.chars().take(9).map(String::from).collect();
+    let want: Vec<_> = (1..10).map(|row| (row, 2)).zip(safe).collect();
+    assert_eq!(live(&vim), want);
+    // Nothing outside the view is labelled.
+    assert!(shown(&vim).iter().all(|((row, _), _, _)| *row < 10));
+
+    // A label goes to its target; `''` is still where the jump started.
+    let mut vim = session(&text, (0, 0), 10, "gsabn");
+    assert_eq!(vim.cursor(), (3, 2));
+    assert_eq!(vim.mark('\''), Some((0, 0)));
+    assert_eq!(vim.jump_overlay(), None);
+    vim.feed("``").unwrap();
+    assert_eq!(vim.cursor(), (0, 0));
+
+    // A key that isn't a label falls through and acts as itself.
+    let vim = session(&text, (0, 0), 10, "gsabx");
+    assert_eq!(vim.text().lines().next(), Some("x b"));
+    assert_eq!((vim.cursor(), vim.mode()), ((0, 2), "normal"));
+    assert_eq!(vim.jump_overlay(), None);
+    let vim = session(&text, (0, 0), 10, "gsabj");
+    assert_eq!(vim.cursor(), (1, 2));
+
+    // `<Esc>` leaves the caret on the first target.
+    let vim = session(&text, (0, 0), 10, "gsab<Esc>");
+    assert_eq!((vim.cursor(), vim.text()), ((0, 2), text.clone()));
+    assert!(!vim.state().failed());
+    assert_eq!(vim.jump_overlay(), None);
+
+    // One target goes straight there, with no session.
+    let vim = session("x ab\nx cd", (0, 0), 10, "gsab");
+    assert_eq!((vim.cursor(), vim.jump_overlay()), ((0, 2), None));
+}
+
+#[test]
+fn session_a_normal_starts_ends_with_it_unrecorded() {
+    // `:normal` ends the session its keys leave after an autojump, and a
+    // recording keeps the `:normal` line, not a jump its keys made.
+    let text = rows(40, "x ab");
+    let mut vim = session(&text, (0, 0), 10, "qa:normal gsab<CR>q");
+    assert_eq!((vim.cursor(), vim.jump_overlay()), ((0, 2), None));
+    assert_eq!(vim.state().pending().kind(), None);
+    let recorded = vim.registers().get('a').unwrap().text.clone();
+    assert_eq!(recorded, ":normal gsab\r");
+    vim.feed("j0@a").unwrap();
+    assert_eq!(vim.cursor(), (1, 2));
+}
+
+#[test]
+fn session_with_more_matches_keeps_the_caret_and_labels_from_the_full_set() {
+    // Six matches a row: 59 in view after the caret, more than the full
+    // set, so two pages.
+    let text = rows(40, "ab ab ab ab ab ab");
+    let vim = session(&text, (0, 0), 10, "gsab");
+    assert_eq!(vim.cursor(), (0, 0));
+    assert_eq!(vim.mark('\''), None);
+    let full: Vec<char> = FULL.chars().collect();
+    let on_page = |vim: &HeadlessVim, state| {
+        shown(vim)
+            .into_iter()
+            .filter(|(_, _, s)| *s == state)
+            .count()
+    };
+    assert_eq!(on_page(&vim, JumpLabelState::Live), full.len());
+    assert_eq!(on_page(&vim, JumpLabelState::Concealed), 59 - full.len());
+    let first = &live(&vim)[..3];
+    let want = [((0, 3), "s"), ((0, 6), "f"), ((0, 9), "n")];
+    assert_eq!(first, want.map(|(at, l)| (at, l.to_string())));
+    assert!(shown(&vim).iter().all(|((row, _), _, _)| *row < 10));
+
+    // `<Space>` pages forward (round to the first), `<BS>` back.
+    let mut vim = session(&text, (0, 0), 10, "gsab ");
+    assert_eq!(on_page(&vim, JumpLabelState::Live), 59 - full.len());
+    // The 55th target, row 9's second match, is page 2's first.
+    assert_eq!(live(&vim)[0], ((9, 3), "s".to_string()));
+    vim.feed("<BS>").unwrap();
+    assert_eq!(live(&vim)[0], ((0, 3), "s".to_string()));
+    vim.feed("<BS>f").unwrap();
+    assert_eq!(vim.cursor(), (9, 6));
+    let vim = session(&text, (0, 0), 10, "gsab  f");
+    assert_eq!(vim.cursor(), (0, 6));
+
+    // A key that isn't a label cancels, with nothing changed.
+    let vim = session(&text, (0, 0), 10, "gsab1");
+    assert_eq!((vim.cursor(), vim.text()), ((0, 0), text.clone()));
+    assert!(vim.state().failed());
+    assert_eq!(vim.jump_overlay(), None);
+    // As does `<Esc>`, quietly.
+    let vim = session(&text, (0, 0), 10, "gsab<Esc>");
+    assert_eq!((vim.cursor(), vim.text()), ((0, 0), text.clone()));
+    assert!(!vim.state().failed());
+    assert_eq!((vim.mark('\''), vim.mode()), (None, "normal"));
+}
+
+#[test]
+fn session_with_no_match_in_view_fails() {
+    // The motion would reach row 20; the session sees only the view.
+    let mut text = rows(40, "x");
+    text.replace_range(text.len() - 1.., "ab");
+    let vim = session(&text, (0, 0), 10, "gsab");
+    assert!(vim.state().failed());
+    assert_eq!((vim.cursor(), vim.mark('\'')), ((0, 0), None));
+    assert_eq!(session(&text, (0, 0), 10, "1gsab").cursor(), (39, 0));
+}
+
+#[test]
+fn session_enter_as_the_first_char_repeats_the_last_jump() {
+    let text = rows(6, "x ab");
+    let mut vim = session(&text, (0, 0), 10, "gsab<Esc>");
+    assert_eq!(vim.cursor(), (0, 2));
+    vim.feed("gs<CR>").unwrap();
+    assert_eq!(vim.cursor(), (1, 2));
+    assert_eq!(vim.state().jump_query(), Some("ab"));
+    // In the last jump's direction, whichever key started it.
+    vim.feed("<Esc>gS<CR><Esc>").unwrap();
+    assert_eq!(vim.cursor(), (2, 2));
+    // Counted too.
+    vim.feed("2gs<CR>").unwrap();
+    assert_eq!(vim.cursor(), (4, 2));
+    // With no jump before, it cancels.
+    let vim = session(&text, (0, 0), 10, "gs<CR>");
+    assert!(vim.state().failed());
+    assert_eq!((vim.cursor(), vim.jump_overlay()), ((0, 0), None));
+}
+
+#[test]
+fn operator_never_autojumps_and_a_label_acts_through_its_target() {
+    let text = "1ab2ab3ab4";
+    let mut vim = session(text, (0, 0), 10, "dgsab");
+    assert_eq!((vim.text(), vim.cursor()), (text.to_string(), (0, 0)));
+    assert_eq!(vim.mode(), "operator_pending");
+    let want = [((0, 1), "s"), ((0, 4), "f"), ((0, 7), "n")];
+    assert_eq!(live(&vim), want.map(|(at, l)| (at, l.to_string())));
+    // Forward takes the target too.
+    vim.feed("f").unwrap();
+    assert_eq!((vim.text(), vim.cursor()), ("b3ab4".to_string(), (0, 0)));
+    assert_eq!(vim.registers().get('1').unwrap().text, "1ab2a");
+    vim.feed("u").unwrap();
+    assert_eq!(vim.text(), text);
+    // Backward stops short of it.
+    let vim = session(text, (0, 9), 10, "dgSabf");
+    assert_eq!(vim.text(), "1ab24");
+    // With a register; a single target needs no label.
+    let vim = session(text, (0, 0), 10, "\"xdgSab");
+    assert_eq!(vim.text(), text);
+    let vim = session(text, (0, 0), 10, "\"xdgsabn");
+    assert_eq!(vim.text(), "b4");
+    assert_eq!(vim.registers().get('x').unwrap().text, "1ab2ab3a");
+    let vim = session("1ab2", (0, 0), 10, "dgsab");
+    assert_eq!(vim.text(), "b2");
+    // `c` and `y`.
+    assert_eq!(session(text, (0, 0), 10, "cgsabfX<Esc>").text(), "Xb3ab4");
+    let vim = session(text, (0, 0), 10, "ygsabn");
+    assert_eq!(vim.registers().get('0').unwrap().text, "1ab2ab3a");
+    // `<Esc>` and a key that isn't a label change nothing.
+    for keys in ["dgsab<Esc>", "dgsab1"] {
+        let vim = session(text, (0, 0), 10, keys);
+        assert_eq!((vim.text(), vim.mode()), (text.to_string(), "normal"));
+    }
+}
+
+#[test]
+fn operator_dot_repeats_the_counted_jump_from_the_new_caret() {
+    let mut vim = session("1ab2ab3ab4ab5ab6", (0, 0), 10, "dgsabf");
+    assert_eq!(vim.text(), "b3ab4ab5ab6");
+    let change = vim.state().last_change().cloned();
+    vim.feed(".").unwrap();
+    assert_eq!(vim.text(), "b5ab6");
+    // Its record is the counted jump.
+    let mut counted = session("1ab2ab3ab4ab5ab6", (0, 0), 10, "d2gsab");
+    assert_eq!(counted.text(), "b3ab4ab5ab6");
+    assert_eq!(
+        format!("{:?}", counted.state().last_change()),
+        format!("{change:?}")
+    );
+    counted.feed(".").unwrap();
+    assert_eq!(counted.text(), "b5ab6");
+}
+
+#[test]
+fn operator_visual_label_extends_the_selection() {
+    let text = rows(4, "ab");
+    // An autojump, then a label from the safe set.
+    let mut vim = session(&text, (0, 0), 10, "vgsab");
+    assert_eq!((vim.cursor(), vim.visual_anchor()), ((1, 0), Some((0, 0))));
+    vim.feed("f").unwrap();
+    assert_eq!((vim.cursor(), vim.visual_anchor()), ((3, 0), Some((0, 0))));
+    assert_eq!(vim.mode(), "visual");
+    assert_eq!(vim.mark('\''), Some((0, 0)));
+    let vim = session(&text, (0, 0), 10, "Vgsabsd");
+    assert_eq!(vim.text(), "ab");
+    // With more targets than safe labels, the caret stays.
+    let text = rows(10, "ab ab");
+    let mut vim = session(&text, (0, 0), 10, "vgsab");
+    assert_eq!((vim.cursor(), vim.mode()), ((0, 0), "visual"));
+    vim.feed("n").unwrap();
+    assert_eq!((vim.cursor(), vim.visual_anchor()), ((1, 3), Some((0, 0))));
+    let vim = session(&text, (2, 3), 10, "VgSabfd");
+    assert_eq!(vim.text(), rows(8, "ab ab"));
+}
+
+#[test]
+fn operator_overlay_previews_then_shows_live_labels() {
+    let mut vim = session("ab ab ab ac", (0, 0), 10, "");
+    assert_eq!(vim.jump_overlay(), None);
+    assert_eq!(vim.state().jump_query(), None);
+    vim.feed("gs").unwrap();
+    assert_eq!(vim.state().jump_query(), Some(""));
+    assert_eq!(shown(&vim), []);
+    // After `{c1}`, each match's label in its `{c2}` group: `ab` would
+    // autojump to (0, 3), labelling (0, 6); `ac` has one target.
+    vim.feed("a").unwrap();
+    assert_eq!(vim.state().jump_query(), Some("a"));
+    let preview = |at, l: &str| (at, l.to_string(), JumpLabelState::Preview);
+    assert_eq!(shown(&vim), [preview((0, 6), "s")]);
+    // After an operator, `ab` takes the full set and doesn't autojump.
+    let mut vim = session("ab ab ab ac", (0, 0), 10, "dgsa");
+    assert_eq!(shown(&vim), [preview((0, 3), "s"), preview((0, 6), "f")]);
+    vim.feed("b").unwrap();
+    assert_eq!(vim.state().jump_query(), Some("ab"));
+    let live = |at, l: &str| (at, l.to_string(), JumpLabelState::Live);
+    assert_eq!(shown(&vim), [live((0, 3), "s"), live((0, 6), "f")]);
+    vim.feed("<Esc>").unwrap();
+    assert_eq!((vim.jump_overlay(), vim.state().jump_query()), (None, None));
+    // A blank or the row's end is `<Space>`'s group.
+    let vim = session("a\nab a\ta", (0, 0), 10, "dgSa");
+    assert_eq!(vim.jump_overlay(), Some(Default::default()));
+    let vim = session("a\nab a\ta", (1, 0), 10, "dgsa");
+    let want = [preview((1, 3), "s"), preview((1, 5), "f")];
+    assert_eq!(shown(&vim), want);
+}
+
+#[test]
+fn macro_records_resolved_jump() {
+    // A labelled jump records as the counted one.
+    let text = rows(20, "ab ab ab ab ab");
+    let mut vim = session(&text, (9, 12), 10, "qqgSabkq");
+    assert_eq!(vim.cursor(), (8, 12));
+    assert_eq!(vim.registers().get('q').unwrap().text, "5gSab");
+    // Replayed from the same place in another view, which would autojump
+    // and make `k` a move, it lands on the same match.
+    vim.feed("``<C-e><C-e><C-e><C-e><C-e><C-e><C-e><C-e>")
+        .unwrap();
+    assert_eq!((vim.cursor(), vim.top_row()), ((9, 12), 8));
+    vim.feed("@q").unwrap();
+    assert_eq!(vim.cursor(), (8, 12));
+    let mut typed = session(
+        &text,
+        (9, 12),
+        10,
+        "``<C-e><C-e><C-e><C-e><C-e><C-e><C-e><C-e>",
+    );
+    typed.feed("gSabk").unwrap();
+    assert_ne!(typed.cursor(), (8, 12));
+
+    // Paging keys and an `<Esc>` after an autojump are dropped, a key
+    // falling through is kept, and so are the keys around the jump.
+    let wide = rows(40, "ab ab ab ab ab ab");
+    for (text, keys, want) in [
+        (rows(10, "x ab"), "qqgsab<Esc>q", "1gsab"),
+        (rows(10, "x ab"), "qqgsabnq", "4gsab"),
+        (rows(10, "x ab"), "qqgsabxjq", "1gsabxj"),
+        (wide.clone(), "qqgsab  <BS>fq", "56gsab"),
+        (wide.clone(), "qqdgsabfq", "d2gsab"),
+        (wide.clone(), "qq\"adgsab<Esc>2gsabq", "2gsab"),
+        (wide.clone(), "qqvgsabflq", "v2gsabl"),
+        (wide.clone(), "qq3gsabq", "3gsab"),
+        // `<CR>` records the chars it stood for.
+        (rows(10, "x ab"), "gsab<Esc>qqgs<CR>q", "1gsab"),
+        (rows(10, "x ab"), "gsab<Esc>qq2gs<CR>q", "2gsab"),
+    ] {
+        let vim = session(&text, (0, 0), 10, keys);
+        let recorded = vim.registers().get('q').map(|r| r.text.clone());
+        assert_eq!(recorded.as_deref(), Some(want), "{keys}");
+    }
+
+    // A cancelled jump leaves none of its keys.
+    for keys in [
+        "qqgsab<Esc>q",
+        "qqgsab1q",
+        "qqdgsab<Esc>q",
+        "qq\"a3dgsa<Esc>q",
+        "qqgs<Esc>q",
+    ] {
+        let vim = session(&wide, (0, 0), 10, keys);
+        let recorded = vim.registers().get('q').map(|r| r.text.clone());
+        assert_eq!(recorded.as_deref().unwrap_or(""), "", "{keys}");
+    }
+    let vim = session(&wide, (0, 0), 10, "qqxgsab<Esc>lq");
+    assert_eq!(vim.registers().get('q').unwrap().text, "xl");
+}
+
+#[test]
+fn opt_in_s() {
+    let text = "ab x ab\ncd ab";
+    let opted = |cursor, keys: &str| {
+        let mut vim = HeadlessVim::new(text, cursor);
+        vim.set_jump_on_s(true);
+        vim.feed(keys).unwrap();
+        vim
+    };
+    // As `gs` and `gS`, in normal mode, a visual mode, after an operator,
+    // with a count and labels.
+    assert_eq!(opted((0, 0), "sab").cursor(), (0, 5));
+    assert_eq!(opted((0, 0), "sabs").cursor(), (1, 3));
+    assert_eq!(opted((1, 3), "Sab").cursor(), (0, 5));
+    assert_eq!(opted((0, 0), "2sab").cursor(), (1, 3));
+    assert_eq!(opted((0, 0), "dsabs").text(), "b\ncd ab");
+    assert_eq!(opted((0, 0), "dsabf").text(), "b");
+    assert_eq!(opted((1, 3), "dSabs").text(), "ab x ab");
+    let vim = opted((0, 0), "vsab");
+    assert_eq!((vim.cursor(), vim.visual_anchor()), ((0, 5), Some((0, 0))));
+    let vim = opted((1, 3), "VSabd");
+    assert_eq!(vim.text(), "");
+    // `gs` still jumps; `s` after a prefix is that prefix's.
+    assert_eq!(opted((0, 0), "gsab").cursor(), (0, 5));
+    assert_eq!(opted((0, 0), "fs").cursor(), (0, 0));
+    assert_eq!(opted((0, 0), "rs").text(), "sb x ab\ncd ab");
+
+    // Off by default: `s` `S` `v_s` `v_S` are what they were.
+    let plain = |keys: &str| session(text, (0, 0), 10, keys).text();
+    assert_eq!(plain("sX<Esc>"), "Xb x ab\ncd ab");
+    assert_eq!(plain("SX<Esc>"), "X\ncd ab");
+    assert_eq!(plain("vlsX<Esc>"), "X x ab\ncd ab");
+    assert_eq!(plain("vSX<Esc>"), "X\ncd ab");
+    assert_eq!(session(text, (0, 0), 10, "gsab").cursor(), (0, 5));
+    let mut vim = HeadlessVim::new(text, (0, 0));
+    vim.set_jump_on_s(true);
+    vim.set_jump_on_s(false);
+    vim.feed("sX<Esc>").unwrap();
+    assert_eq!(vim.text(), "Xb x ab\ncd ab");
+}
+
+/// Another origin's edit, as an agent's would come in.
+fn edit_elsewhere(vim: &HeadlessVim, range: std::ops::Range<usize>, text: &str) {
+    let ai = Origin::Ai {
+        agent: "agent".into(),
+        session: "session".into(),
+    };
+    vim.model().split().buffer_mut().edit([(range, text)], ai);
+}
+
+#[test]
+fn session_labels_go_stale_when_another_origin_edits() {
+    // Each session from the text's start, the edit made while its labels
+    // wait, and the label then typed: it fails with nothing more changed,
+    // and a recording keeps only an autojump that went ahead.
+    type Case<'a> = (
+        &'a str,
+        &'a str,
+        &'a str,
+        std::ops::Range<usize>,
+        &'a str,
+        &'a str,
+    );
+    let wide = rows(10, "ab ab");
+    let cases: [Case; 10] = [
+        // After an operator: an insertion before the targets, a deletion.
+        ("x ab ab", "dgsab", "XX ", 2..2, "f", ""),
+        ("x ab ab", "dgsab", "", 0..1, "f", ""),
+        // No autojump: an insertion at the caret's row, a deletion.
+        (&wide, "gsab", "Z", 0..0, "f", ""),
+        (&wide, "gsab", "", 0..1, "f", ""),
+        // After an autojump: an insertion, a deletion.
+        ("x ab\nx ab\nx ab", "gsab", "QQ", 5..5, "s", "1gsab"),
+        ("x ab\nx ab\nx ab", "gsab", "", 4..6, "s", "1gsab"),
+        // In a visual mode, with and without an autojump: an insertion, a
+        // deletion.
+        ("ab\nab\nab\nab", "vgsab", "W", 3..3, "f", "v1gsab"),
+        ("ab\nab\nab\nab", "vgsab", "", 6..7, "f", "v1gsab"),
+        (&wide, "vgsab", "W", 9..9, "n", "v"),
+        (&wide, "vgsab", "", 6..7, "n", "v"),
+    ];
+    for (text, keys, put, range, label, recorded) in cases {
+        let mut vim = session(text, (0, 0), 10, &format!("qq{keys}"));
+        assert!(!shown(&vim).is_empty(), "{keys} {range:?}");
+        edit_elsewhere(&vim, range.clone(), put);
+        vim.sync_visual();
+        // The labels are no longer shown.
+        assert_eq!(shown(&vim), [], "{keys} {range:?}");
+        let (edited, at) = (vim.text(), vim.cursor());
+        vim.feed(label).unwrap();
+        assert!(vim.state().failed(), "{keys} {range:?}");
+        assert_eq!((vim.text(), vim.cursor()), (edited, at), "{keys} {range:?}");
+        let mode = if keys.starts_with('v') {
+            "visual"
+        } else {
+            "normal"
+        };
+        assert_eq!(vim.mode(), mode, "{keys} {range:?}");
+        vim.feed("q").unwrap();
+        let got = vim.registers().get('q').map(|r| r.text.clone());
+        assert_eq!(got.as_deref().unwrap_or(""), recorded, "{keys} {range:?}");
+    }
+
+    // A caret moved meanwhile, with no edit, makes them stale too.
+    let mut vim = session("x ab\nx ab\nx ab", (0, 0), 10, "gsab");
+    vim.model_mut().set_cursor(0);
+    assert_eq!(shown(&vim), []);
+    vim.feed("s").unwrap();
+    assert!(vim.state().failed());
+    assert_eq!(vim.cursor(), (0, 0));
+
+    // With nothing changed, a picked label still acts.
+    let vim = session("x ab ab ab", (0, 0), 10, "dgsabf");
+    assert_eq!(vim.text(), "b ab");
+}
+
+/// Carets at `offsets`, the last the primary.
+fn carets(offsets: &[usize]) -> Vec<ResolvedSelection> {
+    offsets
+        .iter()
+        .map(|&offset| ResolvedSelection {
+            range: offset..offset,
+            reversed: false,
+        })
+        .collect()
+}
+
+#[test]
+fn session_labels_go_stale_when_the_selections_change() {
+    // Each session, its keys typed with carets at `from`; then, while its
+    // labels wait, a caret before the primary added, removed or moved, the
+    // primary where it was. The label typed then fails with nothing
+    // changed, and the carets stay as they were set.
+    enum Change {
+        Add(usize),
+        Remove,
+        Move(usize),
+    }
+    let wide = rows(10, "ab ab");
+    let four = rows(4, "x ab");
+    let cases: [(&str, &[usize], &str, Change, &str); 9] = [
+        // After an operator.
+        ("ab x ab ab", &[3], "dgsab", Change::Add(0), "f"),
+        ("ab x ab ab", &[0, 3], "dgsab", Change::Remove, "f"),
+        ("ab x ab ab", &[0, 3], "dgsab", Change::Move(1), "f"),
+        // No autojump.
+        (&wide, &[3], "gsab", Change::Add(1), "f"),
+        (&wide, &[1, 3], "gsab", Change::Remove, "f"),
+        (&wide, &[1, 3], "gsab", Change::Move(2), "f"),
+        // After an autojump, which moved both carets of two.
+        (&four, &[0], "gsab", Change::Add(0), "s"),
+        (&four, &[0, 5], "gsab", Change::Remove, "s"),
+        (&four, &[0, 5], "gsab", Change::Move(1), "s"),
+    ];
+    for (text, from, keys, change, label) in cases {
+        let mut vim = HeadlessVim::new(text, (0, 0));
+        vim.set_window_rows(10);
+        vim.model_mut().set_selections(carets(from));
+        vim.feed(keys).unwrap();
+        assert!(!shown(&vim).is_empty(), "{keys} {from:?}");
+        let mut now = vim.model().selections();
+        match change {
+            Change::Add(offset) => now.insert(0, carets(&[offset]).remove(0)),
+            Change::Remove => drop(now.remove(0)),
+            Change::Move(offset) => now[0] = carets(&[offset]).remove(0),
+        }
+        vim.model_mut().set_selections(now.clone());
+        assert_eq!(vim.model().selections(), now, "{keys} {from:?}");
+        assert_eq!(shown(&vim), [], "{keys} {from:?}");
+        let at = vim.cursor();
+        vim.feed(label).unwrap();
+        assert!(vim.state().failed(), "{keys} {from:?}");
+        assert_eq!(vim.text(), text, "{keys} {from:?}");
+        assert_eq!(vim.cursor(), at, "{keys} {from:?}");
+        assert_eq!(vim.model().selections(), now, "{keys} {from:?}");
     }
 }
