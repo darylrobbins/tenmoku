@@ -37,7 +37,7 @@ use fe_text::Text;
 
 use crate::{
     Change, InsertArgs, InsertAt, LastChange, Mode, Motion, OperateArgs, RangeClass, Register,
-    Registers, Target, VimState, VimTarget, Write, history,
+    Registers, Target, VimState, VimTarget, Write, history, marks,
     motion::Cursor,
     operator::{MAX_PUT, Op, Span, apply, caret, grapheme_len, merge, row_end, sync},
     visual,
@@ -444,21 +444,27 @@ pub(crate) fn adopt_closing(state: &mut VimState) {
     else {
         return;
     };
-    // A change made while it was closing is newer than it.
-    if state.changes == changes {
+    // A change made while it was closing is newer than it, marks and all.
+    let current = state.changes == changes;
+    if current {
         state.set_last_change(closed.last_change);
     }
     if !replaying {
         state.carets.settle(carets, closed.transaction);
     }
+    if let Some(left) = closed.left.filter(|_| current) {
+        marks::adopt_insert(state, *left);
+    }
 }
 
-/// What ending a session left: the last change for `.`, and the
-/// transaction it closed, if that was kept, for the carets record.
+/// What ending a session left: the last change for `.`, the transaction it
+/// closed, if that was kept, for the carets record, and at `Esc` the marks
+/// leaving insert mode set.
 #[derive(Clone, Debug)]
 struct Closed {
     last_change: LastChange,
     transaction: Option<TransactionId>,
+    left: Option<Box<marks::Left>>,
 }
 
 /// The count's copies, for [`Ledger::follow`]: the version their batch
@@ -1149,6 +1155,10 @@ fn open(
         resumed,
         block,
     } = opening;
+    // Typing from here on is vim's, and leaving insert mode leaves `'[`
+    // where it began.
+    let primary = heads.last().copied().unwrap_or(0);
+    state.marks.inserting(&snapshot, primary, origin.clone());
     state.session = Some(Session {
         regions,
         ledger,
@@ -1179,6 +1189,7 @@ fn start(
         .collect();
     let id = model.buffer_mut().start_transaction(origin);
     state.carets.record_pending(id, begins);
+    state.marks.own(id);
 }
 
 /// `vim.insert`: moves each caret as `at` says (opening a row for `o` and
@@ -1255,6 +1266,14 @@ pub(crate) fn insert(
             .collect(),
         origin.clone(),
     );
+    // The row `o` or `O` opened, for `'.` if nothing's typed on it.
+    if let Some((at, _, _)) = points.first().filter(|_| opens) {
+        let row = row(&text, *at) + u32::from(args.at == InsertAt::LineBelow);
+        let rows = (row, row);
+        state
+            .marks
+            .note(opened.0.version(), marks::Note::Put { rows });
+    }
     // Each caret, and for `o` and `O` the start of the indentation it
     // opened, in the text right after the edit.
     let mut shift = 0;
@@ -1309,6 +1328,7 @@ pub(crate) fn block(
     let text = snapshot.text();
     let begin = history::pair(text, at);
     state.carets.record_pending(id, vec![begin]);
+    state.marks.own(id);
     let point = text.offset_to_point(at);
     let start = text.row_start(point.row);
     // Typing at a row's start goes before its marks, as an ordinary
@@ -1477,6 +1497,7 @@ pub(crate) fn change(
     }
     let id = model.buffer_mut().start_transaction(origin.clone());
     state.carets.record_pending(id, begins);
+    state.marks.own(id);
     let removed = merge(deletes);
     let opened = apply_opening(
         model,
@@ -1618,6 +1639,9 @@ fn end(model: &mut EditorModel, state: &mut VimState, how: Ending) -> Option<Tra
                     if !replaying {
                         state.carets.close(closed.transaction);
                     }
+                    if let Some(left) = closed.left {
+                        marks::adopt_insert(state, *left);
+                    }
                 }
                 None => {
                     state.closing = Some(Closing {
@@ -1696,17 +1720,56 @@ fn end(model: &mut EditorModel, state: &mut VimState, how: Ending) -> Option<Tra
         }
     }
     drop_unused_indent(model, &session, matches!(how, Ending::Moved(_)));
+    // Where insert mode is left, for `'^`.
+    let exit = esc.then(|| {
+        model
+            .snapshot()
+            .anchor_before(model.primary_selection().head())
+    });
     // Over a block, `Esc` types that on the others too, once the carets
     // stepped back, as nvim's does; `I` and `A` then leave the caret on the
     // block's corner.
     let corner = match (&session.block, &block_typed) {
         (Some(block), Some(typed)) => {
             step_back(model);
-            type_on_rows(model, &session.origin, block, typed, session.count);
-            Some(typed.corner)
+            let end = type_on_rows(model, &session.origin, block, typed, session.count);
+            Some((typed.corner, end))
         }
         _ => None,
     };
+    // Leaving insert mode sets `'^` where it was left, and `'[` and `']`
+    // from where typing began to that (over a block, but for `c`, to the end
+    // of what went in on its last row), as nvim's does.
+    // `'.` is where the last of the count's copies began (the text it typed
+    // after its last line break), or at the start of a block's first row
+    // typed on, as nvim's are.
+    let copied = ended
+        .last()
+        .filter(|_| keys.is_none() && session.block.is_none() && session.count > 1)
+        .and_then(|primary| primary.typed.rsplit('\n').next())
+        .filter(|piece| !piece.is_empty())
+        .map(str::len);
+    let left = exit.map(|exit| {
+        let snapshot = model.snapshot();
+        let exit = snapshot.resolve(&exit);
+        let rows = corner.as_ref().and_then(|(_, rows)| rows.as_ref());
+        let typed_end = match (&session.block, rows) {
+            (Some(block), Some((end, _))) if !matches!(block.rows.edge, Edge::Fixed) => {
+                Some(snapshot.resolve(end))
+            }
+            _ => None,
+        };
+        let change = match rows {
+            Some((_, first)) => {
+                let text = snapshot.text();
+                Some(text.row_start(text.offset_to_point(snapshot.resolve(first)).row))
+            }
+            None => copied.and_then(|len| exit.checked_sub(len)),
+        };
+        let end = typed_end.unwrap_or(exit);
+        Box::new(marks::left_insert(state, model, exit, end, change))
+    });
+    let corner = corner.map(|(corner, _)| corner);
 
     let snapshot = model.snapshot();
     let typed = match keys {
@@ -1750,6 +1813,7 @@ fn end(model: &mut EditorModel, state: &mut VimState, how: Ending) -> Option<Tra
     session.ledger().end = End::Ended(Closed {
         last_change: last_change.clone(),
         transaction: ended,
+        left,
     });
     state.set_last_change(last_change);
     ended
@@ -1788,7 +1852,7 @@ fn type_on_rows(
     block: &Block,
     typed: &Typed,
     count: u32,
-) {
+) -> Option<(Anchor, Anchor)> {
     sync(model);
     let rows = &block.rows;
     let snapshot = model.snapshot();
@@ -1838,20 +1902,37 @@ fn type_on_rows(
         size.checked_add(spaces.0)?.checked_add(each?)
     });
     if size.is_none_or(|size| size > MAX_PUT) {
-        return;
+        return None;
     }
     let typed = format!("{}{}", typed.prefix, typed.text.repeat(copies));
-    let edits = places
+    let edits: Vec<(Range<usize>, String)> = places
         .into_iter()
-        .map(|(range, spaces)| (range, visual::spaced(&typed, spaces)));
+        .map(|(range, spaces)| (range, visual::spaced(&typed, spaces)))
+        .collect();
+    // Where what goes in on the first row starts and on the last ends, once
+    // it's in.
+    let mut grown = 0isize;
+    let mut ends = Vec::with_capacity(edits.len());
+    for (range, text) in &edits {
+        let start = range.start.saturating_add_signed(grown);
+        ends.push((start, start + text.len()));
+        grown += text.len() as isize - range.len() as isize;
+    }
     let carets = history::pairs(model);
     let (_, snapshot) = apply(model, edits, origin.clone());
+    let typed = ends
+        .first()
+        .zip(ends.last())
+        .map(|(&(first, _), &(_, end))| {
+            (snapshot.anchor_before(end), snapshot.anchor_after(first))
+        });
     let text = snapshot.text();
     let heads: Vec<usize> = carets
         .into_iter()
         .map(|(row, column)| text.row_start(row) + column)
         .collect();
     place(model, &snapshot, &heads);
+    typed
 }
 
 impl BlockRows {

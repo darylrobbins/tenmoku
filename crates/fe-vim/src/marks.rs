@@ -6,6 +6,16 @@
 //! `` `> `` to the last visual extent's ends. Each jump that sets the jump
 //! mark also adds where it left from to the jumplist, which
 //! [`crate::jumplist`]'s keys go back and forward through.
+//!
+//! `m{A-Z}` sets an uppercase mark, kept and jumped to as `a` to `z` are
+//! (in this view: a mark in another file is the host's). `'[` and `']`
+//! (`` `[ `` and `` `] ``) go to the first and last char of the text last
+//! changed, put or yanked (`:help '[`), and `'.` to where the last change
+//! was (`:help '.`): the changes and puts come from the edit batches the
+//! marks follow, those of vim's own commands ([`Changes`]), so a yank
+//! (which edits nothing) sets `'[` and `']` itself, as does leaving insert
+//! mode, which also sets `'^`, where it was left (`:help '^`). `m[` and `m]`
+//! set `'[` and `']`.
 
 use std::{
     collections::BTreeMap,
@@ -18,7 +28,8 @@ use std::{
 };
 
 use fe_buffer::{
-    Anchor, BufferEvent, BufferSnapshot, Edit, Subscription, Text, TransactionId, Version,
+    Anchor, BufferEvent, BufferSnapshot, Edit, EditKind, Origin, Subscription, Text, TransactionId,
+    Version,
 };
 use fe_command::{CommandError, Dispatched, Effect};
 use fe_text::Bias;
@@ -35,16 +46,16 @@ pub(crate) const INVALID_ROW: &str = "E19: Mark has invalid line number";
 /// How many entries the jumplist keeps, as nvim's: the oldest go.
 const JUMPS: usize = 100;
 
-/// Whether `m{ch}` sets a mark: `a` to `z`, and `'` and `` ` `` (the jump
-/// mark).
+/// Whether `m{ch}` sets a mark: `a` to `z`, `A` to `Z`, `'` and `` ` ``
+/// (the jump mark), and `[` and `]`.
 pub(crate) fn settable(ch: char) -> bool {
-    ch.is_ascii_lowercase() || matches!(ch, '\'' | '`')
+    ch.is_ascii_alphabetic() || "'`[]".contains(ch)
 }
 
-/// Whether `'{ch}` and `` `{ch} `` go to a mark: `a` to `z`, `'` and `` ` ``
-/// (the jump mark), and `<` and `>`.
+/// Whether `'{ch}` and `` `{ch} `` go to a mark: those `m` sets, and `.`,
+/// `^`, `<` and `>`.
 pub(crate) fn jumpable(ch: char) -> bool {
-    ch.is_ascii_lowercase() || "'`<>".contains(ch)
+    settable(ch) || ".^<>".contains(ch)
 }
 
 /// Where a mark is, kept as nvim keeps one: a byte column on a row. The row
@@ -82,6 +93,9 @@ pub(crate) struct Place {
 /// One edit batch the buffer applied, as [`Life`] follows it.
 #[derive(Clone, Debug)]
 struct Batch {
+    transaction: TransactionId,
+    origin: Origin,
+    kind: EditKind,
     from: Version,
     to: Version,
     edits: Arc<[Edit]>,
@@ -143,14 +157,19 @@ impl FeedState {
     fn receive(&mut self) {
         for event in self.events.drain() {
             if let BufferEvent::Edited {
+                transaction,
+                origin,
+                kind,
                 from,
                 to,
                 edits,
                 text,
-                ..
             } = event
             {
                 self.batches.push(Batch {
+                    transaction,
+                    origin,
+                    kind,
                     from,
                     to,
                     edits,
@@ -234,6 +253,21 @@ impl Life {
     fn new(snapshot: &BufferSnapshot, start: usize, end: usize) -> Self {
         Self {
             version: snapshot.version(),
+            start,
+            end,
+            before: start == end,
+            hollow: start == end,
+            kept: false,
+            dead: false,
+        }
+    }
+
+    /// `row` of `text`, the text as of `version`.
+    fn on_row(version: Version, text: &Text, row: u32) -> Self {
+        let start = text.row_start(row);
+        let end = start + text.row_len(row) as usize;
+        Self {
+            version,
             start,
             end,
             before: start == end,
@@ -515,6 +549,11 @@ impl Place {
         (row < text.row_count()).then_some((row, self.column))
     }
 
+    /// Whether it was set or followed past `snapshot`'s version.
+    fn newer_than(&self, snapshot: &BufferSnapshot) -> bool {
+        self.row.version() > snapshot.version() || self.life.version > snapshot.version()
+    }
+
     /// Joined to the row above by a cut, keeping its column from where its
     /// row's start goes.
     fn joined(snapshot: &BufferSnapshot, row: u32, column: usize) -> Self {
@@ -546,10 +585,484 @@ impl Entry {
     }
 }
 
-/// The marks one editor's vim state holds: `a` to `z`, and the jump mark.
+/// `'[`, `']` and `'.` (`:help '[`, `:help '.`): set from each edit batch of
+/// vim's own (one whose transaction fe-vim noted carets for, or typed in its
+/// insert session), as nvim's commands set them, and followed through the
+/// others as marks are. A yank, a shift that changed nothing and leaving
+/// insert mode set `'[` and `']` themselves ([`yanked`], [`shifted`],
+/// [`left_insert`]).
+///
+/// A batch's edits say where the text changed but not which command
+/// changed it, so it's read by its shape, with what the command noted
+/// ([`Note`]): whole rows taken out (`dd`) leave `'[` and `']` on the row
+/// after them, at the column the operator began at, and `'.` at its start;
+/// whole rows put in (a linewise `p`) span `'[` (column 0) to `']` (their
+/// last row's last byte); rows a shift noted span its column on the first
+/// to the last's last byte; line breaks joined away (`J`) span the first
+/// join to the joined row's end; anything else spans its first char to its
+/// last, both at the start of a deletion, with `'.` at its start (or, past
+/// a line break it took out, the start of the row after). Text typed on
+/// from where the last typing ended, with no line break, leaves `'.` where
+/// that began, as nvim's typed-ahead keys go in at once. An undo or a redo
+/// spans the rows its batches changed, column 0. A row past the last (`dd`
+/// there) leaves the mark there, which a jump can't go to (E19).
+///
+/// The batches wait in `pending` until a command with the vim state at hand
+/// reads them ([`catch_up`]), which knows whose they are.
+#[derive(Clone, Debug, Default)]
+struct Changes {
+    /// The batches the marks took since the last [`catch_up`].
+    pending: Vec<Batch>,
+    /// The text before the next batch, and its version: what a batch took
+    /// out is measured in it.
+    text: Option<(Version, Text)>,
+    /// `'[`.
+    start: Option<Spot>,
+    /// `']`.
+    end: Option<Spot>,
+    /// `'.`.
+    change: Option<Spot>,
+    /// Where the open insert session began, for `'[` once it's left.
+    began: Option<Spot>,
+    /// While an insert session is open, the version it opened at and its
+    /// origin: that origin's batches from it on are typing.
+    typing: Option<(Version, Origin)>,
+    /// Where the last text typed with no line break ended, in the text
+    /// after it.
+    run: Option<usize>,
+    /// The last of vim's batches read: an undo's or a redo's next batch
+    /// spans the rows of both.
+    last: Option<(TransactionId, EditKind)>,
+    /// What the commands that made the last few batches noted, by the
+    /// version each batch made.
+    notes: Vec<(Version, Note)>,
+    /// The transactions of the last few insert sessions, vim's own before
+    /// their carets record is kept (once they end).
+    owned: Vec<TransactionId>,
+}
+
+/// What a command noted about the batch it made, which the batch can't say
+/// ([`Marks::note`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Note {
+    /// Whole rows deleted, the operator having begun at this column, which
+    /// `'[` takes, as nvim's.
+    Deleted { column: usize },
+    /// A shift of the rows from the first to the last, begun at `column`:
+    /// `'[` and `']` span them, whether or not it changed them all.
+    Shifted { column: usize, rows: (u32, u32) },
+    /// Whole rows put in, from the first to the last (in the text after),
+    /// which an empty row put next to an empty row can't say.
+    Put { rows: (u32, u32) },
+    /// Rows joined (`J`): `'[` at the first join, `']` at the end of the
+    /// row they're joined onto.
+    Joined,
+}
+
+/// How many batches' notes, and insert sessions' transactions, [`Changes`]
+/// keeps.
+const NOTES: usize = 16;
+
+impl PartialEq for Changes {
+    fn eq(&self, other: &Self) -> bool {
+        let version = |changes: &Self| changes.text.as_ref().map(|(version, _)| *version);
+        let pending = |changes: &Self| {
+            let batches = changes.pending.iter();
+            batches.map(|batch| batch.to).collect::<Vec<_>>()
+        };
+        version(self) == version(other)
+            && pending(self) == pending(other)
+            && self.start == other.start
+            && self.end == other.end
+            && self.change == other.change
+            && self.began == other.began
+            && self.typing == other.typing
+            && self.run == other.run
+            && self.last == other.last
+            && self.notes == other.notes
+            && self.owned == other.owned
+    }
+}
+
+impl Eq for Changes {}
+
+/// One of [`Changes`]' marks: a row, and its column there.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Spot {
+    row: Row,
+    column: Column,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Row {
+    /// Set from a batch, which has no snapshot to anchor it in: its row is
+    /// followed through each batch since, until [`Marks::follow`] places it.
+    Followed {
+        life: Life,
+        column: usize,
+    },
+    Placed(Place),
+    /// Past the last row: no row ever takes it.
+    Past,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum Column {
+    /// The row's own.
+    Own,
+    /// The row's last byte, as a linewise yank's `']` is.
+    End,
+}
+
+impl Spot {
+    /// At `own` on `row` of `text`, the text as of `version`; past the last
+    /// row if it hasn't that row.
+    fn followed(version: Version, text: &Text, (row, own): (u32, usize)) -> Self {
+        Self {
+            row: match row < text.row_count() {
+                true => Row::Followed {
+                    life: Life::on_row(version, text, row),
+                    column: own,
+                },
+                false => Row::Past,
+            },
+            column: Column::Own,
+        }
+    }
+
+    /// At `offset` in `snapshot`.
+    fn placed_at(snapshot: &BufferSnapshot, offset: usize) -> Self {
+        Self::placed(Place::at(snapshot, offset))
+    }
+
+    fn placed(place: Place) -> Self {
+        Self {
+            row: Row::Placed(place),
+            column: Column::Own,
+        }
+    }
+
+    fn advance(&mut self, batch: &Batch) {
+        match &mut self.row {
+            Row::Followed { life, .. } => life.advance(std::slice::from_ref(batch)),
+            Row::Placed(place) => place.advance(std::slice::from_ref(batch)),
+            Row::Past => {}
+        }
+    }
+
+    /// Its row in `text`, the text right after the batch it was last
+    /// advanced through, if it's followed there.
+    fn row_in(&self, text: &Text, version: Version) -> Option<u32> {
+        match &self.row {
+            Row::Followed { life, .. } if life.version == version && !life.dead => {
+                Some(text.offset_to_point(life.start).row)
+            }
+            _ => None,
+        }
+    }
+
+    /// Its row and byte column in `snapshot`, as [`Place::position`]
+    /// reports them.
+    fn position(&self, snapshot: &BufferSnapshot) -> Option<(u32, usize)> {
+        let (row, own) = match &self.row {
+            Row::Followed { life, column } => {
+                if life.dead || life.version != snapshot.version() {
+                    return None;
+                }
+                (snapshot.text().offset_to_point(life.start).row, *column)
+            }
+            Row::Placed(place) => place.position(snapshot)?,
+            Row::Past => return None,
+        };
+        let column = match self.column {
+            Column::Own => own,
+            Column::End => (snapshot.text().row_len(row) as usize).saturating_sub(1),
+        };
+        Some((row, column))
+    }
+
+    /// Anchored in `snapshot` where it is, `None` once its row is gone, or
+    /// as it is if it's newer than `snapshot`.
+    fn place(&self, snapshot: &BufferSnapshot) -> Option<Self> {
+        let Row::Followed { life, .. } = &self.row else {
+            return Some(self.clone());
+        };
+        if life.dead {
+            return None;
+        }
+        if life.version != snapshot.version() {
+            return Some(self.clone());
+        }
+        let (row, column) = self.position(snapshot)?;
+        let column = match self.column {
+            Column::Own => column,
+            Column::End => 0,
+        };
+        Some(Self {
+            row: Row::Placed(Place::on(snapshot, row, column)),
+            column: self.column,
+        })
+    }
+}
+
+impl Changes {
+    fn spots(&mut self) -> impl Iterator<Item = &mut Option<Spot>> {
+        [
+            &mut self.start,
+            &mut self.end,
+            &mut self.change,
+            &mut self.began,
+        ]
+        .into_iter()
+    }
+
+    fn is_set(&self) -> bool {
+        self.start.is_some() || self.end.is_some() || self.change.is_some() || self.began.is_some()
+    }
+
+    fn mark(&self, name: char) -> Option<&Spot> {
+        match name {
+            '[' => self.start.as_ref(),
+            ']' => self.end.as_ref(),
+            _ => self.change.as_ref(),
+        }
+    }
+
+    /// Reads the pending batches up to those that end by `limit`, `own`
+    /// saying which are vim's (besides those typed in its insert session),
+    /// `caret` the column of a transaction's first caret before it.
+    fn commit(
+        &mut self,
+        limit: Option<Version>,
+        own: &dyn Fn(TransactionId) -> bool,
+        caret: &dyn Fn(TransactionId) -> Option<usize>,
+    ) {
+        let batches = std::mem::take(&mut self.pending);
+        let read = match limit {
+            Some(limit) => batches.partition_point(|batch| batch.to <= limit),
+            None => batches.len(),
+        };
+        for batch in &batches[..read] {
+            let before = match &self.text {
+                Some((version, _)) if batch.to <= *version => continue,
+                Some((version, text)) if *version == batch.from => Some(text.clone()),
+                _ => None,
+            };
+            for spot in self.spots().flatten() {
+                spot.advance(batch);
+            }
+            let typed = self
+                .typing
+                .as_ref()
+                .is_some_and(|(from, origin)| batch.from >= *from && batch.origin == *origin);
+            let owned = self.owned.contains(&batch.transaction);
+            match typed || owned || own(batch.transaction) {
+                true => self.read(batch, before.as_ref(), typed, caret),
+                false => self.run = None,
+            }
+            self.text = Some((batch.to, batch.text.clone()));
+        }
+        self.pending = batches[read..].to_vec();
+    }
+
+    /// Sets the marks from vim's own `batch`, the text before it `before`
+    /// if known (see [`Changes`]).
+    fn read(
+        &mut self,
+        batch: &Batch,
+        before: Option<&Text>,
+        typed: bool,
+        caret: &dyn Fn(TransactionId) -> Option<usize>,
+    ) {
+        let (Some(first), Some(last)) = (batch.edits.first(), batch.edits.last()) else {
+            return;
+        };
+        let (text, version) = (&batch.text, batch.to);
+        let point = |offset: usize| {
+            let point = text.offset_to_point(offset);
+            (point.row, point.column as usize)
+        };
+        let at = |offset: usize| Some(Spot::followed(version, text, point(offset)));
+        let on = |row: u32, column: usize| Some(Spot::followed(version, text, (row, column)));
+        let last_byte = |row: u32| match row < text.row_count() {
+            true => (text.row_len(row) as usize).saturating_sub(1),
+            false => 0,
+        };
+        let run = self.run.take();
+        let previous = self.last.replace((batch.transaction, batch.kind));
+        if batch.kind != EditKind::Edit {
+            let mut top = point(first.new.start).0;
+            let mut bottom = match last.new.is_empty() {
+                true => point(last.new.start).0,
+                false => point(last.new.end - 1).0,
+            };
+            // The same undo's (or redo's) batches span all their rows.
+            if previous == self.last {
+                let row = |spot: &Option<Spot>| spot.as_ref()?.row_in(text, version);
+                top = row(&self.start).map_or(top, |row| row.min(top));
+                bottom = row(&self.end).map_or(bottom, |row| row.max(bottom));
+            }
+            (self.start, self.end, self.change) = (on(top, 0), on(bottom, 0), on(top, 0));
+            return;
+        }
+        let note = self
+            .notes
+            .iter()
+            .find(|(at, _)| *at == batch.to)
+            .map(|(_, note)| note.clone());
+        let one_line = |range: &Range<usize>| point(range.start).0 == point(range.end).0;
+        // Typing on with no line break: `'.` stays where it began.
+        let types_on =
+            typed && batch.edits.len() == 1 && first.old.is_empty() && one_line(&first.new);
+        if types_on && !first.new.is_empty() {
+            self.run = Some(first.new.end);
+        }
+        let keeps_change = types_on && run == Some(first.old.start);
+        let column = || match note {
+            Some(Note::Deleted { column }) => column,
+            _ => caret(batch.transaction).unwrap_or(0),
+        };
+        let deletes = batch.edits.iter().all(|edit| edit.new.is_empty());
+        let put = match note {
+            Some(Note::Put { rows }) => Some(rows),
+            _ => put_rows(text, first).filter(|_| !typed),
+        };
+        let (start, end, change) = if let Some(Note::Shifted {
+            column,
+            rows: (row, last_row),
+        }) = note
+        {
+            (
+                on(row, column),
+                on(last_row, last_byte(last_row)),
+                on(row, 0),
+            )
+        } else if let Some(Note::Joined) = note {
+            let row = point(first.new.start).0;
+            let end = text.row_len(row) as usize;
+            (at(first.new.start), on(row, end), on(row + 1, 0))
+        } else if let Some(row) = before.filter(|_| deletes).and_then(|before| {
+            // All the text, rows only as the operator said.
+            let all = first.old == (0..before.len());
+            match (&note, all) {
+                (Some(Note::Deleted { .. }), true) => Some(0),
+                (_, true) => None,
+                _ => taken_rows(before, &first.old),
+            }
+        }) {
+            (on(row, column()), on(row, column()), on(row, 0))
+        } else if let Some((row, last_row)) = put {
+            (on(row, 0), on(last_row, last_byte(last_row)), on(row, 0))
+        } else {
+            let end = match last.new.is_empty() {
+                true => last.new.start,
+                false => text.clip_offset(last.new.end - 1, Bias::Left),
+            };
+            // A line break taken out leaves `'.` on the row after.
+            let broke = before.is_some_and(|before| {
+                let row = |offset| before.offset_to_point(offset).row;
+                row(first.old.start) != row(first.old.end)
+            });
+            let change = match broke {
+                true => on(point(first.new.start).0 + 1, 0),
+                false => at(first.new.start),
+            };
+            (at(first.new.start), at(end), change)
+        };
+        self.start = start;
+        self.end = end;
+        if !keeps_change {
+            self.change = change;
+        }
+    }
+
+    /// Anchored afresh where they are in `snapshot`, or gone with their
+    /// rows; one newer than `snapshot` (another model edited the buffer
+    /// since) stays as it is.
+    fn follow(&mut self, snapshot: &BufferSnapshot) {
+        for spot in self.spots() {
+            *spot = match spot.take() {
+                Some(Spot {
+                    row: Row::Placed(place),
+                    column,
+                }) if !place.newer_than(snapshot) => {
+                    place.position(snapshot).map(|(row, at)| Spot {
+                        row: Row::Placed(Place::on(snapshot, row, at)),
+                        column,
+                    })
+                }
+                spot => spot.and_then(|spot| spot.place(snapshot)),
+            };
+        }
+    }
+
+    /// Each placed mark becomes what `f` makes of it, or goes.
+    fn update(&mut self, f: impl Fn(&Place) -> Option<Place>) {
+        for spot in self.spots() {
+            if let Some(Spot {
+                row: Row::Placed(place),
+                column,
+            }) = spot
+            {
+                *spot = f(place).map(|place| Spot {
+                    row: Row::Placed(place),
+                    column: *column,
+                });
+            }
+        }
+    }
+}
+
+/// The first of the whole rows `range` of `text` takes out, if it takes
+/// only whole rows, each with its line break (the last rows, with the line
+/// break before them).
+fn taken_rows(text: &Text, range: &Range<usize>) -> Option<u32> {
+    if range.is_empty() {
+        return None;
+    }
+    let (start, end) = (
+        text.offset_to_point(range.start),
+        text.offset_to_point(range.end),
+    );
+    match () {
+        _ if start.column == 0 && end.column == 0 => Some(start.row),
+        _ if range.end == text.len() && start.column == text.row_len(start.row) => {
+            Some(start.row + 1)
+        }
+        _ => None,
+    }
+}
+
+/// The first and last of the whole rows `edit` put in `text`, if it put
+/// only whole rows, each with its line break (after the last row, with the
+/// line break before them).
+fn put_rows(text: &Text, edit: &Edit) -> Option<(u32, u32)> {
+    if !edit.old.is_empty() || edit.new.is_empty() {
+        return None;
+    }
+    let (start, end) = (
+        text.offset_to_point(edit.new.start),
+        text.offset_to_point(edit.new.end),
+    );
+    match () {
+        _ if start.column == 0 && end.column == 0 => Some((start.row, end.row - 1)),
+        _ if edit.new.end == text.len() && start.column == text.row_len(start.row) => {
+            Some((start.row + 1, end.row))
+        }
+        _ => None,
+    }
+}
+
+/// The marks one editor's vim state holds: `a` to `z`, `'^`, `A` to `Z`,
+/// the jump mark, and `'[`, `']` and `'.` ([`Changes`]).
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Marks {
+    /// `a` to `z`, and `^`.
     named: BTreeMap<char, Place>,
+    /// `A` to `Z`: as nvim's, a deleted row doesn't delete one, which goes
+    /// to the row that took its place, as a jumplist entry does.
+    files: BTreeMap<char, Entry>,
+    changes: Changes,
     /// `''` and `` `` ``: where the last jump left from.
     jump: Option<Place>,
     /// While a command that jumped runs, the jump mark before it, which
@@ -576,7 +1089,43 @@ impl Marks {
         if self.feed.is_none() {
             let events = model.buffer_mut().subscribe();
             self.feed = Some(Feed::new(events));
+            let snapshot = model.snapshot();
+            self.changes.text = Some((snapshot.version(), snapshot.text().clone()));
         }
+    }
+
+    /// An insert session of `origin`'s opened at `at` in `snapshot`: what
+    /// it types from there on leaves `'.` where typing began, until a line
+    /// break, and leaving insert mode leaves `'[` at `at`.
+    pub(crate) fn inserting(&mut self, snapshot: &BufferSnapshot, at: usize, origin: Origin) {
+        self.changes.typing = Some((snapshot.version(), origin));
+        self.changes.run = None;
+        // Typing at its row's start goes after it, as nvim's `'[` stays.
+        let start = snapshot
+            .text()
+            .row_start(snapshot.text().offset_to_point(at).row);
+        let began = Place::at(snapshot, at).before_text(snapshot, start);
+        self.changes.began = Some(Spot::placed(began));
+    }
+
+    /// What the command whose batch made `version` noted about it, which
+    /// the batch can't say.
+    pub(crate) fn note(&mut self, version: Version, note: Note) {
+        let notes = &mut self.changes.notes;
+        if notes.len() == NOTES {
+            notes.remove(0);
+        }
+        notes.push((version, note));
+    }
+
+    /// Transaction `id` is an insert session's: its batches are vim's own,
+    /// before its carets record is kept.
+    pub(crate) fn own(&mut self, id: TransactionId) {
+        let owned = &mut self.changes.owned;
+        if owned.len() == NOTES {
+            owned.remove(0);
+        }
+        owned.push(id);
     }
 
     /// The batches the marks haven't caught up with.
@@ -590,7 +1139,9 @@ impl Marks {
         if batches.is_empty() {
             return;
         }
-        let entries = self.list.iter_mut().filter_map(|entry| match entry {
+        self.changes.pending.extend(batches.iter().cloned());
+        let entries = self.list.iter_mut().chain(self.files.values_mut());
+        let entries = entries.filter_map(|entry| match entry {
             Entry::At(place) => Some(place),
             Entry::Past => None,
         });
@@ -738,7 +1289,7 @@ impl Marks {
     fn displace(&mut self, snapshot: &BufferSnapshot, first: u32, last: u32) {
         self.advance();
         let rows = snapshot.text().row_count();
-        for entry in &mut self.list {
+        for entry in self.list.iter_mut().chain(self.files.values_mut()) {
             let Some((row, column)) = entry.spot(snapshot) else {
                 continue;
             };
@@ -855,7 +1406,7 @@ impl Marks {
         }
         // Jumplist entries on the rows between go with the last row's text.
         self.advance();
-        for entry in &mut self.list {
+        for entry in self.list.iter_mut().chain(self.files.values_mut()) {
             if let Some((row, column)) = entry.spot(snapshot)
                 && row > first
                 && row < last
@@ -879,7 +1430,8 @@ impl Marks {
         // A jumplist entry whose row was deleted stays, on the row that took
         // its place.
         self.advance();
-        for entry in &mut self.list {
+        self.changes.follow(snapshot);
+        for entry in self.list.iter_mut().chain(self.files.values_mut()) {
             *entry = match entry.spot(snapshot) {
                 Some((row, column)) => Entry::At(Place::on(snapshot, row, column)),
                 None => Entry::Past,
@@ -889,9 +1441,12 @@ impl Marks {
             let (row, column) = place.position(snapshot)?;
             Some(Place::on(snapshot, row, column))
         };
-        self.update(follow);
-        let entries = self.list.iter().any(|entry| matches!(entry, Entry::At(_)));
-        if self.named.is_empty() && self.jump.is_none() && self.previous.is_none() && !entries {
+        self.update_but_changes(follow);
+        let entries = (self.list.iter().chain(self.files.values()))
+            .any(|entry| matches!(entry, Entry::At(_)));
+        let changes = self.changes.is_set() || !self.changes.pending.is_empty();
+        let set = !self.named.is_empty() || changes;
+        if !set && self.jump.is_none() && self.previous.is_none() && !entries {
             self.feed = None;
         }
     }
@@ -899,6 +1454,12 @@ impl Marks {
     /// Each mark becomes what `f` makes of it, or goes; a jumplist entry
     /// `f` would delete stays as it is.
     fn update(&mut self, f: impl Fn(&Place) -> Option<Place>) {
+        self.changes.update(&f);
+        self.update_but_changes(f);
+    }
+
+    /// [`Marks::update`], leaving `'[`, `']` and `'.` as they are.
+    fn update_but_changes(&mut self, f: impl Fn(&Place) -> Option<Place>) {
         self.advance();
         let named = std::mem::take(&mut self.named);
         self.named = named
@@ -907,7 +1468,7 @@ impl Marks {
             .collect();
         self.jump = self.jump.as_ref().and_then(&f);
         self.previous = self.previous.as_ref().and_then(&f);
-        for entry in &mut self.list {
+        for entry in self.list.iter_mut().chain(self.files.values_mut()) {
             if let Entry::At(place) = entry
                 && let Some(moved) = f(place)
             {
@@ -918,7 +1479,8 @@ impl Marks {
 }
 
 /// A mark, as [`VimState::mark`] returns it: `'<` or `'>`, one `m` set
-/// (`a` to `z`), or the jump mark (`'` or `` ` ``).
+/// (`a` to `z`, `A` to `Z`), the jump mark (`'` or `` ` ``), `'^`, or one
+/// of `'[`, `']` and `'.`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Mark(Of);
 
@@ -934,6 +1496,29 @@ enum Of {
     },
     /// Followed through the batches since it was read, from `Feed`.
     Set(Place, Feed),
+    /// `A` to `Z`: [`Of::Set`], but on the row that took its row's place
+    /// once that's deleted.
+    Kept(Place, Feed),
+    /// `A` to `Z` past the last row, where the rows it was on went.
+    Past,
+    /// `'[`, `']` or `'.` (`name`): the batches pending and since it was
+    /// read, from `Feed`, may set it, those of the transactions in `own`
+    /// being vim's, with the column of each one's first caret in `carets`.
+    Change {
+        name: char,
+        changes: Box<Changes>,
+        feed: Feed,
+        own: Vec<TransactionId>,
+        carets: Vec<(TransactionId, usize)>,
+    },
+}
+
+/// Where a [`Mark`] is.
+enum Found {
+    At((u32, usize)),
+    /// Past the last row, where a jump to it fails with E19.
+    Past,
+    Gone,
 }
 
 impl Mark {
@@ -943,6 +1528,14 @@ impl Mark {
     /// a linewise extent's `'<` is at its row's column 0 and its `'>` on its
     /// row's last byte.
     pub fn get(&self, snapshot: &BufferSnapshot) -> Option<(u32, usize)> {
+        match self.find(snapshot) {
+            Found::At(at) => Some(at),
+            Found::Past | Found::Gone => None,
+        }
+    }
+
+    fn find(&self, snapshot: &BufferSnapshot) -> Found {
+        let found = |at: Option<(u32, usize)>| at.map_or(Found::Gone, Found::At);
         let (ends, end, linewise) = match &self.0 {
             Of::Visual {
                 ends,
@@ -952,7 +1545,29 @@ impl Mark {
             Of::Set(place, feed) => {
                 let mut place = place.clone();
                 place.advance_through(&feed.batches(), snapshot.version());
-                return place.position(snapshot);
+                return found(place.position(snapshot));
+            }
+            Of::Kept(place, feed) => {
+                let mut place = place.clone();
+                place.advance_through(&feed.batches(), snapshot.version());
+                return place.spot(snapshot).map_or(Found::Past, Found::At);
+            }
+            Of::Past => return Found::Past,
+            Of::Change {
+                name,
+                changes,
+                feed,
+                own,
+                carets,
+            } => {
+                let mut changes = changes.clone();
+                changes.pending.extend(feed.batches());
+                let caret = |id| carets.iter().find(|(at, _)| *at == id).map(|&(_, at)| at);
+                changes.commit(Some(snapshot.version()), &|id| own.contains(&id), &caret);
+                return match changes.mark(*name) {
+                    Some(Spot { row: Row::Past, .. }) => Found::Past,
+                    spot => found(spot.and_then(|spot| spot.position(snapshot))),
+                };
             }
         };
         let [a, b] = [&ends[0], &ends[1]].map(|pos| pos.position(snapshot));
@@ -962,7 +1577,7 @@ impl Mark {
             true => (text.row_len(row) as usize).saturating_sub(1),
             false => 0,
         };
-        Some(match (linewise, end) {
+        Found::At(match (linewise, end) {
             (true, false) => (row, 0),
             (true, true) => (row, last(row)),
             (false, _) => (row, column),
@@ -985,14 +1600,46 @@ impl VimState {
             .map_or(0, |feed| feed.lock().consumers.len())
     }
 
-    /// A mark: `a` to `z` once `m` set it, `'` or `` ` `` (the jump mark)
-    /// once a jump or `m'` set it, and `'<` and `'>`, the start and end of
-    /// the last visual extent, once a visual mode is left by any path. A
-    /// linewise extent's `'<` is on its first row's column 0, and its `'>`
-    /// on its last row's last byte.
+    /// A mark: `a` to `z` and `A` to `Z` once `m` set it, `'` or `` ` ``
+    /// (the jump mark) once a jump or `m'` set it, `'<` and `'>`, the start
+    /// and end of the last visual extent, once a visual mode is left by any
+    /// path, `'^` once insert mode is, and `'[`, `']` and `'.` once a change
+    /// (or for `'[` and `']`, a yank or `m`) set them. A linewise extent's
+    /// `'<` is on its first row's column 0, and its `'>` on its last row's
+    /// last byte, as is a linewise yank's or put's `']`.
     pub fn mark(&self, name: char) -> Option<Mark> {
         let place = match name {
-            'a'..='z' => self.marks.named.get(&name),
+            '[' | ']' | '.' => {
+                let feed = self.marks.feed.as_ref()?.clone();
+                let changes = &self.marks.changes;
+                let batches = feed.batches();
+                let ids = changes.pending.iter().chain(&batches);
+                let mut ids: Vec<TransactionId> = ids.map(|batch| batch.transaction).collect();
+                ids.dedup();
+                let own = ids
+                    .iter()
+                    .copied()
+                    .filter(|&id| self.carets.get(id).is_some());
+                let carets = ids
+                    .iter()
+                    .filter_map(|&id| Some((id, self.carets.get(id)?.first()?.1)))
+                    .collect();
+                return Some(Mark(Of::Change {
+                    name,
+                    changes: Box::new(changes.clone()),
+                    feed,
+                    own: own.collect(),
+                    carets,
+                }));
+            }
+            'A'..='Z' => {
+                let Entry::At(place) = self.marks.files.get(&name)? else {
+                    return Some(Mark(Of::Past));
+                };
+                let feed = self.marks.feed.as_ref()?.clone();
+                return Some(Mark(Of::Kept(place.clone(), feed)));
+            }
+            'a'..='z' | '^' => self.marks.named.get(&name),
             '\'' | '`' => self.marks.jump.as_ref(),
             '<' | '>' => {
                 let (ends, linewise) = self.last_visual.as_ref()?.marks();
@@ -1022,23 +1669,37 @@ fn cursor(target: &mut VimTarget<'_>) -> usize {
         .unwrap_or_else(|| target.model.primary_selection().head())
 }
 
-/// `vim.set_mark`: `a` to `z`, or the jump mark for `'` or `` ` ``, at the
-/// vim cursor in a visual mode (which goes on), else at the primary caret.
+/// `vim.set_mark`: `a` to `z`, `A` to `Z`, `'[` or `']`, or the jump mark
+/// for `'` or `` ` ``, at the vim cursor in a visual mode (which goes on),
+/// else at the primary caret.
 pub(crate) fn set(
     target: &mut VimTarget<'_>,
     args: MarkArgs,
 ) -> Result<Dispatched<TransactionId>, CommandError> {
     let name = args.name;
-    if !(name.is_ascii_lowercase() || matches!(name, '\'' | '`')) {
+    if !settable(name) {
         return Err(CommandError::new(format!("m doesn't set mark {name:?}")));
     }
     let at = cursor(target);
     target.state.marks.watch(target.model);
-    let place = Place::at(target.model.snapshot(), at);
+    // The batches before it don't set `'[` or `']` after.
+    catch_up(target.state);
+    let snapshot = target.model.snapshot();
+    let place = Place::at(snapshot, at);
     let marks = &mut target.state.marks;
     match name {
         'a'..='z' => {
             marks.named.insert(name, place);
+        }
+        'A'..='Z' => {
+            marks.files.insert(name, Entry::At(place));
+        }
+        '[' | ']' => {
+            let spot = Some(Spot::placed_at(snapshot, at));
+            match name {
+                '[' => marks.changes.start = spot,
+                _ => marks.changes.end = spot,
+            }
         }
         // `m'` adds a jump, as nvim's does.
         _ => {
@@ -1050,16 +1711,20 @@ pub(crate) fn set(
 }
 
 /// `motion` resolved, if it's a mark's: [`Motion::MarkAt`] the mark, its
-/// column at most its row's length, or E20 if it isn't set. Others come
-/// back as they are.
+/// column at most its row's length, or E20 if it isn't set (E19 past the
+/// last row). Others come back as they are.
 pub(crate) fn resolve(target: &mut VimTarget<'_>, motion: Motion) -> Result<Motion, String> {
     let Motion::Mark(MarkMotion { name, exact }) = motion else {
         return Ok(motion);
     };
     target.model.sync_display();
     let snapshot = target.model.snapshot();
-    let mark = target.state.mark(name).and_then(|mark| mark.get(snapshot));
-    let (row, column) = mark.ok_or_else(|| NOT_SET.to_string())?;
+    let found = target.state.mark(name).map(|mark| mark.find(snapshot));
+    let (row, column) = match found {
+        Some(Found::At(at)) => at,
+        Some(Found::Past) => return Err(INVALID_ROW.to_string()),
+        _ => return Err(NOT_SET.to_string()),
+    };
     let text = snapshot.text();
     // `'<` and `'>` may stay past the end, on rows a change took.
     let row = row.min(text.row_count() - 1);
@@ -1130,4 +1795,144 @@ pub(crate) fn jump(
         _ => true,
     };
     lands.then(|| Place::at(target.model.snapshot(), from))
+}
+
+/// Reads the batches pending for `'[`, `']` and `'.` ([`Changes`]): those
+/// of the transactions fe-vim noted carets for are vim's own.
+pub(crate) fn catch_up(state: &mut VimState) {
+    state.marks.advance();
+    let VimState { marks, carets, .. } = state;
+    let caret = |id| Some(carets.get(id)?.first()?.1);
+    marks
+        .changes
+        .commit(None, &|id| carets.get(id).is_some(), &caret);
+}
+
+/// Catches the marks up with the text before a command that may change it
+/// (see [`Marks::follow`]), and follows the buffer from there, so what the
+/// command changes sets `'[`, `']` and `'.`.
+pub(crate) fn follow(target: &mut VimTarget<'_>) {
+    catch_up(target.state);
+    target.state.marks.follow(target.model.snapshot());
+    target.state.marks.watch(target.model);
+}
+
+/// What a yank took, for `'[` and `']`.
+pub(crate) enum Yanked {
+    /// From `start` to `last`, the offset of its last char (a block's top
+    /// left and bottom right corners).
+    Chars { start: usize, last: usize },
+    /// The rows from the first to the last.
+    Rows(u32, u32),
+}
+
+/// After a yank of `yanked` in `model`'s text, which edits nothing, as
+/// nvim's: `'[` on its first char and `']` on its last, or on the first
+/// row's column 0 and the last row's last byte.
+pub(crate) fn yanked(state: &mut VimState, model: &mut EditorModel, yanked: Yanked) {
+    state.marks.watch(model);
+    catch_up(state);
+    let snapshot = model.snapshot();
+    let (start, end) = match yanked {
+        Yanked::Rows(first, last) => (
+            Spot::placed(Place::on(snapshot, first, 0)),
+            Spot {
+                row: Row::Placed(Place::on(snapshot, last, 0)),
+                column: Column::End,
+            },
+        ),
+        Yanked::Chars { start, last } => (
+            Spot::placed_at(snapshot, start),
+            Spot::placed_at(snapshot, last.max(start)),
+        ),
+    };
+    state.marks.changes.start = Some(start);
+    state.marks.changes.end = Some(end);
+}
+
+/// A shift of the rows from `first` to `last` of `model`'s text, begun at
+/// `column`: its batch, which made `version`, sets `'[` and `']` across
+/// those rows (whether or not it changed them all); with no batch, having
+/// changed nothing, it sets them and `'.` itself, as nvim's does.
+pub(crate) fn shifted(
+    state: &mut VimState,
+    model: &mut EditorModel,
+    version: Option<Version>,
+    (first, last): (u32, u32),
+    column: usize,
+) {
+    if let Some(version) = version {
+        let rows = (first, last);
+        state.marks.note(version, Note::Shifted { column, rows });
+        return;
+    }
+    state.marks.watch(model);
+    catch_up(state);
+    let snapshot = model.snapshot();
+    let last_byte = (snapshot.text().row_len(last) as usize).saturating_sub(1);
+    let changes = &mut state.marks.changes;
+    changes.start = Some(Spot::placed(Place::on(snapshot, first, column)));
+    changes.end = Some(Spot::placed(Place::on(snapshot, last, last_byte)));
+    changes.change = Some(Spot::placed(Place::on(snapshot, first, 0)));
+}
+
+/// Where leaving insert mode left `'[`, `']` and `'^`, for a clone of the
+/// state the session was shared with to adopt.
+#[derive(Clone, Debug)]
+pub(crate) struct Left {
+    start: Place,
+    end: Place,
+    exit: Place,
+}
+
+/// Insert mode left at `exit` in `model`'s text, what it typed ending at
+/// `end` (on a block's last row; else `exit`): `'[` is where the session
+/// began, `']` at `end` and `'^` at `exit`, as nvim's, and `'.` at `change`
+/// if the count's copies or a block's rows went in last.
+pub(crate) fn left_insert(
+    state: &mut VimState,
+    model: &mut EditorModel,
+    exit: usize,
+    end: usize,
+    change: Option<usize>,
+) -> Left {
+    state.marks.watch(model);
+    catch_up(state);
+    let snapshot = model.snapshot();
+    let changes = &mut state.marks.changes;
+    changes.typing = None;
+    changes.run = None;
+    let began = changes.began.take();
+    let start = match began.and_then(|spot| spot.place(snapshot)) {
+        Some(Spot {
+            row: Row::Placed(place),
+            ..
+        }) => place,
+        _ => Place::at(snapshot, exit),
+    };
+    if let Some(change) = change {
+        changes.change = Some(Spot::placed_at(snapshot, change));
+    }
+    let left = Left {
+        start,
+        end: Place::at(snapshot, end),
+        exit: Place::at(snapshot, exit),
+    };
+    adopt_insert(state, left.clone());
+    left
+}
+
+/// Takes the marks a clone of this state left insert mode with ([`Left`]),
+/// leaving a newer session open here as it is.
+pub(crate) fn adopt_insert(state: &mut VimState, left: Left) {
+    // The batches before it don't set them after.
+    catch_up(state);
+    let marks = &mut state.marks;
+    if state.session.is_none() {
+        marks.changes.typing = None;
+        marks.changes.began = None;
+    }
+    marks.changes.start = Some(Spot::placed(left.start));
+    marks.changes.end = Some(Spot::placed(left.end));
+    marks.named.insert('^', left.exit);
 }

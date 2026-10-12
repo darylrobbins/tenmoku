@@ -1,0 +1,781 @@
+# The `'[`, `']`, `'.` and `'^` marks and the uppercase marks for
+# fe-vim's oracle: `` `[ `` and `` `] `` after `yiw`, `yy`, `p`, `P`
+# (charwise and linewise), `dw`, `dd`, `cw…<Esc>`, `>>`, `x` and a visual
+# `d`, and `'[` and `']` linewise; `` `. `` after changes and after undo;
+# `` `^ `` after `i…<Esc>` and `A…<Esc>`; `mA` with its `'A`, `` `A `` and
+# `d'A`, and rows put in or taken out above the marks. An unset mark's
+# jump is a case's last key (nvim flushes the keys after it). nvim's
+# buffer starts with `'.` on its first row (setting the lines is a
+# change), so no case jumps to `'.` before one.
+# Hand-written: name, buffer (rows joined with \n, no trailing newline),
+# cursor = [row, byte column] and keys in vim notation. What nvim does with
+# each is recorded in marks_special.expected.json by the ignored
+# `record_corpus_with_neovim` test; edit a case, then re-record.
+
+[[case]]
+name = "yiw_start"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 5]
+keys = "yiwgg`["
+
+[[case]]
+name = "yiw_end"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 5]
+keys = "yiwgg`]"
+
+[[case]]
+name = "yy_start"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 5]
+keys = "yyG`["
+
+[[case]]
+name = "yy_end"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 5]
+keys = "yyG`]"
+
+[[case]]
+name = "yj_end"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 5]
+keys = "yjgg`]"
+
+[[case]]
+name = "yy_linewise_end"
+buffer = "one two three\n    four five\nsix\nseven\neight"
+cursor = [1, 6]
+keys = "yyG']"
+
+[[case]]
+name = "yj_linewise_start"
+buffer = "one two three\n    four five\nsix\nseven\neight"
+cursor = [1, 6]
+keys = "ykG'["
+
+[[case]]
+name = "p_start"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 0]
+keys = "yiwp0`["
+
+[[case]]
+name = "p_end"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 0]
+keys = "yiwp0`]"
+
+[[case]]
+name = "P_start"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 5]
+keys = "yiwP$`["
+
+[[case]]
+name = "P_end"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 5]
+keys = "yiwP0`]"
+
+[[case]]
+name = "p_rows_start"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 5]
+keys = "yypgg`["
+
+[[case]]
+name = "p_rows_end"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 5]
+keys = "yjpgg`]"
+
+[[case]]
+name = "P_rows_end"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 5]
+keys = "yjPG`]"
+
+[[case]]
+name = "p_rows_linewise"
+buffer = "one two three\n    four five\nsix\nseven\neight"
+cursor = [1, 6]
+keys = "yypgg']"
+
+[[case]]
+name = "p_after_last_row"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 5]
+keys = "yyGpgg`["
+
+[[case]]
+name = "dw_start"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 0]
+keys = "dw$`["
+
+[[case]]
+name = "dw_end"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 0]
+keys = "dw$`]"
+
+[[case]]
+name = "dd_start"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "ddG`["
+
+[[case]]
+name = "dd_end"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "ddG`]"
+
+[[case]]
+name = "dj_linewise"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "djgg'["
+
+[[case]]
+name = "cw_start"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 5]
+keys = "cwxy<Esc>0`["
+
+[[case]]
+name = "cw_end"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 0]
+keys = "cwxy<Esc>0`]"
+
+[[case]]
+name = "shift_start"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = ">>0`["
+
+[[case]]
+name = "shift_end"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = ">>0`]"
+
+[[case]]
+name = "shift_rows_end"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = ">jgg`]"
+
+[[case]]
+name = "x_start"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "x$`["
+
+[[case]]
+name = "x_count_end"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "3x0`]"
+
+[[case]]
+name = "visual_d_start"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [0, 4]
+keys = "vjd0`["
+
+[[case]]
+name = "visual_d_end"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [0, 4]
+keys = "vjd0`]"
+
+[[case]]
+name = "visual_d_change"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [0, 4]
+keys = "vjd`."
+
+[[case]]
+name = "change_x"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "xgg`."
+
+[[case]]
+name = "change_cw"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 5]
+keys = "cwxy<Esc>gg`."
+
+[[case]]
+name = "change_A"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 0]
+keys = "Axy<Esc>0`."
+
+[[case]]
+name = "change_dd_linewise"
+buffer = "one two three\n    four five\nsix\nseven\neight"
+cursor = [1, 6]
+keys = "jddgg'."
+
+[[case]]
+name = "change_after_undo"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "jjxugg`."
+
+[[case]]
+name = "change_after_undo_rows"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "djuG`."
+
+[[case]]
+name = "undo_end"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "djugg`]"
+
+[[case]]
+name = "insert_i"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "ixy<Esc>gg`^"
+
+[[case]]
+name = "insert_i_linewise"
+buffer = "one two three\n    four five\nsix\nseven\neight"
+cursor = [1, 6]
+keys = "ixy<Esc>gg'^"
+
+[[case]]
+name = "insert_A"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "Axy<Esc>0`^"
+
+[[case]]
+name = "insert_a_nothing"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "a<Esc>0`^"
+
+[[case]]
+name = "insert_start"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "ixy<Esc>$`["
+
+[[case]]
+name = "upper_quote"
+buffer = "one two three\n    four five\nsix\nseven\neight"
+cursor = [1, 7]
+keys = "mAgg'A"
+
+[[case]]
+name = "upper_backtick"
+buffer = "one two three\n    four five\nsix\nseven\neight"
+cursor = [1, 7]
+keys = "mAgg`A"
+
+[[case]]
+name = "upper_delete_linewise"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [2, 1]
+keys = "mAggd'A"
+
+[[case]]
+name = "upper_delete_exact"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [2, 1]
+keys = "mAggd`A"
+
+[[case]]
+name = "upper_and_lower"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [2, 1]
+keys = "mAjmaG`A"
+
+[[case]]
+name = "upper_z"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [3, 2]
+keys = "mZgg`Z"
+
+[[case]]
+name = "upper_rows_put_above"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [2, 1]
+keys = "mAggyyP`A"
+
+[[case]]
+name = "upper_rows_put_above_count"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [2, 1]
+keys = "mAggyy3P'A"
+
+[[case]]
+name = "upper_rows_taken_above"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [2, 1]
+keys = "mAggdd`A"
+
+[[case]]
+name = "upper_row_deleted"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [2, 1]
+keys = "mAddgg`A"
+
+[[case]]
+name = "insert_rows_put_above"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [2, 1]
+keys = "ixy<Esc>ggyyP`^"
+
+[[case]]
+name = "upper_rows_opened_above"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [2, 1]
+keys = "mAggOab<Esc>G`A"
+
+[[case]]
+name = "set_start"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "m[jjm]gg`["
+
+[[case]]
+name = "set_end"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "m[jjm]gg`]"
+
+[[case]]
+name = "start_unset"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "`["
+
+[[case]]
+name = "insert_unset"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "`^"
+
+[[case]]
+name = "upper_unset"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "`A"
+
+[[case]]
+name = "first_r"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "rxgg`["
+
+[[case]]
+name = "first_tilde"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "3~gg`]"
+
+[[case]]
+name = "first_gU"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 5]
+keys = "gUiwgg`["
+
+[[case]]
+name = "first_J_end"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [0, 4]
+keys = "Jgg`]"
+
+[[case]]
+name = "J_count_end"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [0, 4]
+keys = "3Jgg`]"
+
+[[case]]
+name = "J_visual_end"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [0, 4]
+keys = "VjjJgg`]"
+
+[[case]]
+name = "visual_put_start"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 0]
+keys = "yiwwviwp0`["
+
+[[case]]
+name = "visual_put_end"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 0]
+keys = "yiwwviwp0`]"
+
+[[case]]
+name = "block_delete_start"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [0, 1]
+keys = "<C-v>jld0`["
+
+[[case]]
+name = "block_yank_start"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [0, 1]
+keys = "<C-v>jlyG`["
+
+[[case]]
+name = "block_yank_end"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [0, 1]
+keys = "<C-v>jlyG`]"
+
+[[case]]
+name = "block_yank_backward_end"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 1]
+keys = "<C-v>khyG`]"
+
+[[case]]
+name = "block_I_start"
+buffer = "abcd\nefgh\nijkl"
+cursor = [0, 1]
+keys = "<C-v>jIX<Esc>G`["
+
+[[case]]
+name = "block_I_end"
+buffer = "abcd\nefgh\nijkl"
+cursor = [0, 1]
+keys = "<C-v>jIX<Esc>gg`]"
+
+[[case]]
+name = "block_I_insert"
+buffer = "abcd\nefgh\nijkl"
+cursor = [0, 1]
+keys = "<C-v>jIX<Esc>G`^"
+
+[[case]]
+name = "block_A_end"
+buffer = "abcd\nefgh\nijkl"
+cursor = [0, 1]
+keys = "<C-v>jAX<Esc>gg`]"
+
+[[case]]
+name = "block_c_end"
+buffer = "abcd\nefgh\nijkl"
+cursor = [0, 1]
+keys = "<C-v>jlcX<Esc>G`]"
+
+[[case]]
+name = "block_I_count_end"
+buffer = "abcd\nefgh\nijkl"
+cursor = [0, 1]
+keys = "<C-v>j2IXY<Esc>gg`]"
+
+[[case]]
+name = "outdent_all_start"
+buffer = "  one\ntwo"
+cursor = [0, 3]
+keys = "<<j`["
+
+[[case]]
+name = "outdent_all_end"
+buffer = "  one\ntwo"
+cursor = [0, 3]
+keys = "<<j`]"
+
+[[case]]
+name = "put_blank_end"
+buffer = " abc\ndef"
+cursor = [0, 0]
+keys = "ylPj`]"
+
+[[case]]
+name = "shift_to_empty_row_end"
+buffer = "one\n\ntwo"
+cursor = [0, 2]
+keys = ">jG`]"
+
+[[case]]
+name = "shift_nothing_start"
+buffer = "one\n\ntwo"
+cursor = [1, 0]
+keys = ">>gg`["
+
+[[case]]
+name = "shift_nothing_change"
+buffer = "one\n\ntwo"
+cursor = [1, 0]
+keys = ">>gg`."
+
+[[case]]
+name = "visual_rows_d_down"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "Vjd`["
+
+[[case]]
+name = "visual_rows_d_up"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [2, 2]
+keys = "Vkd0`["
+
+[[case]]
+name = "visual_rows_shift_down"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "Vj>G`["
+
+[[case]]
+name = "visual_rows_shift_up"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [2, 2]
+keys = "Vk>G`["
+
+[[case]]
+name = "visual_shift_chars"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 7]
+keys = "vh>G`["
+
+[[case]]
+name = "redo_rows_end"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "ia<CR>b<Esc>u<C-r>gg`]"
+
+[[case]]
+name = "redo_rows_start"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "ia<CR>b<CR>c<Esc>u<C-r>G`["
+
+[[case]]
+name = "undo_insert_rows"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "ia<CR>b<CR>c<Esc>uG`]"
+
+[[case]]
+name = "insert_backspace_start"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "i<BS><Esc>0`["
+
+[[case]]
+name = "insert_backspace_typed_start"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "i<BS>z<Esc>0`["
+
+[[case]]
+name = "delete_all_rows_start"
+buffer = "one\nfour five\nsix"
+cursor = [1, 2]
+keys = "ggd2j`["
+
+[[case]]
+name = "delete_all_rows_change"
+buffer = "one\nfour five\nsix"
+cursor = [1, 2]
+keys = "ggdG`."
+
+[[case]]
+name = "dd_only_row"
+buffer = "abc"
+cursor = [0, 2]
+keys = "dd`["
+
+[[case]]
+name = "dd_last_row_past"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [4, 1]
+keys = "ddgg`["
+
+[[case]]
+name = "upper_past_last_row"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [4, 1]
+keys = "mAddgg`A"
+
+[[case]]
+name = "put_empty_row_above"
+buffer = "one\n\ntwo"
+cursor = [1, 0]
+keys = "yyPG`]"
+
+[[case]]
+name = "o_nothing_typed_change"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "o<Esc>gg`."
+
+[[case]]
+name = "O_nothing_typed_change"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "O<Esc>G`."
+
+[[case]]
+name = "cw_nothing_typed_change"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "cw<Esc>gg`."
+
+[[case]]
+name = "cc_nothing_typed_change"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "cc<Esc>gg`."
+
+[[case]]
+name = "block_c_nothing_typed_change"
+buffer = "abcd\nefgh\nijkl"
+cursor = [0, 1]
+keys = "<C-v>jlc<Esc>G`."
+
+[[case]]
+name = "block_shift_start"
+buffer = "abcd\nefgh\nijkl"
+cursor = [1, 2]
+keys = "<C-v>kh>G`["
+
+[[case]]
+name = "block_shift_end"
+buffer = "abcd\nefgh\nijkl"
+cursor = [0, 1]
+keys = "<C-v>j>gg`]"
+
+[[case]]
+name = "block_shift_count_end"
+buffer = "abcd\nefgh\nijkl"
+cursor = [0, 1]
+keys = "<C-v>j3>gg`]"
+
+[[case]]
+name = "block_shift_nothing_start"
+buffer = "abcd\nefgh\nijkl"
+cursor = [0, 1]
+keys = "<C-v>j<G`["
+
+[[case]]
+name = "block_shift_nothing_end"
+buffer = "abcd\nefgh\nijkl"
+cursor = [0, 1]
+keys = "<C-v>j<gg`]"
+
+[[case]]
+name = "block_yank_tab_end"
+buffer = "abcd\n\txxxx\nijkl"
+cursor = [0, 1]
+keys = "<C-v>jlyG`]"
+
+[[case]]
+name = "block_yank_wide_end"
+buffer = "abcd\na漢b"
+cursor = [0, 1]
+keys = "<C-v>jlyG`]"
+
+[[case]]
+name = "block_yank_wide_start"
+buffer = "a漢b\nabcd"
+cursor = [1, 2]
+keys = "<C-v>khyG`["
+
+[[case]]
+name = "block_yank_dollar_end"
+buffer = "abcd\nefgh\nij"
+cursor = [0, 1]
+keys = "<C-v>j$yG`]"
+
+[[case]]
+name = "J_deep_indent_end"
+buffer = "one\n                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            two\nx"
+cursor = [0, 1]
+keys = "J0`]"
+
+[[case]]
+name = "J_empty_first_row_end"
+buffer = "\nfour five\nsix"
+cursor = [0, 0]
+keys = "J0`]"
+
+[[case]]
+name = "J_empty_second_row_end"
+buffer = "one\n\nsix"
+cursor = [0, 1]
+keys = "J0`]"
+
+[[case]]
+name = "J_empty_rows_count_end"
+buffer = "one\n\nsix"
+cursor = [0, 1]
+keys = "3J0`]"
+
+[[case]]
+name = "visual_delete_space_and_break_end"
+buffer = "one \nfour five\nsix"
+cursor = [0, 3]
+keys = "v$d$`]"
+
+[[case]]
+name = "insert_break_at_start"
+buffer = "one two\nfour"
+cursor = [0, 0]
+keys = "i<CR>x<Esc>G`["
+
+[[case]]
+name = "insert_later_break_at_start"
+buffer = "one two\nfour"
+cursor = [0, 0]
+keys = "ix<CR>y<Esc>G`["
+
+[[case]]
+name = "visual_delete_all_text_start"
+buffer = "abc\ndef"
+cursor = [0, 1]
+keys = "vG$d`["
+
+[[case]]
+name = "visual_delete_all_text_change"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = "vG$d`."
+
+[[case]]
+name = "count_insert_change"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "3ixy<Esc>0`."
+
+[[case]]
+name = "count_insert_break_change"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "3ia<CR>b<Esc>gg`."
+
+[[case]]
+name = "count_append_change"
+buffer = "one two three\nfour five\nsix\nseven\neight"
+cursor = [1, 2]
+keys = "3Ax<Esc>0`."
+
+[[case]]
+name = "block_I_change"
+buffer = "abcd\nefgh\nijkl"
+cursor = [0, 1]
+keys = "<C-v>jIX<Esc>G`."
+
+[[case]]
+name = "block_A_rows_change"
+buffer = "abcd\nefgh\nijkl"
+cursor = [0, 1]
+keys = "<C-v>jjAX<Esc>gg`."

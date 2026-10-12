@@ -14,7 +14,7 @@ use std::{
 use fe_buffer::{Anchor, BufferSnapshot, Origin, ResolvedSelection, TransactionId};
 use fe_command::{Actor, CommandError, Dispatched, Effect};
 use fe_editor::{EditorModel, commands::origin};
-use fe_text::Text;
+use fe_text::{Bias, Text};
 
 use crate::{
     Change, JumpMotion, Motion, MoveArgs, OperateArgs, Operator, PutArgs, RangeClass, Register,
@@ -881,6 +881,29 @@ fn operate_unless_failing(
                 .collect();
             state.carets.record(id, begins(&text, firsts));
         }
+        // `'[` and `']` span the rows, from where the shift began: a
+        // selection's start, else the caret's column.
+        let (first, last) = rows
+            .iter()
+            .flatten()
+            .fold((u32::MAX, 0), |(first, last), rows| {
+                (first.min(*rows.start()), last.max(*rows.end()))
+            });
+        let began = spans.iter().zip(&starts).zip(&before).find_map(
+            |((span, start), selection)| match span {
+                Span::Chars(range) => Some(range.start),
+                Span::Lines { .. } => Some(start.unwrap_or(selection.head())),
+                Span::Move(_) | Span::Failed => None,
+            },
+        );
+        let column = began.map_or(0, |at| history::pair(&text, at).1);
+        marks::shifted(
+            state,
+            model,
+            transaction.map(|_| snapshot.version()),
+            (first, last),
+            column,
+        );
         let after = snapshot.text().clone();
         // The caret goes to the first row at its goal column; `$` aims it at
         // the row's end.
@@ -949,6 +972,17 @@ fn operate_unless_failing(
 
     match args.operator {
         Operator::Yank => {
+            // A yank edits nothing, so it sets `'[` and `']` itself.
+            if let Some(op) = primary {
+                let yanked = match op.linewise {
+                    true => marks::Yanked::Rows(*op.rows.start(), *op.rows.end()),
+                    false => marks::Yanked::Chars {
+                        start: op.range.start,
+                        last: text.clip_offset(op.range.end.max(1) - 1, Bias::Left),
+                    },
+                };
+                marks::yanked(state, model, yanked);
+            }
             let carets: Vec<usize> = before
                 .iter()
                 .zip(&ops)
@@ -1022,6 +1056,22 @@ fn operate_unless_failing(
                     })
                     .collect();
                 state.carets.record(id, begins(&text, firsts));
+                // Where whole rows' delete began, for `'[`: a selection's
+                // start, else the caret's column.
+                let began =
+                    ops.iter()
+                        .zip(&starts)
+                        .zip(&before)
+                        .find_map(|((op, start), selection)| {
+                            op.as_ref().filter(|op| op.linewise)?;
+                            Some(start.unwrap_or(selection.head()))
+                        });
+                if let Some(at) = began {
+                    let column = history::pair(&text, at).1;
+                    state
+                        .marks
+                        .note(snapshot.version(), marks::Note::Deleted { column });
+                }
             }
             let after = snapshot.text().clone();
             let carets: Vec<usize> = before
@@ -1226,6 +1276,15 @@ fn put_unless_failing(
     );
     if let Some(id) = transaction {
         state.carets.record(id, carets_before);
+        // The rows the first put in, for `'[` and `']`.
+        if let (true, Some((at, _, (first, _)))) = (value.linewise, puts.first()) {
+            let row = row(*at) + *first as u32;
+            let rows = (payload.matches('\n').count() * count) as u32;
+            let rows = (row, row + rows.max(1) - 1);
+            state
+                .marks
+                .note(snapshot.version(), marks::Note::Put { rows });
+        }
     }
     let after = snapshot.text().clone();
     let mut shift = 0;

@@ -181,6 +181,8 @@ fn hooks_commit_as_keys_do() {
     assert!(d.command_line(VimKey::Char('?')).is_ok());
     // The mark names are today's.
     let names = |of: fn(char) -> bool| (' '..='~').filter(|&ch| of(ch)).collect::<String>();
-    assert_eq!(names(marks::settable), "'`abcdefghijklmnopqrstuvwxyz");
-    assert_eq!(names(marks::jumpable), "'<>`abcdefghijklmnopqrstuvwxyz");
+    let upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    let lower = "abcdefghijklmnopqrstuvwxyz";
+    assert_eq!(names(marks::settable), format!("'{upper}[]`{lower}"));
+    assert_eq!(names(marks::jumpable), format!("'.<>{upper}[]^`{lower}"));
 }

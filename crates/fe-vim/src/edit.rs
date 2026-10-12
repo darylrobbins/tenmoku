@@ -103,6 +103,12 @@ fn apply(
         true => (None, model.snapshot().clone()),
         false => operator::apply(model, edits, origin(actor)),
     };
+    // A join's batch spans `'[` and `']` to the joined row's end.
+    if let (Change::Join(_), Some(_)) = (&change, transaction) {
+        state
+            .marks
+            .note(snapshot.version(), crate::marks::Note::Joined);
+    }
     let after = snapshot.text().clone();
     let heads: Vec<usize> = heads
         .into_iter()

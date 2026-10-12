@@ -374,6 +374,17 @@ pub(super) fn operate_block(
             .write(args.register, write, value, &mut **host)
             .map_err(|error| CommandError::new(error.to_string()))?;
     }
+    // A yank edits nothing, so it sets `'[` and `']` itself, on the block's
+    // top left and bottom right corners: the graphemes at its columns (past
+    // the last row's end after `$`), as nvim's.
+    if args.operator == Operator::Yank {
+        let start = at_column(&text, block.first, block.left, tab);
+        let last = match block.right {
+            Some(right) => at_column(&text, block.last, right, tab),
+            None => text.row_start(block.last) + text.row_len(block.last) as usize,
+        };
+        crate::marks::yanked(state, model, crate::marks::Yanked::Chars { start, last });
+    }
     let cut_rows = || cuts.iter().filter(|cut| !cut.range.is_empty());
     let deletes = || {
         cut_rows()
@@ -513,6 +524,14 @@ pub(super) fn operate_block(
     };
     if let Some(id) = transaction {
         state.carets.record(id, begins);
+    }
+    // A shift spans `'[` and `']` over the block's rows from its top left
+    // corner, whether or not it changed them.
+    if let Operator::Indent | Operator::Outdent = args.operator {
+        let corner = at_column(&text, block.first, block.left, tab);
+        let column = corner - text.row_start(block.first);
+        let version = transaction.map(|_| snapshot.version());
+        crate::marks::shifted(state, model, version, (block.first, block.last), column);
     }
     // The caret goes to the corner's byte column as it was, as nvim's does
     // (after `>` and `<` even past the row's new end), but after a delete to

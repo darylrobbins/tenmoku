@@ -157,8 +157,8 @@ fn marks_follow_joins_and_other_origins() {
     vim.feed("m'jj''").unwrap();
     assert_eq!(vim.cursor(), (1, 0));
     assert_eq!(vim.mark('\''), Some((2, 0)));
-    vim.feed("mA").unwrap();
-    assert_eq!(vim.mark('A'), None);
+    vim.feed("m^").unwrap();
+    assert_eq!(vim.mark('^'), None);
 }
 
 #[test]

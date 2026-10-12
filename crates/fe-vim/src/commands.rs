@@ -13,10 +13,10 @@ use crate::{
     repeat, replace, substitute, visual,
 };
 
-/// Catches the marks up with the text before a command that may change it
-/// (see `marks::Marks::follow`).
+/// Catches the marks up with the text before a command that may change it,
+/// following what it changes (see `marks::follow`).
 pub(crate) fn follow(target: &mut VimTarget<'_>) {
-    target.state.marks.follow(target.model.snapshot());
+    marks::follow(target);
 }
 
 /// What a committed `vim.move` runs.
