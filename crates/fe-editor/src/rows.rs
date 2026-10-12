@@ -128,11 +128,13 @@ impl EditorModel {
         if blocks.is_empty() || at_edge {
             return;
         }
-        // Swapping rows of the same text leaves the text as it was, so
+        // If every swap leaves the text as it was (the combined rows read
+        // the same either way round, even when the units differ in size),
         // there's nothing to do.
         if blocks.iter().all(|block| {
-            let other = self.swapped_unit(block, up);
-            rows_text(text, other) == rows_text(text, block.rows.clone())
+            let other = rows_text(text, self.swapped_unit(block, up));
+            let own = rows_text(text, block.rows.clone());
+            format!("{other}\n{own}") == format!("{own}\n{other}")
         }) {
             return;
         }

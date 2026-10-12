@@ -134,9 +134,22 @@ fn move_rows() {
         ("\n|", "move_rows_up"),
         ("a\n\n|", "move_rows_up"),
         ("a\n|\n", "move_rows_down"),
+        // Units of different sizes whose swap still reads the same.
+        ("[a\na]\na", "move_rows_down"),
+        ("a\n[a\na]", "move_rows_up"),
+        ("[\n\n]", "move_rows_down"),
+        ("\n[\n\n]", "move_rows_up"),
     ] {
         let (mut model, effect) = dispatch(marked, name);
         assert_eq!((render(&model), effect), (marked.into(), Effect::Nothing));
+        assert_eq!(model.undo().unwrap(), None, "{marked}");
+    }
+    // The same with a folded unit.
+    for (marked, fold, up) in [("|x\nx\nx", 1..=2, false), ("x\nx\n|x", 0..=1, true)] {
+        let mut model = parse(marked);
+        model.fold_rows(fold);
+        model.move_rows(up);
+        assert_eq!(render(&model), marked);
         assert_eq!(model.undo().unwrap(), None, "{marked}");
     }
 
