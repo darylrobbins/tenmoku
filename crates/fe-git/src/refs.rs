@@ -1,8 +1,12 @@
 //! Branches and HEAD: what the branch switcher lists and what amend pre-fills.
 
+use std::collections::HashMap;
+use std::ffi::OsString;
+
 use gix::bstr::ByteSlice;
 use gix::refs::Category;
 
+use crate::cli::{self, Access};
 use crate::{GitError, Repo};
 
 /// Where HEAD points.
@@ -30,6 +34,46 @@ pub struct Branch {
     pub committed: i64,
     /// The first line of the tip's message.
     pub summary: String,
+    /// Commits on a local branch that its upstream lacks, as of the last
+    /// fetch. `None` for remote-tracking branches, branches without an
+    /// upstream and branches whose upstream is gone.
+    pub ahead: Option<u32>,
+    /// Commits on the upstream that a local branch lacks, as of the last
+    /// fetch; `None` in the same cases as `ahead`.
+    pub behind: Option<u32>,
+    /// A local branch's upstream is configured but its ref no longer exists
+    /// (git's `[gone]`), as after a fetch with `--prune`.
+    pub upstream_gone: bool,
+}
+
+/// What `%(upstream:track,nobracket)` says about one local branch.
+#[derive(Default)]
+struct Track {
+    ahead: Option<u32>,
+    behind: Option<u32>,
+    gone: bool,
+}
+
+/// Parses `ahead N`, `behind M`, `ahead N, behind M`, `gone` or empty.
+fn parse_track(text: &str) -> Track {
+    let mut track = Track::default();
+    if text.trim() == "gone" {
+        track.gone = true;
+        return track;
+    }
+    for part in text.split(',') {
+        let mut words = part.split_whitespace();
+        let (Some(word), Some(count)) = (words.next(), words.next()) else {
+            continue;
+        };
+        let count = count.parse::<u32>().ok();
+        match word {
+            "ahead" => track.ahead = count,
+            "behind" => track.behind = count,
+            _ => {}
+        }
+    }
+    track
 }
 
 impl Repo {
@@ -55,6 +99,7 @@ impl Repo {
             .map_err(GitError::from_gix)?
             .referent_name()
             .map(|name| name.as_bstr().to_owned());
+        let mut tracks = self.upstream_tracks()?;
         let mut branches = Vec::new();
         let refs = repo.references().map_err(GitError::from_gix)?;
         let iter = refs.prefixed("refs/").map_err(GitError::from_gix)?;
@@ -101,6 +146,20 @@ impl Repo {
             } else {
                 None
             };
+            let (ahead, behind, upstream_gone) = match tracks.remove(&full_name.to_string()) {
+                Some((has_upstream, track)) if remote.is_none() && has_upstream => {
+                    if track.gone {
+                        (None, None, true)
+                    } else {
+                        (
+                            Some(track.ahead.unwrap_or(0)),
+                            Some(track.behind.unwrap_or(0)),
+                            false,
+                        )
+                    }
+                }
+                _ => (None, None, false),
+            };
             branches.push(Branch {
                 name: short.to_string(),
                 remote,
@@ -108,6 +167,9 @@ impl Repo {
                 upstream,
                 committed,
                 summary,
+                ahead,
+                behind,
+                upstream_gone,
             });
         }
         branches.sort_by(|a, b| {
@@ -118,6 +180,61 @@ impl Repo {
             ))
         });
         Ok(branches)
+    }
+
+    /// Each local branch's full ref name to whether it has an upstream and
+    /// what git says about the distance, from one `for-each-ref` call.
+    fn upstream_tracks(&self) -> Result<HashMap<String, (bool, Track)>, GitError> {
+        let args: Vec<OsString> = [
+            "for-each-ref",
+            "--format=%(refname) %(upstream) %(upstream:track,nobracket)",
+            "refs/heads",
+        ]
+        .iter()
+        .map(OsString::from)
+        .collect();
+        let out = cli::run(&self.workdir, Access::Read, &args, None)?;
+        let mut tracks = HashMap::new();
+        for line in String::from_utf8_lossy(&out).lines() {
+            let mut fields = line.splitn(3, ' ');
+            let (Some(name), Some(upstream)) = (fields.next(), fields.next()) else {
+                continue;
+            };
+            let track = parse_track(fields.next().unwrap_or(""));
+            tracks.insert(name.to_owned(), (!upstream.is_empty(), track));
+        }
+        Ok(tracks)
+    }
+
+    /// `(ahead, behind)` of HEAD's branch against its upstream, as of the
+    /// last fetch. `None` when HEAD is detached or unborn, or the branch has
+    /// no upstream or its upstream is gone.
+    pub fn upstream_counts(&self) -> Result<Option<(u32, u32)>, GitError> {
+        if !matches!(self.current_branch()?, Head::Branch(_)) {
+            return Ok(None);
+        }
+        let args: Vec<OsString> = ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"]
+            .iter()
+            .map(OsString::from)
+            .collect();
+        let out = match cli::run(&self.workdir, Access::Read, &args, None) {
+            Ok(out) => out,
+            Err(GitError::Command { stderr, .. })
+                if stderr.contains("no upstream configured")
+                    || stderr.contains("unknown revision")
+                    || stderr.contains("no such branch")
+                    || stderr.contains("upstream branch") =>
+            {
+                return Ok(None);
+            }
+            Err(err) => return Err(err),
+        };
+        let text = String::from_utf8_lossy(&out);
+        let mut numbers = text.split_whitespace().map(|n| n.parse::<u32>());
+        match (numbers.next(), numbers.next()) {
+            (Some(Ok(ahead)), Some(Ok(behind))) => Ok(Some((ahead, behind))),
+            _ => Err(GitError::Gix(format!("unexpected rev-list output: {text}"))),
+        }
     }
 
     /// HEAD commit's full message, `None` when HEAD is unborn.
