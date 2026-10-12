@@ -667,7 +667,9 @@ include override commands for `cargo check` and build scripts. So:
   given: those have the project's keys narrowed, so a disabling flag the
   project file has since dropped would stay in them, and a window the host
   settles with a fresh store has no last good table for a broken user file
-  (T67). The watcher is made, held and dropped on the background executor,
+  (T67). The user layer is read at each settings reload and
+  manager start whatever the root's trust, so it holds the file's last good
+  table by the time a root is first trusted (T69). The watcher is made, held and dropped on the background executor,
   and the main thread never locks the layers a read holds, so untrusting
   and re-rooting don't wait on the file system. It reads the file off the main thread when the
   root becomes trusted, when a manager starts for a trusted root, at each

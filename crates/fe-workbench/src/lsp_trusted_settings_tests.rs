@@ -405,3 +405,56 @@ fn documents_opened_before_trust_get_the_trusted_size_limit(cx: &mut TestAppCont
     assert_eq!(s.sent(1, "textDocument/didOpen", &s.uri("src/other.rs")), 0);
     assert_eq!(s.sent(1, "textDocument/didOpen", &main), 1);
 }
+
+#[gpui::test]
+fn the_user_layer_follows_the_file_while_untrusted(cx: &mut TestAppContext) {
+    // A valid disabling setting read while untrusted holds when the file
+    // breaks before the root is first trusted.
+    let mut s = Lsp::untrusted(cx);
+    s.write_user_settings("lsp.enabled = false\n");
+    reload(&mut s);
+    s.write_user_settings("lsp.enabled = \n");
+    let fresh = Settings::clone(
+        SettingsStore::load(Some(user_path(&s)), Some(project_path(&s))).settings(),
+    );
+    give(&mut s, fresh);
+    s.draw();
+    s.set_trust(true);
+    assert!(!handed(&mut s).enabled);
+}
+
+#[gpui::test]
+fn a_disabling_edit_while_untrusted_reaches_the_user_layer(cx: &mut TestAppContext) {
+    // Delivered to a secondary window, it replaces an enabling value read
+    // earlier.
+    let mut s = Lsp::untrusted(cx);
+    let mut other = s.another_rooted(&s.root.clone());
+    s.write_user_settings("lsp.enabled = true\n");
+    reload(&mut other);
+    s.write_user_settings("lsp.enabled = false\n");
+    reload(&mut other);
+    s.write_user_settings("lsp.enabled = \n");
+    let fresh = Settings::clone(
+        SettingsStore::load(Some(user_path(&s)), Some(project_path(&s))).settings(),
+    );
+    give(&mut other, fresh);
+    other.draw();
+    other.set_trust(true);
+    assert!(!handed(&mut other).enabled);
+}
+
+#[gpui::test]
+fn starting_a_manager_does_not_wait_on_a_user_file_read(cx: &mut TestAppContext) {
+    let mut s = Lsp::untrusted(cx);
+    let layer = s
+        .workbench
+        .read_with(&s.cx, |w, _| w.lsp_user_layer())
+        .expect("a user layer");
+    // A read holds the layer: the UI thread's path check must not wait.
+    let guard = layer.lock().unwrap();
+    let root = s.root.clone();
+    let workbench = s.workbench.clone();
+    workbench.update(&mut s.cx, |w, cx| w.lsp_start_manager(root, cx));
+    drop(guard);
+    s.draw();
+}

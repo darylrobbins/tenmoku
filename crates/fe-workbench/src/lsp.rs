@@ -140,19 +140,27 @@ impl Global for Settings {}
 /// The user's settings file's `lsp` table, for every window of the app:
 /// kept at its last good value while the file has errors, whatever the
 /// host's own reads of the file give a window.
-struct UserLayer(Arc<Mutex<LspLayer>>);
+struct UserLayer {
+    /// The file, kept apart from the layer so comparing it never waits on a
+    /// read holding the layer's lock.
+    path: PathBuf,
+    layer: Arc<Mutex<LspLayer>>,
+}
 
 impl Global for UserLayer {}
 
 /// The app's layer for the user's file `path`.
 fn user_layer(cx: &mut App, path: PathBuf) -> Arc<Mutex<LspLayer>> {
-    if let Some(UserLayer(layer)) = cx.try_global::<UserLayer>()
-        && lock(layer).path() == path
+    if let Some(user) = cx.try_global::<UserLayer>()
+        && user.path == path
     {
-        return layer.clone();
+        return user.layer.clone();
     }
-    let layer = Arc::new(Mutex::new(LspLayer::user(path)));
-    cx.set_global(UserLayer(layer.clone()));
+    let layer = Arc::new(Mutex::new(LspLayer::user(path.clone())));
+    cx.set_global(UserLayer {
+        path,
+        layer: layer.clone(),
+    });
     layer
 }
 
@@ -697,6 +705,8 @@ impl Workbench {
         lsp.project = Some(Arc::new(Mutex::new(LspLayer::project(path.clone()))));
         lsp.project_path = Some(path);
         lsp.user = settings_path(cx).map(|path| user_layer(cx, path));
+        self.read_user_layer(cx);
+        let lsp = &mut self.lsp;
         let host = cx.try_global::<Launcher>().map(|host| host.0.clone());
         #[cfg(test)]
         {
@@ -840,6 +850,17 @@ impl Workbench {
         }));
     }
 
+    /// Reads the app's user layer off the main thread, whatever the root's
+    /// trust, so it holds the file's last good table by the time a root is
+    /// trusted, not the defaults a file broken since would give.
+    fn read_user_layer(&self, cx: &mut Context<Self>) {
+        let Some(user) = self.lsp.user.clone() else {
+            return;
+        };
+        cx.background_spawn(async move { lock(&user).read() })
+            .detach();
+    }
+
     /// Reads the user's and the root's project settings files off the main
     /// thread, then lays the project's `lsp` table over the user's, hands
     /// them to the manager and lets servers start, unless the root, its
@@ -926,6 +947,7 @@ impl Workbench {
         if self.root_trusted() {
             return self.read_trusted_settings(cx);
         }
+        self.read_user_layer(cx);
         if let Some(manager) = self.lsp.manager.clone() {
             lock(&manager).update_settings(settings);
             #[cfg(test)]
@@ -1678,6 +1700,16 @@ impl Workbench {
         if let Some(sender) = &self.lsp.project_changed {
             sender.send_blocking(()).ok();
         }
+    }
+
+    /// The app's user layer.
+    pub(crate) fn lsp_user_layer(&self) -> Option<Arc<Mutex<LspLayer>>> {
+        self.lsp.user.clone()
+    }
+
+    /// Starts a manager for `root` as a root change does.
+    pub(crate) fn lsp_start_manager(&mut self, root: PathBuf, cx: &mut Context<Self>) {
+        self.start_lsp_manager(root, cx);
     }
 
     /// The `[lsp]` settings last handed to a manager.
