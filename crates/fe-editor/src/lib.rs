@@ -396,6 +396,50 @@ impl EditorModel {
         self.row_changes.set_base(base);
     }
 
+    /// Puts the diff base's rows back over every change meeting `rows` (rows
+    /// of the current text; a deletion meets them when they hold its row or
+    /// the row above), each change whole, as one edit and one undo step,
+    /// with the caret on the first reverted row. Returns how many changes
+    /// reverted; 0, with no edit, without a base or a change in `rows`.
+    pub fn revert_changes(&mut self, rows: Range<u32>) -> usize {
+        self.sync_display();
+        let Some(base) = self.row_changes.base() else {
+            return 0;
+        };
+        let text = self.text().to_string();
+        let diff = TextDiff::new(&base, &text);
+        let picked = |row: u32| rows.contains(&row);
+        let chosen: Vec<&Hunk> = diff
+            .hunks()
+            .iter()
+            .filter(|hunk| {
+                if hunk.right.is_empty() {
+                    picked(hunk.right.start) || hunk.right.start.checked_sub(1).is_some_and(picked)
+                } else {
+                    rows.start.max(hunk.right.start) < rows.end.min(hunk.right.end)
+                }
+            })
+            .collect();
+        let Some(first) = chosen.first() else {
+            return 0;
+        };
+        let first_row = first.right.start;
+        let (base_text, _) = Text::from_file_contents(&base);
+        let edits = {
+            let current = self.text();
+            chosen
+                .iter()
+                .map(|hunk| row_swap(current, &hunk.right, &base_text, &hunk.left))
+                .collect()
+        };
+        let count = chosen.len();
+        self.apply_with_carets(edits);
+        let text = self.text();
+        let at = text.row_start(first_row.min(text.row_count().saturating_sub(1)));
+        self.set_selections([caret(at)]);
+        count
+    }
+
     /// The text as of the last catch-up against the diff base, as changed
     /// rows sorted by row; empty without a base, when the text equals it, or
     /// when the base or the text is over 5 MiB. Diffed lazily, once per
@@ -1327,6 +1371,49 @@ impl EditorModel {
         self.sync_display();
         self.goals.clear();
         self.selections = carets;
+    }
+}
+
+/// The edit that puts `new_rows` of `new` where `old_rows` of `old` are, the
+/// rows being joined by line breaks: the break between a hunk and the rest
+/// goes with the hunk's rows, or, at the end of the text, with the rows
+/// before it.
+fn row_swap(
+    old: &Text,
+    old_rows: &Range<u32>,
+    new: &Text,
+    new_rows: &Range<u32>,
+) -> (Range<usize>, String) {
+    let start = |text: &Text, row: u32| text.row_start(row);
+    // The end of `row`'s content, before its line break.
+    let end = |text: &Text, row: u32| {
+        if row + 1 < text.row_count() {
+            text.row_start(row + 1) - 1
+        } else {
+            text.len()
+        }
+    };
+    let content =
+        |rows: &Range<u32>| new.slice_to_string(start(new, rows.start)..end(new, rows.end - 1));
+    match (old_rows.is_empty(), new_rows.is_empty()) {
+        (false, false) => (
+            start(old, old_rows.start)..end(old, old_rows.end - 1),
+            content(new_rows),
+        ),
+        (true, false) if old_rows.start < old.row_count() => (
+            start(old, old_rows.start)..start(old, old_rows.start),
+            content(new_rows) + "\n",
+        ),
+        (true, false) => (old.len()..old.len(), format!("\n{}", content(new_rows))),
+        (false, true) if old_rows.end < old.row_count() => (
+            start(old, old_rows.start)..start(old, old_rows.end),
+            String::new(),
+        ),
+        (false, true) if old_rows.start > 0 => {
+            (end(old, old_rows.start - 1)..old.len(), String::new())
+        }
+        (false, true) => (0..old.len(), String::new()),
+        (true, true) => (0..0, String::new()),
     }
 }
 

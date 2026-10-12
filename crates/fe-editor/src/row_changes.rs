@@ -85,6 +85,10 @@ impl RowChangeState {
     }
 
     /// Returns whether the base changed.
+    pub(crate) fn base(&self) -> Option<Arc<str>> {
+        self.inner.borrow().base.clone()
+    }
+
     pub(crate) fn set_base(&self, base: Option<Arc<str>>) -> bool {
         let mut inner = self.inner.borrow_mut();
         if inner.base == base {
