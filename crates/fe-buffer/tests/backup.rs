@@ -92,7 +92,22 @@ fn write_then_read_round_trips_text_and_meta() {
         let path = files
             .path()
             .join(std::ffi::OsStr::from_bytes(b"not-utf8-\xFF.txt"));
-        let buffer = edited(&path, b"bytes\n");
+        // APFS refuses non-UTF-8 names with EILSEQ (92); no other target gets a fallback.
+        #[cfg(target_vendor = "apple")]
+        const EILSEQ: Option<i32> = Some(92);
+        #[cfg(not(target_vendor = "apple"))]
+        const EILSEQ: Option<i32> = None;
+        let buffer = match fs::write(&path, b"bytes\n") {
+            Ok(()) => edited(&path, b"bytes\n"),
+            Err(error) if EILSEQ.is_some() && error.raw_os_error() == EILSEQ => {
+                // Round-trip the path without a disk file.
+                let mut buffer = Buffer::new("");
+                buffer.set_disk_stamp(None);
+                user(&mut buffer, 0..0, "Noël bytes\n");
+                buffer
+            }
+            Err(error) => panic!("creating {path:?}: {error}"),
+        };
         cases.push((buffer, Some(path), "not-utf8"));
     }
     // A file deleted since it was read: known missing.
