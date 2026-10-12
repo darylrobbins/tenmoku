@@ -4,30 +4,31 @@
 //! opens the file in the active pane; a deleted file's row is dimmed and
 //! opens nothing.
 //!
-//! The panel finds the repository containing the project root and reads
-//! its status with fe-git on the background executor, the first time it's
-//! drawn and on `git.refresh`. At most one status runs at a time: a refresh
-//! meanwhile runs once more after it lands. Each run, and each list given
-//! by [`GitPanel::set_statuses`], has a sequence number, and a run's result
-//! shows only if nothing newer has. Only files under the project root are
-//! listed: the repository may be larger.
+//! The workbench's [`GitState`] reads the status of the repository
+//! containing the project root, on the background executor, one run at a
+//! time: when the panel's first drawn, on `git.refresh`, and as files and
+//! `.git` change. Each run, and each list given by
+//! [`GitPanel::set_statuses`], has a sequence number from the panel, and a
+//! run's result shows only if nothing newer has. Only files under the
+//! project root are listed: the repository may be larger. Where the root is
+//! in the repository is found through symlinks and `..`, so a list given
+//! before that's known is kept and listed again once it is.
 
 use std::{
     ops::Range,
     path::{Path, PathBuf},
-    sync::Arc,
 };
 
-use fe_git::{ChangeKind, FileStatus, GitError, Repo};
+use fe_git::{ChangeKind, FileStatus, GitError};
 use fe_ui::{ROW_HEIGHT, UiTheme};
 use gpui::{
-    AnyElement, App, AppContext as _, Context, ElementId, EventEmitter, FocusHandle, Focusable,
-    Hsla, InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render,
-    ScrollStrategy, SharedString, StatefulInteractiveElement as _, Styled as _, Task,
-    UniformListScrollHandle, Window, div, prelude::FluentBuilder as _, px, uniform_list,
+    AnyElement, App, Context, ElementId, EventEmitter, FocusHandle, Focusable, Hsla,
+    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render, ScrollStrategy,
+    SharedString, StatefulInteractiveElement as _, Styled as _, UniformListScrollHandle,
+    WeakEntity, Window, div, prelude::FluentBuilder as _, px, uniform_list,
 };
 
-use crate::PANEL_WIDTH;
+use crate::{PANEL_WIDTH, git::GitState};
 
 /// The key context the panel's element sets.
 pub(crate) const KEY_CONTEXT: &str = "git_panel";
@@ -46,8 +47,10 @@ pub enum GitPanelEvent {
 
 /// Where the project root is in its repository, once found.
 #[derive(Clone, Debug)]
-struct Located {
+pub(crate) struct Located {
     workdir: PathBuf,
+    /// `workdir` through symlinks and `..`.
+    resolved: PathBuf,
     /// The root, relative to `workdir`.
     prefix: PathBuf,
 }
@@ -73,35 +76,42 @@ struct Entry {
     kind: ChangeKind,
 }
 
-/// What a background run found: where the root is in its repository and
-/// the repository's status, or no repository.
-type Found = Result<Option<(Arc<Repo>, Located, Vec<FileStatus>)>, GitError>;
+/// What a run found: where the root is in its repository and the
+/// repository's status, or no repository.
+pub(crate) type Found = Result<Option<(Located, Vec<FileStatus>)>, GitError>;
 
 pub struct GitPanel {
     root: Option<PathBuf>,
-    /// The repository, once found, for later runs.
-    repo: Option<(Arc<Repo>, Located)>,
+    /// What reads the status.
+    git: WeakEntity<GitState>,
+    /// Where the root is in its repository, once found.
+    located: Option<Located>,
     status: Status,
+    /// The statuses `entries` were listed from, to list again once the
+    /// root is located.
+    listed: Vec<FileStatus>,
     entries: Vec<Entry>,
     selected: Option<usize>,
+    /// Whether a run has started or been asked for: the first is when the
+    /// panel's first drawn, unless files changed before.
+    read: bool,
     /// The last run started's, or list given's, sequence number.
     started: u64,
     /// The sequence number of the list shown.
     shown: u64,
-    /// The run in flight.
-    running: Option<Task<()>>,
-    /// Whether a refresh came while one ran.
-    again: bool,
+    /// The sequence number of the run started and not landed, if any.
+    running: Option<u64>,
     scroll: UniformListScrollHandle,
     ui: UiTheme,
     focus: FocusHandle,
     #[cfg(test)]
-    test: TestHooks,
+    test: std::rc::Rc<std::cell::RefCell<TestHooks>>,
 }
 
 impl GitPanel {
     /// A panel for the repository containing `root`, if any. Nothing runs
-    /// until it's drawn or refreshed.
+    /// until it's drawn or refreshed, and nothing is read until the
+    /// workbench connects its git state.
     pub fn new(root: Option<PathBuf>, ui: UiTheme, cx: &mut App) -> Self {
         let status = match root {
             Some(_) => Status::Reading,
@@ -109,88 +119,96 @@ impl GitPanel {
         };
         Self {
             root,
-            repo: None,
+            git: WeakEntity::new_invalid(),
+            located: None,
             status,
+            listed: Vec::new(),
             entries: Vec::new(),
             selected: None,
+            read: false,
             started: 0,
             shown: 0,
             running: None,
-            again: false,
             scroll: UniformListScrollHandle::new(),
             ui,
             focus: cx.focus_handle(),
             #[cfg(test)]
-            test: TestHooks::default(),
+            test: Default::default(),
         }
+    }
+
+    /// Reads through `git` from now on.
+    pub(crate) fn connect(&mut self, git: WeakEntity<GitState>) {
+        self.git = git;
     }
 
     /// Reads the status again, in the background: now if none is running,
     /// else once more after it lands. With no folder open there's nothing
     /// to read.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
-        let Some(root) = self.root.clone() else {
-            return;
-        };
-        if self.running.is_some() {
-            self.again = true;
+        if self.root.is_none() {
             return;
         }
-        self.started += 1;
-        let seq = self.started;
-        let repo = self.repo.clone();
-        #[cfg(test)]
-        let (ran, gate) = self.test.started(cx);
-        let found = cx.background_spawn(async move {
-            let found = read(&root, repo);
-            #[cfg(test)]
-            {
-                ran();
-                gate.await;
-            }
-            found
-        });
-        self.running = Some(cx.spawn(async move |panel, cx| {
-            let found = found.await;
-            panel
-                .update(cx, |panel, cx| panel.landed(seq, found, cx))
-                .ok();
-        }));
+        self.read = true;
+        if let Some(git) = self.git.upgrade() {
+            git.update(cx, GitState::refresh);
+        }
     }
 
-    /// Shows a run's result unless something newer has shown, then runs
-    /// again if a refresh came meanwhile.
-    fn landed(&mut self, seq: u64, found: Found, cx: &mut Context<Self>) {
-        self.running = None;
-        if seq > self.shown {
-            match found {
-                Ok(Some((repo, located, statuses))) => {
-                    self.repo = Some((repo, located));
-                    self.show(seq, statuses);
-                }
-                Ok(None) => {
-                    self.repo = None;
-                    self.shown = seq;
-                    self.status = Status::NotARepository;
-                    self.entries.clear();
-                    self.selected = None;
-                }
-                Err(error) => {
-                    self.shown = seq;
-                    self.status = Status::Failed(error.to_string());
-                    self.entries.clear();
-                    self.selected = None;
+    /// A run starts: its sequence number.
+    pub(crate) fn begin(&mut self) -> u64 {
+        self.read = true;
+        self.started += 1;
+        self.running = Some(self.started);
+        self.started
+    }
+
+    /// Shows run `seq`'s result unless something newer has shown. Where
+    /// it found the root is kept even so, and the newer list listed again
+    /// where the root is in it.
+    pub(crate) fn landed(&mut self, seq: u64, found: Found, cx: &mut Context<Self>) {
+        self.running.take_if(|running| *running == seq);
+        if seq <= self.shown {
+            if let Ok(Some((located, _))) = found
+                && self.located.is_none()
+            {
+                self.located = Some(located);
+                if self.status == Status::Listed {
+                    let listed = std::mem::take(&mut self.listed);
+                    self.show(self.shown, listed);
+                    cx.notify();
                 }
             }
-            cx.notify();
+            return;
         }
-        if std::mem::take(&mut self.again) {
-            self.refresh(cx);
+        match found {
+            Ok(Some((located, statuses))) => {
+                self.located = Some(located);
+                self.show(seq, statuses);
+            }
+            Ok(None) => {
+                self.located = None;
+                self.shown = seq;
+                self.status = Status::NotARepository;
+                self.listed.clear();
+                self.entries.clear();
+                self.selected = None;
+            }
+            Err(error) => {
+                self.shown = seq;
+                self.status = Status::Failed(error.to_string());
+                self.listed.clear();
+                self.entries.clear();
+                self.selected = None;
+            }
         }
+        cx.notify();
     }
 
     /// Replaces the list with `statuses`, the repository's, as of now: a
-    /// run in flight lands unshown.
+    /// run in flight lands unshown, though the repository it finds is kept.
+    /// Before the root is located, those of `statuses` under it as spelled
+    /// are listed; the rest are once it is.
     pub fn set_statuses(&mut self, statuses: Vec<FileStatus>, cx: &mut Context<Self>) {
         self.started += 1;
         self.show(self.started, statuses);
@@ -206,9 +224,9 @@ impl GitPanel {
             return;
         };
         self.status = Status::Listed;
-        let located = self.repo.as_ref().map(|(_, located)| located);
+        let located = self.located.as_ref();
         let mut entries: Vec<Entry> = statuses
-            .into_iter()
+            .iter()
             .filter_map(|status| {
                 let relative = relative_to(root, located, &status.path)?;
                 Some(Entry {
@@ -221,6 +239,7 @@ impl GitPanel {
         entries.sort_by(|a, b| a.relative.cmp(&b.relative));
         self.selected = selected.and_then(|path| entries.iter().position(|e| e.path == path));
         self.entries = entries;
+        self.listed = statuses;
     }
 
     fn selected_entry(&self) -> Option<&Entry> {
@@ -350,44 +369,25 @@ impl GitPanel {
     }
 }
 
-/// Finds the repository containing `root`, unless `repo` is it already,
-/// and reads its status. Runs on the background executor.
-fn read(root: &Path, repo: Option<(Arc<Repo>, Located)>) -> Found {
-    let (repo, located) = match repo {
-        Some(found) => found,
-        None => {
-            let Some(repo) = Repo::discover(root)? else {
-                return Ok(None);
-            };
-            let Some(located) = locate(root, repo.workdir()) else {
-                return Ok(None);
-            };
-            (Arc::new(repo), located)
-        }
-    };
-    let statuses = repo.status()?;
-    Ok(Some((repo, located, statuses)))
-}
-
-/// Where `root` is in the working tree at `workdir`, through symlinks if
-/// need be: `None` if it isn't in it.
-fn locate(root: &Path, workdir: &Path) -> Option<Located> {
-    let prefix = match root.strip_prefix(workdir) {
-        Ok(prefix) => prefix.to_owned(),
-        Err(_) => {
-            let root = root.canonicalize().ok()?;
-            let workdir = workdir.canonicalize().ok()?;
-            root.strip_prefix(workdir).ok()?.to_owned()
-        }
+/// Where `root` is in the working tree at `workdir`, through symlinks and
+/// `..`: `None` if it isn't in it. Spelled as given if either is gone.
+pub(crate) fn locate(root: &Path, workdir: &Path) -> Option<Located> {
+    let (prefix, resolved) = match (root.canonicalize(), workdir.canonicalize()) {
+        (Ok(root), Ok(resolved)) => (root.strip_prefix(&resolved).ok()?.to_owned(), resolved),
+        _ => (
+            root.strip_prefix(workdir).ok()?.to_owned(),
+            workdir.to_owned(),
+        ),
     };
     Some(Located {
         workdir: workdir.to_owned(),
+        resolved,
         prefix,
     })
 }
 
 /// `path`, absolute, relative to `root`, if it's under it: directly, or
-/// through the working tree `located` names.
+/// through the working tree `located` names, as found or resolved.
 fn relative_to(root: &Path, located: Option<&Located>, path: &Path) -> Option<PathBuf> {
     if let Ok(relative) = path.strip_prefix(root) {
         return (!relative.as_os_str().is_empty()).then(|| relative.to_owned());
@@ -395,6 +395,7 @@ fn relative_to(root: &Path, located: Option<&Located>, path: &Path) -> Option<Pa
     let located = located?;
     let relative = path
         .strip_prefix(&located.workdir)
+        .or_else(|_| path.strip_prefix(&located.resolved))
         .ok()?
         .strip_prefix(&located.prefix)
         .ok()?;
@@ -435,8 +436,8 @@ impl Focusable for GitPanel {
 
 impl Render for GitPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Read when first shown.
-        if self.started == 0 {
+        // Read when first shown, unless a run has started.
+        if !self.read {
             self.refresh(cx);
         }
         let ui = self.ui;
@@ -477,10 +478,11 @@ impl Render for GitPanel {
     }
 }
 
-/// What the tests hold and count.
+/// What the tests hold and count of [`GitState`]'s status runs, which the
+/// Changes panel's tests see too.
 #[cfg(test)]
 #[derive(Default)]
-struct TestHooks {
+pub(crate) struct TestHooks {
     /// Runs started.
     started: usize,
     /// Runs that read the status, and of them those that read it off the
@@ -495,7 +497,7 @@ struct TestHooks {
 impl TestHooks {
     /// Counts a run started, and returns what it calls once it has read the
     /// status, and the gate it then awaits.
-    fn started(
+    pub(crate) fn started(
         &mut self,
         cx: &App,
     ) -> (
@@ -520,6 +522,25 @@ impl TestHooks {
         };
         (ran, gate)
     }
+
+    /// Holds the runs started from now until [`Self::release`], once
+    /// they've read the status.
+    pub(crate) fn hold(&mut self) {
+        self.held.get_or_insert_default();
+    }
+
+    /// Lets the held runs, and the ones started from now, land.
+    pub(crate) fn release(&mut self) {
+        for release in self.held.take().unwrap_or_default() {
+            release.send(()).ok();
+        }
+    }
+
+    /// Runs started, and runs that read the status and of them those off
+    /// the main thread.
+    pub(crate) fn runs(&self) -> (usize, (usize, usize)) {
+        (self.started, *self.ran.lock().unwrap())
+    }
 }
 
 /// A row as shown: its letter, name and directory, and whether it's dimmed.
@@ -537,28 +558,31 @@ impl GitPanel {
     /// Holds the runs started from now until [`Self::release_runs`], once
     /// they've read the status.
     pub(crate) fn hold_runs(&mut self) {
-        self.test.held.get_or_insert_default();
+        self.test.borrow_mut().hold();
     }
 
     /// Lets the held runs, and the ones started from now, land.
     pub(crate) fn release_runs(&mut self) {
-        for release in self.test.held.take().unwrap_or_default() {
-            release.send(()).ok();
-        }
+        self.test.borrow_mut().release();
     }
 
     /// Runs started.
     pub(crate) fn runs_started(&self) -> usize {
-        self.test.started
+        self.test.borrow().runs().0
     }
 
     /// Runs that read the status, and of them those off the main thread.
     pub(crate) fn runs_ran(&self) -> (usize, usize) {
-        *self.test.ran.lock().unwrap()
+        self.test.borrow().runs().1
     }
 
     pub(crate) fn is_running(&self) -> bool {
         self.running.is_some()
+    }
+
+    /// What the tests hold and count, shared with the git state.
+    pub(crate) fn test_hooks(&self) -> std::rc::Rc<std::cell::RefCell<TestHooks>> {
+        self.test.clone()
     }
 
     pub(crate) fn shown_rows(&self) -> Vec<ShownRow> {

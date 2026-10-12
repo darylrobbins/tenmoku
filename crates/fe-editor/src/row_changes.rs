@@ -61,7 +61,8 @@ fn rows<'a>(text: &'a str, scratch: &'a mut String) -> Rows<'a> {
 }
 
 /// The rows of `text` (LF-normalised or not) that differ from `base`, sorted.
-/// Empty when either is over 5 MiB.
+/// Empty when either is over 5 MiB. An empty base has no rows: against it,
+/// every row of `text` is added.
 pub(crate) fn diff_rows(base: &str, text: &str) -> Arc<[RowChange]> {
     #[cfg(test)]
     tests::DIFFS.with(|count| count.set(count.get() + 1));
@@ -69,6 +70,19 @@ pub(crate) fn diff_rows(base: &str, text: &str) -> Arc<[RowChange]> {
         return Arc::new([]);
     }
     let (mut base_scratch, mut text_scratch) = (String::new(), String::new());
+    if base.is_empty() {
+        // A new file's base: it has no rows, so every row is added, but for
+        // the empty one after a final line break.
+        let rows = rows(text, &mut text_scratch).0.len() as u32;
+        let rows = rows - u32::from(text.is_empty() || text.ends_with(['\n', '\r']));
+        return match rows {
+            0 => Arc::new([]),
+            rows => Arc::new([RowChange {
+                rows: 0..rows,
+                kind: RowChangeKind::Added,
+            }]),
+        };
+    }
     let (old, new) = (rows(base, &mut base_scratch), rows(text, &mut text_scratch));
     let input = InternedInput::new(old, new);
     let mut diff = Diff::compute(Algorithm::Histogram, &input);

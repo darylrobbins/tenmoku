@@ -21,6 +21,7 @@ use crate::{
     Dock, GitPanel, GitPanelEvent, KEY_CONTEXT, MenuBarView, OutlinePanel, Pane, PaneGroup, Picker,
     ProjectPanel, QuickOpen, ReferencesPanel, SearchPanel, StatusBar,
     dock::{self, DockEvent, DockOp},
+    git::GitState,
     language_picker::LanguagePicker,
     lsp::{self, Lsp},
     nav::{self, Nav},
@@ -189,6 +190,9 @@ pub struct Workbench {
     root_subscription: Subscription,
     /// To the Changes panel's events: replaced with it on a new root.
     changes_subscription: Subscription,
+    /// The root's git status, kept live in the Changes panel and the open
+    /// editors' diff bases: replaced on a new root.
+    git: Entity<GitState>,
     _rail: Subscription,
     /// To the modal layer's palettes coming and going.
     _modals: Subscription,
@@ -278,6 +282,7 @@ impl Workbench {
                 cx,
             )
         });
+        let git = Self::new_git(root.clone(), &changes, cx);
         let quick_open = Self::new_quick_open(root, pane.downgrade(), ui, cx);
         // A rail click runs the op its panel's key would, or hides the dock.
         let rail = cx.subscribe_in(
@@ -359,6 +364,7 @@ impl Workbench {
             ui,
             root_subscription,
             changes_subscription,
+            git,
             _rail: rail,
             _modals: modals_changed,
             _status_bar: [status_bar_changed, vim_host_commands],
@@ -406,6 +412,18 @@ impl Workbench {
         cx.new(|cx| Picker::new(QuickOpen::new(root, pane, ui), "Go to file…", ui, cx))
     }
 
+    /// The git state for `root`, which `changes` reads through.
+    fn new_git(
+        root: Option<PathBuf>,
+        changes: &Entity<GitPanel>,
+        cx: &mut Context<Self>,
+    ) -> Entity<GitState> {
+        let workbench = cx.weak_entity();
+        let git = cx.new(|cx| GitState::new(root, changes, workbench, cx));
+        changes.update(cx, |changes, _| changes.connect(git.downgrade()));
+        git
+    }
+
     /// Subscribes to a root's project panel.
     fn follow_root(
         panel: &Entity<ProjectPanel>,
@@ -424,6 +442,9 @@ impl Workbench {
                         .quick_open
                         .update(cx, |picker, cx| picker.delegate.fs_changed(changes, cx));
                     workbench.nav_state.fs_changed(changes, cx);
+                    workbench
+                        .git
+                        .update(cx, |git, cx| git.fs_changed(changes, cx));
                 }
             },
         )
@@ -468,7 +489,9 @@ impl Workbench {
     /// indexes it once opened. The old ones are dropped, and with them the
     /// old tree, its watcher, and the old index's walk; their batches land
     /// nowhere. A new Changes panel reads `root`'s repository, the old
-    /// one's status landing nowhere. Search searches `root` from now on,
+    /// one's status landing nowhere, and a new git state gives the open
+    /// editors their bases in `root`'s repository, the old one's refresh
+    /// landing nowhere. Search searches `root` from now on,
     /// its running search cancelled and its results cleared, the query and
     /// options kept. The
     /// dock keeps its visibility and active panel, and open tabs, dirty
@@ -502,6 +525,8 @@ impl Workbench {
         let quick_open = Self::new_quick_open(Some(root.clone()), self.active.downgrade(), ui, cx);
         self.root_subscription = Self::follow_root(&panel, window, cx);
         self.changes_subscription = Self::follow_changes(&changes, window, cx);
+        self.git.update(cx, |git, _| git.close());
+        self.git = Self::new_git(Some(root.clone()), &changes, cx);
         let search = self.dock.update(cx, |dock, cx| {
             dock.set_project(panel.clone(), cx);
             dock.set_changes(changes.clone(), cx);
@@ -529,6 +554,7 @@ impl Workbench {
             });
         }
         self.resolve_trust(Some(root.clone()), true, window, cx);
+        self.track_editors(cx);
         let name = title_bar::name(Some(&root));
         self.shell.update(cx, |shell, cx| shell.set_title(name, cx));
         cx.emit(RootChanged(root));
@@ -896,17 +922,24 @@ impl Workbench {
         cx.notify();
     }
 
-    /// Observes each open editor, and stops observing closed ones.
+    /// Observes each open editor, and stops observing closed ones. A newly
+    /// observed editor gets its diff base.
     fn track_editors(&mut self, cx: &mut Context<Self>) {
         let editors = self.open_editors(cx);
         let open: HashSet<EntityId> = editors.iter().map(Entity::entity_id).collect();
         self.editors.retain(|id, _| open.contains(id));
         self.echoes.retain(|id| open.contains(id));
-        for editor in editors {
+        for editor in &editors {
             self.editors
                 .entry(editor.entity_id())
-                .or_insert_with(|| cx.observe(&editor, Self::editor_changed));
+                .or_insert_with(|| cx.observe(editor, Self::editor_changed));
         }
+        self.git.update(cx, |git, cx| git.track(&editors, cx));
+    }
+
+    #[cfg(test)]
+    pub(crate) fn git(&self) -> &Entity<GitState> {
+        &self.git
     }
 
     pub(crate) fn open_editors(&self, cx: &App) -> Vec<Entity<EditorView>> {

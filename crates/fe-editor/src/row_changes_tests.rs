@@ -41,6 +41,15 @@ fn no_base_or_equal_base_is_no_changes() {
 }
 
 #[test]
+fn against_an_empty_base_every_row_is_added() {
+    assert_eq!(changes(&model("hello", Some(""))), [(0..1, Added)]);
+    assert_eq!(changes(&model("a\nb", Some(""))), [(0..2, Added)]);
+    assert_eq!(changes(&model("a\nb\n", Some(""))), [(0..2, Added)]);
+    assert_eq!(changes(&model("\n", Some(""))), [(0..1, Added)]);
+    assert!(model("", Some("")).row_changes().is_empty());
+}
+
+#[test]
 fn line_endings_are_not_changes() {
     assert!(model("a\nb\n", Some("a\r\nb\r\n")).row_changes().is_empty());
     let crlf = EditorModel::new(Buffer::from_file_contents("a\r\nb\r\n"), None);

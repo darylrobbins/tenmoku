@@ -12,6 +12,7 @@
 
 mod dock;
 mod find_bar;
+mod git;
 mod git_panel;
 mod language_picker;
 pub mod loader;
