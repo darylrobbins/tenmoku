@@ -115,6 +115,9 @@ pub struct EditorView {
     /// window coordinates.
     #[cfg(test)]
     pub(crate) painted_chevrons: Vec<(u32, bool, Bounds<Pixels>)>,
+    /// The bracket outlines the last frame painted, in window coordinates.
+    #[cfg(test)]
+    pub(crate) painted_brackets: Vec<Bounds<Pixels>>,
     /// The hover range's underlines the last frame painted, in window
     /// coordinates, and whether it set the pointing hand.
     #[cfg(test)]
@@ -202,6 +205,8 @@ impl EditorView {
             painted_matches: Vec::new(),
             #[cfg(test)]
             painted_chevrons: Vec::new(),
+            #[cfg(test)]
+            painted_brackets: Vec::new(),
             #[cfg(test)]
             painted_hover: (Vec::new(), false),
             #[cfg(test)]

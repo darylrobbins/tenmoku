@@ -887,11 +887,9 @@ fn injected_languages_load_without_input(cx: &mut TestAppContext) {
 fn injected_languages_compiled_meanwhile_draw_again(cx: &mut TestAppContext) {
     cx.update(init);
     fe_syntax::language_by_name("markdown");
-    // Each test has its own process under nextest, which CI and the gate
-    // use, so Lua isn't loaded yet. (`cargo test` shares one process, where
-    // `folds_follow_the_syntax_tree` may load it first.)
-    assert!(fe_syntax::loaded_language("lua").is_none());
-    let text = "```lua\nlocal x = 1\n```\n";
+    // No other test here loads Swift, whether tests share a process or not.
+    assert!(fe_syntax::loaded_language("swift").is_none());
+    let text = "```swift\nlet x = 1\n```\n";
     let raced = Rc::new(Cell::new(false));
     let (view, cx) = cx.add_window_view({
         let raced = raced.clone();
@@ -900,8 +898,8 @@ fn injected_languages_compiled_meanwhile_draw_again(cx: &mut TestAppContext) {
             let mut view = EditorView::new(model, EditorTheme::default_dark(cx), cx);
             view.before_taking_missing = Some(Box::new(move |syntax| {
                 // Once a frame has highlighted the parsed tree without Lua.
-                if !syntax.needs_parse() && fe_syntax::loaded_language("lua").is_none() {
-                    fe_syntax::language_by_name("lua");
+                if !syntax.needs_parse() && fe_syntax::loaded_language("swift").is_none() {
+                    fe_syntax::language_by_name("swift");
                     raced.set(true);
                 }
             }));
@@ -910,6 +908,6 @@ fn injected_languages_compiled_meanwhile_draw_again(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     assert!(raced.get());
-    let (local, keyword) = drawn_color(&view, cx, text.find("local").unwrap());
-    assert_eq!(local, keyword);
+    let (let_, keyword) = drawn_color(&view, cx, text.find("let").unwrap());
+    assert_eq!(let_, keyword);
 }

@@ -18,13 +18,13 @@ use fe_display::{
 use fe_syntax::{Syntax, SyntaxDriver};
 use fe_vim::jump::JumpLabelState;
 use gpui::{
-    App, Bounds, ContentMask, CursorStyle, DecorationRun, DispatchPhase, Element, ElementId,
-    ElementInputHandler, Entity, Font, FontId, FontWeight, Global, GlobalElementId, Hitbox,
-    HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, LineLayout,
+    App, BorderStyle, Bounds, ContentMask, CursorStyle, DecorationRun, DispatchPhase, Element,
+    ElementId, ElementInputHandler, Entity, Font, FontId, FontWeight, Global, GlobalElementId,
+    Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement, LayoutId, LineLayout,
     ModifiersChangedEvent, MouseDownEvent, MouseEvent, MouseExitEvent, MouseMoveEvent,
     MouseUpEvent, PathBuilder, PinchEvent, Pixels, Point, ScrollWheelEvent, SharedString, Style,
     TextAlign, TextRun, TextSystem, UnderlineStyle, WeakEntity, Window, WindowId, WindowTextSystem,
-    fill, point, px, relative, size,
+    fill, outline, point, px, relative, size,
 };
 
 use crate::{EditorTheme, EditorView, FrameTiming};
@@ -56,6 +56,8 @@ pub(crate) struct FrameLayout {
     text: Hitbox,
     /// The search matches to paint ([`match_rects`]).
     matches: Vec<Rect>,
+    /// The bracket pair at the caret to outline ([`bracket_rects`]).
+    brackets: Vec<Rect>,
     /// A pending vim jump's backdrop and labels ([`jump_layout`]).
     pub(crate) jump: Option<JumpLayout>,
     /// What an input method was composing, and the buffer offset it was
@@ -706,6 +708,7 @@ impl Element for EditorElement {
             clickable,
             text,
             matches: Vec::new(),
+            brackets: Vec::new(),
             jump: None,
             composition: composed,
             decorations: Decorations::default(),
@@ -713,6 +716,7 @@ impl Element for EditorElement {
             prepaint_took: Duration::ZERO,
         };
         layout.matches = match_rects(&mut layout, view);
+        layout.brackets = bracket_rects(&mut layout, view);
         layout.jump = jump_layout(&mut layout, view);
         layout.decorations = Decorations::layout(&mut layout, view, em, window);
         // The completion menu goes by its word's start in this frame, which
@@ -807,6 +811,7 @@ impl Element for EditorElement {
         });
         let selections = selection_rects(&mut layout, view);
         let matches = mem::take(&mut layout.matches);
+        let brackets = mem::take(&mut layout.brackets);
         let (squiggles, marks) = {
             let diagnostics = view.model.diagnostics();
             diagnostic_marks(&mut layout, view.model.text(), &diagnostics, &theme)
@@ -837,6 +842,8 @@ impl Element for EditorElement {
         let mut painted_matches = Vec::new();
         #[cfg(test)]
         let mut painted_chevrons = Vec::new();
+        #[cfg(test)]
+        let mut painted_brackets = Vec::new();
 
         // In vim's normal mode nothing types: neither keys nor an input
         // method insert text.
@@ -876,6 +883,16 @@ impl Element for EditorElement {
                         painted_selections.push(selection);
                         #[cfg(test)]
                         decorations::note("selection");
+                    }
+                    for &bracket in &brackets {
+                        let bracket = layout.bounds(bracket);
+                        window.paint_quad(outline(
+                            bracket,
+                            theme.cursor.opacity(0.5),
+                            BorderStyle::Solid,
+                        ));
+                        #[cfg(test)]
+                        painted_brackets.push(bracket);
                     }
                     // Under the text, so the glyph stays readable.
                     if block && !block_on_top {
@@ -1039,6 +1056,7 @@ impl Element for EditorElement {
                 view.painted_selections = painted_selections;
                 view.painted_matches = painted_matches;
                 view.painted_chevrons = painted_chevrons;
+                view.painted_brackets = painted_brackets;
                 let underlines = underlines.iter().map(|&(bounds, _)| bounds).collect();
                 view.painted_hover = (underlines, hover.is_some());
                 view.painted_squiggles = squiggles;
@@ -1439,6 +1457,50 @@ fn selection_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
     rects
 }
 
+/// The rects of the bracket pair at the caret: none unless the only
+/// selection is a caret and the syntax tree is for the text drawn. A bracket
+/// on a row that isn't shown, or in a fold, has none; the other still does.
+fn bracket_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
+    let model = &view.model;
+    let selection = model.primary_selection();
+    if !selection.range.is_empty() || model.selections().len() != 1 {
+        return Vec::new();
+    }
+    let Some(syntax) = view
+        .syntax
+        .as_ref()
+        .map(SyntaxDriver::syntax)
+        .filter(|syntax| syntax.version() == model.snapshot().version())
+        // An edited tree has its offsets moved but not its structure.
+        .filter(|syntax| !syntax.needs_parse())
+    else {
+        return Vec::new();
+    };
+    let Some(pair) = fe_syntax::bracket_pair(syntax, selection.head()) else {
+        return Vec::new();
+    };
+    let FrameLayout {
+        frame,
+        long_rows,
+        glyph_widths,
+        ..
+    } = layout;
+    [pair.open, pair.close]
+        .into_iter()
+        .filter_map(|range| {
+            let row = frame.row_containing(range.start)?;
+            let left = frame.view_x(row.x_for_offset(range.start, long_rows, glyph_widths));
+            let right = frame.view_x(row.x_for_offset(range.end, long_rows, glyph_widths));
+            Some(Rect {
+                x: left,
+                y: frame.row_top(row.row),
+                width: right - left,
+                height: frame.line_height,
+            })
+        })
+        .collect()
+}
+
 /// The most search matches painted in a frame.
 pub(crate) const MAX_MATCHES: usize = 1_000;
 
@@ -1830,3 +1892,6 @@ mod jump_tests;
 
 #[cfg(test)]
 mod jump_style_tests;
+
+#[cfg(test)]
+mod bracket_tests;
