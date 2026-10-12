@@ -53,10 +53,15 @@ pub struct Reply<T> {
     pub empty_is_final: bool,
 }
 
+/// How long formatting may take, in milliseconds: it has no `lsp.timeouts`
+/// setting.
+const FORMAT_TIMEOUT_MS: u64 = 3000;
+
 /// How long a request with `method` may take, from `lsp.timeouts`; none
 /// for methods it doesn't name.
 pub(crate) fn timeout(method: &str, timeouts: &LspTimeouts) -> Option<Duration> {
     let ms = match method {
+        "textDocument/formatting" | "textDocument/rangeFormatting" => FORMAT_TIMEOUT_MS,
         "textDocument/definition" => timeouts.definition,
         "workspace/symbol" => timeouts.workspace_symbol,
         "textDocument/references" => timeouts.references,
