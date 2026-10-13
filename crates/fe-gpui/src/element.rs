@@ -78,6 +78,9 @@ pub(crate) struct FrameLayout {
     text: Hitbox,
     /// The search matches to paint ([`match_rects`]).
     matches: Vec<Rect>,
+    /// The pattern ([`fe_vim::search::Pattern::regex_str`]) and text version
+    /// of a frame whose highlighting ran out of time, until either changes.
+    highlight_ran_out: Option<(String, fe_buffer::Version)>,
     /// The bracket pair at the caret to outline ([`bracket_rects`]).
     brackets: Vec<Rect>,
     /// A pending vim jump's backdrop and labels ([`jump_layout`]).
@@ -822,6 +825,7 @@ impl Element for EditorElement {
             clickable,
             text,
             matches: Vec::new(),
+            highlight_ran_out: None,
             brackets: Vec::new(),
             jump: None,
             composition: composed,
@@ -1738,6 +1742,8 @@ fn search_match_color(theme: &EditorTheme) -> Hsla {
 
 #[cfg(test)]
 thread_local! {
+    /// Overrides the highlight time limit on this thread.
+    pub(crate) static TEST_LIMIT: std::cell::Cell<Option<Duration>> = const { std::cell::Cell::new(None) };
     /// How many matches the last [`match_rects`] on this thread looked at.
     pub(crate) static CANDIDATES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// How many match ranges the last [`match_rects`] on this thread kept:
@@ -1757,6 +1763,13 @@ thread_local! {
 /// area's left edge on its first displayed row to the right edge on its
 /// last. The find pattern's [`MAX_MATCHES`] go to those, for the whole
 /// frame, so matches scrolled off don't use them.
+///
+/// The frame has one [`fe_vim::search::time_limit`] for all its rows. Once
+/// it runs out the frame paints what it has and searches no more rows, and
+/// the layout records the pattern and text version
+/// ([`FrameLayout::highlight_ran_out`]): later frames search nothing and
+/// paint no matches until an edit or a different pattern, so each key
+/// doesn't spend the limit again.
 fn match_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
     // How many more ranges the frame may find: bounded for the find
     // pattern only.
@@ -1771,28 +1784,47 @@ fn match_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
     let Some(pattern) = pattern else {
         return Vec::new();
     };
+    #[cfg(test)]
+    CANDIDATES.with(|n| n.set(0));
+    #[cfg(test)]
+    FOUND.with(|n| n.set(0));
+    let latched = view
+        .layout
+        .as_ref()
+        .and_then(|last| last.highlight_ran_out.as_ref());
+    if latched
+        .is_some_and(|(key, version)| key == pattern.regex_str() && *version == layout.version)
+    {
+        layout.highlight_ran_out = latched.cloned();
+        return Vec::new();
+    }
     let FrameLayout {
         frame,
         long_rows,
         glyph_widths,
         ..
     } = layout;
-    #[cfg(test)]
-    CANDIDATES.with(|n| n.set(0));
-    #[cfg(test)]
-    FOUND.with(|n| n.set(0));
     let text = view.model.text();
     let space = glyph_widths.char_width(' ');
     let visible = frame.text_bounds();
+    let version = layout.version;
+    let mut latch = None;
     let mut rects = Vec::new();
+    let limit = fe_vim::search::time_limit();
+    #[cfg(test)]
+    let limit = TEST_LIMIT.with(|l| l.get()).unwrap_or(limit);
+    let mut deadline = fe_vim::search::Deadline::after(limit);
     // A buffer row's matches that reach the text area on its displayed rows,
     // kept for its other wrapped rows: found once a frame, searched from the
     // row's start for its context but only as far as the last displayed part.
     let mut whole: Option<(u32, Vec<Range<usize>>)> = None;
     let edge = space;
     let (left_x, right_x) = (visible.x - edge, visible.x + visible.width + edge);
-    for (ix, row) in frame.rows.iter().enumerate() {
+    'rows: for (ix, row) in frame.rows.iter().enumerate() {
         if whole.as_ref().is_none_or(|(at, _)| *at != row.buffer_row) {
+            if deadline.ran_out() {
+                break;
+            }
             let last = frame.rows[ix..]
                 .iter()
                 .take_while(|next| next.buffer_row == row.buffer_row)
@@ -1816,8 +1848,20 @@ fn match_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
                 }
             };
             let window = start..end;
-            let all =
-                fe_vim::search::matches_reaching(text, row.buffer_row, window, pattern, budget);
+            let all = fe_vim::search::matches_reaching_until(
+                text,
+                row.buffer_row,
+                window,
+                pattern,
+                budget,
+                &mut deadline,
+            );
+            // The clock is only read between regex calls, so a last call
+            // that overran the limit is recorded here.
+            deadline.expired();
+            if deadline.ran_out() {
+                latch = Some((pattern.regex_str().to_string(), version));
+            }
             budget = budget.saturating_sub(all.len());
             #[cfg(test)]
             FOUND.with(|n| n.set(n.get() + all.len()));
@@ -1869,10 +1913,11 @@ fn match_rects(layout: &mut FrameLayout, view: &EditorView) -> Vec<Rect> {
                 height: frame.line_height,
             });
             if rects.len() >= MAX_MATCHES {
-                return rects;
+                break 'rows;
             }
         }
     }
+    layout.highlight_ran_out = latch;
     rects
 }
 
@@ -2234,6 +2279,8 @@ fn styled_highlights(
         .collect()
 }
 
+#[cfg(test)]
+mod highlight_limit_tests;
 #[cfg(test)]
 mod tests;
 

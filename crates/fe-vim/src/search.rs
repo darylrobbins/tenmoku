@@ -64,15 +64,34 @@ impl std::error::Error for Interrupted {}
 /// When one operation, counted from its start, must stop matching, and
 /// whether it had to. Wall-clock time: reading rows and building edits count
 /// as well as the regex calls.
-pub(crate) struct Deadline {
+pub struct Deadline {
     end: Instant,
     ran_out: std::cell::Cell<bool>,
 }
 
+impl Default for Deadline {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Deadline {
     /// A deadline [`time_limit`] from now.
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self::within(time_limit())
+    }
+
+    /// A deadline `limit` from now.
+    pub fn after(limit: Duration) -> Self {
+        Self::within(limit)
+    }
+
+    /// A deadline that never passes.
+    pub fn never() -> Self {
+        Self {
+            end: Instant::now() + Duration::from_secs(60 * 60 * 24 * 365 * 100),
+            ran_out: std::cell::Cell::new(false),
+        }
     }
 
     pub(crate) fn within(limit: Duration) -> Self {
@@ -98,12 +117,12 @@ impl Deadline {
 
     /// Whether it is past now: samples the clock, for loops that make no
     /// regex call to do it (stepping through listed matches, reading rows).
-    pub(crate) fn expired(&self) -> bool {
+    pub fn expired(&self) -> bool {
         self.passed()
     }
 
     /// Whether a match iteration was cut short by it.
-    pub(crate) fn ran_out(&self) -> bool {
+    pub fn ran_out(&self) -> bool {
         self.ran_out.get()
     }
 
@@ -128,6 +147,8 @@ pub struct Pattern {
     /// Whether a match must stand alone, between characters that aren't
     /// word characters (a [`FindQuery`]'s `whole_word`).
     whole: bool,
+    /// The translated regex's source with the flags it's built with.
+    key: String,
 }
 
 /// What matches a [`Pattern`].
@@ -209,6 +230,7 @@ impl Pattern {
                 engine: Engine::Backtrack(Arc::new(backtrack::compile(&tokens, ignore_case)?)),
                 word,
                 whole: false,
+                key: format!("{source}\0{ignore_case}\0backtrack\0{word:?}"),
             });
         }
         let builder = RegexBuilder::new(&source);
@@ -239,6 +261,7 @@ impl Pattern {
             engine: Engine::Regex { regex, slots },
             word,
             whole: false,
+            key: format!("{source}\0{ignore_case}\0{word:?}"),
         })
     }
 
@@ -267,7 +290,14 @@ impl Pattern {
             engine: Engine::Regex { regex, slots },
             word: (false, false),
             whole: query.whole_word,
+            key: format!("{source}\0{}\0{}", query.match_case, query.whole_word),
         })
+    }
+
+    /// The translated regex's source, with the flags it is built with:
+    /// what two patterns that match alike share.
+    pub fn regex_str(&self) -> &str {
+        &self.key
     }
 
     /// The first match starting at or after `from`, then row by row to the
@@ -831,7 +861,18 @@ pub fn matches_in(
     pattern: &Pattern,
     cap: usize,
 ) -> Vec<Range<usize>> {
-    let deadline = Deadline::new();
+    matches_in_until(text, rows, pattern, cap, &mut Deadline::new())
+}
+
+/// [`matches_in`] against `deadline`, which the caller may share across
+/// calls and ask afterwards whether it [`Deadline::ran_out`].
+pub fn matches_in_until(
+    text: &Text,
+    rows: Range<u32>,
+    pattern: &Pattern,
+    cap: usize,
+    deadline: &mut Deadline,
+) -> Vec<Range<usize>> {
     let mut found = Vec::new();
     let mut buf = String::new();
     for row in rows.start..rows.end.min(text.row_count()) {
@@ -842,7 +883,7 @@ pub fn matches_in(
         let (start, hay) = row_text(text, row, &mut buf);
         found.extend(
             pattern
-                .matches(hay, &deadline)
+                .matches(hay, deadline)
                 .take(room)
                 .map(|range| start + range.start..start + range.end),
         );
@@ -880,6 +921,19 @@ pub fn matches_reaching(
     cap: usize,
 ) -> Vec<Range<usize>> {
     reaching(text, row, window, pattern, cap, &Deadline::new())
+}
+
+/// [`matches_reaching`] against `deadline`, which the caller may share
+/// across rows and ask afterwards whether it [`Deadline::ran_out`].
+pub fn matches_reaching_until(
+    text: &Text,
+    row: u32,
+    window: Range<usize>,
+    pattern: &Pattern,
+    cap: usize,
+    deadline: &mut Deadline,
+) -> Vec<Range<usize>> {
+    reaching(text, row, window, pattern, cap, deadline)
 }
 
 /// [`matches_reaching`] against `deadline`, which started before the row is

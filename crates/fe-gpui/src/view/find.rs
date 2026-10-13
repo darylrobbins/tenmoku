@@ -11,7 +11,7 @@ use std::{
 };
 
 use fe_buffer::{Text, Version};
-use fe_vim::search::{Pattern, matches_in};
+use fe_vim::search::{Deadline, Pattern, matches_in_until};
 use gpui::{AppContext as _, Context, Task};
 
 use crate::EditorView;
@@ -257,7 +257,13 @@ fn count(text: &Text, pattern: &Pattern, stop: &AtomicBool) -> Option<(Vec<Range
         let end = start.saturating_add(COUNT_CHUNK_ROWS).min(rows);
         // One past the cap says whether there are more.
         let room = MAX_COUNTED + 1 - ranges.len();
-        ranges.extend(matches_in(text, start..end, pattern, room));
+        ranges.extend(matches_in_until(
+            text,
+            start..end,
+            pattern,
+            room,
+            &mut Deadline::never(),
+        ));
         if ranges.len() > MAX_COUNTED {
             ranges.truncate(MAX_COUNTED);
             return Some((ranges, true));
