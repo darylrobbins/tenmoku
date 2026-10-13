@@ -553,7 +553,13 @@ fn for_each_candidate(
         if let Some(range) = candidates.of(cursor.node()) {
             found(range);
         }
-        if cursor.goto_first_child_for_point(start).is_some() {
+        // tree-sitter's search for the first child past `start` doesn't
+        // backtrack out of a hidden node that ends after `start` but holds
+        // no such child, so a miss falls back to stepping over the children
+        // that end at or before `start`.
+        if cursor.goto_first_child_for_point(start).is_some()
+            || first_child_from(&mut cursor, start)
+        {
             if !past(cursor.node()) {
                 continue;
             }
@@ -578,6 +584,21 @@ fn for_each_candidate(
             }
         }
     }
+}
+
+/// Moves to the first child of the cursor's node that ends after `start`,
+/// staying put if there is none.
+fn first_child_from(cursor: &mut TreeCursor, start: Point) -> bool {
+    if !cursor.goto_first_child() {
+        return false;
+    }
+    while cursor.node().end_position() <= start {
+        if !cursor.goto_next_sibling() {
+            cursor.goto_parent();
+            return false;
+        }
+    }
+    true
 }
 
 struct Candidates<'a> {
