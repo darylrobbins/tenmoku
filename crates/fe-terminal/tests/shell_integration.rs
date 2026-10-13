@@ -430,3 +430,24 @@ fn typing_on_the_alternate_screen_forgets_the_prompt() {
     assert!(session.terminal.scroll_to_prompt(false));
     assert_eq!(session.top(), "$ prompt 40");
 }
+
+#[test]
+fn next_prompt_on_the_alternate_screen_forgets_the_prompt_for_a_hidden_resize() {
+    let script = alternate_after_a_pause(r"sleep 1; printf '\033[?1049lback'; read x");
+    let session = Session::sh(&script, 40, ROWS, SCROLLBACK);
+    session.wait_for_text("ready");
+    assert!(session.terminal.scroll_to_prompt(false));
+    assert_eq!(session.top(), "$ prompt 40");
+
+    // Next Prompt on the alternate screen forgets prompt 40, the frozen
+    // copy too, so the resize while hidden has none to restore.
+    session.wait_for_text("alt");
+    assert!(!session.terminal.scroll_to_prompt(true));
+    session.terminal.resize(size(25, ROWS));
+    session.wait_for("the primary grid", |screen| {
+        !screen.contains("alt") && screen.contains("out 40")
+    });
+    assert!(session.terminal.snapshot().display_offset > 0);
+    assert!(session.terminal.scroll_to_prompt(false));
+    assert_eq!(session.top(), "$ prompt 40");
+}

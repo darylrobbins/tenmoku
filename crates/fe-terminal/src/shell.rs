@@ -478,7 +478,9 @@ impl ShellState {
         };
         let Some(&line) = target else {
             if forward {
-                self.remembered = None;
+                // `forget`, not just the live mark: the alternate screen
+                // froze a copy, and a hidden resize would restore it.
+                self.forget();
                 term.scroll_display(Scroll::Bottom);
             }
             return false;
