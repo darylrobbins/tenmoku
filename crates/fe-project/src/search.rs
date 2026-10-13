@@ -258,10 +258,12 @@ pub struct PathFilter {
 }
 
 impl PathFilter {
-    pub fn new(root: &Path, include: &[&str], exclude: &[&str]) -> Result<PathFilter, GlobError> {
+    /// `root` is what the globs are relative to. Paths are matched already
+    /// relative to it, so the matchers hold no root to strip a second time.
+    pub fn new(_root: &Path, include: &[&str], exclude: &[&str]) -> Result<PathFilter, GlobError> {
         Ok(PathFilter {
-            include: build_globs(root, include)?,
-            exclude: build_globs(root, exclude)?,
+            include: build_globs(include)?,
+            exclude: build_globs(exclude)?,
         })
     }
 
@@ -284,11 +286,11 @@ impl PathFilter {
     }
 }
 
-fn build_globs(root: &Path, globs: &[&str]) -> Result<Option<Arc<Gitignore>>, GlobError> {
+fn build_globs(globs: &[&str]) -> Result<Option<Arc<Gitignore>>, GlobError> {
     if globs.is_empty() {
         return Ok(None);
     }
-    let mut builder = GitignoreBuilder::new(root);
+    let mut builder = GitignoreBuilder::new("");
     builder.case_insensitive(false).map_err(|err| GlobError {
         glob: String::new(),
         message: err.to_string(),
@@ -743,8 +745,19 @@ impl Shared<'_> {
         }
         let path = entry.path();
         let rel = path.strip_prefix(self.root).unwrap_or(path);
-        if !self.filter.is_empty() && !rel.as_os_str().is_empty() && !self.filter.includes(rel) {
-            return Outcome::Skip;
+        if !self.filter.is_empty() {
+            // A file given as the root is filtered by its name.
+            let name = Path::new(self.root.file_name().unwrap_or_default());
+            let filtered = if rel.as_os_str().is_empty() {
+                name
+            } else {
+                rel
+            };
+            if !self.filter.includes(filtered)
+                || (rel.as_os_str().is_empty() && self.filter.excludes(filtered, false))
+            {
+                return Outcome::Skip;
+            }
         }
         if self.excluded == Some(rel) {
             self.files_searched.fetch_add(1, Ordering::Relaxed);

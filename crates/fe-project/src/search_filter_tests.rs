@@ -91,3 +91,17 @@ fn errors_and_defaults() {
         assert_eq!(rels, ["docs/c.rs", "src/a.rs", "src/b.txt"]);
     }
 }
+
+#[test]
+fn a_file_root_is_filtered_by_its_name() {
+    let (_dir, root) = fixture();
+    let file = root.join("src/a.rs");
+    for threads in [1, 0] {
+        let filter = PathFilter::new(&file, &["*.txt"], &[]).unwrap();
+        assert!(found(&file, &filter, threads).0.is_empty());
+        let filter = PathFilter::new(&file, &[], &["*.rs"]).unwrap();
+        assert!(found(&file, &filter, threads).0.is_empty());
+        let filter = PathFilter::new(&file, &["*.rs"], &["*.txt"]).unwrap();
+        assert_eq!(found(&file, &filter, threads).0.len(), 1);
+    }
+}
