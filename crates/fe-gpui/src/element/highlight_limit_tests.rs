@@ -83,20 +83,29 @@ fn one_limit_per_frame(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn ran_out_latches_until_a_change(cx: &mut TestAppContext) {
-    TEST_LIMIT.with(|l| l.set(Some(Duration::from_millis(100))));
-    let (view, cx) = editor(cx, &format!("{}\n", "a".repeat(200_000)).repeat(20));
+    // A zero limit has run out by the frame's first clock read, whatever the
+    // machine's load; later frames get all the time they need, so that only
+    // the latch keeps them from searching.
+    TEST_LIMIT.with(|l| l.set(Some(Duration::ZERO)));
+    let (view, cx) = editor(cx, &format!("{}\n", "a".repeat(1_000)).repeat(20));
     submit("/", r"a.*z\|a", cx);
     unlatch(&view, cx);
-    assert!(!draw(&view, cx).is_empty());
+    assert!(draw(&view, cx).is_empty());
+    TEST_LIMIT.with(|l| l.set(Some(Duration::from_secs(3600))));
 
     assert!(draw(&view, cx).is_empty());
     assert_eq!(found(), 0);
 
     view.update(cx, |view, _| view.model_mut().insert("b"));
-    draw(&view, cx);
+    assert!(!draw(&view, cx).is_empty());
     assert!(found() > 0);
 
+    TEST_LIMIT.with(|l| l.set(Some(Duration::ZERO)));
     submit("/", "a", cx);
+    unlatch(&view, cx);
+    assert!(draw(&view, cx).is_empty());
+    TEST_LIMIT.with(|l| l.set(Some(Duration::from_secs(3600))));
+    submit("/", "b", cx);
     assert!(!draw(&view, cx).is_empty());
     TEST_LIMIT.with(|l| l.set(None));
 }

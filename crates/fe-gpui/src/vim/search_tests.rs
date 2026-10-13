@@ -254,6 +254,8 @@ fn enumeration_stops_after_what_is_shown(cx: &mut TestAppContext) {
 /// shown ones, not all the line's.
 #[gpui::test]
 fn work_is_bounded_by_what_is_shown(cx: &mut TestAppContext) {
+    // No time limit to run out of on a loaded machine.
+    crate::element::TEST_LIMIT.with(|l| l.set(Some(std::time::Duration::from_secs(3600))));
     let (view, cx) = editor(cx, &"x ".repeat(100_000), true);
     wrap(&view, cx);
     submit("/", "x", cx);
@@ -267,6 +269,7 @@ fn work_is_bounded_by_what_is_shown(cx: &mut TestAppContext) {
     let looked_at = crate::element::CANDIDATES.with(|n| n.get());
     assert!(painted > 0);
     assert!(looked_at <= painted + 64, "{looked_at} for {painted}");
+    crate::element::TEST_LIMIT.with(|l| l.set(None));
 }
 
 /// `^` and `$` match nothing wide: each shows as a cell, empty rows too.
