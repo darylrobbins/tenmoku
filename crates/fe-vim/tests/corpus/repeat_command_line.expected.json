@@ -1,0 +1,716 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "at_colon_after_s",
+      "buffer": "a1 a2\na3 a4\na5 a6",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a/X/<CR>j@:",
+      "expect": {
+        "buffer": "X1 a2\nX3 a4\na5 a6",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "at_colon_then_down",
+      "buffer": "a1 a2\na3 a4\na5 a6\na7 a8",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a/X/<CR>j@:j@:",
+      "expect": {
+        "buffer": "X1 a2\nX3 a4\nX5 a6\na7 a8",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "at_colon_delete_range",
+      "buffer": "l1\nl2\nl3\nl4\nl5\nl6",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":2,3d<CR>@:",
+      "expect": {
+        "buffer": "l1\nl6",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "l4\nl5\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "l4\nl5\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "l2\nl3\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "at_colon_failing_line",
+      "buffer": "a1\na2\na3",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/zzz/y/<CR>j@:",
+      "expect": {
+        "buffer": "a1\na2\na3",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "zzz",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "at_colon_failing_search_pattern",
+      "buffer": "a1\na2\na3",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a/X/<CR>:s/zzz/y/<CR>j@:",
+      "expect": {
+        "buffer": "X1\na2\na3",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "zzz",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "count_at_colon",
+      "buffer": "l1\nl2\nl3\nl4\nl5\nl6",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":d<CR>2@:",
+      "expect": {
+        "buffer": "l4\nl5\nl6",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "l3\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "l3\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "l2\n",
+            "linewise": true
+          },
+          "3": {
+            "text": "l1\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "count_at_colon_stops_on_fail",
+      "buffer": "a1\nb2\nc3\nd4",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a/X/<CR>3@:",
+      "expect": {
+        "buffer": "X1\nb2\nc3\nd4",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "at_at_after_at_colon",
+      "buffer": "a1\na2\na3\na4\na5",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a/X/<CR>j@:j@@",
+      "expect": {
+        "buffer": "X1\nX2\nX3\na4\na5",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "at_at_count_after_at_colon",
+      "buffer": "l1\nl2\nl3\nl4\nl5\nl6",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":d<CR>@:2@@",
+      "expect": {
+        "buffer": "l5\nl6",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "l4\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "l4\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "l3\n",
+            "linewise": true
+          },
+          "3": {
+            "text": "l2\n",
+            "linewise": true
+          },
+          "4": {
+            "text": "l1\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "at_colon_after_esc_cancel",
+      "buffer": "a1\na2\na3",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a/X/<CR>j:s/a/Y/<Esc>@:",
+      "expect": {
+        "buffer": "X1\nX2\na3",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "at_colon_after_esc_cancel_let",
+      "buffer": "a1\na2\na3",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a/X/<CR>:s/a/Z/<CR>j:s/a/Y/<Esc>@:",
+      "expect": {
+        "buffer": "X1\nZ2\na3",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "at_colon_in_macro",
+      "buffer": "a1\na2\na3\na4\na5",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a/X/<CR>qqj@:q2@q",
+      "expect": {
+        "buffer": "X1\nX2\nX3\nX4\na5",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          },
+          "q": {
+            "text": "j@:",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "at_colon_in_macro_recorded_line",
+      "buffer": "a1\na2\na3\na4",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a/X/<CR>qqj:s/a/Y/<CR>q@:",
+      "expect": {
+        "buffer": "X1\nY2\na3\na4",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          },
+          "q": {
+            "text": "j:s/a/Y/\r",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "at_colon_after_other_line",
+      "buffer": "a1 b\na2 b\na3 b",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a/X/<CR>:s/b/Y/<CR>j@:",
+      "expect": {
+        "buffer": "X1 Y\na2 Y\na3 b",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "b",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "at_colon_not_search",
+      "buffer": "a1\na2\na3",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/a/X/<CR>/3<CR>@:",
+      "expect": {
+        "buffer": "X1\na2\nX3",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "Q_after_record",
+      "buffer": "abcdefgh",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "qaxqQ",
+      "expect": {
+        "buffer": "cdefgh",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b",
+            "linewise": false
+          },
+          "-": {
+            "text": "b",
+            "linewise": false
+          },
+          "a": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "Q_twice",
+      "buffer": "abcdefghij",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "qaxqQQ",
+      "expect": {
+        "buffer": "defghij",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c",
+            "linewise": false
+          },
+          "-": {
+            "text": "c",
+            "linewise": false
+          },
+          "a": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "Q_count",
+      "buffer": "abcdefghij",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "qaxq3Q",
+      "expect": {
+        "buffer": "efghij",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "d",
+            "linewise": false
+          },
+          "-": {
+            "text": "d",
+            "linewise": false
+          },
+          "a": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "Q_after_undo",
+      "buffer": "abcdefgh",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "qaxquQ",
+      "expect": {
+        "buffer": "bcdefgh",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          },
+          "a": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "qA_append_then_Q",
+      "buffer": "abcdefghij",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "qaxqqAxqQ",
+      "expect": {
+        "buffer": "efghij",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "d",
+            "linewise": false
+          },
+          "-": {
+            "text": "d",
+            "linewise": false
+          },
+          "a": {
+            "text": "xx",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "Q_uses_last_recorded",
+      "buffer": "abcdefghij",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "qaxqqb2xqQ",
+      "expect": {
+        "buffer": "fghij",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "de",
+            "linewise": false
+          },
+          "-": {
+            "text": "de",
+            "linewise": false
+          },
+          "a": {
+            "text": "x",
+            "linewise": false
+          },
+          "b": {
+            "text": "2x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "Q_then_at_at",
+      "buffer": "abcdefghij",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "qaxqQ@@",
+      "expect": {
+        "buffer": "defghij",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c",
+            "linewise": false
+          },
+          "-": {
+            "text": "c",
+            "linewise": false
+          },
+          "a": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "Q_count_then_at_at",
+      "buffer": "abcdefghij",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "qaxq2Q@@",
+      "expect": {
+        "buffer": "efghij",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "d",
+            "linewise": false
+          },
+          "-": {
+            "text": "d",
+            "linewise": false
+          },
+          "a": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "Q_after_at_other",
+      "buffer": "abcdefghij",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "qaxqqb2xqu@aQ",
+      "expect": {
+        "buffer": "efghij",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "cd",
+            "linewise": false
+          },
+          "-": {
+            "text": "cd",
+            "linewise": false
+          },
+          "a": {
+            "text": "x",
+            "linewise": false
+          },
+          "b": {
+            "text": "2x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "at_at_then_Q",
+      "buffer": "abcdefghij",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "qaxqqbrZq@aQ",
+      "expect": {
+        "buffer": "Zdefghij",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "Z",
+            "linewise": false
+          },
+          "-": {
+            "text": "Z",
+            "linewise": false
+          },
+          "a": {
+            "text": "x",
+            "linewise": false
+          },
+          "b": {
+            "text": "rZ",
+            "linewise": false
+          }
+        }
+      }
+    }
+  ]
+}

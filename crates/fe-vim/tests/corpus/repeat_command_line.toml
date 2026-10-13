@@ -1,0 +1,155 @@
+# Cases for fe-vim's `@:` (repeat the last command line) and `Q` (repeat the last
+# recorded register) against nvim. The recorder runs every case in one nvim
+# session, which can't reset the last command line, so each `@:` case runs its
+# own `:` line first. Hand-written, as macros.toml; re-record with the ignored
+# `record_corpus_with_neovim` test.
+
+[[case]]
+name = "at_colon_after_s"
+buffer = "a1 a2\na3 a4\na5 a6"
+cursor = [0, 0]
+keys = ":s/a/X/<CR>j@:"
+
+[[case]]
+name = "at_colon_then_down"
+buffer = "a1 a2\na3 a4\na5 a6\na7 a8"
+cursor = [0, 0]
+keys = ":s/a/X/<CR>j@:j@:"
+
+[[case]]
+name = "at_colon_delete_range"
+buffer = "l1\nl2\nl3\nl4\nl5\nl6"
+cursor = [0, 0]
+keys = ":2,3d<CR>@:"
+
+[[case]]
+name = "at_colon_failing_line"
+buffer = "a1\na2\na3"
+cursor = [0, 0]
+keys = ":s/zzz/y/<CR>j@:"
+
+[[case]]
+name = "at_colon_failing_search_pattern"
+buffer = "a1\na2\na3"
+cursor = [0, 0]
+keys = ":s/a/X/<CR>:s/zzz/y/<CR>j@:"
+
+[[case]]
+name = "count_at_colon"
+buffer = "l1\nl2\nl3\nl4\nl5\nl6"
+cursor = [0, 0]
+keys = ":d<CR>2@:"
+
+[[case]]
+name = "count_at_colon_stops_on_fail"
+buffer = "a1\nb2\nc3\nd4"
+cursor = [0, 0]
+keys = ":s/a/X/<CR>3@:"
+
+[[case]]
+name = "at_at_after_at_colon"
+buffer = "a1\na2\na3\na4\na5"
+cursor = [0, 0]
+keys = ":s/a/X/<CR>j@:j@@"
+
+[[case]]
+name = "at_at_count_after_at_colon"
+buffer = "l1\nl2\nl3\nl4\nl5\nl6"
+cursor = [0, 0]
+keys = ":d<CR>@:2@@"
+
+[[case]]
+name = "at_colon_after_esc_cancel"
+buffer = "a1\na2\na3"
+cursor = [0, 0]
+keys = ":s/a/X/<CR>j:s/a/Y/<Esc>@:"
+
+[[case]]
+name = "at_colon_after_esc_cancel_let"
+buffer = "a1\na2\na3"
+cursor = [0, 0]
+keys = ":s/a/X/<CR>:s/a/Z/<CR>j:s/a/Y/<Esc>@:"
+
+[[case]]
+name = "at_colon_in_macro"
+buffer = "a1\na2\na3\na4\na5"
+cursor = [0, 0]
+keys = ":s/a/X/<CR>qqj@:q2@q"
+
+[[case]]
+name = "at_colon_in_macro_recorded_line"
+buffer = "a1\na2\na3\na4"
+cursor = [0, 0]
+keys = ":s/a/X/<CR>qqj:s/a/Y/<CR>q@:"
+
+[[case]]
+name = "at_colon_after_other_line"
+buffer = "a1 b\na2 b\na3 b"
+cursor = [0, 0]
+keys = ":s/a/X/<CR>:s/b/Y/<CR>j@:"
+
+[[case]]
+name = "at_colon_not_search"
+buffer = "a1\na2\na3"
+cursor = [0, 0]
+keys = ":s/a/X/<CR>/3<CR>@:"
+
+[[case]]
+name = "Q_after_record"
+buffer = "abcdefgh"
+cursor = [0, 0]
+keys = "qaxqQ"
+
+[[case]]
+name = "Q_twice"
+buffer = "abcdefghij"
+cursor = [0, 0]
+keys = "qaxqQQ"
+
+[[case]]
+name = "Q_count"
+buffer = "abcdefghij"
+cursor = [0, 0]
+keys = "qaxq3Q"
+
+[[case]]
+name = "Q_after_undo"
+buffer = "abcdefgh"
+cursor = [0, 0]
+keys = "qaxquQ"
+
+[[case]]
+name = "qA_append_then_Q"
+buffer = "abcdefghij"
+cursor = [0, 0]
+keys = "qaxqqAxqQ"
+
+[[case]]
+name = "Q_uses_last_recorded"
+buffer = "abcdefghij"
+cursor = [0, 0]
+keys = "qaxqqb2xqQ"
+
+[[case]]
+name = "Q_then_at_at"
+buffer = "abcdefghij"
+cursor = [0, 0]
+keys = "qaxqQ@@"
+
+[[case]]
+name = "Q_count_then_at_at"
+buffer = "abcdefghij"
+cursor = [0, 0]
+keys = "qaxq2Q@@"
+
+[[case]]
+name = "Q_after_at_other"
+buffer = "abcdefghij"
+cursor = [0, 0]
+keys = "qaxqqb2xqu@aQ"
+
+[[case]]
+name = "at_at_then_Q"
+buffer = "abcdefghij"
+cursor = [0, 0]
+keys = "qaxqqbrZq@aQ"

@@ -42,7 +42,7 @@ fn move_dispatches_through_the_registry() {
     ));
     assert_eq!(vim.cursor(), (6, 2));
 
-    assert_eq!(vim.feed("Q"), Err(FeedError::Forwarded(VimKey::Char('Q'))));
+    assert_eq!(vim.feed("U"), Err(FeedError::Forwarded(VimKey::Char('U'))));
     assert!(matches!(vim.feed("<nope>"), Err(FeedError::Keys(_))));
     assert_eq!(vim.mode(), "normal");
     assert!(parse_keys("<C-r><lt><Left><TAB><cr>").is_ok());

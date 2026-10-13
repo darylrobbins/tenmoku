@@ -12,7 +12,7 @@
 //! cancelled jump leaves none of its command's keys.
 
 use fe_buffer::TransactionId;
-use fe_command::{CommandError, Dispatched, Effect};
+use fe_command::{Actor, CommandError, Dispatched, Effect};
 
 use crate::{JumpMotion, PlayArgs, RecordArgs, VimKey, VimState, VimTarget};
 
@@ -39,6 +39,10 @@ pub(crate) struct Macros {
     recording: Option<Recording>,
     /// For `@@`.
     last_played: Option<char>,
+    /// The last register recorded, lowercase, for `Q`.
+    last_recorded: Option<char>,
+    /// The last ex line submitted, for `@:`.
+    last_command_line: Option<String>,
     /// Keys `@` asked for that the host hasn't taken yet, in order.
     queued: Vec<VimKey>,
     /// Keys the host took and hasn't fed back yet: the next that many are
@@ -77,6 +81,11 @@ struct Recording {
 }
 
 impl Macros {
+    /// The register `@@` plays, `:` after `@:`.
+    pub(crate) fn last_played(&self) -> Option<char> {
+        self.last_played
+    }
+
     /// The lowercase register being recorded into.
     pub(crate) fn recording(&self) -> Option<char> {
         let recording = self.recording.as_ref()?;
@@ -163,6 +172,14 @@ impl Macros {
         self.jump_at = None;
     }
 
+    /// An ex line was submitted, typed or replayed: `@:` runs it again.
+    /// Lines a `:normal` runs aren't.
+    pub(crate) fn command_line(&mut self, line: &str) {
+        if self.held == 0 && !line.is_empty() {
+            self.last_command_line = Some(line.to_string());
+        }
+    }
+
     /// The keys queued for the host, which counts them as a replay's. Once
     /// it has fed them all and there are no more, the replay is over: a
     /// `@` from then on starts another.
@@ -233,6 +250,7 @@ pub(crate) fn stop(target: &mut VimTarget<'_>) -> Handled {
     let Some(recording) = target.state.macros.recording.take() else {
         return Err(CommandError::new("not recording"));
     };
+    target.state.macros.last_recorded = Some(recording.register.to_ascii_lowercase());
     target.registers.record(recording.register, recording.text);
     Ok(Dispatched::new(Effect::Changed))
 }
@@ -242,9 +260,24 @@ pub(crate) fn stop(target: &mut VimTarget<'_>) -> Handled {
 /// any the host hasn't taken. An empty register fails, and so does one
 /// that would take the replay under way past [`REPLAY_CAP`] keys, with a
 /// message.
-pub(crate) fn play(target: &mut VimTarget<'_>, args: PlayArgs) -> Handled {
+pub(crate) fn play(target: &mut VimTarget<'_>, actor: &Actor, args: PlayArgs) -> Handled {
     let macros = &mut target.state.macros;
-    let name = match (args.register, macros.last_played) {
+    let register = match (args.register, macros.last_played) {
+        ('@', Some(':')) => ':',
+        (register, _) => register,
+    };
+    if register == ':' {
+        return repeat_line(target, actor, args.count);
+    }
+    let name = match (register, macros.last_played) {
+        ('Q', _) => match macros.last_recorded {
+            Some(last) => last,
+            // No message: the host's own `Q` key shows none either.
+            None => {
+                target.state.failed = true;
+                return Ok(Dispatched::new(Effect::Nothing));
+            }
+        },
         ('@', Some(last)) => last,
         ('@', None) => return Ok(target.state.fail("E748: No previously used register")),
         (name, _) if name.is_ascii_lowercase() => name,
@@ -272,6 +305,28 @@ pub(crate) fn play(target: &mut VimTarget<'_>, args: PlayArgs) -> Handled {
     queued.append(&mut macros.queued);
     macros.queued = queued;
     Ok(Dispatched::new(Effect::Notify))
+}
+
+/// `@:`: runs the last command line `count` times, straight through the ex
+/// runner so the `:` history is untouched, stopping at the first failure.
+fn repeat_line(target: &mut VimTarget<'_>, actor: &Actor, count: Option<u32>) -> Handled {
+    target.state.macros.last_played = Some(':');
+    let Some(line) = target.state.macros.last_command_line.clone() else {
+        return Ok(target.state.fail("E30: No previous command line"));
+    };
+    let before = std::mem::take(&mut target.state.failed);
+    let mut dispatched = Dispatched::new(Effect::Notify);
+    for _ in 0..count.unwrap_or(1).max(1) {
+        let ran = crate::ex::run(target, actor, &line)?;
+        if ran.effect == Effect::Changed || dispatched.effect != Effect::Changed {
+            dispatched = ran;
+        }
+        if target.state.failed {
+            break;
+        }
+    }
+    target.state.failed |= before;
+    Ok(dispatched)
 }
 
 /// Writes `key` as nvim stores it in a register: a byte where nvim stores

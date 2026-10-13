@@ -446,7 +446,7 @@ impl Pending {
                 invocation("vim.record", RecordArgs { register: ch })
             }
             // A register before `@` is dropped.
-            Prefix::Play if ch.is_ascii_lowercase() || ch == '@' => invocation(
+            Prefix::Play if ch.is_ascii_lowercase() || ch == '@' || ch == ':' => invocation(
                 "vim.play",
                 PlayArgs {
                     register: ch,
@@ -563,6 +563,17 @@ pub fn step(mut pending: Pending, key: VimKey) -> Step {
         // In normal mode only; a count before `q` cancels.
         'q' if pending.is_empty() && !pending.visual => Prefix::Record,
         '@' if pending.operator.is_none() && !pending.visual => Prefix::Play,
+        // A register before it is dropped.
+        'Q' if pending.operator.is_none() && !pending.visual => {
+            pending.end_count();
+            return invocation(
+                "vim.play",
+                PlayArgs {
+                    register: 'Q',
+                    count: pending.count,
+                },
+            );
+        }
         _ if pending.visual => return pending.visual_key(ch, key),
         'v' | 'V' if pending.is_empty() => return visual(ch),
         _ => {

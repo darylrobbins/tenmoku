@@ -352,11 +352,17 @@ pub fn registry() -> Registry<VimCommands> {
         .register_with_args(
             "vim.play",
             "Vim Play Macro",
-            |target: &mut VimTarget<'_>, _: &Actor, args: PlayArgs| macros::play(target, args),
+            |target: &mut VimTarget<'_>, actor: &Actor, args: PlayArgs| {
+                let played = macros::play(target, actor, args);
+                if target.state.macros.last_played() == Some(':') {
+                    marks::settle(target);
+                }
+                played
+            },
         )
         .expect("vim command IDs are valid and distinct")
         .description(
-            "Plays register `register` (`a` to `z`, or `@` for the last one played) `count` times: its text, as keys, is left for the host to feed (`VimState::take_replay`). A replay stops at the first key that fails, or before it would feed more than 1,000,000 keys.",
+            "Plays register `register` (`a` to `z`, `@` for the last one played, or `Q` for the last one recorded) `count` times: its text, as keys, is left for the host to feed (`VimState::take_replay`). `:` runs the last ex line submitted (E30 if none) `count` times instead, stopping at the first failure. A replay stops at the first key that fails, or before it would feed more than 1,000,000 keys.",
         )
         .context(normal)
         .mutates_buffer(false);

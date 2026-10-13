@@ -109,6 +109,7 @@ pub(crate) fn submit(
             search(target, actor, line.args, &args.text)
         }
         CommandLineKind::Ex => {
+            target.state.macros.command_line(&args.text);
             target.registers.enter_ex();
             let handled = ex::run(target, actor, &args.text);
             target.registers.leave_ex();
