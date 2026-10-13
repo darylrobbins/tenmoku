@@ -311,12 +311,14 @@ struct AppliedBatch {
 static NEXT_BUFFER_ID: AtomicU64 = AtomicU64::new(1);
 
 impl Buffer {
-    /// Default for [`Buffer::set_history_limit`]: 16 MiB of text per origin.
+    /// Default for [`Buffer::set_history_limit`]: 16 MiB per origin, counting
+    /// each batch's bookkeeping as well as its old and new text.
     ///
-    /// T7 (`examples/history_memory.rs`) measured a replace-all of 507k
-    /// six-byte words with eight-byte ones on a 33 MB file: about 7.1 MB of
-    /// old and new text per pass. This keeps the last two such passes
-    /// undoable, and never limits ordinary typing.
+    /// A one-character transaction is charged a few hundred bytes, so this
+    /// keeps tens of thousands of them undoable (at least 10,000), and bounds
+    /// a long typing session's memory. A replace-all of 507k six-byte words
+    /// with eight-byte ones (`examples/history_memory.rs`) is charged about
+    /// 130 bytes per edit, so only the newest pass or two stay undoable.
     pub const DEFAULT_HISTORY_LIMIT: usize = 16 << 20;
 
     /// A buffer holding `text`, which must use `\n` line endings.
@@ -416,6 +418,7 @@ impl Buffer {
     fn record_empty(&mut self, origin: Origin) -> TransactionId {
         debug_assert!(self.open.is_none() && self.history.is_empty());
         let id = self.next_transaction_id();
+        *self.history_bytes.entry(origin.clone()).or_default() += ENTRY_OVERHEAD;
         self.history.push(HistoryEntry {
             id,
             origin,
@@ -714,7 +717,9 @@ impl Buffer {
         id
     }
 
-    /// Caps each origin's undo history at `bytes` of old and new text.
+    /// Caps each origin's undo history at `bytes`, counting each batch's old
+    /// and new text plus the bookkeeping it holds (its edits, text handles
+    /// and entry), so a long run of tiny edits is bounded too.
     /// Once a transaction closes, that origin's oldest transactions are
     /// dropped, and can no longer be undone or redone, until it's under the
     /// cap. The newest is always kept, however large. The edit log is
@@ -731,7 +736,8 @@ impl Buffer {
         self.history_limit
     }
 
-    /// Text bytes `origin`'s undo history holds.
+    /// Bytes `origin`'s undo history is charged: its batches' old and new
+    /// text plus their bookkeeping, undone batches included.
     pub fn history_bytes(&self, origin: &Origin) -> usize {
         self.history_bytes.get(origin).copied().unwrap_or(0)
     }
@@ -909,6 +915,7 @@ impl Buffer {
             return open.id;
         }
         let id = self.next_transaction_id();
+        *self.history_bytes.entry(origin.clone()).or_default() += ENTRY_OVERHEAD;
         self.history.push(HistoryEntry {
             id,
             origin: origin.clone(),
@@ -964,7 +971,10 @@ impl Buffer {
     fn finish_transaction(&mut self, id: TransactionId) -> Option<TransactionId> {
         let ix = self.history.iter().rposition(|entry| entry.id == id)?;
         if self.history[ix].batches.is_empty() {
-            self.history.remove(ix);
+            let entry = self.history.remove(ix);
+            if let Some(held) = self.history_bytes.get_mut(&entry.origin) {
+                *held -= ENTRY_OVERHEAD;
+            }
             None
         } else {
             let origin = self.history[ix].origin.clone();
@@ -1104,6 +1114,7 @@ impl Buffer {
             return id;
         }
         let id = self.next_transaction_id();
+        *self.history_bytes.entry(origin.clone()).or_default() += ENTRY_OVERHEAD;
         self.history.push(HistoryEntry {
             id,
             origin: origin.clone(),
@@ -1207,9 +1218,21 @@ impl Buffer {
     }
 }
 
-/// Text bytes a history entry holds, including its undone batches.
+/// Fixed cost of a history entry: the entry itself.
+const ENTRY_OVERHEAD: usize = std::mem::size_of::<HistoryEntry>();
+/// Fixed cost of a batch: the batch, plus the allocation headers (strong and
+/// weak counts) of its `Arc<[Edit]>` and `Arc<[Collapse]>`.
+const BATCH_OVERHEAD: usize = std::mem::size_of::<AppliedBatch>() + 2 * ARC_HEADER;
+/// Cost of an edit: its `Edit`, plus an old and a new `Arc<str>` handle and
+/// their allocation headers.
+const EDIT_OVERHEAD: usize =
+    std::mem::size_of::<Edit>() + 2 * (std::mem::size_of::<Arc<str>>() + ARC_HEADER);
+const ARC_HEADER: usize = 2 * std::mem::size_of::<usize>();
+
+/// Bytes a history entry is charged, including its undone batches.
 fn entry_bytes(entry: &HistoryEntry) -> usize {
-    batches_bytes(&entry.batches)
+    ENTRY_OVERHEAD
+        + batches_bytes(&entry.batches)
         + entry
             .undone
             .as_ref()
@@ -1221,12 +1244,16 @@ fn batches_bytes(batches: &[AppliedBatch]) -> usize {
 }
 
 fn batch_bytes(batch: &AppliedBatch) -> usize {
-    batch
+    let text: usize = batch
         .old_texts
         .iter()
         .chain(&batch.new_texts)
         .map(|text| text.len())
-        .sum()
+        .sum();
+    BATCH_OVERHEAD
+        + batch.edits.len() * EDIT_OVERHEAD
+        + batch.collapsed_by.len() * std::mem::size_of::<Collapse>()
+        + text
 }
 
 fn clip_range(text: &Text, range: Range<usize>) -> Range<usize> {

@@ -4,6 +4,8 @@ use std::ops::Range;
 
 use rand::{Rng, SeedableRng, rngs::StdRng};
 
+use super::history_cap::entry;
+
 use super::{disjoint_ranges, is_user, random_insert};
 use crate::*;
 
@@ -108,9 +110,9 @@ fn undo_below_the_floor_is_refused_without_changing_text() {
     let mut buffer = Buffer::new("");
     buffer.edit([(0..0, "a")], Origin::User);
     let b = buffer.edit([(1..1, "b")], Origin::User).unwrap();
-    assert_eq!(buffer.history_bytes(&Origin::User), 2);
+    assert_eq!(buffer.history_bytes(&Origin::User), 2 * entry(1));
     buffer.compact_log(Version(1));
-    assert_eq!(buffer.history_bytes(&Origin::User), 1);
+    assert_eq!(buffer.history_bytes(&Origin::User), entry(1));
     assert_eq!(buffer.undo(is_user), Ok(Some(b)));
     assert_eq!(buffer.undo(is_user), Ok(None));
     assert_eq!(buffer.text().to_string(), "a");

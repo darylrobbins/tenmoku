@@ -132,14 +132,14 @@ fn bookkeeping_matches_edit() {
 #[test]
 fn extending_an_older_transaction_keeps_it_over_the_limit() {
     let mut buffer = Buffer::new("");
-    buffer.set_history_limit(100);
+    buffer.set_history_limit(1000);
     let id = ai_group(&mut buffer);
     let newer = buffer.edit([(1..1, "B")], ai()).unwrap();
     buffer.end_transaction();
     // Pushes the origin over its limit; the older entry would be the one
     // trimmed if it weren't protected.
-    buffer.edit_in(id, [(0..0, "x".repeat(200))]).unwrap();
-    assert!(buffer.history_bytes(&ai()) > 100);
+    buffer.edit_in(id, [(0..0, "x".repeat(2000))]).unwrap();
+    assert!(buffer.history_bytes(&ai()) > 1000);
     assert_eq!(buffer.undo(|o| o.is_ai()), Ok(Some(newer)));
     assert_eq!(buffer.undo(|o| o.is_ai()), Ok(Some(id)));
     assert_eq!(text(&buffer), "");
