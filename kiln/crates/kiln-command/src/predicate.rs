@@ -45,7 +45,11 @@ impl ContextPredicate {
     /// string), `!p`, `p && q`, `p || q` and parentheses. `!` binds tightest,
     /// then `&&`, then `||`; both binary operators are left-associative.
     pub fn parse(source: &str) -> Result<Self, PredicateError> {
-        let mut parser = Parser { source, pos: 0 };
+        let mut parser = Parser {
+            source,
+            pos: 0,
+            operators: 0,
+        };
         let predicate = parser.or()?;
         parser.skip_whitespace();
         if parser.pos < source.len() {
@@ -170,15 +174,21 @@ fn is_bare_char(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '-')
 }
 
+/// The most `!`, `(`, `&&` and `||` operators one predicate may hold. A tree
+/// is never deeper than its operator count, so this bounds the recursion in
+/// parsing, `eval`, `Display`, `Drop`, `PartialEq` and `Hash`.
+const MAX_OPERATORS: usize = 256;
+
 struct Parser<'a> {
     source: &'a str,
     pos: usize,
+    operators: usize,
 }
 
 impl Parser<'_> {
     fn or(&mut self) -> Result<ContextPredicate, PredicateError> {
         let mut left = self.and()?;
-        while self.eat("||") {
+        while self.operator("||")? {
             let right = self.and()?;
             left = ContextPredicate::Or(Box::new(left), Box::new(right));
         }
@@ -187,7 +197,7 @@ impl Parser<'_> {
 
     fn and(&mut self) -> Result<ContextPredicate, PredicateError> {
         let mut left = self.unary()?;
-        while self.eat("&&") {
+        while self.operator("&&")? {
             let right = self.unary()?;
             left = ContextPredicate::And(Box::new(left), Box::new(right));
         }
@@ -198,10 +208,11 @@ impl Parser<'_> {
         self.skip_whitespace();
         // `!` but not the start of a `!=`, which has no left operand here.
         if self.rest().starts_with('!') && !self.rest().starts_with("!=") {
+            self.count_operator()?;
             self.pos += 1;
             return Ok(ContextPredicate::Not(Box::new(self.unary()?)));
         }
-        if self.eat("(") {
+        if self.operator("(")? {
             let inner = self.or()?;
             if !self.eat(")") {
                 return Err(self.error("expected `)`"));
@@ -272,6 +283,29 @@ impl Parser<'_> {
         let taken = &self.source[self.pos..self.pos + len];
         self.pos += len;
         taken
+    }
+
+    /// Counts an operator starting at the current position against the budget.
+    fn count_operator(&mut self) -> Result<(), PredicateError> {
+        self.operators += 1;
+        if self.operators > MAX_OPERATORS {
+            return Err(PredicateError {
+                offset: self.pos,
+                message: "predicate too complex".to_string(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Like `eat`, for a token that is an operator counted against the budget.
+    fn operator(&mut self, token: &str) -> Result<bool, PredicateError> {
+        self.skip_whitespace();
+        if !self.rest().starts_with(token) {
+            return Ok(false);
+        }
+        self.count_operator()?;
+        self.pos += token.len();
+        Ok(true)
     }
 
     /// Skips whitespace, then consumes `token` if it's next.
