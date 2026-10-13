@@ -15,6 +15,20 @@ repository. Change both files together.
 | `crates/fe-editor/src/diagnostics.rs` | gpui-kit `crates/base/src/input/editor/diagnostics.rs` | `2c5162f8c5b0c7fcec066ed53125d304c632bfe2` | Apache-2.0 |
 | `crates/fe-syntax/queries/toml.scm` | [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter) `runtime/queries/toml/highlights.scm` | `e289100ff98969e118c702199d88b764ce9e7fdf` | Apache-2.0 |
 | `crates/fe-syntax/queries/kotlin.scm` | nvim-treesitter `runtime/queries/kotlin/highlights.scm` | `3e1f54c1ce0a86959313f1cb7f60262ea57aaa23` | Apache-2.0 |
+| `crates/fe-syntax/src/indent.rs` | nvim-treesitter `lua/nvim-treesitter/indent.lua` | `1a4f47b03dfe92d28de7d5654c67327ef008c9e6` | Apache-2.0 |
+| `crates/fe-syntax/queries/indents/c.scm` | nvim-treesitter `runtime/queries/c/indents.scm` | `1a4f47b03dfe92d28de7d5654c67327ef008c9e6` | Apache-2.0 |
+| `crates/fe-syntax/queries/indents/cpp.scm` | nvim-treesitter `runtime/queries/cpp/indents.scm` | `1a4f47b03dfe92d28de7d5654c67327ef008c9e6` | Apache-2.0 |
+| `crates/fe-syntax/queries/indents/css.scm` | nvim-treesitter `runtime/queries/css/indents.scm` | `1a4f47b03dfe92d28de7d5654c67327ef008c9e6` | Apache-2.0 |
+| `crates/fe-syntax/queries/indents/go.scm` | nvim-treesitter `runtime/queries/go/indents.scm` | `1a4f47b03dfe92d28de7d5654c67327ef008c9e6` | Apache-2.0 |
+| `crates/fe-syntax/queries/indents/java.scm` | nvim-treesitter `runtime/queries/java/indents.scm` | `1a4f47b03dfe92d28de7d5654c67327ef008c9e6` | Apache-2.0 |
+| `crates/fe-syntax/queries/indents/javascript.scm` | nvim-treesitter `runtime/queries/ecma/indents.scm` | `1a4f47b03dfe92d28de7d5654c67327ef008c9e6` | Apache-2.0 |
+| `crates/fe-syntax/queries/indents/json.scm` | nvim-treesitter `runtime/queries/json/indents.scm` | `1a4f47b03dfe92d28de7d5654c67327ef008c9e6` | Apache-2.0 |
+| `crates/fe-syntax/queries/indents/jsx.scm` | nvim-treesitter `runtime/queries/jsx/indents.scm` | `1a4f47b03dfe92d28de7d5654c67327ef008c9e6` | Apache-2.0 |
+| `crates/fe-syntax/queries/indents/lua.scm` | nvim-treesitter `runtime/queries/lua/indents.scm` | `1a4f47b03dfe92d28de7d5654c67327ef008c9e6` | Apache-2.0 |
+| `crates/fe-syntax/queries/indents/python.scm` | nvim-treesitter `runtime/queries/python/indents.scm` | `1a4f47b03dfe92d28de7d5654c67327ef008c9e6` | Apache-2.0 |
+| `crates/fe-syntax/queries/indents/rust.scm` | nvim-treesitter `runtime/queries/rust/indents.scm` | `1a4f47b03dfe92d28de7d5654c67327ef008c9e6` | Apache-2.0 |
+| `crates/fe-syntax/queries/indents/tsx.scm` | nvim-treesitter `runtime/queries/tsx/indents.scm` | `1a4f47b03dfe92d28de7d5654c67327ef008c9e6` | Apache-2.0 |
+| `crates/fe-syntax/queries/indents/typescript.scm` | nvim-treesitter `runtime/queries/typescript/indents.scm` | `1a4f47b03dfe92d28de7d5654c67327ef008c9e6` | Apache-2.0 |
 | `crates/fe-syntax/queries/outline/ruby.scm` | tree-sitter-ruby crate `queries/tags.scm` | version 0.23.1 | MIT |
 | `crates/fe-syntax/queries/outline/php.scm` | tree-sitter-php crate `queries/tags.scm` | version 0.24.2 | MIT |
 | `crates/fe-syntax/queries/definitions/php.scm` | tree-sitter-php crate `queries/tags.scm` | version 0.24.2 | MIT |
@@ -34,6 +48,17 @@ kiln's `TextField` adapts the text-input example that ships with GPUI
 (Copyright Zed Industries, Apache-2.0): its line shaping, selection and caret
 quads, IME marked-range underline and input-handler methods. The file's
 header names the source and licence and its module docs say what was changed.
+
+`crates/fe-syntax/src/indent.rs` reimplements in Rust the walk of
+nvim-treesitter's `indent.lua` that works a row's indentation out from those
+captures; its module docs say what was changed.
+
+The indent queries in `crates/fe-syntax/queries/indents/` adapt
+nvim-treesitter's `indents.scm` for twelve languages (JavaScript's from its
+shared `ecma` file). Each starts with a header naming the source file,
+commit and licence and saying what was changed: mostly captures on brackets
+dropped, as `indent.rs` handles brackets itself, `@indent.align`, which we
+don't support, replaced, and patterns of ours added at the end.
 
 The outline and definitions queries adapted from a grammar crate's
 `queries/tags.scm` come from the crate version `fe-syntax` already links

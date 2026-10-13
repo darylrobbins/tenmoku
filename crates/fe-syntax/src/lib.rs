@@ -15,6 +15,8 @@
 //! - [`outline`] lists a parsed file's symbols, nested, from our own
 //!   per-language outline queries; [`outline_job`] runs it on another thread.
 //!   [`symbols`] adds fields, enum variants and variables, for a tags index.
+//! - [`suggest_indent`] suggests a row's indentation and [`closer_outdents`]
+//!   the row a `}` lines up with, from per-language indent queries.
 //!
 //! This crate must never depend on GPUI.
 
@@ -25,6 +27,7 @@ mod driver;
 mod fold;
 mod highlight;
 mod imports;
+mod indent;
 mod injection;
 mod language;
 mod outline;
@@ -39,6 +42,7 @@ pub use driver::{Spawner, SyntaxDriver};
 pub use fold::{fold_range_at, fold_ranges};
 pub use highlight::{Highlight, HighlightSpan, resolve_theme};
 pub use imports::{ImportsError, module_specifiers, module_specifiers_supported};
+pub use indent::{IndentSuggestion, closer_outdents, suggest_indent};
 pub use language::{
     Language, language_by_name, language_for_path, language_name_for_path, language_names,
     loaded_language,
