@@ -53,7 +53,9 @@ pub use palette::{PALETTE_WIDTH, PaletteFrame};
 pub use prompt::{PROMPT_WIDTH, Prompt, prompt_renderer};
 pub use scroll_area::{SCROLLBAR_WIDTH, ScrollArea};
 pub use split_pane::{SplitPane, SplitPaneEvent};
-pub use status_bar::{StatusBarFrame, StatusEntry};
+pub use status_bar::{
+    StatusBarFrame, StatusEntry, StatusEntryColors, StatusFill, StatusTone, status_entry_colors,
+};
 pub use tab_bar::{TAB_HEIGHT, Tab, TabBar};
 pub use tabs::{Tabs, TabsEvent};
 pub use text_field::{TextField, TextFieldEvent};

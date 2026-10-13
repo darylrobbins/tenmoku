@@ -90,6 +90,11 @@ icons! {
     X => "x",
     // The checkbox's mark.
     Check => "check",
+    // The status bar's; not mapped from names.
+    CircleX => "circle-x",
+    TriangleAlert => "triangle-alert",
+    Server => "server",
+    Lock => "lock",
 }
 
 /// Exact file names, ASCII lowercase. Checked before any extension.

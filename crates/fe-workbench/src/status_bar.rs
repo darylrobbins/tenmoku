@@ -71,12 +71,10 @@ impl From<StatusItem> for kiln_shell::StatusItem {
             text,
             command,
         } = item;
-        Self {
-            id,
-            side,
-            priority,
-            text,
-            command,
+        let kiln = Self::new(id, side, priority, text);
+        match command {
+            Some(command) => kiln.command(command),
+            None => kiln,
         }
     }
 }

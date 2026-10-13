@@ -1,12 +1,74 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
 use gpui::{
-    AnyElement, App, ClickEvent, ElementId, InteractiveElement as _, IntoElement,
-    ParentElement as _, RenderOnce, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Window, div, prelude::FluentBuilder as _,
+    AnyElement, App, AppContext as _, ClickEvent, Context, ElementId, Entity, FontWeight, Hsla,
+    InteractiveElement as _, IntoElement, ParentElement as _, Render, RenderOnce, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Window, div, prelude::FluentBuilder as _, px,
+    svg,
 };
 
-use crate::{ActiveTheme as _, ClickHandler, ROW_HEIGHT, UiTheme};
+use crate::{ActiveTheme as _, ClickHandler, Icon, ROW_HEIGHT, Tokens, Tooltip, UiTheme, ui_theme};
+
+/// What a status bar entry's icon says, which picks its colour: the
+/// matching `status.*` token, or the text's for `Default`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum StatusTone {
+    #[default]
+    Default,
+    Error,
+    Warning,
+    Info,
+    Success,
+}
+
+/// A status bar entry drawn as a filled segment, as a vim mode is: its
+/// whole height in `background`, its label and icon in `foreground`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StatusFill {
+    pub background: Hsla,
+    pub foreground: Hsla,
+}
+
+/// The colours a status bar entry draws with ([`status_entry_colors`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct StatusEntryColors {
+    /// `None` leaves the bar's own background.
+    pub background: Option<Hsla>,
+    pub text: Hsla,
+    pub icon: Hsla,
+}
+
+/// An entry's colours: a fill's, background and foreground, if it has
+/// one; otherwise no background, `text.primary` text and an icon in the
+/// tone's `status.*` colour, `text.primary` for `Default`.
+pub fn status_entry_colors(
+    tone: StatusTone,
+    fill: Option<StatusFill>,
+    colors: &Tokens<Hsla>,
+) -> StatusEntryColors {
+    if let Some(fill) = fill {
+        return StatusEntryColors {
+            background: Some(fill.background),
+            text: fill.foreground,
+            icon: fill.foreground,
+        };
+    }
+    let icon = match tone {
+        StatusTone::Default => colors.text.primary,
+        StatusTone::Error => colors.status.error,
+        StatusTone::Warning => colors.status.warning,
+        StatusTone::Info => colors.status.info,
+        StatusTone::Success => colors.status.success,
+    };
+    StatusEntryColors {
+        background: None,
+        text: colors.text.primary,
+        icon,
+    }
+}
+
+/// The side length of an entry's icon.
+const ICON_SIZE: f32 = 14.;
 
 /// The status bar: a full-width row along the window's bottom edge, with a
 /// 1 px line on top, its left children from the left edge and its right
@@ -62,12 +124,17 @@ impl RenderOnce for StatusBarFrame {
     }
 }
 
-/// One status bar item: its label, padded. With a click handler, it's
-/// highlighted on hover under a pointer cursor.
+/// One status bar item: its label, padded, after its icon if it has one.
+/// With a click handler, it's highlighted on hover under a pointer cursor,
+/// unless filled. With a tooltip, hovering shows it.
 #[derive(IntoElement)]
 pub struct StatusEntry {
     id: SharedString,
     label: SharedString,
+    icon: Option<Icon>,
+    tone: StatusTone,
+    fill: Option<StatusFill>,
+    tooltip: Option<SharedString>,
     on_click: Option<ClickHandler>,
 }
 
@@ -84,8 +151,39 @@ impl StatusEntry {
         Self {
             id: id.into(),
             label: label.into(),
+            icon: None,
+            tone: StatusTone::Default,
+            fill: None,
+            tooltip: None,
             on_click: None,
         }
+    }
+
+    /// Draws `icon` before the label, in the tone's colour or the fill's
+    /// foreground. In tests its bounds are those of the debug selector
+    /// `status-icon:{id}`.
+    pub fn icon(mut self, icon: Icon) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+
+    /// Colours the icon: see [`status_entry_colors`].
+    pub fn tone(mut self, tone: StatusTone) -> Self {
+        self.tone = tone;
+        self
+    }
+
+    /// Draws the entry as a filled segment, its label at semibold weight.
+    pub fn fill(mut self, fill: StatusFill) -> Self {
+        self.fill = Some(fill);
+        self
+    }
+
+    /// Shows `text` in a tooltip on hover. In tests, while shown, its
+    /// bounds are those of the debug selector `status-tooltip:{id}:{text}`.
+    pub fn tooltip(mut self, text: impl Into<SharedString>) -> Self {
+        self.tooltip = Some(text.into());
+        self
     }
 
     pub fn on_click(
@@ -99,7 +197,9 @@ impl StatusEntry {
 
 impl RenderOnce for StatusEntry {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
-        let hover = cx.theme().colors.list.row_hover;
+        let theme = cx.theme();
+        let hover = theme.colors.list.row_hover;
+        let colors = status_entry_colors(self.tone, self.fill, &theme.colors);
         let id = self.id;
         div()
             .id(ElementId::Name(id.clone()))
@@ -108,14 +208,63 @@ impl RenderOnce for StatusEntry {
             .flex_none()
             .items_center()
             .h_full()
-            .px_2()
             .whitespace_nowrap()
+            .text_color(colors.text)
+            .map(|entry| match colors.background {
+                // Square, the whole height: a lualine or airline segment.
+                Some(background) => entry
+                    .px_3()
+                    .bg(background)
+                    .font_weight(FontWeight::SEMIBOLD),
+                None => entry.px_2(),
+            })
+            .when_some(self.icon, |entry, icon| {
+                let id = id.clone();
+                entry.gap_1().child(
+                    svg()
+                        .path(icon.path())
+                        .size(px(ICON_SIZE))
+                        .flex_none()
+                        .text_color(colors.icon)
+                        .debug_selector(move || format!("status-icon:{id}")),
+                )
+            })
             .child(self.label)
             .when_some(self.on_click, |entry, on_click| {
                 entry
                     .cursor_pointer()
-                    .hover(move |style| style.bg(hover))
+                    // A fill keeps its colour on hover.
+                    .when(colors.background.is_none(), |entry| {
+                        entry.hover(move |style| style.bg(hover))
+                    })
                     .on_click(on_click)
             })
+            .when_some(self.tooltip, |entry, text| {
+                entry.tooltip(move |_, cx| {
+                    let (id, text) = (id.clone(), text.clone());
+                    cx.new(|cx| StatusTooltip {
+                        selector: format!("status-tooltip:{id}:{text}"),
+                        tooltip: cx
+                            .new(|cx| Tooltip::new(text, None::<SharedString>, &ui_theme(cx))),
+                    })
+                    .into()
+                })
+            })
+    }
+}
+
+/// A [`Tooltip`] under a debug selector naming its entry and text, so
+/// tests can see it shown.
+struct StatusTooltip {
+    selector: String,
+    tooltip: Entity<Tooltip>,
+}
+
+impl Render for StatusTooltip {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let selector = self.selector.clone();
+        div()
+            .debug_selector(move || selector)
+            .child(self.tooltip.clone())
     }
 }

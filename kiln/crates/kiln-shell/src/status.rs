@@ -18,7 +18,7 @@
 use gpui::{App, IntoElement, SharedString, Window};
 use kiln_command::Invocation;
 use kiln_platform::{command_actions::dispatch_invocation, keys};
-use kiln_ui::{StatusBarFrame, StatusEntry, ui_theme};
+use kiln_ui::{Icon, StatusBarFrame, StatusEntry, StatusFill, StatusTone, ui_theme};
 
 use crate::ItemHandle;
 
@@ -41,10 +41,20 @@ pub struct StatusItem {
     /// Run when the item is clicked, as a key would run it. An invocation
     /// with no context gets the focused element's then.
     pub command: Option<Invocation>,
+    /// Drawn before the text.
+    pub icon: Option<Icon>,
+    /// Colours the icon ([`kiln_ui::status_entry_colors`]).
+    pub tone: StatusTone,
+    /// Draws the item as a filled segment.
+    pub fill: Option<StatusFill>,
+    /// Shown on hover.
+    pub tooltip: Option<SharedString>,
 }
 
 impl StatusItem {
-    /// An item that runs nothing when clicked: see [`StatusItem::command`].
+    /// An item that runs nothing when clicked, with no icon, fill or
+    /// tooltip and the default tone: see [`StatusItem::command`] and the
+    /// builders after it.
     pub fn new(
         id: impl Into<SharedString>,
         side: StatusSide,
@@ -57,12 +67,40 @@ impl StatusItem {
             priority,
             text: text.into(),
             command: None,
+            icon: None,
+            tone: StatusTone::Default,
+            fill: None,
+            tooltip: None,
         }
     }
 
     /// Runs `command` when clicked.
     pub fn command(mut self, command: Invocation) -> Self {
         self.command = Some(command);
+        self
+    }
+
+    /// Draws `icon` before the text.
+    pub fn icon(mut self, icon: Icon) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+
+    /// Colours the icon by `tone`.
+    pub fn tone(mut self, tone: StatusTone) -> Self {
+        self.tone = tone;
+        self
+    }
+
+    /// Draws the item as a segment filled with `fill`.
+    pub fn fill(mut self, fill: StatusFill) -> Self {
+        self.fill = Some(fill);
+        self
+    }
+
+    /// Shows `tooltip` on hover.
+    pub fn tooltip(mut self, tooltip: impl Into<SharedString>) -> Self {
+        self.tooltip = Some(tooltip.into());
         self
     }
 }
@@ -133,9 +171,19 @@ pub fn status_bar(items: Vec<StatusItem>, cx: &App) -> StatusBarFrame {
 }
 
 /// `item`'s entry, which runs its command when clicked. In tests its
-/// bounds are those of the debug selector `status-item:{id}`.
+/// bounds are those of the debug selector `status-item:{id}`, its icon's
+/// those of `status-icon:{id}`.
 pub fn status_entry(item: StatusItem, cx: &App) -> impl IntoElement + use<> {
-    let entry = StatusEntry::new(item.id, item.text, &ui_theme(cx));
+    let mut entry = StatusEntry::new(item.id, item.text, &ui_theme(cx)).tone(item.tone);
+    if let Some(icon) = item.icon {
+        entry = entry.icon(icon);
+    }
+    if let Some(fill) = item.fill {
+        entry = entry.fill(fill);
+    }
+    if let Some(tooltip) = item.tooltip {
+        entry = entry.tooltip(tooltip);
+    }
     match item.command {
         Some(command) => {
             entry.on_click(move |_, window, cx| run_item_command(command.clone(), window, cx))

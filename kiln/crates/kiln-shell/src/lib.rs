@@ -64,6 +64,9 @@ pub use shell::Shell;
 pub use status::{StatusItem, StatusItems, StatusSide};
 pub use title_bar::TitleBar;
 
+// For status items, to crates that use kiln-shell without kiln-ui.
+pub use kiln_ui::{Icon, StatusFill, StatusTone};
+
 /// Sets up what the shell draws for the platform: where it has no native
 /// alerts, `window.prompt` shows kiln-ui's in-window prompt, themed and
 /// wrapped, instead of GPUI's plain fallback. `app.quit` and
