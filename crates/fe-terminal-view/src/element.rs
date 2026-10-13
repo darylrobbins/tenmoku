@@ -3,6 +3,8 @@
 //! cursor, as quads, and an input method's marked text over the cursor. Takes
 //! text input while the view is focused, and the mouse over it.
 
+use std::ops::Range;
+
 use fe_terminal::GridSize;
 use gpui::{
     App, BorderStyle, Bounds, ContentMask, CursorStyle, Element, ElementId, ElementInputHandler,
@@ -122,6 +124,8 @@ pub struct PaintReport {
     pub text: Vec<PaintedText>,
     /// Backgrounds, selection, underlines and strikeouts.
     pub quads: Vec<Bounds<Pixels>>,
+    /// The find query's matches, a quad per row they cover.
+    pub find_quads: Vec<Bounds<Pixels>>,
     pub cursor: Option<PaintedCursor>,
     /// A block cursor's character, and its underline and strikeout.
     pub cursor_text: Vec<PaintedText>,
@@ -135,6 +139,8 @@ pub(crate) struct Prepainted {
     frame: Frame,
     background: Hsla,
     quads: Vec<(Bounds<Pixels>, Hsla)>,
+    /// The part of `quads` that's find highlights.
+    find: Range<usize>,
     text: Vec<Text>,
     cursor: Option<Cursor>,
     /// Marked text over its background, at the cursor.
@@ -179,7 +185,17 @@ impl Prepainted {
         };
         PaintReport {
             text: texts(&self.text),
-            quads: self.quads.iter().map(|(quad, _)| *quad).collect(),
+            quads: self
+                .quads
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| !self.find.contains(i))
+                .map(|(_, (quad, _))| *quad)
+                .collect(),
+            find_quads: self.quads[self.find.clone()]
+                .iter()
+                .map(|(quad, _)| *quad)
+                .collect(),
             cursor,
             cursor_text,
             cursor_quads,
@@ -262,6 +278,7 @@ impl Element for TerminalElement {
             frame,
             background: style.background,
             quads: Vec::new(),
+            find: 0..0,
             text: Vec::new(),
             cursor: None,
             marked: None,
@@ -313,6 +330,38 @@ impl Element for TerminalElement {
                     .quads
                     .push((cells(row, range.start, range.len()), *colour));
             }
+        }
+        // Under the selection, which the active match shows through on top
+        // of.
+        let find = self.view.read(cx).find.clone();
+        if let Some(query) = find {
+            let matches = snapshot_terminal_matches(&self.view, &query, cx);
+            self.view
+                .update(cx, |view, _| view.find_matches = matches.clone());
+            let mut colour = style.selection;
+            colour.a *= 0.5;
+            let start = prepainted.quads.len();
+            for found in &matches {
+                let first = found.start.line + snapshot.display_offset as i32;
+                let last = found.end.line + snapshot.display_offset as i32;
+                for row in first.max(0)..=last.min(snapshot.rows.len() as i32 - 1) {
+                    let from = if row == first { found.start.col } else { 0 };
+                    let to = if row == last {
+                        found.end.col + 1
+                    } else {
+                        snapshot.cols
+                    };
+                    let to = to.min(snapshot.cols);
+                    if to > from {
+                        prepainted
+                            .quads
+                            .push((cells(row as usize, from, to - from), colour));
+                    }
+                }
+            }
+            prepainted.find = start..prepainted.quads.len();
+        } else {
+            self.view.update(cx, |view, _| view.find_matches.clear());
         }
         for span in &snapshot.selection {
             let width = span.end_col.saturating_sub(span.start_col);
@@ -457,6 +506,18 @@ impl Element for TerminalElement {
             cx,
         );
     }
+}
+
+/// `query`'s matches on screen; none when it doesn't compile.
+fn snapshot_terminal_matches(
+    view: &Entity<TerminalView>,
+    query: &fe_terminal::TerminalQuery,
+    cx: &App,
+) -> Vec<fe_terminal::TerminalMatch> {
+    view.read(cx)
+        .terminal()
+        .and_then(|terminal| terminal.find_all_visible(query).ok())
+        .unwrap_or_default()
 }
 
 /// Shapes an input method's marked text, underlined, in its natural widths:

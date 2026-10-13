@@ -7,6 +7,7 @@
 //! kiln; the workbench builds the style from its theme.
 
 mod element;
+mod find;
 mod input;
 pub mod layout;
 pub mod mouse;
@@ -17,6 +18,6 @@ mod view;
 pub use element::cell_size;
 #[doc(hidden)]
 pub use element::{PaintReport, PaintedCursor, PaintedText};
-pub use fe_terminal::TerminalOptions;
+pub use fe_terminal::{QueryError, TerminalMatch, TerminalOptions, TerminalQuery};
 pub use style::TerminalStyle;
 pub use view::{KEY_CONTEXT, TerminalView, TerminalViewEvent};

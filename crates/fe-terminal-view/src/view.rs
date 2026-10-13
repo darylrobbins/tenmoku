@@ -1,7 +1,9 @@
 use std::io;
 use std::ops::Range;
 
-use fe_terminal::{GridSize, Terminal, TerminalEvent, TerminalOptions};
+use fe_terminal::{
+    GridSize, Terminal, TerminalEvent, TerminalMatch, TerminalOptions, TerminalQuery,
+};
 use gpui::{
     App, ClipboardItem, Context, EventEmitter, FocusHandle, Focusable, InteractiveElement,
     IntoElement, ParentElement, Render, Styled, Subscription, Task, Window, div,
@@ -52,6 +54,10 @@ pub struct TerminalView {
     pub(crate) wheel: f32,
     /// Where `wheel` was headed.
     pub(crate) wheel_to: WheelTo,
+    /// The query whose matches are highlighted.
+    pub(crate) find: Option<TerminalQuery>,
+    /// The query's matches the last prepaint found on screen.
+    pub(crate) find_matches: Vec<TerminalMatch>,
     /// What the last prepaint laid out.
     pub(crate) painted: PaintReport,
     /// Whether prepaint fills `painted`: off outside tests.
@@ -100,6 +106,8 @@ impl TerminalView {
             reported: None,
             wheel: 0.,
             wheel_to: WheelTo::default(),
+            find: None,
+            find_matches: Vec::new(),
             painted: PaintReport::default(),
             record_paint: false,
             _focus_reports: focus_reports,
