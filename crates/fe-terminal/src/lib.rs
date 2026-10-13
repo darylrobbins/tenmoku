@@ -9,6 +9,7 @@ mod links;
 mod pty_loop;
 mod search;
 mod session;
+mod shell;
 mod snapshot;
 
 pub use links::{Link, LinkTarget, link_at};

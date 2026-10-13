@@ -5,7 +5,11 @@
 //! ([`TerminalPanel::start`]) and keeps its sessions while the dock hides.
 //! `terminal.new` starts another after the last, `terminal.close` drops the
 //! active one, and `terminal.next` and `terminal.previous` cycle through
-//! them; with two or more a strip of tabs shows above the active one. When
+//! them; with two or more a strip of tabs shows above the active one. A
+//! new session starts where the active one's shell last said it was (OSC 7;
+//! docs/terminal-shell-integration.md), and `terminal.previous_prompt` and
+//! `terminal.next_prompt` scroll the active one between the prompts its
+//! shell marked (OSC 133). When
 //! a shell exits the panel drops its session; when none is left it tells
 //! the workbench ([`TerminalPanelEvent::Exited`]), which hides the dock,
 //! and the next show starts a new one. Closing the window drops the
@@ -174,13 +178,18 @@ impl TerminalPanel {
     }
 
     /// Starts a session after the last and makes it active. Its shell
-    /// starts once the view is laid out and its size known, in the panel's
-    /// directory or, if that's gone, the home directory.
+    /// starts once the view is laid out and its size known, in the
+    /// directory the active session's shell last reported if it's a
+    /// directory here, else in the panel's directory or, if that's gone,
+    /// the home directory.
     pub(crate) fn add(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let reported = (self.view())
+            .and_then(|view| view.read(cx).terminal()?.cwd())
+            .filter(|dir| dir.is_dir());
         let options = TerminalOptions {
             shell: self.shell(),
             scrollback: self.settings.scrollback,
-            ..TerminalOptions::new(start_dir(&self.cwd))
+            ..TerminalOptions::new(reported.unwrap_or_else(|| start_dir(&self.cwd)))
         };
         #[cfg(test)]
         {
@@ -265,6 +274,20 @@ impl TerminalPanel {
             self.follow_find(cx);
             self.focus_active(window, cx);
             cx.notify();
+        }
+    }
+
+    /// Scrolls the active session to its previous or next prompt
+    /// (`forward`), as `terminal.previous_prompt` and `terminal.next_prompt`
+    /// do: nothing in a session whose shell marked none.
+    pub(crate) fn scroll_to_prompt(&self, forward: bool, cx: &mut App) {
+        if let Some(view) = self.view() {
+            view.update(cx, |view, cx| {
+                if let Some(terminal) = view.terminal() {
+                    terminal.scroll_to_prompt(forward);
+                }
+                cx.notify();
+            });
         }
     }
 
@@ -564,6 +587,10 @@ pub(crate) enum TerminalOp {
     Previous,
     /// `terminal.find`.
     Find,
+    /// `terminal.previous_prompt`.
+    PreviousPrompt,
+    /// `terminal.next_prompt`.
+    NextPrompt,
 }
 
 /// The [`CommandTarget`] of the terminal's commands: the one that ran.
@@ -586,13 +613,32 @@ pub(crate) fn init(cx: &mut App) {
 pub(crate) fn registry() -> Registry<TerminalCommands> {
     use TerminalOp::*;
     let mut registry = Registry::new();
-    for (id, title, op) in [
-        ("terminal.toggle", "Toggle Terminal", Toggle),
-        ("terminal.new", "New Terminal", New),
-        ("terminal.close", "Close Terminal", Close),
-        ("terminal.next", "Next Terminal", Next),
-        ("terminal.previous", "Previous Terminal", Previous),
-        ("terminal.find", "Terminal: Find", Find),
+    // The prompt commands apply only in a focused terminal.
+    let (workbench, terminal) = (crate::KEY_CONTEXT, fe_terminal_view::KEY_CONTEXT);
+    for (id, title, op, context) in [
+        ("terminal.toggle", "Toggle Terminal", Toggle, workbench),
+        ("terminal.new", "New Terminal", New, workbench),
+        ("terminal.close", "Close Terminal", Close, workbench),
+        ("terminal.next", "Next Terminal", Next, workbench),
+        (
+            "terminal.previous",
+            "Previous Terminal",
+            Previous,
+            workbench,
+        ),
+        ("terminal.find", "Terminal: Find", Find, workbench),
+        (
+            "terminal.previous_prompt",
+            "Terminal: Previous Prompt",
+            PreviousPrompt,
+            terminal,
+        ),
+        (
+            "terminal.next_prompt",
+            "Terminal: Next Prompt",
+            NextPrompt,
+            terminal,
+        ),
     ] {
         registry
             .register(
@@ -604,7 +650,7 @@ pub(crate) fn registry() -> Registry<TerminalCommands> {
                 },
             )
             .expect("terminal command IDs are valid and distinct")
-            .context(ContextPredicate::identifier(crate::KEY_CONTEXT));
+            .context(ContextPredicate::identifier(context));
     }
     registry
 }
@@ -669,3 +715,7 @@ mod terminal_tabs_tests;
 #[cfg(test)]
 #[path = "terminal_find_tests.rs"]
 mod terminal_find_tests;
+
+#[cfg(test)]
+#[path = "terminal_shell_integration_tests.rs"]
+mod terminal_shell_integration_tests;

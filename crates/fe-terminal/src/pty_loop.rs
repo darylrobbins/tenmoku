@@ -2,28 +2,42 @@
 //!
 //! This is alacritty_terminal's `EventLoop`, cut down to what a session needs
 //! (it always drains on exit and never records), because that loop keeps its
-//! VT parser private: the parser holds the output after `ESC[?2026h` back
-//! until the update ends or a timeout fires, and only the loop can end the
-//! update. Owning the loop lets every way out of it flush the parser through
-//! `Processor::stop_sync` before the exit is published.
+//! VT parser private, and the parser is fed through a [`Feeder`] that watches
+//! the bytes for the shell's escapes (`crate::shell`).
+//!
+//! The feeder, not the parser, holds a synchronized update's output (after
+//! `ESC[?2026h`) back until the update ends or a timeout fires, so the held
+//! bytes reach the grid through the same scanning and history bookkeeping as
+//! any others. Every way out of the loop ends the update before the exit is
+//! published.
 
 use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::io::{self, ErrorKind, Read, Write};
 use std::num::NonZeroUsize;
-use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::JoinHandle;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use alacritty_terminal::event::{Event, EventListener, OnResize, WindowSize};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::Term;
 use alacritty_terminal::tty::{self, EventedPty, EventedReadWrite};
-use alacritty_terminal::vte::ansi::Processor;
+use alacritty_terminal::vte::ansi::{Processor, Timeout};
+
+use crate::shell::{Found, MAX_ADVANCE, Scanner, ShellState};
 
 /// Max bytes to read from the pty before forced terminal synchronization.
 const READ_BUFFER_SIZE: usize = 0x10_0000;
+
+/// How long a synchronized update may hold output back, as alacritty's
+/// parser allows.
+const SYNC_TIMEOUT: Duration = Duration::from_millis(150);
+
+/// The most output a synchronized update holds back before it's shown, as
+/// alacritty's parser allows.
+const MAX_SYNC_BYTES: usize = 0x20_0000;
 
 /// Max bytes to parse while holding the terminal lock before letting go.
 const MAX_LOCKED_READ: usize = u16::MAX as usize;
@@ -67,6 +81,8 @@ pub(crate) struct PtyLoop<P, U: EventListener> {
     pty: P,
     rx: Receiver<Msg>,
     terminal: Arc<FairMutex<Term<U>>>,
+    /// Locked after `terminal`.
+    shell: Arc<Mutex<ShellState>>,
     events: U,
 }
 
@@ -77,6 +93,7 @@ where
 {
     pub(crate) fn new(
         terminal: Arc<FairMutex<Term<U>>>,
+        shell: Arc<Mutex<ShellState>>,
         events: U,
         pty: P,
     ) -> io::Result<(PtyLoop<P, U>, LoopSender)> {
@@ -91,6 +108,7 @@ where
             pty,
             rx,
             terminal,
+            shell,
             events,
         };
         Ok((pty_loop, sender))
@@ -106,7 +124,7 @@ where
     }
 
     fn run(mut self) -> P {
-        let mut parser: Processor = Processor::default();
+        let mut feeder = Feeder::default();
         let mut writes = Writes::default();
         let mut buf = vec![0u8; READ_BUFFER_SIZE];
         let mut interest = polling::Event::readable(PTY_READ_WRITE_TOKEN);
@@ -123,9 +141,7 @@ where
         let mut events = polling::Events::with_capacity(NonZeroUsize::new(1024).unwrap());
         'event_loop: loop {
             // Wake for the synchronized update's timeout.
-            let timeout = parser
-                .sync_timeout()
-                .sync_timeout()
+            let timeout = (feeder.deadline())
                 .map(|deadline| deadline.saturating_duration_since(Instant::now()));
             events.clear();
             if let Err(error) = self.poll.wait(&mut events, timeout) {
@@ -135,17 +151,11 @@ where
                 break;
             }
 
-            if events.is_empty() {
-                // Timed out, or a message arrived: handle messages below, and
-                // end an update whose time is up.
-                if parser
-                    .sync_timeout()
-                    .sync_timeout()
-                    .is_some_and(|deadline| deadline <= Instant::now())
-                {
-                    parser.stop_sync(&mut *self.terminal.lock());
-                    self.events.send_event(Event::Wakeup);
-                }
+            // End an update whose time is up, even while output keeps the
+            // pty readable.
+            if (feeder.deadline()).is_some_and(|deadline| deadline <= Instant::now()) {
+                self.end_sync(&mut feeder);
+                self.events.send_event(Event::Wakeup);
             }
 
             // Messages.
@@ -168,7 +178,7 @@ where
                             // `MAX_LOCKED_READ`, so read until caught up or
                             // the cap says a writer is still going.
                             for _ in 0..MAX_FINAL_DRAIN_READS {
-                                match self.read(&mut parser, &mut buf) {
+                                match self.read(&mut feeder, &mut buf) {
                                     Ok(processed) if processed >= MAX_LOCKED_READ => {}
                                     _ => break,
                                 }
@@ -182,7 +192,7 @@ where
                             continue;
                         }
                         if event.readable {
-                            match self.read(&mut parser, &mut buf) {
+                            match self.read(&mut feeder, &mut buf) {
                                 Ok(_) => {}
                                 // Linux reports a hung-up pty as EIO; the
                                 // child-exit event follows.
@@ -216,9 +226,10 @@ where
 
         // Every way out of the loop ends here: output held back for an
         // unfinished synchronized update reaches the grid before the exit is
-        // published or the parser goes. `stop_sync` only releases the held
-        // bytes, so an ordinary escape sequence still unfinished stays so.
-        parser.stop_sync(&mut *self.terminal.lock());
+        // published or the parser goes. Ending the update only releases the
+        // held bytes, so an ordinary escape sequence still unfinished stays
+        // so.
+        self.end_sync(&mut feeder);
         if child_exited {
             self.terminal.lock().exit();
         }
@@ -228,13 +239,20 @@ where
         self.pty
     }
 
-    /// Reads what the pty has and parses it. Returns the bytes parsed.
-    fn read(&mut self, parser: &mut Processor, buf: &mut [u8]) -> io::Result<usize> {
+    /// Ends a synchronized update, putting its held bytes on the grid.
+    fn end_sync(&self, feeder: &mut Feeder) {
+        let mut terminal = self.terminal.lock();
+        feeder.end_sync(&mut lock(&self.shell), &mut terminal);
+    }
+
+    /// Reads what the pty has and parses it. Returns the bytes read.
+    fn read(&mut self, feeder: &mut Feeder, buf: &mut [u8]) -> io::Result<usize> {
         // Reserve the next terminal lock for reading.
         let _lease = self.terminal.lease();
         let mut terminal = None;
         let mut unprocessed = 0;
         let mut processed = 0;
+        let mut parsed = false;
 
         loop {
             match self.pty.reader().read(&mut buf[unprocessed..]) {
@@ -260,7 +278,8 @@ where
                 }),
             };
 
-            parser.advance(&mut **terminal, &buf[..unprocessed]);
+            let bytes = &buf[..unprocessed];
+            parsed |= feeder.feed(&mut lock(&self.shell), terminal, bytes, Instant::now());
             processed += unprocessed;
             unprocessed = 0;
 
@@ -269,12 +288,174 @@ where
             }
         }
 
-        // Redraw unless everything parsed is held in a synchronized update.
-        if parser.sync_bytes_count() < processed && processed > 0 {
+        // Redraw unless everything read is held in a synchronized update.
+        if parsed {
             self.events.send_event(Event::Wakeup);
         }
         Ok(processed)
     }
+}
+
+/// A synchronized-update timeout that never runs, so the parser never holds
+/// output back: the [`Feeder`] does.
+#[derive(Default)]
+struct NoSync;
+
+impl Timeout for NoSync {
+    fn set_timeout(&mut self, _: Duration) {}
+
+    fn clear_timeout(&mut self) {}
+
+    fn pending_timeout(&self) -> bool {
+        false
+    }
+}
+
+/// A synchronized update's output, held back.
+struct Held {
+    bytes: Vec<u8>,
+    deadline: Instant,
+}
+
+/// Feeds the pty's output to the parser at most [`MAX_ADVANCE`] bytes at a
+/// time, telling the shell state of each call and, as the parser reaches
+/// them, of the shell's escapes. A sequence that clears history or hides
+/// the primary grid ends in a call of its own, its final byte in the next.
+#[derive(Default)]
+struct Feeder {
+    parser: Processor<NoSync>,
+    scanner: Scanner,
+    /// The synchronized update under way.
+    held: Option<Held>,
+    /// How much of [`SYNC_PREFIX`] the held bytes end with.
+    matched: usize,
+}
+
+/// What a synchronized update's start and end, exactly as alacritty's
+/// parser matches them while one is under way, begin with: `h` after it
+/// renews the update, `l` ends it.
+const SYNC_PREFIX: &[u8] = b"\x1b[?2026";
+
+impl Feeder {
+    /// When the synchronized update under way must end.
+    fn deadline(&self) -> Option<Instant> {
+        self.held.as_ref().map(|held| held.deadline)
+    }
+
+    /// Feeds `bytes`, read at `now`, or holds them in a synchronized
+    /// update. Whether any reached the parser.
+    fn feed<U: EventListener>(
+        &mut self,
+        shell: &mut ShellState,
+        terminal: &mut Term<U>,
+        mut bytes: &[u8],
+        now: Instant,
+    ) -> bool {
+        let mut parsed = false;
+        while !bytes.is_empty() {
+            let Some(held) = &mut self.held else {
+                parsed = true;
+                let Some(start) = self.parse(shell, terminal, bytes, false) else {
+                    break;
+                };
+                self.held = Some(Held {
+                    bytes: Vec::new(),
+                    deadline: now + SYNC_TIMEOUT,
+                });
+                self.matched = 0;
+                bytes = &bytes[start..];
+                continue;
+            };
+            // Each byte is looked at once, whatever the reads' sizes.
+            let mut end = None;
+            for (ix, &byte) in bytes.iter().enumerate() {
+                if self.matched == SYNC_PREFIX.len() {
+                    self.matched = 0;
+                    match byte {
+                        b'h' => held.deadline = now + SYNC_TIMEOUT,
+                        b'l' => {
+                            end = Some(ix + 1);
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+                if byte == SYNC_PREFIX[self.matched] {
+                    self.matched += 1;
+                } else {
+                    self.matched = usize::from(byte == SYNC_PREFIX[0]);
+                }
+            }
+            let held_len = end.unwrap_or(bytes.len());
+            held.bytes.extend_from_slice(&bytes[..held_len]);
+            bytes = &bytes[held_len..];
+            if end.is_some() || held.bytes.len() >= MAX_SYNC_BYTES {
+                self.end_sync(shell, terminal);
+                parsed = true;
+            }
+        }
+        parsed
+    }
+
+    /// Ends the synchronized update under way, if any, feeding its bytes.
+    fn end_sync<U: EventListener>(&mut self, shell: &mut ShellState, terminal: &mut Term<U>) {
+        if let Some(held) = self.held.take() {
+            self.parse(shell, terminal, &held.bytes, true);
+        }
+    }
+
+    /// Feeds `bytes` to the parser. Unless `replaying` a synchronized
+    /// update's, stops after a CSI that starts one: the offset of the bytes
+    /// after it.
+    fn parse<U: EventListener>(
+        &mut self,
+        shell: &mut ShellState,
+        terminal: &mut Term<U>,
+        mut bytes: &[u8],
+        replaying: bool,
+    ) -> Option<usize> {
+        let len = bytes.len();
+        let mut advance = |bytes: &[u8], terminal: &mut Term<U>, shell: &mut ShellState| {
+            self.parser.advance(terminal, bytes);
+            shell.advanced(terminal);
+        };
+        while !bytes.is_empty() {
+            let chunk = &bytes[..bytes.len().min(MAX_ADVANCE)];
+            let Some((end, found)) = self.scanner.next(chunk) else {
+                advance(chunk, terminal, shell);
+                bytes = &bytes[chunk.len()..];
+                continue;
+            };
+            advance(&bytes[..end], terminal, shell);
+            bytes = &bytes[end..];
+            let starts_sync = match found {
+                Found::Shell(event) => {
+                    shell.event(event, terminal);
+                    false
+                }
+                Found::ClearsHistory => {
+                    advance(&bytes[..1], terminal, shell);
+                    bytes = &bytes[1..];
+                    false
+                }
+                Found::EntersAlternateScreen { sync } => {
+                    shell.freeze(terminal);
+                    advance(&bytes[..1], terminal, shell);
+                    bytes = &bytes[1..];
+                    sync
+                }
+                Found::StartsSync => true,
+            };
+            if starts_sync && !replaying {
+                return Some(len - bytes.len());
+            }
+        }
+        None
+    }
+}
+
+pub(crate) fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 #[cfg(target_os = "linux")]
@@ -324,7 +505,7 @@ mod tests {
     use super::*;
     use alacritty_terminal::event::Event;
     use alacritty_terminal::grid::Dimensions;
-    use alacritty_terminal::term::Config;
+    use alacritty_terminal::term::{Config, TermMode};
     use alacritty_terminal::tty::ChildEvent;
     use std::os::fd::AsRawFd;
     use std::os::unix::net::UnixStream;
@@ -362,6 +543,9 @@ mod tests {
         Endless(u8),
         /// A failing pty.
         Fail,
+        /// The byte every other read, a millisecond apart, until the time
+        /// given: a slow writer that keeps the pty readable.
+        Trickle(u8, Instant),
     }
 
     struct Script {
@@ -370,6 +554,8 @@ mod tests {
         /// Sent after the chunks are read, like a shutdown racing the output.
         shutdown_after: Option<LoopSender>,
         served: usize,
+        /// Whether the last trickled read had the byte.
+        trickled: bool,
     }
 
     impl Read for Script {
@@ -380,11 +566,24 @@ mod tests {
                 self.served += n;
                 return Ok(n);
             }
+            if let Then::Trickle(byte, until) = self.then
+                && Instant::now() < until
+            {
+                // Every other read finds nothing, so the loop polls again.
+                self.trickled = !self.trickled;
+                if !self.trickled {
+                    return Err(ErrorKind::WouldBlock.into());
+                }
+                std::thread::sleep(Duration::from_millis(1));
+                buf[0] = byte;
+                self.served += 1;
+                return Ok(1);
+            }
             if let Some(sender) = self.shutdown_after.take() {
                 sender.send(Msg::Shutdown).unwrap();
             }
             match self.then {
-                Then::Idle => Err(ErrorKind::WouldBlock.into()),
+                Then::Idle | Then::Trickle(..) => Err(ErrorKind::WouldBlock.into()),
                 Then::Endless(byte) => {
                     let n = buf.len().min(4096);
                     buf[..n].fill(byte);
@@ -475,6 +674,24 @@ mod tests {
         text: String,
         events: Vec<String>,
         pty: FakePty,
+        /// The prompt marks' lines.
+        prompts: Vec<i32>,
+    }
+
+    /// The grid's text, history and screen.
+    fn text<U>(terminal: &Term<U>) -> String {
+        (terminal.topmost_line().0..=terminal.bottommost_line().0)
+            .map(|line| {
+                (0..80)
+                    .map(|col| {
+                        terminal.grid()[alacritty_terminal::index::Line(line)]
+                            [alacritty_terminal::index::Column(col)]
+                        .c
+                    })
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     /// Runs the loop to its end on `script`, which `make` may wire to the
@@ -495,30 +712,28 @@ mod tests {
             then,
             shutdown_after: None,
             served: 0,
+            trickled: false,
         };
-        let (mut pty_loop, sender) =
-            PtyLoop::new(term.clone(), events.clone(), FakePty::new(script, token)).unwrap();
+        let shell = Arc::new(Mutex::new(ShellState::new(100_000)));
+        let (mut pty_loop, sender) = PtyLoop::new(
+            term.clone(),
+            shell.clone(),
+            events.clone(),
+            FakePty::new(script, token),
+        )
+        .unwrap();
         if shutdown {
             pty_loop.pty.script.shutdown_after = Some(sender);
         }
         let pty = pty_loop.run();
         let terminal = term.lock();
-        let text = (terminal.topmost_line().0..=terminal.bottommost_line().0)
-            .map(|line| {
-                (0..80)
-                    .map(|col| {
-                        terminal.grid()[alacritty_terminal::index::Line(line)]
-                            [alacritty_terminal::index::Column(col)]
-                        .c
-                    })
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
+        let text = text(&terminal);
+        let prompts = lock(&shell).prompt_lines(&terminal);
         Run {
             text,
             events: events.0.lock().unwrap().clone(),
             pty,
+            prompts,
         }
     }
 
@@ -562,5 +777,118 @@ mod tests {
             "{:?}",
             run.events
         );
+    }
+
+    #[test]
+    fn a_prompt_is_marked_where_the_cursor_is_left() {
+        let prompt = b"a\r\nb\r\n\x1b]133;A\x07$ \r\n";
+        let run = run(PTY_READ_WRITE_TOKEN, &[prompt], Then::Idle, true);
+        assert_eq!(run.prompts, vec![2]);
+    }
+
+    #[test]
+    fn a_prompt_in_a_synchronized_update_is_marked_where_it_was_printed() {
+        let chunks: &[&[u8]] = &[
+            b"\x1b[?2026ha\r\n\x1b]133;A\x07",
+            b"$ \r\nb\r\n\x1b[?20",
+            b"26l\x1b[?2026h\r\n\x1b]133;A\x07\r\n",
+        ];
+        // The second update ends as the loop shuts down.
+        let run = run(PTY_READ_WRITE_TOKEN, chunks, Then::Idle, true);
+        assert_eq!(run.prompts, vec![1, 4]);
+        assert!(run.text.contains("$ "), "{}", run.text);
+    }
+
+    #[test]
+    fn a_prompt_on_the_alternate_screen_is_not_marked_even_in_an_update() {
+        let chunks: &[&[u8]] = &[
+            b"\x1b[?2026h\x1b[?1049h\x1b]133;A\x07x\x1b[?1049l\x1b[?2026l",
+            b"\x1b[?1049h\x1b]133;A\x07\x1b[?2026h\x1b[?1049l\x1b[?2026l",
+        ];
+        let run = run(PTY_READ_WRITE_TOKEN, chunks, Then::Idle, true);
+        assert_eq!(run.prompts, Vec::<i32>::new());
+    }
+
+    /// A feeder and what it feeds.
+    fn feeder() -> (Feeder, ShellState, Term<Recorder>) {
+        let config = Config {
+            scrolling_history: ShellState::term_history(100),
+            ..Config::default()
+        };
+        let term = Term::new(config, &Size, Recorder::default());
+        (Feeder::default(), ShellState::new(100), term)
+    }
+
+    #[test]
+    fn a_repeated_start_renews_a_synchronized_update() {
+        let (mut feeder, mut shell, mut term) = feeder();
+        let start = Instant::now();
+        feeder.feed(&mut shell, &mut term, b"\x1b[?2026hframe", start);
+        assert_eq!(feeder.deadline(), Some(start + SYNC_TIMEOUT));
+        // At 100 ms, a start split across reads.
+        let renewed = start + Duration::from_millis(100);
+        feeder.feed(&mut shell, &mut term, b" one\x1b[?20", renewed);
+        feeder.feed(&mut shell, &mut term, b"26h two", renewed);
+        assert_eq!(feeder.deadline(), Some(renewed + SYNC_TIMEOUT));
+        assert!(!text(&term).contains("frame"));
+        // The timeout ends it, all of it.
+        feeder.end_sync(&mut shell, &mut term);
+        assert_eq!(feeder.deadline(), None);
+        assert!(text(&term).contains("frame one two"), "{}", text(&term));
+    }
+
+    #[test]
+    fn a_screen_switch_can_start_a_synchronized_update() {
+        for start in [&b"\x1b[?1049;2026h"[..], b"\x1b[?2026;1049h"] {
+            let (mut feeder, mut shell, mut term) = feeder();
+            let mut bytes = b"\x1b]133;A\x07$ ".to_vec();
+            bytes.extend(start);
+            bytes.extend(b"held\x1b[?2026lshown");
+            // A byte at a time.
+            let now = Instant::now();
+            let (before_end, end) = bytes.split_at(bytes.len() - 13);
+            for byte in before_end {
+                feeder.feed(&mut shell, &mut term, &[*byte], now);
+            }
+            assert!(feeder.deadline().is_some());
+            assert!(term.mode().contains(TermMode::ALT_SCREEN));
+            assert!(!text(&term).contains("held"));
+            for byte in end {
+                feeder.feed(&mut shell, &mut term, &[*byte], now);
+            }
+            assert_eq!(feeder.deadline(), None);
+            assert!(text(&term).contains("heldshown"), "{}", text(&term));
+            // The prompt before the switch is still marked.
+            term.swap_alt();
+            assert_eq!(shell.prompt_lines(&term), vec![0]);
+        }
+    }
+
+    #[test]
+    fn adjacent_short_updates_are_fed_in_one_pass() {
+        // A quadratic copy of what follows each update would take minutes.
+        let (mut feeder, mut shell, mut term) = feeder();
+        let mut bytes = b"\x1b[?2026h\x1b[?2026l".repeat(0x10_0000 / 16);
+        bytes.extend(b"end");
+        assert!(feeder.feed(&mut shell, &mut term, &bytes, Instant::now()));
+        assert_eq!(feeder.deadline(), None);
+        assert!(text(&term).contains("end"));
+    }
+
+    #[test]
+    fn an_update_times_out_while_output_keeps_coming() {
+        // The pty stays readable for 400 ms, well past the update's 150 ms.
+        let until = Instant::now() + Duration::from_millis(400);
+        let run = run(
+            PTY_READ_WRITE_TOKEN,
+            &[HELD],
+            Then::Trickle(b'x', until),
+            true,
+        );
+        assert!(run.text.contains("hellox"), "{}", run.text);
+        // Wakeups for the timeout and the trickle after it, not only the
+        // one as the loop ends.
+        let wakeups = run.events.iter().filter(|event| *event == "Wakeup").count();
+        assert!(wakeups > 2, "{:?}", run.events);
     }
 }

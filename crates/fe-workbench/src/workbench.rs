@@ -634,7 +634,9 @@ impl Workbench {
     /// new session, focused; `terminal.close` drops the active session;
     /// `terminal.next` and `terminal.previous` show and focus the next or
     /// previous one, if there's another; `terminal.find` shows the dock
-    /// with the active session's find row open, focused.
+    /// with the active session's find row open, focused;
+    /// `terminal.previous_prompt` and `terminal.next_prompt` scroll the
+    /// active session between its shell's prompts.
     fn run_terminal_op(&mut self, op: TerminalOp, window: &mut Window, cx: &mut Context<Self>) {
         let terminal = self.terminal.clone();
         let show = match op {
@@ -659,6 +661,11 @@ impl Workbench {
             TerminalOp::Next => terminal.update(cx, |terminal, cx| terminal.cycle(1, window, cx)),
             TerminalOp::Previous => {
                 terminal.update(cx, |terminal, cx| terminal.cycle(-1, window, cx))
+            }
+            TerminalOp::PreviousPrompt | TerminalOp::NextPrompt => {
+                let forward = op == TerminalOp::NextPrompt;
+                terminal.update(cx, |terminal, cx| terminal.scroll_to_prompt(forward, cx));
+                return;
             }
         };
         if show {

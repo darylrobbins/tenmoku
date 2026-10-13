@@ -16,12 +16,13 @@ use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Column, Direction, Point};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::sync::FairMutex;
-use alacritty_terminal::term::{self, Term};
+use alacritty_terminal::term::{self, Term, TermMode};
 use alacritty_terminal::tty;
 use rustix_openpty::rustix::termios::Winsize;
 
-use crate::pty_loop::{LoopSender, Msg, PtyLoop};
+use crate::pty_loop::{LoopSender, Msg, PtyLoop, lock};
 use crate::search::{self, QueryError, TerminalMatch, TerminalQuery};
+use crate::shell::{ShellState, UNBOUNDED_HISTORY};
 use crate::snapshot::{self, Snapshot};
 
 /// What to run and how much history to keep.
@@ -218,6 +219,12 @@ impl EventListener for Listener {
 /// A running terminal session. Dropping it hangs up the child.
 pub struct Terminal {
     term: Arc<FairMutex<Term<Listener>>>,
+    /// What the shell reported. Locked after `term`.
+    shell: Arc<Mutex<ShellState>>,
+    /// The `Term`'s options with a history too long to fill, set while it
+    /// resizes on the alternate screen: the only way to the hidden primary
+    /// grid's limit.
+    unbounded: term::Config,
     pty: LoopSender,
     size: Arc<Mutex<WindowSize>>,
     pid: u32,
@@ -240,10 +247,16 @@ impl Terminal {
             exited: Arc::new(AtomicBool::new(false)),
         };
 
+        // The loop trims history back to the scrollback (`ShellState`).
         let config = term::Config {
-            scrolling_history: options.scrollback,
+            scrolling_history: ShellState::term_history(options.scrollback),
             ..Default::default()
         };
+        let unbounded = term::Config {
+            scrolling_history: UNBOUNDED_HISTORY,
+            ..config.clone()
+        };
+        let shell = Arc::new(Mutex::new(ShellState::new(options.scrollback)));
         let term = Term::new(config, &TermSize::from(size), listener.clone());
         let term = Arc::new(FairMutex::new(term));
 
@@ -292,7 +305,8 @@ impl Terminal {
         let pty = tty::from_fd(&tty_options, 0, pair.controller, pair.user)?;
         let pid = pty.child().id();
 
-        let (event_loop, sender) = PtyLoop::new(term.clone(), listener.clone(), pty)?;
+        let (event_loop, sender) =
+            PtyLoop::new(term.clone(), shell.clone(), listener.clone(), pty)?;
         let _ = listener.pty.set(sender.clone());
         let handle = event_loop.spawn()?;
         // `PtyLoop::spawn` hands the pty back through the join handle, so the
@@ -314,6 +328,8 @@ impl Terminal {
 
         let terminal = Terminal {
             term,
+            shell,
+            unbounded,
             pty: sender,
             size: listener.size,
             pid,
@@ -351,27 +367,92 @@ impl Terminal {
         let _ = self.pty.send(Msg::Input(bytes));
     }
 
-    /// Resizes the grid and tells the child (SIGWINCH).
+    /// Resizes the grid and tells the child (SIGWINCH). Prompt marks follow
+    /// their lines as a column change reflows them.
     pub fn resize(&self, size: GridSize) {
         let window_size = size.window_size();
         *self.size.lock().unwrap_or_else(|e| e.into_inner()) = window_size;
-        self.term.lock().resize(TermSize::from(size));
+        let mut term = self.term.lock();
+        let mut shell = lock(&self.shell);
+        let offset = term.grid().display_offset();
+        let size = TermSize::from(size);
+        // Rows, then columns, as alacritty does them, but one at a time: a
+        // row change may drop blank rows at the bottom, and the marks follow
+        // each. The history's limit is lifted for each, so a reflow keeps
+        // every row: trimming it back counts the rows that go.
+        let rows_first = TermSize {
+            cols: term.columns(),
+            rows: size.rows,
+        };
+        for step in [rows_first, size] {
+            if (step.cols, step.rows) == (term.columns(), term.screen_lines()) {
+                continue;
+            }
+            let anchors = shell.before_resize(&term);
+            if term.mode().contains(TermMode::ALT_SCREEN) {
+                // Until the primary grid shows again and is trimmed.
+                term.set_options(self.unbounded.clone());
+            } else {
+                term.grid_mut().update_history(UNBOUNDED_HISTORY);
+            }
+            term.resize(step);
+            shell.after_resize(&mut term, anchors);
+        }
+        shell.view_moved(offset, &term);
+        drop((shell, term));
         let _ = self.pty.send(Msg::Resize(window_size));
+    }
+
+    /// The working directory the shell last reported with OSC 7, if any
+    /// (docs/terminal-shell-integration.md). It may not exist here: a shell
+    /// over ssh reports the remote one.
+    pub fn cwd(&self) -> Option<PathBuf> {
+        lock(&self.shell).cwd()
+    }
+
+    /// Scrolls the view to the previous or next prompt (`forward`) the shell
+    /// marked with OSC 133;A, putting its row at the top of the view as far
+    /// as history allows. Back goes from the prompt last scrolled to, or
+    /// with none from the shell's current one; forward from the one last
+    /// scrolled to, and past the last to the bottom (with none, it does
+    /// nothing). The view returning to
+    /// the bottom forgets the prompt. Whether there was a prompt to go to.
+    pub fn scroll_to_prompt(&self, forward: bool) -> bool {
+        let mut term = self.term.lock();
+        lock(&self.shell).scroll_to_prompt(&mut term, forward)
+    }
+
+    /// The grid lines of the prompt marks (negative in history), oldest
+    /// first.
+    #[allow(dead_code, reason = "for vi copy mode's [[ and ]]")]
+    pub(crate) fn prompt_lines(&self) -> Vec<i32> {
+        let term = self.term.lock();
+        lock(&self.shell).prompt_lines(&term)
+    }
+
+    /// The rows scrolled into history so far, as of the last output.
+    #[allow(dead_code, reason = "for vi copy mode's frozen view")]
+    pub(crate) fn scrolled_rows(&self) -> u64 {
+        lock(&self.shell).scrolled
     }
 
     /// Scrolls the view by `lines`: negative moves back into history, positive
     /// toward the bottom.
     pub fn scroll(&self, lines: i32) {
-        self.term
-            .lock()
-            .scroll_display(Scroll::Delta(lines.saturating_neg()));
+        let mut term = self.term.lock();
+        let offset = term.grid().display_offset();
+        term.scroll_display(Scroll::Delta(lines.saturating_neg()));
+        lock(&self.shell).view_moved(offset, &term);
     }
 
+    /// Scrolls the view to the bottom, forgetting the prompt
+    /// [`Terminal::scroll_to_prompt`] went to.
     pub fn scroll_to_bottom(&self) {
         let mut term = self.term.lock();
         if term.grid().display_offset() != 0 {
             term.scroll_display(Scroll::Bottom);
         }
+        lock(&self.shell).forget();
     }
 
     /// A copy of the visible grid.
@@ -422,7 +503,11 @@ impl Terminal {
         query: &TerminalQuery,
         forward: bool,
     ) -> Result<Option<TerminalMatch>, QueryError> {
-        search::find(&mut self.term.lock(), query, forward)
+        let mut term = self.term.lock();
+        let offset = term.grid().display_offset();
+        let found = search::find(&mut term, query, forward);
+        lock(&self.shell).view_moved(offset, &term);
+        found
     }
 
     /// `query`'s matches on the visible rows at the current display offset,
