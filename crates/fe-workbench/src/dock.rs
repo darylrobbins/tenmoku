@@ -6,8 +6,10 @@
 //! their panel has shown.
 //!
 //! Its commands, and the search panel's, are those of [`init`]'s registry:
-//! the dock's in the workbench's [`crate::KEY_CONTEXT`], the search options'
-//! in the search panel's [`search_panel::KEY_CONTEXT`], and
+//! the dock's in the workbench's [`crate::KEY_CONTEXT`] (with
+//! `search.show_replace` and `search.replace_all`), the search options' and
+//! the replace toggle's in the search panel's [`search_panel::KEY_CONTEXT`],
+//! the results list's in [`search_panel::RESULTS_KEY_CONTEXT`],
 //! `text_input.submit` in its input's, and the problems commands
 //! ([`problems_panel::commands`]). Their handlers only name an op: the
 //! workbench, or the search panel, then does it with the window at hand.
@@ -317,7 +319,26 @@ impl Dock {
                 cx.notify();
                 return true;
             }
-            DockOp::ToggleRegex | DockOp::ToggleCase | DockOp::ToggleWholeWord | DockOp::Submit => {
+            DockOp::ShowReplace => {
+                self.show(DockPanel::Search, window, cx);
+                self.search
+                    .update(cx, |search, cx| search.show_replace(true, window, cx));
+                return true;
+            }
+            DockOp::ReplaceAll => {
+                self.search
+                    .update(cx, |search, cx| search.confirm_replace_all(window, cx));
+                return true;
+            }
+            DockOp::ToggleRegex
+            | DockOp::ToggleCase
+            | DockOp::ToggleWholeWord
+            | DockOp::Submit
+            | DockOp::ToggleReplace
+            | DockOp::FocusResults
+            | DockOp::SelectNext
+            | DockOp::SelectPrevious
+            | DockOp::OpenSelected => {
                 return false;
             }
         };
@@ -429,6 +450,15 @@ pub(crate) enum DockOp {
     ToggleWholeWord,
     /// Enter in the search panel's input: [`TextInput::submit`].
     Submit,
+    /// `search.show_replace`: shows search with its replace field, focused.
+    ShowReplace,
+    /// `search.replace_all`: asks, then replaces in the results' files.
+    ReplaceAll,
+    ToggleReplace,
+    FocusResults,
+    SelectNext,
+    SelectPrevious,
+    OpenSelected,
     /// A problems command: `problems.show` is the dock's to do, the others
     /// the workbench's.
     Problems(ProblemsOp),
@@ -455,12 +485,25 @@ pub(crate) fn registry() -> Registry<DockCommands> {
     use DockOp::*;
     let workbench = crate::KEY_CONTEXT;
     let search = search_panel::KEY_CONTEXT;
+    let results = search_panel::RESULTS_KEY_CONTEXT;
     let commands = [
         ("search.show", "Find in Files", workbench, ShowSearch),
         ("dock.show_project", "Show Project", workbench, ShowProject),
         ("dock.toggle", "Toggle Dock", workbench, Toggle),
         ("git.show_changes", "Show Changes", workbench, ShowChanges),
         ("git.refresh", "Refresh Changes", workbench, RefreshChanges),
+        (
+            "search.show_replace",
+            "Replace in Files…",
+            workbench,
+            ShowReplace,
+        ),
+        (
+            "search.replace_all",
+            "Replace All in Files",
+            workbench,
+            ReplaceAll,
+        ),
         ("search.toggle_regex", "Toggle Regex", search, ToggleRegex),
         (
             "search.toggle_case",
@@ -473,6 +516,36 @@ pub(crate) fn registry() -> Registry<DockCommands> {
             "Toggle Whole Word",
             search,
             ToggleWholeWord,
+        ),
+        (
+            "search.toggle_replace",
+            "Toggle Replace",
+            search,
+            ToggleReplace,
+        ),
+        (
+            "search.focus_results",
+            "Focus Search Results",
+            search,
+            FocusResults,
+        ),
+        (
+            "search.select_next",
+            "Select Next Result",
+            results,
+            SelectNext,
+        ),
+        (
+            "search.select_previous",
+            "Select Previous Result",
+            results,
+            SelectPrevious,
+        ),
+        (
+            "search.open_selected",
+            "Open Selected Result",
+            results,
+            OpenSelected,
         ),
         (
             "text_input.submit",

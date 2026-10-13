@@ -9,6 +9,21 @@
 //! that appends them, in arrival order, so rows never move while results
 //! stream in. Dropping the panel cancels the run.
 //!
+//! A replace field under the query (the chevron, `search.toggle_replace`
+//! or `search.show_replace` shows it) replaces the results' matches: all of
+//! them, after asking with the counts (`search.replace_all`), or one file's
+//! (its row's Replace button). Dismissing a file drops it from the results,
+//! so Replace All skips it. The files are matched again as they are then:
+//! see [`search_replace`]. Afterwards the status line says what was
+//! replaced, and the search runs again.
+//!
+//! The results list takes focus (`search.focus_results`, or down from the
+//! query) and moves through the match rows with `search.select_next` and
+//! `search.select_previous`; `search.open_selected` opens the selected
+//! match. Its element's key context is [`RESULTS_KEY_CONTEXT`], with `vim`
+//! too while vim is on. The fields are `text_input`s, so vim never sees the
+//! keys typed in them.
+//!
 //! The panel keeps each line's ranges and preview start as offsets in the
 //! line's lossy decoding, which is what the preview and the editor's text
 //! are made of, rather than in its bytes on disk as the search gives them:
@@ -29,14 +44,16 @@ use std::{
 use fe_buffer::FileEncoding;
 use fe_gpui::commands::RunCommand;
 use fe_project::{
-    FileMatches, LineMatch, PathFilter, SearchError, SearchOptions, SearchQuery, SearchSummary,
+    FileMatches, LineMatch, PathFilter, Replacer, SearchError, SearchOptions, SearchQuery,
+    SearchSummary,
 };
 use fe_ui::{HighlightedLabel, ROW_HEIGHT, TextInput, TextInputEvent, ToggleButton, UiTheme};
 use gpui::{
     AnyElement, AppContext as _, Context, ElementId, Entity, FocusHandle, InteractiveElement as _,
-    IntoElement, ParentElement as _, Render, ScrollHandle, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Subscription, Task, UniformListScrollHandle,
-    WeakEntity, Window, div, prelude::FluentBuilder as _, px, uniform_list,
+    IntoElement, KeyDownEvent, ParentElement as _, PromptButton, PromptLevel, Render, ScrollHandle,
+    ScrollStrategy, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Task,
+    UniformListScrollHandle, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
+    uniform_list,
 };
 
 use crate::{
@@ -45,9 +62,19 @@ use crate::{
     pane::Reveal,
     picker::{self, PaletteOp},
 };
+use search_replace::{Boundary, Target, count};
 
 /// The key context the search panel's element sets.
 pub(crate) const KEY_CONTEXT: &str = "search_panel";
+
+/// The key context the results list's element sets, within the panel's.
+pub(crate) const RESULTS_KEY_CONTEXT: &str = "search_results";
+
+/// Replace All's prompt's buttons; Replace is the default.
+const REPLACE_BUTTONS: [PromptButton; 2] = [
+    PromptButton::Ok(SharedString::new_static("Replace")),
+    PromptButton::Cancel(SharedString::new_static("Cancel")),
+];
 
 /// A search option, with a toggle.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -84,12 +111,26 @@ pub struct SearchPanel {
     /// The files to include and to exclude: comma-separated globs.
     include: Entity<TextInput>,
     exclude: Entity<TextInput>,
+    /// The replacement, under the query while `replace_shown`.
+    replace: Entity<TextInput>,
+    replace_shown: bool,
+    /// The results list's, which moves through the match rows.
+    results_focus: FocusHandle,
+    /// The selected line row, in `rows`.
+    selected: Option<usize>,
     regex: bool,
     match_case: bool,
     whole_word: bool,
     options: SearchOptions,
     /// The current run's, which only its batches carry.
     generation: u64,
+    /// The query the results are of, as it ran.
+    searched: Option<SearchQuery>,
+    /// The folder it searched, as it was then, unless it couldn't be read.
+    boundary: Option<Boundary>,
+    /// Moves on with each run and each dismissed file, as the rows do, so
+    /// a row pressed before isn't clicked as the row now in its place.
+    layout: u64,
     /// The current run's: set when another starts, or the panel goes.
     cancel: Arc<AtomicBool>,
     running: Option<Task<()>>,
@@ -97,13 +138,17 @@ pub struct SearchPanel {
     /// In arrival order.
     files: Vec<FileMatches>,
     rows: Vec<ResultRow>,
+    /// The last replacement's outcome, and whether it's an error: the
+    /// status line until the next search the user runs.
+    notice: Option<(String, bool)>,
+    replacing: Option<Task<()>>,
     scroll: UniformListScrollHandle,
     toggles: ScrollHandle,
     ui: UiTheme,
     /// The row ranges the last frame built.
     #[cfg(test)]
     built: Vec<Range<usize>>,
-    _inputs: [Subscription; 3],
+    _inputs: [Subscription; 4],
 }
 
 impl SearchPanel {
@@ -118,15 +163,21 @@ impl SearchPanel {
         let input = cx.new(|cx| TextInput::new("Search", &ui, cx));
         let include = cx.new(|cx| TextInput::new("files to include", &ui, cx));
         let exclude = cx.new(|cx| TextInput::new("files to exclude", &ui, cx));
-        let submitted =
-            [(&input, false), (&include, true), (&exclude, true)].map(|(input, filter)| {
-                cx.subscribe(input, move |panel, _, event, cx| match event {
-                    TextInputEvent::Submitted => panel.run(cx),
-                    // Typing never searches the query, but a filter reruns.
-                    TextInputEvent::Changed if filter => panel.run(cx),
-                    TextInputEvent::Changed => {}
-                })
-            });
+        let replace = cx.new(|cx| TextInput::new("Replace", &ui, cx));
+        let fields = [
+            (&input, false),
+            (&include, true),
+            (&exclude, true),
+            (&replace, false),
+        ];
+        let submitted = fields.map(|(input, filter)| {
+            cx.subscribe(input, move |panel, _, event, cx| match event {
+                TextInputEvent::Submitted => panel.run(cx),
+                // Typing never searches the query, but a filter reruns.
+                TextInputEvent::Changed if filter => panel.run(cx),
+                TextInputEvent::Changed => {}
+            })
+        });
         Self {
             root,
             pane,
@@ -134,16 +185,25 @@ impl SearchPanel {
             input,
             include,
             exclude,
+            replace,
+            replace_shown: false,
+            results_focus: cx.focus_handle(),
+            selected: None,
             regex: false,
             match_case: false,
             whole_word: false,
             options: SearchOptions::default(),
             generation: 0,
+            searched: None,
+            boundary: None,
+            layout: 0,
             cancel: Arc::default(),
             running: None,
             status: Status::Idle,
             files: Vec::new(),
             rows: Vec::new(),
+            notice: None,
+            replacing: None,
             scroll: UniformListScrollHandle::new(),
             toggles: ScrollHandle::new(),
             ui,
@@ -211,6 +271,7 @@ impl SearchPanel {
     /// unless it's empty: that clears the results.
     pub fn run(&mut self, cx: &mut Context<Self>) {
         let generation = self.restart(cx);
+        self.notice = None;
         let query = self.query(cx);
         if query.pattern.is_empty() {
             self.status = Status::Idle;
@@ -229,6 +290,8 @@ impl SearchPanel {
             }
         };
         self.status = Status::Searching;
+        self.searched = Some(query.clone());
+        self.boundary = Boundary::of(&root).ok();
         let options = self.options.clone();
         let cancel = self.cancel.clone();
         let (sender, batches) = async_channel::unbounded();
@@ -262,9 +325,13 @@ impl SearchPanel {
         self.cancel.store(true, Ordering::Relaxed);
         self.cancel = Arc::default();
         self.generation += 1;
+        self.layout += 1;
         self.running = None;
+        self.searched = None;
+        self.boundary = None;
         self.files.clear();
         self.rows.clear();
+        self.selected = None;
         self.scroll.scroll_to_item(0, gpui::ScrollStrategy::Top);
         cx.notify();
         self.generation
@@ -304,6 +371,7 @@ impl SearchPanel {
             Err(error) => {
                 self.files.clear();
                 self.rows.clear();
+                self.selected = None;
                 Status::Failed(error)
             }
         };
@@ -326,6 +394,9 @@ impl SearchPanel {
 
     /// The status line, and whether it's an error.
     pub fn status(&self) -> Option<(SharedString, bool)> {
+        if let Some((notice, error)) = &self.notice {
+            return Some((notice.clone().into(), *error));
+        }
         let text = match &self.status {
             Status::Idle => return None,
             Status::NoFolder => "No folder open".into(),
@@ -345,13 +416,13 @@ impl SearchPanel {
         Some((text.into(), false))
     }
 
-    /// Opens the file of line row `ix`, if it's still `generation`'s, with
-    /// its first match selected.
-    fn open(&mut self, generation: u64, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+    /// Opens the file of line row `ix`, if the rows are still `layout`'s,
+    /// with its first match selected.
+    fn open(&mut self, layout: u64, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(&ResultRow::Line(file, line)) = self.rows.get(ix) else {
             return;
         };
-        if generation != self.generation {
+        if layout != self.layout {
             return;
         }
         let file = &self.files[file];
@@ -371,8 +442,17 @@ impl SearchPanel {
             .ok();
     }
 
-    /// Runs a search option, Enter or an input edit; others go on to the
-    /// workbench.
+    /// Selects and opens line row `ix`, clicked in a frame of `layout`'s
+    /// rows, if they're still those.
+    fn click_line(&mut self, layout: u64, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if layout == self.layout {
+            self.selected = Some(ix);
+            self.open(layout, ix, window, cx);
+        }
+    }
+
+    /// Runs a search option, a replace or results command, Enter or an
+    /// input edit; others go on to the workbench.
     fn on_run_command(&mut self, run: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
         let option = match dock::op(run, cx) {
             Some(DockOp::ToggleRegex) => Some(SearchOption::Regex),
@@ -383,6 +463,18 @@ impl SearchPanel {
                     .focused_input(window, cx)
                     .clone()
                     .update(cx, TextInput::submit);
+            }
+            Some(DockOp::ShowReplace) => return self.show_replace(false, window, cx),
+            Some(DockOp::ToggleReplace) => return self.toggle_replace(window, cx),
+            Some(DockOp::ReplaceAll) => return self.confirm_replace_all(window, cx),
+            Some(DockOp::FocusResults) => return self.focus_results(window, cx),
+            Some(DockOp::SelectNext) => return self.select_next(true, cx),
+            Some(DockOp::SelectPrevious) => return self.select_next(false, cx),
+            Some(DockOp::OpenSelected) => {
+                if let Some(ix) = self.selected {
+                    self.open(self.layout, ix, window, cx);
+                }
+                return;
             }
             _ => None,
         };
@@ -401,20 +493,236 @@ impl SearchPanel {
 
     /// The field with focus: the query's unless another has it.
     fn focused_input(&self, window: &Window, cx: &gpui::App) -> &Entity<TextInput> {
-        [&self.include, &self.exclude]
+        [&self.include, &self.exclude, &self.replace]
             .into_iter()
             .find(|input| gpui::Focusable::focus_handle(*input, cx).is_focused(window))
             .unwrap_or(&self.input)
     }
 
-    fn render_rows(&mut self, range: Range<usize>, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    /// Shows the replace field, focused. If `seed`, from outside the panel,
+    /// a nonempty selection within one row in the active editor becomes the
+    /// query, and runs.
+    pub(crate) fn show_replace(&mut self, seed: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let seeded = seed.then(|| self.selected_text(cx)).flatten();
+        if let Some(text) = seeded {
+            self.input.update(cx, |input, cx| input.set_text(text, cx));
+            self.run(cx);
+        }
+        self.replace_shown = true;
+        window.focus(&gpui::Focusable::focus_handle(&self.replace, cx), cx);
+        cx.notify();
+    }
+
+    /// The active editor's selection, if it's its only one, nonempty and
+    /// within one row.
+    fn selected_text(&self, cx: &gpui::App) -> Option<String> {
+        let pane = self.pane.upgrade()?;
+        let editor = pane.read(cx).active_editor()?;
+        let model = editor.read(cx).model();
+        let selections = model.selections();
+        let [selection] = &selections[..] else {
+            return None;
+        };
+        let text = model.text().slice_to_string(selection.range.clone());
+        (!text.is_empty() && !text.contains('\n')).then_some(text)
+    }
+
+    /// Shows the replace field, focused, or hides it, focusing the query if
+    /// it had focus.
+    fn toggle_replace(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.replace_shown {
+            return self.show_replace(false, window, cx);
+        }
+        self.replace_shown = false;
+        if gpui::Focusable::focus_handle(&self.replace, cx).is_focused(window) {
+            window.focus(&gpui::Focusable::focus_handle(&self.input, cx), cx);
+        }
+        cx.notify();
+    }
+
+    /// The matches in the results, and their files.
+    fn counts(&self) -> (usize, usize) {
+        let matches = (self.files.iter())
+            .flat_map(|file| &file.lines)
+            .map(|line| line.ranges.len())
+            .sum();
+        (matches, self.files.len())
+    }
+
+    /// The results' files, or only the `only`th's.
+    fn targets(&self, only: Option<usize>) -> Vec<Target> {
+        (self.files.iter().enumerate())
+            .filter(|&(ix, _)| only.is_none_or(|only| only == ix))
+            .map(|(_, file)| Target {
+                path: file.path.clone(),
+                rel: file.rel.clone(),
+            })
+            .collect()
+    }
+
+    /// Asks whether to replace every match in the results, with the counts,
+    /// and replaces them if so. Nothing while a replacement runs.
+    pub(crate) fn confirm_replace_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.replacing.is_some() {
+            return;
+        }
+        let Some(query) = self.searched.clone() else {
+            return;
+        };
+        let (matches, files) = self.counts();
+        if files == 0 {
+            return;
+        }
+        let template = self.replace.read(cx).text().to_owned();
+        let question = format!(
+            "Replace {} across {} with “{template}”?",
+            count(matches, "occurrence"),
+            count(files, "file")
+        );
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            &question,
+            Some("Files that aren't open are saved, and can't be undone."),
+            &REPLACE_BUTTONS,
+            cx,
+        );
+        let targets = self.targets(None);
+        let boundary = self.boundary.clone();
+        cx.spawn(async move |panel, cx| {
+            if answer.await != Ok(0) {
+                return;
+            }
+            panel
+                .update(cx, |panel, cx| {
+                    panel.replace(boundary, targets, query, template, cx)
+                })
+                .ok();
+        })
+        .detach();
+    }
+
+    /// Replaces the matches in the `file`th file of the results, if the
+    /// rows are still `layout`'s, without asking.
+    fn replace_in_file(&mut self, layout: u64, file: usize, cx: &mut Context<Self>) {
+        if layout != self.layout || self.replacing.is_some() || file >= self.files.len() {
+            return;
+        }
+        let Some(query) = self.searched.clone() else {
+            return;
+        };
+        let template = self.replace.read(cx).text().to_owned();
+        let targets = self.targets(Some(file));
+        self.replace(self.boundary.clone(), targets, query, template, cx);
+    }
+
+    /// Replaces `query`'s matches in `targets` with `template`, then says
+    /// what it did and searches again.
+    fn replace(
+        &mut self,
+        boundary: Option<Boundary>,
+        targets: Vec<Target>,
+        query: SearchQuery,
+        template: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(boundary) = boundary else {
+            self.notice = Some(("Can't read the project folder".into(), true));
+            cx.notify();
+            return;
+        };
+        let replacer = match Replacer::new(&query, &template) {
+            Ok(replacer) => Arc::new(replacer),
+            Err(error) => {
+                self.notice = Some((error.to_string(), true));
+                cx.notify();
+                return;
+            }
+        };
+        self.notice = Some(("Replacing…".into(), false));
+        self.replacing = Some(cx.spawn(async move |panel, cx| {
+            let outcome = search_replace::replace(boundary, targets, replacer, cx).await;
+            panel
+                .update(cx, |panel, cx| {
+                    panel.replacing = None;
+                    panel.run(cx);
+                    panel.notice = Some(outcome.message());
+                    cx.notify();
+                })
+                .ok();
+        }));
+        cx.notify();
+    }
+
+    /// Drops the `file`th file from the results, if the rows are still
+    /// `layout`'s, so Replace All skips it.
+    fn dismiss(&mut self, layout: u64, file: usize, cx: &mut Context<Self>) {
+        if layout != self.layout || file >= self.files.len() {
+            return;
+        }
+        self.files.remove(file);
+        self.layout += 1;
+        self.selected = None;
+        self.rows.clear();
+        for (ix, file) in self.files.iter().enumerate() {
+            self.rows.push(ResultRow::File(ix));
+            (self.rows).extend((0..file.lines.len()).map(|line| ResultRow::Line(ix, line)));
+        }
+        cx.notify();
+    }
+
+    /// Focuses the results list, selecting its first match row if none is.
+    fn focus_results(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.selected.is_none() {
+            self.select_next(true, cx);
+        }
+        window.focus(&self.results_focus, cx);
+        cx.notify();
+    }
+
+    /// Selects the next match row after the selected one, or the one
+    /// before it if not `forward`; the first with none selected.
+    fn select_next(&mut self, forward: bool, cx: &mut Context<Self>) {
+        let is_line = |ix: &usize| matches!(self.rows[*ix], ResultRow::Line(..));
+        let selected = self.selected.filter(|&ix| ix < self.rows.len());
+        let next = match selected {
+            None => (0..self.rows.len()).find(is_line),
+            Some(at) if forward => (at + 1..self.rows.len()).find(is_line),
+            Some(at) => (0..at).rev().find(is_line),
+        };
+        if let Some(ix) = next {
+            self.selected = Some(ix);
+            self.scroll.scroll_to_item(ix, ScrollStrategy::Nearest);
+            cx.notify();
+        }
+    }
+
+    /// Down in the query moves to the results.
+    fn on_query_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let keystroke = &event.keystroke;
+        if keystroke.key == "down" && !keystroke.modifiers.modified() && !self.rows.is_empty() {
+            self.focus_results(window, cx);
+            cx.stop_propagation();
+        }
+    }
+
+    fn render_rows(
+        &mut self,
+        range: Range<usize>,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
         #[cfg(test)]
         self.built.push(range.clone());
         let ui = self.ui;
-        let generation = self.generation;
-        // A row's identity is its generation's too, so one pressed before a
-        // rerun isn't clicked as the row that replaced it.
-        let name = SharedString::from(format!("result-{generation}"));
+        let layout = self.layout;
+        let selected_bg = if self.results_focus.is_focused(window) {
+            ui.row_selected
+        } else {
+            ui.row_selected_inactive
+        };
+        // A row's identity is its layout's too, so one pressed before a
+        // rerun or a dismissal isn't clicked as the row now in its place.
+        let name = SharedString::from(format!("result-{layout}"));
         range
             .map(|ix| {
                 let row = div()
@@ -427,10 +735,32 @@ impl SearchPanel {
                     .gap_2()
                     .overflow_hidden()
                     .whitespace_nowrap();
+                let row = row.when(self.selected == Some(ix), |row| row.bg(selected_bg));
                 match self.rows[ix] {
-                    ResultRow::File(file) => {
-                        let file = &self.files[file];
+                    ResultRow::File(file_ix) => {
+                        let file = &self.files[file_ix];
                         let matches: usize = file.lines.iter().map(|line| line.ranges.len()).sum();
+                        let replace = self.replace_shown.then(|| {
+                            div()
+                                .flex_none()
+                                .debug_selector(move || format!("search-replace-file:{ix}"))
+                                .child(
+                                    ToggleButton::new(("search-replace-file", ix), "Replace", &ui)
+                                        .on_click(cx.listener(move |panel, _, _, cx| {
+                                            panel.replace_in_file(layout, file_ix, cx)
+                                        })),
+                                )
+                        });
+                        let dismiss = div()
+                            .flex_none()
+                            .debug_selector(move || format!("search-dismiss:{ix}"))
+                            .child(
+                                ToggleButton::new(("search-dismiss", ix), "×", &ui).on_click(
+                                    cx.listener(move |panel, _, _, cx| {
+                                        panel.dismiss(layout, file_ix, cx)
+                                    }),
+                                ),
+                            );
                         row.text_color(ui.tab_active_text)
                             .child(
                                 div()
@@ -445,13 +775,15 @@ impl SearchPanel {
                                     .text_color(ui.muted_text)
                                     .child(matches.to_string()),
                             )
+                            .children(replace)
+                            .child(dismiss)
                     }
                     ResultRow::Line(file, line) => {
                         let line = &self.files[file].lines[line];
                         row.pl_5()
                             .hover(move |row| row.bg(ui.row_hover))
                             .on_click(cx.listener(move |panel, _, window, cx| {
-                                panel.open(generation, ix, window, cx)
+                                panel.click_line(layout, ix, window, cx)
                             }))
                             .child(
                                 div()
@@ -466,12 +798,6 @@ impl SearchPanel {
             })
             .collect()
     }
-}
-
-/// `n` and `noun`, plural unless `n` is 1.
-fn count(n: usize, noun: &str) -> String {
-    let s = if n == 1 { "" } else { "s" };
-    format!("{n} {noun}{s}")
 }
 
 /// A line's preview, its matches highlighted: shifted by `preview_start`,
@@ -949,10 +1275,56 @@ impl Render for SearchPanel {
         let list = uniform_list(
             "search-results",
             self.rows.len(),
-            cx.processor(|panel, range, _, cx| panel.render_rows(range, cx)),
+            cx.processor(|panel, range, window, cx| panel.render_rows(range, window, cx)),
         )
         .track_scroll(&self.scroll)
         .flex_1();
+        let results_context = if fe_gpui::vim_enabled(cx) {
+            "search_results vim"
+        } else {
+            RESULTS_KEY_CONTEXT
+        };
+        let results = div()
+            .key_context(results_context)
+            .track_focus(&self.results_focus)
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .child(list);
+        let replace_toggle = div()
+            .flex_none()
+            .pl_1()
+            .debug_selector(|| "search-replace-toggle".into())
+            .child(
+                ToggleButton::new(
+                    "search-replace-toggle",
+                    if self.replace_shown { "▾" } else { "▸" },
+                    &ui,
+                )
+                .on(self.replace_shown)
+                .on_click(cx.listener(|panel, _, window, cx| panel.toggle_replace(window, cx))),
+            );
+        let replace = self.replace_shown.then(|| {
+            div()
+                .flex_none()
+                .flex()
+                .items_center()
+                .pr_2()
+                .child(div().flex_1().min_w_0().child(self.replace.clone()))
+                .child(
+                    div()
+                        .flex_none()
+                        .debug_selector(|| "search-replace-all".into())
+                        .child(
+                            ToggleButton::new("search-replace-all", "Replace All", &ui).on_click(
+                                cx.listener(|panel, _, window, cx| {
+                                    panel.confirm_replace_all(window, cx)
+                                }),
+                            ),
+                        ),
+                )
+        });
         div()
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus)
@@ -973,7 +1345,14 @@ impl Render for SearchPanel {
                     .flex()
                     .items_center()
                     .pr_2()
-                    .child(div().flex_1().min_w_0().child(self.input.clone()))
+                    .child(replace_toggle)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .on_key_down(cx.listener(Self::on_query_key))
+                            .child(self.input.clone()),
+                    )
                     .child(
                         div()
                             .id("search-options")
@@ -984,6 +1363,7 @@ impl Render for SearchPanel {
                             .children(toggles),
                     ),
             )
+            .children(replace)
             .child(
                 div()
                     .flex_none()
@@ -1003,7 +1383,7 @@ impl Render for SearchPanel {
                         .child(status),
                 )
             })
-            .child(list)
+            .child(results)
     }
 }
 
@@ -1063,6 +1443,19 @@ impl SearchPanel {
         &self.exclude
     }
 
+    pub(crate) fn replace_input(&self) -> &Entity<TextInput> {
+        &self.replace
+    }
+
+    /// The selected row, in [`SearchPanel::shown_rows`].
+    pub(crate) fn selected(&self) -> Option<usize> {
+        self.selected
+    }
+
+    pub(crate) fn results_focused(&self, window: &Window) -> bool {
+        self.results_focus.is_focused(window)
+    }
+
     pub(crate) fn status_text(&self) -> Option<String> {
         self.status().map(|(text, _)| text.to_string())
     }
@@ -1097,6 +1490,9 @@ impl SearchPanel {
         self.toggles.bounds_for_item(ix)
     }
 }
+
+#[path = "search_replace.rs"]
+mod search_replace;
 
 #[cfg(test)]
 #[path = "search_panel_filter_tests.rs"]
