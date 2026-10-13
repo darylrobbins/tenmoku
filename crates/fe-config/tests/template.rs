@@ -45,4 +45,36 @@ fn template_is_all_defaults() {
             assert_eq!(found[line.len()..], value, "{key}'s default");
         }
     }
+
+    let terminal = defaults["terminal"].as_table().unwrap();
+    let mut keys: Vec<_> = terminal.keys().cloned().collect();
+    // `font_family` and `font_size` are unset by default, so aren't serialized.
+    keys.push("font_family".to_owned());
+    keys.push("font_size".to_owned());
+    keys.sort();
+    assert_eq!(
+        keys,
+        [
+            "font_family",
+            "font_size",
+            "scrollback",
+            "shell",
+            "shell_args"
+        ]
+    );
+    let section = USER_SETTINGS_TEMPLATE.split("[terminal]").nth(1).unwrap();
+    for key in keys {
+        let line = format!("# {key} = ");
+        let found = section
+            .lines()
+            .find(|l| l.starts_with(&line))
+            .unwrap_or_else(|| panic!("terminal.{key} is commented out in the template"));
+        if let Some(value) = terminal.get(&key) {
+            assert_eq!(
+                found[line.len()..],
+                value.to_string(),
+                "terminal.{key}'s default"
+            );
+        }
+    }
 }

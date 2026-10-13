@@ -9,6 +9,7 @@ use std::{
 };
 
 use fe_buffer::Buffer;
+use fe_config::TerminalSettings;
 use fe_editor::EditorModel;
 use fe_gpui::{EditorSettings, EditorTheme, EditorView, SettingsEvent, commands::RunCommand};
 use fe_ui::{ROW_HEIGHT, UiTheme};
@@ -1589,6 +1590,12 @@ impl Workbench {
         self.status_bar_visible
     }
 
+    /// Applies the `terminal` settings to the terminal panel.
+    pub fn set_terminal_settings(&mut self, settings: &TerminalSettings, cx: &mut Context<Self>) {
+        self.terminal
+            .update(cx, |terminal, cx| terminal.set_settings(settings, cx));
+    }
+
     /// Shows or hides the status bar, as `view.toggle_status_bar` does,
     /// though without saving it (see [`crate::save_toggles_to`]).
     pub fn set_status_bar_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
@@ -1745,6 +1752,9 @@ impl Workbench {
         let visible = event.settings.status_bar.visible;
         if visible != event.previous.status_bar.visible {
             self.set_status_bar_visible(visible, cx);
+        }
+        if event.settings.terminal != event.previous.terminal {
+            self.set_terminal_settings(&event.settings.terminal, cx);
         }
         for pane in self.panes.panes() {
             pane.update(cx, |pane, cx| pane.reload_settings(event, cx));

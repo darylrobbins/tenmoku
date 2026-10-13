@@ -10,13 +10,14 @@
 use std::{path::PathBuf, rc::Rc};
 
 use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry};
+use fe_config::TerminalSettings;
 use fe_gpui::{EditorTheme, commands::RunCommand};
 use fe_terminal_view::{TerminalOptions, TerminalStyle, TerminalView, TerminalViewEvent};
 use fe_ui::Icon;
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, Global,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString, Styled as _,
-    Subscription, Window, div,
+    Subscription, Window, div, px,
 };
 use kiln_shell::{DockItem, PanelId};
 
@@ -36,6 +37,10 @@ pub struct TerminalPanel {
     /// Where a session starts.
     cwd: PathBuf,
     style: TerminalStyle,
+    /// The theme `style` was last made from.
+    theme: EditorTheme,
+    /// The user's `terminal` settings.
+    settings: TerminalSettings,
     /// Focused while there's no session, which starts one as the panel
     /// draws.
     focus: FocusHandle,
@@ -57,7 +62,9 @@ impl TerminalPanel {
         Self {
             view: None,
             cwd,
-            style: style(theme),
+            style: style(theme, &TerminalSettings::default()),
+            theme: theme.clone(),
+            settings: TerminalSettings::default(),
             focus: cx.focus_handle(),
             #[cfg(test)]
             shell: None,
@@ -74,7 +81,19 @@ impl TerminalPanel {
 
     /// Restyles the session, and the ones to come, from `theme`.
     pub(crate) fn set_theme(&mut self, theme: &EditorTheme, cx: &mut Context<Self>) {
-        self.style = style(theme);
+        self.theme = theme.clone();
+        self.restyle(cx);
+    }
+
+    /// Applies the `terminal` settings: a new font restyles the running
+    /// session; a new shell, arguments or scrollback apply to the next one.
+    pub(crate) fn set_settings(&mut self, settings: &TerminalSettings, cx: &mut Context<Self>) {
+        self.settings = settings.clone();
+        self.restyle(cx);
+    }
+
+    fn restyle(&mut self, cx: &mut Context<Self>) {
+        self.style = style(&self.theme, &self.settings);
         if let Some(view) = &self.view {
             let style = self.style.clone();
             view.update(cx, |view, cx| view.set_style(style, cx));
@@ -100,6 +119,7 @@ impl TerminalPanel {
         }
         let options = TerminalOptions {
             shell: self.shell(),
+            scrollback: self.settings.scrollback,
             ..TerminalOptions::new(start_dir(&self.cwd))
         };
         #[cfg(test)]
@@ -131,12 +151,15 @@ impl TerminalPanel {
         cx.notify();
     }
 
-    /// The shell sessions run: the user's, outside tests.
+    /// The shell sessions run: `terminal.shell`, else the user's login
+    /// shell. Tests may override it ([`TerminalPanel::set_shell`]).
     fn shell(&self) -> Option<(String, Vec<String>)> {
         #[cfg(test)]
-        return self.shell.clone();
-        #[cfg(not(test))]
-        None
+        if let Some(shell) = &self.shell {
+            return Some(shell.clone());
+        }
+        let settings = &self.settings;
+        (!settings.shell.is_empty()).then(|| (settings.shell.clone(), settings.shell_args.clone()))
     }
 }
 
@@ -150,12 +173,17 @@ fn start_dir(cwd: &std::path::Path) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/"))
 }
 
-/// The terminal's style: the editor's font and colours, and ANSI colours
-/// that read on its background.
-fn style(theme: &EditorTheme) -> TerminalStyle {
+/// The terminal's style: the editor's colours and, unless `settings` set
+/// them, font and size, and ANSI colours that read on its background.
+fn style(theme: &EditorTheme, settings: &TerminalSettings) -> TerminalStyle {
     TerminalStyle {
-        font_family: theme.font_family.clone(),
-        font_size: theme.font_size,
+        font_family: settings.font_family.as_deref().map_or_else(
+            || theme.font_family.clone(),
+            |family| family.to_owned().into(),
+        ),
+        font_size: settings
+            .font_size
+            .map_or(theme.font_size, |size| px(size as f32)),
         line_height: TerminalStyle::LINE_HEIGHT,
         background: theme.background,
         foreground: theme.foreground,
@@ -283,6 +311,10 @@ impl TerminalPanel {
         self.shell = Some((shell.to_owned(), args));
     }
 }
+
+#[cfg(test)]
+#[path = "terminal_settings_tests.rs"]
+mod terminal_settings_tests;
 
 #[cfg(test)]
 #[path = "terminal_panel_tests.rs"]

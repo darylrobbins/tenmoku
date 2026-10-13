@@ -57,3 +57,17 @@
 # go in theme.toml beside this file; its appearance says whether it replaces
 # the dark or the light theme.
 # mode = "dark"
+
+[terminal]
+# The program the terminal runs. Empty runs your login shell. A project file
+# can't set it.
+# shell = ""
+# The shell's arguments. Ignored when shell is empty. A project file can't
+# set it.
+# shell_args = []
+# How many lines the terminal keeps above the screen.
+# scrollback = 10000
+# The terminal's font family. Unset uses the editor's.
+# font_family = "JetBrains Mono"
+# The terminal's font size, in points. Unset uses the editor's.
+# font_size = 13.0

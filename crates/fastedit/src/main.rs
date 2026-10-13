@@ -350,6 +350,7 @@ fn new_workbench(
         workbench.set_menu_bar(!capabilities.native_menus, cx);
         workbench.set_window_frame(!capabilities.unified_title_bar, cx);
         workbench.set_status_bar_visible(status_bar, cx);
+        workbench.set_terminal_settings(&settings.terminal, cx);
         if let Some(entry) = &entry {
             workbench.restore_layout(entry, window, cx);
         }

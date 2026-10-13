@@ -291,6 +291,51 @@
       },
       "type": "object"
     },
+    "TerminalSettings": {
+      "description": "Settings for the terminal panel. A project file may set all but the\nprogram it runs.",
+      "properties": {
+        "font_family": {
+          "description": "The terminal's font family. Unset uses the editor's.",
+          "minLength": 1,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "font_size": {
+          "description": "The terminal's font size, in points. Unset uses the editor's.",
+          "format": "double",
+          "maximum": 72.0,
+          "minimum": 6.0,
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "scrollback": {
+          "default": 10000,
+          "description": "How many lines the terminal keeps above the screen. Applies to\nterminals started after it changes.",
+          "format": "uint",
+          "maximum": 100000,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "shell": {
+          "default": "",
+          "description": "The program the terminal runs. Empty runs your login shell. A running\nterminal keeps its shell; the next one started uses the new one.",
+          "type": "string"
+        },
+        "shell_args": {
+          "default": [],
+          "description": "The shell's arguments. Ignored when `shell` is empty.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
     "ThemeModeSetting": {
       "description": "`theme.mode`.",
       "oneOf": [
@@ -422,6 +467,15 @@
         "visible": true
       },
       "description": "The status bar."
+    },
+    "terminal": {
+      "$ref": "#/$defs/TerminalSettings",
+      "default": {
+        "scrollback": 10000,
+        "shell": "",
+        "shell_args": []
+      },
+      "description": "The terminal panel."
     },
     "theme": {
       "$ref": "#/$defs/ThemeSettings",

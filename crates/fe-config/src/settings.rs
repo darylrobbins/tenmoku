@@ -41,6 +41,45 @@ pub struct Settings {
     /// The colour theme.
     #[serde(default)]
     pub theme: ThemeSettings,
+    /// The terminal panel.
+    #[serde(default)]
+    pub terminal: TerminalSettings,
+}
+
+/// Settings for the terminal panel. A project file may set all but the
+/// program it runs.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct TerminalSettings {
+    /// The program the terminal runs. Empty runs your login shell. A running
+    /// terminal keeps its shell; the next one started uses the new one.
+    pub shell: String,
+    /// The shell's arguments. Ignored when `shell` is empty.
+    pub shell_args: Vec<String>,
+    /// How many lines the terminal keeps above the screen. Applies to
+    /// terminals started after it changes.
+    #[schemars(range(min = 0, max = 100000))]
+    pub scrollback: usize,
+    /// The terminal's font family. Unset uses the editor's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(length(min = 1))]
+    pub font_family: Option<String>,
+    /// The terminal's font size, in points. Unset uses the editor's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(range(min = 6.0, max = 72.0))]
+    pub font_size: Option<f64>,
+}
+
+impl Default for TerminalSettings {
+    fn default() -> Self {
+        Self {
+            shell: String::new(),
+            shell_args: Vec::new(),
+            scrollback: 10_000,
+            font_family: None,
+            font_size: None,
+        }
+    }
 }
 
 /// Settings for the colour theme. The theme is the app's, not a window's,
@@ -436,6 +475,7 @@ fn options() -> SettingsOptions {
         .schema_for(schema_for)
         .project_filter(ProjectFilter::new("lsp", narrow_lsp))
         .project_filter(ProjectFilter::new("theme", drop_theme))
+        .project_filter(ProjectFilter::new("terminal", drop_terminal_shell))
 }
 
 /// [`SCHEMA`], with each server `table` names under `lsp.servers` listed
@@ -692,6 +732,35 @@ fn drop_theme(layer: &mut Layer) {
             .join(".");
         let warning =
             layer.diagnostic_at(Severity::Warning, Some(key), offset, PROJECT_THEME.into());
+        layer.diagnostics.push(warning);
+    }
+}
+
+/// The warning for each `terminal.shell` and `terminal.shell_args` a project
+/// file sets.
+pub const PROJECT_TERMINAL_SHELL: &str = "terminal.shell and terminal.shell_args in project files are ignored: a folder can't choose the program its terminal runs";
+
+/// Drops a project layer's `terminal.shell` and `terminal.shell_args`, with a
+/// [`PROJECT_TERMINAL_SHELL`] warning at each; its other `terminal` keys stay.
+fn drop_terminal_shell(layer: &mut Layer) {
+    let Some(toml::Value::Table(terminal)) = layer.table.get_mut("terminal") else {
+        return;
+    };
+    let dropped: Vec<&str> = ["shell", "shell_args"]
+        .into_iter()
+        .filter(|key| terminal.remove(*key).is_some())
+        .collect();
+    let document = DeTable::parse(&layer.source).ok();
+    for key in dropped {
+        let offset = document.as_ref().map_or(0, |document| {
+            key_offset(document.get_ref(), "terminal", &[key.to_owned()])
+        });
+        let warning = layer.diagnostic_at(
+            Severity::Warning,
+            Some(format!("terminal.{key}")),
+            offset,
+            PROJECT_TERMINAL_SHELL.into(),
+        );
         layer.diagnostics.push(warning);
     }
 }
