@@ -208,7 +208,8 @@ impl Repo {
 
     /// `(ahead, behind)` of HEAD's branch against its upstream, as of the
     /// last fetch. `None` when HEAD is detached or unborn, or the branch has
-    /// no upstream or its upstream is gone.
+    /// no upstream or its upstream is gone. Any other git failure, such as an
+    /// upstream the fetch refspec doesn't map, is an error.
     pub fn upstream_counts(&self) -> Result<Option<(u32, u32)>, GitError> {
         if !matches!(self.current_branch()?, Head::Branch(_)) {
             return Ok(None);
@@ -222,8 +223,7 @@ impl Repo {
             Err(GitError::Command { stderr, .. })
                 if stderr.contains("no upstream configured")
                     || stderr.contains("unknown revision")
-                    || stderr.contains("no such branch")
-                    || stderr.contains("upstream branch") =>
+                    || stderr.contains("no such branch") =>
             {
                 return Ok(None);
             }
