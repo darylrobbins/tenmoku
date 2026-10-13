@@ -223,4 +223,6 @@ impl CommandCatalog for Catalog {
 }
 
 #[cfg(test)]
+mod panel_width_tests;
+#[cfg(test)]
 mod tests;
