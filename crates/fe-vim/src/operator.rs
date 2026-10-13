@@ -559,12 +559,8 @@ fn operate_over(
     // repeats the operator: the args keep them. A search target is checked
     // as `/` checks it, and a mark's must be set.
     if let Target::Motion(motion) = args.target {
-        let checked = cmdline::resolve(target, motion).and_then(|(motion, keep)| match motion {
-            Motion::Search(search) | Motion::SearchWord(search) => {
-                cmdline::check_search(target, search, keep)
-            }
-            _ => Ok(()),
-        });
+        let checked = cmdline::resolve(target, motion)
+            .and_then(|(motion, keep)| cmdline::check_motion_search(target, motion, keep));
         if let Err(message) = checked.and_then(|()| marks::resolve(target, motion).map(drop)) {
             return cmdline::failed(target.state, message);
         }

@@ -36,9 +36,7 @@ pub(crate) fn move_command(
         Err(message) => return target.state.fail(message),
     };
     let searching = matches!(args.motion, Motion::Search(_) | Motion::SearchWord(_));
-    if let Motion::Search(search) | Motion::SearchWord(search) = args.motion
-        && let Err(message) = cmdline::check_search(target, search, keep)
-    {
+    if let Err(message) = cmdline::check_motion_search(target, args.motion, keep) {
         return target.state.fail(message);
     }
     match marks::resolve(target, args.motion) {

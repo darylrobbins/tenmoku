@@ -7,10 +7,10 @@ use fe_command::{Actor, CommandError, CommandTarget, ContextPredicate, Dispatche
 use fe_editor::{EditorModel, commands::EditorHost};
 
 use crate::{
-    CommandLineArgs, CountArgs, InsertArgs, MarkArgs, MoveArgs, OperateArgs, PlayArgs, PutArgs,
-    RecordArgs, Registers, ReplaceCharArgs, SelectArgs, SubmitArgs, SwapArgs, VimState, VisualArgs,
-    cmdline, edit, feature, history, insert, jump, line_motions, macros, marks, motion, operator,
-    repeat, replace, substitute, visual,
+    CancelArgs, CommandLineArgs, CountArgs, InsertArgs, MarkArgs, MoveArgs, OperateArgs, PlayArgs,
+    PutArgs, RecordArgs, Registers, ReplaceCharArgs, SelectArgs, SubmitArgs, SwapArgs, VimState,
+    VisualArgs, cmdline, edit, feature, history, insert, jump, line_motions, macros, marks, motion,
+    operator, repeat, replace, substitute, visual,
 };
 
 /// Catches the marks up with the text before a command that may change it,
@@ -498,14 +498,14 @@ pub fn registry() -> Registry<VimCommands> {
         .context(cmdline_mode.clone())
         .mutates_buffer(true);
     registry
-        .register(
+        .register_with_args(
             "vim.command_line_cancel",
             "Vim Cancel Command Line",
-            |target: &mut VimTarget<'_>, _: &Actor| cmdline::cancel(target.state),
+            |target: &mut VimTarget<'_>, _: &Actor, args: CancelArgs| cmdline::cancel(target, args),
         )
         .expect("vim command IDs are valid and distinct")
         .description(
-            "Ends the command line without running it, back in the mode it came from (a visual selection as it was), dropping a pending operator.",
+            "Ends the command line without running it, back in the mode it came from (a visual selection as it was), dropping a pending operator. Its `text`, if any, goes into the history, as nvim keeps a cancelled line.",
         )
         .context(cmdline_mode)
         .mutates_buffer(false);

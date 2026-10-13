@@ -180,3 +180,26 @@ fn question_mark_and_colon_lines_recall_their_histories(cx: &mut TestAppContext)
     cx.simulate_keystrokes("up enter");
     assert_eq!(caret(&editor, cx), (3, 0));
 }
+
+#[gpui::test]
+fn an_escaped_line_stays_in_its_history(cx: &mut TestAppContext) {
+    let (_dir, workbench, editor, cx) = opened(cx);
+    cx.simulate_keystrokes("/");
+    cx.simulate_input("bar");
+    cx.simulate_keystrokes("escape");
+    cx.simulate_keystrokes(":");
+    cx.simulate_input("3");
+    cx.simulate_keystrokes("escape");
+    draw(cx);
+    assert_eq!(line(&workbench, cx), None);
+
+    cx.simulate_keystrokes("/");
+    steps(&workbench, cx, '/', &[("up", "bar")]);
+    cx.simulate_keystrokes("escape :");
+    steps(&workbench, cx, ':', &[("up", "3")]);
+    cx.simulate_keystrokes("enter");
+    assert_eq!(caret(&editor, cx), (2, 0));
+    // A backspace on an empty line adds nothing.
+    cx.simulate_keystrokes("/ backspace / up");
+    assert_eq!(line(&workbench, cx), Some(('/', "bar".into())));
+}

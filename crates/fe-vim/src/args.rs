@@ -656,6 +656,14 @@ pub struct CommandLineArgs {
     pub operator: Option<Operator>,
 }
 
+/// `vim.command_line_cancel`'s args: the line's text as the host's line
+/// holds it, which nvim keeps in the history; none (or empty) adds nothing.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CancelArgs {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+}
+
 /// `vim.command_line_submit`'s args: the line's text, as the host's line
 /// holds it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]

@@ -90,10 +90,15 @@ pub struct Registers {
     /// the same text keeps it.
     clipboard_last: Option<Register>,
     /// The search lines submitted, oldest first, each with the delimiter
-    /// of the line it was typed on (`/` or `?`).
+    /// of the line it was typed on (`/` or `?`, [`NO_DELIMITER`] for a
+    /// pattern set by `:s`, `:g`, an ex address or `*`).
     search_history: VecDeque<(String, char)>,
     /// The ex lines submitted, oldest first, each with `:`.
     ex_history: VecDeque<(String, char)>,
+    /// The last pattern a running ex line set, for the search history.
+    pending_pattern: Option<String>,
+    /// How many ex lines are running (`:normal` nests them).
+    ex_depth: u32,
 }
 
 /// The clipboard's name in [`Registers::unnamed`].
@@ -279,10 +284,54 @@ impl Registers {
     /// with the same delimiter) is taken out, and past [`HISTORY_MAX`]
     /// entries the oldest goes. An empty line adds nothing.
     pub fn add_history(&mut self, kind: CommandLineKind, text: &str) {
+        self.add_entry(kind, text, delimiter(kind));
+    }
+
+    /// Notes `pattern`, which `:s`, `:g`, an ex address or `*` made the last
+    /// search, for the search history: nvim adds the last one such a line
+    /// set when the line ends, or at once outside an ex line
+    /// ([`Registers::enter_ex`]). It's recalled with no delimiter of its
+    /// own, so only the other delimiter is escaped.
+    pub(crate) fn note_pattern(&mut self, pattern: &str) {
+        if pattern.is_empty() {
+            return;
+        }
+        self.pending_pattern = Some(pattern.to_owned());
+        if self.ex_depth == 0 {
+            self.flush_pattern();
+        }
+    }
+
+    /// A search line submitted inside an ex line (`:normal`): the pattern it
+    /// sets replaces any the line set before.
+    pub(crate) fn drop_pending_pattern(&mut self) {
+        self.pending_pattern = None;
+    }
+
+    /// An ex line starts running: patterns it sets are noted until it ends.
+    pub(crate) fn enter_ex(&mut self) {
+        self.ex_depth += 1;
+    }
+
+    /// The ex line ends: the last pattern it set goes into the search
+    /// history.
+    pub(crate) fn leave_ex(&mut self) {
+        self.ex_depth = self.ex_depth.saturating_sub(1);
+        if self.ex_depth == 0 {
+            self.flush_pattern();
+        }
+    }
+
+    fn flush_pattern(&mut self) {
+        if let Some(pattern) = self.pending_pattern.take() {
+            self.add_entry(CommandLineKind::SearchForward, &pattern, NO_DELIMITER);
+        }
+    }
+
+    fn add_entry(&mut self, kind: CommandLineKind, text: &str, delimiter: char) {
         if text.is_empty() {
             return;
         }
-        let delimiter = delimiter(kind);
         let history = self.history_mut(kind);
         history.retain(|(entry, typed)| !(entry == text && *typed == delimiter));
         if history.len() >= HISTORY_MAX {
@@ -404,6 +453,9 @@ impl HistoryRecall {
     }
 }
 
+/// The delimiter of a search history entry no line was typed for.
+const NO_DELIMITER: char = '\0';
+
 /// The delimiter a line of `kind` is typed after.
 fn delimiter(kind: CommandLineKind) -> char {
     match kind {
@@ -416,23 +468,24 @@ fn delimiter(kind: CommandLineKind) -> char {
 /// A search line typed after `from`, as recalled after `to`, as nvim
 /// recalls it: an unescaped `from` becomes `to`, and an unescaped `to` is
 /// escaped. What a backslash escapes stays as it is, even `\from`, and a
-/// collection gets no exception (`a[/]b` becomes `a[?]b`).
+/// collection gets no exception (`a[/]b` becomes `a[?]b`). A `from` of
+/// [`NO_DELIMITER`] only escapes `to`.
 fn retarget(text: &str, from: char, to: char) -> Cow<'_, str> {
     if from == to || !text.contains([from, to]) {
         return Cow::Borrowed(text);
     }
     let mut out = String::with_capacity(text.len() + 1);
-    let mut chars = text.chars();
-    while let Some(ch) = chars.next() {
+    let mut previous = None;
+    for ch in text.chars() {
+        // As nvim does, only the character just before decides.
+        let escaped = previous == Some('\\');
         match ch {
-            '\\' => {
-                out.push(ch);
-                out.extend(chars.next());
-            }
+            _ if escaped => out.push(ch),
             _ if ch == from => out.push(to),
             _ if ch == to => out.extend(['\\', to]),
             _ => out.push(ch),
         }
+        previous = Some(ch);
     }
     Cow::Owned(out)
 }

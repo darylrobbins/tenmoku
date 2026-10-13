@@ -313,6 +313,7 @@ fn searched(target: &mut VimTarget<'_>, search: &LineSearch) -> Result<(String, 
         Ok(parsed) => {
             if keep {
                 registers.set_search(&pattern, forward);
+                super::note_address_pattern(registers, search);
             }
             target.state.highlight = Some(parsed.clone());
             Ok((pattern, parsed))
@@ -321,6 +322,7 @@ fn searched(target: &mut VimTarget<'_>, search: &LineSearch) -> Result<(String, 
             // Vim rejects it, but it's still the last search.
             if keep && matches!(error, PatternError::Invalid(_)) {
                 registers.set_search(&pattern, forward);
+                super::note_address_pattern(registers, search);
                 target.state.highlight = None;
             }
             Err(ExError::Pattern(error.to_string()))

@@ -14,7 +14,7 @@ use CommandLineKind::{Ex, SearchBackward, SearchForward};
 #[test]
 fn history_matches_neovim() {
     let recorded = load("history").unwrap();
-    assert!(recorded.len() >= 20, "history: {} cases", recorded.len());
+    assert!(recorded.len() >= 28, "history: {} cases", recorded.len());
     // What the card asks the corpus to cover, by case name.
     for name in [
         "up",
@@ -28,6 +28,14 @@ fn history_matches_neovim() {
         "ex_prefix",
         "offset_recalled",
         "question_recalls_an_offset",
+        "esc_cancelled_search_recalled",
+        "esc_cancelled_ex_recalled",
+        "ctrl_c_cancelled_search_recalled",
+        "star_pattern_recalled",
+        "hash_pattern_recalled",
+        "substitute_pattern_recalled",
+        "global_pattern_recalled",
+        "address_pattern_recalled",
     ] {
         assert!(
             recorded.iter().any(|case| case.name == name),
@@ -174,18 +182,34 @@ fn history_recall_goes_back_to_what_was_typed() {
 }
 
 #[test]
-fn submitted_lines_go_into_the_history_cancelled_ones_dont() {
+fn submitted_and_cancelled_lines_go_into_the_history() {
     let mut vim = HeadlessVim::new("x foo bar\ny", (0, 0));
     // A failing line is kept, as in nvim.
     vim.feed("/foo<CR>/zzz<CR>?bar<CR>:s/q/r/<CR>").unwrap();
+    // A line cancelled with <Esc> is kept, an empty one isn't; the pattern of
+    // `:s` is another entry.
     vim.feed("/cancelled<Esc>:cancelled<Esc>/<CR>:<CR>")
         .unwrap();
     assert_eq!(
         history(vim.registers(), SearchForward),
-        ["foo", "zzz", "bar"]
+        ["foo", "zzz", "bar", "q", "cancelled"]
     );
-    assert_eq!(history(vim.registers(), Ex), ["s/q/r/"]);
-    // Each line starts at the end of its history.
+    assert_eq!(history(vim.registers(), Ex), ["s/q/r/", "cancelled"]);
+    // Each line starts at the end of its history; a recalled line cancelled
+    // moves to the end.
     vim.feed("/<Up><Up><Esc>/<Up><CR>").unwrap();
-    assert_eq!(vim.registers().last_search(), Some(("bar", true)));
+    assert_eq!(vim.registers().last_search(), Some(("q", true)));
+}
+
+#[test]
+fn star_global_and_address_patterns_go_into_the_search_history() {
+    let mut vim = HeadlessVim::new("x foo\nbar foo\nfoo bar", (0, 0));
+    vim.feed("w*").unwrap();
+    vim.feed(":g/bar/s/o/0/<CR>:/zzz/d<CR>").unwrap();
+    // The last pattern a line set, once, whatever it ran.
+    assert_eq!(
+        history(vim.registers(), SearchForward),
+        ["\\<foo\\>", "o", "zzz"]
+    );
+    assert_eq!(history(vim.registers(), Ex), ["g/bar/s/o/0/", "/zzz/d"]);
 }

@@ -908,6 +908,964 @@
           }
         }
       }
+    },
+    {
+      "name": "esc_cancelled_search_recalled",
+      "buffer": "x foo bar foo bar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>/bar<Esc>0/<Up><CR>",
+      "expect": {
+        "buffer": "x foo bar foo bar",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "bar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "esc_cancelled_search_recalled_on_question",
+      "buffer": "x foo bar foo bar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>/bar<Esc>0?<Up><CR>",
+      "expect": {
+        "buffer": "x foo bar foo bar",
+        "cursor": [
+          0,
+          14
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "bar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "esc_cancelled_ex_recalled",
+      "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":2<CR>:3d<Esc>:<Up><CR>",
+      "expect": {
+        "buffer": "x foo\nbar foo\na/b?c",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo bar\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "foo bar\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "esc_cancelled_ex_prefix",
+      "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":2<CR>:1d<CR>:3<Esc>:<Up><Up><CR>",
+      "expect": {
+        "buffer": "foo bar\na/b?c",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bar foo\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "bar foo\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "x foo\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_c_cancelled_search_recalled",
+      "buffer": "x foo bar foo bar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>/bar<C-c>0/<Up><CR>",
+      "expect": {
+        "buffer": "x foo bar foo bar",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "bar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_c_cancelled_ex_recalled",
+      "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":3d<C-c>:<Up><CR>",
+      "expect": {
+        "buffer": "x foo\nbar foo\na/b?c",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo bar\n",
+            "linewise": true
+          },
+          "1": {
+            "text": "foo bar\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "empty_cancelled_lines_add_nothing",
+      "buffer": "x foo bar foo bar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>/<Esc>:<Esc>0/<Up><CR>",
+      "expect": {
+        "buffer": "x foo bar foo bar",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "backspaced_empty_line_adds_nothing",
+      "buffer": "x foo bar foo bar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>/a<BS><BS>0/<Up><CR>",
+      "expect": {
+        "buffer": "x foo bar foo bar",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "star_pattern_recalled",
+      "buffer": "x foo bar foo bar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "*0/<Up><CR>",
+      "expect": {
+        "buffer": "x foo bar foo bar",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<x\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "hash_pattern_recalled",
+      "buffer": "x foo bar foo bar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "$#0/<Up><CR>",
+      "expect": {
+        "buffer": "x foo bar foo bar",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<bar\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "star_pattern_recalled_on_question",
+      "buffer": "x foo bar foo bar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/bar<CR>0*0?<Up><Up><CR>",
+      "expect": {
+        "buffer": "x foo bar foo bar",
+        "cursor": [
+          0,
+          14
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "bar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "star_after_search_moves_to_newest",
+      "buffer": "x foo bar foo bar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "*/bar<CR>0*0/<Up><Up><CR>",
+      "expect": {
+        "buffer": "x foo bar foo bar",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "bar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "operator_star_pattern_recalled",
+      "buffer": "x foo bar foo bar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "d*0/<Up><CR>",
+      "expect": {
+        "buffer": "x foo bar foo bar",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "\\<x\\>",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "substitute_pattern_recalled",
+      "buffer": "x foo bar foo bar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/bar/Z/<CR>0/<Up><CR>",
+      "expect": {
+        "buffer": "x foo Z foo bar",
+        "cursor": [
+          0,
+          12
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "bar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "substitute_pattern_with_other_delimiter",
+      "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s#a/b?c#X#<CR>/<Up><CR>",
+      "expect": {
+        "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a\\/b?c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "substitute_pattern_recalled_on_question",
+      "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s#a/b?c#X#<CR>?<Up><CR>",
+      "expect": {
+        "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a/b?c",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "substitute_failing_pattern_recalled",
+      "buffer": "x foo bar foo bar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s/zzz/Z/<CR>/<Up><CR>",
+      "expect": {
+        "buffer": "x foo bar foo bar",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "zzz",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "substitute_empty_pattern_adds_nothing",
+      "buffer": "x foo bar foo bar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>/bar<CR>:s//Z/<CR>0/<Up><CR>",
+      "expect": {
+        "buffer": "x foo Z foo bar",
+        "cursor": [
+          0,
+          12
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "bar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "substitute_pattern_moves_to_newest",
+      "buffer": "x foo bar foo bar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>/bar<CR>:s/foo/Z/<CR>0/<Up><CR>",
+      "expect": {
+        "buffer": "x Z bar foo bar",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "substitute_double_backslash_before_delimiter",
+      "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s#a\\\\/b#X#<CR>/<Up><CR>",
+      "expect": {
+        "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a\\\\",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "substitute_double_backslash_before_question",
+      "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":s#a\\\\?b#X#<CR>?<Up><CR>",
+      "expect": {
+        "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "a\\\\",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_pattern_recalled",
+      "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/foo/s/bar/Z/<CR>0/<Up><CR>",
+      "expect": {
+        "buffer": "x foo\nZ foo\nfoo Z\na/b?c",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "bar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_pattern_recalled_alone",
+      "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/foo/d<CR>/<Up><CR>",
+      "expect": {
+        "buffer": "a/b?c",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo bar\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "foo",
+            "linewise": false
+          },
+          "1": {
+            "text": "foo bar\n",
+            "linewise": true
+          },
+          "2": {
+            "text": "bar foo\n",
+            "linewise": true
+          },
+          "3": {
+            "text": "x foo\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "vglobal_pattern_recalled",
+      "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":v/zzz/s/bar/Z/<CR>0/<Up><CR>",
+      "expect": {
+        "buffer": "x foo\nZ foo\nfoo Z\na/b?c",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "bar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_failing_pattern_recalled",
+      "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/zzz/d<CR>/<Up><CR>",
+      "expect": {
+        "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "zzz",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_empty_pattern_adds_nothing",
+      "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>/bar<CR>:g//s/bar/Z/<CR>0/<Up><CR>",
+      "expect": {
+        "buffer": "x foo\nZ foo\nfoo Z\na/b?c",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "bar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "address_pattern_recalled",
+      "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":/bar/d<CR>0/<Up><CR>",
+      "expect": {
+        "buffer": "x foo\nfoo bar\na/b?c",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "bar foo\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "bar",
+            "linewise": false
+          },
+          "1": {
+            "text": "bar foo\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "address_pattern_recalled_on_question",
+      "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":/a\\/b/d<CR>?<Up><CR>",
+      "expect": {
+        "buffer": "x foo\nbar foo\nfoo bar",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a/b?c\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "a\\/b",
+            "linewise": false
+          },
+          "1": {
+            "text": "a/b?c\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "backward_address_pattern_recalled",
+      "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "G:?foo?d<CR>0/<Up><CR>",
+      "expect": {
+        "buffer": "x foo\nbar foo\na/b?c",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo bar\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "foo",
+            "linewise": false
+          },
+          "1": {
+            "text": "foo bar\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "backward_address_escaped_question_recalled",
+      "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "G:?a/b\\?c?d<CR>?<Up><CR>",
+      "expect": {
+        "buffer": "x foo\nbar foo\nfoo bar",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a/b?c\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "a/b?c",
+            "linewise": false
+          },
+          "1": {
+            "text": "a/b?c\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "address_failing_pattern_recalled",
+      "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":/zzz/d<CR>/<Up><CR>",
+      "expect": {
+        "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "zzz",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "address_pattern_alone_recalled",
+      "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":/bar<CR>0/<Up><CR>",
+      "expect": {
+        "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+        "cursor": [
+          2,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "bar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "address_repeat_adds_nothing",
+      "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>/bar<CR>:/foo/d<CR>:/<CR>0/<Up><CR>",
+      "expect": {
+        "buffer": "x foo\nbar foo\na/b?c",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "foo bar\n",
+            "linewise": true
+          },
+          "/": {
+            "text": "foo",
+            "linewise": false
+          },
+          "1": {
+            "text": "foo bar\n",
+            "linewise": true
+          }
+        }
+      }
+    },
+    {
+      "name": "global_runs_substitute_last_pattern_wins",
+      "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/foo/s/bar/Z/<CR>/<Up><Up><CR>",
+      "expect": {
+        "buffer": "x foo\nZ foo\nfoo Z\na/b?c",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "bar",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "typed_and_set_patterns_are_separate_entries",
+      "buffer": "x foo bar foo bar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "/foo<CR>:s/foo/Z/<CR>0/<Up><Up><CR>",
+      "expect": {
+        "buffer": "x Z bar foo bar",
+        "cursor": [
+          0,
+          8
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "foo",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_search_macro_replaces_the_pattern",
+      "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "qa/bar<CR>q:g/foo/normal @a<CR>0/<Up><CR>",
+      "expect": {
+        "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+        "cursor": [
+          2,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "bar",
+            "linewise": false
+          },
+          "a": {
+            "text": "/bar\r",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "address_normal_search_macro_replaces_the_pattern",
+      "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "qa/bar<CR>q:/foo/normal @a<CR>0/<Up><CR>",
+      "expect": {
+        "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+        "cursor": [
+          2,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "bar",
+            "linewise": false
+          },
+          "a": {
+            "text": "/bar\r",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "ctrl_c_in_a_macro_cancels_the_line",
+      "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "qa/bar<C-c>lq@a:<Esc>0/<Up><CR>",
+      "expect": {
+        "buffer": "x foo\nbar foo\nfoo bar\na/b?c",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "bar",
+            "linewise": false
+          },
+          "a": {
+            "text": "/bar\u0003l",
+            "linewise": false
+          }
+        }
+      }
     }
   ]
 }

@@ -10,8 +10,8 @@ use fe_editor::{
 };
 
 use crate::{
-    HistoryRecall, KeyError, Mode, Registers, Splits, Step, SubmitArgs, VimCommands, VimKey,
-    VimState, VimTarget, context, jump::JumpOverlay, parse_keys, registry,
+    CancelArgs, HistoryRecall, KeyError, Mode, Registers, Splits, Step, SubmitArgs, VimCommands,
+    VimKey, VimState, VimTarget, context, jump::JumpOverlay, parse_keys, registry,
 };
 
 /// An [`EditorModel`] with a [`HeadlessHost`], a [`VimState`], registers
@@ -225,7 +225,14 @@ impl HeadlessVim {
                 }
                 return Ok(());
             }
-            VimKey::Esc if !replayed => Invocation::of("vim.command_line_cancel"),
+            VimKey::Ctrl('c') | VimKey::Esc if !replayed || key == VimKey::Ctrl('c') => {
+                Invocation::of("vim.command_line_cancel").map(|invocation| {
+                    let text = Some(std::mem::take(&mut self.line));
+                    let args =
+                        serde_json::to_value(CancelArgs { text }).expect("vim args serialize");
+                    invocation.args(args)
+                })
+            }
             VimKey::Backspace => Invocation::of("vim.command_line_cancel"),
             VimKey::Enter | VimKey::Ctrl('j') | VimKey::Esc => {
                 Invocation::of("vim.command_line_submit").map(|invocation| {

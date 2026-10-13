@@ -5,8 +5,9 @@
 # (an entry's delimiters swapped), a repeated line moved to the newest, `:`
 # history apart from the search history, offsets recalled with their
 # pattern, and recalls under an operator, in visual mode and after a visual
-# `:`'s prefill. No case cancels a line and then recalls: nvim keeps a
-# cancelled line, fe-vim doesn't. A failing search is a case's last key.
+# `:`'s prefill, a line cancelled with `<Esc>` or `<C-c>` (kept; an empty one
+# isn't), and the patterns `*`, `#`, `:s`, `:g` and an ex address add to the
+# search history. A failing search is a case's last key.
 # Hand-written: name, buffer (rows joined with \n, no trailing newline),
 # cursor = [row, byte column] and keys in vim notation. What nvim does with
 # each is recorded in history.expected.json by the ignored
@@ -245,3 +246,231 @@ name = "search_empty_line_left_out"
 buffer = "x foo fab far bar foo fab far bar"
 cursor = [0, 0]
 keys = "/far<CR>/foo<CR>/<CR>0/<Up><Up><CR>"
+
+[[case]]
+name = "esc_cancelled_search_recalled"
+buffer = "x foo bar foo bar"
+cursor = [0, 0]
+keys = "/foo<CR>/bar<Esc>0/<Up><CR>"
+
+[[case]]
+name = "esc_cancelled_search_recalled_on_question"
+buffer = "x foo bar foo bar"
+cursor = [0, 0]
+keys = "/foo<CR>/bar<Esc>0?<Up><CR>"
+
+[[case]]
+name = "esc_cancelled_ex_recalled"
+buffer = "x foo\nbar foo\nfoo bar\na/b?c"
+cursor = [0, 0]
+keys = ":2<CR>:3d<Esc>:<Up><CR>"
+
+[[case]]
+name = "esc_cancelled_ex_prefix"
+buffer = "x foo\nbar foo\nfoo bar\na/b?c"
+cursor = [0, 0]
+keys = ":2<CR>:1d<CR>:3<Esc>:<Up><Up><CR>"
+
+[[case]]
+name = "ctrl_c_cancelled_search_recalled"
+buffer = "x foo bar foo bar"
+cursor = [0, 0]
+keys = "/foo<CR>/bar<C-c>0/<Up><CR>"
+
+[[case]]
+name = "ctrl_c_cancelled_ex_recalled"
+buffer = "x foo\nbar foo\nfoo bar\na/b?c"
+cursor = [0, 0]
+keys = ":3d<C-c>:<Up><CR>"
+
+[[case]]
+name = "empty_cancelled_lines_add_nothing"
+buffer = "x foo bar foo bar"
+cursor = [0, 0]
+keys = "/foo<CR>/<Esc>:<Esc>0/<Up><CR>"
+
+[[case]]
+name = "backspaced_empty_line_adds_nothing"
+buffer = "x foo bar foo bar"
+cursor = [0, 0]
+keys = "/foo<CR>/a<BS><BS>0/<Up><CR>"
+
+[[case]]
+name = "star_pattern_recalled"
+buffer = "x foo bar foo bar"
+cursor = [0, 0]
+keys = "*0/<Up><CR>"
+
+[[case]]
+name = "hash_pattern_recalled"
+buffer = "x foo bar foo bar"
+cursor = [0, 0]
+keys = "$#0/<Up><CR>"
+
+[[case]]
+name = "star_pattern_recalled_on_question"
+buffer = "x foo bar foo bar"
+cursor = [0, 0]
+keys = "/bar<CR>0*0?<Up><Up><CR>"
+
+[[case]]
+name = "star_after_search_moves_to_newest"
+buffer = "x foo bar foo bar"
+cursor = [0, 0]
+keys = "*/bar<CR>0*0/<Up><Up><CR>"
+
+[[case]]
+name = "operator_star_pattern_recalled"
+buffer = "x foo bar foo bar"
+cursor = [0, 0]
+keys = "d*0/<Up><CR>"
+
+[[case]]
+name = "substitute_pattern_recalled"
+buffer = "x foo bar foo bar"
+cursor = [0, 0]
+keys = ":s/bar/Z/<CR>0/<Up><CR>"
+
+[[case]]
+name = "substitute_pattern_with_other_delimiter"
+buffer = "x foo\nbar foo\nfoo bar\na/b?c"
+cursor = [0, 0]
+keys = ":s#a/b?c#X#<CR>/<Up><CR>"
+
+[[case]]
+name = "substitute_pattern_recalled_on_question"
+buffer = "x foo\nbar foo\nfoo bar\na/b?c"
+cursor = [0, 0]
+keys = ":s#a/b?c#X#<CR>?<Up><CR>"
+
+[[case]]
+name = "substitute_failing_pattern_recalled"
+buffer = "x foo bar foo bar"
+cursor = [0, 0]
+keys = ":s/zzz/Z/<CR>/<Up><CR>"
+
+[[case]]
+name = "substitute_empty_pattern_adds_nothing"
+buffer = "x foo bar foo bar"
+cursor = [0, 0]
+keys = "/foo<CR>/bar<CR>:s//Z/<CR>0/<Up><CR>"
+
+[[case]]
+name = "substitute_pattern_moves_to_newest"
+buffer = "x foo bar foo bar"
+cursor = [0, 0]
+keys = "/foo<CR>/bar<CR>:s/foo/Z/<CR>0/<Up><CR>"
+
+[[case]]
+name = "substitute_double_backslash_before_delimiter"
+buffer = "x foo\nbar foo\nfoo bar\na/b?c"
+cursor = [0, 0]
+keys = ":s#a\\\\/b#X#<CR>/<Up><CR>"
+
+[[case]]
+name = "substitute_double_backslash_before_question"
+buffer = "x foo\nbar foo\nfoo bar\na/b?c"
+cursor = [0, 0]
+keys = ":s#a\\\\?b#X#<CR>?<Up><CR>"
+
+[[case]]
+name = "global_pattern_recalled"
+buffer = "x foo\nbar foo\nfoo bar\na/b?c"
+cursor = [0, 0]
+keys = ":g/foo/s/bar/Z/<CR>0/<Up><CR>"
+
+[[case]]
+name = "global_pattern_recalled_alone"
+buffer = "x foo\nbar foo\nfoo bar\na/b?c"
+cursor = [0, 0]
+keys = ":g/foo/d<CR>/<Up><CR>"
+
+[[case]]
+name = "vglobal_pattern_recalled"
+buffer = "x foo\nbar foo\nfoo bar\na/b?c"
+cursor = [0, 0]
+keys = ":v/zzz/s/bar/Z/<CR>0/<Up><CR>"
+
+[[case]]
+name = "global_failing_pattern_recalled"
+buffer = "x foo\nbar foo\nfoo bar\na/b?c"
+cursor = [0, 0]
+keys = ":g/zzz/d<CR>/<Up><CR>"
+
+[[case]]
+name = "global_empty_pattern_adds_nothing"
+buffer = "x foo\nbar foo\nfoo bar\na/b?c"
+cursor = [0, 0]
+keys = "/foo<CR>/bar<CR>:g//s/bar/Z/<CR>0/<Up><CR>"
+
+[[case]]
+name = "address_pattern_recalled"
+buffer = "x foo\nbar foo\nfoo bar\na/b?c"
+cursor = [0, 0]
+keys = ":/bar/d<CR>0/<Up><CR>"
+
+[[case]]
+name = "address_pattern_recalled_on_question"
+buffer = "x foo\nbar foo\nfoo bar\na/b?c"
+cursor = [0, 0]
+keys = ":/a\\/b/d<CR>?<Up><CR>"
+
+[[case]]
+name = "backward_address_pattern_recalled"
+buffer = "x foo\nbar foo\nfoo bar\na/b?c"
+cursor = [0, 0]
+keys = "G:?foo?d<CR>0/<Up><CR>"
+
+[[case]]
+name = "backward_address_escaped_question_recalled"
+buffer = "x foo\nbar foo\nfoo bar\na/b?c"
+cursor = [0, 0]
+keys = "G:?a/b\\?c?d<CR>?<Up><CR>"
+
+[[case]]
+name = "address_failing_pattern_recalled"
+buffer = "x foo\nbar foo\nfoo bar\na/b?c"
+cursor = [0, 0]
+keys = ":/zzz/d<CR>/<Up><CR>"
+
+[[case]]
+name = "address_pattern_alone_recalled"
+buffer = "x foo\nbar foo\nfoo bar\na/b?c"
+cursor = [0, 0]
+keys = ":/bar<CR>0/<Up><CR>"
+
+[[case]]
+name = "address_repeat_adds_nothing"
+buffer = "x foo\nbar foo\nfoo bar\na/b?c"
+cursor = [0, 0]
+keys = "/foo<CR>/bar<CR>:/foo/d<CR>:/<CR>0/<Up><CR>"
+
+[[case]]
+name = "global_runs_substitute_last_pattern_wins"
+buffer = "x foo\nbar foo\nfoo bar\na/b?c"
+cursor = [0, 0]
+keys = ":g/foo/s/bar/Z/<CR>/<Up><Up><CR>"
+
+[[case]]
+name = "typed_and_set_patterns_are_separate_entries"
+buffer = "x foo bar foo bar"
+cursor = [0, 0]
+keys = "/foo<CR>:s/foo/Z/<CR>0/<Up><Up><CR>"
+
+[[case]]
+name = "global_normal_search_macro_replaces_the_pattern"
+buffer = "x foo\nbar foo\nfoo bar\na/b?c"
+cursor = [0, 0]
+keys = "qa/bar<CR>q:g/foo/normal @a<CR>0/<Up><CR>"
+
+[[case]]
+name = "address_normal_search_macro_replaces_the_pattern"
+buffer = "x foo\nbar foo\nfoo bar\na/b?c"
+cursor = [0, 0]
+keys = "qa/bar<CR>q:/foo/normal @a<CR>0/<Up><CR>"
+
+[[case]]
+name = "ctrl_c_in_a_macro_cancels_the_line"
+buffer = "x foo\nbar foo\nfoo bar\na/b?c"
+cursor = [0, 0]
+keys = "qa/bar<C-c>lq@a:<Esc>0/<Up><CR>"

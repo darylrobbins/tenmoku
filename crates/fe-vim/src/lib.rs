@@ -573,10 +573,8 @@
 //!   in memory for the life of the process.
 //! - `;` chained searches (`/foo/;/bar`) and 'incsearch' aren't
 //!   supported: a line chaining searches fails, changing nothing.
-//! - The command-line histories ([`Registers::recall`]) hold only lines
-//!   submitted with `<CR>`: nvim also keeps a line cancelled with `<Esc>`,
-//!   and adds the pattern of `*`, `#`, `:s`, `:g` and an ex address to the
-//!   search history. They aren't kept across runs (nvim's ShaDa).
+//! - The command-line histories ([`Registers::recall`]) aren't kept across
+//!   runs (nvim's ShaDa).
 //! - `'<` and `'>` keep a byte column on a row anchored at its start, as
 //!   nvim's marks do: rows put in or taken out above move them, edits
 //!   within their row don't. nvim also moves marks on rows that a change
@@ -757,10 +755,10 @@ mod text_object;
 mod visual;
 
 pub use args::{
-    CommandLineArgs, CommandLineKind, CountArgs, InsertArgs, InsertAt, JumpChars, JumpMotion,
-    MarkArgs, MarkMotion, Motion, MoveArgs, OperateArgs, Operator, PlayArgs, PutArgs, RangeClass,
-    RecordArgs, ReplaceCharArgs, Search, SearchOffset, SearchPattern, SelectArgs, SubmitArgs,
-    SwapArgs, Target, TextObject, VisualArgs, VisualKind,
+    CancelArgs, CommandLineArgs, CommandLineKind, CountArgs, InsertArgs, InsertAt, JumpChars,
+    JumpMotion, MarkArgs, MarkMotion, Motion, MoveArgs, OperateArgs, Operator, PlayArgs, PutArgs,
+    RangeClass, RecordArgs, ReplaceCharArgs, Search, SearchOffset, SearchPattern, SelectArgs,
+    SubmitArgs, SwapArgs, Target, TextObject, VisualArgs, VisualKind,
 };
 pub use commands::{VimCommands, VimTarget, registry};
 pub use ex::{Address, Base, Ex, ExCommand, ExError, HostCommand, LineSearch, Part};

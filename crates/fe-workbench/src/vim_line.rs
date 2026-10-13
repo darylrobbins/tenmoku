@@ -243,6 +243,11 @@ impl StatusBar {
             Some(text) => Invocation::of("vim.command_line_submit")
                 .expect("a valid command ID")
                 .args(Value::from_iter([("text", text)])),
+            // Esc keeps the cancelled text in the history, as nvim does.
+            None if key == VimKey::Esc => cancel().args(Value::from_iter([(
+                "text",
+                typed.clone().unwrap_or_default(),
+            )])),
             None => cancel(),
         };
         run_in(&editor, invocation, window, cx);

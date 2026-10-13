@@ -380,6 +380,14 @@ pub(crate) fn run(
     {
         let forward = target.registers.last_search().is_none_or(|(_, f)| f);
         target.registers.set_search(&pattern, forward);
+        // An empty pattern is the last search's already.
+        if sub
+            .with
+            .as_ref()
+            .is_some_and(|(typed, _)| !typed.is_empty())
+        {
+            target.registers.note_pattern(&pattern);
+        }
         target.state.highlight = Pattern::parse(&pattern).ok();
     }
     let parsed = parsed.map_err(|error| ExError::Pattern(error.to_string()))?;

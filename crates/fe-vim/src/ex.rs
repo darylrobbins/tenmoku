@@ -1123,6 +1123,14 @@ fn offset(line: i64, by: i64) -> Result<i64, ExError> {
     }
 }
 
+/// An address's own pattern, now the last search, goes into the search
+/// history; the repeats of the last search and `\&` don't.
+pub(crate) fn note_address_pattern(registers: &mut Registers, search: &LineSearch) {
+    if let LineSearch::Pattern { pattern, .. } = search {
+        registers.note_pattern(pattern);
+    }
+}
+
 /// The next line after `from` (or the last before it) that `search`
 /// matches, wrapping round the text, `from` itself last.
 fn search_line(target: &mut VimTarget<'_>, search: &LineSearch, from: i64) -> Result<i64, ExError> {
@@ -1156,6 +1164,7 @@ fn search_line(target: &mut VimTarget<'_>, search: &LineSearch, from: i64) -> Re
         Err(error) => {
             if keep && matches!(error, PatternError::Invalid(_)) {
                 target.registers.set_search(&pattern, forward);
+                note_address_pattern(target.registers, search);
                 if drops_offset {
                     target.registers.set_search_offset(SearchOffset::None);
                 }
@@ -1166,6 +1175,7 @@ fn search_line(target: &mut VimTarget<'_>, search: &LineSearch, from: i64) -> Re
     };
     if keep {
         target.registers.set_search(&pattern, forward);
+        note_address_pattern(target.registers, search);
         if drops_offset {
             target.registers.set_search_offset(SearchOffset::None);
         }

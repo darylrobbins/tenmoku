@@ -16,8 +16,8 @@ use fe_buffer::TransactionId;
 use fe_command::{CommandError, Dispatched, Effect, Invocation, Source};
 
 use crate::{
-    CommandLineArgs, CommandLineKind, Mode, Motion, MoveArgs, OperateArgs, Pending, SearchOffset,
-    Step, SubmitArgs, Target, VimKey, VimState, VimTarget,
+    CancelArgs, CommandLineArgs, CommandLineKind, Mode, Motion, MoveArgs, OperateArgs, Pending,
+    SearchOffset, Step, SubmitArgs, Target, VimKey, VimState, VimTarget,
     args::{Search, SearchPattern},
     ex, insert, motion, operator,
     search::{self, Pattern},
@@ -85,8 +85,11 @@ fn close(state: &mut VimState) -> Result<CommandLine, CommandError> {
 
 /// `vim.command_line_cancel`: back to the mode the line came from, a visual
 /// selection as it was, dropping what it carried.
-pub(crate) fn cancel(state: &mut VimState) -> Handled {
-    close(state)?;
+pub(crate) fn cancel(target: &mut VimTarget<'_>, args: CancelArgs) -> Handled {
+    let line = close(target.state)?;
+    if let Some(text) = args.text {
+        target.registers.add_history(line.args.kind, &text);
+    }
     Ok(Dispatched::new(Effect::Changed))
 }
 
@@ -102,9 +105,15 @@ pub(crate) fn submit(
     target.registers.add_history(line.args.kind, &args.text);
     match line.args.kind {
         CommandLineKind::SearchForward | CommandLineKind::SearchBackward => {
+            target.registers.drop_pending_pattern();
             search(target, actor, line.args, &args.text)
         }
-        CommandLineKind::Ex => ex::run(target, actor, &args.text),
+        CommandLineKind::Ex => {
+            target.registers.enter_ex();
+            let handled = ex::run(target, actor, &args.text);
+            target.registers.leave_ex();
+            handled
+        }
     }
 }
 
@@ -206,6 +215,24 @@ pub(crate) fn check_search(
         Ok(Some(_)) => Ok(()),
         Err(interrupted) => Err(interrupted.to_string()),
         Ok(None) => Err(format!("E486: Pattern not found: {pattern}")),
+    }
+}
+
+/// [`check_search`] for a search `motion`, and nothing for any other. The
+/// pattern of `*` and `#` goes into the search history.
+pub(crate) fn check_motion_search(
+    target: &mut VimTarget<'_>,
+    motion: Motion,
+    keep_direction: bool,
+) -> Result<(), String> {
+    match motion {
+        Motion::Search(search) => check_search(target, search, keep_direction),
+        Motion::SearchWord(search) => {
+            let checked = check_search(target, search, keep_direction);
+            target.registers.note_pattern(search.pattern.as_str());
+            checked
+        }
+        _ => Ok(()),
     }
 }
 
