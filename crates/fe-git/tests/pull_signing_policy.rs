@@ -216,3 +216,67 @@ fn merge_options_parse_like_git() {
         assert_eq!(rev(&r.a, "HEAD^2"), rev(&r.b, "HEAD"), "{options}");
     }
 }
+
+/// Option arguments and everything after `--` are not options to git's
+/// `merge`, so they can't turn signing off.
+#[test]
+fn merge_option_values_and_dashdash_like_git() {
+    if !isolated("merge_option_values_and_dashdash_like_git") {
+        return;
+    }
+    let r = remotes();
+    let a = open(&r.a);
+    let mut n = 0;
+
+    for options in [
+        "-S -m --no-gpg",
+        "-S -- --no-gpg",
+        "-S --message --no-gpg-sign",
+        "-S -nm --no-gpg-sign",
+    ] {
+        n += 1;
+        diverge(&r, n);
+        set(&r, "false", options);
+        let head = rev(&r.a, "HEAD");
+        assert_refused(&r, a.pull(PullMode::Merge), &head, options);
+    }
+
+    // `-mS` is the message `S`.
+    for (gpg_sign, options) in [("false", "-mS"), ("true", "-m msg --no-gpg-sign")] {
+        n += 1;
+        diverge(&r, n);
+        set(&r, gpg_sign, options);
+        a.pull(PullMode::Merge).expect(options);
+        assert_eq!(rev(&r.a, "HEAD^2"), rev(&r.b, "HEAD"), "{options}");
+    }
+}
+
+/// Git's tokenizer splits on space, tab, LF and CR only, so other Unicode
+/// whitespace stays inside a word, a signing key for instance.
+#[test]
+fn merge_options_split_on_git_whitespace() {
+    if !isolated("merge_options_split_on_git_whitespace") {
+        return;
+    }
+    let r = remotes();
+    let a = open(&r.a);
+    let mut n = 0;
+
+    for options in [
+        "--gpg-sign=key\u{a0}--no-gpg-sign",
+        "--gpg-sign=key\u{b}--no-gpg-sign",
+    ] {
+        n += 1;
+        diverge(&r, n);
+        set(&r, "false", options);
+        let head = rev(&r.a, "HEAD");
+        assert_refused(&r, a.pull(PullMode::Merge), &head, options);
+    }
+
+    n += 1;
+    diverge(&r, n);
+    let options = "--gpg-sign=key\t--no-gpg-sign";
+    set(&r, "true", options);
+    a.pull(PullMode::Merge).expect(options);
+    assert_eq!(rev(&r.a, "HEAD^2"), rev(&r.b, "HEAD"), "{options}");
+}

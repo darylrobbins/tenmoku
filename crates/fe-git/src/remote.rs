@@ -11,9 +11,10 @@
 //! A signer, or the command that finds its key, may ask for a passphrase, so
 //! nothing here can sign: pulls pass `--no-gpg-sign` and turn
 //! `commit.gpgSign` off for every command they run, pushes pass `--no-signed`,
-//! and pushes never recurse into a submodule, where git would run with the
-//! submodule's own config. A pull that would make a signed commit and a push
-//! with `push.gpgSign` on are [`RemoteError::Failed`] before git runs them.
+//! and pushes never run anything in a submodule, where git would use the
+//! submodule's own config: a configured `push.recurseSubmodules=check` is
+//! kept, and recursive pushing becomes a check. A pull that would make a signed commit and a
+//! push with `push.gpgSign` on are [`RemoteError::Failed`] before git runs them.
 //! Signature verification (`merge.verifySignatures`) works as configured.
 //! Pulls don't recurse into submodules either, so they never stash or rebase
 //! in one. Hooks are the user's, and run as they would in a terminal.
@@ -210,11 +211,7 @@ impl Repo {
                 // Unterminated quote: the policy can't be told.
                 return Ok(true);
             };
-            for token in tokens {
-                if let Some(sign) = merge_option_signs(&token) {
-                    signs = sign;
-                }
-            }
+            signs = merge_options_sign(&tokens, signs);
         }
         Ok(signs)
     }
@@ -226,10 +223,11 @@ impl Repo {
     ///
     /// Git pushes a submodule with the submodule's own config, which could
     /// sign or run a key command, so every push says how to treat submodules:
-    /// when the config would push them, it only checks them
-    /// (`--recurse-submodules=check`), so a submodule commit its remote lacks
-    /// makes the push fail and nothing runs in the submodule; otherwise
-    /// `--recurse-submodules=no`.
+    /// when the config would check or push them (`check`, `on-demand`, `only`,
+    /// `submodule.recurse`), it only checks them (`--recurse-submodules=check`),
+    /// so a submodule commit its remote lacks makes the push fail and nothing
+    /// runs in the submodule; otherwise `--recurse-submodules=no`. A configured
+    /// check is kept; on-demand and only are never passed.
     fn push_args(&self) -> Result<Vec<OsString>, RemoteError> {
         let signs = match self.config_get(&["config", "--get", "push.gpgSign"])? {
             None => false,
@@ -241,7 +239,7 @@ impl Repo {
                 output: format!("push.gpgSign: {SIGNING_REFUSED}"),
             });
         }
-        let recurse = if self.push_recurses()? {
+        let recurse = if self.push_checks_submodules()? {
             "--recurse-submodules=check"
         } else {
             "--recurse-submodules=no"
@@ -251,11 +249,11 @@ impl Repo {
             .into())
     }
 
-    /// Whether a plain `git push` would push submodules first: as git reads
-    /// `push.recurseSubmodules` (`on-demand` or `only`) and `submodule.recurse`
-    /// (true), in config order with the last one deciding. A value git can't
-    /// parse counts as recursing; git then fails anyway.
-    fn push_recurses(&self) -> Result<bool, GitError> {
+    /// Whether a plain `git push` would check or push submodules: as git reads
+    /// `push.recurseSubmodules` (`check`, `on-demand` or `only`) and
+    /// `submodule.recurse` (true), in config order with the last one deciding.
+    /// A value git can't parse counts; git then fails anyway.
+    fn push_checks_submodules(&self) -> Result<bool, GitError> {
         let args = [
             "config",
             "-z",
@@ -279,10 +277,8 @@ impl Repo {
                 None => (&*entry, None),
             };
             match key {
-                // Git's false values don't push submodules; `check` checks them.
-                "push.recursesubmodules" => {
-                    recurses = value.is_none_or(|value| value == "check" || parse_bool(value));
-                }
+                // Git's false values don't check or push submodules.
+                "push.recursesubmodules" => recurses = value.is_none_or(parse_bool),
                 "submodule.recurse" => recurses = value.is_none_or(parse_bool),
                 _ => {}
             }
@@ -417,7 +413,7 @@ fn split_cmdline(line: &str) -> Option<Vec<String>> {
     let mut chars = line.chars();
     while let Some(c) = chars.next() {
         match c {
-            c if c.is_whitespace() => {
+            ' ' | '\t' | '\n' | '\r' => {
                 if in_word {
                     words.push(std::mem::take(&mut word));
                     in_word = false;
@@ -458,26 +454,61 @@ fn split_cmdline(line: &str) -> Option<Vec<String>> {
     Some(words)
 }
 
-/// What one `merge` option does to signing: `Some(true)` signs,
-/// `Some(false)` doesn't, `None` says nothing about it. Abbreviations of
-/// `--gpg-sign` (from `--g`) and `--no-gpg-sign` (from `--no-g`) count, and
-/// any single-dash option containing `S` counts as signing, since the `S` may
-/// be `-S` in a cluster; refusing when it's another option's value is fine.
-fn merge_option_signs(token: &str) -> Option<bool> {
-    if let Some(long) = token.strip_prefix("--") {
-        let name = long.split_once('=').map_or(long, |(name, _)| name);
-        if !name.is_empty() && "gpg-sign".starts_with(name) {
-            return Some(true);
+/// Whether `merge` signs after `tokens`, its options as `signs` says it does
+/// before them. A token that is another option's argument, or follows `--`,
+/// isn't an option. Abbreviations of `--gpg-sign` (from `--g`) and
+/// `--no-gpg-sign` (from `--no-g`) count, and `-S` anywhere in a cluster of
+/// short options signs.
+fn merge_options_sign(tokens: &[String], mut signs: bool) -> bool {
+    // Long options that take their argument as the next token.
+    const WITH_ARG: [&str; 6] = [
+        "message",
+        "file",
+        "strategy",
+        "strategy-option",
+        "cleanup",
+        "into-name",
+    ];
+    let mut tokens = tokens.iter();
+    while let Some(token) = tokens.next() {
+        if token == "--" {
+            break;
         }
-        if name.len() >= 4 && "no-gpg-sign".starts_with(name) {
-            return Some(false);
+        if let Some(long) = token.strip_prefix("--") {
+            let (name, attached) = long
+                .split_once('=')
+                .map_or((long, false), |(name, _)| (name, true));
+            if !name.is_empty() && "gpg-sign".starts_with(name) {
+                signs = true;
+            } else if name.len() >= 4 && "no-gpg-sign".starts_with(name) {
+                signs = false;
+            } else if !attached
+                && !name.is_empty()
+                && WITH_ARG.iter().any(|option| option.starts_with(name))
+            {
+                tokens.next();
+            }
+        } else if token.starts_with('-') {
+            for (at, c) in token.char_indices().skip(1) {
+                match c {
+                    'S' => {
+                        // The rest is the key id.
+                        signs = true;
+                        break;
+                    }
+                    'm' | 'F' | 's' | 'X' => {
+                        // The rest, or else the next token, is the argument.
+                        if at + 1 == token.len() {
+                            tokens.next();
+                        }
+                        break;
+                    }
+                    _ => {}
+                }
+            }
         }
-        None
-    } else if token.starts_with('-') && token.contains('S') {
-        Some(true)
-    } else {
-        None
     }
+    signs
 }
 
 /// Trimmed stdout, `None` when that's empty.
@@ -515,4 +546,32 @@ fn outcome(output: Output) -> Result<(), RemoteError> {
             RemoteError::Failed { output }
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn signs(line: &str) -> bool {
+        merge_options_sign(&split_cmdline(line).unwrap(), false)
+    }
+
+    #[test]
+    fn option_arguments_and_after_double_dash_are_not_options() {
+        assert!(signs("-S -m --no-gpg"));
+        assert!(signs("-S -- --no-gpg"));
+        assert!(signs("-S --message --no-gpg-sign"));
+        assert!(signs("-S -vm --no-gpg-sign"));
+        assert!(!signs("-S --no-gpg-sign"));
+        assert!(!signs("-m -S"));
+        assert!(!signs("-S -m x --no-gpg-sign"));
+        assert!(signs("--no-gpg-sign --gpg-sign=k"));
+        assert!(signs("-vSkey"));
+    }
+
+    #[test]
+    fn only_git_whitespace_separates_words() {
+        assert!(signs("--gpg-sign=key\u{a0}--no-gpg-sign"));
+        assert_eq!(split_cmdline("a\u{a0}b").unwrap(), ["a\u{a0}b"]);
+    }
 }

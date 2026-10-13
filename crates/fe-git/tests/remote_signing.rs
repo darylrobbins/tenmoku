@@ -340,6 +340,46 @@ fn recursive_push_runs_nothing_in_submodules() {
     );
 }
 
+/// A configured `push.recurseSubmodules=check` is kept: a push whose
+/// submodule commits their remotes lack fails, as in git, and still runs
+/// nothing in a submodule. A later `submodule.recurse=false` turns the check
+/// off, as in git.
+#[cfg(unix)]
+#[test]
+fn push_keeps_submodule_check() {
+    if !isolated("push_keeps_submodule_check") {
+        return;
+    }
+    let s = submodules();
+    let config = s.r.a.join(".git/config");
+    let base = fs::read_to_string(&config).unwrap();
+    let checking = [
+        (
+            "push.recurseSubmodules=check",
+            "[push]\n\trecurseSubmodules = check\n",
+        ),
+        (
+            "submodule.recurse=false, then push.recurseSubmodules=check",
+            "[submodule]\n\trecurse = false\n[push]\n\trecurseSubmodules = check\n",
+        ),
+    ];
+    for (i, (what, text)) in checking.into_iter().enumerate() {
+        fs::write(&config, format!("{base}{text}")).unwrap();
+        s.push_and_publish(what, &format!("feat{i}"), false);
+    }
+    // Pushes, as git doesn't check; last as it puts main on origin.
+    fs::write(
+        &config,
+        format!("{base}[push]\n\trecurseSubmodules = check\n[submodule]\n\trecurse = false\n"),
+    )
+    .unwrap();
+    s.push_and_publish(
+        "push.recurseSubmodules=check, then submodule.recurse=false",
+        "plain",
+        true,
+    );
+}
+
 /// Config from the environment comes after the repository's, as git reads it.
 #[cfg(unix)]
 #[test]
