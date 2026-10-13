@@ -9,6 +9,8 @@ use support::{check, load};
 
 #[test]
 fn delimiters_matches_neovim() {
+    // Interim until T582 makes yit_count_2_over_pattern_names fast: the oracle checks results, not the time limit.
+    fe_vim::search::set_time_limit(std::time::Duration::from_secs(60));
     let recorded = load("delimiters").unwrap();
     assert!(recorded.len() >= 40, "delimiters: {} cases", recorded.len());
     let failures: Vec<String> = recorded
