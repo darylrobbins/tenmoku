@@ -1,0 +1,573 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "global_normal_gJ_from_empty_row",
+      "buffer": "\nx\ntail",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/^/normal gJ<CR>",
+      "expect": {
+        "buffer": "x\ntail",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "^",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_gJ_x",
+      "buffer": "a\nb\nc\nd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/./normal gJx<CR>",
+      "expect": {
+        "buffer": "a\nc",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "d",
+            "linewise": false
+          },
+          "-": {
+            "text": "d",
+            "linewise": false
+          },
+          "/": {
+            "text": ".",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_gJ_x_pattern",
+      "buffer": "ax\nb\ncx\nd\nex",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/x/normal gJx<CR>",
+      "expect": {
+        "buffer": "ax\ncx\nex",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "d",
+            "linewise": false
+          },
+          "-": {
+            "text": "d",
+            "linewise": false
+          },
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_2gJ",
+      "buffer": "a\nb\nc\nd\ne",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/^/normal 2gJ<CR>",
+      "expect": {
+        "buffer": "ab\ncd\ne",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "^",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_3gJ_empty_rows",
+      "buffer": "\n\nx\n\ny\nz",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/^$/normal 3gJ<CR>",
+      "expect": {
+        "buffer": "x\nyz",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "^$",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_v_normal_gJ",
+      "buffer": "a\nx\nb\nx\nc\nd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":v/x/normal gJ<CR>",
+      "expect": {
+        "buffer": "ax\nbx\ncd",
+        "cursor": [
+          2,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "x",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_gJ_indented",
+      "buffer": "a\n  b\n    c\nd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/^/normal gJ<CR>",
+      "expect": {
+        "buffer": "a  b\n    cd",
+        "cursor": [
+          1,
+          5
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "^",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_gJ_indented_x",
+      "buffer": "a\n  b\n    c\nd\n  e",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/^[a-d]/normal gJx<CR>",
+      "expect": {
+        "buffer": "a b\n    c\nd e",
+        "cursor": [
+          2,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": " ",
+            "linewise": false
+          },
+          "-": {
+            "text": " ",
+            "linewise": false
+          },
+          "/": {
+            "text": "^[a-d]",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_gJ_last_row",
+      "buffer": "a\nb\nlast",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/last/normal gJ<CR>",
+      "expect": {
+        "buffer": "a\nb\nlast",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "last",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_gJ_last_row_all",
+      "buffer": "a\nb\nlast",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/^/normal gJ<CR>",
+      "expect": {
+        "buffer": "ab\nlast",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "^",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_visual_V_gJ",
+      "buffer": "\nx\ntail\nend",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/^/normal VjgJ<CR><Esc>",
+      "expect": {
+        "buffer": "x\ntailend",
+        "cursor": [
+          1,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "^",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            6
+          ]
+        }
+      }
+    },
+    {
+      "name": "global_normal_visual_V_gJ_indented",
+      "buffer": "a\n  b\n  c\n  d\ne",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/^/normal VjgJ<CR><Esc>",
+      "expect": {
+        "buffer": "a  b\n  c  d\ne",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "^",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            2,
+            0
+          ],
+          ">": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "global_normal_visual_v_gJ",
+      "buffer": "ab\n  cd\nef\n  gh\nij",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/^/normal vjgJ<CR><Esc>",
+      "expect": {
+        "buffer": "ab  cd\nef  gh\nij",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "^",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            2,
+            0
+          ],
+          ">": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "global_normal_visual_block_gJ_gv",
+      "buffer": "ab\n  cd\nef\n  gh\nij",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>j<Esc>:g/^/normal gvgJ<CR><Esc>",
+      "expect": {
+        "buffer": "ab  cdef  ghij",
+        "cursor": [
+          0,
+          12
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "^",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "global_normal_visual_block_gJ",
+      "buffer": "ab\n  cd\nef\n  gh\nij",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/^/normal <lt>C-v>jgJ<CR><Esc>",
+      "oracle_keys": ":g/^/normal <C-v><C-v>jgJ<CR><Esc>",
+      "expect": {
+        "buffer": "ab  cd\nef  gh\nij",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "^",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            2,
+            0
+          ],
+          ">": [
+            2,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "global_normal_repeat_gJ",
+      "buffer": "a\n\nb\nc\nd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gJ:g/^/normal .<CR>",
+      "expect": {
+        "buffer": "ab\ncd",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "^",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_repeat_gJ_indented",
+      "buffer": "a\n  b\n  c\n  d\n  e\nf",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gJ:g/^/normal .<CR>",
+      "expect": {
+        "buffer": "a  b  c\n  d  e\nf",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "^",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_repeat_count_gJ",
+      "buffer": "a\nb\nc\nd\ne\nf\ng",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3gJ:g/^/normal .<CR>",
+      "expect": {
+        "buffer": "abcde\nfg",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "^",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_repeat_visual_gJ",
+      "buffer": "a\n  b\nc\n  d\ne\nf",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "VjgJ:g/^/normal .<CR>",
+      "expect": {
+        "buffer": "a  bc\n  de\nf",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "^",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            4
+          ]
+        }
+      }
+    },
+    {
+      "name": "global_normal_gJ_undo",
+      "buffer": "a\n  b\nc\n  d\ne",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/^/normal gJ<CR>u",
+      "expect": {
+        "buffer": "a\n  b\nc\n  d\ne",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "^",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "global_normal_gJ_undo_redo",
+      "buffer": "a\n  b\nc\n  d\ne",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": ":g/^/normal gJ<CR>u<C-r>",
+      "expect": {
+        "buffer": "a  b\nc  d\ne",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "/": {
+            "text": "^",
+            "linewise": false
+          }
+        }
+      }
+    }
+  ]
+}

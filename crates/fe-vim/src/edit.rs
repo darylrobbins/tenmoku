@@ -159,10 +159,6 @@ pub(crate) fn join(
 /// `vim.join_raw` (`gJ`, `:help gJ`): rows joined as `join` walks them,
 /// but each keeps its indentation and no space goes in or comes out; the
 /// line break alone is deleted. The caret goes to the last join point.
-///
-/// Known limit: `ex/normal.rs`'s `joins` doesn't know `vim.join_raw` or
-/// `Operator::JoinRaw`, so `:g` row tracking after a `:normal gJ` follows
-/// bytes only.
 pub(crate) fn join_raw(
     target: &mut VimTarget<'_>,
     actor: &Actor,

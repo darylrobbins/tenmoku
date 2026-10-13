@@ -245,19 +245,21 @@ impl Runner {
     }
 }
 
-/// Whether `invocation` joins rows: `J` (`vim.join`), a visual `J`, or `.`
-/// repeating either, for a `:g` following its rows ([`global::Change`]).
+/// Whether `invocation` joins rows: `J` (`vim.join`), `gJ` (`vim.join_raw`),
+/// a visual `J` or `gJ`, or `.` repeating any of them, for a `:g` following its rows ([`global::Change`]).
 fn joins(invocation: &Invocation, state: &VimState) -> bool {
     let operates_join = |args: &serde_json::Value| {
         serde_json::from_value::<OperateArgs>(args.clone())
-            .is_ok_and(|args| args.operator == Operator::Join)
+            .is_ok_and(|args| matches!(args.operator, Operator::Join | Operator::JoinRaw))
     };
     match invocation.command.as_str() {
-        "vim.join" => true,
+        "vim.join" | "vim.join_raw" => true,
         "vim.operate" => operates_join(&invocation.args),
         "vim.repeat" => match state.last_change().map(|last| last.change()) {
             Some(Change::Join(_)) => true,
-            Some(Change::Operate(args)) => args.operator == Operator::Join,
+            Some(Change::Operate(args)) => {
+                matches!(args.operator, Operator::Join | Operator::JoinRaw)
+            }
             _ => false,
         },
         _ => false,
