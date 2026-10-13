@@ -297,9 +297,7 @@ impl ProposedChange {
             HunkStatus::Stale => return Err(ProposalError::Stale),
             HunkStatus::Accepted | HunkStatus::Rejected => return Err(ProposalError::NotPending),
         }
-        let range = buffer
-            .current()
-            .resolve_range(&hunk.anchors(buffer.current()));
+        let range = self.locate(buffer.current())[id.index as usize].clone();
         if hunk.check(buffer.current(), range.clone()) == HunkStatus::Stale {
             return Err(ProposalError::Stale);
         }
@@ -446,13 +444,35 @@ impl ProposedChange {
                 [range.start, range.end]
             })
             .collect();
-        snapshot
+        let mut ranges: Vec<Range<usize>> = snapshot
             .resolve_many(&anchors)
             .as_chunks::<2>()
             .0
             .iter()
             .map(|&[start, end]| start..end.max(start))
-            .collect()
+            .collect();
+        // A user edit can merge two insertion points into one offset, and
+        // accepting the later hunk first lands its text there, which pushes
+        // the earlier hunk's anchor after it. Put the pending insertion back
+        // before the text of later hunks that landed ending at its point, so
+        // the text order doesn't depend on the accept order.
+        for i in 0..self.hunks.len() {
+            let hunk = &self.hunks[i];
+            if !hunk.old_text.is_empty() || hunk.landed_in(snapshot) {
+                continue;
+            }
+            for j in (i + 1..self.hunks.len()).rev() {
+                let landed = &ranges[j];
+                if self.hunks[j].landed_in(snapshot)
+                    && !landed.is_empty()
+                    && landed.end == ranges[i].start
+                {
+                    let start = landed.start;
+                    ranges[i] = start..start;
+                }
+            }
+        }
+        ranges
     }
 
     fn find(&self, id: HunkId) -> Option<&Hunk> {
@@ -476,6 +496,11 @@ impl ProposedChange {
 }
 
 impl Hunk {
+    /// Whether the hunk was accepted by `snapshot`.
+    fn landed_in(&self, snapshot: &BufferSnapshot) -> bool {
+        matches!(self.landed, Some((start, _)) if start.version() <= snapshot.version())
+    }
+
     /// The anchors to resolve in `snapshot`: where it landed, if it was
     /// accepted by then, else its old range.
     fn anchors(&self, snapshot: &BufferSnapshot) -> Range<Anchor> {
