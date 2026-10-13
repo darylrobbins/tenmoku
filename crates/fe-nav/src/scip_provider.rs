@@ -366,6 +366,8 @@ impl NavigationProvider for ScipNavigation {
             let refs: Vec<Reference> = (found.into_iter())
                 .map(|(range, is_definition)| reference(rel, text, range, snapshot, is_definition))
                 .collect();
+            // Each file is visited once: don't hold its text until the end.
+            texts.forget(rel);
             if refs.is_empty() {
                 continue;
             }
@@ -493,6 +495,11 @@ impl<'a> Texts<'a> {
                 load(&nav.root, rel)
             })
             .as_ref()
+    }
+
+    /// Drops `rel`'s loaded text.
+    fn forget(&mut self, rel: &Path) {
+        self.loaded.remove(rel);
     }
 
     /// Where `site` is, if its file can be read and the site's bytes there
