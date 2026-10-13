@@ -1,7 +1,7 @@
 //! Staging and discarding, through the `git` executable (see [`crate::cli`]).
 
 use std::collections::HashSet;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 use crate::cli::{Access, run};
@@ -9,6 +9,12 @@ use crate::{GitError, Repo};
 
 fn os(arg: &str) -> OsString {
     OsString::from(arg)
+}
+
+/// What exec charges for one argument or environment entry: its bytes, a NUL
+/// and the pointer to it.
+fn exec_cost(arg: &OsStr) -> usize {
+    arg.len() + 1 + std::mem::size_of::<usize>()
 }
 
 const FROM_STDIN: &str = "--pathspec-from-file=-";
@@ -156,17 +162,44 @@ impl Repo {
     }
 
     /// The names among `relas` that the index tracks at any stage, sparse
-    /// directory entries expanded, asked of `ls-files` in batches that stay
-    /// under the argument limit.
+    /// directory entries expanded, asked of `ls-files` in batches that fit the
+    /// argument space. Each path, fixed argument and inherited environment
+    /// entry is charged its bytes, a NUL and a pointer (see [`exec_cost`]),
+    /// against half of [`ARG_SPACE`]; a batch takes at least one path.
     fn tracked_names(&self, relas: &[OsString]) -> Result<HashSet<Vec<u8>>, GitError> {
-        const BATCH_BYTES: usize = 64 * 1024;
+        const ARG_SPACE: usize = 128 * 1024;
+        let fixed = [
+            os("git"),
+            os("--literal-pathspecs"),
+            os("-C"),
+            self.workdir.clone().into_os_string(),
+            os("ls-files"),
+            os("-z"),
+            os("--"),
+        ];
+        // The three variables `cli::run_raw` sets on every git it spawns.
+        let added_env = [
+            os("GIT_TERMINAL_PROMPT=0"),
+            os("LC_ALL=C"),
+            os("GIT_OPTIONAL_LOCKS=0"),
+        ];
+        let inherited: usize = std::env::vars_os()
+            .map(|(key, value)| key.len() + value.len() + 2 + std::mem::size_of::<usize>())
+            .sum();
+        let overhead = inherited
+            + fixed
+                .iter()
+                .chain(&added_env)
+                .map(|arg| exec_cost(arg))
+                .sum::<usize>();
+        let budget = (ARG_SPACE / 2).saturating_sub(overhead);
         let mut tracked = HashSet::new();
         let mut start = 0;
         while start < relas.len() {
             let mut end = start;
             let mut size = 0;
-            while end < relas.len() && (end == start || size + relas[end].len() < BATCH_BYTES) {
-                size += relas[end].len() + 1;
+            while end < relas.len() && (end == start || size + exec_cost(&relas[end]) <= budget) {
+                size += exec_cost(&relas[end]);
                 end += 1;
             }
             let mut args = vec![os("ls-files"), os("-z"), os("--")];
