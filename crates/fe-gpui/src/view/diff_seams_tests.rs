@@ -316,9 +316,9 @@ fn read_only_vim(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("l");
     assert_eq!(message(&view, cx), None);
     draw(cx);
-    let middle = on_row(&view, 0, cx);
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
+        let middle = on_row(&view, 0, cx);
         cx.update(|_, cx| cx.write_to_primary(ClipboardItem::new_string("PRIMARY".into())));
         cx.simulate_mouse_down(middle, MouseButton::Middle, Modifiers::none());
         cx.simulate_mouse_up(middle, MouseButton::Middle, Modifiers::none());
