@@ -95,7 +95,8 @@ fn active_view(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Ent
     terminal.read_with(cx, |terminal, _| terminal.view().unwrap().clone())
 }
 
-/// Draws until the active session's shell has printed [`SCRIPT`]'s lines.
+/// Draws until the active session's shell has printed [`SCRIPT`]'s lines,
+/// then once more so the find matches cover them.
 /// Panics after 5 s.
 fn printed(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Entity<TerminalView> {
     let view = active_view(workbench, cx);
@@ -106,6 +107,9 @@ fn printed(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Entity<
             (view.terminal()).is_some_and(|t| t.snapshot().text().contains("end"))
         });
         if done {
+            // The matches are found in prepaint: the text may have landed
+            // after the draw above, so draw once more with it on screen.
+            draw(cx);
             return view;
         }
         assert!(Instant::now() < deadline, "timed out waiting for the shell");
