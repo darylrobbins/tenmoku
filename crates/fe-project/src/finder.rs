@@ -698,8 +698,9 @@ impl FinderIndex {
             Reached::Yes => {}
             Reached::Gone(depth) => {
                 let gone: PathBuf = names[..=depth].iter().collect();
-                self.remove(&gone);
-                return None;
+                // What is there now says what it is: a file that replaced a
+                // directory stays, and what was under the old one goes.
+                return self.apply_path(chain, &gone);
             }
             Reached::Unknown => return None,
         }
