@@ -984,6 +984,126 @@ fn a_bind_mounted_project_trashes_on_its_own_mount_remounted_child() {
     assert_eq!(parents, [base.join("elsewhere/project")]);
 }
 
+/// As [`a_bind_mounted_project_trashes_on_its_own_mount`], where `statx`
+/// fails (as before Linux 5.8, or under a seccomp policy that denies it), so
+/// it can't tell the project's mount: the mount is told from
+/// `/proc/self/fdinfo` instead, never taken to be the home trash's for being
+/// on its device, whose rename into the home trash would fail.
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+#[test]
+fn a_bind_mounted_project_trashes_on_its_own_mount_without_statx() {
+    let (_dir, base) = temp();
+    fs::create_dir(base.join("home")).unwrap();
+    write(&base, "source/project/gone.txt", "gone");
+    fs::create_dir(base.join("mount")).unwrap();
+    let source = base.join("source");
+    let mount = base.join("mount");
+    let wrapper = [
+        "bwrap",
+        "--dev-bind",
+        "/",
+        "/",
+        "--bind",
+        source.to_str().unwrap(),
+        mount.to_str().unwrap(),
+    ];
+    let envs = [
+        ("XDG_DATA_HOME", base.join("home")),
+        ("FE_PROJECT_FS_OPS_BASE", base.clone()),
+    ];
+    if run_child(
+        "a_bind_mounted_project_trashes_on_its_own_mount_without_statx_child",
+        &wrapper,
+        &envs,
+    )
+    .is_none()
+    {
+        return;
+    }
+    // SAFETY: always safe to call.
+    let uid = unsafe { libc::getuid() };
+    let trashed = source.join(format!(".Trash-{uid}"));
+    assert_eq!(
+        fs::read_to_string(trashed.join("files/gone.txt")).unwrap(),
+        "gone"
+    );
+    assert!(fs::read_dir(base.join("home")).unwrap().next().is_none());
+}
+
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+#[test]
+fn a_bind_mounted_project_trashes_on_its_own_mount_without_statx_child() {
+    if !in_child() {
+        return;
+    }
+    deny_statx();
+    let base = PathBuf::from(std::env::var_os("FE_PROJECT_FS_OPS_BASE").unwrap());
+    let root = base.join("mount/project");
+    trash(&root, &[Path::new("gone.txt")]).unwrap();
+    assert!(snapshot(&root).is_empty());
+}
+
+/// Makes `statx` fail with `ENOSYS` on this thread from now on, as on a
+/// kernel without it, through a seccomp filter.
+#[cfg(all(
+    target_os = "linux",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+fn deny_statx() {
+    // `AUDIT_ARCH_*` in <linux/audit.h>.
+    #[cfg(target_arch = "x86_64")]
+    const ARCH: u32 = 0xC000_003E;
+    #[cfg(target_arch = "aarch64")]
+    const ARCH: u32 = 0xC000_00B7;
+    // The offsets of `nr` and `arch` in `struct seccomp_data`.
+    const NR: u32 = 0;
+    const ARCH_AT: u32 = 4;
+    let op = |code: u32, k: u32, jt: u8, jf: u8| libc::sock_filter {
+        code: code as u16,
+        jt,
+        jf,
+        k,
+    };
+    let load = libc::BPF_LD | libc::BPF_W | libc::BPF_ABS;
+    let equal = libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K;
+    let ret = libc::BPF_RET | libc::BPF_K;
+    let filter = [
+        // Another architecture's calls are let through.
+        op(load, ARCH_AT, 0, 0),
+        op(equal, ARCH, 1, 0),
+        op(ret, libc::SECCOMP_RET_ALLOW, 0, 0),
+        op(load, NR, 0, 0),
+        op(equal, libc::SYS_statx as u32, 0, 1),
+        op(ret, libc::SECCOMP_RET_ERRNO | libc::ENOSYS as u32, 0, 0),
+        op(ret, libc::SECCOMP_RET_ALLOW, 0, 0),
+    ];
+    let program = libc::sock_fprog {
+        len: filter.len() as u16,
+        filter: filter.as_ptr().cast_mut(),
+    };
+    // SAFETY: `program` points to `filter`, which outlives the calls; the
+    // kernel copies it.
+    unsafe {
+        assert_eq!(libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0), 0);
+        assert_eq!(
+            libc::prctl(
+                libc::PR_SET_SECCOMP,
+                libc::SECCOMP_MODE_FILTER,
+                &raw const program,
+            ),
+            0,
+            "{}",
+            std::io::Error::last_os_error()
+        );
+    }
+}
+
 /// A copy made under a umask that takes its owner's access from new folders
 /// still fills them, gives them the source's modes, and is removed whole
 /// should it fail.
@@ -1002,6 +1122,24 @@ fn duplicate_works_under_a_restrictive_umask_child() {
     write(&root, "dir/a.txt", "a");
     // SAFETY: this child process runs this one test on one thread.
     unsafe { libc::umask(0o700) };
+
+    // Off Linux nothing opens a folder its owner can't read, and its
+    // permissions are never changed by name: the copy fails, leaving nothing.
+    // SAFETY: always safe to call.
+    if cfg!(not(target_os = "linux")) && unsafe { libc::geteuid() } != 0 {
+        let err = duplicate(&root, Path::new("dir")).unwrap_err();
+        assert_eq!(err.kind(), ErrorKind::PermissionDenied, "{err}");
+        assert_eq!(
+            snapshot(&root),
+            [
+                "dir/",
+                "dir/a.txt = a",
+                "dir/sub/",
+                "dir/sub/inner.txt = inner"
+            ]
+        );
+        return;
+    }
 
     let copy = duplicate(&root, Path::new("dir")).unwrap();
     assert_eq!(
@@ -1023,4 +1161,34 @@ fn duplicate_works_under_a_restrictive_umask_child() {
     assert_eq!(err.kind(), ErrorKind::PermissionDenied);
     assert!(!root.join("dir copy 2").exists());
     fs::set_permissions(root.join("dir/zzz"), fs::Permissions::from_mode(0o644)).unwrap();
+}
+
+/// Under a umask that takes its owner's access from new folders, creating a
+/// file below a new folder fails, as the folder can't be opened: the folder
+/// made is still removed.
+#[test]
+fn create_removes_its_folders_under_a_restrictive_umask() {
+    run_child(
+        "create_removes_its_folders_under_a_restrictive_umask_child",
+        &[],
+        &[],
+    )
+    .unwrap();
+}
+
+#[test]
+fn create_removes_its_folders_under_a_restrictive_umask_child() {
+    if !in_child() {
+        return;
+    }
+    // SAFETY: always safe to call.
+    if unsafe { libc::geteuid() } == 0 {
+        return;
+    }
+    let (_dir, root) = temp();
+    // SAFETY: this child process runs this one test on one thread.
+    unsafe { libc::umask(0o700) };
+    let err = create_file(&root, &root, "a/b.txt").unwrap_err();
+    assert_eq!(err.kind(), ErrorKind::PermissionDenied, "{err}");
+    assert!(snapshot(&root).is_empty());
 }

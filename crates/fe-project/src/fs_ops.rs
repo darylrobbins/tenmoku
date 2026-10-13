@@ -15,6 +15,7 @@
 //! are absolute: the root joined with the names below it.
 
 use std::{
+    collections::HashSet,
     ffi::{CStr, CString, OsStr, OsString, c_int},
     fmt,
     fs::{File, Permissions},
@@ -29,7 +30,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use crate::listing::{self, Access, EntryKind};
+use crate::listing::{self, Access, EntryKind, Identity};
 
 /// Why a name typed for a new or renamed entry is refused.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -107,7 +108,8 @@ fn validate_component(name: &str) -> Result<(), NameError> {
 ///
 /// An existing target fails with [`io::ErrorKind::AlreadyExists`], and a file
 /// or symlink where a folder should be fails too, both before anything is
-/// created. Should creating fail midway, the folders made are removed again.
+/// created. Should creating fail midway, the folders made are removed again:
+/// those it made, not ones another process put in their place or in them.
 pub fn create_file(root: &Path, dir: &Path, name: &str) -> io::Result<PathBuf> {
     create(root, dir, name, name.ends_with('/'))
 }
@@ -151,19 +153,33 @@ fn create(root: &Path, dir: &Path, name: &str, folder: bool) -> io::Result<PathB
         ));
     }
 
-    // The folders made, each with its parent, to remove should a later step
-    // fail.
-    let mut made: Vec<(File, &OsStr)> = Vec::new();
+    // The folders made, each with its parent and what it is, to remove should
+    // a later step fail: recorded as soon as it is made, before anything that
+    // can fail opens it, so that is all that is removed. One that can't be
+    // looked up is not known to be ours, and is kept.
+    let mut made: Vec<(File, &OsStr, Identity)> = Vec::new();
     let result = (|| {
         for name in &above[existing..] {
             match mkdir_at(&parent, name, 0o777) {
-                Ok(()) => made.push((parent.try_clone()?, name)),
+                Ok(()) => {
+                    let id = listing::stat_at(&parent, name)?.id;
+                    made.push((parent, name, id));
+                    let (above, _, _) = made.last().expect("just pushed");
+                    reach(Point::Opening)?;
+                    let dir = open_subdir(above, name)?;
+                    if listing::identity(&dir)? != id {
+                        return Err(replaced());
+                    }
+                    parent = dir;
+                }
                 // Made since it was looked for: use it, but it isn't ours.
-                Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+                    parent = open_subdir(&parent, name)?;
+                }
                 Err(err) => return Err(err),
             }
-            parent = open_subdir(&parent, name)?;
         }
+        reach(Point::Parents)?;
         if folder {
             mkdir_at(&parent, last, 0o777)
         } else {
@@ -177,9 +193,11 @@ fn create(root: &Path, dir: &Path, name: &str, folder: bool) -> io::Result<PathB
         }
     })();
     if result.is_err() {
-        for (parent, name) in made.iter().rev() {
-            // Only removes a folder still empty: never anything else's.
-            let _ = unlink_at(parent, name, libc::AT_REMOVEDIR);
+        let owned: Owned = made.iter().map(|(_, _, id)| *id).collect();
+        for (parent, name, _) in made.iter().rev() {
+            // Only a folder this made, and only once it is empty: never
+            // anything else's, there or put in its place.
+            discard(parent, name, &owned);
         }
     }
     result.map(|()| path)
@@ -223,28 +241,28 @@ pub fn rename(root: &Path, from: &Path, new_name: &str) -> io::Result<PathBuf> {
 /// Renames `old` to `new` in `dir` through a temporary name, for a rename
 /// that only changes case. Puts `old` back if `new` turns out to be taken.
 fn rename_through_temp(dir: &File, old: &OsStr, new: &OsStr) -> io::Result<()> {
-    let mut temp = None;
+    let temp = rename_to_temp(dir, old, "rename")?;
+    rename_noreplace(dir, &temp, dir, new).inspect_err(|_| {
+        let _ = rename_noreplace(dir, &temp, dir, old);
+    })
+}
+
+/// Renames `old` in `dir` to a free temporary name for `what`, and returns
+/// that name.
+fn rename_to_temp(dir: &File, old: &OsStr, what: &str) -> io::Result<OsString> {
     for attempt in 0..100 {
         // Not built from `old`, which may be as long as a name can be.
-        let name = OsString::from(format!(".fastedit-rename-{}-{attempt}", std::process::id()));
+        let name = OsString::from(format!(".fastedit-{what}-{}-{attempt}", std::process::id()));
         match rename_noreplace(dir, old, dir, &name) {
-            Ok(()) => {
-                temp = Some(name);
-                break;
-            }
+            Ok(()) => return Ok(name),
             Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {}
             Err(err) => return Err(err),
         }
     }
-    let Some(temp) = temp else {
-        return Err(io::Error::new(
-            io::ErrorKind::AlreadyExists,
-            "no free temporary name to rename through",
-        ));
-    };
-    rename_noreplace(dir, &temp, dir, new).inspect_err(|_| {
-        let _ = rename_noreplace(dir, &temp, dir, old);
-    })
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "no free temporary name to rename through",
+    ))
 }
 
 /// Moves the entries at `paths` to the system Trash: the Finder's on macOS,
@@ -277,17 +295,45 @@ pub fn trash(root: &Path, paths: &[impl AsRef<Path>]) -> io::Result<()> {
     Ok(())
 }
 
-/// In tests, runs what a test set to happen between the last check of an
-/// entry to trash and its move.
-#[cfg(test)]
-fn after_check() {
-    if let Some(hook) = tests::AFTER_CHECK.with(std::cell::Cell::take) {
-        hook();
-    }
+/// Where tests can change the disk in the middle of an operation, to check
+/// what another process racing it there can do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Point {
+    /// An entry to trash was checked for the last time and is about to move.
+    Checked,
+    /// A folder was made and is about to be opened.
+    Opening,
+    /// `create` made the folders above its entry and is about to make it.
+    Parents,
+    /// A copy made a folder and opened it, and is about to fill it.
+    Made,
+    /// A copy is complete, and its folders are about to get their
+    /// permissions.
+    Copied,
+    /// The `.trashinfo` of an entry to trash was written, and the entry is
+    /// about to move.
+    #[cfg(target_os = "linux")]
+    Recorded,
+    /// Cleanup checked an entry it staged to remove and is about to act on
+    /// it.
+    Discarding,
+    /// A folder its owner can't read was opened as a path and checked, and
+    /// is about to be given its owner's access.
+    #[cfg(target_os = "linux")]
+    Owning,
 }
 
-#[cfg(not(test))]
-fn after_check() {}
+/// Runs what a test set to happen at `point`, which may fail in place of the
+/// step that follows.
+fn reach(point: Point) -> io::Result<()> {
+    #[cfg(test)]
+    return race_tests::reach(point);
+    #[cfg(not(test))]
+    {
+        let _ = point;
+        Ok(())
+    }
+}
 
 /// Trashes `target` with `NSFileManager`, which needs no Automation
 /// permission (the Finder would), through a file reference URL: it names the
@@ -314,7 +360,7 @@ fn trash_target(target: &Target<'_>) -> io::Result<()> {
             "the path no longer leads to the entry found under the project root",
         ));
     }
-    after_check();
+    reach(Point::Checked)?;
     NSFileManager::defaultManager()
         .trashItemAtURL_resultingItemURL_error(&reference, None)
         .map_err(|err| io::Error::other(err.localizedDescription().to_string()))
@@ -358,13 +404,13 @@ fn trash_target(target: &Target<'_>) -> io::Result<()> {
     // below the volume's top, so it still restores with the volume mounted
     // elsewhere.
     let (trash, recorded) = match freedesktop::home_trash() {
-        Ok(home) if home.volume.same(&volume) => (home.open()?, target.path.clone()),
+        Ok(home) if home.volume == volume => (home.open()?, target.path.clone()),
         _ => {
             let (trash, climbed) = freedesktop::volume_trash(&target.parent, &volume)?;
             (trash, freedesktop::below_top(&target.path, climbed))
         }
     };
-    after_check();
+    reach(Point::Checked)?;
     freedesktop::move_into(&trash, target, &recorded)
 }
 
@@ -381,7 +427,7 @@ mod freedesktop {
     use std::{
         ffi::OsString,
         fs::{self, File},
-        io::{self, Write},
+        io::{self, Read, Write},
         os::{
             fd::AsRawFd,
             unix::{
@@ -393,7 +439,8 @@ mod freedesktop {
     };
 
     use super::{
-        NAME_MAX, Target, check, cut, mkdir_at, open_dir_at, open_in, rename_noreplace, unlink_at,
+        NAME_MAX, Owned, Point, Target, check, cut, discard, mkdir_at, open_dir_at, open_in, reach,
+        rename_noreplace,
     };
     use crate::listing::{self, Access};
 
@@ -402,49 +449,116 @@ mod freedesktop {
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub(super) struct Volume {
         dev: u64,
-        /// The mount's id, where the kernel tells it (`statx`, Linux 5.8).
-        mount: Option<u64>,
+        /// The mount's id, as `statx` and `/proc/self/fdinfo` both give it.
+        mount: u64,
     }
 
     impl Volume {
-        /// The volume of open file `file`.
+        /// The volume of open file `file`. Its mount is the one `statx` tells
+        /// (Linux 5.8) or, where `statx` fails or leaves `STATX_MNT_ID` out,
+        /// the one the descriptor's `/proc/self/fdinfo` entry tells. Where
+        /// neither tells it, it fails with [`io::ErrorKind::Unsupported`]
+        /// rather than take `file` for being on any mount of its device: a
+        /// bind mount of one file system is another mount, which an entry
+        /// can't be renamed into.
         pub(super) fn of(file: &File) -> io::Result<Self> {
-            let dev = file.metadata()?.dev();
-            let mut stat = std::mem::MaybeUninit::<libc::statx>::uninit();
-            // SAFETY: `file` is an open descriptor, the empty path is
-            // NUL-terminated and `stat` is valid for writes of a `statx`.
-            let result = check(unsafe {
-                libc::statx(
-                    file.as_raw_fd(),
-                    c"".as_ptr(),
-                    libc::AT_EMPTY_PATH,
-                    libc::STATX_MNT_ID,
-                    stat.as_mut_ptr(),
-                )
-            });
-            let mount = result.ok().and_then(|()| {
-                // SAFETY: `statx` succeeded, so it filled `stat`.
-                let stat = unsafe { stat.assume_init() };
-                (stat.stx_mask & libc::STATX_MNT_ID != 0).then_some(stat.stx_mnt_id)
-            });
-            Ok(Self { dev, mount })
+            let metadata = file.metadata()?;
+            let mount = match statx_mount(file) {
+                Some(mount) => mount,
+                None => fdinfo_mount(file, metadata.ino()).map_err(|err| {
+                    io::Error::new(
+                        io::ErrorKind::Unsupported,
+                        format!("can't tell which mount the entry is on: {err}"),
+                    )
+                })?,
+            };
+            Ok(Self {
+                dev: metadata.dev(),
+                mount,
+            })
         }
+    }
 
-        /// Whether an entry can be renamed from one to the other: the same
-        /// device, and the same mount where both are known.
-        pub(super) fn same(&self, other: &Self) -> bool {
-            self.dev == other.dev
-                && match (self.mount, other.mount) {
-                    (Some(a), Some(b)) => a == b,
-                    // Where statx can't tell a mount (it fails, or leaves
-                    // `STATX_MNT_ID` out: Linux before 5.8, or a file system
-                    // that omits it), only the devices are compared, so a bind
-                    // mount of one file system passes for the same mount and
-                    // its rename fails with `EXDEV`. Telling mounts apart
-                    // there is follow-up T64.
-                    _ => true,
-                }
+    /// The id of the mount open file `file` is on, where `statx` tells it.
+    fn statx_mount(file: &File) -> Option<u64> {
+        #[cfg(test)]
+        let fault = super::race_tests::FAULT.get();
+        #[cfg(test)]
+        if matches!(
+            fault,
+            super::race_tests::Fault::StatxFails | super::race_tests::Fault::Unidentified
+        ) {
+            return None;
         }
+        let mut stat = std::mem::MaybeUninit::<libc::statx>::uninit();
+        // SAFETY: `file` is an open descriptor, the empty path is
+        // NUL-terminated and `stat` is valid for writes of a `statx`.
+        check(unsafe {
+            libc::statx(
+                file.as_raw_fd(),
+                c"".as_ptr(),
+                libc::AT_EMPTY_PATH,
+                libc::STATX_MNT_ID,
+                stat.as_mut_ptr(),
+            )
+        })
+        .ok()?;
+        // SAFETY: `statx` succeeded, so it filled `stat`.
+        #[cfg_attr(not(test), allow(unused_mut))]
+        let mut stat = unsafe { stat.assume_init() };
+        #[cfg(test)]
+        if fault == super::race_tests::Fault::NoMountId {
+            stat.stx_mask &= !libc::STATX_MNT_ID;
+        }
+        (stat.stx_mask & libc::STATX_MNT_ID != 0).then_some(stat.stx_mnt_id)
+    }
+
+    /// The id of the mount open file `file`, inode `ino`, is on, from its
+    /// descriptor's `/proc/self/fdinfo` entry (Linux 3.15): read only from a
+    /// procfs, and only should the entry name inode `ino` where it names one
+    /// (Linux 5.14).
+    fn fdinfo_mount(file: &File, ino: u64) -> io::Result<u64> {
+        #[cfg(test)]
+        if super::race_tests::FAULT.get() == super::race_tests::Fault::Unidentified {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "no fdinfo"));
+        }
+        let mut info = File::open(format!("/proc/self/fdinfo/{}", file.as_raw_fd()))?;
+        let mut stat = std::mem::MaybeUninit::<libc::statfs>::uninit();
+        // SAFETY: `info` is an open descriptor and `stat` is valid for
+        // writes of a `libc::statfs`.
+        check(unsafe { libc::fstatfs(info.as_raw_fd(), stat.as_mut_ptr()) })?;
+        // SAFETY: `fstatfs` succeeded, so it filled `stat`.
+        let stat = unsafe { stat.assume_init() };
+        // Their types differ from one architecture to another.
+        #[allow(clippy::unnecessary_cast)]
+        if stat.f_type as i64 != libc::PROC_SUPER_MAGIC as i64 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "/proc is not a procfs",
+            ));
+        }
+        let mut text = String::new();
+        info.read_to_string(&mut text)?;
+        fdinfo_mount_in(&text, ino)
+    }
+
+    /// The mount id in fdinfo `text`, should it be for inode `ino`.
+    pub(super) fn fdinfo_mount_in(text: &str, ino: u64) -> io::Result<u64> {
+        let field = |key: &str| {
+            text.lines().find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                (name == key).then(|| value.trim().parse::<u64>().ok())
+            })
+        };
+        let bad = |what| io::Error::new(io::ErrorKind::InvalidData, what);
+        match field("ino") {
+            Some(Some(found)) if found == ino => {}
+            None => {}
+            Some(_) => return Err(bad("fdinfo for another file")),
+        }
+        field("mnt_id")
+            .flatten()
+            .ok_or_else(|| bad("no mount id in fdinfo"))
     }
 
     /// The home trash: where it is, and the volume it is (or would be) on.
@@ -498,8 +612,7 @@ mod freedesktop {
         let mut climbed = 0;
         loop {
             let up = listing::open_at(&top, "..".as_ref(), Access::Search)?;
-            if !Volume::of(&up)?.same(volume) || listing::identity(&up)? == listing::identity(&top)?
-            {
+            if Volume::of(&up)? != *volume || listing::identity(&up)? == listing::identity(&top)? {
                 break;
             }
             top = up;
@@ -575,13 +688,17 @@ mod freedesktop {
                 Err(err) if err.kind() == io::ErrorKind::AlreadyExists => continue,
                 Err(err) => return Err(err),
             };
-            let moved = file
-                .write_all(contents.as_bytes())
-                .and_then(|()| rename_noreplace(&target.parent, target.name, &files, &name));
+            let moved = file.write_all(contents.as_bytes()).and_then(|()| {
+                reach(Point::Recorded)?;
+                rename_noreplace(&target.parent, target.name, &files, &name)
+            });
             match moved {
                 Ok(()) => return Ok(()),
                 Err(err) => {
-                    let _ = unlink_at(&info, &info_name, 0);
+                    // The `.trashinfo` written, not one put in its place.
+                    if let Ok(id) = listing::identity(&file) {
+                        discard(&info, &info_name, &Owned::from([id]));
+                    }
                     if err.kind() != io::ErrorKind::AlreadyExists {
                         return Err(err);
                     }
@@ -645,7 +762,8 @@ mod freedesktop {
 ///
 /// Contents and permission bits are copied, and a file's modification time.
 /// Inside a folder, anything but a file, a folder or a symlink (a FIFO or a
-/// socket) is left out. Should copying fail, the partial copy is removed.
+/// socket) is left out. Should copying fail, the partial copy is removed:
+/// what it made, not what another process put in it or in its place.
 pub fn duplicate(root: &Path, path: &Path) -> io::Result<PathBuf> {
     let root = Root::open(root)?;
     let target = root.resolve(path)?;
@@ -653,24 +771,14 @@ pub fn duplicate(root: &Path, path: &Path) -> io::Result<PathBuf> {
     let dir = &target.parent;
     for n in 1..10_000 {
         let name = copy_name(target.name, kind == EntryKind::Dir, n);
-        let mut modes = Modes::default();
-        match copy_new(dir, target.name, kind, dir, &name, true, &mut modes)? {
+        let mut copying = Copying::default();
+        match copy_new(dir, target.name, kind, dir, &name, true, &mut copying)? {
             Copied::Done | Copied::Skipped => {}
             Copied::Taken => continue,
         }
-        // The folders' own permissions, which may not let their owner write
-        // or even search them, only once everything is in them: each folder
-        // opened afresh from the copy's (so as few are open at once as the
-        // copy is deep), and inner ones first.
-        let result = modes.list.iter().try_for_each(|(path, mode)| {
-            let mut folder = open_dir_at(dir, &name, Access::Read)?;
-            for component in path {
-                folder = open_dir_at(&folder, component, Access::Read)?;
-            }
-            folder.set_permissions(Permissions::from_mode(*mode))
-        });
-        if let Err(err) = result {
-            remove_copy(dir, &name);
+        reach(Point::Copied)?;
+        if let Err(err) = set_modes(dir, &name, &copying) {
+            discard(dir, &name, &copying.owned);
             return Err(err);
         }
         return Ok(target.path.with_file_name(name));
@@ -766,20 +874,64 @@ enum Copied {
     Skipped,
 }
 
-/// The permissions to give the folders of a copy once it is complete.
+/// What a copy has made: everything, to remove should it fail, and its
+/// folders, to give them their permissions once it is complete.
 #[derive(Default)]
-struct Modes {
+struct Copying {
     /// Where the copy has got to, below its top.
     path: Vec<OsString>,
     /// Each folder below the copy's top (the top itself is the empty path),
-    /// after the folders in it, with its permissions.
-    list: Vec<(Vec<OsString>, u32)>,
+    /// after the folders in it, with what it is and its permissions.
+    folders: Vec<(Vec<OsString>, Identity, u32)>,
+    /// Every entry made.
+    owned: Owned,
+    /// The copy's top folder, held open: the one descriptor a copy keeps, so
+    /// its folders are found from the folder copied, and so its identity
+    /// can't pass to another.
+    top: Option<File>,
+}
+
+/// The entries an operation made, which are all that undoing it removes.
+type Owned = HashSet<Identity>;
+
+/// Gives the folders of complete copy `name` in `dir` the permissions
+/// [`copy_new`] recorded, which may not let their owner write or even search
+/// them, now that everything is in them. Each folder is opened afresh from
+/// the copy's top (so as few are open at once as the copy is deep), inner
+/// ones first, and checked to be the one copied before its permissions
+/// change: one swapped in for it is left as it is and fails the copy, as does
+/// `name` no longer leading to the copy.
+fn set_modes(dir: &File, name: &OsStr, copying: &Copying) -> io::Result<()> {
+    let Some(top) = &copying.top else {
+        return Ok(());
+    };
+    let replaced = || {
+        io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "a folder of the copy was replaced while it was made",
+        )
+    };
+    for (path, id, mode) in &copying.folders {
+        let mut folder = top.try_clone()?;
+        for component in path {
+            folder = open_dir_at(&folder, component, Access::Read)?;
+        }
+        if listing::identity(&folder)? != *id {
+            return Err(replaced());
+        }
+        folder.set_permissions(Permissions::from_mode(*mode))?;
+    }
+    if listing::stat_at(dir, name)?.id != listing::identity(top)? {
+        return Err(replaced());
+    }
+    Ok(())
 }
 
 /// Copies entry `name` of `kind` in `from` to new entry `to_name` in `to`.
 /// At the `top`, something not to be copied is an error rather than
-/// [`Copied::Skipped`]. Each folder made is left writable by its owner, and
-/// added to `modes` with the permissions it is to have.
+/// [`Copied::Skipped`]. Everything made is added to `copying`, and each
+/// folder made is left writable by its owner and added with the permissions
+/// it is to have. Should it fail, what it made is removed again.
 fn copy_new(
     from: &File,
     name: &OsStr,
@@ -787,7 +939,7 @@ fn copy_new(
     to: &File,
     to_name: &OsStr,
     top: bool,
-    modes: &mut Modes,
+    copying: &mut Copying,
 ) -> io::Result<Copied> {
     let skip = || {
         if top {
@@ -810,6 +962,9 @@ fn copy_new(
             if !made(symlink_at(&link, to, to_name))? {
                 return Ok(Copied::Taken);
             }
+            // What it is is looked up after it was made: a link is never
+            // opened.
+            copying.owned.insert(listing::stat_at(to, to_name)?.id);
         }
         EntryKind::File => {
             // A FIFO, socket or device counts as a file in a listing. Look
@@ -838,12 +993,13 @@ fn copy_new(
                 Err(err) => return Err(err),
             };
             let result = (|| {
+                copying.owned.insert(listing::identity(&copy)?);
                 io::copy(&mut source, &mut copy)?;
                 copy.set_permissions(Permissions::from_mode(metadata.mode() & 0o777))?;
                 copy.set_modified(metadata.modified()?)
             })();
             if result.is_err() {
-                let _ = unlink_at(to, to_name, 0);
+                discard(to, to_name, &copying.owned);
             }
             result?;
         }
@@ -851,13 +1007,20 @@ fn copy_new(
             if !made(mkdir_at(to, to_name, 0o700))? {
                 return Ok(Copied::Taken);
             }
+            // What it is, once it is opened.
             let result = (|| {
+                // What it is, recorded before anything that can fail opens
+                // it. One that can't be looked up is not known to be ours,
+                // and is kept.
+                let id = listing::stat_at(to, to_name)?.id;
+                copying.owned.insert(id);
+                reach(Point::Opening)?;
                 // Open to its owner until it is filled, whatever the source's
                 // mode, and whatever the umask took from `mkdirat`'s.
-                chmod_at(to, to_name, 0o700)?;
+                let copy = own_dir(to, to_name, Some(id))?;
+                reach(Point::Made)?;
                 let source = open_dir_at(from, name, Access::Read)?;
                 let mode = source.metadata()?.mode() & 0o777;
-                let copy = open_dir_at(to, to_name, Access::Read)?;
                 let mut children = listing::read_dir(&source)?;
                 children.sort_by(|(a, _), (b, _)| a.cmp(b));
                 for (child, kind) in children {
@@ -865,9 +1028,9 @@ fn copy_new(
                         Some(kind) => kind,
                         None => listing::stat_at(&source, &child)?.kind,
                     };
-                    modes.path.push(child.clone());
-                    let copied = copy_new(&source, &child, kind, &copy, &child, false, modes);
-                    modes.path.pop();
+                    copying.path.push(child.clone());
+                    let copied = copy_new(&source, &child, kind, &copy, &child, false, copying);
+                    copying.path.pop();
                     if let Copied::Taken = copied? {
                         return Err(io::Error::new(
                             io::ErrorKind::AlreadyExists,
@@ -875,11 +1038,14 @@ fn copy_new(
                         ));
                     }
                 }
-                modes.list.push((modes.path.clone(), mode));
+                copying.folders.push((copying.path.clone(), id, mode));
+                if top {
+                    copying.top = Some(copy);
+                }
                 Ok(())
             })();
             if result.is_err() {
-                remove_copy(to, to_name);
+                discard(to, to_name, &copying.owned);
             }
             result?;
         }
@@ -887,22 +1053,59 @@ fn copy_new(
     Ok(Copied::Done)
 }
 
-/// Removes a copy made by [`copy_new`], as far as it can: its folders are
-/// made writable by their owner first, whatever permissions they were given.
-fn remove_copy(dir: &File, name: &OsStr) {
-    if !listing::stat_at(dir, name).is_ok_and(|stat| stat.kind == EntryKind::Dir) {
-        let _ = unlink_at(dir, name, 0);
+/// Removes entry `name` in `dir` should it be one of `owned`, with, for a
+/// folder, whatever in it is: anything else, there or put in its place, is
+/// kept, and so is a folder that keeps it. Each entry is renamed to a name
+/// of its own before it is checked, so what is checked is what is removed.
+/// A folder is made writable by its owner first, whatever permissions it was
+/// given, through the handle checked to be it. As far as it can: it fails
+/// silently.
+fn discard(dir: &File, name: &OsStr, owned: &Owned) {
+    if !listing::stat_at(dir, name).is_ok_and(|stat| owned.contains(&stat.id)) {
         return;
     }
-    // Opened to its owner first: it may have been made with no access at
-    // all, or already given a mode without it.
-    let _ = chmod_at(dir, name, 0o700);
-    if let Ok(sub) = open_dir_at(dir, name, Access::Read) {
-        for (child, _) in listing::read_dir(&sub).unwrap_or_default() {
-            remove_copy(&sub, &child);
+    // Where the file system can't rename without replacing, checked where
+    // it is.
+    let staged = match rename_to_temp(dir, name, "discard") {
+        Ok(staged) => staged,
+        Err(err) if err.kind() == io::ErrorKind::Unsupported => name.to_owned(),
+        Err(_) => return,
+    };
+    let restore = || {
+        if staged != name
+            && let Err(err) = rename_noreplace(dir, &staged, dir, name)
+        {
+            log::warn!("left {name:?} as {staged:?} after a failed operation: {err}");
         }
+    };
+    let Ok(stat) = listing::stat_at(dir, &staged) else {
+        return;
+    };
+    if !owned.contains(&stat.id) {
+        return restore();
     }
-    let _ = unlink_at(dir, name, libc::AT_REMOVEDIR);
+    let _ = reach(Point::Discarding);
+    let flags = if stat.kind == EntryKind::Dir {
+        match own_dir(dir, &staged, Some(stat.id)) {
+            Ok(sub) => {
+                for (child, _) in listing::read_dir(&sub).unwrap_or_default() {
+                    discard(&sub, &child, owned);
+                }
+            }
+            // Another folder in its place is kept as it is.
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => return restore(),
+            // One that can't be opened (where its owner can't read it and
+            // nothing opens it without access) is removed only should it be
+            // empty.
+            Err(_) => {}
+        }
+        libc::AT_REMOVEDIR
+    } else {
+        0
+    };
+    if unlink_at(dir, &staged, flags).is_err() {
+        restore();
+    }
 }
 
 /// `path` relative to `root`, its components joined with `/`. A relative
@@ -1079,11 +1282,67 @@ fn mkdir_at(dir: &File, name: &OsStr, mode: libc::mode_t) -> io::Result<()> {
     check(unsafe { libc::mkdirat(dir.as_raw_fd(), name.as_ptr(), mode) })
 }
 
-/// Sets the mode of folder `name` in `dir`, one just made by this module.
-fn chmod_at(dir: &File, name: &OsStr, mode: libc::mode_t) -> io::Result<()> {
-    let name = c_name(name)?;
-    // SAFETY: `dir` is an open descriptor and `name` is NUL-terminated.
-    check(unsafe { libc::fchmodat(dir.as_raw_fd(), name.as_ptr(), mode, 0) })
+/// Opens folder `name` in `dir` for reading without following a symlink,
+/// checked to be `expected` where one is given, and gives its owner all
+/// access to it through the handle checked, whatever its permissions were:
+/// never by name. Another folder found fails with
+/// [`io::ErrorKind::AlreadyExists`], its permissions as they were.
+fn own_dir(dir: &File, name: &OsStr, expected: Option<Identity>) -> io::Result<File> {
+    let folder = match open_dir_at(dir, name, Access::Read) {
+        Err(err) if err.kind() == io::ErrorKind::PermissionDenied => {
+            return own_closed_dir(dir, name, expected);
+        }
+        result => result?,
+    };
+    if expected.is_some_and(|id| listing::identity(&folder).ok() != Some(id)) {
+        return Err(replaced());
+    }
+    folder.set_permissions(Permissions::from_mode(0o700))?;
+    Ok(folder)
+}
+
+fn replaced() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        "a folder was replaced while it was worked on",
+    )
+}
+
+/// [`own_dir`] for a folder its owner can't read: opened as a path alone,
+/// which takes no access, checked, given its owner's access through that
+/// descriptor's `/proc/self/fd` link, and opened for reading through it.
+#[cfg(target_os = "linux")]
+fn own_closed_dir(dir: &File, name: &OsStr, expected: Option<Identity>) -> io::Result<File> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let flags = libc::O_PATH | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+    let path = open_in(dir, name, flags, 0)?;
+    let id = listing::identity(&path)?;
+    if expected.is_some_and(|expected| expected != id) {
+        return Err(replaced());
+    }
+    reach(Point::Owning)?;
+    let link = PathBuf::from(format!("/proc/self/fd/{}", path.as_raw_fd()));
+    std::fs::set_permissions(&link, Permissions::from_mode(0o700))?;
+    let folder = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_CLOEXEC)
+        .open(&link)?;
+    if listing::identity(&folder)? != id {
+        return Err(replaced());
+    }
+    Ok(folder)
+}
+
+/// [`own_dir`] for a folder its owner can't read. Nothing here opens one
+/// without access, and its permissions are never changed by name, so it is
+/// left as it is: [`io::ErrorKind::PermissionDenied`].
+#[cfg(not(target_os = "linux"))]
+fn own_closed_dir(_: &File, _: &OsStr, _: Option<Identity>) -> io::Result<File> {
+    Err(io::Error::new(
+        io::ErrorKind::PermissionDenied,
+        "a folder its owner can't read, which can't be opened to change that",
+    ))
 }
 
 fn unlink_at(dir: &File, name: &OsStr, flags: c_int) -> io::Result<()> {
@@ -1193,6 +1452,10 @@ fn rename_exclusive(_: &File, _: &CStr, _: &File, _: &CStr) -> io::Result<()> {
 }
 
 #[cfg(test)]
+#[path = "fs_ops_race_tests.rs"]
+mod race_tests;
+
+#[cfg(test)]
 mod tests {
     use std::{fs, os::unix::fs::symlink};
 
@@ -1208,12 +1471,6 @@ mod tests {
 
     fn open(dir: &Path) -> File {
         Root::open(dir).unwrap().dir
-    }
-
-    thread_local! {
-        /// What [`after_check`] runs next, once.
-        pub(super) static AFTER_CHECK: std::cell::Cell<Option<Box<dyn FnOnce()>>> =
-            std::cell::Cell::new(None);
     }
 
     #[test]
@@ -1445,14 +1702,11 @@ mod tests {
         };
         match when {
             Swap::BeforeCheck => swap(),
-            Swap::AfterCheck => AFTER_CHECK.with(|hook| hook.set(Some(Box::new(swap)))),
+            Swap::AfterCheck => race_tests::at(Point::Checked, swap),
         }
 
         let result = trash_target(&target);
-        assert!(
-            AFTER_CHECK.with(|hook| hook.take()).is_none(),
-            "the swap was made"
-        );
+        assert!(race_tests::reached(), "the swap was made");
         assert_eq!(
             fs::read_to_string(outside.join(&file)).unwrap(),
             "outside",
