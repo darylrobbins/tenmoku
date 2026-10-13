@@ -48,6 +48,9 @@ pub struct EditorView {
     pub(crate) scroll: Point<Pixels>,
     /// Scroll the primary cursor into view on the next frame.
     pub(crate) autoscroll: bool,
+    /// The hunk whose block the next frame scrolls into view, after the
+    /// caret: where next or previous hunk went.
+    pub(crate) reveal_hunk: Option<fe_buffer::HunkId>,
     /// The buffer row a vim scroll put first since the last frame, which
     /// the next dispatch sees as the top until a frame is laid out.
     pub(crate) scrolled_top: Option<u32>,
@@ -227,6 +230,7 @@ impl EditorView {
             focus: cx.focus_handle(),
             scroll: Point::default(),
             autoscroll: true,
+            reveal_hunk: None,
             scrolled_top: None,
             scrolled_display_top: None,
             layout: None,

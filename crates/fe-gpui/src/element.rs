@@ -685,6 +685,24 @@ impl Element for EditorElement {
             )
         };
         let mut frame = lay_out(&input);
+        // Next or previous hunk: its block comes into view too, though that
+        // leaves the caret, at the hunk's start, out of it.
+        let reveal = view.reveal_hunk.and_then(|id| {
+            let top = frame.scroll.y / frame.line_height;
+            let rows = frame.height / frame.line_height;
+            proposal::reveal(&hunks, id, &frame.block_map, top, rows)
+        });
+        if let Some(top) = reveal {
+            frame = lay_out(&FrameInput {
+                scroll: Vec2 {
+                    x: frame.scroll.x,
+                    y: top * frame.line_height,
+                },
+                autoscroll: false,
+                styles: input.styles.clone(),
+                ..input
+            });
+        }
         // Autoscroll keeps the buffer caret in view, which is before the
         // inlay. While composing, the composition's caret inside it stays in
         // view too, as far inside the edge as autoscroll keeps a caret: the
@@ -811,6 +829,7 @@ impl Element for EditorElement {
             }
             view.scroll = scroll;
             view.autoscroll = false;
+            view.reveal_hunk = None;
             view.report_scroll_top(host_top, cx);
             view.load_injected_languages(cx);
         });

@@ -176,7 +176,8 @@ impl EditorView {
 
     /// Moves to the start of the first hunk on a row after the caret's
     /// (`forward`) or before it, wrapping around the document, with one caret,
-    /// and has it scrolled into view. Returns whether there was a hunk.
+    /// and has it scrolled into view, then the hunk's block. Returns whether
+    /// there was a hunk.
     fn step_hunk(&mut self, forward: bool, cx: &mut Context<Self>) -> bool {
         let row = self.caret_row();
         let shown = self.open_hunks();
@@ -194,8 +195,17 @@ impl EditorView {
         self.composition = None;
         let offset = target.hunk.range.start;
         let start_row = target.start;
-        self.model.unfold_rows(start_row..=start_row);
-        self.model.set_cursor(offset);
+        // A move, as a click is: it ends vim's insert or replace session.
+        self.split_session(
+            fe_vim::Splits::Moves,
+            |model| {
+                model.unfold_rows(start_row..=start_row);
+                model.set_cursor(offset)
+            },
+            cx,
+        );
+        // The caret's autoscroll, then the next frame shows the block.
+        self.reveal_hunk = Some(target.hunk.id);
         self.changed(cx);
         true
     }

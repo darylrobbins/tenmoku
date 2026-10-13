@@ -81,6 +81,13 @@ impl BlockMap {
         display_row + self.rows_before[before]
     }
 
+    /// The screen rows of the block with `id`, if there's one.
+    pub fn screen_rows(&self, id: u64) -> Option<Range<u32>> {
+        let ix = self.blocks.iter().position(|block| block.id == id)?;
+        let start = self.starts[ix];
+        Some(start..start + self.blocks[ix].rows)
+    }
+
     /// What `screen_row` shows. Past the last row, it's a display row past
     /// the last too.
     pub fn at_screen_row(&self, screen_row: u32) -> ScreenRow {

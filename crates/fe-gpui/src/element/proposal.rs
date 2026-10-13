@@ -12,7 +12,7 @@ use std::{collections::HashMap, ops::Range, sync::Arc};
 
 use fe_buffer::{HunkId, HunkStatus, Outcome, Text};
 use fe_display::{
-    Block, CharWidth, DisplayMap, ExpandedRow, RowIndex,
+    Block, BlockMap, CharWidth, DisplayMap, ExpandedRow, RowIndex,
     layout::{Frame, MAX_SHAPED_ROW_BYTES, MeasuredLine as _, Rect, StyleRun, TextMeasure, Vec2},
 };
 use gpui::{
@@ -326,6 +326,29 @@ pub(super) fn blocks<'a>(
             id: IDS + ix as u64,
         })
     })
+}
+
+/// Where to scroll, as a top in screen rows, to show the block of hunk `id`
+/// in a view `visible_rows` tall now at `scroll_top`: nowhere if it's in
+/// view, else as little as shows it whole, or, for a block taller than the
+/// view, to its header at the top. A hunk without a block has none.
+pub(super) fn reveal(
+    hunks: &[Hunk],
+    id: HunkId,
+    blocks: &BlockMap,
+    scroll_top: f32,
+    visible_rows: f32,
+) -> Option<f32> {
+    let ix = hunks.iter().position(|hunk| hunk.id == id)?;
+    let rows = blocks.screen_rows(IDS + ix as u64)?;
+    let (start, end) = (rows.start as f32, rows.end as f32);
+    if start >= scroll_top && end <= scroll_top + visible_rows {
+        return None;
+    }
+    match start < scroll_top || end - start > visible_rows {
+        true => Some(start),
+        false => Some(end - visible_rows),
+    }
 }
 
 /// The hunk a frame's block of `id` shows, if it's a proposal's.
