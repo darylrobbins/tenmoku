@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 use std::time::{Duration, Instant};
 
 use kiln_core::parse_layer;
