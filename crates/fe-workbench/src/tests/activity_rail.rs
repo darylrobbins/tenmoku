@@ -263,7 +263,14 @@ fn buttons_draw_lucide_icons(cx: &mut TestAppContext) {
     let dock = dock(&workbench, cx);
     let drawn =
         |cx: &mut VisualTestContext| dock.read_with(cx, |dock, _| dock.rail_icons().to_vec());
-    let icons = [Icon::Files, Icon::Search, Icon::ListTree, Icon::GitBranch];
+    // The Terminal button is pinned below the panels'.
+    let icons = [
+        Icon::Files,
+        Icon::Search,
+        Icon::ListTree,
+        Icon::GitBranch,
+        Icon::FileTerminal,
+    ];
     assert_eq!(drawn(cx), icons);
     // Drawn whether or not the dock shows.
     cx.simulate_keystrokes("cmd-b");

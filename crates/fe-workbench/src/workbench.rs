@@ -48,6 +48,7 @@ use crate::{
     trust::{self, TrustChanged},
 };
 use fe_command::Value;
+use fe_ui::Icon;
 use kiln_shell::{
     CloseKind, CloseRequest, Closing, DockPosition, DockState, DockView as _, ItemHandle,
     ModalEvent, ModalId, ModalLayer, PaneView as _, Shell,
@@ -159,15 +160,19 @@ impl Palette {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RootChanged(pub PathBuf);
 
+/// The sidebar rail's Terminal button.
+const TERMINAL_BUTTON: &str = "terminal";
+
 pub struct Workbench {
     panel: Entity<ProjectPanel>,
     dock: Entity<Dock>,
     /// The bottom dock, which shows the terminal, hidden at launch.
     terminal_dock: Entity<kiln_shell::Dock>,
     terminal: Entity<TerminalPanel>,
-    /// To the terminal's shell exiting, and to the bottom dock hiding it
-    /// with focus in it.
-    _terminal: [Subscription; 2],
+    /// To the terminal's shell exiting, to the bottom dock hiding it with
+    /// focus in it, and to the bottom dock showing or hiding, which the
+    /// sidebar's Terminal button follows.
+    _terminal: [Subscription; 3],
     panes: PaneGroup,
     /// The pane files open in; its active tab is the active editor.
     active: Entity<Pane>,
@@ -338,6 +343,19 @@ impl Workbench {
                 references,
                 problems,
                 ui,
+                cx,
+            )
+        });
+        // Opens the terminal from the sidebar, whose button follows the
+        // bottom dock (`follow_terminal`).
+        dock.update(cx, |dock, cx| {
+            dock.add_action(
+                kiln_shell::RailAction {
+                    id: TERMINAL_BUTTON,
+                    icon: Icon::FileTerminal,
+                    title: "Terminal".into(),
+                    command: "terminal.toggle",
+                },
                 cx,
             )
         });
@@ -551,7 +569,7 @@ impl Workbench {
         dock: &Entity<kiln_shell::Dock>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> [Subscription; 2] {
+    ) -> [Subscription; 3] {
         let exited = cx.subscribe_in(
             terminal,
             window,
@@ -570,7 +588,13 @@ impl Workbench {
                 window.focus(&workbench.focus_handle(cx), cx);
             },
         );
-        [exited, hid]
+        let shown = cx.observe(dock, |workbench, dock, cx| {
+            let shown = dock.read(cx).is_visible();
+            workbench.dock.update(cx, |dock, cx| {
+                dock.set_action_highlighted(TERMINAL_BUTTON, shown, cx)
+            });
+        });
+        [exited, hid, shown]
     }
 
     /// `terminal.toggle`: shows the bottom dock with the terminal, focused,
@@ -2016,6 +2040,10 @@ mod recent_picker;
 )]
 #[path = "toast.rs"]
 pub(crate) mod toast;
+
+#[cfg(test)]
+#[path = "terminal_rail_button_tests.rs"]
+mod terminal_rail_button_tests;
 
 #[cfg(test)]
 #[path = "close_tests.rs"]
