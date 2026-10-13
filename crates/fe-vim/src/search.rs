@@ -14,6 +14,7 @@ use regex::{CaptureLocations, Regex, RegexBuilder};
 use unicode_segmentation::UnicodeSegmentation;
 
 mod backtrack;
+pub mod replace;
 
 use crate::args::SearchPattern;
 use crate::motion::{self, Class, Line};
