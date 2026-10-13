@@ -16,6 +16,9 @@ whose module docs give the script grammar), and is the reference to copy.
   `ghost_text.accept`; also `accept_word`, `accept_line`, `dismiss`).
   Subscribe to `GhostTextEvent`: `Accepted { transaction, text, whole }` or
   `Dismissed`. The host's own `set_ghost_text` raises neither.
+- On `Accepted { whole: true, .. }`, drop the host's copy of the suggestion:
+  an undo puts the caret back where it would be live again, and it was
+  taken. `ai_demo` keeps one accepted in part, and one the caret left.
 
 ## A streamed edit
 
@@ -44,6 +47,18 @@ Register a provider once with `EditorModel::add_decoration_provider(set)`,
 (`DecorationKind::RowBackground`) into it as the AI writes. `ai_demo` marks
 streamed regions and, on `ProposalEvent::Accepted`, the accepted hunk
 (`ScriptedAi::note_accepted`).
+
+Anchors can't follow text deleted and restored, so an undo of a marked edit
+has to take its mark away and a redo has to mark where it lands again. The
+driver does that bookkeeping from the buffer's edit events, whenever it's
+serviced. `ai_demo`'s host (`examples/ai_demo/host.rs`) services it on every
+change of the buffer's version, not only at the next step: it observes the
+view for the window's lifetime and, when the version differs from the last
+it serviced, runs a silent zero `wait` step and notifies the view so the marks
+repaint. So an undo or redo by key, during a `wait`, or after the script ends
+updates the marks as it happens. The version check stops the loop its own
+notify would start. The servicing is deferred until the view's events have
+gone out, so `note_accepted` still sees the accept as the buffer's last edit.
 
 ## The undo rule
 

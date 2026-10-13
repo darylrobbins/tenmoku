@@ -25,7 +25,8 @@
 //!   [`GhostText::new`](fe_editor::ghost_text::GhostText::new) (in
 //!   [`ScriptedAi::step`]), [`EditorView::set_ghost_text`] and
 //!   [`GhostTextEvent`]. A suggestion the caret left and came back to is
-//!   shown again.
+//!   shown again; one accepted in full, or turned down, isn't, even when an
+//!   undo takes its text back.
 //! - **Streamed edit**: `stream`, `push` and `finish` write into the buffer
 //!   while `caret` and `type` edit around it, all one AI-origin undo group
 //!   that `undo-ai` takes back whole and `undo` never touches.
@@ -39,14 +40,22 @@
 //!   [`EditorView::set_proposals`], [`EditorView::accept_hunk`],
 //!   [`EditorView::reject_hunk`] and [`ProposalEvent`].
 //! - **Touched rows**: the rows the AI wrote, or the user took from it, get
-//!   an accent background, hunks accepted by hand included.
+//!   an accent background, hunks accepted by hand included. An undo takes
+//!   a mark away and a redo puts it back, by step, key or host alike, as it
+//!   happens: the host services the driver on every change of the buffer's
+//!   version, for the window's lifetime, not only at the next step.
 //!   [`EditorModel::add_decoration_provider`] with a
 //!   [`DecorationSet`](fe_editor::decorations::DecorationSet) (in
-//!   [`ScriptedAi::new`]), and [`ScriptedAi::note_accepted`] on
-//!   [`ProposalEvent::Accepted`].
+//!   [`ScriptedAi::new`]), [`ScriptedAi::note_accepted`] on
+//!   [`ProposalEvent::Accepted`], and a zero `wait` step on each version
+//!   change the view's notify brings.
+//!
+//! The wiring is in `ai_demo/host.rs`, which `tests/ai_demo_host.rs` drives
+//! headless; this file parses, paces and prints.
 //!
 //! Printed to stdout: each step's line and what it did or why it couldn't
-//! (an error never stops the script), each [`GhostTextEvent`] and
+//! (an error never stops the script; a suggestion step that finds nothing
+//! live to act on is `no live suggestion`), each [`GhostTextEvent`] and
 //! [`ProposalEvent`], and `script done`. The window then stays open for
 //! hand play until it's closed or, unless the script is stdin, `q` is
 //! typed on stdin.
@@ -61,23 +70,23 @@ use std::{
 };
 
 use fe_buffer::{Buffer, HunkId};
-use fe_command::{ContextFrame, ContextStack, Invocation};
 use fe_editor::{
     EditorModel,
     scripted_ai::{self, Report, ScriptError, ScriptedAi, Step, StepError},
 };
-use fe_gpui::{EditorTheme, EditorView, GhostTextEvent, ProposalEvent, commands::RunCommand};
-use gpui::{
-    AnyWindowHandle, App, AppContext as _, AsyncApp, Focusable as _, WindowHandle, WindowOptions,
-};
+use fe_gpui::{EditorTheme, EditorView, GhostTextEvent, ProposalEvent};
+use gpui::{App, AppContext as _, AsyncApp, Focusable as _, WindowHandle, WindowOptions};
+
+// Not `ai_demo/main.rs`, which cargo would take for an example of its own.
+#[path = "ai_demo/host.rs"]
+mod host;
+
+use host::Host;
 
 const USAGE: &str = "usage: ai_demo [<file> <script>]  (<script> `-` reads steps from stdin)";
 /// Between steps, so each can be watched landing.
 const PACE: Duration = Duration::from_millis(250);
 const POLL_EVERY: Duration = Duration::from_millis(20);
-
-/// The key context the suggestion's commands run in while it shows.
-const GHOST_TEXT_CONTEXT: &str = "ghost_text";
 
 /// One step of a script, with where it came from.
 struct Line {
@@ -142,8 +151,8 @@ fn main() -> ExitCode {
             }
             Rc::new(RefCell::new(ScriptedAi::new(view.model_mut())))
         });
-        let ai = driver.clone();
-        cx.subscribe(&view, move |view, event: &GhostTextEvent, cx| match event {
+        // Each event's line comes before what the host does with it.
+        cx.subscribe(&view, |_, event: &GhostTextEvent, _| match event {
             GhostTextEvent::Accepted {
                 transaction,
                 text,
@@ -152,34 +161,18 @@ fn main() -> ExitCode {
                 let part = if *whole { "" } else { " in part" };
                 println!("      event: suggestion accepted{part}: {text:?} as {transaction:?}");
             }
-            GhostTextEvent::Dismissed => {
-                println!("      event: suggestion dismissed");
-                // Still live at the caret, it was turned down (`escape`,
-                // `dismiss`, leaving insert mode), so it isn't offered
-                // again; one the caret left is, when the caret is back.
-                view.update(cx, |view, _| {
-                    let mut ai = ai.borrow_mut();
-                    if (ai.ghost_text()).is_some_and(|ghost| ghost.is_live(view.model())) {
-                        ai.step(view.model_mut(), &Step::Dismiss).ok();
-                    }
-                });
-            }
+            GhostTextEvent::Dismissed => println!("      event: suggestion dismissed"),
         })
         .detach();
-        let ai = driver.clone();
-        cx.subscribe(&view, move |view, event: &ProposalEvent, cx| match event {
+        cx.subscribe(&view, |_, event: &ProposalEvent, _| match event {
             ProposalEvent::Accepted { hunk, transaction } => {
                 println!("      event: hunk {hunk:?} accepted as {transaction:?}");
-                // By button, key or step alike, its rows are touched.
-                view.update(cx, |view, cx| {
-                    ai.borrow_mut().note_accepted(view.model(), *hunk);
-                    cx.notify();
-                });
             }
             ProposalEvent::Rejected { hunk } => println!("      event: hunk {hunk:?} rejected"),
         })
         .detach();
-        cx.spawn(async move |cx| play(window, driver, script, stdin, cx).await)
+        let host = host::install(&view, &driver, cx);
+        cx.spawn(async move |cx| play(window, driver, host, script, stdin, cx).await)
             .detach();
         cx.activate(true);
     });
@@ -236,6 +229,7 @@ fn parse_line(number: usize, text: &str) -> Result<Option<Line>, ScriptError> {
 async fn play(
     window: WindowHandle<EditorView>,
     driver: Rc<RefCell<ScriptedAi>>,
+    host: Host,
     script: Script,
     stdin: Receiver<String>,
     cx: &mut AsyncApp,
@@ -247,7 +241,7 @@ async fn play(
                     cx.update(|cx| cx.quit());
                     return;
                 }
-                if run(window, &driver, line, cx).await.is_err() {
+                if run(window, &driver, &host, line, cx).await.is_err() {
                     return;
                 }
             }
@@ -273,7 +267,7 @@ async fn play(
                         number += 1;
                         match parse_line(number, &text) {
                             Ok(Some(line)) => {
-                                if run(window, &driver, &line, cx).await.is_err() {
+                                if run(window, &driver, &host, &line, cx).await.is_err() {
                                     return;
                                 }
                             }
@@ -302,6 +296,7 @@ fn quit_asked(stdin: &Receiver<String>) -> bool {
 async fn run(
     window: WindowHandle<EditorView>,
     driver: &Rc<RefCell<ScriptedAi>>,
+    host: &Host,
     line: &Line,
     cx: &mut AsyncApp,
 ) -> gpui::Result<()> {
@@ -309,15 +304,7 @@ async fn run(
     match &line.step {
         // What the user does with a suggestion, they do in the window.
         step @ (Step::Accept | Step::AcceptWord | Step::AcceptLine | Step::Dismiss) => {
-            let shown = window.update(cx, |view, _, _| view.ghost_text().is_some())?;
-            if shown {
-                let command = ghost_text_command(step);
-                AnyWindowHandle::from(window).update(cx, |_, window, cx| {
-                    window.dispatch_action(Box::new(command), cx)
-                })?;
-            } else {
-                print(Err(StepError::NoSuggestion));
-            }
+            print(host::run_ghost_step(window, host, step, cx)?);
         }
         // And a hunk they accept or reject, through the view, as a button.
         Step::AcceptHunk(n) | Step::RejectHunk(n) => {
@@ -343,12 +330,8 @@ async fn run(
                     Step::Propose { .. } => view.set_proposals(ai.proposals().to_vec(), cx),
                     // The caret back where a suggestion was left shows it
                     // again.
-                    _ if view.ghost_text().is_none() => {
-                        let ghost = ai.ghost_text().filter(|ghost| ghost.is_live(view.model()));
-                        if let Some(ghost) = ghost.cloned() {
-                            view.set_ghost_text(Some(ghost), cx);
-                            println!("      suggestion shown again");
-                        }
+                    _ if host::show_again(view, &ai, cx) => {
+                        println!("      suggestion shown again");
                     }
                     _ => {}
                 }
@@ -361,20 +344,6 @@ async fn run(
     }
     cx.background_executor().timer(PACE).await;
     Ok(())
-}
-
-/// The `ghost_text.*` command for `step`, in the context a key would run it
-/// in while the suggestion shows.
-fn ghost_text_command(step: &Step) -> RunCommand {
-    let command = match step {
-        Step::Accept => "ghost_text.accept",
-        Step::AcceptWord => "ghost_text.accept_word",
-        Step::AcceptLine => "ghost_text.accept_line",
-        _ => "ghost_text.dismiss",
-    };
-    let frame = ContextFrame::new(fe_gpui::KEY_CONTEXT).flag(GHOST_TEXT_CONTEXT);
-    let invocation = Invocation::of(command).expect("a valid command ID");
-    RunCommand(invocation.context(ContextStack::new().with(frame)))
 }
 
 /// The latest proposal's `n`th (1-based) hunk, as the script counts them.
