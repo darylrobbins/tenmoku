@@ -18,12 +18,19 @@
 //! - **`escape`**, wherever it's pressed, and losing focus drop it, before
 //!   any binding takes the key: so one `escape` in vim's insert mode drops
 //!   it and goes back to normal mode.
+//! - **The palette.** Opening it blurs the view, so the suggestion is gone
+//!   by the time a pick runs; the view keeps the one blur dropped, and a
+//!   [`ACCEPT`], [`ACCEPT_WORD`] or [`ACCEPT_LINE`] from the palette takes
+//!   it back while it's still live at the caret. Any other command or edit
+//!   in the view, [`set_ghost_text`](EditorView::set_ghost_text), and the
+//!   first frame drawn focused forget it, so escaping the palette or any
+//!   other focus change just drops it.
 //! - **Events.** The host hears each accept and the suggestion going any
 //!   other way as a [`GhostTextEvent`], but its own
 //!   [`set_ghost_text`](EditorView::set_ghost_text).
 
 use fe_buffer::TransactionId;
-use fe_command::ContextStack;
+use fe_command::{ContextStack, Invocation, Source};
 use fe_editor::ghost_text::GhostText;
 use gpui::{Context, EventEmitter};
 
@@ -42,7 +49,8 @@ pub(crate) const KEY_CONTEXT: &str = "ghost_text";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GhostTextEvent {
     /// `text`, some or all of what remained, went in as `transaction`, the
-    /// user's; `whole` if nothing of it remains to show.
+    /// user's; `whole` if nothing of it remains to show. One accepted from
+    /// the command palette follows the `Dismissed` its blur sent.
     Accepted {
         transaction: TransactionId,
         text: String,
@@ -66,6 +74,7 @@ impl EditorView {
         self.model.sync_display();
         self.sync_vim(cx);
         let accepts_text = self.accepts_text();
+        self.blurred_ghost_text = None;
         self.ghost_text = ghost.filter(|ghost| {
             let live = accepts_text && ghost.is_live(&self.model);
             if !live {
@@ -117,8 +126,9 @@ impl EditorView {
         }
     }
 
-    /// Has losing focus drop the suggestion. `escape` does too, through
-    /// [`dismiss_ghost_text_on_escape`], before any binding takes it.
+    /// Has losing focus drop the suggestion, kept for the palette. `escape`
+    /// drops it too, through [`dismiss_ghost_text_on_escape`], before any
+    /// binding takes it.
     pub(crate) fn dismiss_ghost_text_on_blur(
         view: &mut EditorView,
         window: &mut gpui::Window,
@@ -127,17 +137,42 @@ impl EditorView {
         // Blur listeners run at the end of a draw, which asks for no frame
         // after it: the redraw waits until it's over.
         let blur = cx.on_blur(&view.focus, window, |view, window, cx| {
-            if view.ghost_text.is_some() {
+            if let Some(ghost) = view.ghost_text.clone() {
                 view.dismiss_ghost_text(cx);
+                view.blurred_ghost_text = Some(ghost);
                 cx.defer_in(window, |_, _, cx| cx.notify());
             }
         });
         view.ghost_text_subscriptions = vec![blur];
     }
 
+    /// Forgets the suggestion blur dropped, for a frame drawn while the view
+    /// has focus: focus came back without a palette pick taking it.
+    pub(crate) fn forget_blurred_ghost_text_if_focused(&mut self, window: &gpui::Window) {
+        if self.focus.is_focused(window) {
+            self.blurred_ghost_text = None;
+        }
+    }
+
+    /// Forgets the suggestion blur dropped, for `invocation` about to run in
+    /// the view, unless it's an accept from the palette, which takes it.
+    pub(crate) fn forget_blurred_ghost_text_unless_taken(&mut self, invocation: &Invocation) {
+        let accept = [ACCEPT, ACCEPT_WORD, ACCEPT_LINE].contains(&invocation.command.as_str());
+        if !(accept && invocation.source == Source::Palette) {
+            self.blurred_ghost_text = None;
+        }
+    }
+
     /// Runs one of the suggestion's commands, which the registry has
-    /// dispatched. `true` if `command` is one.
-    pub(crate) fn run_ghost_text_command(&mut self, command: &str, cx: &mut Context<Self>) -> bool {
+    /// dispatched from `source`. `true` if `command` is one. An accept from
+    /// the palette takes back the suggestion opening it dropped, if it's
+    /// still live.
+    pub(crate) fn run_ghost_text_command(
+        &mut self,
+        command: &str,
+        source: Source,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let accept = match command {
             ACCEPT => GhostText::accept,
             ACCEPT_WORD => GhostText::accept_word,
@@ -149,6 +184,12 @@ impl EditorView {
             _ => return false,
         };
         self.drop_stale_ghost_text(cx);
+        let blurred = self.blurred_ghost_text.take();
+        if self.ghost_text.is_none() && source == Source::Palette {
+            self.model.sync_display();
+            let accepts_text = self.accepts_text();
+            self.ghost_text = blurred.filter(|ghost| accepts_text && ghost.is_live(&self.model));
+        }
         let Some(ghost) = self.ghost_text.take() else {
             return true;
         };

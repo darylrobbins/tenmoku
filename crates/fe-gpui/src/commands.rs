@@ -356,6 +356,7 @@ impl EditorView {
         } else {
             invocation.context(fe_editor::commands::context())
         };
+        self.forget_blurred_ghost_text_unless_taken(&invocation);
         self.sync_vim(cx);
         if self.vim.is_some() && vim::registry().get(&invocation.command).is_some() {
             self.record_vim_command(&invocation);
@@ -480,7 +481,7 @@ impl EditorView {
             }
             Ok(()) => {
                 let command = invocation.command.as_str();
-                self.run_ghost_text_command(command, cx);
+                self.run_ghost_text_command(command, invocation.source, cx);
                 if !self.run_completion_command(command, cx) {
                     self.sync_completion(cx);
                 }

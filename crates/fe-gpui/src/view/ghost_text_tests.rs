@@ -1,9 +1,13 @@
 //! Ghost text ([`super::ghost_text`]) in a headless window: its first line
 //! dimmed inline after the caret, its other lines in rows below the caret's,
 //! typing its next char consuming it, and anything else that ends it, or
-//! vim leaving insert mode, dropping it.
+//! vim leaving insert mode, dropping it; and an accept from the palette
+//! taking back the one its blur dropped.
+
+use std::{cell::RefCell, rc::Rc};
 
 use fe_buffer::{Buffer, Origin};
+use fe_command::{Invocation, Source};
 use fe_display::layout::Rect;
 use fe_editor::{EditorModel, ghost_text::GhostText};
 use gpui::{
@@ -11,6 +15,7 @@ use gpui::{
     VisualTestContext, px,
 };
 
+use super::ghost_text;
 use crate::*;
 
 /// The caret is before the `;`.
@@ -374,4 +379,106 @@ fn replace_caret_ignores_the_inlay(cx: &mut TestAppContext) {
         after[0].size.width,
         before[0].size.width
     );
+}
+
+/// The view's events from now on: each accept's text and whether it was
+/// whole, or `None` for a dismissal.
+fn events(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> Rc<RefCell<Vec<Seen>>> {
+    let events = Rc::new(RefCell::new(Vec::new()));
+    let seen = events.clone();
+    cx.update(|_, cx| {
+        let push = move |_, event: &GhostTextEvent, _: &mut gpui::App| {
+            seen.borrow_mut().push(match event {
+                GhostTextEvent::Accepted { text, whole, .. } => Some((text.clone(), *whole)),
+                GhostTextEvent::Dismissed => None,
+            })
+        };
+        cx.subscribe(view, push).detach();
+    });
+    events
+}
+
+type Seen = Option<(String, bool)>;
+
+/// Suggests `text`, draws it, then blurs the view, which drops it. Blur
+/// listeners hear only from an active window.
+fn suggest_and_blur(view: &Entity<EditorView>, text: &str, cx: &mut VisualTestContext) {
+    cx.update(|window, cx| {
+        window.activate_window();
+        window.focus(&view.focus_handle(cx), cx);
+    });
+    cx.run_until_parked();
+    suggest(view, text, cx);
+    draw(cx);
+    cx.update(|window, cx| window.blur(cx));
+    cx.run_until_parked();
+    draw(cx);
+    assert!(!shown(view, cx));
+}
+
+/// Runs `command` in the view from `source`, in the editor's context with
+/// the suggestion's flag set, as the palette that listed it captured it.
+fn run(view: &Entity<EditorView>, command: &str, source: Source, cx: &mut VisualTestContext) {
+    let context = ghost_text::stamp(fe_editor::commands::context(), true);
+    let invocation = Invocation::of(command)
+        .unwrap()
+        .source(source)
+        .context(context);
+    view.update_in(cx, |view, window, cx| {
+        view.run_command(invocation, Some(window), cx)
+    });
+}
+
+#[gpui::test]
+fn the_palette_takes_back_what_blur_dropped(cx: &mut TestAppContext) {
+    let (view, cx) = editor(cx);
+    let events = events(&view, cx);
+
+    // An accept from the palette takes it back; a partial one leaves the
+    // rest showing.
+    suggest_and_blur(&view, "bar()", cx);
+    run(&view, ghost_text::ACCEPT_WORD, Source::Palette, cx);
+    assert_eq!(text(&view, cx), "foobar;\nnext\nlast\n");
+    let remaining = view.read_with(cx, |view, _| {
+        Some(view.ghost_text()?.remaining(view.model())?.to_owned())
+    });
+    assert_eq!(remaining.as_deref(), Some("()"));
+    let taken: Vec<Seen> = events.borrow_mut().drain(..).collect();
+    assert_eq!(taken, [None, Some(("bar".into(), false))]);
+    run(&view, ghost_text::ACCEPT, Source::Palette, cx);
+    assert_eq!(text(&view, cx), "foobar();\nnext\nlast\n");
+    let taken: Vec<Seen> = events.borrow_mut().drain(..).collect();
+    assert_eq!(taken, [Some(("()".into(), true))]);
+}
+
+#[gpui::test]
+fn only_a_palette_accept_takes_back_what_blur_dropped(cx: &mut TestAppContext) {
+    let (view, cx) = editor(cx);
+    let start = view.read_with(cx, |view, _| view.model().text().to_string());
+    let untouched = |cx: &mut VisualTestContext| {
+        run(&view, ghost_text::ACCEPT, Source::Palette, cx);
+        assert_eq!(text(&view, cx), start);
+        assert!(!shown(&view, cx));
+    };
+
+    // The same accept from a key doesn't, nor a palette accept after it.
+    suggest_and_blur(&view, "bar()", cx);
+    run(&view, ghost_text::ACCEPT, Source::Keyboard, cx);
+    untouched(cx);
+
+    // Nor after another command that leaves the caret where it was.
+    suggest_and_blur(&view, "bar()", cx);
+    run(&view, ghost_text::DISMISS, Source::Palette, cx);
+    untouched(cx);
+
+    // Nor after the host sets none.
+    suggest_and_blur(&view, "bar()", cx);
+    view.update(cx, |view, cx| view.set_ghost_text(None, cx));
+    untouched(cx);
+
+    // Nor once focus is back and a frame has been drawn.
+    suggest_and_blur(&view, "bar()", cx);
+    cx.update(|window, cx| window.focus(&view.focus_handle(cx), cx));
+    draw(cx);
+    untouched(cx);
 }

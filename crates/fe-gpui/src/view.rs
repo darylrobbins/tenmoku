@@ -133,6 +133,9 @@ pub struct EditorView {
     pub(crate) proposal_buttons: Vec<(fe_buffer::HunkId, ProposalButton, gpui::Bounds<Pixels>)>,
     /// The suggestion shown at the caret ([`ghost_text`]).
     ghost_text: Option<fe_editor::ghost_text::GhostText>,
+    /// The suggestion losing focus dropped, for a palette pick that
+    /// accepts it ([`ghost_text`]).
+    blurred_ghost_text: Option<fe_editor::ghost_text::GhostText>,
     /// Drop it on `escape` and on losing focus.
     ghost_text_subscriptions: Vec<Subscription>,
     /// The top, in screen rows, the last frame reported or the host set
@@ -265,6 +268,7 @@ impl EditorView {
             proposals: Vec::new(),
             proposal_buttons: Vec::new(),
             ghost_text: None,
+            blurred_ghost_text: None,
             ghost_text_subscriptions: Vec::new(),
             reported_top: 0.,
             top_set: None,
@@ -487,6 +491,7 @@ impl EditorView {
     /// Call after anything that moves the cursor or changes the text.
     pub(crate) fn changed(&mut self, cx: &mut Context<Self>) {
         self.autoscroll = true;
+        self.blurred_ghost_text = None;
         // An edit stops the find count running and starts another now, not
         // at the next frame.
         self.sync_find(cx);
@@ -1282,6 +1287,7 @@ impl Render for EditorView {
         self.drop_stale_completion();
         self.drop_stale_ghost_text(cx);
         self.sync_signature_help(cx);
+        self.forget_blurred_ghost_text_if_focused(window);
         if self.completion_shown() {
             key_context.add(crate::completion_menu::KEY_CONTEXT);
         }
