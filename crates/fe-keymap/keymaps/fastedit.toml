@@ -1059,3 +1059,167 @@ keys = "ctrl-alt-shift-n"
 command = "proposal.reject_all"
 context = "editor && proposal"
 platform = "!macos"
+
+# Vim's <C-w> window keys, in normal mode: they run the pane commands. Off
+# macOS `ctrl-w` alone closes the tab in the `workbench` context, which these
+# longer bindings take over in vim normal mode; with vim off it still does.
+
+[[bindings]]
+keys = "ctrl-w h"
+command = "pane.focus_left"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w ctrl-h"
+command = "pane.focus_left"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w left"
+command = "pane.focus_left"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w j"
+command = "pane.focus_down"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w ctrl-j"
+command = "pane.focus_down"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w down"
+command = "pane.focus_down"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w k"
+command = "pane.focus_up"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w ctrl-k"
+command = "pane.focus_up"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w up"
+command = "pane.focus_up"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w l"
+command = "pane.focus_right"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w ctrl-l"
+command = "pane.focus_right"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w right"
+command = "pane.focus_right"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w w"
+command = "pane.focus_next"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w ctrl-w"
+command = "pane.focus_next"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w shift-w"
+command = "pane.focus_previous"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w s"
+command = "pane.split_down"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w shift-s"
+command = "pane.split_down"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w ctrl-s"
+command = "pane.split_down"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w v"
+command = "pane.split_right"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w ctrl-v"
+command = "pane.split_right"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w c"
+command = "pane.close"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w q"
+command = "pane.close"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w ctrl-q"
+command = "pane.close"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w shift-h"
+command = "pane.move_tab_left"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w shift-j"
+command = "pane.move_tab_down"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w shift-k"
+command = "pane.move_tab_up"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w shift-l"
+command = "pane.move_tab_right"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w >"
+command = "pane.grow_width"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w <"
+command = "pane.shrink_width"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w +"
+command = "pane.grow_height"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w -"
+command = "pane.shrink_height"
+context = "editor && vim.mode == normal"
+
+[[bindings]]
+keys = "ctrl-w ="
+command = "pane.equalize"
+context = "editor && vim.mode == normal"

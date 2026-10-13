@@ -424,25 +424,26 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
             .unwrap_or_else(|| panic!("{diagnostic:?}"));
         let context = bindings[index].context.as_ref().map(ToString::to_string);
         assert!(
-            matches!(
-                context.as_deref(),
-                Some(
-                    "workbench"
-                        | "workbench && !terminal"
-                        | "picker"
-                        | "text_input"
-                        | "search_panel"
-                        | "search_panel && text_input"
-                        | "find_bar"
-                        | "find_bar && text_input"
-                        | "editor || find_bar"
-                        | "project_panel"
-                        | "ReferencesPanel"
-                        | "vim_line"
-                        | "vim_line && text_input"
-                        | "editor"
-                )
-            ),
+            crate::keymap_tests::is_window_key(&bindings[index])
+                || matches!(
+                    context.as_deref(),
+                    Some(
+                        "workbench"
+                            | "workbench && !terminal"
+                            | "picker"
+                            | "text_input"
+                            | "search_panel"
+                            | "search_panel && text_input"
+                            | "find_bar"
+                            | "find_bar && text_input"
+                            | "editor || find_bar"
+                            | "project_panel"
+                            | "ReferencesPanel"
+                            | "vim_line"
+                            | "vim_line && text_input"
+                            | "editor"
+                    )
+                ),
             "{diagnostic:?}"
         );
     }
@@ -451,6 +452,7 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
         .filter(|binding| {
             binding.context.as_ref().map(ToString::to_string).as_deref()
                 == Some("editor && vim.mode == normal")
+                && !crate::keymap_tests::is_window_key(binding)
         })
         .map(|binding| {
             (
@@ -503,6 +505,8 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
                 })
         })
         .filter(|binding| binding.depth(&stack).is_some())
+        // Vim's `<C-w>` window keys run the pane commands.
+        .filter(|binding| !crate::keymap_tests::is_window_key(binding))
         .map(|binding| binding.keys.to_string())
         .collect();
     assert_eq!(

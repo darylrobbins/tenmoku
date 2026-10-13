@@ -205,6 +205,15 @@ fn text_and_caret(view: &Entity<EditorView>, cx: &mut TestAppContext) -> (String
     })
 }
 
+/// One of vim's `<C-w>` window keys: a `pane.` command on a `ctrl-w` chord
+/// in vim's normal mode, 32 in the default keymap.
+pub(crate) fn is_window_key(binding: &fe_keymap::Binding) -> bool {
+    binding.command.as_str().starts_with("pane.")
+        && binding.keys.to_string().starts_with("ctrl-w ")
+        && binding.context.as_ref().map(ToString::to_string).as_deref()
+            == Some("editor && vim.mode == normal")
+}
+
 #[gpui::test]
 fn default_keymap_matches_the_old_table(cx: &mut TestAppContext) {
     // fe-workbench's commands (the `workbench`, `picker`, `text_input`,
@@ -213,7 +222,8 @@ fn default_keymap_matches_the_old_table(cx: &mut TestAppContext) {
     let store = KeymapStore::load(DEFAULT_MACOS, None, None);
     assert_eq!(store.diagnostics(), []);
     let bindings = store.keymap().bindings();
-    assert_eq!(bindings.len(), 169);
+    assert_eq!(bindings.len(), 201);
+    assert_eq!(bindings.iter().filter(|b| is_window_key(b)).count(), 32);
     for (binding, &(keys, command, context)) in bindings.iter().zip(OLD_TABLE) {
         assert_eq!(binding.keys, KeySequence::parse(keys).unwrap(), "{command}");
         assert_eq!(binding.command.as_str(), command, "{keys}");
@@ -224,24 +234,25 @@ fn default_keymap_matches_the_old_table(cx: &mut TestAppContext) {
     let catalog = crate::commands::command_catalog();
     let workbench = |binding: &&fe_keymap::Binding| {
         let context = binding.context.as_ref().map(ToString::to_string);
-        matches!(
-            context.as_deref(),
-            Some(
-                "workbench"
-                    | "workbench && !terminal"
-                    | "picker"
-                    | "text_input"
-                    | "search_panel"
-                    | "search_panel && text_input"
-                    | "find_bar"
-                    | "find_bar && text_input"
-                    | "editor || find_bar"
-                    | "vim_line"
-                    | "vim_line && text_input"
-                    | "project_panel"
-                    | "ReferencesPanel"
+        crate::keymap_tests::is_window_key(binding)
+            || matches!(
+                context.as_deref(),
+                Some(
+                    "workbench"
+                        | "workbench && !terminal"
+                        | "picker"
+                        | "text_input"
+                        | "search_panel"
+                        | "search_panel && text_input"
+                        | "find_bar"
+                        | "find_bar && text_input"
+                        | "editor || find_bar"
+                        | "vim_line"
+                        | "vim_line && text_input"
+                        | "project_panel"
+                        | "ReferencesPanel"
+                )
             )
-        )
     };
     // `find.show` is the workbench's too, though bound in `editor`.
     let find = |binding: &&fe_keymap::Binding| binding.command.as_str().starts_with("find.");
@@ -251,7 +262,7 @@ fn default_keymap_matches_the_old_table(cx: &mut TestAppContext) {
     {
         assert_eq!(catalog.check(&binding.command, &binding.args), Ok(()));
     }
-    assert_eq!(bindings.iter().filter(workbench).count(), 63);
+    assert_eq!(bindings.iter().filter(workbench).count(), 95);
 
     cx.update(|cx| init_with_keymap(cx, store.keymap().clone()));
     let issues = cx.update(|cx| keymap_report(cx));

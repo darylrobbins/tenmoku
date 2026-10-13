@@ -197,3 +197,7 @@ pub(crate) fn op(run: &RunCommand, cx: &App) -> Option<PaneOp> {
 #[cfg(test)]
 #[path = "pane_resize_tests.rs"]
 mod resize_tests;
+
+#[cfg(test)]
+#[path = "vim_window_keys_tests.rs"]
+mod vim_window_keys_tests;
