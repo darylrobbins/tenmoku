@@ -169,6 +169,14 @@ impl Pending {
         self.kind().is_none()
     }
 
+    /// Nothing but a register is pending: no count, operator or prefix.
+    fn at_most_register(&self) -> bool {
+        self.prefix.is_none()
+            && self.operator.is_none()
+            && self.count.is_none()
+            && self.typing.is_none()
+    }
+
     /// What it waits on, by the last thing typed; `None` if nothing is
     /// pending.
     pub fn kind(&self) -> Option<PendingKind> {
@@ -494,6 +502,10 @@ impl Pending {
 /// register before `q` cancels), and `@{a-z}` or `@@`, after a count, commits
 /// `vim.play`; both in normal mode only. Only [`VimState`](crate::VimState)
 /// knows a recording is under way, so ending it with `q` is its own.
+///
+/// `v`, `V`, `<C-v>` and `<C-q>` start their visual mode when nothing but a
+/// register is pending, dropping the register, as in nvim; a count before
+/// them is `1v`'s reselect, and an operator or prefix cancels.
 pub fn step(mut pending: Pending, key: VimKey) -> Step {
     if let Some(prefix) = pending.prefix.take() {
         return pending.complete(prefix, key);
@@ -511,7 +523,7 @@ pub fn step(mut pending: Pending, key: VimKey) -> Step {
         // `<NL>` (a register's line break, as `@` plays it) is `j`.
         VimKey::Ctrl('j') => 'j',
         // `<C-q>` is `<C-v>`, as in nvim.
-        VimKey::Ctrl('v' | 'q') if pending.visual || pending.is_empty() => {
+        VimKey::Ctrl('v' | 'q') if pending.visual || pending.at_most_register() => {
             return invocation(
                 "vim.visual",
                 VisualArgs {
@@ -575,7 +587,7 @@ pub fn step(mut pending: Pending, key: VimKey) -> Step {
             );
         }
         _ if pending.visual => return pending.visual_key(ch, key),
-        'v' | 'V' if pending.is_empty() => return visual(ch),
+        'v' | 'V' if pending.at_most_register() => return visual(ch),
         _ => {
             if let Some(operator) = operator(ch) {
                 return match pending.operator {
