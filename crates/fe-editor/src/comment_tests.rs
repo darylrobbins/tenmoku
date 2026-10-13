@@ -99,3 +99,16 @@ fn block_only_and_none() {
     model.undo().unwrap();
     assert_eq!(render(&model), "|a");
 }
+
+#[test]
+fn token_only_row_uncomments_to_empty() {
+    assert_eq!(toggled("|  // ", LINE), "|  ");
+    assert_eq!(toggled("|//", LINE), "|");
+}
+
+#[test]
+fn block_wraps_trailing_whitespace() {
+    assert_eq!(toggled("|a  ", BLOCK), "/* |a   */");
+    assert_eq!(toggled("|/* a   */", BLOCK), "|a  ");
+    assert_eq!(toggled("|/* a */  ", BLOCK), "|a  ");
+}

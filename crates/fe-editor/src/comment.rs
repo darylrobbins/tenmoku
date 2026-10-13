@@ -43,18 +43,19 @@ impl EditorModel {
     pub fn toggle_comment(&mut self, tokens: CommentTokens) {
         self.sync_display();
         let text = self.text();
-        // Each non-blank row: where its text starts and ends (without
-        // surrounding whitespace), as offsets.
-        let rows: Vec<(usize, usize)> = self
+        // Each non-blank row: where its text starts, where it ends without
+        // trailing whitespace, and where the row ends, as offsets.
+        let rows: Vec<(usize, usize, usize)> = self
             .blocks(false)
             .iter()
             .flat_map(|block| block.rows.clone())
             .filter_map(|row| {
                 let content = text.row_to_string(row);
+                let content = content.trim_end_matches(['\n', '\r']);
                 let trimmed = content.trim_start();
                 let code = trimmed.trim_end();
                 let start = text.row_start(row) + (content.len() - trimmed.len());
-                (!code.is_empty()).then(|| (start, start + code.len()))
+                (!code.is_empty()).then(|| (start, start + code.len(), start + trimmed.len()))
             })
             .collect();
         if rows.is_empty() {
@@ -63,16 +64,18 @@ impl EditorModel {
         let slice = |range: (usize, usize)| text.slice_to_string(range.0..range.1);
         let mut edits = Vec::new();
         if let Some(token) = tokens.line {
-            let commented = rows.iter().all(|&row| slice(row).starts_with(token));
+            let commented = rows
+                .iter()
+                .all(|&(start, end, _)| slice((start, end)).starts_with(token));
             if commented {
-                for &(start, end) in &rows {
-                    let after = &slice((start, end))[token.len()..];
+                for &(start, _, full) in &rows {
+                    let after = slice((start + token.len(), full));
                     let len = token.len() + usize::from(after.starts_with(' '));
                     edits.push((start..start + len, String::new()));
                 }
             } else {
                 // The smallest indentation, in chars, so the markers line up.
-                let indent = |&(start, _): &(usize, usize)| {
+                let indent = |&(start, ..): &(usize, usize, usize)| {
                     let row = text.offset_to_point(start).row;
                     text.slice_to_string(text.row_start(row)..start)
                         .chars()
@@ -88,13 +91,13 @@ impl EditorModel {
                 }
             }
         } else if let Some((open, close)) = tokens.block {
-            let wrapped = rows.iter().all(|&row| {
-                let code = slice(row);
+            let wrapped = rows.iter().all(|&(start, end, _)| {
+                let code = slice((start, end));
                 code.len() >= open.len() + close.len()
                     && code.starts_with(open)
                     && code.ends_with(close)
             });
-            for &(start, end) in &rows {
+            for &(start, end, full) in &rows {
                 if wrapped {
                     let code = slice((start, end));
                     let inner = &code[open.len()..code.len() - close.len()];
@@ -104,7 +107,7 @@ impl EditorModel {
                     edits.push((end - close.len() - after..end, String::new()));
                 } else {
                     edits.push((start..start, format!("{open} ")));
-                    edits.push((end..end, format!(" {close}")));
+                    edits.push((full..full, format!(" {close}")));
                 }
             }
         }
