@@ -57,7 +57,7 @@ pub fn link_at(snapshot: &Snapshot, row: usize, col: usize, cwd: &Path) -> Optio
 
     let text = RowText::new(cells);
     let at = text.index_of(col)?;
-    let (span, target) = url_at(&text.chars, at).or_else(|| path_at(&text.chars, at, cwd))?;
+    let (span, target) = url_at(&text, at).or_else(|| path_at(&text, at, cwd))?;
     Some(Link {
         row,
         cols: text.cols(span),
@@ -68,6 +68,8 @@ pub fn link_at(snapshot: &Snapshot, row: usize, col: usize, cwd: &Path) -> Optio
 /// A row's characters, with the cells each covers (two for a wide one).
 struct RowText {
     chars: Vec<char>,
+    /// The combining marks of each character, parallel to `chars`.
+    marks: Vec<Option<String>>,
     cells: Vec<Range<usize>>,
 }
 
@@ -75,6 +77,7 @@ impl RowText {
     fn new(cells: &[Cell]) -> RowText {
         let mut text = RowText {
             chars: Vec::with_capacity(cells.len()),
+            marks: Vec::with_capacity(cells.len()),
             cells: Vec::with_capacity(cells.len()),
         };
         for (col, cell) in cells.iter().enumerate() {
@@ -85,6 +88,7 @@ impl RowText {
                 continue;
             }
             text.chars.push(cell.ch);
+            text.marks.push(cell.extra.clone());
             text.cells.push(col..col + 1);
         }
         text
@@ -93,6 +97,18 @@ impl RowText {
     /// The character covering cell `col`.
     fn index_of(&self, col: usize) -> Option<usize> {
         self.cells.iter().position(|cells| cells.contains(&col))
+    }
+
+    /// Characters `span` as text, each followed by its combining marks.
+    fn text(&self, span: Range<usize>) -> String {
+        let mut text = String::new();
+        for i in span {
+            text.push(self.chars[i]);
+            if let Some(marks) = &self.marks[i] {
+                text.push_str(marks);
+            }
+        }
+        text
     }
 
     /// The cells characters `span` cover.
@@ -104,7 +120,8 @@ impl RowText {
 const SCHEMES: [&str; 4] = ["https://", "http://", "file://", "mailto:"];
 
 /// The URL covering character `at`, with its characters.
-fn url_at(chars: &[char], at: usize) -> Option<(Range<usize>, LinkTarget)> {
+fn url_at(text: &RowText, at: usize) -> Option<(Range<usize>, LinkTarget)> {
+    let chars = &text.chars;
     let mut i = 0;
     while i <= at {
         let after_word = i > 0 && chars[i - 1].is_alphanumeric();
@@ -113,8 +130,7 @@ fn url_at(chars: &[char], at: usize) -> Option<(Range<usize>, LinkTarget)> {
             let end = url_end(chars, i, body);
             if end > body {
                 if (i..end).contains(&at) {
-                    let url: String = chars[i..end].iter().collect();
-                    return Some((i..end, uri_target(&url)));
+                    return Some((i..end, uri_target(&text.text(i..end))));
                 }
                 i = end;
                 continue;
@@ -221,7 +237,8 @@ fn is_path_char(c: char) -> bool {
 
 /// The existing path covering character `at`, with its `:line[:column]` or
 /// `(line[,column])` suffix.
-fn path_at(chars: &[char], at: usize, cwd: &Path) -> Option<(Range<usize>, LinkTarget)> {
+fn path_at(text: &RowText, at: usize, cwd: &Path) -> Option<(Range<usize>, LinkTarget)> {
+    let chars = &text.chars;
     let mut start = 0;
     while start <= at {
         if !is_path_char(chars[start]) {
@@ -233,7 +250,7 @@ fn path_at(chars: &[char], at: usize, cwd: &Path) -> Option<(Range<usize>, LinkT
             .unwrap_or(chars.len());
         let (line, column, end) = location(chars, run_end);
         if (start..end).contains(&at) {
-            let (len, path) = existing_path(&chars[start..run_end], line, cwd)?;
+            let (len, path) = existing_path(text, start..run_end, line, cwd)?;
             let span = if len == run_end - start {
                 start..end
             } else {
@@ -296,20 +313,26 @@ fn location(chars: &[char], at: usize) -> (Option<u32>, Option<u32>, usize) {
 /// The resolved path of `run`, if it exists, and how many of its characters
 /// it takes: all of them, or (with no `line`, so `see src/main.rs.` works)
 /// all but trailing dots.
-fn existing_path(run: &[char], line: Option<u32>, cwd: &Path) -> Option<(usize, PathBuf)> {
-    let mut len = run.len();
+fn existing_path(
+    row: &RowText,
+    run: Range<usize>,
+    line: Option<u32>,
+    cwd: &Path,
+) -> Option<(usize, PathBuf)> {
+    let run_chars = &row.chars[run.clone()];
+    let mut len = run_chars.len();
     loop {
-        let text: String = run[..len].iter().collect();
+        let text = row.text(run.start..run.start + len);
         if text.chars().any(char::is_alphanumeric)
             && let Some(path) = resolve(&text, cwd)
             && std::fs::metadata(&path).is_ok()
         {
             return Some((len, path));
         }
-        if line.is_some() || len == 0 || run[len - 1] != '.' {
+        if line.is_some() || len == 0 || run_chars[len - 1] != '.' {
             return None;
         }
-        while len > 0 && run[len - 1] == '.' {
+        while len > 0 && run_chars[len - 1] == '.' {
             len -= 1;
         }
     }
