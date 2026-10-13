@@ -433,7 +433,7 @@ fn command(
         return host_command(command, range, after);
     }
     if is_diff(name) {
-        return diff_command(name, after, check);
+        return diff_command(name, range, after, check);
     }
     if let Some(vglobal) = global::kind(name) {
         return global::parse(vglobal, after, check);
@@ -556,9 +556,13 @@ fn host(name: &str) -> Option<Build> {
 /// they run, from the range.
 fn diff_command(
     name: &str,
+    range: &[Address],
     after: &str,
     check: impl FnOnce(bool) -> Result<(), ExError>,
 ) -> Result<ExCommand, ExError> {
+    if is_diff_name(name, "diffsplit", 5) && !range.is_empty() {
+        return Err(ExError::NoRange);
+    }
     if after.starts_with('!') {
         return Err(ExError::NoBang);
     }

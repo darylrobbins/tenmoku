@@ -78,6 +78,27 @@ fn diff_commands() {
 }
 
 #[test]
+fn diffsplit_refuses_a_range() {
+    for line in [
+        "3diffsplit a.rs",
+        "3diffs a.rs",
+        ".diffsplit a.rs",
+        "0diffsplit a.rs",
+        "%diffsplit a.rs",
+        "3diffsplit",
+        "3diffsplit! a.rs",
+    ] {
+        let (vim, command) = host(TEXT, &format!(":{line}<CR>"));
+        assert_eq!(command, None, "{line}");
+        assert_eq!(
+            vim.state().message(),
+            Some("E481: No range allowed"),
+            "{line}"
+        );
+    }
+}
+
+#[test]
 fn zz_zq() {
     let wq = Some(H::WriteQuit {
         force: false,
