@@ -7,7 +7,8 @@
 //! and which commit last changed each row of a file ([`Repo::blame`]).
 //! Every path in and out is absolute. `Repo` is `Send + Sync`, so the workbench
 //! can run it on a background thread. Reads use gix. Writes ([`Repo::stage`],
-//! [`Repo::unstage`], [`Repo::discard`], [`Repo::set_index_text`], [`Repo::commit`], [`Repo::switch`], [`Repo::create_branch`]) run `git`,
+//! [`Repo::unstage`], [`Repo::discard`], [`Repo::set_index_text`], [`Repo::commit`], [`Repo::switch`], [`Repo::create_branch`]) and
+//! remotes ([`Repo::fetch`], [`Repo::pull`], [`Repo::push`], [`Repo::publish`]) run `git`,
 //! because gix doesn't apply clean filters or autocrlf when staging; they block,
 //! so callers run them off the UI thread.
 
@@ -17,6 +18,7 @@ mod cli;
 mod commit;
 mod index;
 mod refs;
+mod remote;
 mod stage;
 
 pub use blame::{BlameRun, CommitInfo};
@@ -24,6 +26,7 @@ pub use branch::SwitchError;
 pub use commit::CommitError;
 pub use index::SplitStatus;
 pub use refs::{Branch, Head};
+pub use remote::{PullMode, RemoteError};
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
