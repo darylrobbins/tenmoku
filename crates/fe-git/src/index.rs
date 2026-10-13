@@ -16,7 +16,8 @@ use crate::{BINARY_PROBE_LEN, ChangeKind, GitError, Repo};
 pub struct SplitStatus {
     /// Absolute path of the file.
     pub path: PathBuf,
-    /// How the index differs from HEAD, `None` when it doesn't.
+    /// How the index differs from HEAD, `None` when it doesn't. An
+    /// intent-to-add file is `unstaged: Some(Added)`, as git status shows it.
     pub staged: Option<ChangeKind>,
     /// How the working tree differs from the index, `None` when it doesn't.
     pub unstaged: Option<ChangeKind>,
@@ -61,7 +62,8 @@ impl Repo {
     /// Every changed file with the staged and unstaged halves apart, sorted by
     /// path. Untracked files are `unstaged: Some(Untracked)`; an unmerged path is
     /// `Conflicted` on both sides. Renames aren't tracked and submodules are
-    /// skipped, as in [`Repo::status`].
+    /// skipped, as in [`Repo::status`]. An intent-to-add file is
+    /// `unstaged: Some(Added)`, as git status shows it.
     pub fn status_split(&self) -> Result<Vec<SplitStatus>, GitError> {
         let repo = self.repo.to_thread_local();
         let iter = repo
@@ -119,7 +121,7 @@ impl Repo {
                                 slot.1 = Some(ChangeKind::Modified);
                             }
                         }
-                        EntryStatus::IntentToAdd => slot.0 = Some(ChangeKind::Added),
+                        EntryStatus::IntentToAdd => slot.1 = Some(ChangeKind::Added),
                         EntryStatus::Change(Change::SubmoduleModification(_))
                         | EntryStatus::NeedsUpdate(_) => {}
                     }
