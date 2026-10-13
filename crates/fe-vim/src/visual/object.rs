@@ -48,7 +48,9 @@ fn object_ends(text: &Text, span: Span, object: TextObject) -> Option<(usize, us
 /// `vim.select`: a text object typed in a visual mode. Over one position it
 /// selects the object there; otherwise a word object adds `count` more from
 /// the cursor on, the way it faces, and any other selects the smallest one
-/// around the selection that's larger than it. The mode becomes charwise.
+/// around the selection that's larger than it. The mode becomes charwise, as
+/// nvim's does, except that word and quote objects keep a blockwise selection
+/// a block (`V` still becomes charwise).
 pub(crate) fn select_object(
     target: &mut VimTarget<'_>,
     args: SelectArgs,
@@ -208,6 +210,22 @@ pub(crate) fn select_object(
             _ => return failed(state),
         }
     };
+    let keeps_block = matches!(
+        args.text_object,
+        InnerWord
+            | AWord
+            | InnerBigWord
+            | ABigWord
+            | InnerDoubleQuote
+            | ADoubleQuote
+            | InnerSingleQuote
+            | ASingleQuote
+            | InnerBacktick
+            | ABacktick
+    );
+    if ends.kind == VisualKind::Block && keeps_block {
+        kind = VisualKind::Block;
+    }
     let selected = Ends {
         kind,
         anchor,
