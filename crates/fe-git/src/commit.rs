@@ -50,37 +50,45 @@ impl Repo {
         }
     }
 
-    /// The prefix that marks a comment line in a commit message: `None` when
-    /// `core.commentChar` is `auto`, since git then picks a character no line
-    /// starts with.
+    /// The prefix that marks a comment line in a commit message: the last
+    /// value set for either of the aliases `core.commentChar` and
+    /// `core.commentString`, across all config scopes, as git reads it. `None`
+    /// when that value is `auto` (in any case), since git then picks a
+    /// character no line starts with.
     fn comment_prefix(&self) -> Result<Option<String>, GitError> {
-        for key in ["core.commentString", "core.commentChar"] {
-            let args = ["config", "--get", key].map(OsString::from);
-            let output = run_raw(&self.workdir, Access::Read, &args, None, &[])?;
-            match output.status.code() {
-                Some(0) => {
-                    let value = String::from_utf8_lossy(&output.stdout);
-                    let value = value.trim_end_matches('\n');
-                    return Ok(match value {
-                        "auto" => None,
-                        "" => Some("#".to_owned()),
-                        value => Some(value.to_owned()),
-                    });
-                }
-                Some(1) => {}
-                code => {
-                    return Err(GitError::Command {
-                        args: args
-                            .iter()
-                            .map(|arg| arg.to_string_lossy().into_owned())
-                            .collect(),
-                        code,
-                        stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-                    });
-                }
+        let args = [
+            "config",
+            "-z",
+            "--get-regexp",
+            r"^core\.comment(char|string)$",
+        ]
+        .map(OsString::from);
+        let output = run_raw(&self.workdir, Access::Read, &args, None, &[])?;
+        match output.status.code() {
+            Some(1) => Ok(Some("#".to_owned())),
+            Some(0) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let record = stdout.split('\0').rfind(|record| !record.is_empty());
+                let value = record
+                    .and_then(|record| record.split_once('\n'))
+                    .map_or("", |(_, value)| value);
+                Ok(if value.eq_ignore_ascii_case("auto") {
+                    None
+                } else if value.is_empty() {
+                    Some("#".to_owned())
+                } else {
+                    Some(value.to_owned())
+                })
             }
+            code => Err(GitError::Command {
+                args: args
+                    .iter()
+                    .map(|arg| arg.to_string_lossy().into_owned())
+                    .collect(),
+                code,
+                stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+            }),
         }
-        Ok(Some("#".to_owned()))
     }
 
     /// Commits the index with `message` (comment lines (`core.commentChar`, `#` by default) stripped), replacing HEAD
