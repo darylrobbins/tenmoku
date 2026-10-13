@@ -322,3 +322,7 @@ fn on_run_command(
     };
     panel.update_find(|find, _, cx| find.input.update(cx, edit), cx);
 }
+
+#[cfg(test)]
+#[path = "terminal_find_keys_tests.rs"]
+mod terminal_find_keys_tests;

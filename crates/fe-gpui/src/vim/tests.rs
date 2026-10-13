@@ -430,6 +430,7 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
                     Some(
                         "workbench"
                             | "workbench && !terminal"
+                            | "terminal"
                             | "picker"
                             | "text_input"
                             | "search_panel"

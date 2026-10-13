@@ -446,6 +446,14 @@ keys = "ctrl-`"
 command = "terminal.toggle"
 context = "workbench"
 
+# The terminal's find row. Linux keeps ctrl-f for the shell (readline's
+# forward-char), so its key is ctrl-shift-f, which in a terminal wins over
+# project search.
+[[bindings]]
+keys = "ctrl-shift-f"
+command = "terminal.find"
+context = "terminal"
+
 [[bindings]]
 keys = "alt-r"
 command = "search.toggle_regex"
