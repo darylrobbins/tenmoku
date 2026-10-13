@@ -5,6 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use fe_buffer::Origin;
 use fe_command::Invocation;
 use serde_json::json;
 
@@ -226,4 +227,107 @@ fn off_and_other_inserts() {
     assert_eq!(render(&model), "g(y)|");
     run(&mut model, "editor.undo", serde_json::Value::Null);
     assert_eq!(render(&model), "|");
+}
+
+#[test]
+fn wrapped_pair_types_over_and_backspaces() {
+    // Wrapped, the closer is moved over like a typed pair's.
+    let mut model = parse("x [foo] y");
+    type_chars(&mut model, "[", BRACKETS);
+    model.move_cursors(Movement::Right, false);
+    assert_eq!(render(&model), "x [foo|] y");
+    type_chars(&mut model, "]", BRACKETS);
+    assert_eq!(render(&model), "x [foo]| y");
+    // And emptied, it goes with one backspace.
+    let mut model = parse("x [foo] y");
+    type_chars(&mut model, "(", BRACKETS);
+    model.backspace();
+    assert_eq!(render(&model), "x (|) y");
+    model.backspace();
+    assert_eq!(render(&model), "x | y");
+}
+
+/// Asserts that after `edit` to a typed `(|)`, leaving it as it was,
+/// typing `)` types it and backspace deletes one char.
+fn assert_forgotten(edit: impl Fn(&mut EditorModel)) {
+    for backspace in [false, true] {
+        let mut model = parse("|");
+        type_chars(&mut model, "(", BRACKETS);
+        edit(&mut model);
+        assert_eq!(render(&model), "(|)");
+        if backspace {
+            model.backspace();
+            assert_eq!(render(&model), "|)");
+        } else {
+            type_chars(&mut model, ")", BRACKETS);
+            assert_eq!(render(&model), "()|)");
+        }
+    }
+}
+
+#[test]
+fn edited_half_is_not_typed_over() {
+    // A closer replaced by the same char through the model.
+    assert_forgotten(|model| {
+        model.select_range(1..2, false);
+        model.insert(")");
+        model.set_cursor(1);
+    });
+    // So through another model, while the caret stays inside.
+    assert_forgotten(|model| {
+        let mut other = model.split();
+        other.select_range(1..2, false);
+        other.insert(")");
+        model.sync_display();
+    });
+    // Or a half changed and restored before a sync, opener or closer.
+    for (half, ch) in [(0..1, "("), (1..2, ")")] {
+        assert_forgotten(|model| {
+            let mut buffer = model.buffer_mut();
+            buffer.edit([(half.clone(), "x")], Origin::User);
+            buffer.edit([(half.clone(), ch)], Origin::User);
+        });
+    }
+    // Text put between or around the halves leaves the pair alone.
+    let mut model = parse("|");
+    type_chars(&mut model, "(", BRACKETS);
+    model
+        .buffer_mut()
+        .edit([(0..0, "a"), (1..1, "b"), (2..2, "c")], Origin::User);
+    model.set_cursor(3);
+    assert_eq!(render(&model), "a(b|)c");
+    type_chars(&mut model, ")", BRACKETS);
+    assert_eq!(render(&model), "a(b)|c");
+}
+
+#[test]
+fn leaving_the_pair_forgets_it() {
+    // A caret that leaves the row and comes back, with no sync between.
+    let mut model = parse("|\nb");
+    type_chars(&mut model, "(", BRACKETS);
+    model.set_cursor(3);
+    model.set_cursor(1);
+    assert_eq!(render(&model), "(|)\nb");
+    type_chars(&mut model, ")", BRACKETS);
+    assert_eq!(render(&model), "()|)\nb");
+    // Or leaves the pair on its row, while another caret stays on it.
+    let mut model = parse("a| b|");
+    type_chars(&mut model, "(", BRACKETS);
+    assert_eq!(render(&model), "a(|) b(|)");
+    model.set_selections([caret(0), caret(6)]);
+    model.set_selections([caret(2), caret(6)]);
+    type_chars(&mut model, ")", BRACKETS);
+    assert_eq!(render(&model), "a()|) b()|");
+}
+
+#[test]
+fn more_than_64_carets_keep_their_pairs() {
+    let marked = "|\n".repeat(65);
+    let mut model = parse(&marked);
+    type_chars(&mut model, "()", BRACKETS);
+    assert_eq!(render(&model), "()|\n".repeat(65));
+    let mut model = parse(&marked);
+    type_chars(&mut model, "(", BRACKETS);
+    model.backspace();
+    assert_eq!(render(&model), marked);
 }

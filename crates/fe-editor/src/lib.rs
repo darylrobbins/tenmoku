@@ -151,7 +151,8 @@ pub struct EditorModel {
     clock: Rc<dyn Fn() -> Instant>,
     /// Whether typing an opener closes it (see [`EditorModel::insert_typed`]).
     auto_close: bool,
-    /// The closers typing inserted that typing may still move over.
+    /// The pairs typing inserted whose closers typing may still move over,
+    /// by closer (see [`EditorModel::forget_auto_closed`]).
     auto_closed: Vec<pairs::AutoClosed>,
 }
 
@@ -750,6 +751,7 @@ impl EditorModel {
         self.end_typing();
         self.goals.clear();
         self.selections = SelectionSet::from_resolved(&self.snapshot, selections);
+        self.forget_auto_closed();
     }
 
     /// Places a single caret.
@@ -1346,6 +1348,7 @@ impl EditorModel {
         if let Some(carets) = carets {
             self.goals.clear();
             self.selections = carets;
+            self.forget_auto_closed();
         }
     }
 
@@ -1407,6 +1410,7 @@ impl EditorModel {
         self.sync_display();
         self.goals.clear();
         self.selections = selections;
+        self.forget_auto_closed();
         snapshot
     }
 }

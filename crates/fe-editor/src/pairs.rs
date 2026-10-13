@@ -5,74 +5,78 @@
 
 use std::ops::Range;
 
-use fe_buffer::{Anchor, Bias, BufferSnapshot, ResolvedSelection};
+use fe_buffer::{BufferSnapshot, ResolvedSelection, Version};
 
 use crate::{CharClass, EditorModel, Typed, caret, chars_backward, chars_forward};
-
-/// The most pairs tracked at once; the oldest are forgotten first.
-const MAX_TRACKED: usize = 64;
 
 /// What a closer may come before for typing its opener to close it,
 /// besides whitespace and the row's end.
 const CLOSES_BEFORE: &[char] = &[';', ':', '.', ',', '=', '}', ']', ')', '>'];
 
-/// A pair typing an opener inserted, anchored to follow edits. Its closer
-/// can be typed over while both halves are intact and on one row with a
-/// caret.
+/// A pair typing inserted, at offsets in the text of `version`. Its closer
+/// can be typed over while no edit has touched either half since, both are
+/// on one row, and a caret is between them.
 #[derive(Clone, Debug)]
 pub(crate) struct AutoClosed {
-    opener: Range<Anchor>,
-    closer: Range<Anchor>,
+    opener: Range<usize>,
+    closer: Range<usize>,
     chars: (char, char),
+    version: Version,
 }
 
 impl AutoClosed {
     /// A pair whose opener and closer are at `opener` and `closer` in
-    /// `snapshot`. Each half's anchors stay on it as text is inserted at
-    /// either side.
+    /// `snapshot`.
     fn new(
         snapshot: &BufferSnapshot,
         opener: Range<usize>,
         closer: Range<usize>,
         chars: (char, char),
     ) -> Self {
-        let anchor = |range: Range<usize>| {
-            snapshot.anchor_at(range.start, Bias::Right)..snapshot.anchor_at(range.end, Bias::Left)
-        };
         Self {
-            opener: anchor(opener),
-            closer: anchor(closer),
+            opener,
+            closer,
             chars,
+            version: snapshot.version(),
         }
     }
 
-    /// Where the opener and closer are in `snapshot`, if both are still
-    /// whole, in order, and on one row.
-    fn resolve(&self, snapshot: &BufferSnapshot) -> Option<(Range<usize>, Range<usize>)> {
-        let opener = snapshot.resolve_range(&self.opener);
-        let closer = snapshot.resolve_range(&self.closer);
-        let text = snapshot.text();
-        let holds = |range: &Range<usize>, ch: char| {
-            range.len() == ch.len_utf8()
-                && chars_forward(text, range.clone()).next() == Some((range.start, ch))
-        };
-        let row = |offset| text.offset_to_point(offset).row;
-        (holds(&opener, self.chars.0)
-            && holds(&closer, self.chars.1)
-            && opener.end <= closer.start
-            && row(opener.start) == row(closer.start))
-        .then_some((opener, closer))
-    }
-
-    /// The pair with its anchors rebased onto `snapshot`.
-    fn refreshed(&self, snapshot: &BufferSnapshot) -> Self {
-        let refresh =
-            |range: &Range<Anchor>| snapshot.refresh(&range.start)..snapshot.refresh(&range.end);
-        Self {
-            opener: refresh(&self.opener),
-            closer: refresh(&self.closer),
+    /// The pair carried through the edits made since its version, up to
+    /// `snapshot`'s: none if any of them replaced or cut into either half,
+    /// even with the same char, or left the halves on different rows.
+    /// Text inserted at a half's edges moves it, but leaves it whole.
+    fn advanced(&self, snapshot: &BufferSnapshot) -> Option<Self> {
+        if self.version < snapshot.oldest_version() {
+            return None;
+        }
+        let (mut opener, mut closer) = (self.opener.clone(), self.closer.clone());
+        for batch in snapshot.edits_since(self.version) {
+            let touches = |half: &Range<usize>| {
+                batch
+                    .iter()
+                    .any(|edit| edit.old.start < half.end && edit.old.end > half.start)
+            };
+            if touches(&opener) || touches(&closer) {
+                return None;
+            }
+            let moved = |half: &Range<usize>| {
+                let start = batch
+                    .iter()
+                    .filter(|edit| edit.old.end <= half.start)
+                    .fold(half.start, |start, edit| {
+                        start + edit.new.len() - edit.old.len()
+                    });
+                start..start + half.len()
+            };
+            (opener, closer) = (moved(&opener), moved(&closer));
+        }
+        let row = |offset| snapshot.text().offset_to_point(offset).row;
+        (row(opener.start) == row(closer.start)).then_some(Self {
+            opener,
+            closer,
             chars: self.chars,
-        }
+            version: snapshot.version(),
+        })
     }
 }
 
@@ -113,9 +117,10 @@ impl EditorModel {
     ///   An opener that is its own closer (a quote) also needs the char
     ///   before not to be a word char nor the same quote.
     /// - An opener with a selection surrounds it, keeping it selected.
-    /// - A closer right before a caret, that typing inserted and that is
-    ///   still whole and on the caret's row with its opener, is moved over
-    ///   rather than typed again.
+    /// - A closer right before a caret, that typing inserted (opening or
+    ///   wrapping), that no edit has touched since, that is on one row with
+    ///   its opener, and that has had a caret between them ever since, is
+    ///   moved over rather than typed again.
     ///
     /// It all lands as one edit, in the run of typing as other typing does.
     pub fn insert_typed(&mut self, ch: char, pairs: &[(char, char)]) {
@@ -161,10 +166,12 @@ impl EditorModel {
                 Typing::Wrap(close) => {
                     edits.push((range.start..range.start, typed.to_owned()));
                     edits.push((range.end..range.end, close.to_string()));
+                    let end = start + len + range.len();
                     selections.push(ResolvedSelection {
-                        range: start + len..start + len + range.len(),
+                        range: start + len..end,
                         reversed: selection.reversed,
                     });
+                    opened.push((start..start + len, end..end + close.len_utf8(), (ch, close)));
                     delta += (len + close.len_utf8()) as isize;
                 }
                 Typing::TypeOver(ix) => {
@@ -184,8 +191,7 @@ impl EditorModel {
             self.auto_closed
                 .push(AutoClosed::new(&snapshot, opener, closer, chars));
         }
-        let excess = self.auto_closed.len().saturating_sub(MAX_TRACKED);
-        self.auto_closed.drain(..excess);
+        self.forget_auto_closed();
     }
 
     /// What typing `ch` does at `selection`; `closer` is `ch`'s, if it's an
@@ -195,13 +201,9 @@ impl EditorModel {
             return closer.map_or(Typing::Plain, Typing::Wrap);
         }
         let offset = selection.range.start;
-        let tracked = self.auto_closed.iter().position(|pair| {
-            pair.chars.1 == ch
-                && pair
-                    .resolve(&self.snapshot)
-                    .is_some_and(|(_, closer)| closer.start == offset)
-        });
-        if let Some(ix) = tracked {
+        if let Some(ix) = self.auto_closed_before(offset)
+            && self.auto_closed[ix].chars.1 == ch
+        {
             return Typing::TypeOver(ix);
         }
         let Some(close) = closer else {
@@ -229,34 +231,50 @@ impl EditorModel {
     /// The opener and closer, as one range, of an empty pair typing
     /// inserted, with `offset` between them.
     pub(crate) fn empty_pair_at(&self, offset: usize) -> Option<Range<usize>> {
-        self.auto_closed.iter().find_map(|pair| {
-            let (opener, closer) = pair.resolve(&self.snapshot)?;
-            (opener.end == offset && closer.start == offset).then_some(opener.start..closer.end)
-        })
+        let pair = &self.auto_closed[self.auto_closed_before(offset)?];
+        (pair.opener.end == offset).then_some(pair.opener.start..pair.closer.end)
     }
 
-    /// Forgets the pairs no longer whole, or with no caret on their row,
-    /// and rebases the rest onto the snapshot.
+    /// The index of the tracked pair whose closer starts at `offset`, with
+    /// the pairs as of the snapshot, as [`EditorModel::forget_auto_closed`]
+    /// leaves them; callers sync first.
+    fn auto_closed_before(&self, offset: usize) -> Option<usize> {
+        self.auto_closed
+            .binary_search_by_key(&offset, |pair| pair.closer.start)
+            .ok()
+    }
+
+    /// Forgets the pairs an edit touched since they were made, or with no
+    /// caret's head between their halves, and brings the rest up to the
+    /// snapshot, sorted by closer. Runs whenever the text is caught up
+    /// with or the selections change, so a caret that leaves a pair
+    /// forgets it even if it comes straight back.
     pub(crate) fn forget_auto_closed(&mut self) {
         if self.auto_closed.is_empty() {
             return;
         }
-        let text = self.snapshot.text();
-        let rows: Vec<u32> = self
+        let heads: Vec<usize> = self
             .selections()
             .iter()
-            .map(|selection| text.offset_to_point(selection.head()).row)
+            .map(ResolvedSelection::head)
             .collect();
         let snapshot = &self.snapshot;
-        self.auto_closed = std::mem::take(&mut self.auto_closed)
-            .into_iter()
-            .filter(|pair| {
-                pair.resolve(snapshot).is_some_and(|(opener, _)| {
-                    rows.contains(&text.offset_to_point(opener.start).row)
-                })
-            })
-            .map(|pair| pair.refreshed(snapshot))
-            .collect();
+        let inside = |pair: &AutoClosed| {
+            let first = heads.partition_point(|&head| head < pair.opener.end);
+            heads
+                .get(first)
+                .is_some_and(|&head| head <= pair.closer.start)
+        };
+        self.auto_closed
+            .retain_mut(|pair| match pair.advanced(snapshot) {
+                Some(advanced) if inside(&advanced) => {
+                    *pair = advanced;
+                    true
+                }
+                _ => false,
+            });
+        self.auto_closed
+            .sort_unstable_by_key(|pair| pair.closer.start);
     }
 }
 
