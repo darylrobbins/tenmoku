@@ -255,6 +255,8 @@ impl<D: PickerDelegate> Picker<D> {
     /// Runs a picker or input command; others go on to the host.
     fn on_run_command(&mut self, run: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
         let Some(op) = op(run, cx) else {
+            // Not the picker's: it interrupts a pending g on its way.
+            self.pending_g = false;
             return cx.propagate();
         };
         self.sync_mode(cx);
@@ -291,6 +293,8 @@ impl<D: PickerDelegate> Picker<D> {
         if !vim_keys(cx) {
             return;
         }
+        // Anything but a second g drops the prefix, modified keys included.
+        let pending_g = std::mem::take(&mut self.pending_g);
         let m = keystroke.modifiers;
         let escape = (keystroke.key == "escape" && !m.modified())
             || (keystroke.key == "[" && m.control && !(m.alt || m.platform || m.shift));
@@ -304,7 +308,6 @@ impl<D: PickerDelegate> Picker<D> {
         let Some(key) = keystroke.key_char.as_deref() else {
             return;
         };
-        let pending_g = std::mem::take(&mut self.pending_g);
         match key {
             "j" => self.select(self.selected + 1, cx),
             "k" => self.select(self.selected.saturating_sub(1), cx),
