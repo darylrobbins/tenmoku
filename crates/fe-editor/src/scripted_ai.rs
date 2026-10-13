@@ -61,11 +61,11 @@
 //! [`DEMO_SCRIPT`] plays every verb against [`DEMO_TEXT`].
 
 use std::{
-    cell::RefCell, collections::HashSet, fmt, ops::Range, rc::Rc, sync::Arc, time::Duration,
+    cell::RefCell, collections::HashMap, fmt, ops::Range, rc::Rc, sync::Arc, time::Duration,
 };
 
 use fe_buffer::{
-    Bias, BufferEvent, EditKind, EditStream, HunkId, HunkStatus, Origin, ProposalError,
+    BufferEvent, Edit, EditKind, EditStream, HunkId, HunkStatus, Origin, ProposalError,
     ProposedChange, StreamError, Subscription, TransactionId, UndoError,
 };
 
@@ -368,11 +368,20 @@ pub struct ScriptedAi {
     /// Rows the AI wrote, or the user took from it: streamed regions and
     /// accepted hunks.
     touched: Rc<RefCell<DecorationSet>>,
-    /// The transactions behind the touched rows: an undo of one takes its
-    /// mark away, a redo puts it back.
-    marked: HashSet<TransactionId>,
+    /// What `touched` shows, each mark with the transaction behind it: an
+    /// undo of one takes its mark away, a redo puts it back, and the marks
+    /// it covered over come back with its undo.
+    marks: Vec<Mark>,
+    next_mark: u32,
+    /// The open stream's mark.
+    stream_mark: Option<u32>,
+    /// The open stream holds back a `\r`, as far as the pushes told.
+    held_cr: bool,
     /// The buffer's edits, to follow undos and redos of `marked`.
     events: Subscription,
+    /// How many batches of each transaction are applied, as the events told:
+    /// an undo inverts the last of them.
+    applied: HashMap<TransactionId, usize>,
     /// How many suggestions, streams and proposals have been made, for
     /// their sessions.
     suggestions: u32,
@@ -392,8 +401,12 @@ impl ScriptedAi {
             stream: None,
             proposals: Vec::new(),
             touched,
-            marked: HashSet::new(),
+            marks: Vec::new(),
+            next_mark: 0,
+            stream_mark: None,
+            held_cr: false,
             events,
+            applied: HashMap::new(),
             suggestions: 0,
             streams: 0,
             proposed: 0,
@@ -491,15 +504,26 @@ impl ScriptedAi {
             }
             Step::Push(chunk) => {
                 let stream = self.stream.as_mut().ok_or(StepError::NoStream)?;
+                let before = stream.range(model.snapshot());
                 if let Err(error) = stream.push(&mut model.buffer_mut(), chunk) {
                     self.stream = None;
+                    self.stream_mark = None;
+                    self.held_cr = false;
                     return Err(StepError::Stream(error));
                 }
-                let region = stream.range(model.snapshot());
-                if let Some(transaction) = stream.transaction() {
-                    self.marked.insert(transaction);
-                    self.mark(model, region.clone());
+                if !chunk.is_empty() {
+                    self.held_cr = chunk.ends_with('\r');
                 }
+                let region = stream.range(model.snapshot());
+                let appended = before.end.min(region.end)..region.end;
+                let transaction = stream.transaction();
+                // Its own edits don't cover the stream's mark.
+                if let Some(mark) = (self.marks.iter_mut()).find(|m| Some(m.id) == self.stream_mark)
+                {
+                    mark.tx = transaction.or(mark.tx);
+                }
+                self.catch_up(model);
+                self.mark_stream(model, region.clone(), appended, transaction);
                 Ok(Report::Pushed {
                     bytes: chunk.len(),
                     region,
@@ -507,14 +531,48 @@ impl ScriptedAi {
             }
             Step::Finish => {
                 let stream = self.stream.take().ok_or(StepError::NoStream)?;
+                let held = std::mem::take(&mut self.held_cr);
                 let region = stream.range(model.snapshot());
+                let started = stream.transaction().is_some();
+                let version = model.buffer().current().version();
                 let len = model.text().len();
                 let transaction = stream.finish(&mut model.buffer_mut());
-                // A held-back `\r` landed at the region's end.
-                let grown = model.text().len().saturating_sub(len);
-                if grown > 0 {
-                    self.mark(model, region.start..region.end + grown);
+                let stream_mark = self.stream_mark.take();
+                if !held {
+                    return Ok(Report::Finished(transaction));
                 }
+                if model.buffer().current().version() == version {
+                    // The held-back `\r` didn't land: `finish` swallowed why.
+                    return Err(StepError::Stream(if started {
+                        StreamError::Undone
+                    } else {
+                        StreamError::Conflict
+                    }));
+                }
+                // The `\r` landed, at the region's end, or over the target
+                // if nothing had yet.
+                let landed = if model.text().len() == len + 1 {
+                    region.start..region.end + 1
+                } else {
+                    region.start..region.start + 1
+                };
+                let covered = (self.marks.iter_mut())
+                    .find(|mark| Some(mark.id) == stream_mark && mark.cover.is_some());
+                if let Some(mark) = covered {
+                    // Another edit has replaced the region: it stays so.
+                    mark.tx = transaction.or(mark.tx);
+                    self.catch_up(model);
+                    if let Some(transaction) = transaction {
+                        // Only what this finish appended, not the region.
+                        let landed = landed.end - 1..landed.end;
+                        self.mark_tail(transaction, landed);
+                        self.publish(model);
+                    }
+                    return Ok(Report::Finished(transaction));
+                }
+                self.marks.retain(|mark| Some(mark.id) != stream_mark);
+                self.catch_up(model);
+                self.add_mark(model, landed, transaction);
                 Ok(Report::Finished(transaction))
             }
             Step::Propose { first, last, text } => {
@@ -544,6 +602,7 @@ impl ScriptedAi {
                         .borrow_mut()
                         .accept_as(&mut model.buffer_mut(), id, Origin::User);
                 let transaction = accepted.map_err(StepError::Proposal)?;
+                self.catch_up(model);
                 self.mark_hunk(model, id, transaction);
                 Ok(Report::HunkAccepted(transaction))
             }
@@ -604,62 +663,145 @@ impl ScriptedAi {
                 .map(|view| view.range)
         });
         if let Some(range) = landed {
-            self.marked.insert(transaction);
-            self.mark(model, range);
+            self.add_mark(model, range, Some(transaction));
         }
     }
 
-    /// Follows the buffer's edits since the last call: an undo of a marked
-    /// transaction takes its mark away, a redo marks where it lands again,
-    /// as anchors can't follow text deleted and restored. Returns the last
-    /// transaction edited, not undone or redone.
+    /// Follows the buffer's edits since the last call: marks move with the
+    /// text, an edit replacing a mark's text covers it over until that edit
+    /// is undone, an undo of a marked transaction takes its mark away and a
+    /// redo marks where it lands again, as anchors can't follow text deleted
+    /// and restored. Returns the last transaction edited, not undone or
+    /// redone.
     fn catch_up(&mut self, model: &EditorModel) -> Option<TransactionId> {
-        let snapshot = model.snapshot();
         let mut edited = None;
-        // Each undo or redo of a marked transaction, in order, with the
-        // span of its batches in `snapshot`.
-        let mut changed: Vec<(TransactionId, EditKind, Range<usize>)> = Vec::new();
+        let mut changed = false;
+        // The transaction the last event redid, whose batches are one mark.
+        let mut redoing: Option<(TransactionId, Range<usize>)> = None;
         for event in self.events.drain() {
             let BufferEvent::Edited {
                 transaction,
                 kind,
-                to,
                 edits,
                 ..
             } = event
             else {
                 continue;
             };
-            if kind == EditKind::Edit {
-                edited = Some(transaction);
-                continue;
-            }
-            let start = edits.iter().map(|edit| edit.new.start).min();
-            let end = edits.iter().map(|edit| edit.new.end).max();
-            let (Some(start), Some(end)) = (start, end) else {
-                continue;
+            let was_redoing = redoing.take();
+            // The batch this event applies, or inverts.
+            let applied = self.applied.entry(transaction).or_insert(0);
+            let batch = if kind == EditKind::Undo {
+                *applied = applied.saturating_sub(1);
+                *applied
+            } else {
+                *applied += 1;
+                *applied - 1
             };
-            // A model not caught up, or a log compacted past it, can't map
-            // it.
-            let mappable = snapshot.oldest_version() <= to && to <= snapshot.version();
-            if !self.marked.contains(&transaction) || !mappable {
-                continue;
-            }
-            let start = snapshot.map_offset(start, Bias::Right, to);
-            let span = start..snapshot.map_offset(end, Bias::Left, to).max(start);
-            match changed.last_mut() {
-                Some((id, last_kind, last)) if *id == transaction && *last_kind == kind => {
-                    *last = last.start.min(span.start)..last.end.max(span.end);
+            if kind == EditKind::Undo {
+                // Where the transaction's marks sit from the first of them
+                // before the undo moves them, for a redo to put each back
+                // at its own span.
+                let base = (self.marks.iter())
+                    .filter(|m| m.tx == Some(transaction) && m.active && m.cover.is_none())
+                    .map(|m| m.range.start)
+                    .min();
+                if let Some(base) = base {
+                    for mark in &mut self.marks {
+                        if mark.tx == Some(transaction) && mark.active && mark.cover.is_none() {
+                            mark.offset = Some(mark.range.start - base..mark.range.end - base);
+                        }
+                    }
                 }
-                _ => changed.push((transaction, kind, span)),
+            }
+            for mark in self.marks.iter_mut().filter(|mark| mark.active) {
+                if let Some(cover) = mark.cover.as_ref() {
+                    // The undo of the covering batch inverts the covering
+                    // edit, at the same place in its batch.
+                    let undoing =
+                        (kind == EditKind::Undo && cover.tx == transaction && cover.batch == batch)
+                            .then(|| edits.get(cover.edit))
+                            .flatten();
+                    if let Some(edit) = undoing {
+                        mark.range = edit.new.start + cover.start..edit.new.start + cover.end;
+                        mark.cover = None;
+                        changed = true;
+                        continue;
+                    }
+                }
+                let covering = if kind == EditKind::Undo
+                    || mark.tx == Some(transaction)
+                    || mark.cover.is_some()
+                    || mark.range.is_empty()
+                {
+                    None
+                } else {
+                    edits.iter().enumerate().find(|(_, edit)| {
+                        !edit.old.is_empty()
+                            && edit.old.start <= mark.range.start
+                            && mark.range.end <= edit.old.end
+                    })
+                };
+                if let Some((ix, edit)) = covering {
+                    // Remember where in the replaced text the mark was, as
+                    // anchors lose it: an undo puts it back there.
+                    mark.cover = Some(Cover {
+                        tx: transaction,
+                        batch,
+                        edit: ix,
+                        start: mark.range.start - edit.old.start,
+                        end: mark.range.end - edit.old.start,
+                    });
+                    mark.range = edit.new.start..edit.new.start;
+                    changed = true;
+                    continue;
+                }
+                let start = map_start(mark.range.start, &edits);
+                mark.range = start..map_end(mark.range.end, &edits).max(start);
+            }
+            match kind {
+                EditKind::Edit => edited = Some(transaction),
+                EditKind::Undo => {
+                    for mark in &mut self.marks {
+                        if mark.tx == Some(transaction) && mark.active {
+                            mark.active = false;
+                            changed = true;
+                        }
+                    }
+                }
+                EditKind::Redo => {
+                    let start = edits.iter().map(|edit| edit.new.start).min();
+                    let end = edits.iter().map(|edit| edit.new.end).max();
+                    if let (Some(start), Some(end)) = (start, end) {
+                        // The span the redone batches have written so far.
+                        let span = match was_redoing.filter(|(tx, _)| *tx == transaction) {
+                            Some((_, span)) => span.start.min(start)..span.end.max(end),
+                            None => start..end,
+                        };
+                        redoing = Some((transaction, span.clone()));
+                        // A transaction with several marks puts each back
+                        // at its own span, one with a mark on the whole.
+                        let several =
+                            (self.marks.iter().filter(|m| m.tx == Some(transaction))).count() > 1;
+                        for mark in &mut self.marks {
+                            if mark.tx == Some(transaction) {
+                                mark.active = true;
+                                mark.cover = None;
+                                mark.range = match &mark.offset {
+                                    Some(offset) if several && !span.is_empty() => {
+                                        span.start + offset.start..span.start + offset.end
+                                    }
+                                    _ => span.clone(),
+                                };
+                                changed = true;
+                            }
+                        }
+                    }
+                }
             }
         }
-        for (_, kind, span) in changed {
-            let items = match kind {
-                EditKind::Redo => vec![touched_row(span.clone())],
-                _ => Vec::new(),
-            };
-            (self.touched.borrow_mut()).splice(snapshot, snapshot.version(), span, items);
+        if changed {
+            self.publish(model);
         }
         edited
     }
@@ -692,16 +834,163 @@ impl ScriptedAi {
         Ok((proposal.clone(), view.id))
     }
 
-    /// Covers `range`'s rows, replacing the marks inside it.
-    fn mark(&mut self, model: &EditorModel, range: Range<usize>) {
-        let snapshot = model.snapshot();
-        self.touched.borrow_mut().splice(
-            snapshot,
-            snapshot.version(),
-            range.clone(),
-            vec![touched_row(range)],
-        );
+    /// Marks the open stream's `region`, which `transaction` (once it has
+    /// one) wrote, replacing its last mark.
+    fn mark_stream(
+        &mut self,
+        model: &EditorModel,
+        region: Range<usize>,
+        appended: Range<usize>,
+        transaction: Option<TransactionId>,
+    ) {
+        // Text pushed while the first mark was covered has marks of its own.
+        let split = transaction.is_some_and(|tx| {
+            (self.marks.iter()).any(|m| m.tx == Some(tx) && Some(m.id) != self.stream_mark)
+        });
+        let existing = (self.marks.iter_mut()).find(|mark| Some(mark.id) == self.stream_mark);
+        match existing {
+            Some(mark) => {
+                mark.tx = transaction.or(mark.tx);
+                mark.active = true;
+                // Covered by another transaction's edit, the mark stays so.
+                if mark.cover.is_none() && !split {
+                    mark.range = region;
+                } else if let Some(transaction) = transaction {
+                    self.mark_tail(transaction, appended);
+                }
+                self.publish(model);
+            }
+            None => self.stream_mark = Some(self.add_mark(model, region, transaction)),
+        }
     }
+
+    /// Marks `range`, which `transaction` has just appended to a stream whose
+    /// first mark another edit covers.
+    fn mark_tail(&mut self, transaction: TransactionId, range: Range<usize>) {
+        if range.is_empty() {
+            return;
+        }
+        let stream_mark = self.stream_mark;
+        let adjoining = (self.marks.iter_mut()).find(|mark| {
+            mark.tx == Some(transaction)
+                && mark.cover.is_none()
+                && Some(mark.id) != stream_mark
+                && mark.range.end == range.start
+        });
+        if let Some(mark) = adjoining {
+            mark.range.end = range.end;
+            return;
+        }
+        let id = self.next_mark;
+        self.next_mark += 1;
+        self.marks.push(Mark {
+            id,
+            tx: Some(transaction),
+            range,
+            active: true,
+            cover: None,
+            offset: None,
+        });
+    }
+
+    /// Marks `range`, written by `transaction`, in place of that
+    /// transaction's last mark. Returns the mark's id.
+    fn add_mark(
+        &mut self,
+        model: &EditorModel,
+        range: Range<usize>,
+        transaction: Option<TransactionId>,
+    ) -> u32 {
+        let id = self.next_mark;
+        self.next_mark += 1;
+        if transaction.is_some() {
+            self.marks.retain(|mark| mark.tx != transaction);
+        }
+        self.marks.push(Mark {
+            id,
+            tx: transaction,
+            range,
+            active: true,
+            cover: None,
+            offset: None,
+        });
+        self.publish(model);
+        id
+    }
+
+    /// Shows the marks that are neither undone nor covered over.
+    fn publish(&mut self, model: &EditorModel) {
+        let snapshot = model.snapshot();
+        let len = snapshot.text().len();
+        let items = (self.marks.iter())
+            .filter(|mark| mark.active && mark.cover.is_none())
+            .map(|mark| touched_row(mark.range.start.min(len)..mark.range.end.min(len)))
+            .collect();
+        self.touched
+            .borrow_mut()
+            .apply(snapshot, snapshot.version(), items);
+    }
+}
+
+/// One touched region, and the transaction that wrote it.
+struct Mark {
+    id: u32,
+    /// None while a stream's first chunk, equal to the text it replaces,
+    /// has made none.
+    tx: Option<TransactionId>,
+    range: Range<usize>,
+    /// Not undone.
+    active: bool,
+    /// The edit that replaced this mark's text, until undone.
+    cover: Option<Cover>,
+    /// Where the mark sat from the start of its transaction's marks when
+    /// that transaction was undone, for a redo to put it back.
+    offset: Option<Range<usize>>,
+}
+
+/// An edit that replaced a mark's text, and where in that text the mark was.
+struct Cover {
+    tx: TransactionId,
+    /// Which batch of the transaction, and which of its edits, covered.
+    batch: usize,
+    edit: usize,
+    /// The mark's bounds, from the start of the replaced text.
+    start: usize,
+    end: usize,
+}
+
+/// Where a mark's start goes through `edits`: not into text inserted at it,
+/// and back to the start of text replaced around it.
+fn map_start(offset: usize, edits: &[Edit]) -> usize {
+    let mut delta = 0isize;
+    for edit in edits {
+        if offset < edit.old.start {
+            break;
+        } else if edit.old.is_empty() {
+            if offset == edit.old.start {
+                return edit.new.end;
+            }
+        } else if offset < edit.old.end {
+            return edit.new.start;
+        }
+        delta = edit.new.end as isize - edit.old.end as isize;
+    }
+    offset.saturating_add_signed(delta)
+}
+
+/// Where a mark's end goes through `edits`: not into text inserted at it,
+/// and on to the end of text replaced around it.
+fn map_end(offset: usize, edits: &[Edit]) -> usize {
+    let mut delta = 0isize;
+    for edit in edits {
+        if offset <= edit.old.start {
+            break;
+        } else if offset < edit.old.end {
+            return edit.new.end;
+        }
+        delta = edit.new.end as isize - edit.old.end as isize;
+    }
+    offset.saturating_add_signed(delta)
 }
 
 fn touched_row(range: Range<usize>) -> Decoration {
