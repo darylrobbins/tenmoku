@@ -65,16 +65,16 @@ fn the_column_pads_the_chevron() {
     // em × (3 digits + 6.75).
     assert_eq!(frame.text_left, 97.5);
     let column = Rect {
-        x: 60.,
+        x: 55.,
         y: 0.,
         width: 37.5,
         height: 200.,
     };
     assert_eq!(frame.fold_column, column);
-    // Line numbers end 0.5 em left of the change lane, which is flush
+    // Line numbers end 0.5 em left of the fold column, which is flush
     // against its left edge.
     for (origin, line) in &frame.line_numbers {
-        assert_eq!(origin.x + line.width(), column.x - 10.);
+        assert_eq!(origin.x + line.width(), column.x - 5.);
     }
 
     // Row 2 is folded; rows 0 and 4 (display row 3) are candidates.

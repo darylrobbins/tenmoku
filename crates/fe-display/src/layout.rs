@@ -32,15 +32,15 @@ const SLICE_MARGIN_EMS: f32 = 32.;
 /// Shown after a row whose following rows are folded.
 pub const FOLD_MARKER: &str = "⋯";
 
-/// The clear space between the line numbers' right edge and the change lane,
-/// in ems, so a change bar doesn't crowd the digits.
-pub const CHANGE_GAP_EMS: f32 = 0.5;
-/// The width of the change lane, the strip between the line numbers and the
-/// fold column where git change bars and deletion marks go, in ems.
+/// The clear space between the line numbers' right edge and the fold column,
+/// in ems, so a chevron doesn't crowd the digits.
+pub const LINE_NUMBER_GAP_EMS: f32 = 0.5;
+/// The width of the change lane, the strip between the fold column and the
+/// text where git change bars and deletion marks go, in ems.
 pub const CHANGE_LANE_EMS: f32 = 0.5;
 
-/// The width of the fold column, the strip between the change lane and the
-/// text where chevrons go, in ems.
+/// The width of the fold column, the strip between the line numbers and the
+/// change lane where chevrons go, in ems.
 pub const FOLD_COLUMN_EMS: f32 = 3.75;
 /// The side of a chevron's box, in ems, padded by the rest of the column on
 /// either side (0.75 em each).
@@ -183,12 +183,12 @@ pub struct Frame<L> {
     pub selections: Vec<Rect>,
     pub cursors: Vec<Rect>,
     pub line_numbers: Vec<(Vec2, L)>,
-    /// The strip between the line numbers and the fold column, the frame's
-    /// height, where change marks go. Line numbers end [`CHANGE_GAP_EMS`]
-    /// left of it.
+    /// The strip between the fold column and the text, the frame's height,
+    /// where change marks go.
     pub change_lane: Rect,
-    /// The strip between the change lane and the text, the frame's height,
-    /// where chevrons go.
+    /// The strip between the line numbers and the change lane, the frame's
+    /// height, where chevrons go. Line numbers end [`LINE_NUMBER_GAP_EMS`]
+    /// left of it.
     pub fold_column: Rect,
     /// The side of a chevron's square box.
     pub fold_chevron: f32,
@@ -521,10 +521,10 @@ const CURSOR_WIDTH: f32 = 2.;
 
 /// The gutter's width, which fits the line numbers of `buffer_rows` rows.
 /// Left to right: 2 em for the diagnostics' marks, the digits, the
-/// [`CHANGE_GAP_EMS`] gap, the change lane and the fold column.
+/// [`LINE_NUMBER_GAP_EMS`] gap, the fold column and the change lane.
 pub fn gutter_width(buffer_rows: u32, em: f32) -> f32 {
     let digits = buffer_rows.to_string().len().max(3) as f32;
-    em * (digits + 2. + CHANGE_GAP_EMS + CHANGE_LANE_EMS + FOLD_COLUMN_EMS)
+    em * (digits + 2. + LINE_NUMBER_GAP_EMS + FOLD_COLUMN_EMS + CHANGE_LANE_EMS)
 }
 
 /// The width to soft wrap at in an editor `width` wide: what's right of the
@@ -621,8 +621,9 @@ pub fn layout_frame_with_inlay<M: TextMeasure>(
     let screen_rows = row_count + blocks.block_rows();
     let text_left = gutter_width(text.row_count(), em);
     let fold_column_width = em * FOLD_COLUMN_EMS;
+    let fold_column_x = text_left - em * (CHANGE_LANE_EMS + FOLD_COLUMN_EMS);
     let change_lane = Rect {
-        x: text_left - fold_column_width - em * CHANGE_LANE_EMS,
+        x: text_left - em * CHANGE_LANE_EMS,
         y: 0.,
         width: em * CHANGE_LANE_EMS,
         height,
@@ -1127,7 +1128,7 @@ pub fn layout_frame_with_inlay<M: TextMeasure>(
             };
             let line = shape(&(row.buffer_row + 1).to_string(), style);
             let origin = Vec2 {
-                x: change_lane.x - em * CHANGE_GAP_EMS - line.width(),
+                x: fold_column_x - em * LINE_NUMBER_GAP_EMS - line.width(),
                 y: row_top(row.row),
             };
             (origin, line)
@@ -1178,7 +1179,7 @@ pub fn layout_frame_with_inlay<M: TextMeasure>(
             let folded = heads_fold(row.buffer_row);
             (folded || candidates.binary_search(&row.buffer_row).is_ok()).then(|| FoldToggle {
                 rect: Rect {
-                    x: text_left - fold_column_width,
+                    x: fold_column_x,
                     y: row_top(row.row),
                     width: fold_column_width,
                     height: line_height,
@@ -1237,7 +1238,7 @@ pub fn layout_frame_with_inlay<M: TextMeasure>(
         line_numbers,
         change_lane,
         fold_column: Rect {
-            x: text_left - fold_column_width,
+            x: fold_column_x,
             y: 0.,
             width: fold_column_width,
             height,
@@ -1357,6 +1358,9 @@ pub fn row_runs<S: Clone>(
 }
 
 #[cfg(test)]
+mod change_lane_beside_text_tests;
+#[cfg(test)]
+#[allow(dead_code)] // its fixture is unused since the lane moved
 mod change_lane_tests;
 #[cfg(test)]
 mod cluster_row_tests;
