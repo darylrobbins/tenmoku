@@ -510,7 +510,7 @@ pub(super) fn operate_block(
             }
             return Ok(Dispatched::new(Effect::Changed));
         }
-        Operator::Yank | Operator::Join => Vec::new(),
+        Operator::Yank | Operator::Join | Operator::JoinRaw => Vec::new(),
         Operator::Format | Operator::FormatKeep => unreachable!("g_operators' own"),
     };
     let corner = block.corner(&text, tab);

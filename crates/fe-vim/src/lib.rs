@@ -755,10 +755,10 @@ mod text_object;
 mod visual;
 
 pub use args::{
-    CancelArgs, CommandLineArgs, CommandLineKind, CountArgs, InsertArgs, InsertAt, JumpChars,
-    JumpMotion, MarkArgs, MarkMotion, Motion, MoveArgs, OperateArgs, Operator, PlayArgs, PutArgs,
-    RangeClass, RecordArgs, ReplaceCharArgs, Search, SearchOffset, SearchPattern, SelectArgs,
-    SubmitArgs, SwapArgs, Target, TextObject, VisualArgs, VisualKind,
+    CancelArgs, CommandLineArgs, CommandLineKind, CountArgs, InsertArgs, InsertAt, JoinArgs,
+    JumpChars, JumpMotion, MarkArgs, MarkMotion, Motion, MoveArgs, OperateArgs, Operator, PlayArgs,
+    PutArgs, RangeClass, RecordArgs, ReplaceCharArgs, Search, SearchOffset, SearchPattern,
+    SelectArgs, SubmitArgs, SwapArgs, Target, TextObject, VisualArgs, VisualKind,
 };
 pub use commands::{VimCommands, VimTarget, registry};
 pub use ex::{Address, Base, Ex, ExCommand, ExError, HostCommand, LineSearch, Part};

@@ -8,7 +8,7 @@ use fe_command::{Actor, CommandError, Dispatched, Effect};
 use fe_editor::commands::origin;
 
 use crate::{
-    Change, CountArgs, ReplaceCharArgs, VimTarget, history,
+    Change, CountArgs, JoinArgs, ReplaceCharArgs, VimTarget, history,
     motion::Cursor,
     operator::{self, row_end},
 };
@@ -146,6 +146,37 @@ pub(crate) fn join(
     actor: &Actor,
     args: CountArgs,
 ) -> Result<Dispatched<TransactionId>, CommandError> {
+    join_rows(
+        target,
+        actor,
+        JoinArgs {
+            count: args.count,
+            raw: false,
+        },
+    )
+}
+
+/// `vim.join_raw` (`gJ`, `:help gJ`): rows joined as `join` walks them,
+/// but each keeps its indentation and no space goes in or comes out; the
+/// line break alone is deleted. The caret goes to the last join point.
+///
+/// Known limit: `ex/normal.rs`'s `joins` doesn't know `vim.join_raw` or
+/// `Operator::JoinRaw`, so `:g` row tracking after a `:normal gJ` follows
+/// bytes only.
+pub(crate) fn join_raw(
+    target: &mut VimTarget<'_>,
+    actor: &Actor,
+    args: JoinArgs,
+) -> Result<Dispatched<TransactionId>, CommandError> {
+    join_rows(target, actor, JoinArgs { raw: true, ..args })
+}
+
+/// Both joins: `args.raw` for `gJ`.
+pub(crate) fn join_rows(
+    target: &mut VimTarget<'_>,
+    actor: &Actor,
+    args: JoinArgs,
+) -> Result<Dispatched<TransactionId>, CommandError> {
     target.model.sync_display();
     let text = target.model.text().clone();
     let rows = args.count.unwrap_or(2).max(2);
@@ -181,8 +212,13 @@ pub(crate) fn join(
                 let next = text.row_to_string(row);
                 let rest = next.trim_start_matches(blank);
                 let indent = next.len() - rest.len();
-                let space = !rest.is_empty() && !empty && !after_blank && !rest.starts_with(')');
-                let range = row_end(&text, row - 1)..text.row_start(row) + indent;
+                let space = !args.raw
+                    && !rest.is_empty()
+                    && !empty
+                    && !after_blank
+                    && !rest.starts_with(')');
+                let kept = if args.raw { 0 } else { indent };
+                let range = row_end(&text, row - 1)..text.row_start(row) + kept;
                 acts.land = Some(Land::Edit(acts.edits.len(), 0));
                 acts.edits
                     .push((range, if space { " " } else { "" }.to_string()));
@@ -201,7 +237,15 @@ pub(crate) fn join(
     target.state.failed |= acts
         .iter()
         .all(|acts| acts.edits.is_empty() && acts.land.is_none());
-    apply(target, actor, acts, Change::Join(CountArgs { count }))
+    apply(
+        target,
+        actor,
+        acts,
+        Change::Join(JoinArgs {
+            count,
+            raw: args.raw,
+        }),
+    )
 }
 
 /// `vim.replace_char`: the `count` graphemes from each caret become `char`

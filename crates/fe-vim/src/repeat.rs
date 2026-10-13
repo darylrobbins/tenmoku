@@ -6,7 +6,7 @@ use fe_editor::commands::origin;
 use serde::Serialize;
 
 use crate::{
-    CountArgs, InsertArgs, Mode, OperateArgs, PutArgs, ReplaceCharArgs, VimTarget, edit,
+    CountArgs, InsertArgs, JoinArgs, Mode, OperateArgs, PutArgs, ReplaceCharArgs, VimTarget, edit,
     increment::{self, IncrementArgs},
     insert, operator, replace, visual,
 };
@@ -20,7 +20,7 @@ pub enum Change {
     Put(PutArgs),
     Insert(InsertArgs),
     Replace(CountArgs),
-    Join(CountArgs),
+    Join(JoinArgs),
     ReplaceChar(ReplaceCharArgs),
     ToggleCase(CountArgs),
     Increment(IncrementArgs),
@@ -38,6 +38,7 @@ impl Change {
             Self::Put(args) => of("vim.put", args),
             Self::Insert(args) => of("vim.insert", args),
             Self::Replace(args) => of("vim.replace_mode", args),
+            Self::Join(args) if args.raw => of("vim.join_raw", args),
             Self::Join(args) => of("vim.join", args),
             Self::ReplaceChar(args) => of("vim.replace_char", args),
             Self::ToggleCase(args) => of("vim.toggle_case", args),
@@ -51,7 +52,8 @@ impl Change {
             Self::Operate(args) => args.count = count,
             Self::Put(args) => args.count = count,
             Self::Insert(args) => args.count = count,
-            Self::Join(args) | Self::ToggleCase(args) | Self::Replace(args) => args.count = count,
+            Self::Join(args) => args.count = count,
+            Self::ToggleCase(args) | Self::Replace(args) => args.count = count,
             Self::ReplaceChar(args) => args.count = count,
             Self::Increment(args) => args.count = count,
         }
@@ -142,7 +144,7 @@ fn replay(
         Change::Put(args) => operator::put(target, actor, args)?,
         Change::Insert(args) => insert::insert(target, actor, args)?,
         Change::Replace(args) => replace::replace(target, actor, args)?,
-        Change::Join(args) => edit::join(target, actor, args)?,
+        Change::Join(args) => edit::join_rows(target, actor, args)?,
         Change::ReplaceChar(args) => edit::replace_char(target, actor, args)?,
         Change::ToggleCase(args) => edit::toggle_case(target, actor, args)?,
         Change::Increment(args) => increment::increment(target, actor, args)?,

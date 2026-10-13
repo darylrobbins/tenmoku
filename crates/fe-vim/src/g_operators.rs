@@ -49,24 +49,28 @@
 use std::ops::{Range, RangeInclusive};
 
 use fe_buffer::TransactionId;
-use fe_command::{Actor, CommandError, Dispatched, Effect};
+use fe_command::{Actor, CommandError, ContextPredicate, Dispatched, Effect, Registry};
 use fe_editor::{EditorModel, commands::origin};
 use fe_text::{Bias, Text};
 use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
-    Change, Motion, MoveArgs, OperateArgs, Operator, Pending, RangeClass, Step, Target, VimKey,
-    VimState, VimTarget, cmdline, edit,
+    Change, JoinArgs, Motion, MoveArgs, OperateArgs, Operator, Pending, RangeClass, Step, Target,
+    VimCommands, VimKey, VimState, VimTarget, cmdline,
+    commands::follow,
+    edit,
     feature::Feature,
-    history, marks,
+    history, insert, marks,
     motion::{self, Cursor},
     operator::{self, Span},
+    reducer::invocation,
     text_object, visual,
 };
 
 pub(crate) const FEATURE: Feature = Feature {
     key,
     g,
+    register,
     ..Feature::NONE
 };
 
@@ -94,6 +98,24 @@ fn g(pending: &Pending, key: VimKey) -> Option<Step> {
     let VimKey::Char(ch) = key else {
         return None;
     };
+    // `gJ`: joins rows as they are; an operator pending cancels it.
+    if ch == 'J' {
+        return match pending.operator() {
+            _ if pending.is_visual() => Some(
+                pending
+                    .clone()
+                    .operate(Operator::JoinRaw, Target::Selection),
+            ),
+            None => Some(invocation(
+                "vim.join_raw",
+                JoinArgs {
+                    count: pending.count(),
+                    raw: true,
+                },
+            )),
+            Some(_) => Some(Step::Cancel),
+        };
+    }
     let operator = named(ch)?;
     let pending = pending.clone();
     match pending.operator() {
@@ -104,6 +126,28 @@ fn g(pending: &Pending, key: VimKey) -> Option<Step> {
         }
         Some(_) => None,
     }
+}
+
+/// `vim.join_raw`.
+fn register(registry: &mut Registry<VimCommands>) {
+    let context = ContextPredicate::parse("editor && vim.mode == normal")
+        .expect("vim's context predicate parses");
+    registry
+        .register_with_args(
+            "vim.join_raw",
+            "Vim Join Lines Without Spaces",
+            |target: &mut VimTarget<'_>, actor: &Actor, args: JoinArgs| {
+                follow(target);
+                insert::adopt_closing(target.state);
+                edit::join_raw(target, actor, args)
+            },
+        )
+        .expect("vim command IDs are valid and distinct")
+        .description(
+            "Joins `count` rows (at least two) from each caret's as `gJ` does: keeping their indentation, putting in no space and taking none out.",
+        )
+        .context(context)
+        .mutates_buffer(true);
 }
 
 /// The doubled short forms `guu gUU g~~ g?? gqq`: `u U ~ ? q` with its

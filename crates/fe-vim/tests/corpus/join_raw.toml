@@ -1,0 +1,196 @@
+# gJ cases for fe-vim's oracle: joins without adding or removing spaces, counted,
+# on the last row, over indentation and blanks, in the visual modes, with `.`
+# and `u`, and cancelled by an operator. Recorded by the ignored recorder in
+# tests/oracle.rs.
+
+[[case]]
+name = "gJ_two_rows"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "gJ"
+
+[[case]]
+name = "gJ_count_3"
+buffer = "a\nb\nc\nd"
+cursor = [0, 0]
+keys = "3gJ"
+
+[[case]]
+name = "gJ_count_1_is_2"
+buffer = "a\nb\nc"
+cursor = [0, 0]
+keys = "1gJ"
+
+[[case]]
+name = "gJ_count_past_end"
+buffer = "a\nb\nc"
+cursor = [0, 0]
+keys = "9gJ"
+
+[[case]]
+name = "gJ_last_row"
+buffer = "a\nb"
+cursor = [1, 0]
+keys = "gJ"
+
+[[case]]
+name = "gJ_count_3_last_row"
+buffer = "a\nb"
+cursor = [1, 0]
+keys = "3gJ"
+
+[[case]]
+name = "gJ_indented_next"
+buffer = "abc\n    def\n\tghi"
+cursor = [0, 0]
+keys = "gJ"
+
+[[case]]
+name = "gJ_indented_count"
+buffer = "abc\n    def\n\tghi"
+cursor = [0, 0]
+keys = "3gJ"
+
+[[case]]
+name = "gJ_ends_blank"
+buffer = "abc  \ndef"
+cursor = [0, 0]
+keys = "gJ"
+
+[[case]]
+name = "gJ_starts_blank"
+buffer = "abc\n  def"
+cursor = [0, 0]
+keys = "gJ"
+
+[[case]]
+name = "gJ_next_blank_only"
+buffer = "abc\n   \ndef"
+cursor = [0, 0]
+keys = "3gJ"
+
+[[case]]
+name = "gJ_empty_row"
+buffer = "abc\n\ndef"
+cursor = [0, 0]
+keys = "3gJ"
+
+[[case]]
+name = "gJ_into_empty_row"
+buffer = "\nabc"
+cursor = [0, 0]
+keys = "gJ"
+
+[[case]]
+name = "gJ_paren"
+buffer = "foo\n)bar"
+cursor = [0, 0]
+keys = "gJ"
+
+[[case]]
+name = "gJ_multibyte"
+buffer = "héllo\nwörld ü"
+cursor = [0, 0]
+keys = "gJ"
+
+[[case]]
+name = "gJ_wide"
+buffer = "日本語\n字 ab"
+cursor = [0, 1]
+keys = "gJ"
+
+[[case]]
+name = "v_gJ_one_row"
+buffer = "abc\ndef\nghi"
+cursor = [0, 1]
+keys = "vgJ"
+
+[[case]]
+name = "v_gJ_three_rows"
+buffer = "a\n b\n  c\nd"
+cursor = [0, 0]
+keys = "vjjgJ"
+
+[[case]]
+name = "V_gJ_one_row"
+buffer = "abc\n def\nghi"
+cursor = [0, 0]
+keys = "VgJ"
+
+[[case]]
+name = "V_gJ_three_rows"
+buffer = "a\n b\n  c\nd"
+cursor = [0, 0]
+keys = "VjjgJ"
+
+[[case]]
+name = "ctrl_v_gJ_one_row"
+buffer = "abc\ndef\nghi"
+cursor = [0, 1]
+keys = "<C-v>gJ"
+
+[[case]]
+name = "ctrl_v_gJ_three_rows"
+buffer = "abc\n def\nghi\njkl"
+cursor = [0, 1]
+keys = "<C-v>jjgJ"
+
+[[case]]
+name = "dot_after_gJ"
+buffer = "a\nb\nc\nd\ne"
+cursor = [0, 0]
+keys = "gJ."
+
+[[case]]
+name = "dot_after_3gJ"
+buffer = "a\nb\nc\nd\ne\nf"
+cursor = [0, 0]
+keys = "3gJ."
+
+[[case]]
+name = "dot_count_after_gJ"
+buffer = "a\nb\nc\nd\ne\nf"
+cursor = [0, 0]
+keys = "gJ3."
+
+[[case]]
+name = "dot_after_V_gJ"
+buffer = "a\nb\nc\nd\ne\nf"
+cursor = [0, 0]
+keys = "VjgJ."
+
+[[case]]
+name = "dot_after_v_gJ"
+buffer = "a\nb\nc\nd\ne\nf"
+cursor = [0, 0]
+keys = "vjgJ."
+
+[[case]]
+name = "u_after_gJ"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "gJu"
+
+[[case]]
+name = "u_after_3gJ"
+buffer = "abc\ndef\nghi"
+cursor = [0, 1]
+keys = "3gJu"
+
+[[case]]
+name = "dgJ_cancels"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "dgJ"
+
+[[case]]
+name = "dgJ_then_x"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "dgJx"
+
+[[case]]
+name = "J_then_gJ"
+buffer = "a\n b\nc\nd"
+cursor = [0, 0]
+keys = "JgJ"

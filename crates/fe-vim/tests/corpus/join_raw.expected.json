@@ -1,0 +1,670 @@
+{
+  "nvim": "0.12.4",
+  "cases": [
+    {
+      "name": "gJ_two_rows",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gJ",
+      "expect": {
+        "buffer": "abcdef\nghi",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gJ_count_3",
+      "buffer": "a\nb\nc\nd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3gJ",
+      "expect": {
+        "buffer": "abc\nd",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gJ_count_1_is_2",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "1gJ",
+      "expect": {
+        "buffer": "ab\nc",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gJ_count_past_end",
+      "buffer": "a\nb\nc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "9gJ",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gJ_last_row",
+      "buffer": "a\nb",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "gJ",
+      "expect": {
+        "buffer": "a\nb",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gJ_count_3_last_row",
+      "buffer": "a\nb",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "3gJ",
+      "expect": {
+        "buffer": "a\nb",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gJ_indented_next",
+      "buffer": "abc\n    def\n\tghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gJ",
+      "expect": {
+        "buffer": "abc    def\n\tghi",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gJ_indented_count",
+      "buffer": "abc\n    def\n\tghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3gJ",
+      "expect": {
+        "buffer": "abc    def\tghi",
+        "cursor": [
+          0,
+          10
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gJ_ends_blank",
+      "buffer": "abc  \ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gJ",
+      "expect": {
+        "buffer": "abc  def",
+        "cursor": [
+          0,
+          5
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gJ_starts_blank",
+      "buffer": "abc\n  def",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gJ",
+      "expect": {
+        "buffer": "abc  def",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gJ_next_blank_only",
+      "buffer": "abc\n   \ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3gJ",
+      "expect": {
+        "buffer": "abc   def",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gJ_empty_row",
+      "buffer": "abc\n\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3gJ",
+      "expect": {
+        "buffer": "abcdef",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gJ_into_empty_row",
+      "buffer": "\nabc",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gJ",
+      "expect": {
+        "buffer": "abc",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gJ_paren",
+      "buffer": "foo\n)bar",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gJ",
+      "expect": {
+        "buffer": "foo)bar",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gJ_multibyte",
+      "buffer": "héllo\nwörld ü",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gJ",
+      "expect": {
+        "buffer": "héllowörld ü",
+        "cursor": [
+          0,
+          6
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "gJ_wide",
+      "buffer": "日本語\n字 ab",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "gJ",
+      "expect": {
+        "buffer": "日本語字 ab",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "v_gJ_one_row",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "vgJ",
+      "expect": {
+        "buffer": "abcdef\nghi",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "v_gJ_three_rows",
+      "buffer": "a\n b\n  c\nd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vjjgJ",
+      "expect": {
+        "buffer": "a b  c\nd",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_gJ_one_row",
+      "buffer": "abc\n def\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "VgJ",
+      "expect": {
+        "buffer": "abc def\nghi",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            6
+          ]
+        }
+      }
+    },
+    {
+      "name": "V_gJ_three_rows",
+      "buffer": "a\n b\n  c\nd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "VjjgJ",
+      "expect": {
+        "buffer": "a b  c\nd",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            5
+          ]
+        }
+      }
+    },
+    {
+      "name": "ctrl_v_gJ_one_row",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>gJ",
+      "expect": {
+        "buffer": "abcdef\nghi",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "ctrl_v_gJ_three_rows",
+      "buffer": "abc\n def\nghi\njkl",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jjgJ",
+      "expect": {
+        "buffer": "abc defghi\njkl",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            0,
+            8
+          ]
+        }
+      }
+    },
+    {
+      "name": "dot_after_gJ",
+      "buffer": "a\nb\nc\nd\ne",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gJ.",
+      "expect": {
+        "buffer": "abc\nd\ne",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_after_3gJ",
+      "buffer": "a\nb\nc\nd\ne\nf",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3gJ.",
+      "expect": {
+        "buffer": "abcde\nf",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_count_after_gJ",
+      "buffer": "a\nb\nc\nd\ne\nf",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gJ3.",
+      "expect": {
+        "buffer": "abcd\ne\nf",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dot_after_V_gJ",
+      "buffer": "a\nb\nc\nd\ne\nf",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "VjgJ.",
+      "expect": {
+        "buffer": "abc\nd\ne\nf",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "dot_after_v_gJ",
+      "buffer": "a\nb\nc\nd\ne\nf",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vjgJ.",
+      "expect": {
+        "buffer": "abc\nd\ne\nf",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "u_after_gJ",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "gJu",
+      "expect": {
+        "buffer": "abc\ndef\nghi",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "u_after_3gJ",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "3gJu",
+      "expect": {
+        "buffer": "abc\ndef\nghi",
+        "cursor": [
+          0,
+          1
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dgJ_cancels",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dgJ",
+      "expect": {
+        "buffer": "abc\ndef\nghi",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "dgJ_then_x",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "dgJx",
+      "expect": {
+        "buffer": "bc\ndef\nghi",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a",
+            "linewise": false
+          },
+          "-": {
+            "text": "a",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "J_then_gJ",
+      "buffer": "a\n b\nc\nd",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "JgJ",
+      "expect": {
+        "buffer": "a bc\nd",
+        "cursor": [
+          0,
+          3
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    }
+  ]
+}

@@ -28,6 +28,8 @@ pub enum Operator {
     Lowercase,
     Uppercase,
     Join,
+    /// `gJ`: `Join` without adding or removing spaces.
+    JoinRaw,
     /// `r{char}`: every grapheme but line breaks becomes the char.
     Replace(char),
     /// `I` over a block: an insert session at its left edge, the typed text
@@ -586,6 +588,16 @@ pub struct InsertArgs {
 pub struct CountArgs {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub count: Option<u32>,
+}
+
+/// `vim.join`'s and `vim.join_raw`'s args: `J` and `gJ` (`raw`) over `count`
+/// rows.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct JoinArgs {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub count: Option<u32>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub raw: bool,
 }
 
 /// `vim.set_mark`'s args: `m{name}`, `a` to `z`, or `'` or `` ` `` for the

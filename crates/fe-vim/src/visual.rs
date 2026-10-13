@@ -21,7 +21,7 @@ use fe_editor::{EditorModel, commands::origin};
 use fe_text::{Bias, Text};
 
 use crate::{
-    Change, CountArgs, Mode, Motion, MoveArgs, OperateArgs, Operator, PutArgs, Register, Registers,
+    Change, JoinArgs, Mode, Motion, MoveArgs, OperateArgs, Operator, PutArgs, Register, Registers,
     SelectArgs, SwapArgs, Target, TextObject, VimState, VimTarget, VisualArgs, VisualKind, Write,
     edit, history, insert,
     motion::{self, Class, Cursor, Line},

@@ -293,7 +293,7 @@ fn operate_as_wide(
     // `S`, `R` and `J` take a block's rows; the rest act on the block.
     let rows_of_block = matches!(
         (args.operator, args.target),
-        (Operator::Change, Target::SelectedLines) | (Operator::Join, _)
+        (Operator::Change, Target::SelectedLines) | (Operator::Join | Operator::JoinRaw, _)
     );
     if ends.kind == VisualKind::Block && !rows_of_block {
         return operate_block(target, actor, args, ends, columns);
@@ -343,7 +343,12 @@ fn operate_as_wide(
     // The row a charwise change joins to the first: where what it takes ends.
     let joined = text.offset_to_point(end_of(&text, ends.hi())).row;
     let landings = match args.operator {
-        Operator::Join => join_landings(&text, first, (last - first + 1).max(2)),
+        Operator::Join | Operator::JoinRaw => join_landings(
+            &text,
+            first,
+            (last - first + 1).max(2),
+            args.operator == Operator::JoinRaw,
+        ),
         _ => Vec::new(),
     };
     let moved = |pos: &Pos, row: u32| {
@@ -371,7 +376,9 @@ fn operate_as_wide(
                 row: snapshot.anchor_after(text.row_start(last + 1)),
                 ..pos.clone()
             },
-            Operator::Join if first < row && row <= first + landings.len() as u32 => {
+            Operator::Join | Operator::JoinRaw
+                if first < row && row <= first + landings.len() as u32 =>
+            {
                 let landing = landings[(row - first - 1) as usize];
                 Pos {
                     row: first_row,
@@ -391,14 +398,21 @@ fn operate_as_wide(
         | Operator::Outdent => operator::operate_span(target, actor, args, span)?,
         // A linewise `J` starts from the first row's start, where it stays if
         // it joins nothing; `.` joins as `J` does, from the caret.
-        Operator::Join => {
+        Operator::Join | Operator::JoinRaw => {
             let at = match ends.kind == VisualKind::Line && !target.state.replaying {
                 true => text.row_start(first),
                 false => Cursor::at(&text, ends.lo()).offset(),
             };
             target.model.set_selections([operator::caret(at)]);
             let join = Some((last - first + 1).max(2));
-            edit::join(target, actor, CountArgs { count: join })?
+            edit::join_rows(
+                target,
+                actor,
+                JoinArgs {
+                    count: join,
+                    raw: args.operator == Operator::JoinRaw,
+                },
+            )?
         }
         Operator::Insert | Operator::Append => unreachable!("refused but over a block"),
         Operator::Format | Operator::FormatKeep => unreachable!("g_operators' own"),
@@ -452,8 +466,9 @@ impl Landing {
 }
 
 /// Where `J` over `rows` rows from `first` (as `edit::join` joins them)
-/// puts each row after the first, read from the text before it joins.
-fn join_landings(text: &Text, first: u32, rows: u32) -> Vec<Landing> {
+/// puts each row after the first, read from the text before it joins (with
+/// `raw`, as `gJ` does).
+fn join_landings(text: &Text, first: u32, rows: u32, raw: bool) -> Vec<Landing> {
     let blank = |ch: char| ch == ' ' || ch == '\t';
     let last = first.saturating_add(rows - 1).min(text.row_count() - 1);
     let line = text.row_to_string(first);
@@ -463,13 +478,16 @@ fn join_landings(text: &Text, first: u32, rows: u32) -> Vec<Landing> {
         .map(|row| {
             let next = text.row_to_string(row);
             let rest = next.trim_start_matches(blank);
-            let space = !rest.is_empty() && !empty && !after_blank && !rest.starts_with(')');
+            let space =
+                !raw && !rest.is_empty() && !empty && !after_blank && !rest.starts_with(')');
+            // `gJ` keeps the indentation: the row's text starts after it.
+            let indent = if raw { 0 } else { next.len() - rest.len() };
             let landing = Landing {
                 at: len + usize::from(space),
-                indent: next.len() - rest.len(),
+                indent,
                 space,
             };
-            len = landing.at + rest.len();
+            len = landing.at + next.len() - indent;
             empty &= rest.is_empty();
             after_blank = rest.ends_with(blank);
             landing
