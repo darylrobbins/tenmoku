@@ -15,7 +15,7 @@
 
 use std::collections::HashMap;
 
-use regex::Regex;
+use regex_automata::{Input, meta::Regex};
 
 use super::{
     Deadline, MAX_GROUPS, Opened, Path, PatternError, Token, Translator, is_mark, unique_names,
@@ -28,6 +28,8 @@ const MAX_PROGRAM: usize = 200_000;
 /// marks is tens of kilobytes compiled, so this bounds what a pattern retains.
 const MAX_LEAF_TEXT: usize = 64 << 10;
 const MAX_LEAF_COMPILED: usize = 8 << 20;
+/// The most memory a program's leaves may compile to, summed.
+const MAX_PROGRAM_COMPILED: usize = 32 << 20;
 /// The most choices a search may leave to try, and the most steps one
 /// search from one start may take, before it gives up.
 const MAX_STACK: usize = 1 << 20;
@@ -128,6 +130,7 @@ pub(super) fn compile(tokens: &[Token], ignore_case: bool) -> Result<Program, Pa
         regexes: Vec::new(),
         known: HashMap::new(),
         text: 0,
+        compiled: 0,
     };
     let tree = builder.alternation(Opened::Pattern)?;
     let mut program = Program {
@@ -149,6 +152,8 @@ struct Builder<'a> {
     known: HashMap<String, usize>,
     /// The text of the regexes so far.
     text: usize,
+    /// The memory the regexes so far compiled to.
+    compiled: usize,
 }
 
 fn too_large() -> PatternError {
@@ -305,9 +310,21 @@ impl Builder<'_> {
         if self.text > MAX_LEAF_TEXT {
             return Err(too_large());
         }
-        let mut builder = regex::RegexBuilder::new(&format!("^(?:{})", unique_names(text)));
-        builder.size_limit(MAX_LEAF_COMPILED);
-        let regex = super::build(builder, |error| PatternError::TooLarge(error.to_string()))?;
+        let left = MAX_PROGRAM_COMPILED.saturating_sub(self.compiled);
+        let config = Regex::config().nfa_size_limit(Some(MAX_LEAF_COMPILED.min(left)));
+        let regex = Regex::builder()
+            .configure(config)
+            .build(&format!("^(?:{})", unique_names(text)))
+            .map_err(|error| match error.size_limit() {
+                Some(limit) => PatternError::TooLarge(format!("over {limit} bytes compiled")),
+                None => PatternError::TooLarge(error.to_string()),
+            })?;
+        self.compiled += regex.memory_usage();
+        if self.compiled > MAX_PROGRAM_COMPILED {
+            return Err(PatternError::TooLarge(format!(
+                "over {MAX_PROGRAM_COMPILED} bytes compiled"
+            )));
+        }
         self.regexes.push(regex);
         self.known.insert(text.to_string(), self.regexes.len() - 1);
         Ok(self.regexes.len() - 1)
@@ -493,7 +510,7 @@ impl Program {
             let next = match self.insts[pc] {
                 Inst::Leaf(ways) => {
                     let (regex, ends_bare) = ways[usize::from(bare)];
-                    match self.regexes[regex].find(&hay[at..]) {
+                    match self.regexes[regex].find(Input::new(&hay[at..])) {
                         Some(found) => {
                             at += found.end();
                             bare = ends_bare;

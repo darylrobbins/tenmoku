@@ -13,6 +13,7 @@ fe-command.workspace = true
 fe-editor.workspace = true
 fe-text.workspace = true
 regex.workspace = true
+regex-automata = "0.4"
 regex-syntax = "0.8"
 schemars.workspace = true
 serde.workspace = true
