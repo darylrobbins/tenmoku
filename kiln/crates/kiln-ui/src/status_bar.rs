@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
+use std::sync::Arc;
+
 use gpui::{
     AnyElement, App, AppContext as _, ClickEvent, Context, ElementId, Entity, FontWeight, Hsla,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, RenderOnce, SharedString,
@@ -196,11 +198,21 @@ impl StatusEntry {
 }
 
 impl RenderOnce for StatusEntry {
-    fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = cx.theme();
         let hover = theme.colors.list.row_hover;
         let colors = status_entry_colors(self.tone, self.fill, &theme.colors);
         let id = self.id;
+        // One entity per entry, updated to the current text, so a pending
+        // show or a visible tooltip GPUI holds across frames shows it.
+        let tooltip = self.tooltip.map(|text| {
+            let key =
+                ElementId::NamedChild(Arc::new(ElementId::Name(id.clone())), "tooltip".into());
+            let tooltip =
+                window.use_keyed_state(key, cx, |_, cx| StatusTooltip::new(&id, &text, cx));
+            tooltip.update(cx, |tooltip, cx| tooltip.set_text(&text, cx));
+            tooltip
+        });
         div()
             .id(ElementId::Name(id.clone()))
             .debug_selector(|| format!("status-item:{id}"))
@@ -239,16 +251,8 @@ impl RenderOnce for StatusEntry {
                     })
                     .on_click(on_click)
             })
-            .when_some(self.tooltip, |entry, text| {
-                entry.tooltip(move |_, cx| {
-                    let (id, text) = (id.clone(), text.clone());
-                    cx.new(|cx| StatusTooltip {
-                        selector: format!("status-tooltip:{id}:{text}"),
-                        tooltip: cx
-                            .new(|cx| Tooltip::new(text, None::<SharedString>, &ui_theme(cx))),
-                    })
-                    .into()
-                })
+            .when_some(tooltip, |entry, tooltip| {
+                entry.tooltip(move |_, _| tooltip.clone().into())
             })
     }
 }
@@ -256,13 +260,38 @@ impl RenderOnce for StatusEntry {
 /// A [`Tooltip`] under a debug selector naming its entry and text, so
 /// tests can see it shown.
 struct StatusTooltip {
-    selector: String,
+    id: SharedString,
+    text: SharedString,
     tooltip: Entity<Tooltip>,
+}
+
+impl StatusTooltip {
+    fn new(id: &SharedString, text: &SharedString, cx: &mut Context<Self>) -> Self {
+        Self {
+            id: id.clone(),
+            text: text.clone(),
+            tooltip: Self::tooltip(text, cx),
+        }
+    }
+
+    fn tooltip(text: &SharedString, cx: &mut Context<Self>) -> Entity<Tooltip> {
+        let text = text.clone();
+        cx.new(|cx| Tooltip::new(text, None::<SharedString>, &ui_theme(cx)))
+    }
+
+    /// Shows `text`; an unchanged text notifies nothing.
+    fn set_text(&mut self, text: &SharedString, cx: &mut Context<Self>) {
+        if self.text != *text {
+            self.text = text.clone();
+            self.tooltip = Self::tooltip(text, cx);
+            cx.notify();
+        }
+    }
 }
 
 impl Render for StatusTooltip {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let selector = self.selector.clone();
+        let selector = format!("status-tooltip:{}:{}", self.id, self.text);
         div()
             .debug_selector(move || selector)
             .child(self.tooltip.clone())
