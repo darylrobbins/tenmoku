@@ -19,6 +19,7 @@
 
 pub mod commands;
 pub mod completion_menu;
+pub mod diff_view;
 mod element;
 mod file_viewer;
 mod hover;
@@ -32,6 +33,7 @@ mod view;
 mod vim;
 
 pub use completion_menu::{CompletionFuture, CompletionProvider, ResolveFuture};
+pub use diff_view::{DiffSide, DiffView};
 pub use fe_config::{EditorSettings, SettingsEvent, theme::EditorPalette};
 use fe_editor::diagnostics::Severity;
 pub use fe_keymap;
