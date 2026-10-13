@@ -253,7 +253,8 @@ pub enum HostCommand {
     /// A command named with a capital (`:help user-commands`) that fe-vim
     /// has none of its own by: `:Gitsigns stage_hunk`, `:Git! commit`.
     /// `range` is the buffer rows the line's range names (`None` with no
-    /// range); `args` the rest of the line, trimmed. The host answers `E492`
+    /// range, and `0..0`, the empty range at row 0, for exactly the address
+    /// `0` as in `:0Gclog`); `args` the rest of the line, trimmed. The host answers `E492`
     /// for one it doesn't know.
     User {
         name: String,
@@ -881,6 +882,9 @@ fn execute(target: &mut VimTarget<'_>, actor: &Actor, line: &str) -> Result<Hand
                     .map(|(first, end)| row(first)..row(end) + 1)
             };
             match &mut command {
+                // `:0Gclog`: the single address 0 stays the empty range at
+                // row 0, which `rows` would clamp to line 1.
+                HostCommand::User { range, .. } if lines == Some((0, 0)) => *range = Some(0..0),
                 HostCommand::User { range, .. } if lines.is_some() => *range = Some(rows(target)?),
                 HostCommand::DiffGet { rows: at } | HostCommand::DiffPut { rows: at } => {
                     *at = rows(target)?;
