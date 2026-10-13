@@ -6,11 +6,17 @@
 //! Nothing here waits on a prompt: git gets no stdin, terminal and askpass
 //! prompts are off, and `ssh` runs in batch mode unless the user configured
 //! their own ssh command. A remote that wants credentials it can't get
-//! fails with [`RemoteError::Auth`]. A signer may ask for a passphrase, so
-//! nothing here signs: a pull that would make a signed commit and a push with
-//! `push.gpgSign` on are [`RemoteError::Failed`] before git runs them, and
-//! every signer git could still reach, in a submodule say, is `false`. Pulls
-//! don't recurse into submodules, so they never stash or rebase in one.
+//! fails with [`RemoteError::Auth`].
+//!
+//! A signer, or the command that finds its key, may ask for a passphrase, so
+//! nothing here can sign: pulls pass `--no-gpg-sign` and turn
+//! `commit.gpgSign` off for every command they run, pushes pass `--no-signed`,
+//! and pushes never recurse into a submodule, where git would run with the
+//! submodule's own config. A pull that would make a signed commit and a push
+//! with `push.gpgSign` on are [`RemoteError::Failed`] before git runs them.
+//! Signature verification (`merge.verifySignatures`) works as configured.
+//! Pulls don't recurse into submodules either, so they never stash or rebase
+//! in one. Hooks are the user's, and run as they would in a terminal.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -75,19 +81,6 @@ const AUTH_MARKERS: &[&str] = &[
     "Permission denied (",
 ];
 
-/// Every signer git could run, `false`, given as `-c` options, which git hands
-/// on to the git commands it runs in submodules.
-const NO_SIGNERS: [&str; 8] = [
-    "-c",
-    "gpg.program=false",
-    "-c",
-    "gpg.openpgp.program=false",
-    "-c",
-    "gpg.x509.program=false",
-    "-c",
-    "gpg.ssh.program=false",
-];
-
 /// Why a pull or push that would sign wasn't run.
 const SIGNING_REFUSED: &str = "signing is on and could ask for a passphrase, so this wasn't done; \
 run it from a terminal";
@@ -121,9 +114,12 @@ impl Repo {
     /// Fetches HEAD's upstream and brings its commits into HEAD's branch as
     /// `mode` says. Local changes are never stashed: those the pull would
     /// overwrite stop it, with [`RemoteError::Failed`]. Submodules aren't
-    /// updated. When the merge or rebase would sign its commits, one that needs
-    /// a new commit is [`RemoteError::Failed`] with nothing changed; a
-    /// fast-forward goes ahead.
+    /// updated. Nothing is signed (`--no-gpg-sign` beats `commit.gpgSign` and
+    /// `branch.<name>.mergeOptions`, and `-c commit.gpgSign=false` reaches the
+    /// `git am` an apply-backend rebase runs): when the merge or rebase would
+    /// sign its commits, one that needs a new commit is [`RemoteError::Failed`]
+    /// with nothing changed, and a fast-forward goes ahead. Signatures are
+    /// verified as configured.
     pub fn pull(&self, mode: PullMode) -> Result<(), RemoteError> {
         let branch = self.branch()?.ok_or(RemoteError::Detached)?;
         if self.upstream_of(&branch)?.is_none() {
@@ -131,11 +127,14 @@ impl Repo {
         }
         let signs = mode != PullMode::FastForwardOnly && self.signs_commits(&branch)?;
         let mut args: Vec<OsString> = [
+            "-c",
+            "commit.gpgSign=false",
             "pull",
             "-q",
             "--no-edit",
             "--no-autostash",
             "--no-recurse-submodules",
+            "--no-gpg-sign",
         ]
         .map(OsString::from)
         .into();
@@ -169,7 +168,8 @@ impl Repo {
 
     /// Pushes HEAD's branch to its upstream branch, with `--force-with-lease`
     /// when `force_with_lease` (never a plain `--force`): the remote branch is
-    /// replaced only if it's still where the last fetch saw it.
+    /// replaced only if it's still where the last fetch saw it. Nothing is
+    /// signed, and no submodule is pushed (see the module docs).
     pub fn push(&self, force_with_lease: bool) -> Result<(), RemoteError> {
         let Some((remote, merge)) = self.upstream()? else {
             return Err(RemoteError::NoUpstream);
@@ -184,7 +184,8 @@ impl Repo {
     }
 
     /// Pushes HEAD's branch to a branch of the same name on `remote` and makes
-    /// that its upstream (`git push -u <remote> HEAD`).
+    /// that its upstream (`git push -u <remote> HEAD`). Nothing is signed, and
+    /// no submodule is pushed (see the module docs).
     pub fn publish(&self, remote: &str) -> Result<(), RemoteError> {
         self.branch()?.ok_or(RemoteError::Detached)?;
         let mut args = self.push_args()?;
@@ -208,10 +209,17 @@ impl Repo {
         Ok(signs)
     }
 
-    /// `git push` and its options shared by push and publish. `push.gpgSign`
-    /// true, as git reads a boolean, is [`RemoteError::Failed`]; `if-asked`
-    /// pushes unsigned (`--no-signed`), as it would to a server that doesn't
-    /// ask.
+    /// `git push` and its options shared by push and publish. The push is
+    /// unsigned (`--no-signed`): `push.gpgSign` true, as git reads a boolean,
+    /// is [`RemoteError::Failed`], and `if-asked` pushes unsigned, as it would
+    /// to a server that doesn't ask.
+    ///
+    /// Git pushes a submodule with the submodule's own config, which could
+    /// sign or run a key command, so every push says how to treat submodules:
+    /// when the config would push them, it only checks them
+    /// (`--recurse-submodules=check`), so a submodule commit its remote lacks
+    /// makes the push fail and nothing runs in the submodule; otherwise
+    /// `--recurse-submodules=no`.
     fn push_args(&self) -> Result<Vec<OsString>, RemoteError> {
         let signs = match self.config_get(&["config", "--get", "push.gpgSign"])? {
             None => false,
@@ -223,7 +231,53 @@ impl Repo {
                 output: format!("push.gpgSign: {SIGNING_REFUSED}"),
             });
         }
-        Ok(["push", "-q", "--no-signed"].map(OsString::from).into())
+        let recurse = if self.push_recurses()? {
+            "--recurse-submodules=check"
+        } else {
+            "--recurse-submodules=no"
+        };
+        Ok(["push", "-q", "--no-signed", recurse]
+            .map(OsString::from)
+            .into())
+    }
+
+    /// Whether a plain `git push` would push submodules first: as git reads
+    /// `push.recurseSubmodules` (`on-demand` or `only`) and `submodule.recurse`
+    /// (true), in config order with the last one deciding. A value git can't
+    /// parse counts as recursing; git then fails anyway.
+    fn push_recurses(&self) -> Result<bool, GitError> {
+        let args = [
+            "config",
+            "-z",
+            "--get-regexp",
+            r"^(push\.recursesubmodules|submodule\.recurse)$",
+        ]
+        .map(OsString::from);
+        let output = run_raw(&self.workdir, Access::Read, &args, None, &[])?;
+        // Exit 1: neither key is set.
+        match output.status.code() {
+            Some(0) => {}
+            Some(1) => return Ok(false),
+            _ => return Err(command_error(&args, &output)),
+        }
+        let mut recurses = false;
+        // Each entry is `key\nvalue`, or just `key` when it has no value.
+        for entry in output.stdout.split(|&byte| byte == 0) {
+            let entry = String::from_utf8_lossy(entry);
+            let (key, value) = match entry.split_once('\n') {
+                Some((key, value)) => (key, Some(value)),
+                None => (&*entry, None),
+            };
+            match key {
+                // `check` and git's false values don't push submodules.
+                "push.recursesubmodules" => {
+                    recurses = value.is_none_or(|value| value != "check" && parse_bool(value));
+                }
+                "submodule.recurse" => recurses = value.is_none_or(parse_bool),
+                _ => {}
+            }
+        }
+        Ok(recurses)
     }
 
     /// HEAD's branch's upstream remote and the branch's full name there
@@ -328,12 +382,17 @@ impl Repo {
         if !own_ssh {
             envs.push(("GIT_SSH_COMMAND", "ssh -o BatchMode=yes".as_ref()));
         }
-        let args: Vec<OsString> = NO_SIGNERS
-            .iter()
-            .map(OsString::from)
-            .chain(args.iter().cloned())
-            .collect();
-        run_raw(&self.workdir, Access::Write, &args, None, &envs)
+        run_raw(&self.workdir, Access::Write, args, None, &envs)
+    }
+}
+
+/// A config value with one, as git reads a boolean; `true` when git couldn't
+/// read it.
+fn parse_bool(value: &str) -> bool {
+    match value.to_ascii_lowercase().as_str() {
+        "" | "false" | "no" | "off" => false,
+        "true" | "yes" | "on" => true,
+        number => number.parse::<i64>() != Ok(0),
     }
 }
 
