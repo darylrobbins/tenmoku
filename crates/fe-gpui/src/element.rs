@@ -757,8 +757,8 @@ impl Element for EditorElement {
                 shift_frame(&mut frame, past);
             }
         }
-        // A text block's line wider than the rows: the view scrolls as far
-        // as it reaches too, where layout clamped short of it. Soft-wrapped
+        // A text block's line, or a ghost text row, wider than the rows: the
+        // view scrolls as far as it reaches too, where layout clamped short of it. Soft-wrapped
         // rows don't scroll, so then only the blocks' lines do.
         let mut host_x = frame.scroll.x;
         if kept_scroll.is_none() && !input.autoscroll {
@@ -771,7 +771,9 @@ impl Element for EditorElement {
                 &mut shaper,
                 &mut glyph_widths,
             );
-            let widest = host.max(proposed);
+            let ghosted =
+                ghost_text::widest(&frame, ghost.as_ref(), view, &mut shaper, &mut glyph_widths);
+            let widest = host.max(proposed).max(ghosted);
             let text_width = f64::from(frame.width - frame.text_left);
             let reach = (widest - text_width + f64::from(em) * 4.).max(0.) as f32;
             let wanted = input.scroll.x.min(reach).max(0.);
@@ -801,7 +803,14 @@ impl Element for EditorElement {
             &mut glyph_widths,
             host_x,
         );
-        let ghost = ghost_text::layout(&frame, ghost.as_ref(), view, &mut shaper, host_x);
+        let ghost = ghost_text::layout(
+            &frame,
+            ghost.as_ref(),
+            view,
+            &mut shaper,
+            &mut glyph_widths,
+            host_x,
+        );
         let composed = composition.map(|(offset, composition)| (offset, composition.text.clone()));
         let to_window = |rect: Rect| {
             Bounds::new(
@@ -1627,11 +1636,14 @@ fn block_carets(
 
 /// A block over the grapheme after `head`, to the next grapheme boundary on
 /// its display row, or one space wide at a line's end; `None` off screen.
+/// Ghost text's inlay at `head` is left out: the block covers the buffer's
+/// grapheme after it.
 fn block_rect(layout: &mut FrameLayout, text: &Text, head: usize) -> Option<Rect> {
     let FrameLayout {
         frame,
         long_rows,
         glyph_widths,
+        ghost,
         ..
     } = layout;
     let row = frame.row_containing(head)?;
@@ -1639,8 +1651,12 @@ fn block_rect(layout: &mut FrameLayout, text: &Text, head: usize) -> Option<Rect
     let line = text.offset_to_point(head).row;
     let line_end = text.row_start(line) + text.row_len(line) as usize;
     // Measured on the head's row: a wrap point's caret is on the next.
+    let inlay = match ghost.inlay_offset() == Some(head) {
+        true => row.inlay_width,
+        false => 0.,
+    };
     let end = next_grapheme(text, head, row.end.min(line_end))
-        .map(|next| frame.view_x(row.x_for_offset(next, long_rows, glyph_widths)))
+        .map(|next| frame.view_x(row.x_for_offset(next, long_rows, glyph_widths) - inlay))
         .filter(|&end| end > bar.x);
     let width = end.map_or_else(|| glyph_widths.char_width(' '), |end| end - bar.x);
     Some(Rect { width, ..bar })

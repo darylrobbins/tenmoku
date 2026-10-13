@@ -6,14 +6,14 @@
 
 use fe_buffer::Text;
 use fe_display::{
-    Block, DisplayMap, ExpandedRow,
-    layout::{self, Frame, MAX_SHAPED_ROW_BYTES, StyleRun, TextMeasure, Vec2},
+    Block, CharWidth, DisplayMap, ExpandedRow,
+    layout::{self, Frame, MAX_SHAPED_ROW_BYTES, MeasuredLine as _, StyleRun, TextMeasure, Vec2},
 };
 use gpui::{App, Hsla, Window, px};
 #[cfg(test)]
 use gpui::{Bounds, Pixels};
 
-use super::{FrameLayout, Line, Shaper};
+use super::{FrameLayout, Line, Shaper, host_blocks};
 use crate::EditorView;
 
 /// The id of the suggestion's block: past the host's and the proposals'.
@@ -102,10 +102,19 @@ fn below_row(offset: usize, text: &Text, display: &DisplayMap) -> u32 {
 /// The suggestion's block rows in a frame, shaped, to paint.
 #[derive(Default)]
 pub(super) struct Placed {
+    /// The caret the inlay is at, if there's a suggestion.
+    offset: Option<usize>,
     rows: Vec<Shown>,
     /// The inline part, which tests see.
     #[cfg(test)]
     inline: Option<String>,
+}
+
+impl Placed {
+    /// The caret the suggestion's inlay is at, if there's one.
+    pub(super) fn inlay_offset(&self) -> Option<usize> {
+        self.offset
+    }
 }
 
 /// A block row, and where it's painted.
@@ -117,57 +126,90 @@ struct Shown {
     text: String,
 }
 
+/// The rows of the suggestion's block `frame` shows that are in view, and
+/// the y each is at.
+fn in_view<'a>(
+    frame: &'a Frame<Line>,
+    ghost: &'a Ghost,
+) -> impl Iterator<Item = (f32, &'a str)> + 'a {
+    let laid = frame.blocks.iter().find(|laid| laid.id == ID);
+    let line_height = frame.line_height;
+    laid.into_iter().flat_map(move |laid| {
+        (ghost.rows.iter().enumerate())
+            .map(move |(ix, text)| (laid.rect.y + line_height * ix as f32, text.as_str()))
+            .filter(move |&(y, _)| y + line_height > 0. && y < frame.height)
+    })
+}
+
+/// How wide the widest of the suggestion's block rows in view is, from
+/// column 0: the view scrolls as far as it reaches too, as it does for the
+/// host's blocks ([`host_blocks::widest`]).
+pub(super) fn widest(
+    frame: &Frame<Line>,
+    ghost: Option<&Ghost>,
+    view: &EditorView,
+    shaper: &mut Shaper,
+    widths: &mut dyn CharWidth,
+) -> f64 {
+    let Some(ghost) = ghost else {
+        return 0.;
+    };
+    in_view(frame, ghost)
+        .map(|(_, text)| match text.len() > MAX_SHAPED_ROW_BYTES {
+            true => host_blocks::clusters(text, widths)
+                .last()
+                .map_or(0., |(_, _, end)| end),
+            false => f64::from(shaper.shape(text, &runs(text, view)).width()),
+        })
+        .fold(0., f64::max)
+}
+
+/// The style run of a row of `text`: the gutter's colour.
+fn runs(text: &str, view: &EditorView) -> [StyleRun<Hsla>; 1] {
+    [StyleRun {
+        len: text.len(),
+        style: view.theme.gutter_foreground,
+    }]
+}
+
 /// Shapes the rows of the suggestion's block `frame` shows that are in view,
-/// each from the text area's left edge scrolled to `scroll_x`, cut to as
-/// much as is shaped at once.
+/// each from the text area's left edge scrolled to `scroll_x`: a long one
+/// around the view ([`host_blocks::slice`]).
 pub(super) fn layout(
     frame: &Frame<Line>,
     ghost: Option<&Ghost>,
     view: &EditorView,
     shaper: &mut Shaper,
+    widths: &mut dyn CharWidth,
     scroll_x: f32,
 ) -> Placed {
     let Some(ghost) = ghost else {
         return Placed::default();
     };
-    let mut rows = Vec::new();
-    if let Some(laid) = frame.blocks.iter().find(|laid| laid.id == ID) {
-        let line_height = frame.line_height;
-        for (ix, text) in ghost.rows.iter().enumerate() {
-            let y = laid.rect.y + line_height * ix as f32;
-            if y + line_height <= 0. || y >= frame.height {
-                continue;
-            }
-            let text = &text[..floor_char_boundary(text, MAX_SHAPED_ROW_BYTES)];
-            let runs = [StyleRun {
-                len: text.len(),
-                style: view.theme.gutter_foreground,
-            }];
-            rows.push(Shown {
+    let rows = in_view(frame, ghost)
+        .map(|(y, text)| {
+            let (range, x) = match text.len() > MAX_SHAPED_ROW_BYTES {
+                true => host_blocks::slice(text, frame, scroll_x, widths),
+                false => (0..text.len(), 0.),
+            };
+            let text = &text[range];
+            Shown {
                 at: Vec2 {
-                    x: frame.text_left - scroll_x,
+                    x: frame.text_left + (x - f64::from(scroll_x)) as f32,
                     y,
                 },
-                line: shaper.shape(text, &runs),
+                line: shaper.shape(text, &runs(text, view)),
                 #[cfg(test)]
                 text: text.to_string(),
-            });
-        }
-    }
+            }
+        })
+        .collect();
     Placed {
+        offset: Some(ghost.offset),
         rows,
         #[cfg(test)]
         inline: Some(ghost.inline.clone()),
     }
-}
-
-/// The char boundary of `text` at or before `byte`.
-fn floor_char_boundary(text: &str, byte: usize) -> usize {
-    let mut byte = byte.min(text.len());
-    while !text.is_char_boundary(byte) {
-        byte -= 1;
-    }
-    byte
 }
 
 /// What a frame painted of the suggestion, for tests: its inline part, the

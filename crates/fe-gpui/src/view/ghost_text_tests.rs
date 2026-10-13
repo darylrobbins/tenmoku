@@ -285,3 +285,93 @@ fn composition_hides_it(cx: &mut TestAppContext) {
     mark("", cx);
     assert_eq!(texts(&view, cx), Some(("bar()".into(), vec![])));
 }
+
+/// Scrolls the view right to `x`, as far as it goes, and draws a frame.
+fn scroll_right(view: &Entity<EditorView>, x: f32, cx: &mut VisualTestContext) {
+    view.update(cx, |view, cx| {
+        view.scroll.x = px(x);
+        view.autoscroll = false;
+        cx.notify();
+    });
+    draw(cx);
+}
+
+#[gpui::test]
+fn wide_rows_scroll_into_view(cx: &mut TestAppContext) {
+    use fe_display::layout::MAX_SHAPED_ROW_BYTES;
+    let (view, cx) = editor(cx);
+    draw(cx);
+    let text_width = f32::from(row_bounds(&view, 0, cx).size.width);
+    // Monospaced, as wide as the `;`.
+    let char_width =
+        f32::from(caret_at(&view, CARET + 1, cx).origin.x - caret_at(&view, CARET, cx).origin.x);
+    // A second line twice as wide as the view, on rows that all fit in it:
+    // the view scrolls right as far as its end.
+    let chars = (2. * text_width / char_width) as usize;
+    let wide = format!("{}end", "x".repeat(chars));
+    suggest(&view, &format!("bar(\n{wide}\n)"), cx);
+    scroll_right(&view, 1_000_000., cx);
+    let scrolled = view.read_with(cx, |view, _| f32::from(view.scroll.x));
+    let wide_width = char_width * wide.len() as f32;
+    assert!(scrolled > 0., "the view scrolled");
+    assert!(
+        scrolled + text_width >= wide_width,
+        "{scrolled} + {text_width} reaches {wide_width}"
+    );
+    let (_, rows) = texts(&view, cx).expect("shown");
+    assert_eq!(rows, [wide.as_str(), ")"]);
+
+    // A second line longer than is shaped at once, scrolled to its end: a
+    // slice around the view is painted, its last chars with it.
+    view.update(cx, |view, cx| view.set_ghost_text(None, cx));
+    let long = format!("{}tail!", "y".repeat(2 * MAX_SHAPED_ROW_BYTES));
+    suggest(&view, &format!("bar(\n{long}\n)"), cx);
+    scroll_right(&view, 10_000_000., cx);
+    let (_, rows) = texts(&view, cx).expect("shown");
+    assert!(
+        rows[0].len() <= MAX_SHAPED_ROW_BYTES && rows[0].ends_with("yyytail!"),
+        "{} bytes, ending {:?}",
+        rows[0].len(),
+        &rows[0][rows[0].len().saturating_sub(10)..]
+    );
+    let scrolled = view.read_with(cx, |view, _| f32::from(view.scroll.x));
+    let long_width = char_width * long.len() as f32;
+    assert!(
+        scrolled + text_width >= long_width,
+        "{scrolled} + {text_width} reaches {long_width}"
+    );
+}
+
+#[gpui::test]
+fn replace_caret_ignores_the_inlay(cx: &mut TestAppContext) {
+    let (view, cx) = editor(cx);
+    cx.update(|_, cx| set_vim_enabled(cx, true));
+    view.update(cx, |view, _| view.model_mut().set_cursor(CARET));
+    cx.simulate_keystrokes("shift-r");
+    cx.run_until_parked();
+    assert_eq!(
+        view.read_with(cx, |view, _| view.vim_mode()),
+        Some("replace")
+    );
+    let carets = |cx: &mut VisualTestContext| {
+        draw(cx);
+        view.read_with(cx, |view, _| view.painted_carets.clone())
+    };
+    // An underline under the `;`.
+    let before = carets(cx);
+    assert_eq!(before.len(), 1);
+    let semicolon = caret_at(&view, CARET + 1, cx).origin.x - caret_at(&view, CARET, cx).origin.x;
+    assert!((before[0].size.width - semicolon).abs() < px(0.01));
+
+    suggest(&view, "bar()", cx);
+    assert_eq!(texts(&view, cx), Some(("bar()".into(), vec![])));
+    let after = carets(cx);
+    assert_eq!(after.len(), 1);
+    assert_eq!(after[0].origin, before[0].origin);
+    assert!(
+        (after[0].size.width - before[0].size.width).abs() < px(0.01),
+        "{:?} is one `;` wide, as {:?} is",
+        after[0].size.width,
+        before[0].size.width
+    );
+}
