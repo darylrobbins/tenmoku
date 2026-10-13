@@ -32,6 +32,7 @@ pub mod indent_guides;
 mod indent_style;
 mod multi_cursor;
 pub mod occurrences;
+mod pairs;
 mod row_change_decorations;
 pub mod row_changes;
 mod rows;
@@ -148,6 +149,10 @@ pub struct EditorModel {
     typing: Option<TypingGroup>,
     /// What typing pauses are measured on; shared with splits.
     clock: Rc<dyn Fn() -> Instant>,
+    /// Whether typing an opener closes it (see [`EditorModel::insert_typed`]).
+    auto_close: bool,
+    /// The closers typing inserted that typing may still move over.
+    auto_closed: Vec<pairs::AutoClosed>,
 }
 
 impl EditorModel {
@@ -185,6 +190,8 @@ impl EditorModel {
             decorations: Vec::new(),
             typing: None,
             clock: Rc::new(Instant::now),
+            auto_close: true,
+            auto_closed: Vec::new(),
         };
         model.row_changes.track(&model.caught_up);
         model
@@ -202,7 +209,7 @@ impl EditorModel {
     }
 
     /// A second model over the same buffer, for a split: same path, tab size,
-    /// indent style, wrap, selections, diagnostics and decoration providers (the same
+    /// indent style, wrap, auto-closing, selections, diagnostics and decoration providers (the same
     /// ones; providers added to either later aren't added to the other),
     /// but its own display rows with nothing folded.
     /// Its char widths are [`Monospace`] until set.
@@ -238,6 +245,8 @@ impl EditorModel {
             decorations: self.decorations.clone(),
             typing: None,
             clock: Rc::clone(&self.clock),
+            auto_close: self.auto_close,
+            auto_closed: Vec::new(),
         };
         model.row_changes.track(&model.caught_up);
         model.apply_wrap();
@@ -337,6 +346,7 @@ impl EditorModel {
         // first; this keeps them from piling up while others edit.
         self.events.drain();
         self.poll_typing();
+        self.forget_auto_closed();
     }
 
     /// The buffer's diagnostics in the text as of the last catch-up (see
@@ -1036,13 +1046,13 @@ impl EditorModel {
     /// as typing does: consecutive typing is one undo step (see
     /// [`TYPING_PAUSE`]).
     pub fn insert(&mut self, text: &str) {
-        self.insert_typed(text, Typed::insert(text));
+        self.insert_grouped(text, Typed::insert(text));
     }
 
     /// [`EditorModel::insert`], joining the run of typing only if `typed`
     /// says to; `None` makes it a step of its own (a paste, an accepted
     /// suggestion).
-    pub(crate) fn insert_typed(&mut self, text: &str, typed: Option<Typed>) {
+    pub(crate) fn insert_grouped(&mut self, text: &str, typed: Option<Typed>) {
         self.sync_display();
         let selections = self.selections();
         let edits = selections
@@ -1065,7 +1075,7 @@ impl EditorModel {
                 .collect();
             self.apply_with_carets(edits);
         } else {
-            self.insert_typed(text, None);
+            self.insert_grouped(text, None);
         }
     }
 
@@ -1124,8 +1134,14 @@ impl EditorModel {
         self.apply_typed(edits, Typed::insert(" "));
     }
 
+    /// Deletes back a grapheme, or both halves of an empty pair typing
+    /// closed (see [`EditorModel::insert_typed`]).
     pub fn backspace(&mut self) {
-        self.delete_typed(|model, offset| model.prev_grapheme(offset)..offset);
+        self.delete_typed(|model, offset| {
+            model
+                .empty_pair_at(offset)
+                .unwrap_or_else(|| model.prev_grapheme(offset)..offset)
+        });
     }
 
     pub fn delete_forward(&mut self) {
@@ -1358,22 +1374,36 @@ impl EditorModel {
             carets.push(caret(start + text.len()));
             delta += text.len() as isize - range.len() as isize;
         }
+        self.apply_selecting(merged, carets, typed);
+    }
+
+    /// Applies `edits`, sorted and apart, joining the run of typing if
+    /// `typed` continues it, and sets `selections`, offsets in the text
+    /// they make. Returns the buffer as the edits left it.
+    pub(crate) fn apply_selecting(
+        &mut self,
+        edits: Vec<(Range<usize>, String)>,
+        selections: Vec<ResolvedSelection>,
+        typed: Option<Typed>,
+    ) -> BufferSnapshot {
         // Anchored before catching up, whose measuring may edit the buffer
         // through another model.
-        let carets = {
+        let (selections, snapshot) = {
             let shared = Rc::clone(&self.buffer);
             let mut buffer = shared.borrow_mut();
-            let id = self.edit_typed(&mut buffer, merged, typed);
+            let id = self.edit_typed(&mut buffer, edits, typed);
             if let (Some(id), Some(transactions)) = (id, &mut self.transactions) {
                 transactions.push(id);
             }
-            let carets = SelectionSet::from_resolved(&buffer.snapshot(), carets);
-            self.typing_left(&carets);
-            carets
+            let snapshot = buffer.snapshot();
+            let selections = SelectionSet::from_resolved(&snapshot, selections);
+            self.typing_left(&selections);
+            (selections, snapshot)
         };
         self.sync_display();
         self.goals.clear();
-        self.selections = carets;
+        self.selections = selections;
+        snapshot
     }
 }
 

@@ -480,6 +480,7 @@ impl PaneItem for EditorView {
                 let mut model = EditorModel::new(buffer, Some(path));
                 model.set_tab_size(settings.tab_size);
                 model.set_soft_wrap(settings.soft_wrap);
+                model.set_auto_close(settings.auto_close_pairs);
                 let view = cx.new(|cx| EditorView::new(model, theme, cx));
                 view.update(cx, |view, cx| place_caret(view, &state, cx));
                 Some(view)

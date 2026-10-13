@@ -143,7 +143,7 @@ impl GhostText {
         model.sync_display();
         let rest = self.remaining(model)?;
         let piece = rest[..len(rest)].to_owned();
-        let (_, produced) = model.run_as(Origin::User, |model| model.insert_typed(&piece, None));
+        let (_, produced) = model.run_as(Origin::User, |model| model.insert_grouped(&piece, None));
         let id = produced.first().copied();
         // A command accepting it produced this transaction too.
         if let (Some(id), Some(transactions)) = (id, &mut model.transactions) {

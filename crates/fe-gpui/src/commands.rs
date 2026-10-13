@@ -15,8 +15,8 @@ use fe_editor::{
     commands::{Editor, EditorHost, EditorTarget, ScrollRequest, Viewport},
 };
 use fe_keymap::{CatalogError, CommandCatalog};
-use fe_syntax::Syntax;
-use gpui::{App, ClipboardItem, Context, Window};
+use fe_syntax::{Syntax, SyntaxDriver};
+use gpui::{App, ClipboardItem, Context, Task, Window};
 
 use crate::{EditorView, completion_menu, view::synced_syntax, vim};
 
@@ -192,13 +192,23 @@ thread_local! {
     static VIEWPORT_ASKED: Cell<bool> = const { Cell::new(false) };
 }
 
-/// The editor's side of a dispatch: the view's clipboard, viewport and
-/// syntax folds.
+/// The editor's side of a dispatch: the view's clipboard, viewport, syntax
+/// folds, and its language's comment tokens and pairs.
 pub(crate) struct ViewHost<'a> {
     pub(crate) cx: &'a mut App,
     pub(crate) page_rows: u32,
     /// The syntax tree, if it matches the text.
     pub(crate) syntax: Option<&'a Syntax>,
+    /// The view's language, once loaded, whether or not its tree matches
+    /// the text yet ([`loaded_language`]).
+    pub(crate) language: Option<&'static str>,
+}
+
+/// The name of the language `syntax` parses, once it has loaded: known
+/// from the moment an edit lands, unlike the tree, which matches the text
+/// only from the next frame ([`synced_syntax`]).
+pub(crate) fn loaded_language(syntax: &Option<SyntaxDriver<Task<()>>>) -> Option<&'static str> {
+    Some(syntax.as_ref()?.syntax().language().name())
 }
 
 impl EditorHost for ViewHost<'_> {
@@ -226,11 +236,15 @@ impl EditorHost for ViewHost<'_> {
     }
 
     fn comment_tokens(&self) -> Option<CommentTokens> {
-        let tokens = fe_syntax::comment_tokens(self.syntax?.language().name())?;
+        let tokens = fe_syntax::comment_tokens(self.language?)?;
         Some(CommentTokens {
             line: tokens.line,
             block: tokens.block,
         })
+    }
+
+    fn auto_pairs(&self) -> &[(char, char)] {
+        self.language.map_or(&[], fe_syntax::auto_pairs)
     }
 
     fn viewport(&self) -> Option<Viewport> {
@@ -331,10 +345,12 @@ impl EditorView {
         }
         let page_rows = self.page_rows();
         let syntax = synced_syntax(&self.syntax, &self.model);
+        let language = loaded_language(&self.syntax);
         let mut host = ViewHost {
             cx,
             page_rows,
             syntax,
+            language,
         };
         let meta = registry.get(&invocation.command);
         let mutates = meta.is_some_and(|meta| meta.mutates_buffer);
@@ -547,3 +563,6 @@ impl EditorView {
 #[cfg(test)]
 #[path = "comment_host_tests.rs"]
 mod comment_host_tests;
+#[cfg(test)]
+#[path = "pairs_host_tests.rs"]
+mod pairs_host_tests;

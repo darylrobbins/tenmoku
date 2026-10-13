@@ -555,8 +555,12 @@ impl Pane {
         self.settings = event.settings.editor.clone();
         self.theme.set_metrics(&self.settings, cx);
         for tab in &self.tabs {
-            tab.editor
-                .update(cx, |editor, cx| editor.reload_settings(event, cx));
+            tab.editor.update(cx, |editor, cx| {
+                editor.reload_settings(event, cx);
+                editor
+                    .model_mut()
+                    .set_auto_close(self.settings.auto_close_pairs);
+            });
             if let Some(width) = configs::get(tab.editor.entity_id(), cx).and_then(|c| c.tab_width)
             {
                 tab.editor
@@ -579,6 +583,7 @@ impl Pane {
         if model.soft_wrap() != self.settings.soft_wrap {
             model.set_soft_wrap(self.settings.soft_wrap);
         }
+        model.set_auto_close(self.settings.auto_close_pairs);
         let theme = self.theme.clone();
         cx.new(|cx| EditorView::new(model, theme, cx))
     }
@@ -1185,3 +1190,68 @@ impl Pane {
 #[cfg(test)]
 #[path = "editorconfig_tests.rs"]
 mod editorconfig_tests;
+
+/// `editor.auto_close_pairs` reaches the open editors' models on a reload,
+/// and those opened after it.
+#[cfg(test)]
+mod auto_close_tests {
+    use std::sync::Arc;
+
+    use fe_buffer::Buffer;
+    use fe_config::Settings;
+    use gpui::{TestAppContext, VisualTestContext};
+
+    use super::*;
+    use crate::{Launch, Workbench};
+
+    fn reload(workbench: &Entity<Workbench>, on: bool, cx: &mut VisualTestContext) {
+        let mut settings = Settings::default();
+        settings.editor.auto_close_pairs = on;
+        let mut previous = Settings::default();
+        previous.editor.auto_close_pairs = !on;
+        let event = SettingsEvent {
+            settings: Arc::new(settings),
+            previous: Arc::new(previous),
+            diagnostics: Vec::new(),
+        };
+        workbench.update(cx, |workbench, cx| workbench.reload_settings(&event, cx));
+        cx.run_until_parked();
+    }
+
+    /// Each editor's model's [`EditorModel::auto_close`], pane by pane.
+    fn auto_close(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<bool> {
+        workbench.read_with(cx, |workbench, cx| {
+            (workbench.pane_group().panes().iter())
+                .flat_map(|pane| pane.read(cx).tabs().to_vec())
+                .map(|tab| tab.editor.read(cx).model().auto_close())
+                .collect()
+        })
+    }
+
+    #[gpui::test]
+    fn reload_reaches_open_and_new_editors(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.rs");
+        std::fs::write(&path, "f\n").unwrap();
+        std::fs::write(dir.path().join("b.rs"), "g\n").unwrap();
+        let launch = Launch {
+            root: Some(dir.path().to_owned()),
+            file: Some((path, Some(Buffer::from_file_contents("f\n")))),
+        };
+        let (workbench, cx, _) = crate::tests::open(cx, launch);
+        assert_eq!(auto_close(&workbench, cx), [true]);
+
+        reload(&workbench, false, cx);
+        assert_eq!(auto_close(&workbench, cx), [false]);
+        // A file opened since opens as the settings now say.
+        let pane =
+            workbench.read_with(cx, |workbench, _| workbench.pane_group().panes()[0].clone());
+        let b = dir.path().join("b.rs");
+        cx.update(|window, cx| pane.update(cx, |pane, cx| pane.open(b, window, cx)));
+        cx.run_until_parked();
+        assert_eq!(auto_close(&workbench, cx), [false, false]);
+
+        reload(&workbench, true, cx);
+        assert_eq!(auto_close(&workbench, cx), [true, true]);
+    }
+}

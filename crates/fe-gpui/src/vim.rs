@@ -69,7 +69,11 @@ use gpui::{
     WeakFocusHandle, Window,
 };
 
-use crate::{EditorView, commands::ViewHost, view::synced_syntax};
+use crate::{
+    EditorView,
+    commands::{ViewHost, loaded_language},
+    view::synced_syntax,
+};
 
 /// The command a vim-layer binding names to hand its keystroke to the
 /// reducer. It's never dispatched from a key.
@@ -998,6 +1002,7 @@ impl EditorView {
     ) -> Option<Result<Dispatched<TransactionId>, DispatchError>> {
         let page_rows = self.page_rows();
         let syntax = synced_syntax(&self.syntax, &self.model);
+        let language = loaded_language(&self.syntax);
         let state = self.vim.as_mut()?;
         // Out of the global while the host holds `cx`, and back after.
         let mut registers = std::mem::take(&mut cx.default_global::<Vim>().registers);
@@ -1005,6 +1010,7 @@ impl EditorView {
             cx,
             page_rows,
             syntax,
+            language,
         };
         let mut target = VimTarget {
             model: &mut self.model,

@@ -50,6 +50,11 @@ pub trait EditorHost {
     fn comment_tokens(&self) -> Option<CommentTokens> {
         None
     }
+    /// The (opener, closer) pairs typing an opener closes in the buffer's
+    /// language; none (the default) if it isn't known.
+    fn auto_pairs(&self) -> &[(char, char)] {
+        &[]
+    }
     /// Changes what the view shows; the default does nothing.
     fn scroll(&mut self, request: ScrollRequest) {
         let _ = request;
@@ -475,14 +480,20 @@ pub fn registry() -> Registry<Editor> {
             "editor.insert",
             "Insert Text",
             |target: &mut EditorTarget<'_>, actor: &Actor, args: InsertArgs| {
-                run_as(target, actor, |model, _| {
-                    model.insert(&args.text);
+                run_as(target, actor, |model, host| {
+                    let mut chars = args.text.chars();
+                    match (chars.next(), chars.next()) {
+                        (Some(ch), None) => model.insert_typed(ch, host.auto_pairs()),
+                        _ => model.insert(&args.text),
+                    }
                     Ok(Effect::Changed)
                 })
             },
         )
         .expect("editor command IDs are valid and distinct")
-        .description("Replaces every selection with `text`, as typing does.")
+        .description(
+            "Replaces every selection with `text`, as typing does. A single char typed closes what it opens, in the host's language, unless auto-closing is off.",
+        )
         .context(ContextPredicate::identifier(CONTEXT))
         .mutates_buffer(true);
     registry
