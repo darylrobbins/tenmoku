@@ -333,7 +333,7 @@ fn symbols_follow_the_caret(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("cmd-\\");
     settle(cx);
     assert_ne!(active(&workbench, cx), pane);
-    for language in [None, Some("json")] {
+    for language in [None, Some("html")] {
         cx.update(|_, cx| pane.update(cx, |_, cx| cx.emit(crate::PaneEvent::Activated)));
         draw(cx);
         assert_eq!(active(&workbench, cx), pane);
@@ -341,7 +341,7 @@ fn symbols_follow_the_caret(cx: &mut TestAppContext) {
         editor.update(cx, |editor, cx| editor.set_language(language, cx));
         draw(cx);
         if language.is_none() {
-            // JSON's grammar loads in the background: an outline could
+            // HTML's grammar loads in the background: an outline could
             // still come until it has.
             assert_eq!(symbols(cx), Vec::<String>::new(), "plain text");
         }

@@ -7,7 +7,7 @@
 //! `UPDATE_GOLDEN=1 cargo nextest run -p fe-syntax --test outline` rewrites
 //! them; review the diff before committing it.
 //!
-//! Built only with every outlined language, and JSON for an unsupported one.
+//! Built only with every outlined language, and HTML for an unsupported one.
 
 #![cfg(all(
     feature = "rust",
@@ -19,7 +19,7 @@
     feature = "c",
     feature = "markdown",
     feature = "toml",
-    feature = "json"
+    feature = "html"
 ))]
 
 use std::{
@@ -148,8 +148,13 @@ fn outlines_match_golden_files() {
     // The languages T113 added have their samples, and goldens, in
     // more_languages_samples/, which tests/more_languages.rs checks; Bash,
     // Make and SQL have theirs in outline_scripts_samples/, which
-    // tests/outline_scripts.rs checks.
-    for dir in ["more_languages_samples", "outline_scripts_samples"] {
+    // tests/outline_scripts.rs checks, and JSON, YAML, CSS and Dockerfile
+    // in outline_data_samples/, which tests/outline_data.rs checks.
+    for dir in [
+        "more_languages_samples",
+        "outline_scripts_samples",
+        "outline_data_samples",
+    ] {
         covered.extend(
             fs::read_dir(samples_dir().with_file_name(dir))
                 .unwrap()
@@ -547,10 +552,10 @@ fn items_are_preorder_and_ranges_nest() {
 
 #[test]
 fn no_outline_without_a_full_tree() {
-    let json = Buffer::new("{\"a\": 1}\n");
-    let mut syntax = Syntax::new(language_by_name("json").unwrap(), json.current());
+    let html = Buffer::new("<p>a</p>\n");
+    let mut syntax = Syntax::new(language_by_name("html").unwrap(), html.current());
     syntax.finish(syntax.parse_job().run());
-    assert!(!outline_supported("json"));
+    assert!(!outline_supported("html"));
     assert_eq!(outline(&syntax).err(), Some(NoOutline::Unsupported));
 
     let rust = language_by_name("rust").unwrap();

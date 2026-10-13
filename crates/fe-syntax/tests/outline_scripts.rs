@@ -303,8 +303,13 @@ fn supported_flags() {
         assert!(outline_supported(language), "{language}");
         assert!(symbols_supported(language), "{language}");
     }
+    // JSON, YAML, CSS and Dockerfile have an outline but no symbols.
+    for language in ["json", "yaml", "css", "dockerfile"] {
+        assert!(outline_supported(language), "{language}");
+        assert!(!symbols_supported(language), "{language}");
+    }
     // The other languages with neither, as before.
-    for language in ["json", "yaml", "html", "css", "xml", "dockerfile"] {
+    for language in ["html", "xml"] {
         assert!(language_names().any(|name| name == language), "{language}");
         assert!(!outline_supported(language), "{language}");
         assert!(!symbols_supported(language), "{language}");

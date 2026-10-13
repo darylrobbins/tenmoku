@@ -1,0 +1,49 @@
+/* A stylesheet. */
+:root {
+  --accent: #0a84ff;
+}
+
+body,
+  html {
+  margin: 0;
+}
+
+.toolbar > button:hover,
+.toolbar   a {
+  color: var(--accent);
+}
+
+@media screen and (max-width: 600px), print {
+  .toolbar {
+    display: none;
+  }
+
+  #main {
+    padding: 4px;
+  }
+}
+
+@supports (display: grid) {
+  .grid {
+    display: grid;
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.card {
+  padding: 8px;
+
+  & .title {
+    font-weight: bold;
+  }
+}
+
+@import url("theme.css");

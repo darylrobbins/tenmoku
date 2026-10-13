@@ -53,8 +53,9 @@ pub enum OutlineKind {
     Table,
     /// A heading of level 1 to 6.
     Heading(u8),
-    /// A field of a struct, union, class or interface. Only [`symbols`]
-    /// lists these, as it does the next two.
+    /// A field of a struct, union, class or interface, which only
+    /// [`symbols`] lists, as it does the next two; or, in the outline, a
+    /// JSON or YAML key whose value isn't a mapping.
     Field,
     /// An enum's variant, member or constant.
     Variant,
@@ -193,7 +194,8 @@ pub fn symbols_job(syntax: &Syntax) -> Result<OutlineJob, NoOutline> {
 /// [`outline`]'s items, with the same kinds, names and ranges, plus fields,
 /// enum variants and module-level variables. Nesting, names, the cap and
 /// the errors follow the outline's rules. Languages without a definitions
-/// query, such as markdown and toml, are [`NoOutline::Unsupported`].
+/// query, such as markdown, toml, json, yaml, css and dockerfile, are
+/// [`NoOutline::Unsupported`].
 pub fn symbols(syntax: &Syntax) -> Result<Outline, NoOutline> {
     Ok(symbols_job(syntax)?.run())
 }
@@ -271,7 +273,7 @@ impl OutlineJob {
                     Capture::Name => {
                         let declared = declared_name(capture.node);
                         names_function |= declares_function(declared);
-                        let range = name_range(declared);
+                        let range = name_range(declared, self.language.name());
                         name = Some(match name {
                             Some(name) => merge(name, range),
                             None => range,
@@ -527,7 +529,9 @@ fn declarator_end(mut node: Node) -> Node {
 /// symbol, `:name` in `attr_reader :name`, which names `name`, and a C++
 /// conversion operator, `operator char*() const`, named up to its
 /// parameters, `operator char*`, also through a reference: `operator int&`.
-fn name_range(node: Node) -> Range<usize> {
+/// A JSON key, `"a"`, names what's between its quotes, `a`, even when that's
+/// nothing.
+fn name_range(node: Node, language: &str) -> Range<usize> {
     let range = node.byte_range();
     match node.kind() {
         "simple_symbol" => (range.start + 1).min(range.end)..range.end,
@@ -547,6 +551,17 @@ fn name_range(node: Node) -> Range<usize> {
             }
             let parameters = declarator.and_then(|d| d.child_by_field_name("parameters"));
             range.start..parameters.map_or(range.end, |parameters| parameters.start_byte())
+        }
+        "string" if language == "json" => {
+            // The quotes are its first and last children; the content and
+            // escapes between them are named.
+            let open = node.child(0).filter(|open| !open.is_named());
+            let close = (node.child(node.child_count().saturating_sub(1)))
+                .filter(|close| !close.is_named() && node.child_count() >= 2);
+            match open.zip(close) {
+                Some((open, close)) => open.end_byte()..close.start_byte(),
+                None => range,
+            }
         }
         _ => range,
     }
@@ -1677,7 +1692,7 @@ const JAVASCRIPT_DEFINITIONS: &str = include_str!("../queries/definitions/javasc
 const TYPESCRIPT_DEFINITIONS: &str = include_str!("../queries/definitions/typescript.scm");
 
 /// The outline and definitions queries, by language name.
-static QUERIES: [OutlineQuery; 21] = [
+static QUERIES: [OutlineQuery; 25] = [
     OutlineQuery::new(
         "rust",
         &[include_str!("../queries/outline/rust.scm")],
@@ -1760,6 +1775,14 @@ static QUERIES: [OutlineQuery; 21] = [
         &[],
     ),
     OutlineQuery::new("toml", &[include_str!("../queries/outline/toml.scm")], &[]),
+    OutlineQuery::new("json", &[include_str!("../queries/outline/json.scm")], &[]),
+    OutlineQuery::new("yaml", &[include_str!("../queries/outline/yaml.scm")], &[]),
+    OutlineQuery::new("css", &[include_str!("../queries/outline/css.scm")], &[]),
+    OutlineQuery::new(
+        "dockerfile",
+        &[include_str!("../queries/outline/dockerfile.scm")],
+        &[],
+    ),
     OutlineQuery::new(
         "bash",
         &[include_str!("../queries/outline/bash.scm")],

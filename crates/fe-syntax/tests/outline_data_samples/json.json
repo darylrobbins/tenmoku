@@ -1,0 +1,25 @@
+{
+  "name": "fastedit",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "cargo build",
+    "test": "cargo nextest run"
+  },
+  "files": ["src", "README.md"],
+  "workspaces": [
+    {
+      "path": "crates/fe-syntax",
+      "features": { "json": true }
+    },
+    "crates/fe-buffer"
+  ],
+  "with \"escapes\"": null,
+  "": "an empty key",
+  "config": {
+    "nested": {
+      "deep": [1, 2, 3]
+    },
+    "empty": {}
+  }
+}

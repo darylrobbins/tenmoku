@@ -1,0 +1,17 @@
+Field "name" 2:3-2:21
+Field "version" 3:3-3:21
+Field "private" 4:3-4:18
+Module "scripts" 5:3-8:4
+  Field "build" 6:5-6:27
+  Field "test" 7:5-7:32
+Field "files" 9:3-9:32
+Field "workspaces" 10:3-16:4
+  Field "path" 12:7-12:33
+  Module "features" 13:7-13:35
+    Field "json" 13:21-13:33
+Field "with \\\"escapes\\\"" 17:3-17:27
+Field "" 18:3-18:21
+Module "config" 19:3-24:4
+  Module "nested" 20:5-22:6
+    Field "deep" 21:7-21:24
+  Module "empty" 23:5-23:16

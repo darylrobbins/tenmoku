@@ -1,0 +1,30 @@
+# A CI workflow.
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request: {}
+env:
+  RUST_BACKTRACE: 1
+  "quoted key": yes
+  'single': no
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: {os: [ubuntu, macos], rust: stable}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test
+        run: |
+          cargo nextest run
+        with:
+          cache: true
+  lint: &lint
+    runs-on: ubuntu-latest
+  empty:
+---
+second: document
+defaults:
+  <<: *lint
+  shell: bash

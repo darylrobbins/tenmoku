@@ -1,0 +1,29 @@
+Field "name" 2:1-2:9
+Module "on" 3:1-6:19
+  Module "push" 4:3-5:21
+    Field "branches" 5:5-5:21
+  Module "pull_request" 6:3-6:19
+Module "env" 7:1-10:15
+  Field "RUST_BACKTRACE" 8:3-8:20
+  Field "\"quoted key\"" 9:3-9:20
+  Field "'single'" 10:3-10:15
+Module "jobs" 11:1-25:9
+  Module "test" 12:3-22:22
+    Field "runs-on" 13:5-13:27
+    Module "strategy" 14:5-15:50
+      Module "matrix" 15:7-15:50
+        Field "os" 15:16-15:35
+        Field "rust" 15:37-15:49
+    Field "steps" 16:5-22:22
+      Field "uses" 17:9-17:34
+      Field "name" 18:9-18:19
+      Field "run" 19:9-20:28
+      Module "with" 21:9-22:22
+        Field "cache" 22:11-22:22
+  Module "lint" 23:3-24:27
+    Field "runs-on" 24:5-24:27
+  Field "empty" 25:3-25:9
+Field "second" 27:1-27:17
+Module "defaults" 28:1-31:1
+  Field "<<" 29:3-29:12
+  Field "shell" 30:3-30:14

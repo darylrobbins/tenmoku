@@ -322,7 +322,7 @@ fn clicking_an_item_jumps(cx: &mut TestAppContext) {
 fn empty_and_too_large_states(cx: &mut TestAppContext) {
     let (dir, paths) = project(&[
         ("notes.txt", "fn not_code() {}\n"),
-        ("data.json", "{\"a\": 1}\n"),
+        ("page.html", "<p>a</p>\n"),
         ("empty.rs", ""),
     ]);
     let (workbench, outline, cx) = outlining(cx, &dir);
@@ -337,7 +337,7 @@ fn empty_and_too_large_states(cx: &mut TestAppContext) {
         shown(&paths[0], cx).as_deref(),
         Some("No outline for plain text")
     );
-    assert_eq!(shown(&paths[1], cx).as_deref(), Some("No outline for json"));
+    assert_eq!(shown(&paths[1], cx).as_deref(), Some("No outline for html"));
     assert_eq!(shown(&paths[2], cx).as_deref(), Some("No symbols"));
 
     // Over Rust's parse limit; built in memory rather than written out.
