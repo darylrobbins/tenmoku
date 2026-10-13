@@ -43,6 +43,7 @@ pub use pane_item::set_restore_style;
 pub use theme::{ActivePalette, editor_palette, set_editor_palette};
 pub use timing::{FrameTiming, FrameTimings};
 pub use view::EditorView;
+pub use view::GhostTextEvent;
 pub use view::ProposalEvent;
 pub use vim::{
     apply_vim_reload, set_vim_clipboard, set_vim_enabled, set_vim_jump_on_s, vim_enabled,

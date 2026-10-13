@@ -18,7 +18,11 @@ use fe_keymap::{CatalogError, CommandCatalog};
 use fe_syntax::{Syntax, SyntaxDriver};
 use gpui::{App, ClipboardItem, Context, Task, Window};
 
-use crate::{EditorView, completion_menu, view::synced_syntax, vim};
+use crate::{
+    EditorView, completion_menu,
+    view::{ghost_text, synced_syntax},
+    vim,
+};
 
 // The app's command plumbing is kiln's (docs/decisions/app-framework.md);
 // fastedit keeps its paths to it.
@@ -46,7 +50,8 @@ pub const SHOW_HOVER: &str = "editor.show_hover";
 const SAVE: &str = "editor.save";
 
 /// fe-editor's commands, and the view's own: in the editor's context, and
-/// the completion menu's in its own ([`completion_menu`]). The
+/// the completion menu's and the ghost text's in their own
+/// ([`completion_menu`], [`ghost_text`]). The
 /// view's do nothing to the model: once one has dispatched, the view does
 /// its work ([`EditorView::run_command`]).
 fn editor_registry() -> Registry<Editor> {
@@ -84,6 +89,26 @@ fn editor_registry() -> Registry<Editor> {
             completion_menu::DISMISS,
             "Dismiss Completion",
             completion_menu::KEY_CONTEXT,
+        ),
+        (
+            ghost_text::ACCEPT,
+            "Accept Suggestion",
+            ghost_text::KEY_CONTEXT,
+        ),
+        (
+            ghost_text::ACCEPT_WORD,
+            "Accept Next Word of Suggestion",
+            ghost_text::KEY_CONTEXT,
+        ),
+        (
+            ghost_text::ACCEPT_LINE,
+            "Accept Next Line of Suggestion",
+            ghost_text::KEY_CONTEXT,
+        ),
+        (
+            ghost_text::DISMISS,
+            "Dismiss Suggestion",
+            ghost_text::KEY_CONTEXT,
         ),
     ];
     for (id, title, context) in menu {
@@ -264,11 +289,18 @@ impl EditorHost for ViewHost<'_> {
 }
 
 /// Whether a read-only view refuses `invocation`, one of the editor's: it
-/// edits, or asks for or accepts a completion, where the registry would run
-/// it.
+/// edits, asks for or accepts a completion, or accepts a suggestion, where
+/// the registry would run it.
 fn refused(registry: &Registry<Editor>, invocation: &Invocation) -> bool {
     let command = invocation.command.as_str();
-    let completes = command == completion_menu::TRIGGER || command == completion_menu::ACCEPT;
+    let completes = command == completion_menu::TRIGGER
+        || command == completion_menu::ACCEPT
+        || [
+            ghost_text::ACCEPT,
+            ghost_text::ACCEPT_WORD,
+            ghost_text::ACCEPT_LINE,
+        ]
+        .contains(&command);
     registry
         .validate(invocation)
         .is_ok_and(|meta| meta.mutates_buffer || completes)
@@ -297,7 +329,8 @@ impl EditorView {
     /// replace mode's `Esc`, `vim.replace_normal_mode`. While a macro
     /// records, what runs is recorded as the keys it was
     /// ([`EditorView::record_typing`]). A read-only view refuses a command
-    /// that edits, and accepting or asking for a completion
+    /// that edits, accepting or asking for a completion, and accepting a
+    /// suggestion
     /// ([`EditorView::refuse_edit`]).
     ///
     /// Given the window, the view takes [`SAVE`] over from fe-editor's
@@ -393,9 +426,11 @@ impl EditorView {
                         // Edit nothing, or as typing does, so the session
                         // goes on.
                         SHOW_HOVER => dispatch(&mut self.model),
+                        // Accepting a suggestion types it, into the session.
                         command
                             if command == completion_menu::TRIGGER
-                                || command.starts_with("completion.") =>
+                                || command.starts_with("completion.")
+                                || command.starts_with("ghost_text.") =>
                         {
                             dispatch(&mut self.model)
                         }
@@ -432,7 +467,9 @@ impl EditorView {
                 }
             }
             Ok(()) => {
-                if !self.run_completion_command(invocation.command.as_str(), cx) {
+                let command = invocation.command.as_str();
+                self.run_ghost_text_command(command, cx);
+                if !self.run_completion_command(command, cx) {
                     self.sync_completion(cx);
                 }
             }

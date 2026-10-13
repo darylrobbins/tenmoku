@@ -9,26 +9,71 @@
 //! ([`fe_editor::ghost_text`]), or leaving vim's insert mode, drops it
 //! before the next frame. While an input method composes, the composition
 //! takes the caret's inlay and the suggestion hides.
+//!
+//! - **Keys**, in the [`KEY_CONTEXT`] while it shows: [`ACCEPT`] (`tab`)
+//!   inserts the rest as one undo step, or, in vim's insert mode, as part
+//!   of the insert session; [`ACCEPT_WORD`] and [`ACCEPT_LINE`] insert its
+//!   next word or line, the rest still shown; [`DISMISS`] drops it. The
+//!   completion menu's `tab` wins while both show.
+//! - **`escape`**, wherever it's pressed, and losing focus drop it, before
+//!   any binding takes the key: so one `escape` in vim's insert mode drops
+//!   it and goes back to normal mode.
+//! - **Events.** The host hears each accept and the suggestion going any
+//!   other way as a [`GhostTextEvent`], but its own
+//!   [`set_ghost_text`](EditorView::set_ghost_text).
 
+use fe_buffer::TransactionId;
+use fe_command::ContextStack;
 use fe_editor::ghost_text::GhostText;
-use gpui::Context;
+use gpui::{Context, EventEmitter};
 
 use super::EditorView;
+
+pub(crate) const ACCEPT: &str = "ghost_text.accept";
+pub(crate) const ACCEPT_WORD: &str = "ghost_text.accept_word";
+pub(crate) const ACCEPT_LINE: &str = "ghost_text.accept_line";
+pub(crate) const DISMISS: &str = "ghost_text.dismiss";
+
+/// The key context the suggestion's keys are bound in while it shows.
+pub(crate) const KEY_CONTEXT: &str = "ghost_text";
+
+/// What an [`EditorView`] tells its subscribers the user did with its
+/// suggestion.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GhostTextEvent {
+    /// `text`, some or all of what remained, went in as `transaction`, the
+    /// user's; `whole` if nothing of it remains to show.
+    Accepted {
+        transaction: TransactionId,
+        text: String,
+        whole: bool,
+    },
+    /// It went without being accepted: `escape`, losing focus,
+    /// `ghost_text.dismiss`, or anything that ended it, typing all of it
+    /// among others. Not for one the host replaced or cleared.
+    Dismissed,
+}
+
+impl EventEmitter<GhostTextEvent> for EditorView {}
 
 impl EditorView {
     /// Shows `ghost` from the next frame, in place of any shown before, or
     /// nothing with `None`. One that doesn't show at the caret now, such as
-    /// one for another buffer, is dropped with a warning.
+    /// one for another buffer or one set in vim's normal mode, is dropped
+    /// with a warning. Neither tells subscribers anything.
     pub fn set_ghost_text(&mut self, ghost: Option<GhostText>, cx: &mut Context<Self>) {
         // Made against the buffer as it is, which the model may trail.
         self.model.sync_display();
+        self.sync_vim(cx);
+        let accepts_text = self.accepts_text();
         self.ghost_text = ghost.filter(|ghost| {
-            let live = ghost.is_live(&self.model);
+            let live = accepts_text && ghost.is_live(&self.model);
             if !live {
                 let buffer = self.model.snapshot().id();
                 log::warn!(
                     "a suggestion that doesn't show at the caret of {buffer:?}, \
-                     or is for another buffer, isn't shown"
+                     is for another buffer or comes in a vim mode that takes no \
+                     text, isn't shown"
                 );
             }
             live
@@ -41,14 +86,110 @@ impl EditorView {
         self.ghost_text.as_ref()
     }
 
+    /// Whether the suggestion shows, so its keys apply: it's live, and no
+    /// input method composes over it.
+    pub(crate) fn ghost_text_shown(&self) -> bool {
+        self.ghost_text.is_some() && self.composition().is_none()
+    }
+
     /// Drops a suggestion that's over, or that vim's normal or visual mode
-    /// hides, for a frame about to be drawn.
-    pub(crate) fn drop_stale_ghost_text(&mut self) {
+    /// hides, for a frame about to be drawn or a key about to be matched,
+    /// and tells subscribers. Checked against the buffer as it is, so an
+    /// edit through another view of it counts.
+    pub(crate) fn drop_stale_ghost_text(&mut self, cx: &mut Context<Self>) {
+        if self.ghost_text.is_none() {
+            return;
+        }
+        self.model.sync_display();
         let accepts_text = self.accepts_text();
         if (self.ghost_text.as_ref())
             .is_some_and(|ghost| !accepts_text || !ghost.is_live(&self.model))
         {
-            self.ghost_text = None;
+            self.dismiss_ghost_text(cx);
         }
     }
+
+    /// Drops the suggestion, if any, telling subscribers.
+    pub(crate) fn dismiss_ghost_text(&mut self, cx: &mut Context<Self>) {
+        if self.ghost_text.take().is_some() {
+            cx.emit(GhostTextEvent::Dismissed);
+            cx.notify();
+        }
+    }
+
+    /// Has `escape` drop the suggestion wherever it's pressed, before any
+    /// binding takes it, and losing focus drop it too.
+    pub(crate) fn dismiss_ghost_text_on_escape_and_blur(
+        view: &mut EditorView,
+        window: &mut gpui::Window,
+        cx: &mut Context<EditorView>,
+    ) {
+        let this = cx.weak_entity();
+        let escape = cx.intercept_keystrokes(move |event, _, cx| {
+            if event.keystroke.key == "escape" {
+                this.update(cx, |view, cx| view.dismiss_ghost_text(cx)).ok();
+            }
+        });
+        let blur = cx.on_blur(&view.focus, window, |view, _, cx| {
+            view.dismiss_ghost_text(cx)
+        });
+        view.ghost_text_subscriptions = vec![escape, blur];
+    }
+
+    /// Runs one of the suggestion's commands, which the registry has
+    /// dispatched. `true` if `command` is one.
+    pub(crate) fn run_ghost_text_command(&mut self, command: &str, cx: &mut Context<Self>) -> bool {
+        let accept = match command {
+            ACCEPT => GhostText::accept,
+            ACCEPT_WORD => GhostText::accept_word,
+            ACCEPT_LINE => GhostText::accept_line,
+            DISMISS => {
+                self.dismiss_ghost_text(cx);
+                return true;
+            }
+            _ => return false,
+        };
+        self.drop_stale_ghost_text(cx);
+        let Some(ghost) = self.ghost_text.take() else {
+            return true;
+        };
+        let before = ghost.remaining(&self.model).unwrap_or_default().to_owned();
+        let Some(transaction) = accept(&ghost, &mut self.model) else {
+            return true;
+        };
+        let after = ghost.remaining(&self.model).map_or(0, str::len);
+        let text = before[..before.len().saturating_sub(after)].to_owned();
+        // A partial accept keeps the rest, while there's any.
+        let whole = command == ACCEPT || after == 0;
+        if !whole {
+            self.ghost_text = Some(ghost);
+        }
+        cx.emit(GhostTextEvent::Accepted {
+            transaction,
+            text,
+            whole,
+        });
+        self.changed(cx);
+        true
+    }
+}
+
+/// `stack` with its innermost editor frame's [`KEY_CONTEXT`] flag set as
+/// `shown` says: keys are matched against the suggestion as it is when they
+/// come, as vim's are ([`crate::vim::live_stack`]).
+pub(crate) fn stamp(stack: ContextStack, shown: bool) -> ContextStack {
+    let frames = stack.frames();
+    let editor = (frames.iter()).rposition(|frame| frame.name == fe_editor::commands::CONTEXT);
+    (frames.iter().enumerate())
+        .map(|(ix, frame)| {
+            let mut frame = frame.clone();
+            if Some(ix) == editor {
+                frame.flags.remove(KEY_CONTEXT);
+                if shown {
+                    frame.flags.insert(KEY_CONTEXT.to_owned());
+                }
+            }
+            frame
+        })
+        .collect()
 }

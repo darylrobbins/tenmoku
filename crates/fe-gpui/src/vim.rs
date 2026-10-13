@@ -336,9 +336,12 @@ pub(crate) fn live_stack(
         // And the completion menu as it is now, not as the last frame
         // drew it: a key after the menu closed is the editor's again.
         view.drop_stale_completion();
+        // And the suggestion, so `tab` after it went is the editor's.
+        view.drop_stale_ghost_text(cx);
         let stack = stamp(stack, view.vim.as_ref());
+        let stack = crate::completion_menu::stamp(stack, view.completion_shown());
         (
-            crate::completion_menu::stamp(stack, view.completion_shown()),
+            crate::view::ghost_text::stamp(stack, view.ghost_text_shown()),
             pending,
         )
     })

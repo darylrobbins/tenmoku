@@ -933,6 +933,20 @@ keys = "escape"
 command = "vim_line.cancel"
 context = "vim_line"
 
+# Ghost text: while a suggestion shows, `tab` accepts it and accept-word
+# takes its next word, over the editor's and vim's insert mode's keys. The
+# completion rows come after, so the menu's `tab` wins while both show.
+
+[[bindings]]
+keys = "tab"
+command = "ghost_text.accept"
+context = "ghost_text"
+
+[[bindings]]
+keys = { macos = "cmd-right", default = "ctrl-right" }
+command = "ghost_text.accept_word"
+context = "ghost_text"
+
 # Completion: `ctrl-space` asks at the caret. While the menu shows, its keys
 # win over the editor's and vim's insert mode's, being later at the same
 # depth.

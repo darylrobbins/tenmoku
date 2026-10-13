@@ -128,6 +128,8 @@ pub struct EditorView {
     pub(crate) proposal_buttons: Vec<(fe_buffer::HunkId, ProposalButton, gpui::Bounds<Pixels>)>,
     /// The suggestion shown at the caret ([`ghost_text`]).
     ghost_text: Option<fe_editor::ghost_text::GhostText>,
+    /// Drop it on `escape` and on losing focus.
+    ghost_text_subscriptions: Vec<Subscription>,
     /// The top, in screen rows, the last frame reported or the host set
     /// ([`EditorView::report_scroll_top`]).
     pub(crate) reported_top: f32,
@@ -256,6 +258,7 @@ impl EditorView {
             proposals: Vec::new(),
             proposal_buttons: Vec::new(),
             ghost_text: None,
+            ghost_text_subscriptions: Vec::new(),
             reported_top: 0.,
             top_set: None,
             #[cfg(test)]
@@ -1258,10 +1261,16 @@ impl Render for EditorView {
         if self.completion_subscriptions.is_empty() {
             Self::close_completion_on_escape_and_blur(self, window, cx);
         }
+        if self.ghost_text_subscriptions.is_empty() {
+            Self::dismiss_ghost_text_on_escape_and_blur(self, window, cx);
+        }
         self.drop_stale_completion();
-        self.drop_stale_ghost_text();
+        self.drop_stale_ghost_text(cx);
         if self.completion_shown() {
             key_context.add(crate::completion_menu::KEY_CONTEXT);
+        }
+        if self.ghost_text_shown() {
+            key_context.add(ghost_text::KEY_CONTEXT);
         }
         div()
             .id("editor")
@@ -1315,12 +1324,13 @@ fn read_primary_text(_: &App) -> Option<String> {
 }
 
 mod find;
-mod ghost_text;
+pub(crate) mod ghost_text;
 mod host;
 mod ime;
 mod proposal;
 mod proposal_commands;
 
+pub use ghost_text::GhostTextEvent;
 pub use host::{EditorViewEvent, HostBlock, HostBlockKind};
 pub(crate) use proposal::ProposalButton;
 pub use proposal::ProposalEvent;
@@ -1376,3 +1386,6 @@ mod proposal_command_tests;
 
 #[cfg(test)]
 mod ghost_text_tests;
+
+#[cfg(test)]
+mod ghost_text_key_tests;
