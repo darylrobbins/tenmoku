@@ -11,6 +11,28 @@ fn os(arg: &str) -> OsString {
     OsString::from(arg)
 }
 
+const FROM_STDIN: &str = "--pathspec-from-file=-";
+const NUL: &str = "--pathspec-file-nul";
+
+/// `names` as NUL-terminated entries, the stdin form of `--pathspec-from-file`,
+/// so the list never counts against the argument limit.
+fn nul_joined(names: &[OsString]) -> Result<Vec<u8>, GitError> {
+    let mut out = Vec::new();
+    for name in names {
+        let bytes = gix::path::os_str_into_bstr(name)
+            .map_err(|_| GitError::Io(format!("{} is not a valid path", name.to_string_lossy())))?;
+        if bytes.contains(&0) {
+            return Err(GitError::Io(format!(
+                "{} is not a valid path",
+                name.to_string_lossy()
+            )));
+        }
+        out.extend_from_slice(bytes.as_ref());
+        out.push(0);
+    }
+    Ok(out)
+}
+
 impl Repo {
     /// Stages `paths`: additions, modifications and deletions alike, as VS
     /// Code's Stage Changes does.
@@ -18,9 +40,14 @@ impl Repo {
         let Some(relas) = self.relative(paths)? else {
             return Ok(());
         };
-        let mut args = vec![os("add"), os("-A"), os("--")];
-        args.extend(relas);
-        run(&self.workdir, Access::Write, &args, None).map(drop)
+        let args = [os("add"), os("-A"), os(FROM_STDIN), os(NUL)];
+        run(
+            &self.workdir,
+            Access::Write,
+            &args,
+            Some(&nul_joined(&relas)?),
+        )
+        .map(drop)
     }
 
     /// Takes `paths` out of the index again, back to HEAD. Works while HEAD is
@@ -29,7 +56,7 @@ impl Repo {
         let Some(relas) = self.relative(paths)? else {
             return Ok(());
         };
-        let mut args = if self.head_is_unborn()? {
+        let args = if self.head_is_unborn()? {
             // `-f`: the entry may match neither HEAD nor the working tree.
             vec![
                 os("rm"),
@@ -38,13 +65,18 @@ impl Repo {
                 os("-q"),
                 os("-r"),
                 os("--ignore-unmatch"),
-                os("--"),
             ]
         } else {
-            vec![os("reset"), os("-q"), os("--")]
+            vec![os("reset"), os("-q")]
         };
-        args.extend(relas);
-        run(&self.workdir, Access::Write, &args, None).map(drop)
+        let args = [args, vec![os(FROM_STDIN), os(NUL)]].concat();
+        run(
+            &self.workdir,
+            Access::Write,
+            &args,
+            Some(&nul_joined(&relas)?),
+        )
+        .map(drop)
     }
 
     /// Throws away the working-tree changes to `paths`: a tracked file goes back
@@ -53,13 +85,7 @@ impl Repo {
         let Some(relas) = self.relative(paths)? else {
             return Ok(());
         };
-        let mut args = vec![os("ls-files"), os("-z"), os("--")];
-        args.extend(relas.iter().cloned());
-        let listing = run(&self.workdir, Access::Read, &args, None)?;
-        let tracked: HashSet<&[u8]> = listing
-            .split(|&byte| byte == 0)
-            .filter(|name| !name.is_empty())
-            .collect();
+        let tracked = self.tracked_names(&relas)?;
 
         let mut restore = Vec::new();
         let mut delete = Vec::new();
@@ -72,9 +98,13 @@ impl Repo {
             }
         }
         if !restore.is_empty() {
-            let mut args = vec![os("checkout"), os("-q"), os("--")];
-            args.extend(restore);
-            run(&self.workdir, Access::Write, &args, None)?;
+            let args = [os("checkout"), os("-q"), os(FROM_STDIN), os(NUL)];
+            run(
+                &self.workdir,
+                Access::Write,
+                &args,
+                Some(&nul_joined(&restore)?),
+            )?;
         }
         for path in delete {
             self.check_deletable(path)?;
@@ -123,6 +153,34 @@ impl Repo {
             cacheinfo,
         ];
         run(&self.workdir, Access::Write, &args, None).map(drop)
+    }
+
+    /// The names among `relas` that the index tracks at any stage, sparse
+    /// directory entries expanded, asked of `ls-files` in batches that stay
+    /// under the argument limit.
+    fn tracked_names(&self, relas: &[OsString]) -> Result<HashSet<Vec<u8>>, GitError> {
+        const BATCH_BYTES: usize = 64 * 1024;
+        let mut tracked = HashSet::new();
+        let mut start = 0;
+        while start < relas.len() {
+            let mut end = start;
+            let mut size = 0;
+            while end < relas.len() && (end == start || size + relas[end].len() < BATCH_BYTES) {
+                size += relas[end].len() + 1;
+                end += 1;
+            }
+            let mut args = vec![os("ls-files"), os("-z"), os("--")];
+            args.extend(relas[start..end].iter().cloned());
+            let listing = run(&self.workdir, Access::Read, &args, None)?;
+            tracked.extend(
+                listing
+                    .split(|&byte| byte == 0)
+                    .filter(|name| !name.is_empty())
+                    .map(<[u8]>::to_vec),
+            );
+            start = end;
+        }
+        Ok(tracked)
     }
 
     /// Whether HEAD is unborn; a HEAD that can't be read is an error.
