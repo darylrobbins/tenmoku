@@ -23,7 +23,7 @@ use fe_text::{Bias, Text};
 use crate::{
     Change, JoinArgs, Mode, Motion, MoveArgs, OperateArgs, Operator, PutArgs, Register, Registers,
     SelectArgs, SwapArgs, Target, TextObject, VimState, VimTarget, VisualArgs, VisualKind, Write,
-    edit, history, insert,
+    edit, history, insert, line_motions,
     motion::{self, Class, Cursor, Line},
     operator::{self, Span, row_end},
     text_object,
@@ -48,6 +48,9 @@ pub(crate) struct Visual {
     cursor: Anchor,
     /// The cursor's goal column (`usize::MAX` after `$`), as in normal mode.
     goal: Option<usize>,
+    /// The display column along its row `gj` and `gk` aimed for with the
+    /// goal (see [`crate::line_motions::DisplayGoal`]): `select` clears it.
+    along: Option<usize>,
 }
 
 /// A position as nvim keeps a mark: a byte column on a row. The row is
@@ -338,8 +341,10 @@ fn select(model: &mut EditorModel, state: &mut VimState, ends: Ends) {
         anchor: snapshot.anchor_after(ends.anchor),
         cursor: snapshot.anchor_after(ends.cursor),
         goal: ends.goal,
+        along: None,
     });
     state.goals = None;
+    state.display_goals = None;
     let selections = ends.selections(model.text(), model.tab_size().max(1));
     model.set_selections(selections);
 }
@@ -367,6 +372,7 @@ fn to_normal(model: &mut EditorModel, state: &mut VimState, ends: Ends) {
     let caret = Cursor::at(model.text(), ends.cursor).offset();
     model.set_selections([operator::caret(caret)]);
     state.goals = Some((model.snapshot().version(), vec![(caret, ends.goal)]));
+    state.display_goals = None;
 }
 
 /// The goal column normal mode holds for the primary caret, if any.
@@ -675,6 +681,15 @@ pub(crate) fn move_cursor(model: &mut EditorModel, state: &mut VimState, args: M
         ..ends
     };
     select(model, state, moved_to);
+    // Only `gj` and `gk` leave one, aiming for the display column they hold.
+    let along = line_motions::alongs()
+        .iter()
+        .rev()
+        .find(|kept| Some(kept.goal) == goal && kept.head == cursor.offset())
+        .map(|kept| kept.along);
+    if let Some(visual) = state.visual.as_mut() {
+        visual.along = along;
+    }
     moved_to.cursor != ends.cursor
 }
 
@@ -701,6 +716,12 @@ pub(crate) fn jump_cursor(model: &mut EditorModel, state: &mut VimState, offset:
 }
 
 impl VimState {
+    /// The display column `gj` and `gk` left the visual cursor aiming for.
+    pub(crate) fn visual_along(&self) -> Option<usize> {
+        let visual = self.visual.as_ref()?;
+        visual.goal.and(visual.along)
+    }
+
     /// In a visual mode, the vim cursor's offset in `model`'s text: where
     /// the host paints the block cursor, which isn't the model selection's
     /// head (a charwise selection takes the cursor's grapheme too). It may

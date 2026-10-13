@@ -9,6 +9,7 @@ mod clipboard;
 mod cmdline;
 mod commands;
 mod delimiters;
+mod display_goal;
 mod edits;
 mod ex;
 mod ex_host;

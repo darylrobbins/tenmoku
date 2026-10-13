@@ -105,6 +105,9 @@ pub(crate) fn apply(model: &mut EditorModel, state: &mut VimState, args: MoveArg
         (selection.head(), first.and_then(|(_, goal)| *goal))
     });
     state.goals = Some((version, goals.collect()));
+    // Only `gj` and `gk` leave a display column: any other motion clears it.
+    let alongs = line_motions::alongs();
+    state.display_goals = (!alongs.is_empty()).then_some((version, alongs));
     state.failed |= failed;
     after != before
 }

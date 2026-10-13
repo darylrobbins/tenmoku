@@ -122,6 +122,9 @@ struct View {
     /// For `gj` and `gk`, each caret's display row and the one they go
     /// to, by offset.
     hops: Vec<Hop>,
+    /// What `gj` and `gk` left for each caret they moved, for the state's
+    /// display goals once the command ran.
+    alongs: Vec<DisplayGoal>,
     /// In a visual mode, a motion moved the cursor but failed, which fails
     /// the key (stopping a macro) once the command ran.
     failed: bool,
@@ -159,6 +162,11 @@ pub(crate) fn with_view<'a, R>(
     };
     let visual = matches!(target.state.mode, Mode::Visual(_));
     let past_end = visual.then(|| visual_past_end(target)).flatten();
+    let version = target.model.snapshot().version();
+    let held = target.state.display_goals.clone();
+    // Normal mode's goals as `motion::apply` reads them: all or none.
+    let goals = crate::motion::valid_goals(target.state, version, &target.model.selections())
+        .map(|(_, goals)| goals.clone());
     let hops = match viewed {
         Some(Viewed {
             motion: motion @ (Motion::DisplayDown | Motion::DisplayUp),
@@ -167,12 +175,35 @@ pub(crate) fn with_view<'a, R>(
         }) => hops(target, motion == Motion::DisplayDown, count),
         _ => Vec::new(),
     };
+    // A display column holds while the buffer goal it came with does.
+    let visual_along = target.state.visual_along();
+    let hops = hops.into_iter().map(|hop| {
+        if visual {
+            return Hop {
+                along: visual_along,
+                ..hop
+            };
+        }
+        let along = held
+            .as_ref()
+            .zip(goals.as_ref())
+            .and_then(|((at, held), goals)| {
+                let goal = goals.iter().find(|(head, _)| *head == hop.offset)?.1?;
+                let found = held
+                    .iter()
+                    .find(|d| d.head == hop.offset && d.goal == goal)?;
+                (*at == version).then_some(found.along)
+            });
+        Hop { along, ..hop }
+    });
+    let hops: Vec<Hop> = hops.collect();
     let view = View {
         top,
         rows,
         visual,
         past_end,
         hops,
+        alongs: Vec::new(),
         failed: false,
     };
     let restore = Restore(VIEW.with(|cell| cell.replace(Some(view))));
@@ -251,6 +282,20 @@ struct Hop {
     /// fe-display broke the display rows near `from` and `to` shows it;
     /// `None` if neither row wraps.
     limit: Option<usize>,
+    /// The display column along the row the caret's last `gj` or `gk` aimed
+    /// for, if it's still the caret's goal.
+    along: Option<usize>,
+}
+
+/// A caret's display column along a display row, kept with the buffer
+/// column `goal` it came with through `gj` and `gk`: a tab can be wider on
+/// a wrapped row than in the buffer, so the buffer column alone can't say
+/// where along the row the caret was.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct DisplayGoal {
+    pub(crate) head: usize,
+    pub(crate) goal: usize,
+    pub(crate) along: usize,
 }
 
 /// The display rows `count` `gj`s (`down`) or `gk`s take each caret
@@ -325,6 +370,7 @@ fn hops(target: &mut VimTarget<'_>, down: bool, count: Option<u32>) -> Vec<Hop> 
                 to_last: to_row.last,
                 rows: from.abs_diff(to),
                 limit,
+                along: None,
             }
         })
         .collect();
@@ -349,6 +395,7 @@ fn row_hop(text: &Text, offset: usize, row: u32, down: bool, count: u32) -> Hop 
         to_last: true,
         rows: row.abs_diff(to),
         limit: None,
+        along: None,
     }
 }
 
@@ -434,6 +481,27 @@ pub(crate) fn motion(
     }
 }
 
+/// Notes for the [`with_view`] running that `gj` or `gk` left the caret at
+/// `head` with buffer goal `goal`, aiming for display column `along`.
+fn record_along(head: usize, goal: usize, along: usize) {
+    VIEW.with(|view| {
+        if let Some(view) = view.borrow_mut().as_mut() {
+            view.alongs.push(DisplayGoal { head, goal, along });
+        }
+    });
+}
+
+/// The display columns the `gj`s and `gk`s of the command running left its
+/// carets aiming for: [`crate::motion::apply`] keeps them with the goals it
+/// sets, which is how every other motion clears them.
+pub(crate) fn alongs() -> Vec<DisplayGoal> {
+    VIEW.with(|view| {
+        view.borrow()
+            .as_ref()
+            .map_or_else(Vec::new, |v| v.alongs.clone())
+    })
+}
+
 /// In a visual mode, a goal at or past the row's end puts the cursor on the
 /// row's end, past its last character, as `j` and `k` do there.
 fn past_end(cursor: &mut Cursor, visual: bool, goal: usize, tab: usize) {
@@ -507,14 +575,21 @@ fn display_rows(
     goal: Option<usize>,
     tab: usize,
 ) -> Result<Option<usize>, Option<usize>> {
+    let offset = cursor.offset();
     if hop.rows == 0 {
+        // A caret that can't move keeps the display column it held.
+        if let (Some(along), Some(goal)) = (hop.along, goal.filter(|&goal| goal != usize::MAX)) {
+            record_along(offset, goal, along);
+        }
         return Err(goal);
     }
-    let offset = cursor.offset();
     let goal = goal.unwrap_or_else(|| cursor.line.goal_column(cursor.ix, tab));
     let from = first_grapheme(&cursor.line, hop.from.start);
     let along_start = columns_between(&cursor.line, from, cursor.ix, tab);
-    let mut along = to_along(&cursor.line, cursor.ix, along_start, goal, tab);
+    let mut along = match hop.along.filter(|_| goal != usize::MAX) {
+        Some(along) => along,
+        None => to_along(&cursor.line, cursor.ix, along_start, goal, tab),
+    };
     if let Some(limit) = hop.limit.filter(|_| goal != usize::MAX) {
         along = along.min(limit);
     }
@@ -533,6 +608,9 @@ fn display_rows(
     };
     if hop.to_last {
         past_end(cursor, visual, goal, tab);
+    }
+    if goal != usize::MAX {
+        record_along(cursor.offset(), goal, along);
     }
     match hop.rows < count {
         true => failed(cursor, offset, false, visual, Some(goal)),

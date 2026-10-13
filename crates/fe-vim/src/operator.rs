@@ -455,6 +455,7 @@ pub(crate) fn keep_goals(
     landed: &[usize],
     kept: &[Option<usize>],
 ) {
+    state.display_goals = None;
     let kept: Vec<(usize, usize)> = landed
         .iter()
         .zip(kept)

@@ -66,6 +66,10 @@ pub struct VimState {
     /// `gg` and `G` (Vim's `curswant`; `usize::MAX` is the line end, after
     /// `$`; `None` is the caret's own column), as of a version of the text.
     pub(crate) goals: Option<(Version, Goals)>,
+    /// The display column along its row each caret's last `gj` or `gk`
+    /// aimed for, with the goal it came with: only they set it, and it
+    /// holds only while that goal does in the same version of the text.
+    pub(crate) display_goals: Option<(Version, Vec<crate::line_motions::DisplayGoal>)>,
     pub(crate) last_find: Option<Motion>,
     /// Set in insert mode: the session `vim.normal_mode` ends.
     pub(crate) session: Option<Session>,
