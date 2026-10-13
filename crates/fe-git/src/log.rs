@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use gix::ObjectId;
 
-use crate::blame::commit_info;
+use crate::blame::{commit_info, git_path};
 use crate::cli::{self, Access};
 use crate::{CommitInfo, GitError, Repo};
 
@@ -34,13 +34,9 @@ impl Repo {
         if limit == 0 {
             return Ok(Vec::new());
         }
-        let git_path = rela_path
-            .components()
-            .map(|part| part.as_os_str().to_string_lossy())
-            .collect::<Vec<_>>()
-            .join("/");
-        // Explicit flags, so neither the user's nor the repo's config changes
-        // the output.
+        let git_path = git_path(rela_path);
+        // Explicit flags, so neither the user's nor the repo's config (such as
+        // `log.showRoot`) changes the output.
         let mut args: Vec<OsString> = [
             "-c",
             "log.follow=false",
@@ -48,6 +44,7 @@ impl Repo {
             "diff.renames=true",
             "log",
             "--follow",
+            "--root",
             "-z",
             "--name-status",
             "--no-color",
@@ -60,7 +57,13 @@ impl Repo {
         .into();
         args.push(format!("--max-count={limit}").into());
         args.push("--".into());
-        args.push(git_path.into());
+        #[cfg(unix)]
+        args.push({
+            use std::os::unix::ffi::OsStrExt;
+            std::ffi::OsStr::from_bytes(&git_path).to_owned()
+        });
+        #[cfg(not(unix))]
+        args.push(git_path.to_string().into());
         let stdout = match cli::run(&self.workdir, Access::Read, &args, None) {
             Ok(stdout) => stdout,
             Err(GitError::Command { stderr, .. })

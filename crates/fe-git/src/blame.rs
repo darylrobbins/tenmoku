@@ -7,10 +7,29 @@ use std::path::Path;
 use std::sync::Arc;
 
 use gix::ObjectId;
-use gix::bstr::ByteSlice;
+use gix::bstr::{BString, ByteSlice};
 use imara_diff::{Algorithm, Diff, InternedInput, TokenSource};
 
 use crate::{GitError, Repo, commit_blob, commit_text, is_binary};
+
+/// The path as git names it: the normalized components (no `.` or doubled
+/// separators) joined with `/`, each keeping its exact bytes.
+pub(crate) fn git_path(rela_path: &Path) -> BString {
+    let mut out = BString::default();
+    for (i, part) in rela_path.components().enumerate() {
+        if i > 0 {
+            out.push(b'/');
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            out.extend_from_slice(part.as_os_str().as_bytes());
+        }
+        #[cfg(not(unix))]
+        out.extend_from_slice(part.as_os_str().to_string_lossy().as_bytes());
+    }
+    out
+}
 
 /// A blob or text over this many bytes isn't blamed.
 const MAX_BLAME_BYTES: usize = 5 * 1024 * 1024;
@@ -83,20 +102,14 @@ impl Repo {
         }
         let head_rows = rows(&blob.data);
 
-        // The same normalized components the blob lookup used (no `.` or
-        // doubled separators), joined with `/`.
-        let git_path = rela_path
-            .components()
-            .map(|part| part.as_os_str().to_string_lossy())
-            .collect::<Vec<_>>()
-            .join("/");
+        let git_path = git_path(rela_path);
         // As `git blame` does, follow a file across a rename.
         let options = gix::repository::blame_file::Options {
             rewrites: Some(gix::diff::Rewrites::default()),
             ..Default::default()
         };
         let outcome = repo
-            .blame_file(git_path.as_bytes().as_bstr(), head.id, options)
+            .blame_file(git_path.as_bstr(), head.id, options)
             .map_err(GitError::from_gix)?;
         let mut head_commits: Vec<Option<ObjectId>> = vec![None; head_rows.0.len()];
         for entry in &outcome.entries {
