@@ -181,3 +181,6 @@ mod settings_tests;
 mod tests;
 #[cfg(test)]
 mod theme_tests;
+#[cfg(test)]
+#[path = "vim_key_fallback_tests.rs"]
+mod vim_key_fallback_tests;
