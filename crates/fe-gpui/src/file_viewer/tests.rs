@@ -275,3 +275,55 @@ fn a_copy_that_reads_a_truncated_file_reports_it_once(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("cmd-c");
     assert_eq!(*events.borrow(), [FileViewerEvent::Changed]);
 }
+
+#[gpui::test]
+fn a_refresh_that_finds_fewer_rows_keeps_the_last_snapshot(cx: &mut TestAppContext) {
+    let (_dir, view, _) = generated(18_000 * 64);
+    let (index, mut step) = LineIndex::build_stepped(view.clone());
+    let (viewer, cx, events) = viewer(cx, view.clone(), Arc::new(index));
+    step.next();
+    cx.executor().advance_clock(POLL_INTERVAL);
+    cx.run_until_parked();
+    let rows =
+        |cx: &mut VisualTestContext| viewer.read_with(cx, |v, _| v.model().display().row_count());
+    let shown = rows(cx);
+    assert!(shown > 1);
+
+    // The snapshot a racing read would make: one row.
+    let (fresh, _unscanned) = LineIndex::build_stepped(view);
+    viewer.update(cx, |v, cx| {
+        v.index = Arc::new(fresh);
+        v.refresh(cx);
+    });
+    assert_eq!(rows(cx), shown);
+    assert!(!viewer.read_with(cx, |v, _| v.is_polling()));
+    assert_eq!(*events.borrow(), [FileViewerEvent::Changed]);
+}
+
+#[gpui::test]
+fn an_index_that_changes_while_polling_keeps_its_rows(cx: &mut TestAppContext) {
+    let (dir, view, _) = generated(18_000 * 64);
+    let (index, mut step) = LineIndex::build_stepped(view.clone());
+    let (viewer, cx, events) = viewer(cx, view, Arc::new(index));
+    step.next();
+    cx.executor().advance_clock(POLL_INTERVAL);
+    cx.run_until_parked();
+    let rows =
+        |cx: &mut VisualTestContext| viewer.read_with(cx, |v, _| v.model().display().row_count());
+    let shown = rows(cx);
+    assert!(shown > 1);
+    let generation = viewer.read_with(cx, |v, _| v.generation);
+
+    let file = OpenOptions::new()
+        .write(true)
+        .open(dir.path().join("big.log"));
+    file.unwrap().set_len(1000).unwrap();
+    step.for_each(drop);
+    cx.executor().advance_clock(POLL_INTERVAL);
+    cx.run_until_parked();
+    assert_eq!(rows(cx), shown);
+    // The poll saw the failure and installed no snapshot.
+    assert_eq!(viewer.read_with(cx, |v, _| v.generation), generation);
+    assert!(!viewer.read_with(cx, |v, _| v.is_polling()));
+    assert_eq!(*events.borrow(), [FileViewerEvent::Changed]);
+}

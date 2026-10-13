@@ -16,6 +16,7 @@ use std::{io, ops::Range, path::Path, sync::Arc, time::Duration};
 
 use fe_editor::{CopyError, Outcome, ViewerModel, commands::CONTEXT};
 use fe_fileview::{FileText, FileView, Freshness, IndexState, LineIndex};
+use fe_text::TextSource as _;
 use gpui::{
     App, ClipboardItem, Context, CursorStyle, EventEmitter, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, KeyContext, KeyDownEvent, MouseButton, MouseDownEvent,
@@ -257,7 +258,17 @@ impl FileViewer {
         let building = self.index.progress().state == IndexState::Building;
         // The old snapshot's reads may have failed since the last check.
         self.check_index(cx);
-        self.text = FileText::new(self.view.clone(), self.index.clone());
+        let text = FileText::new(self.view.clone(), self.index.clone());
+        // A read that failed while it was made, or a snapshot with fewer
+        // rows than the one shown, would drop rows from the model: keep
+        // the last snapshot and offer a reload.
+        if text.error().is_some() || text.row_count() < self.text.row_count() {
+            self.poll = None;
+            self.mark_changed(cx);
+            cx.notify();
+            return false;
+        }
+        self.text = text;
         self.model.refresh(Arc::new(self.text.clone()));
         self.generation += 1;
         self.put_back(!building);

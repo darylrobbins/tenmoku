@@ -1983,6 +1983,7 @@ dependencies = [
  "fe-fileview",
  "fe-keymap",
  "fe-syntax",
+ "fe-text",
  "fe-vim",
  "fe-workbench",
  "futures",

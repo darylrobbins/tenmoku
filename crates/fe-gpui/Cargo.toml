@@ -16,6 +16,7 @@ fe-editor.workspace = true
 fe-fileview.workspace = true
 fe-keymap.workspace = true
 fe-syntax.workspace = true
+fe-text.workspace = true
 fe-vim.workspace = true
 kiln-platform.workspace = true
 # EditorView is a pane item (pane_item.rs).
