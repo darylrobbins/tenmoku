@@ -347,15 +347,30 @@ fn trash_target(target: &Target<'_>) -> io::Result<()> {
         .path
         .to_str()
         .ok_or_else(|| invalid("a path that isn't UTF-8"))?;
-    let (dev, ino) = listing::stat_at(&target.parent, target.name)?.id;
-    let reference = NSURL::fileURLWithPath(&NSString::from_str(path))
-        .fileReferenceURL()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no file reference"))?;
-    let ids = reference
-        .absoluteString()
-        .and_then(|url| reference_ids(&url.to_string()));
-    let volumes = [dev as i32, fs_id(&target.parent)?];
-    if !ids.is_some_and(|(volume, file)| file == ino && volumes.contains(&volume)) {
+    let folder_path = target
+        .path
+        .parent()
+        .and_then(Path::to_str)
+        .ok_or_else(|| invalid("a path that isn't UTF-8"))?;
+    let reference_url = |path: &str| {
+        NSURL::fileURLWithPath(&NSString::from_str(path))
+            .fileReferenceURL()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no file reference"))
+    };
+    let reference = reference_url(path)?;
+    let folder = reference_url(folder_path)?;
+    let seen = |url: &NSURL, stat| {
+        Some(Seen {
+            url: reference_ids(&url.absoluteString()?.to_string())?,
+            stat,
+        })
+    };
+    let entry_stat = listing::stat_at(&target.parent, target.name)?.id;
+    let folder_stat = listing::identity(&target.parent)?;
+    let named = seen(&reference, entry_stat)
+        .zip(seen(&folder, folder_stat))
+        .is_some_and(|(entry, folder)| names_the_entry(entry, folder));
+    if !named {
         return Err(invalid(
             "the path no longer leads to the entry found under the project root",
         ));
@@ -366,18 +381,24 @@ fn trash_target(target: &Target<'_>) -> io::Result<()> {
         .map_err(|err| io::Error::other(err.localizedDescription().to_string()))
 }
 
-/// The first word of the file system id of the volume `dir` is on, which
-/// names the volume in a file reference URL.
-#[cfg(target_os = "macos")]
-fn fs_id(dir: &File) -> io::Result<i32> {
-    let mut stat = std::mem::MaybeUninit::<libc::statfs>::uninit();
-    // SAFETY: `dir` is an open descriptor and `stat` is valid for writes of
-    // a `libc::statfs`.
-    check(unsafe { libc::fstatfs(dir.as_raw_fd(), stat.as_mut_ptr()) })?;
-    // SAFETY: `fstatfs` succeeded, so it filled `stat`.
-    let stat = unsafe { stat.assume_init() };
-    // SAFETY: `fsid_t` is two `int32_t`s, `val[0]` first.
-    Ok(unsafe { (&raw const stat.f_fsid).cast::<i32>().read() })
+/// One entry as its file reference URL names it (volume id, file id) and as
+/// its handle names it (`st_dev`, inode). The two volume numberings differ
+/// and are never compared with each other.
+#[cfg(any(target_os = "macos", test))]
+struct Seen {
+    url: (i32, u64),
+    stat: (u64, u64),
+}
+
+/// Whether the reference URL of `entry` names the entry found through the
+/// handles under `folder`: each URL's file id is its handle's inode, the URLs
+/// name one volume, and the handles are on one device.
+#[cfg(any(target_os = "macos", test))]
+fn names_the_entry(entry: Seen, folder: Seen) -> bool {
+    entry.url.1 == entry.stat.1
+        && folder.url.1 == folder.stat.1
+        && entry.url.0 == folder.url.0
+        && entry.stat.0 == folder.stat.0
 }
 
 /// The volume and file ids a file reference URL names:
@@ -1599,6 +1620,55 @@ mod tests {
         );
         assert_eq!(reference_ids("file:///Users/x/a.txt"), None);
         assert_eq!(reference_ids("file:///.file/id=1"), None);
+    }
+
+    #[test]
+    fn trash_identity_compares_like_with_like() {
+        const FOLDER: u64 = 1_234;
+        let seen = |url: (i32, u64), stat: (u64, u64)| Seen { url, stat };
+        let entry = || seen((6_571_367, 2_773_272), (16_777_231, 2_773_272));
+        let folder = || seen((6_571_367, FOLDER), (16_777_231, FOLDER));
+        assert!(names_the_entry(entry(), folder()));
+        let moved = seen((6_571_367, 2_773_272), (16_777_231, 5));
+        assert!(!names_the_entry(moved, folder()));
+        let swapped = seen((6_571_367, FOLDER), (16_777_231, 77));
+        assert!(!names_the_entry(entry(), swapped));
+        let other_volume = seen((42, FOLDER), (16_777_231, FOLDER));
+        assert!(!names_the_entry(entry(), other_volume));
+        let other_device = seen((6_571_367, FOLDER), (9, FOLDER));
+        assert!(!names_the_entry(entry(), other_device));
+        // Only comparing a URL volume id with an st_dev would accept this.
+        let cross = seen((16_777_231, 2_773_272), (16_777_231, 2_773_272));
+        assert!(!names_the_entry(cross, folder()));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_reference_url_and_its_folder_name_one_volume() {
+        use objc2_foundation::{NSString, NSURL};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.txt");
+        std::fs::write(&path, "x").unwrap();
+        let folder = File::open(dir.path()).unwrap();
+        let seen = |path: &Path, stat| Seen {
+            url: reference_ids(
+                &NSURL::fileURLWithPath(&NSString::from_str(path.to_str().unwrap()))
+                    .fileReferenceURL()
+                    .unwrap()
+                    .absoluteString()
+                    .unwrap()
+                    .to_string(),
+            )
+            .unwrap(),
+            stat,
+        };
+        let entry = seen(
+            &path,
+            listing::stat_at(&folder, OsStr::new("a.txt")).unwrap().id,
+        );
+        let folder = seen(dir.path(), listing::identity(&folder).unwrap());
+        assert!(names_the_entry(entry, folder));
     }
 
     /// A temporary folder the trash moves into the home trash, as
