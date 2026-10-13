@@ -838,3 +838,33 @@ context = "workbench"
 keys = "ctrl-shift-n"
 command = "window.new"
 context = "workbench"
+
+[[bindings]]
+keys = "alt-f5"
+command = "proposal.next_hunk"
+context = "editor && proposal"
+
+[[bindings]]
+keys = "alt-shift-f5"
+command = "proposal.previous_hunk"
+context = "editor && proposal"
+
+[[bindings]]
+keys = "ctrl-alt-y"
+command = "proposal.accept_hunk"
+context = "editor && proposal"
+
+[[bindings]]
+keys = "ctrl-alt-n"
+command = "proposal.reject_hunk"
+context = "editor && proposal"
+
+[[bindings]]
+keys = "ctrl-alt-shift-y"
+command = "proposal.accept_all"
+context = "editor && proposal"
+
+[[bindings]]
+keys = "ctrl-alt-shift-n"
+command = "proposal.reject_all"
+context = "editor && proposal"

@@ -91,6 +91,7 @@ impl EditorView {
             (proposal.borrow_mut()).accept_as(&mut self.model.buffer_mut(), id, Origin::User)?;
         // Caught up with the edit now, not at the next frame.
         self.sync_find(cx);
+        self.sync_completion(cx);
         self.resolved(
             ProposalEvent::Accepted {
                 hunk: id,
@@ -150,6 +151,8 @@ impl EditorView {
             return false;
         };
         let pressed = match button {
+            // The last frame's button may predate read-only.
+            ProposalButton::Accept if self.read_only => return true,
             ProposalButton::Accept => self.accept_hunk(id, cx).map(drop),
             ProposalButton::Reject => self.reject_hunk(id, cx),
         };

@@ -919,3 +919,65 @@ context = "workbench"
 keys = "secondary-shift-n"
 command = "window.new"
 context = "workbench"
+
+# Proposed changes, while the editor shows one: next and previous hunk, then
+# accept or reject the hunk at the caret, or all. Off macOS the accept and
+# reject keys are ctrl-alt chords, as ctrl-y, ctrl-n and ctrl-backspace are
+# the editor's (and vim's).
+[[bindings]]
+keys = "alt-f5"
+command = "proposal.next_hunk"
+context = "editor && proposal"
+
+[[bindings]]
+keys = "alt-shift-f5"
+command = "proposal.previous_hunk"
+context = "editor && proposal"
+
+[[bindings]]
+keys = "cmd-y"
+command = "proposal.accept_hunk"
+context = "editor && proposal"
+platform = "macos"
+
+[[bindings]]
+keys = "cmd-n"
+command = "proposal.reject_hunk"
+context = "editor && proposal"
+platform = "macos"
+
+[[bindings]]
+keys = "cmd-enter"
+command = "proposal.accept_all"
+context = "editor && proposal"
+platform = "macos"
+
+[[bindings]]
+keys = "cmd-backspace"
+command = "proposal.reject_all"
+context = "editor && proposal"
+platform = "macos"
+
+[[bindings]]
+keys = "ctrl-alt-y"
+command = "proposal.accept_hunk"
+context = "editor && proposal"
+platform = "!macos"
+
+[[bindings]]
+keys = "ctrl-alt-n"
+command = "proposal.reject_hunk"
+context = "editor && proposal"
+platform = "!macos"
+
+[[bindings]]
+keys = "ctrl-alt-shift-y"
+command = "proposal.accept_all"
+context = "editor && proposal"
+platform = "!macos"
+
+[[bindings]]
+keys = "ctrl-alt-shift-n"
+command = "proposal.reject_all"
+context = "editor && proposal"
+platform = "!macos"

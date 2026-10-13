@@ -58,7 +58,7 @@ fn table_is_the_only_binding_source(cx: &mut TestAppContext) {
     let bindings = keymap.bindings();
     // 61 for the editor and the app, 62 for fe-workbench, 24 for vim, 5 for
     // the completion menu.
-    assert_eq!(bindings.len(), 152);
+    assert_eq!(bindings.len(), 158);
     let editor = fe_editor::commands::context();
     let workbench = |binding: &fe_keymap::Binding| {
         let context = binding.context.as_ref().map(ToString::to_string);
@@ -83,6 +83,7 @@ fn table_is_the_only_binding_source(cx: &mut TestAppContext) {
                     | "editor && vim.mode == replace"
                     | "editor && vim.visual"
                     | "completion"
+                    | "editor && proposal"
             )
         )
     };

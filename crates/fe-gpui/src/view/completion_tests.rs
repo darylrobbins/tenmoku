@@ -17,7 +17,7 @@ use crate::{
     *,
 };
 
-const TEXT: &str = "fn main() {\n    va\n}\n";
+pub(super) const TEXT: &str = "fn main() {\n    va\n}\n";
 
 /// How long the test provider takes to resolve.
 const RESOLVE: Duration = Duration::from_millis(100);
@@ -25,11 +25,11 @@ const RESOLVE: Duration = Duration::from_millis(100);
 /// Offers `labels` over the word of `back` bytes before the offset asked
 /// at, resolves after [`RESOLVE`] with documentation, and records each
 /// request.
-struct TestProvider {
+pub(super) struct TestProvider {
     executor: BackgroundExecutor,
     labels: RefCell<Vec<String>>,
     back: RefCell<usize>,
-    calls: RefCell<Vec<(usize, CompletionTrigger)>>,
+    pub(super) calls: RefCell<Vec<(usize, CompletionTrigger)>>,
     /// Answer after this long, with lists this incomplete, or nothing.
     delay: RefCell<Duration>,
     incomplete: RefCell<bool>,
@@ -84,7 +84,7 @@ impl CompletionProvider for TestProvider {
 
 /// A focused editor on [`TEXT`], the caret after `va`, with the test
 /// provider offering `value`, `values` and `vary`.
-fn editor(
+pub(super) fn editor(
     cx: &mut TestAppContext,
 ) -> (Entity<EditorView>, Rc<TestProvider>, &mut VisualTestContext) {
     cx.update(init);
@@ -113,7 +113,7 @@ fn editor(
     (view, provider, cx)
 }
 
-fn keys(keys: &str, cx: &mut VisualTestContext) {
+pub(super) fn keys(keys: &str, cx: &mut VisualTestContext) {
     cx.simulate_keystrokes(keys);
     cx.run_until_parked();
 }
@@ -123,7 +123,10 @@ fn painted(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> Option<Pain
 }
 
 /// The labels of the last frame's rows, and the selected one's.
-fn rows(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> (Vec<String>, Option<String>) {
+pub(super) fn rows(
+    view: &Entity<EditorView>,
+    cx: &mut VisualTestContext,
+) -> (Vec<String>, Option<String>) {
     let Some(painted) = painted(view, cx) else {
         return (Vec::new(), None);
     };

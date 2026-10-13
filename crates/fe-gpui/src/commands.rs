@@ -129,6 +129,7 @@ pub fn command_catalog() -> Box<dyn CommandCatalog> {
     Box::new(Catalog {
         editor: EDITOR_COMMANDS.with(Rc::clone),
         vim: vim::registry(),
+        proposal: crate::view::proposal_registry(),
         app: app_registry(),
     })
 }
@@ -136,16 +137,20 @@ pub fn command_catalog() -> Box<dyn CommandCatalog> {
 struct Catalog {
     editor: Rc<Registry<Editor>>,
     vim: Rc<Registry<fe_vim::VimCommands>>,
+    proposal: Registry<crate::view::ProposalCommands>,
     app: Registry<AppCommands>,
 }
 
 /// A command the editor doesn't know is checked against vim's, then the
-/// app's.
+/// proposal commands', then the app's.
 impl CommandCatalog for Catalog {
     fn check(&self, command: &CommandId, args: &Value) -> Result<(), CatalogError> {
         match self.editor.check(command, args) {
             Err(CatalogError::UnknownCommand) => match self.vim.check(command, args) {
-                Err(CatalogError::UnknownCommand) => self.app.check(command, args),
+                Err(CatalogError::UnknownCommand) => match self.proposal.check(command, args) {
+                    Err(CatalogError::UnknownCommand) => self.app.check(command, args),
+                    result => result,
+                },
                 result => result,
             },
             result => result,
@@ -298,6 +303,13 @@ impl EditorView {
             return;
         }
         let registry = EDITOR_COMMANDS.with(Rc::clone);
+        if registry.get(&invocation.command).is_none() {
+            let proposals = crate::view::proposal_registry();
+            if proposals.get(&invocation.command).is_some() {
+                self.run_proposal_command(&proposals, &invocation, cx);
+                return;
+            }
+        }
         if self.read_only && refused(&registry, &invocation) {
             self.refuse_edit(cx);
             return;
@@ -401,6 +413,40 @@ impl EditorView {
                 kiln_platform::commands::propagate_with_context(invocation, cx);
             }
             Err(error) => log::error!("{error}"),
+        }
+    }
+
+    /// Runs `invocation`, one of the proposal commands: dispatched through
+    /// `proposals`, then the view does the op. A read-only view refuses those
+    /// that accept.
+    fn run_proposal_command(
+        &mut self,
+        proposals: &Registry<crate::view::ProposalCommands>,
+        invocation: &Invocation,
+        cx: &mut Context<Self>,
+    ) {
+        let mut op = None;
+        let result = match proposals.dispatch(&mut op, invocation) {
+            Ok(_) => {
+                let mutates = proposals
+                    .get(&invocation.command)
+                    .is_some_and(|meta| meta.mutates_buffer);
+                if self.read_only && mutates {
+                    self.refuse_edit(cx);
+                    return;
+                }
+                let op = op.expect("a dispatched proposal command sets its op");
+                self.run_proposal_op(op, cx)
+                    .map(Dispatched::<()>::new)
+                    .map_err(|error| DispatchError::Failed {
+                        command: invocation.command.clone(),
+                        error,
+                    })
+            }
+            Err(error) => Err(error),
+        };
+        if let Err(error) = self.dispatched(result, invocation, true, cx) {
+            log::error!("{error}");
         }
     }
 

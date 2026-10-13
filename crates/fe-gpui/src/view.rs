@@ -1243,6 +1243,9 @@ impl Render for EditorView {
         if let Some(state) = &self.vim {
             crate::vim::add_to_key_context(&mut key_context, state);
         }
+        if self.shows_open_hunk() {
+            key_context.add("proposal");
+        }
         if self.completion_subscriptions.is_empty() {
             Self::close_completion_on_escape_and_blur(self, window, cx);
         }
@@ -1305,10 +1308,12 @@ mod find;
 mod host;
 mod ime;
 mod proposal;
+mod proposal_commands;
 
 pub use host::{EditorViewEvent, HostBlock, HostBlockKind};
 pub(crate) use proposal::ProposalButton;
 pub use proposal::ProposalEvent;
+pub(crate) use proposal_commands::{ProposalCommands, registry as proposal_registry};
 
 #[cfg(test)]
 mod ime_tests;
@@ -1354,3 +1359,6 @@ mod proposal_tests;
 
 #[cfg(test)]
 mod proposal_accept_tests;
+
+#[cfg(test)]
+mod proposal_command_tests;

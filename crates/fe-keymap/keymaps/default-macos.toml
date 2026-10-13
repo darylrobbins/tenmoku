@@ -794,3 +794,33 @@ context = "workbench"
 keys = "cmd-shift-n"
 command = "window.new"
 context = "workbench"
+
+[[bindings]]
+keys = "alt-f5"
+command = "proposal.next_hunk"
+context = "editor && proposal"
+
+[[bindings]]
+keys = "alt-shift-f5"
+command = "proposal.previous_hunk"
+context = "editor && proposal"
+
+[[bindings]]
+keys = "cmd-y"
+command = "proposal.accept_hunk"
+context = "editor && proposal"
+
+[[bindings]]
+keys = "cmd-n"
+command = "proposal.reject_hunk"
+context = "editor && proposal"
+
+[[bindings]]
+keys = "cmd-enter"
+command = "proposal.accept_all"
+context = "editor && proposal"
+
+[[bindings]]
+keys = "cmd-backspace"
+command = "proposal.reject_all"
+context = "editor && proposal"
