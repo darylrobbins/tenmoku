@@ -945,8 +945,11 @@ fn operate_unless_failing(
     // failed, they're left alone while the other carets still act.
     let primary = ops.last().and_then(Option::as_ref);
     let write = primary.map(|primary| primary.register(&text));
+    // A delete on a buffer a linewise delete emptied has nothing to take.
+    let emptied = state.is_emptied(model);
     let write = write.and_then(|value| match args.operator {
         Operator::Yank => Some((Write::Yank, value)),
+        Operator::Delete if emptied => None,
         Operator::Delete => {
             let small = !value.linewise && !value.text.contains('\n');
             let percent = args.target.writes_numbered();
@@ -1071,6 +1074,9 @@ fn operate_unless_failing(
                 state.marks.note(snapshot.version(), note);
             }
             let after = snapshot.text().clone();
+            if ops.iter().flatten().any(|op| op.linewise) && after.is_empty() {
+                state.emptied = Some(snapshot.version());
+            }
             let carets: Vec<usize> = before
                 .iter()
                 .zip(&ops)

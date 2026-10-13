@@ -111,6 +111,22 @@ pub struct VimState {
     pub(crate) scroll: Option<(u32, u32)>,
     /// The jump's labels waiting, the last jump and the `s` opt-in.
     pub(crate) jump: jump::Jumps,
+    /// The buffer's version when a linewise delete last left its text
+    /// empty. As in nvim, such a buffer has no rows to take, so while the
+    /// version still equals this a delete or change writes no register (a
+    /// yank still does). fe-buffer drops edits that change nothing, so
+    /// `i<Esc>`, `>>` and `cc<Esc>` keep it; any edit putting text in moves
+    /// it on. Known limit: nvim counts the buffer as emptied again when `u`
+    /// or `<C-r>` returns it to a state a linewise delete emptied, which a
+    /// version check can't see.
+    pub(crate) emptied: Option<Version>,
+}
+
+impl VimState {
+    /// Whether the buffer is as a linewise delete left it, emptied.
+    pub(crate) fn is_emptied(&self, model: &EditorModel) -> bool {
+        self.emptied == Some(model.snapshot().version())
+    }
 }
 
 impl VimState {

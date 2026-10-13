@@ -1515,7 +1515,7 @@ pub(crate) fn change(
             write = value;
         }
     }
-    if let Some(value) = write {
+    if let Some(value) = write.filter(|_| !state.is_emptied(model)) {
         let small = !value.linewise && !value.text.contains('\n');
         let percent = args.target.writes_numbered();
         let write = Write::Delete {

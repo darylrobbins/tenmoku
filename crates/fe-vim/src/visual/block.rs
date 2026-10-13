@@ -369,7 +369,9 @@ pub(super) fn operate_block(
     };
     leave(model, state, ends);
     state.goals = None;
-    if let Some((write, value)) = write {
+    if let Some((write, value)) =
+        write.filter(|(write, _)| matches!(write, Write::Yank) || !state.is_emptied(model))
+    {
         registers
             .write(args.register, write, value, &mut **host)
             .map_err(|error| CommandError::new(error.to_string()))?;
