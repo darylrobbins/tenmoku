@@ -41,7 +41,7 @@ use crate::{
     picker::{self, Toggle},
     project_panel::{self, PanelEvent, PanelOp},
     status_bar::{self, StatusOp},
-    terminal_panel::{self, TERMINAL, TerminalPanel, TerminalPanelEvent},
+    terminal_panel::{self, TERMINAL, TerminalOp, TerminalPanel, TerminalPanelEvent},
     title_bar,
     toolbar_picker::ToolbarPicker,
     trust::{self, TrustChanged},
@@ -590,6 +590,33 @@ impl Workbench {
             .update(cx, |terminal, cx| terminal.start(window, cx));
         self.terminal_dock
             .update(cx, |dock, cx| dock.show(TERMINAL, window, cx));
+    }
+
+    /// Runs a terminal command: `terminal.new` shows the bottom dock with a
+    /// new session, focused; `terminal.close` drops the active session;
+    /// `terminal.next` and `terminal.previous` show and focus the next or
+    /// previous one, if there's another.
+    fn run_terminal_op(&mut self, op: TerminalOp, window: &mut Window, cx: &mut Context<Self>) {
+        let terminal = self.terminal.clone();
+        let show = match op {
+            TerminalOp::Toggle => return self.toggle_terminal(window, cx),
+            TerminalOp::New => {
+                terminal.update(cx, |terminal, cx| terminal.add(window, cx));
+                true
+            }
+            TerminalOp::Close => {
+                terminal.update(cx, |terminal, cx| terminal.close_active(window, cx));
+                false
+            }
+            TerminalOp::Next => terminal.update(cx, |terminal, cx| terminal.cycle(1, window, cx)),
+            TerminalOp::Previous => {
+                terminal.update(cx, |terminal, cx| terminal.cycle(-1, window, cx))
+            }
+        };
+        if show {
+            self.terminal_dock
+                .update(cx, |dock, cx| dock.show(TERMINAL, window, cx));
+        }
     }
 
     /// Subscribes to a root's Changes panel: its rows open as the project
@@ -1817,8 +1844,8 @@ impl Workbench {
             if pane_toolbar::toggles(run, cx) {
                 return self.toggle_breadcrumbs(cx);
             }
-            if terminal_panel::toggles(run, cx) {
-                return self.toggle_terminal(window, cx);
+            if let Some(op) = terminal_panel::op(run, cx) {
+                return self.run_terminal_op(op, window, cx);
             }
             let op = if outline_panel::shows(run, cx) {
                 Some(DockOp::ShowOutline)
