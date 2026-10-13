@@ -124,8 +124,9 @@ pub(crate) fn put_block(
 /// register, `count` times, as one transaction. `p` leaves what it replaced
 /// in the registers as a delete would; `P` leaves them alone. Lines put over
 /// characters go on rows of their own, and over a block below it (`P`:
-/// above); a one-row text goes on every row of a block reaching its left
-/// column. `'<` and `'>` go to the start and the last character of what
+/// above, except below its first row when the block ran to that row's end
+/// from past column 0); a one-row text goes on every row of a block
+/// reaching its left column. `'<` and `'>` go to the start and the last character of what
 /// went in (on a block's first row, for text put on every row). The put is
 /// taken in the text the delete leaves, and both go in together, so nothing
 /// edits the buffer between them; one too big is refused before anything
@@ -275,7 +276,15 @@ pub(crate) fn put(
             let (at, put, ending) = match kind {
                 VisualKind::Char => (at, format!("\n{repeated}"), 1),
                 VisualKind::Line => (at, body.clone(), 0),
-                _ if args.before => (emptied.row_start(first), repeated.clone(), 0),
+                // A block that ran to its first row's end, from past column
+                // 0, leaves nothing there at or after `at`: nvim's caret
+                // lands left of the delete's start and the put turns forward.
+                _ if args.before
+                    && !(at > emptied.row_start(first) && at >= row_end(&emptied, first)) =>
+                {
+                    (emptied.row_start(first), repeated.clone(), 0)
+                }
+                _ if args.before => (row_end(&emptied, first), format!("\n{body}"), 1),
                 _ => (row_end(&emptied, cursor_row), format!("\n{body}"), 1),
             };
             let start = at + ending;
