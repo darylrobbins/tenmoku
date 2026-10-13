@@ -584,6 +584,17 @@ fn to_offset(text: &Text, (line, column): (u32, u32), encoding: ScipEncoding) ->
         let offset = line_start + column as usize;
         return (offset <= line_end && text.is_char_boundary(offset)).then_some(offset);
     }
+    if encoding == ScipEncoding::Utf16 {
+        // The rope's UTF-16 metric is O(log n); walking the row per
+        // occurrence made a long generated row quadratic.
+        let target = text.offset_to_utf16(line_start) + column as usize;
+        if target > text.offset_to_utf16(line_end) {
+            return None;
+        }
+        let offset = text.utf16_to_offset(target);
+        // A column that splits a surrogate pair lands short of the target.
+        return (text.offset_to_utf16(offset) == target).then_some(offset);
+    }
     let target = u64::from(column);
     let mut units = 0u64;
     let mut offset = line_start;
@@ -592,10 +603,7 @@ fn to_offset(text: &Text, (line, column): (u32, u32), encoding: ScipEncoding) ->
             if units == target {
                 return Some(offset);
             }
-            units += match encoding {
-                ScipEncoding::Utf16 => ch.len_utf16() as u64,
-                _ => 1,
-            };
+            units += 1;
             if units > target {
                 return None;
             }
