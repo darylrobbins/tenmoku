@@ -6,7 +6,7 @@
 
 use std::path::{Component, Path, PathBuf};
 
-use ec4rs::{ConfigFile, ParseError, Properties, PropertiesSource, Section};
+use ec4rs::{ConfigParser, Properties, PropertiesSource, Section};
 
 /// `indent_style`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,15 +92,32 @@ pub fn editorconfig_for(path: &Path) -> EditorConfig {
 /// a root. `None` if there is none, or it was skipped.
 fn read_file(dir: &Path) -> Option<(Parsed, bool)> {
     let file = dir.join(".editorconfig");
-    let mut config = match ConfigFile::open(&file) {
-        Ok(config) => config,
-        Err(ParseError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => return None,
+    let bytes = match std::fs::read(&file) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // A dangling symlink is a configuration that can't be read.
+            if std::fs::symlink_metadata(&file).is_ok() {
+                warn_skipped(&file, &e);
+            }
+            return None;
+        }
         Err(e) => {
             warn_skipped(&file, &e);
             return None;
         }
     };
-    let root = config.reader.is_root;
+    // ec4rs keeps the byte order mark on a first-line section header and then
+    // fails to reparse it, so it never sees the mark.
+    let text = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes);
+    let mut config =
+        match ConfigParser::new_with_path(std::io::Cursor::new(text), Some(file.as_path())) {
+            Ok(config) => config,
+            Err(e) => {
+                warn_skipped(&file, &e);
+                return None;
+            }
+        };
+    let root = config.is_root;
     let mut sections = Vec::new();
     for section in &mut config {
         match section {
@@ -122,13 +139,19 @@ fn warn_skipped(file: &Path, error: &dyn std::fmt::Display) {
     log::warn!("skipping {}: {error}", file.display());
 }
 
-/// Resolves `.` and `..` lexically, so `a/b/../c` looks in `a`, not `a/b`.
+/// Resolves `.` and `..`, so `a/b/../c` looks in `a`, not `a/b`. A `..` after
+/// a symlinked directory goes to the link target's parent, as the OS does.
 fn normalize(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for component in path.components() {
         match component {
             Component::CurDir => {}
             Component::ParentDir => {
+                if out.is_symlink()
+                    && let Ok(real) = out.canonicalize()
+                {
+                    out = real;
+                }
                 if !out.pop() {
                     out.push(component);
                 }
