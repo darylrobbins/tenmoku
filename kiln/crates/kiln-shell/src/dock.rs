@@ -14,6 +14,17 @@
 //! view of its own to add to what a rail click does. Either way,
 //! [`DockState::render`] draws it.
 //!
+//! A shown dock's inner edge, the one facing the centre, has a handle
+//! that drags its size, between [`MIN_DOCK_WIDTH`] (or
+//! [`MIN_DOCK_HEIGHT`] at the bottom) and what leaves the centre
+//! [`MIN_PANE_WIDTH`] (or [`MIN_PANE_HEIGHT`]); pressed twice, it puts back
+//! the size the dock was built with. A window too small for its size
+//! draws it smaller, by layout: the dock's column shrinks to its least
+//! before the centre, given its own least ([`MIN_PANE_WIDTH`],
+//! [`MIN_PANE_HEIGHT`]) as the [`Shell`](crate::Shell) gives it, does. A
+//! drag or [`DockState::max_size`] stops at what leaves the centre its
+//! least, as [`track_centre`], which the shell draws in it, measured it.
+//!
 //! ```ignore
 //! let dock = cx.new(|cx| {
 //!     let mut dock = Dock::new(DockPosition::Left, ui);
@@ -23,18 +34,78 @@
 //! dock.update(cx, |dock, cx| dock.show(OUTLINE, window, cx));
 //! ```
 
-use std::{any::TypeId, cell::RefCell, collections::HashSet, rc::Rc};
+use std::{
+    any::TypeId,
+    cell::{Cell, RefCell},
+    collections::{HashMap, HashSet},
+    rc::Rc,
+};
 
 use gpui::{
-    AnyElement, AnyEntity, AnyView, App, AppContext as _, Bounds, Context, Entity, EventEmitter,
-    FocusHandle, Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Pixels,
-    Render, ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
-    prelude::FluentBuilder as _, px,
+    AnyElement, AnyEntity, AnyView, App, AppContext as _, Bounds, Context, CursorStyle,
+    DragMoveEvent, Entity, EventEmitter, FocusHandle, Focusable, Global, InteractiveElement as _,
+    IntoElement, MouseButton, MouseDownEvent, ParentElement as _, Pixels, Point, Render,
+    ScrollHandle, SharedString, Size, StatefulInteractiveElement as _, Styled as _, Window,
+    WindowId, canvas, div, prelude::FluentBuilder as _, px,
 };
 use kiln_command::{CommandId, ContextFrame, ContextStack, Invocation, Source, Value};
 use kiln_core::{shortcut_label, shortcuts};
 use kiln_platform::{command_actions::dispatch_invocation, keys};
-use kiln_ui::{ActivityRail, Icon, RailButton, TAB_HEIGHT, Tooltip, UiTheme, ui_theme};
+use kiln_ui::{ActivityRail, Icon, RAIL_WIDTH, RailButton, TAB_HEIGHT, Tooltip, UiTheme, ui_theme};
+
+use crate::pane_group::{MIN_PANE_HEIGHT, MIN_PANE_WIDTH};
+
+/// The narrowest a side dock's panel gets by dragging its edge.
+pub const MIN_DOCK_WIDTH: Pixels = px(160.);
+/// The shortest a bottom dock's panel gets by dragging its edge.
+pub const MIN_DOCK_HEIGHT: Pixels = px(80.);
+/// How far across the inner edge's handle is, centred on its 1 px border.
+const HANDLE: f32 = 5.;
+
+/// Where the centre that a window's docks surround was last laid out, and
+/// the window's content size then.
+#[derive(Clone, Copy)]
+struct Centre {
+    bounds: Bounds<Pixels>,
+    viewport: Size<Pixels>,
+}
+
+/// Each window's [`Centre`], as [`track_centre`] last measured it.
+#[derive(Default)]
+struct Centres(HashMap<WindowId, Centre>);
+
+impl Global for Centres {}
+
+/// Measures the centre that the window's docks surround, for their
+/// limits: an element to put in the centre's own, positioned
+/// (`relative`), that fills it and draws nothing. The
+/// [`Shell`](crate::Shell) draws one; in a window without one, a dock's
+/// limit leaves the centre its least only as the window's size alone tells.
+pub fn track_centre() -> impl IntoElement {
+    let measure = |bounds, window: &mut Window, cx: &mut App| {
+        let centre = Centre {
+            bounds,
+            viewport: window.viewport_size(),
+        };
+        let id = window.window_handle().window_id();
+        cx.default_global::<Centres>().0.insert(id, centre);
+    };
+    canvas(measure, |_, _, _, _| {})
+        .absolute()
+        .top_0()
+        .left_0()
+        .size_full()
+}
+
+/// Forgets the centre of `window`, which has gone.
+pub(crate) fn forget_centre(window: WindowId, cx: &mut App) {
+    if cx
+        .try_global::<Centres>()
+        .is_some_and(|centres| centres.0.contains_key(&window))
+    {
+        cx.global_mut::<Centres>().0.remove(&window);
+    }
+}
 
 /// A panel's identity among a dock's panels: `"project"`, `"search"`, …
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -171,6 +242,10 @@ pub struct DrawnDock {
     /// The ids of the buttons drawn highlighted.
     highlighted: Rc<RefCell<Vec<PanelId>>>,
     tooltip: Rc<RefCell<Option<String>>>,
+    /// The column's title row, its panel and its edge's handle.
+    column: ScrollHandle,
+    /// The handle's cursor, if drawn.
+    cursor: Rc<Cell<Option<CursorStyle>>>,
 }
 
 impl DrawnDock {
@@ -209,6 +284,32 @@ impl DrawnDock {
     pub fn last_tooltip(&self) -> Option<String> {
         self.tooltip.borrow().clone()
     }
+
+    /// Where the handle on the column's inner edge was laid out, if the
+    /// column showed.
+    pub fn handle_bounds(&self) -> Option<Bounds<Pixels>> {
+        self.column_bounds()?;
+        self.column.bounds_for_item(2)
+    }
+
+    /// The cursor the handle shows, if the column showed.
+    pub fn handle_cursor(&self) -> Option<CursorStyle> {
+        self.cursor.get()
+    }
+}
+
+/// A drag of the handle on a dock's inner edge, which the dock at that
+/// position follows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct EdgeDrag(DockPosition);
+
+/// An edge's drag draws nothing at the pointer.
+struct NoGhost;
+
+impl Render for NoGhost {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        gpui::Empty
+    }
 }
 
 /// A dock's panels, the one shown, and whether the dock shows: the state
@@ -225,6 +326,11 @@ pub struct DockState {
     actions: Vec<(RailAction, bool)>,
     /// The panel's width, or its height at the bottom.
     size: Pixels,
+    /// The size it was built with, which a double-click on the edge puts
+    /// back.
+    built: Pixels,
+    /// Where the edge's drag started: the pointer, and the size drawn.
+    press: Option<(Point<Pixels>, Pixels)>,
     /// The key contexts a rail button's tooltip looks its show command's
     /// key up in, outermost first.
     shortcut_contexts: Vec<SharedString>,
@@ -244,15 +350,83 @@ impl DockState {
             joined: HashSet::new(),
             actions: Vec::new(),
             size: px(240.),
+            built: px(240.),
+            press: None,
             shortcut_contexts: Vec::new(),
             drawn: DrawnDock::default(),
         }
     }
 
-    /// The panel's width, or its height in a bottom dock.
+    /// Builds it with its panel `size` across, its width, or its height
+    /// in a bottom dock: the size a double-click on its edge puts back.
     pub fn size(mut self, size: Pixels) -> Self {
-        self.size = size;
+        self.size = size.max(self.min_size());
+        self.built = self.size;
         self
+    }
+
+    /// The panel's width, or its height in a bottom dock, as last set: a
+    /// window too small for it draws it smaller. (Not `size()`, the
+    /// builder's name.)
+    pub fn current_size(&self) -> Pixels {
+        self.size
+    }
+
+    /// Sets the panel's width, or its height in a bottom dock, at least
+    /// [`MIN_DOCK_WIDTH`] or [`MIN_DOCK_HEIGHT`].
+    pub fn set_size(&mut self, size: Pixels) {
+        self.size = size.max(self.min_size());
+    }
+
+    /// The least size: [`MIN_DOCK_WIDTH`], or [`MIN_DOCK_HEIGHT`] at the
+    /// bottom.
+    pub fn min_size(&self) -> Pixels {
+        match self.position {
+            DockPosition::Bottom => MIN_DOCK_HEIGHT,
+            DockPosition::Left | DockPosition::Right => MIN_DOCK_WIDTH,
+        }
+    }
+
+    /// The most size there's room for in `window`: what leaves the centre
+    /// [`MIN_PANE_WIDTH`] or [`MIN_PANE_HEIGHT`], beside the other docks
+    /// and rows as they are, from the centre as [`track_centre`] last
+    /// measured it and the column as last laid out, counting the window's
+    /// change of size since. Before the centre is measured, the window's
+    /// content size less the rail and the centre's least. Never less than
+    /// [`DockState::min_size`].
+    pub fn max_size(&self, window: &Window, cx: &App) -> Pixels {
+        let (along, least): (fn(Size<Pixels>) -> Pixels, _) = match self.position {
+            DockPosition::Bottom => (|size| size.height, MIN_PANE_HEIGHT),
+            DockPosition::Left | DockPosition::Right => (|size| size.width, MIN_PANE_WIDTH),
+        };
+        let viewport = window.viewport_size();
+        let centre = cx
+            .try_global::<Centres>()
+            .and_then(|centres| centres.0.get(&window.window_handle().window_id()).copied());
+        let max = match centre {
+            Some(centre) => {
+                let column = self.drawn.column_bounds();
+                let column = column.map_or(Pixels::ZERO, |column| along(column.size));
+                let grown = along(viewport) - along(centre.viewport);
+                along(centre.bounds.size) + column + grown - least
+            }
+            None => {
+                let rail = self.drawn.rail_bounds();
+                let rail = rail.map_or(RAIL_WIDTH, |rail| along(rail.size));
+                along(viewport) - rail - least
+            }
+        };
+        max.max(self.min_size())
+    }
+
+    /// The size the column was drawn at, if it showed: the size, or less in
+    /// a window too small for it.
+    fn drawn_size(&self) -> Option<Pixels> {
+        let column = self.drawn.column_bounds()?;
+        Some(match self.position {
+            DockPosition::Bottom => column.size.height,
+            DockPosition::Left | DockPosition::Right => column.size.width,
+        })
     }
 
     /// The key contexts, outermost first, that a rail button's tooltip
@@ -405,20 +579,25 @@ impl DockState {
     }
 
     /// The dock's state, for a saved layout: whether it shows, its active
-    /// panel and the panels that have joined the rail.
+    /// panel, the panels that have joined the rail and its size.
     pub fn save(&self) -> Value {
         let ids = |ids: Vec<PanelId>| Value::from_iter(ids.into_iter().map(|id| id.0));
         Value::from_iter([
             ("visible", Value::from(self.visible)),
             ("active", self.active.map_or(Value::Null, |id| id.0.into())),
             ("joined", ids(self.joined())),
+            ("size", Value::from(f64::from(f32::from(self.size)))),
         ])
     }
 
     /// Puts back what [`DockState::save`] saved, as far as its panels are
     /// registered: whether it shows, its active panel (without focusing
-    /// it) and the panels that had joined the rail.
+    /// it), the panels that had joined the rail and its size, at least the
+    /// least.
     pub fn restore(&mut self, saved: &Value) {
+        if let Some(size) = saved.get("size").and_then(Value::as_f64) {
+            self.set_size(px(size as f32));
+        }
         let registered = |name: &str| {
             (self.panels.iter())
                 .map(|panel| panel.id())
@@ -448,6 +627,81 @@ impl DockState {
     /// What the last frame drew.
     pub fn drawn(&self) -> &DrawnDock {
         &self.drawn
+    }
+
+    /// A press on the edge's handle: the start of a drag from the size
+    /// drawn, or, pressed twice, puts back the size the dock was built
+    /// with and starts the drag from that: the last frame drew the size
+    /// it replaces.
+    fn press_edge(&mut self, event: &MouseDownEvent) {
+        let from = if event.click_count == 2 {
+            self.size = self.built;
+            self.built
+        } else {
+            self.drawn_size().unwrap_or(self.size)
+        };
+        self.press = Some((event.position, from));
+    }
+
+    /// Sizes the dock to follow the edge's drag, the pointer now at `to`,
+    /// within the limits.
+    fn drag_edge(&mut self, to: Point<Pixels>, window: &Window, cx: &App) {
+        let Some((at, pressed)) = self.press else {
+            return;
+        };
+        let grown = match self.position {
+            DockPosition::Right => at.x - to.x,
+            DockPosition::Left => to.x - at.x,
+            DockPosition::Bottom => at.y - to.y,
+        };
+        let max = self.max_size(window, cx);
+        self.size = (pressed + grown).min(max).max(self.min_size());
+    }
+
+    /// The handle on the column's inner edge, over its border and a
+    /// little either side: pressing it starts a drag (twice puts back the
+    /// built size), and moving draws nothing but the cursor.
+    fn edge_handle<V: DockView>(&self, cx: &mut Context<V>) -> impl IntoElement {
+        // From inside the column, whose border is its first pixel.
+        let offset = px(-(HANDLE - 1.) / 2.);
+        let cursor = match self.position {
+            DockPosition::Bottom => CursorStyle::ResizeUpDown,
+            DockPosition::Left | DockPosition::Right => CursorStyle::ResizeLeftRight,
+        };
+        self.drawn.cursor.set(Some(cursor));
+        div()
+            .id("dock-edge")
+            .absolute()
+            // Over the centre beside it, for presses, but not for drops.
+            .when(!cx.has_active_drag(), |handle| handle.occlude())
+            .map(|handle| match self.position {
+                DockPosition::Right => handle.top_0().bottom_0().left(offset).w(px(HANDLE)),
+                DockPosition::Left => handle.top_0().bottom_0().right(offset).w(px(HANDLE)),
+                DockPosition::Bottom => handle.left_0().right_0().top(offset).h(px(HANDLE)),
+            })
+            .cursor(cursor)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|view, event: &MouseDownEvent, _, cx| {
+                    view.dock_mut().press_edge(event);
+                    cx.notify();
+                }),
+            )
+            .on_drag(EdgeDrag(self.position), |_, _, _, cx| cx.new(|_| NoGhost))
+    }
+
+    /// Follows the edge's drag, on the dock's outermost element.
+    fn on_edge_drag<V: DockView>(
+        &self,
+        cx: &mut Context<V>,
+    ) -> impl Fn(&DragMoveEvent<EdgeDrag>, &mut Window, &mut App) + 'static {
+        let position = self.position;
+        cx.listener(move |view, event: &DragMoveEvent<EdgeDrag>, window, cx| {
+            if *event.drag(cx) == EdgeDrag(position) {
+                view.dock_mut().drag_edge(event.event.position, window, cx);
+                cx.notify();
+            }
+        })
     }
 
     fn handle(&self, panel: PanelId) -> Option<&dyn PanelHandle> {
@@ -525,12 +779,15 @@ impl DockState {
     }
 
     /// Draws the dock for `V`, whose [`DockView::rail_clicked`] a rail
-    /// button's click runs: the panel's column, unless hidden, and the
-    /// rail.
+    /// button's click runs: the panel's column, unless hidden, with its
+    /// edge's handle, and the rail. Shown, it shrinks to its least in a
+    /// window too small for it.
     pub fn render<V: DockView>(&self, cx: &mut Context<V>) -> AnyElement {
         self.drawn.buttons.borrow_mut().clear();
         self.drawn.icons.borrow_mut().clear();
         self.drawn.highlighted.borrow_mut().clear();
+        self.drawn.cursor.set(None);
+        let (size, min) = (self.size, self.min_size());
         let shown: Vec<_> = (0..self.panels.len())
             .filter(|&ix| self.on_rail(self.panels[ix].id(), cx))
             .collect();
@@ -561,6 +818,11 @@ impl DockState {
         };
         if self.position == DockPosition::Bottom {
             // The rail's buttons in a row before the title, the panel below.
+            let rail_height = if buttons.is_empty() {
+                Pixels::ZERO
+            } else {
+                RAIL_WIDTH
+            };
             let rail = div()
                 .id("dock-bottom-rail")
                 .flex_none()
@@ -570,20 +832,30 @@ impl DockState {
                 .children(actions);
             let column = body.map(|(view, title)| {
                 div()
+                    .id("dock-bottom-column")
+                    .relative()
                     .w_full()
-                    .h(self.size)
-                    .flex_none()
+                    .h(size)
+                    .flex_shrink(1.)
+                    .min_h(min)
                     .flex()
                     .flex_col()
                     .border_t_1()
                     .border_color(ui.border)
+                    .track_scroll(&self.drawn.column)
                     .child(title_row(title))
                     .child(div().flex_1().min_h_0().flex().child(view))
+                    .child(self.edge_handle(cx))
             });
+            let shown = column.is_some();
             return div()
                 .id("dock-bottom")
+                .on_drag_move(self.on_edge_drag(cx))
                 .w_full()
-                .flex_none()
+                .map(|dock| match shown {
+                    true => dock.flex_shrink(1.).min_h(min + rail_height),
+                    false => dock.flex_none(),
+                })
                 .flex()
                 .flex_col()
                 .track_scroll(&self.drawn.layout)
@@ -612,19 +884,29 @@ impl DockState {
                 }
             });
             div()
-                .w(self.size)
+                .id("dock-column")
+                .relative()
+                .w(size)
                 .h_full()
-                .flex_none()
+                .flex_shrink(1.)
+                .min_w(min)
                 .flex()
                 .flex_col()
+                .track_scroll(&self.drawn.column)
                 .child(title)
                 .child(div().flex_1().min_h_0().flex().child(view))
+                .child(self.edge_handle(cx))
         });
         let id = if left { "dock-left" } else { "dock" };
+        let shown = column.is_some();
         div()
             .id(id)
+            .on_drag_move(self.on_edge_drag(cx))
             .h_full()
-            .flex_none()
+            .map(|dock| match shown {
+                true => dock.flex_shrink(1.).min_w(min + RAIL_WIDTH),
+                false => dock.flex_none(),
+            })
             .flex()
             // The rail on the window's edge: drawn last, it's laid out
             // last, which `DrawnDock::rail_bounds` relies on.

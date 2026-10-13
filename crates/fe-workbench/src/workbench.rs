@@ -26,6 +26,7 @@ use crate::{
     config_problems::{self, ConfigProblemsPicker},
     disk_sync::DiskSync,
     dock::{self, DockEvent, DockOp, ProblemsOp, ProblemsPanel},
+    dock_layout::{self, DockSizeOp},
     find_bar::FindOp,
     git::GitState,
     go_to_line::GoToLine,
@@ -238,6 +239,9 @@ pub struct Workbench {
     /// editors' diff bases: replaced on a new root.
     git: Entity<GitState>,
     _rail: Subscription,
+    /// To the sidebar's dock and the terminal's: a drag of an edge changes
+    /// only the dock, so the layout saves from here too.
+    _docks: [Subscription; 2],
     /// To the modal layer's palettes coming and going.
     _modals: Subscription,
     /// To the status bar, whose vim line shows in its place even while
@@ -434,6 +438,14 @@ impl Workbench {
             };
             cx.notify();
         });
+        let docks = [
+            cx.observe_in(&dock, window, |workbench, _, window, cx| {
+                workbench.save_layout(window, cx)
+            }),
+            cx.observe_in(&terminal_dock, window, |workbench, _, window, cx| {
+                workbench.save_layout(window, cx)
+            }),
+        ];
         let mut workbench = Self {
             panel,
             dock,
@@ -472,6 +484,7 @@ impl Workbench {
             changes_subscription,
             git,
             _rail: rail,
+            _docks: docks,
             _modals: modals_changed,
             _status_bar: [status_bar_changed, vim_host_commands],
             toasts,
@@ -1012,6 +1025,22 @@ impl Workbench {
         }
     }
 
+    /// `dock.grow` or `dock.shrink`: resizes the terminal's dock while the
+    /// terminal has focus, else the sidebar.
+    fn run_dock_size_op(&mut self, op: DockSizeOp, window: &mut Window, cx: &mut Context<Self>) {
+        if self.terminal.read(cx).is_focused(window, cx) {
+            self.terminal_dock.update(cx, |dock, cx| {
+                dock_layout::resize(dock.dock_mut(), op, window, cx);
+                cx.notify();
+            });
+        } else {
+            self.dock.update(cx, |dock, cx| {
+                dock_layout::resize(dock.dock_mut(), op, window, cx);
+                cx.notify();
+            });
+        }
+    }
+
     /// Opens a pane in `direction` of the active one and activates it. If
     /// the active pane shows a tab, the new pane gets one for the same file,
     /// sharing its buffer.
@@ -1281,11 +1310,15 @@ impl Workbench {
     }
 
     /// The window's layout, as saved: its bounds, its panes and their
-    /// files, the dock and whether the breadcrumbs show.
+    /// files, the dock, the terminal's dock's size and whether the
+    /// breadcrumbs show.
     pub fn layout_entry(&self, cx: &App) -> Value {
+        let terminal_dock = self.terminal_dock.read(cx).dock().current_size();
+        let terminal_dock = Value::from(f64::from(f32::from(terminal_dock)));
         let mut entry = Value::from_iter([
             ("panes", layout::save_panes(&self.panes, &self.active, cx)),
             ("dock", self.dock.read(cx).state().save()),
+            ("terminal_dock", Value::from_iter([("size", terminal_dock)])),
             ("breadcrumbs", Value::from(self.breadcrumbs)),
         ]);
         if let (Some(bounds), Some(object)) = (self.bounds, entry.as_object_mut()) {
@@ -1294,14 +1327,22 @@ impl Workbench {
         entry
     }
 
-    /// Puts the window back as `entry` saved it: the dock and the
-    /// breadcrumbs at once; the panes, split as they were, with their
+    /// Puts the window back as `entry` saved it: the dock, the terminal's
+    /// dock's size (it stays hidden, with no session) and the breadcrumbs
+    /// at once; the panes, split as they were, with their
     /// files read in the background, the views of one file sharing its
     /// buffer, each with its caret. A file that's gone is left out, and a
     /// pane left empty closes, unless it's the only one.
     pub fn restore_layout(&mut self, entry: &Value, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(saved) = entry.get("dock") {
             self.dock.update(cx, |dock, cx| dock.restore(saved, cx));
+        }
+        let terminal_dock = entry.get("terminal_dock").and_then(|dock| dock.get("size"));
+        if let Some(size) = terminal_dock.and_then(Value::as_f64) {
+            self.terminal_dock.update(cx, |dock, cx| {
+                dock.dock_mut().set_size(px(size as f32));
+                cx.notify();
+            });
         }
         let breadcrumbs = entry.get("breadcrumbs").and_then(Value::as_bool);
         if breadcrumbs.is_some_and(|shown| shown != self.breadcrumbs) {
@@ -1888,6 +1929,9 @@ impl Workbench {
             if let Some(op) = pane_group::op(run, cx) {
                 return self.run_pane_op(op, window, cx);
             }
+            if let Some(op) = dock_layout::op(run, cx) {
+                return self.run_dock_size_op(op, window, cx);
+            }
             if project_panel::op(run, cx) == Some(PanelOp::RevealActive) {
                 return self.reveal_active(cx);
             }
@@ -2075,6 +2119,10 @@ mod palette_tests;
 #[cfg(test)]
 #[path = "layout_tests.rs"]
 mod layout_tests;
+
+#[cfg(test)]
+#[path = "dock_resize_tests.rs"]
+mod dock_resize_tests;
 
 #[cfg(test)]
 #[path = "windows_tests.rs"]

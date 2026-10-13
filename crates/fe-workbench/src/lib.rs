@@ -14,6 +14,7 @@
 mod config_problems;
 mod disk_sync;
 mod dock;
+mod dock_layout;
 mod find_bar;
 mod git;
 mod git_panel;
@@ -99,6 +100,7 @@ pub fn init(cx: &mut App) {
     picker::init(cx);
     config_problems::init(cx);
     dock::init(cx);
+    dock_layout::init(cx);
     lsp::init(cx);
     kiln_shell::menu_bar::register(cx);
     // `command_palette.toggle`, the palette listing these commands too.
@@ -162,6 +164,7 @@ pub fn command_catalog() -> Box<dyn CommandCatalog> {
         kiln_shell::picker::catalog(),
         Box::new(config_problems::registry()),
         Box::new(dock::registry()),
+        Box::new(dock_layout::registry()),
         Box::new(find_bar::registry()),
         Box::new(lsp::registry()),
         kiln_shell::menu_bar::catalog(),
@@ -187,6 +190,7 @@ fn command_list() -> Vec<CommandMeta> {
     list.extend(picker::registry().commands().cloned());
     list.extend(config_problems::registry().commands().cloned());
     list.extend(dock::registry().commands().cloned());
+    list.extend(dock_layout::registry().commands().cloned());
     list.extend(find_bar::registry().commands().cloned());
     list.extend(lsp::registry().commands().cloned());
     list.extend(nav::registry().commands().cloned());

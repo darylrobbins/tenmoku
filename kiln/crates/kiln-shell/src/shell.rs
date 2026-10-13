@@ -18,8 +18,9 @@ use kiln_ui::{ROW_HEIGHT, UiTheme, ui_theme};
 
 use crate::{
     Closing, DockPosition, MenuBarView, ModalId, ModalLayer, ModalView, TitleBar, close,
-    command_palette,
+    command_palette, dock,
     menu_bar::Open,
+    pane_group::{MIN_PANE_HEIGHT, MIN_PANE_WIDTH},
     window_frame::{self, TopRow},
 };
 
@@ -84,6 +85,9 @@ impl Shell {
         cx: &mut Context<Self>,
     ) -> Self {
         focus::watch(window, cx);
+        let id = window.window_handle().window_id();
+        cx.on_release(move |_, cx| dock::forget_centre(id, cx))
+            .detach();
         // The platform's close button asks the window's items first.
         window.on_window_should_close(cx, |window, cx| {
             let handle = window.window_handle();
@@ -328,13 +332,25 @@ impl Render for Shell {
                 None => row,
             }
         });
+        // The centre keeps its least: the docks shrink first.
         let main = div()
             .flex_1()
-            .min_h_0()
+            .min_h(MIN_PANE_HEIGHT)
             .w_full()
             .flex()
             .children(self.docks_at(DockPosition::Left))
-            .children(self.center().cloned())
+            // Kept its least beside the docks, and measured for their
+            // limits.
+            .children(self.center().cloned().map(|center| {
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_w(MIN_PANE_WIDTH)
+                    .min_h_0()
+                    .flex()
+                    .child(center)
+                    .child(dock::track_centre())
+            }))
             .children(self.docks_at(DockPosition::Right));
         // Cached: frames the shell redraws for other reasons reuse the
         // bar's last render, unless the host asked for it afresh.
