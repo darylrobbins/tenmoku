@@ -612,6 +612,11 @@ impl EditorView {
             self.changed(cx);
             return;
         }
+        if self.click_change_bar(event.position, cx) {
+            self.drag = None;
+            self.changed(cx);
+            return;
+        }
         let offset = self.offset_for_position(event.position);
         if event.click_count == 1
             && let Some(invocation) = self.click_command(&event.modifiers, window, cx)
@@ -1331,6 +1336,7 @@ fn read_primary_text(_: &App) -> Option<String> {
     None
 }
 
+mod change_bar;
 mod find;
 pub(crate) mod ghost_text;
 mod host;
@@ -1361,6 +1367,9 @@ mod reveal_tests;
 
 #[cfg(test)]
 mod find_tests;
+
+#[cfg(test)]
+mod change_bar_click_tests;
 
 #[cfg(test)]
 mod fold_hover_tests;

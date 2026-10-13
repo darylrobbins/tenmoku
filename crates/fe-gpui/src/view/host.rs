@@ -71,6 +71,10 @@ pub enum EditorViewEvent {
     /// [`EditorView::set_scroll_top`]: so two views can follow each other
     /// without echo.
     Scrolled { top: f32 },
+    /// The git change bar was clicked, on the change at `rows`: buffer rows
+    /// of the text, empty for a deletion, at its row. The caret is at the
+    /// change's first row.
+    ChangeBarClicked { rows: std::ops::Range<u32> },
 }
 
 impl EventEmitter<EditorViewEvent> for EditorView {}

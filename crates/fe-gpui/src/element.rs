@@ -15,6 +15,7 @@ use fe_display::{
         TextMeasure, Vec2,
     },
 };
+use fe_editor::decorations::DecorationKind;
 use fe_syntax::{Syntax, SyntaxDriver};
 use fe_vim::jump::JumpLabelState;
 use gpui::{
@@ -841,6 +842,19 @@ impl Element for EditorElement {
         layout.brackets = bracket_rects(&mut layout, view);
         layout.jump = jump_layout(&mut layout, view);
         layout.decorations = Decorations::layout(&mut layout, view, em, window);
+        // A hand over each change mark, across the whole change lane.
+        let lane = layout.bounds(layout.frame.change_lane);
+        for placed in &layout.decorations.placed {
+            if matches!(placed.kind, DecorationKind::Gutter(_)) {
+                let hitbox = Bounds::new(
+                    point(lane.origin.x, placed.bounds.origin.y),
+                    size(lane.size.width, placed.bounds.size.height),
+                );
+                layout
+                    .clickable
+                    .push(window.insert_hitbox(hitbox, HitboxBehavior::Normal));
+            }
+        }
         // The completion menu goes by its word's start in this frame, which
         // the view doesn't hold until paint.
         let word = self.view.read(cx).completion_word_start();
