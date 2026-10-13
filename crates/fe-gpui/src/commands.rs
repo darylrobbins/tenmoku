@@ -230,6 +230,8 @@ pub(crate) struct ViewHost<'a> {
     /// The view's language, once loaded, whether or not its tree matches
     /// the text yet ([`loaded_language`]).
     pub(crate) language: Option<&'static str>,
+    /// Vim is on: typing inserts exactly what was typed, so no pairs.
+    pub(crate) vim: bool,
 }
 
 /// The name of the language `syntax` parses, once it has loaded: known
@@ -272,6 +274,9 @@ impl EditorHost for ViewHost<'_> {
     }
 
     fn auto_pairs(&self) -> &[(char, char)] {
+        if self.vim {
+            return &[];
+        }
         self.language.map_or(&[], fe_syntax::auto_pairs)
     }
 
@@ -387,6 +392,7 @@ impl EditorView {
             page_rows,
             syntax,
             language,
+            vim: self.vim.is_some(),
         };
         let meta = registry.get(&invocation.command);
         let mutates = meta.is_some_and(|meta| meta.mutates_buffer);

@@ -1014,6 +1014,7 @@ impl EditorView {
             page_rows,
             syntax,
             language,
+            vim: true,
         };
         let mut target = VimTarget {
             model: &mut self.model,

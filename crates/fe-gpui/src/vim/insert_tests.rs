@@ -514,3 +514,25 @@ fn refused_commands_change_nothing(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("escape u");
     assert_eq!(state(&view, cx), ("    a\nb".into(), (0, 4)));
 }
+
+#[gpui::test]
+fn vim_insert_types_pairs_as_typed(cx: &mut TestAppContext) {
+    let (view, cx) = vim_editor(cx, "", 0);
+    view.update(cx, |view, cx| view.set_language(Some("rust"), cx));
+    cx.run_until_parked();
+
+    cx.simulate_keystrokes("i");
+    for ch in ["(", "[", "{", "\""] {
+        cx.simulate_input(ch);
+    }
+    assert_eq!(state(&view, cx), ("([{\"".into(), (0, 4)));
+
+    // One undo step.
+    cx.simulate_keystrokes("escape u");
+    assert_eq!(state(&view, cx).0, "");
+
+    // With vim off the same view pairs.
+    cx.update(|_, cx| set_vim_enabled(cx, false));
+    cx.simulate_input("(");
+    assert_eq!(state(&view, cx), ("()".into(), (0, 1)));
+}
