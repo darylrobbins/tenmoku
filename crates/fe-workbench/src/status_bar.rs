@@ -194,7 +194,7 @@ impl StatusBar {
 
     /// Every item to draw, sorted: the item's, with the editor's macro
     /// recording, and the host's over them.
-    fn items(&self, cx: &App) -> Vec<kiln_shell::StatusItem> {
+    pub(crate) fn items(&self, cx: &App) -> Vec<kiln_shell::StatusItem> {
         let Some(item) = self.item.as_deref() else {
             return self.items.items_for(None, cx);
         };

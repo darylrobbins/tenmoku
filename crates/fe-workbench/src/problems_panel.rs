@@ -47,7 +47,8 @@ use gpui::{
     WeakEntity, Window, div, prelude::FluentBuilder as _, px, uniform_list,
 };
 
-use crate::{Pane, StatusItem, StatusSide, Workbench, pane::Reveal};
+use crate::{Pane, Workbench, pane::Reveal};
+use kiln_shell::{Icon, StatusItem, StatusSide, StatusTone};
 
 /// The key context the panel's element sets.
 pub(crate) const KEY_CONTEXT: &str = "problems_panel";
@@ -58,10 +59,14 @@ const VIM_FLAG: &str = "vim";
 /// The status item's id.
 pub(crate) const ITEM: &str = "problems";
 
+/// The warnings' status item's id, beside [`ITEM`], the errors'.
+pub(crate) const WARNINGS_ITEM: &str = "problems.warnings";
+
 /// The command that shows the panel, which the status item runs.
 pub(crate) const SHOW: &str = "problems.show";
 
-/// The item's priority: on the left, after the config problems'.
+/// The errors' item's priority: on the left, after the config problems'; the
+/// warnings' is the next.
 const PRIORITY: i32 = 60;
 
 /// What a problems command asks for.
@@ -447,24 +452,41 @@ fn count(n: usize, noun: &str) -> String {
     format!("{n} {noun}{s}")
 }
 
-/// The status item for `counts`: its errors and warnings, none without
-/// either.
-fn status_item(counts: DiagnosticCounts) -> Option<StatusItem> {
+/// The status items for `counts`: the errors', then the warnings', none
+/// without either. Each has both counts, as `1 error, 1 warning`, for a
+/// tooltip.
+fn status_items(counts: DiagnosticCounts) -> Vec<StatusItem> {
     if counts.errors + counts.warnings == 0 {
-        return None;
+        return Vec::new();
     }
-    let text = format!(
+    let tooltip = format!(
         "{}, {}",
         count(counts.errors, "error"),
         count(counts.warnings, "warning")
     );
-    Some(StatusItem {
-        id: ITEM.into(),
-        side: StatusSide::Left,
-        priority: PRIORITY,
-        text: text.into(),
-        command: Some(Invocation::of(SHOW).expect("a valid command ID")),
-    })
+    let item = |id, priority, n: usize, icon, tone| {
+        StatusItem::new(id, StatusSide::Left, priority, n.to_string())
+            .icon(icon)
+            .tone(if n > 0 { tone } else { StatusTone::Default })
+            .tooltip(tooltip.clone())
+            .command(Invocation::of(SHOW).expect("a valid command ID"))
+    };
+    vec![
+        item(
+            ITEM,
+            PRIORITY,
+            counts.errors,
+            Icon::CircleX,
+            StatusTone::Error,
+        ),
+        item(
+            WARNINGS_ITEM,
+            PRIORITY + 1,
+            counts.warnings,
+            Icon::TriangleAlert,
+            StatusTone::Warning,
+        ),
+    ]
 }
 
 impl Focusable for ProblemsPanel {
@@ -530,12 +552,23 @@ impl Workbench {
         let panel = self.dock().read(cx).problems().clone();
         let counts = panel.update(cx, |panel, cx| panel.set_files(root, files, cx));
         if let Some(counts) = counts {
-            let bar = self.status_bar().clone();
-            bar.update(cx, |bar, cx| match status_item(counts) {
-                Some(item) => bar.set_item(item, cx),
-                None => bar.remove_item(ITEM, cx),
-            });
+            self.show_problem_counts(counts, cx);
         }
+    }
+
+    /// Shows `counts` on the status bar: the pair of items, or neither.
+    pub(crate) fn show_problem_counts(&mut self, counts: DiagnosticCounts, cx: &mut Context<Self>) {
+        let bar = self.status_bar().clone();
+        bar.update(cx, |bar, cx| {
+            let items = status_items(counts);
+            if items.is_empty() {
+                bar.remove_item(ITEM, cx);
+                bar.remove_item(WARNINGS_ITEM, cx);
+            }
+            for item in items {
+                bar.set_item(item, cx);
+            }
+        });
     }
 
     /// Does a problems command but `problems.show`, which the dock does.

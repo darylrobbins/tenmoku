@@ -122,12 +122,11 @@ use fe_lsp::{
     KillSwitch, LOGIN_SHELL_TIMEOUT, LocalLauncher, LspEvent, LspManager, LspNavigation, ServerId,
     ServerLauncher, ServerStatus,
 };
-use gpui::{
-    App, AppContext as _, Context, Global, SharedString, Subscription, Task, WeakEntity, Window,
-};
+use gpui::{App, AppContext as _, Context, Global, Subscription, Task, WeakEntity, Window};
 
 use crate::open::settings_path;
-use crate::{RootChanged, StatusItem, StatusSide, TrustChanged, Workbench};
+use crate::{RootChanged, TrustChanged, Workbench};
+use kiln_shell::{Icon, StatusSide, StatusTone};
 
 /// The status bar item's id.
 pub(crate) const ITEM: &str = "lsp";
@@ -450,7 +449,7 @@ pub(crate) struct Lsp {
     #[cfg(test)]
     project_changed: Option<async_channel::Sender<()>>,
     /// The item's text as last set.
-    shown: Option<SharedString>,
+    shown: Option<(String, StatusTone)>,
     /// The manager was made with fe-lsp's own launcher.
     #[cfg(test)]
     local: bool,
@@ -645,6 +644,41 @@ impl Lsp {
     pub(crate) fn manager(&self) -> Option<Arc<Mutex<LspManager>>> {
         self.manager.clone()
     }
+}
+
+/// The status item's text and tone for server `name` in `status`, or its
+/// `message` if it has one: none for a server running with nothing to say.
+pub(crate) fn status_text(
+    name: &str,
+    status: &ServerStatus,
+    message: Option<&str>,
+) -> Option<(String, StatusTone)> {
+    if let Some(message) = message {
+        return Some((message.to_owned(), StatusTone::Error));
+    }
+    let (status, tone) = match status {
+        ServerStatus::Starting => ("starting…".to_owned(), StatusTone::Default),
+        ServerStatus::Indexing { title } => (format!("indexing {title}"), StatusTone::Default),
+        ServerStatus::Restarting(n) => {
+            (format!("restarting ({n}/{RESTARTS})"), StatusTone::Warning)
+        }
+        ServerStatus::Stopped(Some(error)) => (format!("stopped: {error}"), StatusTone::Error),
+        ServerStatus::Stopped(None) => ("stopped".to_owned(), StatusTone::Default),
+        _ => return None,
+    };
+    Some((format!("{name}: {status}"), tone))
+}
+
+/// The language server's status item showing `text`.
+pub(crate) fn lsp_status_item(text: String, tone: StatusTone) -> kiln_shell::StatusItem {
+    let mut item = kiln_shell::StatusItem::new(ITEM, StatusSide::Right, 0, text)
+        .icon(Icon::Server)
+        .tone(tone)
+        .tooltip("Show Language Server Log");
+    if let Ok(command) = Invocation::of("lsp.show_log") {
+        item = item.command(command);
+    }
+    item
 }
 
 impl Workbench {
@@ -1518,42 +1552,43 @@ impl Workbench {
         Some(CodeActioner(manager.clone()))
     }
 
+    /// Gives the active editor's server `status` and `message`, as its
+    /// events would, and updates the item.
+    #[cfg(test)]
+    pub(crate) fn force_lsp_status(
+        &mut self,
+        status: ServerStatus,
+        message: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let buffer = self
+            .active_editor(cx)
+            .map(|editor| editor.read(cx).model().buffer().id());
+        let (server, ..) = self.lsp.server(buffer).expect("the buffer has a server");
+        self.lsp.servers.get_mut(&server).unwrap().1 = status;
+        match message {
+            Some(message) => self.lsp.messages.insert(server, message),
+            None => self.lsp.messages.remove(&server),
+        };
+        self.show_lsp_status(cx);
+    }
+
     /// Sets the status item for the active editor's server, or removes it.
     fn show_lsp_status(&mut self, cx: &mut Context<Self>) {
         let buffer = self
             .active_editor(cx)
             .map(|editor| editor.read(cx).model().buffer().id());
         let lsp = &self.lsp;
-        let text = lsp.server(buffer).and_then(|(server, name, status)| {
-            if let Some(message) = lsp.messages.get(&server) {
-                return Some(message.clone());
-            }
-            let status = match status {
-                ServerStatus::Starting => "starting…".to_owned(),
-                ServerStatus::Indexing { title } => format!("indexing {title}"),
-                ServerStatus::Restarting(n) => format!("restarting ({n}/{RESTARTS})"),
-                ServerStatus::Stopped(Some(error)) => format!("stopped: {error}"),
-                ServerStatus::Stopped(None) => "stopped".to_owned(),
-                _ => return None,
-            };
-            Some(format!("{name}: {status}"))
+        let shown = lsp.server(buffer).and_then(|(server, name, status)| {
+            let message = lsp.messages.get(&server).map(String::as_str);
+            status_text(name, status, message)
         });
-        let text = text.map(SharedString::from);
-        if text == self.lsp.shown {
+        if shown == self.lsp.shown {
             return;
         }
-        self.lsp.shown = text.clone();
-        self.status_bar().clone().update(cx, |bar, cx| match text {
-            Some(text) => bar.set_item(
-                StatusItem {
-                    id: ITEM.into(),
-                    side: StatusSide::Right,
-                    priority: 0,
-                    text,
-                    command: Invocation::of("lsp.show_log").ok(),
-                },
-                cx,
-            ),
+        self.lsp.shown.clone_from(&shown);
+        self.status_bar().clone().update(cx, |bar, cx| match shown {
+            Some((text, tone)) => bar.set_item(lsp_status_item(text, tone), cx),
             None => bar.remove_item(ITEM, cx),
         });
     }

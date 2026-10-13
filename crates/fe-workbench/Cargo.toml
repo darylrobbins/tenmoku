@@ -32,6 +32,8 @@ libc.workspace = true
 log.workspace = true
 
 [dev-dependencies]
+# The status bar test builds a file viewer over a generated file.
+fe-fileview.workspace = true
 futures.workspace = true
 # Card 1's fake server and its launcher, and the LSP types it speaks.
 fe-lsp = { workspace = true, features = ["test-support"] }

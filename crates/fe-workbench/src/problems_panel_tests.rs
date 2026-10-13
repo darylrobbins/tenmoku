@@ -208,7 +208,7 @@ fn lists(cx: &mut TestAppContext) {
     // main.rs once, though two splits show it; files by path, problems by
     // position, each message's first line.
     assert_eq!(rows(&mut s), all_rows());
-    assert_eq!(item(&mut s).as_deref(), Some("1 error, 1 warning"));
+    assert_eq!(item(&mut s).as_deref(), Some("1"));
 
     // A file's problems cleared: its group goes.
     publish(&s, "src/main.rs", Vec::new());
@@ -219,7 +219,7 @@ fn lists(cx: &mut TestAppContext) {
     // Published again, it's back; then every problem cleared.
     publish(&s, "src/main.rs", main_diagnostics());
     s.until("main.rs listed again", |s| rows(s) == all_rows());
-    assert_eq!(item(&mut s).as_deref(), Some("1 error, 1 warning"));
+    assert_eq!(item(&mut s).as_deref(), Some("1"));
     publish(&s, "src/lib.rs", Vec::new());
     publish(&s, "src/main.rs", Vec::new());
     s.until("all cleared", |s| rows(s).is_empty());
@@ -330,7 +330,7 @@ fn next_previous(cx: &mut TestAppContext) {
 #[gpui::test]
 fn status(cx: &mut TestAppContext) {
     let mut s = setup(cx);
-    assert_eq!(item(&mut s).as_deref(), Some("1 error, 1 warning"));
+    assert_eq!(item(&mut s).as_deref(), Some("1"));
     assert_ne!(dock(&mut s).1, DockPanel::Problems);
 
     // A click runs `problems.show`: the dock shows the panel, focused.

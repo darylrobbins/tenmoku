@@ -33,7 +33,8 @@ use gpui::{
 };
 use kiln_platform::config::{self, ConfigDiagnostics};
 
-use crate::{Pane, Picker, PickerDelegate, StatusItem, StatusSide, Workbench, workbench::Palette};
+use crate::{Pane, Picker, PickerDelegate, Workbench, workbench::Palette};
+use kiln_shell::{Icon, StatusItem, StatusSide, StatusTone};
 
 /// The status item's id.
 pub(crate) const ITEM: &str = "config.problems";
@@ -96,19 +97,19 @@ pub(crate) fn shows(run: &RunCommand, cx: &App) -> bool {
 }
 
 /// The status item for `count` problems: none for none.
-fn status_item(count: usize) -> Option<StatusItem> {
+pub(crate) fn status_item(count: usize) -> Option<StatusItem> {
     let text = match count {
         0 => return None,
         1 => "1 config problem".to_owned(),
         count => format!("{count} config problems"),
     };
-    Some(StatusItem {
-        id: ITEM.into(),
-        side: StatusSide::Left,
-        priority: PRIORITY,
-        text: text.into(),
-        command: Some(Invocation::of(SHOW).expect("a valid command ID")),
-    })
+    Some(
+        StatusItem::new(ITEM, StatusSide::Left, PRIORITY, text)
+            .icon(Icon::FileCog)
+            .tone(StatusTone::Warning)
+            .tooltip("Show Config Problems")
+            .command(Invocation::of(SHOW).expect("a valid command ID")),
+    )
 }
 
 impl Workbench {

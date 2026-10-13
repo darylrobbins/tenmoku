@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use fe_command::Value;
 use gpui::{AnyView, App, AppContext as _, Context, Entity, SharedString, Task, Window};
-use kiln_shell::{PaneItem, StatusItem, StatusSide};
+use kiln_shell::{Icon, PaneItem, StatusItem, StatusSide};
 
 use super::{FileViewer, open};
 use crate::pane_item::{file_name, restore_style, status};
@@ -49,7 +49,7 @@ impl PaneItem for FileViewer {
     /// `Read-only`, and the cursor as the editor shows it.
     fn status_items(&self, _: &App) -> Vec<StatusItem> {
         vec![
-            StatusItem::new(READ_ONLY_STATUS, StatusSide::Right, 50, "Read-only"),
+            StatusItem::new(READ_ONLY_STATUS, StatusSide::Right, 50, "Read-only").icon(Icon::Lock),
             StatusItem::new(
                 status::CURSOR,
                 StatusSide::Right,
