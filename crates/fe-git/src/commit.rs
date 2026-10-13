@@ -11,7 +11,7 @@ use crate::{GitError, Repo};
 /// Why a commit didn't happen.
 #[derive(Debug, thiserror::Error)]
 pub enum CommitError {
-    /// The message has nothing but whitespace and `#` lines.
+    /// The message has nothing but whitespace and comment lines.
     #[error("empty commit message")]
     EmptyMessage,
     /// Nothing is staged and the commit isn't an amend.
@@ -50,14 +50,47 @@ impl Repo {
         }
     }
 
-    /// Commits the index with `message` (`#` lines stripped), replacing HEAD
+    /// The prefix that marks a comment line in a commit message: `None` when
+    /// `core.commentChar` is `auto`, since git then picks a character no line
+    /// starts with.
+    fn comment_prefix(&self) -> Result<Option<String>, GitError> {
+        for key in ["core.commentString", "core.commentChar"] {
+            let args = ["config", "--get", key].map(OsString::from);
+            let output = run_raw(&self.workdir, Access::Read, &args, None, &[])?;
+            match output.status.code() {
+                Some(0) => {
+                    let value = String::from_utf8_lossy(&output.stdout);
+                    let value = value.trim_end_matches('\n');
+                    return Ok(match value {
+                        "auto" => None,
+                        "" => Some("#".to_owned()),
+                        value => Some(value.to_owned()),
+                    });
+                }
+                Some(1) => {}
+                code => {
+                    return Err(GitError::Command {
+                        args: args
+                            .iter()
+                            .map(|arg| arg.to_string_lossy().into_owned())
+                            .collect(),
+                        code,
+                        stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+                    });
+                }
+            }
+        }
+        Ok(Some("#".to_owned()))
+    }
+
+    /// Commits the index with `message` (comment lines (`core.commentChar`, `#` by default) stripped), replacing HEAD
     /// when `amend`, and returns the new HEAD's id. `pre-commit`, `commit-msg`
     /// and `post-commit` hooks run. Blocks until git exits.
     pub fn commit(&self, message: &str, amend: bool) -> Result<String, CommitError> {
-        if message
-            .lines()
-            .all(|line| line.trim().is_empty() || line.starts_with('#'))
-        {
+        let prefix = self.comment_prefix()?;
+        if message.lines().all(|line| {
+            line.trim().is_empty() || prefix.as_deref().is_some_and(|p| line.starts_with(p))
+        }) {
             return Err(CommitError::EmptyMessage);
         }
         if !amend && !self.has_staged()? {
