@@ -376,3 +376,47 @@ fn escape_dismisses_before_bindings(cx: &mut TestAppContext) {
     draw(cx);
     assert_eq!(taken(&events), [None]);
 }
+
+#[gpui::test]
+fn host_edits_end_the_suggestion_blur_dropped(cx: &mut TestAppContext) {
+    let (view, cx) = editor(false, cx);
+    let events = events(&view, cx);
+    // The `t` ending row 1, `next`.
+    let at = TEXT.find("next").unwrap() + 3;
+    let mut expected = TEXT.to_owned();
+    for (split, with) in [(false, "u"), (true, "v")] {
+        cx.update(|window, cx| window.focus(&view.focus_handle(cx), cx));
+        cx.run_until_parked();
+        suggest(&view, "bar()", cx);
+        draw(cx);
+        cx.update(|window, cx| window.blur(cx));
+        cx.run_until_parked();
+        assert_eq!(remaining(&view, cx), None);
+        events.borrow_mut().clear();
+
+        // As a formatter reply does, or another view of the buffer.
+        expected.replace_range(at..at + 1, with);
+        if split {
+            let mut other = view.read_with(cx, |view, _| view.model().split());
+            other.buffer_mut().edit([(at..at + 1, with)], Origin::User);
+        } else {
+            view.update(cx, |view, _| {
+                let mut buffer = view.model_mut().buffer_mut();
+                buffer.edit([(at..at + 1, with)], Origin::User);
+            });
+        }
+        view.update(cx, |_, cx| cx.notify());
+
+        let context = super::ghost_text::stamp(fe_editor::commands::context(), true);
+        let invocation = fe_command::Invocation::of("ghost_text.accept")
+            .unwrap()
+            .source(fe_command::Source::Palette)
+            .context(context);
+        view.update_in(cx, |view, window, cx| {
+            view.run_command(invocation, Some(window), cx)
+        });
+        assert_eq!(text(&view, cx), expected);
+        assert_eq!(remaining(&view, cx), None);
+        assert!(events.borrow().is_empty());
+    }
+}

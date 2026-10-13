@@ -139,7 +139,7 @@ impl EditorView {
         let blur = cx.on_blur(&view.focus, window, |view, window, cx| {
             if let Some(ghost) = view.ghost_text.clone() {
                 view.dismiss_ghost_text(cx);
-                view.blurred_ghost_text = Some(ghost);
+                view.blurred_ghost_text = Some((ghost, view.model.snapshot().version()));
                 cx.defer_in(window, |_, _, cx| cx.notify());
             }
         });
@@ -188,7 +188,10 @@ impl EditorView {
         if self.ghost_text.is_none() && source == Source::Palette {
             self.model.sync_display();
             let accepts_text = self.accepts_text();
-            self.ghost_text = blurred.filter(|ghost| accepts_text && ghost.is_live(&self.model));
+            let version = self.model.snapshot().version();
+            self.ghost_text = blurred.and_then(|(ghost, saved)| {
+                (saved == version && accepts_text && ghost.is_live(&self.model)).then_some(ghost)
+            });
         }
         let Some(ghost) = self.ghost_text.take() else {
             return true;

@@ -133,9 +133,10 @@ pub struct EditorView {
     pub(crate) proposal_buttons: Vec<(fe_buffer::HunkId, ProposalButton, gpui::Bounds<Pixels>)>,
     /// The suggestion shown at the caret ([`ghost_text`]).
     ghost_text: Option<fe_editor::ghost_text::GhostText>,
-    /// The suggestion losing focus dropped, for a palette pick that
-    /// accepts it ([`ghost_text`]).
-    blurred_ghost_text: Option<fe_editor::ghost_text::GhostText>,
+    /// The suggestion losing focus dropped, with the buffer's version then,
+    /// for a palette pick that accepts it if the buffer hasn't changed since
+    /// ([`ghost_text`]).
+    blurred_ghost_text: Option<(fe_editor::ghost_text::GhostText, fe_buffer::Version)>,
     /// Drop it on `escape` and on losing focus.
     ghost_text_subscriptions: Vec<Subscription>,
     /// The top, in screen rows, the last frame reported or the host set
