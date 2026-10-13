@@ -160,6 +160,19 @@ fn run(target: &mut VimTarget<'_>, args: ChangeArgs) -> Dispatched<TransactionId
     let moved = match target.state.mode {
         Mode::Visual(_) => visual::jump_cursor(target.model, target.state, offset),
         _ => {
+            // nvim's `]c` sets the column without touching `curswant`: the
+            // goal `j` and `k` would have kept survives the jump.
+            let version = target.model.snapshot().version();
+            let before = target.model.selections();
+            let goal = motion::valid_goals(target.state, version, &before)
+                .and_then(|(_, goals)| goals.iter().find(|(at, _)| *at == head))
+                .and_then(|(_, goal)| *goal)
+                .unwrap_or_else(|| {
+                    let cursor = motion::Cursor::at(&text, head);
+                    cursor
+                        .line
+                        .goal_column(cursor.ix, target.model.tab_size().max(1))
+                });
             let args = MoveArgs {
                 motion: Motion::MarkAt {
                     offset,
@@ -168,7 +181,13 @@ fn run(target: &mut VimTarget<'_>, args: ChangeArgs) -> Dispatched<TransactionId
                 extend: false,
                 count: None,
             };
-            motion::apply(target.model, target.state, args)
+            let moved = motion::apply(target.model, target.state, args);
+            if let Some((_, goals)) = target.state.goals.as_mut() {
+                for (_, kept) in goals {
+                    *kept = Some(goal);
+                }
+            }
+            moved
         }
     };
     marks::settle(target);
