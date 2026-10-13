@@ -7,12 +7,44 @@ GPUI (gpui-pre-* crates)
 Copyright Zed Industries, Inc.
 Licensed under the Apache License, Version 2.0.
 
-gpui-kit (soft wrap and folding, adapted in crates/fe-display)
+gpui-kit (soft wrap, folding and diagnostics, adapted in crates/fe-display and
+crates/fe-editor)
 Copyright 2024 - 2026 Longbridge.
 Licensed under the Apache License, Version 2.0.
+
+nvim-treesitter (highlight queries, adapted in crates/fe-syntax/queries: toml.scm, kotlin.scm)
+Copyright The nvim-treesitter contributors. Its LICENSE names no holder.
+Licensed under the Apache License, Version 2.0.
+
+tree-sitter-ruby (outline query adapted from queries/tags.scm, 0.23.1)
+Copyright (c) 2016 Rob Rix. The crate ships no LICENSE file; the line is from
+the repository's LICENSE at v0.23.1.
+Licensed under the MIT License.
+
+tree-sitter-php (outline and definitions queries adapted from queries/tags.scm, 0.24.2)
+Copyright (c) 2017 Josh Vera, GitHub.
+Copyright (c) 2019 Max Brunsfeld, Amaan Qureshi, Christian Frøystad, Caleb White.
+Licensed under the MIT License.
+
+tree-sitter-kotlin-sg (outline and definitions queries adapted from queries/tags.scm, 0.4.1)
+Copyright (c) 2019 fwcd.
+Licensed under the MIT License.
+
+tree-sitter-scala (outline and definitions queries adapted from queries/tags.scm, 0.26.2)
+Copyright (c) 2018 Max Brunsfeld and GitHub.
+Licensed under the MIT License.
+
+tree-sitter-lua (outline query adapted from queries/tags.scm, 0.5.0)
+Copyright (c) 2021 Munif Tanjim. The crate ships no LICENSE file; the line is
+from the repository's LICENSE.md at v0.5.0.
+Licensed under the MIT License.
 
 Lucide icons (unmodified, in kiln/crates/kiln-ui/assets/icons)
 Copyright (c) 2026 Lucide Icons and Contributors.
 Licensed under the ISC License.
 Icons derived from Feather: Copyright (c) 2013-present Cole Bemis.
 Licensed under the MIT License.
+
+License texts: LICENSES/Apache-2.0.txt and LICENSES/MIT.txt (the MIT text is
+the template; the holders are named above). The ISC text is Lucide's own
+kiln/crates/kiln-ui/assets/icons/LICENSE.
