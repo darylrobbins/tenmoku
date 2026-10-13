@@ -11,7 +11,9 @@
 //! (`hover`), with what the host's [`HoverProvider`] says about the word
 //! there, or at the caret on `editor.show_hover`, and a completion menu
 //! (`completion_menu`) of what the host's [`CompletionProvider`] offers at
-//! the caret. Vim mode, one app-wide switch
+//! the caret, and signature help (`signature_help`) from the host's
+//! [`SignatureHelpProvider`] above the caret while a call's arguments are
+//! typed. Vim mode, one app-wide switch
 //! ([`set_vim_enabled`]), routes an editor's keys through `fe-vim`. An
 //! editor is a kiln-shell pane item ([`pane_item`]).
 
@@ -23,6 +25,7 @@ mod hover;
 pub mod keymap;
 pub mod menu;
 pub mod pane_item;
+pub mod signature_help;
 mod theme;
 mod timing;
 mod view;
@@ -40,6 +43,10 @@ pub use hover::{HoverContent, HoverFuture, HoverProvider};
 pub use fe_vim::search::set_time_limit as set_vim_time_limit;
 pub use keymap::{default_keymap, keymap_report, set_user_keymap};
 pub use pane_item::set_restore_style;
+pub use signature_help::{
+    Parameter, Signature, SignatureContext, SignatureHelp, SignatureHelpFuture,
+    SignatureHelpProvider, SignatureTrigger,
+};
 pub use theme::{ActivePalette, editor_palette, set_editor_palette};
 pub use timing::{FrameTiming, FrameTimings};
 pub use view::EditorView;

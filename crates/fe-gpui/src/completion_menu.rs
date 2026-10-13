@@ -92,6 +92,8 @@ pub(crate) struct Menu {
     request: Option<Task<()>>,
     /// Where it goes, as the frame being drawn lays its word out.
     place: Option<Place>,
+    /// Its bounds, as the frame being drawn has laid it out.
+    laid_out: Option<gpui::Bounds<Pixels>>,
 }
 
 /// Where the menu goes: by its word's start, below it or, with more room
@@ -172,6 +174,7 @@ impl EditorView {
             resolving: None,
             request: None,
             place: None,
+            laid_out: None,
         });
         menu.asked = (version, offset);
         menu.request = Some(request);
@@ -426,17 +429,23 @@ impl EditorView {
         self.scroll_to_selected();
     }
 
+    /// The bounds the frame being drawn has laid the menu out at, its
+    /// documentation's included, in window coordinates, once its layer has
+    /// laid it out ([`menu_layer`]).
+    pub(crate) fn completion_bounds(&self) -> Option<gpui::Bounds<Pixels>> {
+        self.completion.as_ref()?.laid_out
+    }
+
     /// The menu, below the start of the word, if it shows and the frame
     /// being drawn has placed it.
     pub(crate) fn render_completion(&mut self, cx: &mut Context<Self>) -> Option<AnyElement> {
-        // Only tests record the bounds it's laid out at.
-        #[cfg(not(test))]
-        let _ = cx;
         #[cfg(test)]
         {
             self.painted_completion = None;
         }
-        let menu = self.completion.as_ref()?;
+        let menu = self.completion.as_mut()?;
+        menu.laid_out = None;
+        let menu = &*menu;
         let session = &menu.session;
         if session.matches().is_empty() {
             return None;
@@ -536,14 +545,18 @@ impl EditorView {
             .font_family(theme.font_family.clone())
             .child(list)
             .children(docs);
-        #[cfg(test)]
         let menu = {
-            // Records the bounds it's laid out at.
+            // Records the bounds it's laid out at, for signature help to
+            // keep clear of.
             let view = cx.weak_entity();
             menu.child(
                 canvas(
                     move |bounds, _, cx| {
                         view.update(cx, |view, _| {
+                            if let Some(menu) = &mut view.completion {
+                                menu.laid_out = Some(bounds);
+                            }
+                            #[cfg(test)]
                             if let Some(painted) = &mut view.painted_completion {
                                 painted.bounds = Some(bounds);
                             }

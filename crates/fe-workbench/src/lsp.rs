@@ -78,6 +78,10 @@
 //! - **Completion.** The same provider asks for an editor's completions
 //!   ([`LspManager::completion`]), resolves the selected one, and reports
 //!   the server's trigger characters for the buffer.
+//! - **Signature help.** So does it for an editor's signature help
+//!   ([`LspManager::signature_help`]) and its trigger characters
+//!   ([`LspManager::signature_help_triggers`]). fe-lsp keeps no parameter's
+//!   documentation, so the popover shows the signature's alone.
 //! - **Shutdown.** Closing the window shuts its servers down (§3.4) on
 //!   their threads. Quitting shuts every workbench's down, and blocks until
 //!   each closed window's and each workbench's server has stopped, for as
@@ -1015,6 +1019,7 @@ impl Workbench {
         let editors = self.open_editors(cx);
         let hover: Rc<dyn fe_gpui::HoverProvider> = self.lsp.hover.clone();
         let completion: Rc<dyn fe_gpui::CompletionProvider> = self.lsp.hover.clone();
+        let signature_help: Rc<dyn fe_gpui::SignatureHelpProvider> = self.lsp.hover.clone();
         for editor in &editors {
             let set = editor.read(cx).hover_provider();
             if !set.is_some_and(|set| Rc::ptr_eq(set, &hover)) {
@@ -1024,6 +1029,12 @@ impl Workbench {
             if !set.is_some_and(|set| Rc::ptr_eq(set, &completion)) {
                 editor.update(cx, |view, _| {
                     view.set_completion_provider(Some(completion.clone()))
+                });
+            }
+            let set = editor.read(cx).signature_help_provider();
+            if !set.is_some_and(|set| Rc::ptr_eq(set, &signature_help)) {
+                editor.update(cx, |view, _| {
+                    view.set_signature_help_provider(Some(signature_help.clone()))
                 });
             }
         }
@@ -1650,9 +1661,9 @@ impl CodeActioner {
     }
 }
 
-/// Hover text and completions for an editor, from the server its buffer is
-/// open on, through whichever manager the workbench has now: none (no root,
-/// or a closed window) answers nothing.
+/// Hover text, completions and signature help for an editor, from the
+/// server its buffer is open on, through whichever manager the workbench has
+/// now: none (no root, or a closed window) answers nothing.
 #[derive(Default)]
 struct LspHover {
     manager: RefCell<Weak<Mutex<LspManager>>>,
@@ -1736,6 +1747,78 @@ impl fe_gpui::CompletionProvider for LspHover {
                 }
             }
         })
+    }
+}
+
+impl fe_gpui::SignatureHelpProvider for LspHover {
+    fn triggers(&self, buffer: BufferId) -> Option<(Vec<char>, Vec<char>)> {
+        let manager = self.manager.borrow().upgrade()?;
+        lock(&manager).signature_help_triggers(buffer)
+    }
+
+    fn signature_help(
+        &self,
+        buffer: BufferId,
+        version: Version,
+        offset: usize,
+        context: fe_gpui::SignatureContext,
+    ) -> fe_gpui::SignatureHelpFuture {
+        let Some(manager) = self.manager.borrow().upgrade() else {
+            return Box::pin(async { None });
+        };
+        let mut lsp = fe_lsp::SignatureContext::new(match context.trigger {
+            fe_gpui::SignatureTrigger::Invoked => fe_lsp::SignatureTrigger::Invoked,
+            fe_gpui::SignatureTrigger::Character(c) => fe_lsp::SignatureTrigger::Character(c),
+            fe_gpui::SignatureTrigger::ContentChange => fe_lsp::SignatureTrigger::ContentChange,
+        });
+        lsp.is_retrigger = context.is_retrigger;
+        lsp.active = context.active.map(|help| {
+            let signatures = (help.signatures.into_iter())
+                .map(|signature| {
+                    let parameters = signature.parameters.into_iter().map(|p| p.range);
+                    fe_lsp::Signature::new(
+                        signature.label,
+                        signature.documentation,
+                        parameters.collect(),
+                        signature.active_parameter,
+                    )
+                })
+                .collect();
+            fe_lsp::SignatureHelp::new(signatures, help.active_signature, help.active_parameter)
+        });
+        // Sent under the lock; awaited without it.
+        let reply = lock(&manager).signature_help(buffer, version, offset, lsp);
+        Box::pin(async move {
+            match reply.await {
+                Ok(help) => help.map(signature_help),
+                Err(error) => {
+                    log::debug!("no signature help: {error}");
+                    None
+                }
+            }
+        })
+    }
+}
+
+/// fe-lsp's signature help as fe-gpui's.
+fn signature_help(help: fe_lsp::SignatureHelp) -> fe_gpui::SignatureHelp {
+    let signatures = (help.signatures.into_iter())
+        .map(|signature| fe_gpui::Signature {
+            label: signature.label,
+            documentation: signature.documentation,
+            parameters: (signature.parameters.into_iter())
+                .map(|range| fe_gpui::Parameter {
+                    range,
+                    documentation: None,
+                })
+                .collect(),
+            active_parameter: signature.active_parameter,
+        })
+        .collect();
+    fe_gpui::SignatureHelp {
+        signatures,
+        active_signature: help.active_signature,
+        active_parameter: help.active_parameter,
     }
 }
 

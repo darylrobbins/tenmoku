@@ -19,7 +19,7 @@ use fe_syntax::{Syntax, SyntaxDriver};
 use gpui::{App, ClipboardItem, Context, Task, Window};
 
 use crate::{
-    EditorView, completion_menu,
+    EditorView, completion_menu, signature_help,
     view::{ghost_text, synced_syntax},
     vim,
 };
@@ -56,14 +56,17 @@ const SAVE: &str = "editor.save";
 /// its work ([`EditorView::run_command`]).
 fn editor_registry() -> Registry<Editor> {
     let mut registry = fe_editor::commands::registry();
-    registry
-        .register(
-            SHOW_HOVER,
-            "Show Hover",
-            |_: &mut EditorTarget<'_>, _: &Actor| Ok(Dispatched::new(Effect::Nothing)),
-        )
-        .expect("view command IDs are valid and distinct")
-        .context(ContextPredicate::identifier(fe_editor::commands::CONTEXT));
+    for (id, title) in [
+        (SHOW_HOVER, "Show Hover"),
+        (signature_help::SHOW, "Show Signature Help"),
+    ] {
+        registry
+            .register(id, title, |_: &mut EditorTarget<'_>, _: &Actor| {
+                Ok(Dispatched::new(Effect::Nothing))
+            })
+            .expect("view command IDs are valid and distinct")
+            .context(ContextPredicate::identifier(fe_editor::commands::CONTEXT));
+    }
     let menu = [
         (
             completion_menu::TRIGGER,
@@ -425,7 +428,7 @@ impl EditorView {
                         }
                         // Edit nothing, or as typing does, so the session
                         // goes on.
-                        SHOW_HOVER => dispatch(&mut self.model),
+                        SHOW_HOVER | signature_help::SHOW => dispatch(&mut self.model),
                         // Accepting a suggestion types it, into the session.
                         command
                             if command == completion_menu::TRIGGER
@@ -461,6 +464,9 @@ impl EditorView {
         }
         match self.dispatched(result, &invocation, mutates, cx) {
             Ok(()) if invocation.command.as_str() == SHOW_HOVER => self.show_hover(cx),
+            Ok(()) if invocation.command.as_str() == signature_help::SHOW => {
+                self.ask_signature_help(signature_help::SignatureTrigger::Invoked, cx)
+            }
             Ok(()) if saves => {
                 if let Some(window) = window {
                     self.save_from_command(window, cx);
@@ -594,6 +600,7 @@ impl EditorView {
         if self.typing_mode() != Some(true) {
             self.completion_typed(text, cx);
         }
+        self.signature_help_typed(text, cx);
     }
 }
 

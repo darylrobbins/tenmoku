@@ -108,6 +108,8 @@ pub struct EditorView {
     pub(crate) completion_provider: Option<std::rc::Rc<dyn crate::CompletionProvider>>,
     /// Close the menu on `escape` and on losing focus.
     pub(crate) completion_subscriptions: Vec<Subscription>,
+    /// Signature help, and where it comes from ([`crate::signature_help`]).
+    pub(crate) signature_help: crate::signature_help::SignaturePopover,
     /// The frames around the view's own in its context stack, as last seen
     /// while it was focused: see [`EditorView::context_stack`].
     ancestors: Option<ContextStack>,
@@ -250,6 +252,7 @@ impl EditorView {
             completion: None,
             completion_provider: None,
             completion_subscriptions: Vec::new(),
+            signature_help: Default::default(),
             ancestors: None,
             find: Default::default(),
             read_only: false,
@@ -1264,8 +1267,12 @@ impl Render for EditorView {
         if self.ghost_text_subscriptions.is_empty() {
             Self::dismiss_ghost_text_on_escape_and_blur(self, window, cx);
         }
+        if !self.signature_help_subscribed() {
+            self.hide_signature_help_on_escape_and_blur(window, cx);
+        }
         self.drop_stale_completion();
         self.drop_stale_ghost_text(cx);
+        self.sync_signature_help(cx);
         if self.completion_shown() {
             key_context.add(crate::completion_menu::KEY_CONTEXT);
         }
@@ -1293,6 +1300,7 @@ impl Render for EditorView {
             .child(EditorElement::new(cx.entity()))
             .child(crate::hover::popover_layer(cx))
             .child(crate::completion_menu::menu_layer(cx))
+            .child(crate::signature_help::popover_layer(cx))
     }
 }
 

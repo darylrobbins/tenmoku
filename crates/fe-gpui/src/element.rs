@@ -849,6 +849,11 @@ impl Element for EditorElement {
         self.view.update(cx, |view, cx| {
             view.place_completion(word, viewport, line_height, cx)
         });
+        // Signature help goes by the caret, within the editor.
+        let caret = self.view.read(cx).signature_help_caret();
+        let caret = caret.and_then(|caret| layout.caret_bounds(caret));
+        self.view
+            .update(cx, |view, _| view.anchor_signature_help(caret, bounds));
         layout.prepaint_took = started.elapsed();
         Some(layout)
     }
