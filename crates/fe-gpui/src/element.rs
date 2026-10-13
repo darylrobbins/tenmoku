@@ -34,15 +34,24 @@ use crate::{
 
 mod decorations;
 use decorations::{Decorations, Layer};
+mod ghost_text;
 mod host_blocks;
 #[cfg(test)]
 pub(crate) use host_blocks::PaintedBlock;
 mod proposal;
 
-/// The frame's blocks: the host's ([`host_blocks`]) and the proposals'
-/// hunks ([`proposal`]).
-fn block_map(view: &EditorView, hunks: &[proposal::Hunk]) -> fe_display::BlockMap {
-    fe_display::BlockMap::new(host_blocks::blocks(view).chain(proposal::blocks(hunks, view)))
+/// The frame's blocks: the host's ([`host_blocks`]), the proposals' hunks
+/// ([`proposal`]) and the ghost text's lines after its first
+/// ([`ghost_text`]).
+fn block_map(
+    view: &EditorView,
+    hunks: &[proposal::Hunk],
+    ghost: Option<&ghost_text::Ghost>,
+) -> fe_display::BlockMap {
+    let ghost = ghost.and_then(|ghost| ghost_text::block(ghost, view));
+    fe_display::BlockMap::new(
+        (host_blocks::blocks(view).chain(proposal::blocks(hunks, view))).chain(ghost),
+    )
 }
 
 /// What one frame laid out: kept by the view for hit testing and IME.
@@ -84,6 +93,8 @@ pub(crate) struct FrameLayout {
     pub(crate) proposals: proposal::Layout,
     /// Their new texts, indexed, kept from frame to frame.
     pub(crate) proposal_texts: proposal::Texts,
+    /// The ghost text's block rows in view ([`ghost_text`]).
+    ghost: ghost_text::Placed,
     /// When prepaint started and how long it took, for [`FrameTiming`].
     prepaint_started: Instant,
     prepaint_took: Duration,
@@ -570,6 +581,7 @@ impl Element for EditorElement {
         });
         let proposal_texts = proposal_texts.get_or_insert_default();
         let hunks = proposal::hunks(self.view.read(cx), proposal_texts);
+        let ghost = ghost_text::shown(self.view.read(cx));
         // Wrap a slice of what's pending around the top of the viewport,
         // keeping the text at the top where it is unless the caret is about
         // to be scrolled into view, and ask for another frame to continue.
@@ -595,12 +607,12 @@ impl Element for EditorElement {
             // after the wrap place. A top inside a block keeps its place
             // above the display row below it.
             let screen_top = f32::from(view.scroll.y) / line_height_f32;
-            let blocks = block_map(view, &hunks);
+            let blocks = block_map(view, &hunks, ghost.as_ref());
             let display_top = blocks.to_display_top(screen_top);
             let in_block = screen_top - blocks.to_screen_top(display_top);
             let (pending, top) = view.model.wrap_pending_at(display_top);
             if !view.autoscroll {
-                let top = block_map(view, &hunks).to_screen_top(top) + in_block;
+                let top = block_map(view, &hunks, ghost.as_ref()).to_screen_top(top) + in_block;
                 view.scroll.y = px(top.max(0.) * line_height_f32);
             }
             pending
@@ -645,7 +657,8 @@ impl Element for EditorElement {
             font,
             font_size,
         };
-        // What an input method is composing, drawn at its caret.
+        // What an input method is composing, drawn at its caret, or else
+        // the ghost text's first line.
         let composition = view.composition();
         let inlay = composition.map(|(offset, composition)| layout::Inlay {
             offset,
@@ -653,7 +666,8 @@ impl Element for EditorElement {
             text: composition.text.replace(['\n', '\r'], " "),
             style: theme.foreground,
         });
-        let blocks = block_map(view, &hunks);
+        let inlay = inlay.or_else(|| Some(ghost_text::inlay(ghost.as_ref()?, view)));
+        let blocks = block_map(view, &hunks, ghost.as_ref());
         let mut lay_out = |input: &FrameInput<Hsla>| {
             layout::layout_frame_with_inlay(
                 input,
@@ -765,6 +779,7 @@ impl Element for EditorElement {
             &mut glyph_widths,
             host_x,
         );
+        let ghost = ghost_text::layout(&frame, ghost.as_ref(), view, &mut shaper, host_x);
         let composed = composition.map(|(offset, composition)| (offset, composition.text.clone()));
         let to_window = |rect: Rect| {
             Bounds::new(
@@ -814,6 +829,7 @@ impl Element for EditorElement {
             host_blocks: placed,
             proposals,
             proposal_texts: mem::take(proposal_texts),
+            ghost,
             prepaint_started: started,
             prepaint_took: Duration::ZERO,
         };
@@ -936,8 +952,9 @@ impl Element for EditorElement {
                 carets
             }
         };
-        // Composed text is underlined in the text colour.
-        let composition_underline = layout.frame.inlay.map(|inlay| {
+        // Composed text is underlined in the text colour; ghost text isn't.
+        let composed = layout.composition.is_some();
+        let composition_underline = layout.frame.inlay.filter(|_| composed).map(|inlay| {
             let thickness = COMPOSITION_UNDERLINE;
             layout.bounds(Rect {
                 y: inlay.y + inlay.height - thickness,
@@ -987,6 +1004,8 @@ impl Element for EditorElement {
         let mut proposal_buttons = Vec::new();
         #[cfg(test)]
         let mut painted_proposals = Vec::new();
+        #[cfg(test)]
+        let mut painted_ghost = None;
 
         // In vim's normal mode nothing types: neither keys nor an input
         // method insert text.
@@ -1068,6 +1087,14 @@ impl Element for EditorElement {
                         let origin = layout.to_window(frame.line_origin(row));
                         row.line.paint(origin, line_height, window, cx);
                     }
+                    ghost_text::paint(
+                        &layout.ghost,
+                        &layout,
+                        window,
+                        cx,
+                        #[cfg(test)]
+                        &mut painted_ghost,
+                    );
                     #[cfg(test)]
                     decorations::note("text");
                     for marker in &frame.fold_markers {
@@ -1223,6 +1250,7 @@ impl Element for EditorElement {
                 view.painted_brackets = painted_brackets;
                 view.painted_blocks = painted_blocks;
                 view.painted_proposals = painted_proposals;
+                view.painted_ghost = painted_ghost;
                 let underlines = underlines.iter().map(|&(bounds, _)| bounds).collect();
                 view.painted_hover = (underlines, hover.is_some());
                 view.painted_squiggles = squiggles;

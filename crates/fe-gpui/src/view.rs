@@ -126,6 +126,8 @@ pub struct EditorView {
     /// hunk, the button, and the part of its box shown, in window
     /// coordinates. A click there presses it.
     pub(crate) proposal_buttons: Vec<(fe_buffer::HunkId, ProposalButton, gpui::Bounds<Pixels>)>,
+    /// The suggestion shown at the caret ([`ghost_text`]).
+    ghost_text: Option<fe_editor::ghost_text::GhostText>,
     /// The top, in screen rows, the last frame reported or the host set
     /// ([`EditorView::report_scroll_top`]).
     pub(crate) reported_top: f32,
@@ -184,6 +186,10 @@ pub struct EditorView {
         String,
         Bounds<Pixels>,
     )>,
+    /// The ghost text the last frame painted: its inline part, its block's
+    /// rows, and the inline part's box in window coordinates.
+    #[cfg(test)]
+    pub(crate) painted_ghost: Option<(String, Vec<String>, Bounds<Pixels>)>,
 }
 
 /// A word a bound click would run its command on: see [`EditorView::hover`].
@@ -249,6 +255,7 @@ impl EditorView {
             blocks: Vec::new(),
             proposals: Vec::new(),
             proposal_buttons: Vec::new(),
+            ghost_text: None,
             reported_top: 0.,
             top_set: None,
             #[cfg(test)]
@@ -279,6 +286,8 @@ impl EditorView {
             painted_blocks: Vec::new(),
             #[cfg(test)]
             painted_proposals: Vec::new(),
+            #[cfg(test)]
+            painted_ghost: None,
         };
         crate::vim::register(&view.focus, cx);
         crate::hover::hide_on_escape(&mut view, cx);
@@ -1250,6 +1259,7 @@ impl Render for EditorView {
             Self::close_completion_on_escape_and_blur(self, window, cx);
         }
         self.drop_stale_completion();
+        self.drop_stale_ghost_text();
         if self.completion_shown() {
             key_context.add(crate::completion_menu::KEY_CONTEXT);
         }
@@ -1305,6 +1315,7 @@ fn read_primary_text(_: &App) -> Option<String> {
 }
 
 mod find;
+mod ghost_text;
 mod host;
 mod ime;
 mod proposal;
@@ -1362,3 +1373,6 @@ mod proposal_accept_tests;
 
 #[cfg(test)]
 mod proposal_command_tests;
+
+#[cfg(test)]
+mod ghost_text_tests;
