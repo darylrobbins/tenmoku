@@ -176,6 +176,8 @@ impl DiffView {
                 &views[from],
                 move |this: &mut Self, _, event: &EditorViewEvent, cx| match *event {
                     EditorViewEvent::Scrolled { top } => this.follow(to, top, cx),
+                    // A side's change bar is the host's to act on; it doesn't move the other side.
+                    EditorViewEvent::ChangeBarClicked { .. } => {}
                 },
             ));
         }
