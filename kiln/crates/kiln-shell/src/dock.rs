@@ -18,7 +18,10 @@
 //! that drags its size, between [`MIN_DOCK_WIDTH`] (or
 //! [`MIN_DOCK_HEIGHT`] at the bottom) and what leaves the centre
 //! [`MIN_PANE_WIDTH`] (or [`MIN_PANE_HEIGHT`]); pressed twice, it puts back
-//! the size the dock was built with. A window too small for its size
+//! the size the dock was built with. A dock keeps a size for each axis,
+//! its width at a side and its height at the bottom, so
+//! [`DockState::set_position`] moving it between them finds each as it was
+//! last left. A window too small for its size
 //! draws it smaller, by layout: the dock's column shrinks to its least
 //! before the centre, given its own least ([`MIN_PANE_WIDTH`],
 //! [`MIN_PANE_HEIGHT`]) as the [`Shell`](crate::Shell) gives it, does. A
@@ -246,6 +249,9 @@ pub struct DrawnDock {
     column: ScrollHandle,
     /// The handle's cursor, if drawn.
     cursor: Rc<Cell<Option<CursorStyle>>>,
+    /// Whether the rail's buttons were drawn in the column's title row, as
+    /// a shown bottom dock's are, rather than beside or below it.
+    rail_in_title: Rc<Cell<bool>>,
 }
 
 impl DrawnDock {
@@ -256,8 +262,13 @@ impl DrawnDock {
         self.rail.bounds_for_item(ix)
     }
 
-    /// Where the rail was laid out.
+    /// Where the rail was laid out: at a side, the column of buttons on
+    /// the window's edge; at the bottom, the row of buttons, in the title
+    /// row while the dock shows.
     pub fn rail_bounds(&self) -> Option<Bounds<Pixels>> {
+        if self.rail_in_title.get() {
+            return self.column_bounds().map(|_| self.rail.bounds());
+        }
         let count = self.layout.children_count();
         self.layout.bounds_for_item(count.checked_sub(1)?)
     }
@@ -265,9 +276,17 @@ impl DrawnDock {
     /// Where the dock's column, its title row then its panel, was laid
     /// out, if it showed.
     pub fn column_bounds(&self) -> Option<Bounds<Pixels>> {
-        (self.layout.children_count() == 2)
+        // Beside or above the rail, unless the rail is in its title row.
+        let children = if self.rail_in_title.get() { 1 } else { 2 };
+        (self.layout.children_count() == children)
             .then(|| self.layout.bounds_for_item(0))
             .flatten()
+    }
+
+    /// Where the column's title row was laid out, if it showed.
+    pub fn title_bounds(&self) -> Option<Bounds<Pixels>> {
+        self.column_bounds()?;
+        self.column.bounds_for_item(0)
     }
 
     /// The icons the rail's buttons drew, top to bottom.
@@ -324,10 +343,12 @@ pub struct DockState {
     joined: HashSet<PanelId>,
     /// The rail's actions, with whether each is highlighted.
     actions: Vec<(RailAction, bool)>,
-    /// The panel's width, or its height at the bottom.
-    size: Pixels,
+    /// The panel's width at a side.
+    side_size: Pixels,
+    /// The panel's height at the bottom.
+    bottom_size: Pixels,
     /// The size it was built with, which a double-click on the edge puts
-    /// back.
+    /// back, at least the position's least.
     built: Pixels,
     /// Where the edge's drag started: the pointer, and the size drawn.
     press: Option<(Point<Pixels>, Pixels)>,
@@ -349,7 +370,8 @@ impl DockState {
             visible: true,
             joined: HashSet::new(),
             actions: Vec::new(),
-            size: px(240.),
+            side_size: px(240.),
+            bottom_size: px(240.),
             built: px(240.),
             press: None,
             shortcut_contexts: Vec::new(),
@@ -357,11 +379,13 @@ impl DockState {
         }
     }
 
-    /// Builds it with its panel `size` across, its width, or its height
-    /// in a bottom dock: the size a double-click on its edge puts back.
+    /// Builds it with its panel `size` across, its width at a side and its
+    /// height at the bottom, each at least its least: the size a
+    /// double-click on its edge puts back.
     pub fn size(mut self, size: Pixels) -> Self {
-        self.size = size.max(self.min_size());
-        self.built = self.size;
+        self.side_size = size.max(MIN_DOCK_WIDTH);
+        self.bottom_size = size.max(MIN_DOCK_HEIGHT);
+        self.built = size;
         self
     }
 
@@ -369,13 +393,34 @@ impl DockState {
     /// window too small for it draws it smaller. (Not `size()`, the
     /// builder's name.)
     pub fn current_size(&self) -> Pixels {
-        self.size
+        match self.position {
+            DockPosition::Bottom => self.bottom_size,
+            DockPosition::Left | DockPosition::Right => self.side_size,
+        }
+    }
+
+    /// The panel's width at a side, wherever the dock is.
+    pub fn side_size(&self) -> Pixels {
+        self.side_size
+    }
+
+    /// The panel's height at the bottom, wherever the dock is.
+    pub fn bottom_size(&self) -> Pixels {
+        self.bottom_size
     }
 
     /// Sets the panel's width, or its height in a bottom dock, at least
-    /// [`MIN_DOCK_WIDTH`] or [`MIN_DOCK_HEIGHT`].
+    /// [`MIN_DOCK_WIDTH`] or [`MIN_DOCK_HEIGHT`]. The other is left as it is.
     pub fn set_size(&mut self, size: Pixels) {
-        self.size = size.max(self.min_size());
+        let size = size.max(self.min_size());
+        *self.size_mut() = size;
+    }
+
+    fn size_mut(&mut self) -> &mut Pixels {
+        match self.position {
+            DockPosition::Bottom => &mut self.bottom_size,
+            DockPosition::Left | DockPosition::Right => &mut self.side_size,
+        }
     }
 
     /// The least size: [`MIN_DOCK_WIDTH`], or [`MIN_DOCK_HEIGHT`] at the
@@ -411,8 +456,11 @@ impl DockState {
                 along(centre.bounds.size) + column + grown - least
             }
             None => {
-                let rail = self.drawn.rail_bounds();
-                let rail = rail.map_or(RAIL_WIDTH, |rail| along(rail.size));
+                // A rail in the title row takes nothing beside the column.
+                let rail = match self.drawn.rail_in_title.get() {
+                    true => Pixels::ZERO,
+                    false => (self.drawn.rail_bounds()).map_or(RAIL_WIDTH, |rail| along(rail.size)),
+                };
                 along(viewport) - rail - least
             }
         };
@@ -443,6 +491,18 @@ impl DockState {
 
     pub fn position(&self) -> DockPosition {
         self.position
+    }
+
+    /// Moves the dock to `position`'s edge: it draws there from the next
+    /// frame, a vertical rail at a side, its buttons in a row at the
+    /// bottom, at the size it last had there, keeping its panels, active
+    /// panel, visibility and rail actions. The host puts its view at that
+    /// position ([`Shell::set_dock`](crate::Shell::set_dock)).
+    pub fn set_position(&mut self, position: DockPosition) {
+        if position != self.position {
+            self.position = position;
+            self.press = None;
+        }
     }
 
     /// Adds `panel` at the end of the rail, or, if a panel with its id is
@@ -579,24 +639,41 @@ impl DockState {
     }
 
     /// The dock's state, for a saved layout: whether it shows, its active
-    /// panel, the panels that have joined the rail and its size.
+    /// panel, the panels that have joined the rail and its size, `"size"`
+    /// at its position, `"side_size"` and `"bottom_size"` at each.
     pub fn save(&self) -> Value {
+        let size = |size: Pixels| Value::from(f64::from(f32::from(size)));
         let ids = |ids: Vec<PanelId>| Value::from_iter(ids.into_iter().map(|id| id.0));
         Value::from_iter([
             ("visible", Value::from(self.visible)),
             ("active", self.active.map_or(Value::Null, |id| id.0.into())),
             ("joined", ids(self.joined())),
-            ("size", Value::from(f64::from(f32::from(self.size)))),
+            ("size", size(self.current_size())),
+            ("side_size", size(self.side_size)),
+            ("bottom_size", size(self.bottom_size)),
         ])
     }
 
     /// Puts back what [`DockState::save`] saved, as far as its panels are
     /// registered: whether it shows, its active panel (without focusing
-    /// it), the panels that had joined the rail and its size, at least the
-    /// least.
+    /// it), the panels that had joined the rail and its sizes, each at
+    /// least its least: `"side_size"` and `"bottom_size"`, else, saved
+    /// before a dock had both, `"size"` at its position.
     pub fn restore(&mut self, saved: &Value) {
-        if let Some(size) = saved.get("size").and_then(Value::as_f64) {
-            self.set_size(px(size as f32));
+        let size = |key| {
+            saved
+                .get(key)
+                .and_then(Value::as_f64)
+                .map(|size| px(size as f32))
+        };
+        if let Some(size) = size("size") {
+            self.set_size(size);
+        }
+        if let Some(size) = size("side_size") {
+            self.side_size = size.max(MIN_DOCK_WIDTH);
+        }
+        if let Some(size) = size("bottom_size") {
+            self.bottom_size = size.max(MIN_DOCK_HEIGHT);
         }
         let registered = |name: &str| {
             (self.panels.iter())
@@ -635,10 +712,11 @@ impl DockState {
     /// it replaces.
     fn press_edge(&mut self, event: &MouseDownEvent) {
         let from = if event.click_count == 2 {
-            self.size = self.built;
-            self.built
+            let built = self.built.max(self.min_size());
+            *self.size_mut() = built;
+            built
         } else {
-            self.drawn_size().unwrap_or(self.size)
+            self.drawn_size().unwrap_or(self.current_size())
         };
         self.press = Some((event.position, from));
     }
@@ -655,7 +733,7 @@ impl DockState {
             DockPosition::Bottom => at.y - to.y,
         };
         let max = self.max_size(window, cx);
-        self.size = (pressed + grown).min(max).max(self.min_size());
+        *self.size_mut() = (pressed + grown).min(max).max(self.min_size());
     }
 
     /// The handle on the column's inner edge, over its border and a
@@ -787,7 +865,7 @@ impl DockState {
         self.drawn.icons.borrow_mut().clear();
         self.drawn.highlighted.borrow_mut().clear();
         self.drawn.cursor.set(None);
-        let (size, min) = (self.size, self.min_size());
+        let (size, min) = (self.current_size(), self.min_size());
         let shown: Vec<_> = (0..self.panels.len())
             .filter(|&ix| self.on_rail(self.panels[ix].id(), cx))
             .collect();
@@ -817,12 +895,15 @@ impl DockState {
                 .child(title)
         };
         if self.position == DockPosition::Bottom {
-            // The rail's buttons in a row before the title, the panel below.
-            let rail_height = if buttons.is_empty() {
-                Pixels::ZERO
+            // The rail's buttons in a row before the title, the panel below;
+            // hidden, the buttons alone.
+            let row_height = if buttons.is_empty() && actions.is_empty() {
+                TAB_HEIGHT
             } else {
-                RAIL_WIDTH
+                // The buttons, then the row's bottom border.
+                RAIL_WIDTH + px(1.)
             };
+            self.drawn.rail_in_title.set(body.is_some());
             let rail = div()
                 .id("dock-bottom-rail")
                 .flex_none()
@@ -830,39 +911,49 @@ impl DockState {
                 .track_scroll(&self.drawn.rail)
                 .children(buttons)
                 .children(actions);
-            let column = body.map(|(view, title)| {
-                div()
-                    .id("dock-bottom-column")
-                    .relative()
-                    .w_full()
-                    .h(size)
-                    .flex_shrink(1.)
-                    .min_h(min)
-                    .flex()
-                    .flex_col()
-                    .border_t_1()
-                    .border_color(ui.border)
-                    .track_scroll(&self.drawn.column)
-                    .child(title_row(title))
-                    .child(div().flex_1().min_h_0().flex().child(view))
-                    .child(self.edge_handle(cx))
-            });
-            let shown = column.is_some();
-            return div()
+            let dock = div()
                 .id("dock-bottom")
                 .on_drag_move(self.on_edge_drag(cx))
                 .w_full()
-                .map(|dock| match shown {
-                    true => dock.flex_shrink(1.).min_h(min + rail_height),
-                    false => dock.flex_none(),
-                })
                 .flex()
                 .flex_col()
-                .track_scroll(&self.drawn.layout)
-                .children(column)
+                .track_scroll(&self.drawn.layout);
+            let Some((view, title)) = body else {
+                return dock.flex_none().child(rail).into_any_element();
+            };
+            let title = div()
+                .flex_none()
+                .flex()
+                .items_center()
+                .h(row_height)
+                .bg(ui.panel_background)
+                .border_b_1()
+                .border_color(ui.border)
+                .text_color(ui.muted_text)
                 .child(rail)
+                .child(div().px_3().child(title));
+            let column = div()
+                .id("dock-bottom-column")
+                .relative()
+                .w_full()
+                .h(size)
+                .flex_shrink(1.)
+                .min_h(min)
+                .flex()
+                .flex_col()
+                .border_t_1()
+                .border_color(ui.border)
+                .track_scroll(&self.drawn.column)
+                .child(title)
+                .child(div().flex_1().min_h_0().flex().child(view))
+                .child(self.edge_handle(cx));
+            return dock
+                .flex_shrink(1.)
+                .min_h(min)
+                .child(column)
                 .into_any_element();
         }
+        self.drawn.rail_in_title.set(false);
         let left = self.position == DockPosition::Left;
         if !actions.is_empty() {
             // The gap that pushes the actions down is an item of its own.

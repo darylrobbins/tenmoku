@@ -27,7 +27,8 @@ use gpui::{
 /// The key context the panel's element sets.
 pub(crate) const KEY_CONTEXT: &str = "project_panel";
 
-/// The dock's width, fixed until docks can be resized.
+/// The sidebar's width as built. Its panels fill its column, however
+/// wide it's dragged.
 pub const PANEL_WIDTH: gpui::Pixels = px(240.);
 
 /// What the panel asks of the workbench.
@@ -616,9 +617,10 @@ impl Render for ProjectPanel {
             .track_focus(&self.focus)
             .key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::on_run_command))
-            .w(PANEL_WIDTH)
+            .debug_selector(|| "sidebar-panel".into())
+            .flex_1()
+            .min_w_0()
             .h_full()
-            .flex_none()
             .flex()
             .flex_col()
             .border_l_1()

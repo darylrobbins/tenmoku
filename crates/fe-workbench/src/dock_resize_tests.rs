@@ -128,11 +128,11 @@ fn dragged_sizes_are_kept_in_the_layout(cx: &mut TestAppContext) {
     let entry = first.read_with(cx, |workbench, cx| workbench.layout_entry(cx));
     assert_eq!(entry["dock"]["size"].as_f64(), Some(320.));
     assert_eq!(entry["terminal_dock"]["size"].as_f64(), Some(400.));
-    // Only the size: the terminal's dock comes back hidden.
-    assert_eq!(
-        entry["terminal_dock"].as_object().map(|dock| dock.len()),
-        Some(1)
-    );
+    // Only the sizes, at its position and at each: the terminal's dock
+    // comes back hidden.
+    let mut keys: Vec<_> = (entry["terminal_dock"].as_object().unwrap().keys()).collect();
+    keys.sort();
+    assert_eq!(keys, ["bottom_size", "side_size", "size"]);
 
     let (second, cx, _dir) = opened(&mut app);
     second.update_in(cx, |workbench, window, cx| {

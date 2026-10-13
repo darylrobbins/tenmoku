@@ -42,7 +42,7 @@ use gpui::{
     Window, div, prelude::FluentBuilder as _, px, uniform_list,
 };
 
-use crate::{DockPanel, PANEL_WIDTH, Workbench};
+use crate::{DockPanel, Workbench};
 
 /// The key context the panel's element sets.
 pub(crate) const KEY_CONTEXT: &str = "ReferencesPanel";
@@ -507,9 +507,10 @@ impl Render for ReferencesPanel {
             .track_focus(&self.focus)
             .key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::on_run_command))
-            .w(PANEL_WIDTH)
+            .debug_selector(|| "sidebar-panel".into())
+            .flex_1()
+            .min_w_0()
             .h_full()
-            .flex_none()
             .flex()
             .flex_col()
             .border_l_1()

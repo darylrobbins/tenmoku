@@ -57,7 +57,7 @@ use gpui::{
 };
 
 use crate::{
-    PANEL_WIDTH, Pane,
+    Pane,
     dock::{self, DockOp},
     pane::Reveal,
     picker::{self, PaletteOp},
@@ -1329,9 +1329,10 @@ impl Render for SearchPanel {
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus)
             .on_action(cx.listener(Self::on_run_command))
-            .w(PANEL_WIDTH)
+            .debug_selector(|| "sidebar-panel".into())
+            .flex_1()
+            .min_w_0()
             .h_full()
-            .flex_none()
             .flex()
             .flex_col()
             .border_l_1()

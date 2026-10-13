@@ -24,12 +24,11 @@ use fe_gpui::{EditorView, commands::RunCommand};
 use fe_syntax::{Language, MAX_OUTLINE_ITEMS, NoOutline, Outline, Syntax};
 use fe_ui::{TreeRow, UiTheme};
 use gpui::{
-    App, AppContext as _, Context, Entity, EntityId, Focusable as _, Global, IntoElement,
-    ParentElement as _, Render, Styled as _, Subscription, Task, UniformListScrollHandle,
-    WeakEntity, Window, div, prelude::FluentBuilder as _, px, uniform_list,
+    App, AppContext as _, Context, Entity, EntityId, Focusable as _, Global,
+    InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _, Subscription,
+    Task, UniformListScrollHandle, WeakEntity, Window, div, prelude::FluentBuilder as _, px,
+    uniform_list,
 };
-
-use crate::PANEL_WIDTH;
 
 /// What the panel says in place of, or under, the outline.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -344,9 +343,10 @@ impl Render for OutlinePanel {
                 .child(text)
         };
         div()
-            .w(PANEL_WIDTH)
+            .debug_selector(|| "sidebar-panel".into())
+            .flex_1()
+            .min_w_0()
             .h_full()
-            .flex_none()
             .flex()
             .flex_col()
             .border_l_1()

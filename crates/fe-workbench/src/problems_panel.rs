@@ -47,7 +47,7 @@ use gpui::{
     WeakEntity, Window, div, prelude::FluentBuilder as _, px, uniform_list,
 };
 
-use crate::{PANEL_WIDTH, Pane, StatusItem, StatusSide, Workbench, pane::Reveal};
+use crate::{Pane, StatusItem, StatusSide, Workbench, pane::Reveal};
 
 /// The key context the panel's element sets.
 pub(crate) const KEY_CONTEXT: &str = "problems_panel";
@@ -486,9 +486,10 @@ impl Render for ProblemsPanel {
         div()
             .track_focus(&self.focus)
             .key_context(self.key_context(cx))
-            .w(PANEL_WIDTH)
+            .debug_selector(|| "sidebar-panel".into())
+            .flex_1()
+            .min_w_0()
             .h_full()
-            .flex_none()
             .flex()
             .flex_col()
             .border_l_1()

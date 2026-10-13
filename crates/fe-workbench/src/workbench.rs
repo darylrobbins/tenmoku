@@ -14,9 +14,9 @@ use fe_editor::EditorModel;
 use fe_gpui::{EditorSettings, EditorTheme, EditorView, SettingsEvent, commands::RunCommand};
 use fe_ui::{ROW_HEIGHT, UiTheme};
 use gpui::{
-    App, AppContext as _, Context, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle,
-    Focusable, InteractiveElement as _, IntoElement, ParentElement as _, PromptButton, PromptLevel,
-    Render, Styled as _, Subscription, WeakEntity, Window, WindowBounds, div, px,
+    AnyView, App, AppContext as _, Context, Entity, EntityId, EventEmitter, ExternalPaths,
+    FocusHandle, Focusable, InteractiveElement as _, IntoElement, ParentElement as _, PromptButton,
+    PromptLevel, Render, Styled as _, Subscription, WeakEntity, Window, WindowBounds, div, px,
 };
 
 use self::recent_picker::{RecentOp, RecentPicker};
@@ -26,7 +26,7 @@ use crate::{
     config_problems::{self, ConfigProblemsPicker},
     disk_sync::DiskSync,
     dock::{self, DockEvent, DockOp, ProblemsOp, ProblemsPanel},
-    dock_layout::{self, DockSizeOp},
+    dock_layout::{self, DockLayoutOp},
     find_bar::FindOp,
     git::GitState,
     go_to_line::GoToLine,
@@ -167,7 +167,7 @@ const TERMINAL_BUTTON: &str = "terminal";
 pub struct Workbench {
     panel: Entity<ProjectPanel>,
     dock: Entity<Dock>,
-    /// The bottom dock, which shows the terminal, hidden at launch.
+    /// The terminal's dock, at the bottom unless moved, hidden at launch.
     terminal_dock: Entity<kiln_shell::Dock>,
     terminal: Entity<TerminalPanel>,
     /// To the terminal's shell exiting, to the bottom dock hiding it with
@@ -883,7 +883,7 @@ impl Workbench {
         &self.panel
     }
 
-    /// The bottom dock, which shows the terminal.
+    /// The terminal's dock, at the bottom unless moved.
     pub fn terminal_dock(&self) -> &Entity<kiln_shell::Dock> {
         &self.terminal_dock
     }
@@ -892,7 +892,8 @@ impl Workbench {
         &self.terminal
     }
 
-    /// The right dock, which shows the project panel, search or the outline.
+    /// The sidebar's dock, on the right unless moved, which shows the
+    /// project panel, search, the outline and the rest.
     pub fn dock(&self) -> &Entity<Dock> {
         &self.dock
     }
@@ -1026,19 +1027,89 @@ impl Workbench {
     }
 
     /// `dock.grow` or `dock.shrink`: resizes the terminal's dock while the
-    /// terminal has focus, else the sidebar.
-    fn run_dock_size_op(&mut self, op: DockSizeOp, window: &mut Window, cx: &mut Context<Self>) {
+    /// terminal has focus, else the sidebar. The `*move*` commands move
+    /// the terminal's dock or the sidebar.
+    fn run_dock_layout_op(
+        &mut self,
+        op: DockLayoutOp,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let by = match op {
+            DockLayoutOp::Grow => dock_layout::STEP,
+            DockLayoutOp::Shrink => -dock_layout::STEP,
+            DockLayoutOp::MoveTerminal(to) => return self.move_terminal(to, cx),
+            DockLayoutOp::MoveSidebar(to) => return self.move_sidebar(to, cx),
+        };
         if self.terminal.read(cx).is_focused(window, cx) {
             self.terminal_dock.update(cx, |dock, cx| {
-                dock_layout::resize(dock.dock_mut(), op, window, cx);
+                dock_layout::resize(dock.dock_mut(), by, window, cx);
                 cx.notify();
             });
         } else {
             self.dock.update(cx, |dock, cx| {
-                dock_layout::resize(dock.dock_mut(), op, window, cx);
+                dock_layout::resize(dock.dock_mut(), by, window, cx);
                 cx.notify();
             });
         }
+    }
+
+    /// The sidebar's position and the terminal dock's.
+    fn dock_positions(&self, cx: &App) -> (DockPosition, DockPosition) {
+        let sidebar = self.dock.read(cx).state().position();
+        (sidebar, self.terminal_dock.read(cx).dock().position())
+    }
+
+    /// Moves the terminal's dock to `to`, keeping its visibility, its
+    /// sessions and focus, the sidebar giving way if there
+    /// ([`dock_layout::displaced`]).
+    fn move_terminal(&mut self, to: DockPosition, cx: &mut Context<Self>) {
+        let (sidebar, terminal) = self.dock_positions(cx);
+        let sidebar = dock_layout::displaced(terminal, to, sidebar);
+        self.place_docks(sidebar, to, cx);
+    }
+
+    /// Moves the sidebar to the side `to`, the terminal's dock giving way
+    /// if there ([`dock_layout::displaced`]).
+    fn move_sidebar(&mut self, to: DockPosition, cx: &mut Context<Self>) {
+        let (sidebar, terminal) = self.dock_positions(cx);
+        let terminal = dock_layout::displaced(sidebar, to, terminal);
+        self.place_docks(to, terminal, cx);
+    }
+
+    /// Puts the sidebar at `sidebar` and the terminal's dock at `terminal`,
+    /// two edges, the sidebar's a side: each dock's state moves, and its
+    /// view moves in the shell.
+    fn place_docks(
+        &mut self,
+        sidebar: DockPosition,
+        terminal: DockPosition,
+        cx: &mut Context<Self>,
+    ) {
+        debug_assert!(sidebar != terminal && sidebar != DockPosition::Bottom);
+        let (was_sidebar, was_terminal) = self.dock_positions(cx);
+        if (was_sidebar, was_terminal) == (sidebar, terminal) {
+            return;
+        }
+        self.dock.update(cx, |dock, cx| {
+            dock.dock_mut().set_position(sidebar);
+            cx.notify();
+        });
+        self.terminal_dock.update(cx, |dock, cx| {
+            dock.dock_mut().set_position(terminal);
+            cx.notify();
+        });
+        let views: [(DockPosition, AnyView); 2] = [
+            (sidebar, self.dock.clone().into()),
+            (terminal, self.terminal_dock.clone().into()),
+        ];
+        self.shell.update(cx, |shell, cx| {
+            shell.set_dock(was_sidebar, None, cx);
+            shell.set_dock(was_terminal, None, cx);
+            for (position, view) in views {
+                shell.set_dock(position, Some(view), cx);
+            }
+        });
     }
 
     /// Opens a pane in `direction` of the active one and activates it. If
@@ -1310,15 +1381,21 @@ impl Workbench {
     }
 
     /// The window's layout, as saved: its bounds, its panes and their
-    /// files, the dock, the terminal's dock's size and whether the
-    /// breadcrumbs show.
+    /// files, the docks' positions, the dock, the terminal's dock's sizes
+    /// and whether the breadcrumbs show.
     pub fn layout_entry(&self, cx: &App) -> Value {
-        let terminal_dock = self.terminal_dock.read(cx).dock().current_size();
-        let terminal_dock = Value::from(f64::from(f32::from(terminal_dock)));
+        let terminal_dock = self.terminal_dock.read(cx).dock().save();
+        let terminal_dock = terminal_dock_sizes(&terminal_dock);
+        let (sidebar, terminal) = self.dock_positions(cx);
+        let docks = Value::from_iter([
+            ("sidebar", dock_layout::position_name(sidebar)),
+            ("terminal", dock_layout::position_name(terminal)),
+        ]);
         let mut entry = Value::from_iter([
             ("panes", layout::save_panes(&self.panes, &self.active, cx)),
+            ("docks", docks),
             ("dock", self.dock.read(cx).state().save()),
-            ("terminal_dock", Value::from_iter([("size", terminal_dock)])),
+            ("terminal_dock", terminal_dock),
             ("breadcrumbs", Value::from(self.breadcrumbs)),
         ]);
         if let (Some(bounds), Some(object)) = (self.bounds, entry.as_object_mut()) {
@@ -1327,20 +1404,31 @@ impl Workbench {
         entry
     }
 
-    /// Puts the window back as `entry` saved it: the dock, the terminal's
-    /// dock's size (it stays hidden, with no session) and the breadcrumbs
-    /// at once; the panes, split as they were, with their
+    /// Puts the window back as `entry` saved it: the docks' positions, if
+    /// two edges with the sidebar at a side, then the dock and the
+    /// terminal's dock's sizes (it stays hidden, with no session) and the
+    /// breadcrumbs at once; the panes, split as they were, with their
     /// files read in the background, the views of one file sharing its
     /// buffer, each with its caret. A file that's gone is left out, and a
     /// pane left empty closes, unless it's the only one.
     pub fn restore_layout(&mut self, entry: &Value, window: &mut Window, cx: &mut Context<Self>) {
+        let position = |dock| {
+            let name = entry.get("docks")?.get(dock)?.as_str()?;
+            dock_layout::position_named(name)
+        };
+        if let (Some(sidebar), Some(terminal)) = (position("sidebar"), position("terminal"))
+            && sidebar != terminal
+            && sidebar != DockPosition::Bottom
+        {
+            self.place_docks(sidebar, terminal, cx);
+        }
         if let Some(saved) = entry.get("dock") {
             self.dock.update(cx, |dock, cx| dock.restore(saved, cx));
         }
-        let terminal_dock = entry.get("terminal_dock").and_then(|dock| dock.get("size"));
-        if let Some(size) = terminal_dock.and_then(Value::as_f64) {
+        if let Some(saved) = entry.get("terminal_dock") {
+            let sizes = terminal_dock_sizes(saved);
             self.terminal_dock.update(cx, |dock, cx| {
-                dock.dock_mut().set_size(px(size as f32));
+                dock.dock_mut().restore(&sizes);
                 cx.notify();
             });
         }
@@ -1930,7 +2018,7 @@ impl Workbench {
                 return self.run_pane_op(op, window, cx);
             }
             if let Some(op) = dock_layout::op(run, cx) {
-                return self.run_dock_size_op(op, window, cx);
+                return self.run_dock_layout_op(op, window, cx);
             }
             if project_panel::op(run, cx) == Some(PanelOp::RevealActive) {
                 return self.reveal_active(cx);
@@ -2077,6 +2165,17 @@ fn terminal_dir(launch: &Launch) -> PathBuf {
     (launch.root.clone().or_else(file_dir).or_else(home)).unwrap_or_else(|| PathBuf::from("/"))
 }
 
+/// The terminal's dock's sizes in its saved state ([`DockState::save`]),
+/// and nothing else: the dock comes back hidden, with no session.
+fn terminal_dock_sizes(saved: &Value) -> Value {
+    let size = |key: &'static str| Some((key, saved.get(key)?.clone()));
+    Value::from_iter(
+        ["size", "side_size", "bottom_size"]
+            .into_iter()
+            .filter_map(size),
+    )
+}
+
 /// The prompt shown when the open panel fails with `error`: see
 /// [`kiln_platform::dialogs::open_panel_failed`].
 pub(crate) fn open_panel_failed(error: &str) -> (&'static str, String) {
@@ -2123,6 +2222,10 @@ mod layout_tests;
 #[cfg(test)]
 #[path = "dock_resize_tests.rs"]
 mod dock_resize_tests;
+
+#[cfg(test)]
+#[path = "dock_position_tests.rs"]
+mod dock_position_tests;
 
 #[cfg(test)]
 #[path = "windows_tests.rs"]

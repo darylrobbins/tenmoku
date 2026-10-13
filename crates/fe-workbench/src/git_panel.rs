@@ -28,7 +28,7 @@ use gpui::{
     WeakEntity, Window, div, prelude::FluentBuilder as _, px, uniform_list,
 };
 
-use crate::{PANEL_WIDTH, git::GitState};
+use crate::git::GitState;
 
 /// The key context the panel's element sets.
 pub(crate) const KEY_CONTEXT: &str = "git_panel";
@@ -453,9 +453,10 @@ impl Render for GitPanel {
             .track_focus(&self.focus)
             .key_context(KEY_CONTEXT)
             .on_key_down(cx.listener(Self::on_key_down))
-            .w(PANEL_WIDTH)
+            .debug_selector(|| "sidebar-panel".into())
+            .flex_1()
+            .min_w_0()
             .h_full()
-            .flex_none()
             .flex()
             .flex_col()
             .border_l_1()
