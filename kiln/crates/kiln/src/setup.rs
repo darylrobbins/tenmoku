@@ -56,6 +56,8 @@ use kiln_ui::{Assets, TextField, Theme, ThemeMode, set_themes};
 
 use crate::config::UserTheme;
 
+mod defaults;
+
 /// GPUI's application for this platform, with kiln-ui's icons and other
 /// assets installed. GPUI's Linux backends (X11 and Wayland) come with
 /// kiln, so an app needs no GPUI platform dependency of its own.
@@ -111,6 +113,9 @@ pub struct Config {
     theme_extensions: &'static [&'static str],
     batches: Option<Batches>,
     log_target: Option<&'static str>,
+    default_keys: bool,
+    default_menus: bool,
+    fail_fast: bool,
 }
 
 impl Config {
@@ -136,6 +141,9 @@ impl Config {
             theme_extensions: &[],
             batches: None,
             log_target: None,
+            default_keys: false,
+            default_menus: false,
+            fail_fast: false,
         }
     }
 
@@ -293,19 +301,14 @@ impl Config {
     }
 
     /// The keymap as on `os`, its bindings checked against `catalog` if
-    /// given: the app's, then the user's file over it.
+    /// given: kiln's bundled keys if [`Config::default_keys`] is on, the
+    /// app's over them, then the user's file over both.
     pub fn keymap_for(
         &self,
         os: Os,
         catalog: Option<&dyn CommandCatalog>,
     ) -> (Keymap, Vec<Diagnostic>) {
-        let mut diagnostics = Vec::new();
-        let mut layers = Vec::new();
-        if let Some(source) = &self.keymap {
-            let (layer, found) = KeymapLayer::parse_for(&source.path, &source.text, catalog, os);
-            layers.extend(layer);
-            diagnostics.extend(found);
-        }
+        let (mut layers, mut diagnostics) = self.own_keymap(os, catalog);
         if let Some(path) = &self.user_keymap {
             let (layer, found) = load_keymap_layer(path, catalog);
             layers.extend(layer);
@@ -314,15 +317,17 @@ impl Config {
         (Keymap::from_layers(layers), diagnostics)
     }
 
-    /// The keymap store [`init`] reloads: the app's keymap parsed for `os`,
-    /// then the user's file.
-    fn keymap_store(&self, os: Os, catalog: Rc<dyn CommandCatalog>) -> KeymapStore {
-        let (layer, diagnostics) = match &self.keymap {
-            Some(source) => KeymapLayer::parse_for(&source.path, &source.text, Some(&*catalog), os),
-            None => (None, Vec::new()),
-        };
-        KeymapStore::with_default(
-            layer,
+    /// The keymap store [`init`] reloads: the `layers` the app ships, as
+    /// [`Config::own_keymap`] parsed them with their `diagnostics`, then
+    /// the user's file.
+    fn keymap_store(
+        &self,
+        layers: Vec<KeymapLayer>,
+        diagnostics: Vec<Diagnostic>,
+        catalog: Rc<dyn CommandCatalog>,
+    ) -> KeymapStore {
+        KeymapStore::with_defaults(
+            layers,
             diagnostics,
             self.user_keymap.clone(),
             Some(Box::new(catalog)),
@@ -330,14 +335,16 @@ impl Config {
     }
 
     /// The menu bar as on `os`, its items checked against `catalog` if
-    /// given, their shortcuts resolved in [`Config::menu_shortcut_context`];
-    /// empty without a table, or with errors in it.
+    /// given, their shortcuts resolved in [`Config::menu_shortcut_context`]:
+    /// the app's table, or kiln's bundled menus if [`Config::default_menus`]
+    /// is on and the app has none. Empty without a table, or with errors
+    /// in it.
     pub fn menu_bar_for(
         &self,
         os: Os,
         catalog: Option<&dyn CommandCatalog>,
     ) -> (MenuBar, Vec<Diagnostic>) {
-        let Some(source) = &self.menus else {
+        let Some((path, text)) = self.menu_source() else {
             return (MenuBar::default(), Vec::new());
         };
         let frames: Vec<&str> = self
@@ -345,9 +352,12 @@ impl Config {
             .iter()
             .map(String::as_str)
             .collect();
-        let (bar, diagnostics) =
-            MenuBar::parse_in(&source.path, &source.text, catalog, os, &frames);
-        (bar.unwrap_or_default(), diagnostics)
+        let (bar, diagnostics) = MenuBar::parse_in(path, &text, catalog, os, &frames);
+        let mut bar = bar.unwrap_or_default();
+        if self.menus.is_none() {
+            defaults::name_app_menu(&mut bar, &self.app_name);
+        }
+        (bar, diagnostics)
     }
 }
 
@@ -372,10 +382,11 @@ impl Global for Watching {}
 ///    `window.close` and the rest) as typed actions too: [`crate::app`],
 ///    [`crate::window`]; and the shell's, such as `menu_bar.open`;
 /// 2. the app's own commands, from [`Config::commands`];
-/// 3. the keymap and menus, parsed for this platform and checked against
-///    every command registered so far ([`catalog`]: the shell's picker
-///    commands too), and the app's own catalogs ([`Config::catalog`]),
-///    then installed;
+/// 3. the keymap and menus, kiln's bundled ones too if
+///    [`Config::default_keys`] and [`Config::default_menus`] are on,
+///    parsed for this platform and checked against every command
+///    registered so far ([`catalog`]: the shell's picker commands too),
+///    and the app's own catalogs ([`Config::catalog`]), then installed;
 /// 4. in-window prompts where the platform has no native ones, and
 ///    `TextField`'s editing keys for this platform;
 /// 5. kiln's dark and light themes, in [`Config::theme_mode`];
@@ -386,6 +397,11 @@ impl Global for Watching {}
 /// it has also logged: errors and warnings at those levels. Those the
 /// user's files have later are logged as they change, and
 /// [`kiln_platform::config::diagnostics`] has them all.
+///
+/// # Panics
+///
+/// With [`Config::fail_fast`] on, if the keymap or menus the app ships
+/// have any diagnostic.
 pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
     commands::init(cx, config.app_name.clone());
     crate::app_commands::init(cx);
@@ -402,10 +418,12 @@ pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
     let mut catalogs = vec![catalog(cx)];
     catalogs.append(&mut config.catalogs);
     let catalog: Rc<dyn CommandCatalog> = Rc::new(Catalogs(catalogs));
-    let keymap = config.keymap_store(os, catalog.clone());
+    let (layers, keymap_diagnostics) = config.own_keymap(os, Some(&*catalog));
+    let (menu_bar, menu_diagnostics) = config.menu_bar_for(os, Some(&*catalog));
+    config.check_fail_fast(&[keymap_diagnostics.as_slice(), &menu_diagnostics].concat());
+    let keymap = config.keymap_store(layers, keymap_diagnostics, catalog.clone());
     let mut diagnostics = keymap.diagnostics().to_vec();
     keys::init(cx, keymap.keymap().clone());
-    let (menu_bar, menu_diagnostics) = config.menu_bar_for(os, Some(&*catalog));
     diagnostics.extend(menu_diagnostics);
     menus::install(cx, menu_bar);
 

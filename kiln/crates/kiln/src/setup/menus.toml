@@ -1,0 +1,59 @@
+# kiln's own menus, installed when `Config::default_menus` is on and the
+# app gives no menu table: one table for every platform, naming only
+# kiln's commands. `{app}` is the app's name, put in before it's parsed.
+# The first menu is the app menu on macOS: it's named for the app once
+# parsed, as an app may share its name with another of these menus.
+
+[[menus]]
+name = "App"
+
+[[menus.items]]
+title = "Hide {app}"
+command = "app.hide"
+platform = "macos"
+
+[[menus.items]]
+title = "Hide Others"
+command = "app.hide_others"
+platform = "macos"
+
+[[menus.items]]
+title = "Show All"
+command = "app.show_all"
+platform = "macos"
+
+[[menus.items]]
+separator = true
+
+[[menus.items]]
+title = "Quit {app}"
+command = "app.quit"
+
+[[menus]]
+name = "View"
+
+[[menus.items]]
+title = "Command Palette"
+command = "command_palette.toggle"
+
+[[menus.items]]
+title = "Toggle Full Screen"
+command = "window.toggle_fullscreen"
+
+[[menus]]
+name = "Window"
+
+[[menus.items]]
+title = "Minimize"
+command = "window.minimize"
+
+[[menus.items]]
+title = "Zoom"
+command = "window.zoom"
+
+[[menus.items]]
+separator = true
+
+[[menus.items]]
+title = "Close Window"
+command = "window.close"

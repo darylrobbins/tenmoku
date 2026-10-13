@@ -51,13 +51,14 @@ pub struct KeymapEvent {
     pub diagnostics: Vec<Diagnostic>,
 }
 
-/// The effective keymap: the built-in defaults, then the user's file.
+/// The effective keymap: the built-in defaults, in one or more layers,
+/// then the user's file.
 ///
 /// A file with an error keeps its layer's last good version, which is empty
 /// until it has loaded cleanly once, so a typo never drops the user's
 /// bindings. Warnings, such as an unknown command, don't reject a file.
 pub struct KeymapStore {
-    default: KeymapLayer,
+    defaults: Vec<KeymapLayer>,
     default_diagnostics: Vec<Diagnostic>,
     user: Option<UserLayer>,
     catalog: Option<Box<dyn CommandCatalog>>,
@@ -111,6 +112,21 @@ impl KeymapStore {
         user: Option<PathBuf>,
         catalog: Option<Box<dyn CommandCatalog>>,
     ) -> Self {
+        let default = default.unwrap_or_default();
+        Self::with_defaults(vec![default], default_diagnostics, user, catalog)
+    }
+
+    /// [`KeymapStore::with_default`] over several default layers already
+    /// parsed, such as a framework's keymap and the app's over it: in
+    /// order, a later layer's binding winning over an earlier one's with
+    /// the same keys and context, then the user's file over them all.
+    /// `default_diagnostics` are all of theirs.
+    pub fn with_defaults(
+        defaults: Vec<KeymapLayer>,
+        default_diagnostics: Vec<Diagnostic>,
+        user: Option<PathBuf>,
+        catalog: Option<Box<dyn CommandCatalog>>,
+    ) -> Self {
         let user = user.map(|path| {
             let mut layer = UserLayer {
                 good: KeymapLayer {
@@ -124,7 +140,7 @@ impl KeymapStore {
             layer
         });
         let mut store = Self {
-            default: default.unwrap_or_default(),
+            defaults,
             default_diagnostics,
             user,
             catalog,
@@ -174,7 +190,7 @@ impl KeymapStore {
     /// The layers' good versions combined, and their diagnostics.
     fn effective(&self) -> (Arc<Keymap>, Vec<Diagnostic>) {
         let user = self.user.as_ref();
-        let layers = std::iter::once(&self.default).chain(user.map(|user| &user.good));
+        let layers = self.defaults.iter().chain(user.map(|user| &user.good));
         let keymap = Arc::new(Keymap::from_layers(layers));
         let diagnostics = self
             .default_diagnostics

@@ -1,0 +1,50 @@
+# kiln's own keys, laid under the app's keymap when `Config::default_keys`
+# is on: one file for every platform. `secondary` is cmd on macOS and ctrl
+# elsewhere. The app's keymap and the user's override these key by key.
+
+# kiln-shell's command palette, anywhere in the window.
+[[bindings]]
+keys = "secondary-shift-p"
+command = "command_palette.toggle"
+
+[[bindings]]
+keys = "secondary-q"
+command = "app.quit"
+
+# Opens the menu bar drawn in the window, as F10 does in GNOME and KDE
+# apps. macOS's menus are native.
+[[bindings]]
+keys = "f10"
+command = "menu_bar.open"
+platform = "!macos"
+
+# The keys of kiln-shell's picker, such as the palette's.
+[[bindings]]
+keys = "up"
+command = "picker.select_prev"
+context = "picker"
+
+[[bindings]]
+keys = "down"
+command = "picker.select_next"
+context = "picker"
+
+[[bindings]]
+keys = "enter"
+command = "picker.confirm"
+context = "picker"
+
+[[bindings]]
+keys = "escape"
+command = "picker.dismiss"
+context = "picker"
+
+[[bindings]]
+keys = "backspace"
+command = "text_input.backspace"
+context = "text_input"
+
+[[bindings]]
+keys = { macos = "alt-backspace", default = "ctrl-backspace" }
+command = "text_input.delete_word_left"
+context = "text_input"
