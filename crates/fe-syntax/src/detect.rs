@@ -15,6 +15,10 @@ const INTERPRETERS: &[(&str, &str)] = &[
     ("ksh", "bash"),
     ("node", "javascript"),
     ("nodejs", "javascript"),
+    ("ruby", "ruby"),
+    ("lua", "lua"),
+    ("php", "php"),
+    ("make", "make"),
 ];
 
 /// The language a `#!` line runs, if its interpreter is known and compiled in.
