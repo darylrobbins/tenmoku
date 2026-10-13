@@ -203,13 +203,7 @@ fn show_changes_lists_the_changed_files_sorted_with_their_status(cx: &mut TestAp
     let icons = dock.read_with(cx, |dock, _| dock.rail_icons());
     assert_eq!(
         icons,
-        [
-            Icon::Files,
-            Icon::Search,
-            Icon::ListTree,
-            Icon::GitBranch,
-            Icon::FileTerminal
-        ]
+        [Icon::Files, Icon::Search, Icon::ListTree, Icon::GitBranch]
     );
     let (outline, changes) = dock.read_with(cx, |dock, _| {
         let bounds = |panel| dock.rail_button_bounds(panel).expect("drawn");

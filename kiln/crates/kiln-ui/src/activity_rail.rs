@@ -24,7 +24,6 @@ type TooltipBuilder = Box<dyn Fn(&mut Window, &mut App) -> AnyView>;
 pub struct ActivityRail {
     id: ElementId,
     buttons: Vec<RailButton>,
-    footer: Vec<RailButton>,
     track: Option<ScrollHandle>,
 }
 
@@ -35,7 +34,6 @@ impl ActivityRail {
         Self {
             id: id.into(),
             buttons: Vec::new(),
-            footer: Vec::new(),
             track: None,
         }
     }
@@ -45,16 +43,8 @@ impl ActivityRail {
         self
     }
 
-    /// Buttons pinned to the rail's bottom, below `children`.
-    pub fn footer(mut self, buttons: impl IntoIterator<Item = RailButton>) -> Self {
-        self.footer.extend(buttons);
-        self
-    }
-
     /// Tracks each button's laid-out bounds
-    /// ([`ScrollHandle::bounds_for_item`]) in `handle`. With a footer, the
-    /// item after the children is the gap that pushes it down, then the
-    /// footer's buttons.
+    /// ([`ScrollHandle::bounds_for_item`]) in `handle`.
     pub fn track(mut self, handle: &ScrollHandle) -> Self {
         self.track = Some(handle.clone());
         self
@@ -87,12 +77,7 @@ impl RenderOnce for ActivityRail {
                     .flex_col()
                     .size_full()
                     .when_some(self.track, |buttons, track| buttons.track_scroll(&track))
-                    .children(self.buttons)
-                    .when(!self.footer.is_empty(), |buttons| {
-                        buttons
-                            .child(div().flex_1().min_h_0())
-                            .children(self.footer)
-                    }),
+                    .children(self.buttons),
             )
     }
 }

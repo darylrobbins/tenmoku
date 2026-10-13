@@ -31,9 +31,9 @@ use gpui::{
     Render, ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
     prelude::FluentBuilder as _, px,
 };
-use kiln_command::{CommandId, ContextFrame, ContextStack, Invocation, Source, Value};
+use kiln_command::{CommandId, ContextFrame, ContextStack, Value};
 use kiln_core::{shortcut_label, shortcuts};
-use kiln_platform::{command_actions::dispatch_invocation, keys};
+use kiln_platform::keys;
 use kiln_ui::{ActivityRail, Icon, RailButton, TAB_HEIGHT, Tooltip, UiTheme, ui_theme};
 
 /// A panel's identity among a dock's panels: `"project"`, `"search"`, …
@@ -141,20 +141,6 @@ impl<P: DockItem> PanelHandle for Panel<P> {
     }
 }
 
-/// A rail button that isn't one of the dock's panels: it runs `command`
-/// when clicked and leaves the dock as it is. On a side dock's rail it is
-/// pinned to the bottom, below the panel buttons; on a bottom dock's it
-/// follows them.
-#[derive(Clone, Debug)]
-pub struct RailAction {
-    pub id: &'static str,
-    pub icon: Icon,
-    /// Its tooltip's text.
-    pub title: SharedString,
-    /// The command a click runs, whose key the tooltip shows.
-    pub command: &'static str,
-}
-
 /// What the last frame drew of a dock: where its rail, its buttons and its
 /// column were laid out, the icons its buttons drew and the last tooltip
 /// built. Cloning it shares it, so a host can read it without the dock.
@@ -164,18 +150,14 @@ pub struct DrawnDock {
     rail: ScrollHandle,
     /// The dock's column, if shown, then the rail.
     layout: ScrollHandle,
-    /// The ids of the rail's drawn items, top to bottom, an action's by its
-    /// own; a side rail's gap above its actions has an empty one.
+    /// The ids of the buttons drawn, top to bottom.
     buttons: Rc<RefCell<Vec<PanelId>>>,
     icons: Rc<RefCell<Vec<Icon>>>,
-    /// The ids of the buttons drawn highlighted.
-    highlighted: Rc<RefCell<Vec<PanelId>>>,
     tooltip: Rc<RefCell<Option<String>>>,
 }
 
 impl DrawnDock {
-    /// Where `panel`'s rail button, or the [`RailAction`] of that id, was
-    /// laid out, if it was drawn.
+    /// Where `panel`'s rail button was laid out, if it was drawn.
     pub fn rail_button_bounds(&self, panel: PanelId) -> Option<Bounds<Pixels>> {
         let ix = self.buttons.borrow().iter().position(|id| *id == panel)?;
         self.rail.bounds_for_item(ix)
@@ -200,11 +182,6 @@ impl DrawnDock {
         self.icons.borrow().clone()
     }
 
-    /// The ids of the rail's buttons drawn highlighted, panels' and actions'.
-    pub fn rail_highlighted(&self) -> Vec<PanelId> {
-        self.highlighted.borrow().clone()
-    }
-
     /// The text of the last tooltip a rail button built.
     pub fn last_tooltip(&self) -> Option<String> {
         self.tooltip.borrow().clone()
@@ -221,8 +198,6 @@ pub struct DockState {
     /// Panels not always on the rail that have shown, which puts them on
     /// it.
     joined: HashSet<PanelId>,
-    /// The rail's actions, with whether each is highlighted.
-    actions: Vec<(RailAction, bool)>,
     /// The panel's width, or its height at the bottom.
     size: Pixels,
     /// The key contexts a rail button's tooltip looks its show command's
@@ -242,7 +217,6 @@ impl DockState {
             active: None,
             visible: true,
             joined: HashSet::new(),
-            actions: Vec::new(),
             size: px(240.),
             shortcut_contexts: Vec::new(),
             drawn: DrawnDock::default(),
@@ -283,27 +257,6 @@ impl DockState {
             None => self.panels.push(handle),
         }
         self.active.get_or_insert(id);
-    }
-
-    /// Adds `action` to the rail's actions, or, if one has its id, puts it
-    /// in that one's place, highlighted as that was.
-    pub fn add_action(&mut self, action: RailAction) {
-        match self
-            .actions
-            .iter_mut()
-            .find(|(have, _)| have.id == action.id)
-        {
-            Some((have, _)) => *have = action,
-            None => self.actions.push((action, false)),
-        }
-    }
-
-    /// Draws the action `id` highlighted, or not. The host calls it as what
-    /// the action's command toggles changes.
-    pub fn set_action_highlighted(&mut self, id: &str, highlighted: bool) {
-        if let Some((_, was)) = self.actions.iter_mut().find(|(action, _)| action.id == id) {
-            *was = highlighted;
-        }
     }
 
     /// The registered panel of type `P`, if any.
@@ -474,43 +427,12 @@ impl DockState {
         found.first().map(shortcut_label)
     }
 
-    /// `action`'s button: a click runs its command as a key would, from
-    /// the mouse.
-    fn action_button<V: DockView>(
-        &self,
-        ix: usize,
-        action: &RailAction,
-        highlighted: bool,
-        cx: &mut Context<V>,
-    ) -> RailButton {
-        self.drawn.buttons.borrow_mut().push(PanelId(action.id));
-        self.drawn.icons.borrow_mut().push(action.icon);
-        if highlighted {
-            self.drawn.highlighted.borrow_mut().push(PanelId(action.id));
-        }
-        let (title, command) = (action.title.clone(), action.command);
-        let contexts = self.shortcut_contexts.clone();
-        let last_tooltip = self.drawn.tooltip.clone();
-        RailButton::new(("dock-rail-action", ix), action.icon, &ui_theme(cx))
-            .highlighted(highlighted)
-            .on_click(move |_, window, cx| run_action(command, window, cx))
-            .tooltip(move |_, cx| {
-                let shortcut = Self::shortcut(&contexts, command, cx);
-                let tooltip = Tooltip::new(title.clone(), shortcut, &ui_theme(cx));
-                last_tooltip.replace(Some(tooltip.text()));
-                cx.new(|_| tooltip).into()
-            })
-    }
-
     fn rail_button<V: DockView>(&self, ix: usize, cx: &mut Context<V>) -> RailButton {
         let panel = &self.panels[ix];
         let (id, icon) = (panel.id(), panel.icon(cx));
         let (title, command) = (panel.title(cx), panel.show_command(cx));
         self.drawn.buttons.borrow_mut().push(id);
         self.drawn.icons.borrow_mut().push(icon);
-        if self.rail_highlighted() == Some(id) {
-            self.drawn.highlighted.borrow_mut().push(id);
-        }
         let contexts = self.shortcut_contexts.clone();
         let last_tooltip = self.drawn.tooltip.clone();
         RailButton::new(("dock-rail", ix), icon, &ui_theme(cx))
@@ -530,16 +452,12 @@ impl DockState {
     pub fn render<V: DockView>(&self, cx: &mut Context<V>) -> AnyElement {
         self.drawn.buttons.borrow_mut().clear();
         self.drawn.icons.borrow_mut().clear();
-        self.drawn.highlighted.borrow_mut().clear();
         let shown: Vec<_> = (0..self.panels.len())
             .filter(|&ix| self.on_rail(self.panels[ix].id(), cx))
             .collect();
         let buttons: Vec<_> = shown
             .into_iter()
             .map(|ix| self.rail_button(ix, cx))
-            .collect();
-        let actions: Vec<_> = (self.actions.iter().enumerate())
-            .map(|(ix, (action, highlighted))| self.action_button(ix, action, *highlighted, cx))
             .collect();
         let active = self.active.and_then(|id| self.handle(id));
         let body = active
@@ -566,8 +484,7 @@ impl DockState {
                 .flex_none()
                 .flex()
                 .track_scroll(&self.drawn.rail)
-                .children(buttons)
-                .children(actions);
+                .children(buttons);
             let column = body.map(|(view, title)| {
                 div()
                     .w_full()
@@ -592,16 +509,8 @@ impl DockState {
                 .into_any_element();
         }
         let left = self.position == DockPosition::Left;
-        if !actions.is_empty() {
-            // The gap that pushes the actions down is an item of its own.
-            self.drawn
-                .buttons
-                .borrow_mut()
-                .insert(buttons.len(), PanelId(""));
-        }
         let rail = ActivityRail::new("dock-rail", ui)
             .children(buttons)
-            .footer(actions)
             .track(&self.drawn.rail);
         let column = body.map(|(view, title)| {
             let title = title_row(title).map(|row| {
@@ -633,18 +542,6 @@ impl DockState {
             .children(column)
             .child(rail)
             .into_any_element()
-    }
-}
-
-/// Runs `command` for a clicked [`RailAction`], in the focused context.
-fn run_action(command: &str, window: &mut Window, cx: &mut App) {
-    let Ok(invocation) = Invocation::of(command) else {
-        return;
-    };
-    let context = keys::context_stack(&window.context_stack(), cx);
-    let invocation = invocation.source(Source::Mouse).context(context);
-    if let Err(error) = dispatch_invocation(invocation, window, cx) {
-        log::warn!("{error}");
     }
 }
 
@@ -698,18 +595,6 @@ impl Dock {
         let shown = self.state.show(panel, window, cx);
         cx.notify();
         shown
-    }
-
-    /// See [`DockState::add_action`].
-    pub fn add_action(&mut self, action: RailAction, cx: &mut Context<Self>) {
-        self.state.add_action(action);
-        cx.notify();
-    }
-
-    /// See [`DockState::set_action_highlighted`].
-    pub fn set_action_highlighted(&mut self, id: &str, highlighted: bool, cx: &mut Context<Self>) {
-        self.state.set_action_highlighted(id, highlighted);
-        cx.notify();
     }
 
     /// See [`DockState::toggle`].

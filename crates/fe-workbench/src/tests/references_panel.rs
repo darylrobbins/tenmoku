@@ -296,13 +296,7 @@ fn shift_f12_shows_the_panel(cx: &mut TestAppContext) {
         })
     };
     assert!(!dock.read_with(cx, |dock, _| dock.is_visible()));
-    let rail = [
-        Icon::Files,
-        Icon::Search,
-        Icon::ListTree,
-        Icon::GitBranch,
-        Icon::FileTerminal,
-    ];
+    let rail = [Icon::Files, Icon::Search, Icon::ListTree, Icon::GitBranch];
     let before = (rail.to_vec(), false);
     assert_eq!(tabs(cx), before, "no References tab yet");
 
@@ -317,8 +311,7 @@ fn shift_f12_shows_the_panel(cx: &mut TestAppContext) {
         header(&panel, cx).as_deref(),
         Some("References to `helper`")
     );
-    // References joins above the Terminal button.
-    let after = [&rail[..4], &[Icon::FileSymlink, Icon::FileTerminal]].concat();
+    let after = [rail.as_slice(), &[Icon::FileSymlink]].concat();
     assert_eq!(tabs(cx), (after, true));
 
     let focused = cx.update(|window, cx| panel.focus_handle(cx).is_focused(window));

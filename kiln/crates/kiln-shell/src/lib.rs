@@ -52,7 +52,7 @@ use kiln_core::{CatalogError, CommandCatalog};
 use kiln_platform::Capabilities;
 
 pub use close::{CloseKind, CloseRequest, Closing};
-pub use dock::{Dock, DockItem, DockPosition, DockState, DockView, PanelId, RailAction};
+pub use dock::{Dock, DockItem, DockPosition, DockState, DockView, PanelId};
 pub use item::{CloseAnswer, ItemCrumb, ItemHandle, ItemId, PaneItem};
 pub use menu_bar::MenuBarView;
 pub use modal::{ModalEvent, ModalId, ModalLayer, ModalView};

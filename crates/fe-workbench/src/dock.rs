@@ -359,24 +359,6 @@ impl Dock {
         cx.notify();
     }
 
-    /// Adds a rail action, pinned to the rail's bottom.
-    pub(crate) fn add_action(&mut self, action: kiln_shell::RailAction, cx: &mut Context<Self>) {
-        self.state.add_action(action);
-        cx.notify();
-    }
-
-    /// Draws the rail action `id` highlighted, or not, redrawing the rail
-    /// if that changes.
-    pub(crate) fn set_action_highlighted(
-        &mut self,
-        id: &str,
-        highlighted: bool,
-        cx: &mut Context<Self>,
-    ) {
-        self.state.set_action_highlighted(id, highlighted);
-        cx.notify();
-    }
-
     /// Whether a panel that isn't shown has focus.
     pub(crate) fn hidden_panel_focused(&self, window: &Window, cx: &App) -> bool {
         self.state.hidden_panel_focused(window, cx)
