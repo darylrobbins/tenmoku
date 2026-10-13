@@ -580,8 +580,9 @@ pub(crate) fn status_items(editor: &EditorView) -> Vec<StatusItem> {
         None => format!("Spaces: {}", model.tab_size()),
     };
     let language_command = Invocation::of("language.select").expect("a valid command ID");
+    let go_to_line_command = Invocation::of("go_to_line.toggle").expect("a valid command ID");
     let texts: [(SharedString, Option<Invocation>); 5] = [
-        (cursor.into(), None),
+        (cursor.into(), Some(go_to_line_command)),
         (indent.into(), None),
         (encoding.into(), None),
         (line_ending.into(), None),
@@ -590,12 +591,12 @@ pub(crate) fn status_items(editor: &EditorView) -> Vec<StatusItem> {
     let right = status::RIGHT
         .into_iter()
         .zip(texts)
-        .map(|((id, priority), (text, command))| StatusItem {
-            id: id.into(),
-            side: StatusSide::Right,
-            priority,
-            text,
-            command,
+        .map(|((id, priority), (text, command))| {
+            let item = StatusItem::new(id, StatusSide::Right, priority, text);
+            match command {
+                Some(command) => item.command(command),
+                None => item,
+            }
         });
     vim_mode
         .into_iter()

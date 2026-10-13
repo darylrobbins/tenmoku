@@ -43,6 +43,7 @@ mod search_panel_followups;
 mod splits;
 mod splits_followups;
 mod status_bar;
+mod status_bar_go_to_line;
 mod tabs;
 mod title_bar;
 mod toolbar_history;
