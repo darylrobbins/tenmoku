@@ -475,3 +475,219 @@ fn a_blocks_end_follows_edits_made_while_measuring() {
     let row = text.lines().position(|line| line == "eXfgh").unwrap() as u32;
     assert_eq!(vim.mark(']'), Some((row, 2)));
 }
+
+/// Runs `keys` on `state` in `model`, one committed invocation each (`Esc`
+/// leaving insert mode), as another view sharing the buffer would.
+fn dispatch(state: &mut crate::VimState, model: &mut fe_editor::EditorModel, keys: &[&str]) {
+    use fe_command::Invocation;
+    use fe_editor::commands::HeadlessHost;
+
+    use crate::{Registers, VimTarget, context, registry};
+
+    let (mut host, mut registers) = (HeadlessHost::new(), Registers::new());
+    for keys in keys {
+        let invocation = match *keys {
+            "<Esc>" => Invocation::of("vim.normal_mode").unwrap(),
+            keys => super::commit(keys),
+        };
+        let invocation = invocation.context(context(state));
+        let mut target = VimTarget {
+            model,
+            host: &mut host,
+            state,
+            registers: &mut registers,
+        };
+        registry().dispatch(&mut target, &invocation).unwrap();
+    }
+}
+
+/// What a clone of the state did: the state, `'[`, `']`, `'.` and `'^` as
+/// it left them, in the text as it was then.
+type Cloned = (crate::VimState, [Option<(u32, usize)>; 4]);
+
+/// `keys` from `cursor` in `text`, then `Esc`: as its first edit catches
+/// the model up (measuring text), a clone of the state ends the session
+/// too, in another view of the buffer, and runs `after` there before the
+/// outcome is published. Returns the editor, and the clone with its marks
+/// as `after` left them, the outcome yet to be adopted.
+fn closed_by_a_clone(
+    text: &str,
+    cursor: (u32, usize),
+    keys: &str,
+    after: &'static [&'static str],
+) -> (HeadlessVim, Cloned) {
+    use std::{cell::RefCell, rc::Rc};
+
+    use super::Measuring;
+
+    let mut vim = HeadlessVim::new(text, cursor);
+    vim.feed(keys).unwrap();
+    let cloned = Rc::new(RefCell::new(None));
+    let measuring = {
+        let mut clone = Some(vim.state().clone());
+        let mut split = vim.model().split();
+        split.set_cursor(vim.model().primary_selection().head());
+        let cloned = Rc::clone(&cloned);
+        Measuring::new(move |edited| {
+            let Some(mut clone) = clone.take_if(|_| edited) else {
+                return;
+            };
+            dispatch(&mut clone, &mut split, &["<Esc>"]);
+            dispatch(&mut clone, &mut split, after);
+            let snapshot = split.snapshot();
+            let marks = ['[', ']', '.', '^']
+                .map(|name| clone.mark(name).and_then(|mark| mark.get(snapshot)));
+            *cloned.borrow_mut() = Some((clone, marks));
+        })
+    };
+    vim.feed("<Esc>").unwrap();
+    drop(measuring);
+    let cloned = cloned
+        .borrow_mut()
+        .take()
+        .expect("the clone ended the session");
+    assert!(
+        cloned.0.closing.is_some(),
+        "the outcome was yet to be published"
+    );
+    (vim, cloned)
+}
+
+/// `'[`, `']`, `'.` and `'^` in `state`, in `vim`'s text.
+fn special(vim: &HeadlessVim, state: &crate::VimState) -> [Option<(u32, usize)>; 4] {
+    let snapshot = vim.model().snapshot();
+    ['[', ']', '.', '^'].map(|name| state.mark(name).and_then(|mark| mark.get(snapshot)))
+}
+
+#[test]
+fn a_clone_keeps_a_yank_made_while_its_session_closed() {
+    // The clone yanks after leaving the session, before the outcome is
+    // published: adopting it keeps the yank's `'[` and `']`, but takes the
+    // session's `'.` and `'^`, which a yank doesn't set (nvim's `3ix<Esc>`
+    // then `yiw`).
+    let (vim, (mut clone, yanked)) = closed_by_a_clone("ab\ncd", (0, 1), "3ix", &["yiw"]);
+    assert_eq!(yanked[..2], [Some((0, 0)), Some((0, 4))]);
+    crate::insert::adopt_closing(&mut clone);
+    let left = special(&vim, vim.state());
+    assert_eq!(left[2], Some((0, 3)));
+    assert_ne!(left[..2], yanked[..2]);
+    assert_eq!(
+        special(&vim, &clone),
+        [yanked[0], yanked[1], left[2], left[3]]
+    );
+}
+
+#[test]
+fn a_clone_keeps_one_end_set_while_its_session_closed() {
+    // `m[` sets `'[` alone: `']` is the session's.
+    let (vim, (mut clone, set)) = closed_by_a_clone("ab\ncd", (0, 1), "3ix", &["0", "m["]);
+    assert_eq!(set[0], Some((0, 0)));
+    crate::insert::adopt_closing(&mut clone);
+    let left = special(&vim, vim.state());
+    assert_eq!(special(&vim, &clone), [set[0], left[1], left[2], left[3]]);
+}
+
+#[test]
+fn the_rest_of_esc_doesnt_overwrite_a_clones_newer_marks() {
+    // `Esc` takes the unused indentation out of the last copy's row after
+    // the clone yanked: that batch, made after the yank but older than it,
+    // leaves the yank's `'[` and `']`. `'.` is the session's: on that row,
+    // as `Esc` took indentation out there (nvim's `2Ax<CR><Esc>` on an
+    // indented row, then `yiw` on the first).
+    let (vim, (mut clone, yanked)) =
+        closed_by_a_clone("  one\nsix", (0, 4), "2Ax<CR>", &["gg", "yiw"]);
+    assert_eq!(vim.text(), "  onex\n  x\n\nsix");
+    assert_eq!(yanked[..2], [Some((0, 2)), Some((0, 5))]);
+    crate::insert::adopt_closing(&mut clone);
+    let left = special(&vim, vim.state());
+    assert_eq!(left[2], Some((2, 0)));
+    assert_eq!(
+        special(&vim, &clone),
+        [yanked[0], yanked[1], left[2], left[3]]
+    );
+}
+
+#[test]
+fn a_clone_keeps_a_change_made_while_its_session_closed() {
+    // A change sets `'[`, `']` and `'.`: only `'^` is the session's.
+    let (vim, (mut clone, changed)) = closed_by_a_clone("ab\ncd", (0, 1), "3ix", &["x"]);
+    crate::insert::adopt_closing(&mut clone);
+    let left = special(&vim, vim.state());
+    assert_eq!(
+        special(&vim, &clone),
+        [changed[0], changed[1], changed[2], left[3]]
+    );
+}
+
+/// `keys` from `cursor` in `text`, then `Esc`; then a clone of the state
+/// made before it leaves the session too, in another view, and adopts the
+/// outcome: the editor's `'[`, `']`, `'.` and `'^`, and the clone's.
+fn adopted(text: &str, cursor: (u32, usize), keys: &str) -> [[Option<(u32, usize)>; 4]; 2] {
+    let mut vim = HeadlessVim::new(text, cursor);
+    vim.feed(keys).unwrap();
+    let mut clone = vim.state().clone();
+    let mut split = vim.model().split();
+    split.set_cursor(vim.model().primary_selection().head());
+    vim.feed("<Esc>").unwrap();
+    dispatch(&mut clone, &mut split, &["<Esc>"]);
+    [special(&vim, vim.state()), special(&vim, &clone)]
+}
+
+#[test]
+fn a_clone_adopts_the_change_mark_of_a_count_or_a_block() {
+    // `'.` where the last copy or the block's rows put it, as nvim's (the
+    // corpus' `count_insert_change` and `block_I_change`), in the
+    // clone that adopts the session as in the editor that ended it.
+    let [ended, clone] = adopted(TEXT, (1, 2), "3ixy");
+    assert_eq!(ended[2], Some((1, 6)));
+    assert_eq!(clone, ended);
+    let [ended, clone] = adopted(TEXT, (1, 2), "3ia<CR>");
+    assert_eq!(ended[2], Some((3, 1)));
+    assert_eq!(clone, ended);
+    let [ended, clone] = adopted("abcd\nefgh\nijkl", (0, 1), "<C-v>jIX");
+    assert_eq!(ended[2], Some((1, 0)));
+    assert_eq!(clone, ended);
+}
+
+#[test]
+fn a_clone_reads_the_change_mark_with_the_batch() {
+    // A clone that hasn't left the session reads `'.` from the batches,
+    // the last one noted with where it goes.
+    let mut vim = HeadlessVim::new(TEXT, (1, 2));
+    vim.feed("3ia<CR>").unwrap();
+    let clone = vim.state().clone();
+    vim.feed("<Esc>").unwrap();
+    assert_eq!(special(&vim, &clone)[2], vim.mark('.'));
+    assert_eq!(vim.mark('.'), Some((3, 1)));
+}
+
+#[test]
+fn a_block_yanks_corners_lie_past_a_short_rows_end() {
+    // Where the block's column lies past a row's end, so do `'[` and `']`,
+    // as nvim's `getpos()` has them: its visual cursor stops there.
+    let marks = |text, cursor, keys| {
+        let mut vim = HeadlessVim::new(text, cursor);
+        vim.feed(keys).unwrap();
+        [vim.mark('['), vim.mark(']')]
+    };
+    assert_eq!(
+        marks("abc\nd", (0, 2), "<C-v>jy"),
+        [Some((0, 1)), Some((1, 1))]
+    );
+    assert_eq!(
+        marks("abc\nde", (0, 2), "<C-v>jy"),
+        [Some((0, 2)), Some((1, 2))]
+    );
+    assert_eq!(
+        marks("abc\n", (0, 2), "<C-v>jy"),
+        [Some((0, 0)), Some((1, 0))]
+    );
+    assert_eq!(
+        marks("a\nbcd", (1, 2), "<C-v>ky"),
+        [Some((0, 1)), Some((1, 2))]
+    );
+    assert_eq!(
+        marks("abc\ndef", (0, 1), "<C-v>jy"),
+        [Some((0, 1)), Some((1, 1))]
+    );
+}

@@ -122,6 +122,10 @@ struct FeedState {
     /// How many batches were dropped from the front of `batches`.
     dropped: usize,
     consumers: Vec<Weak<AtomicUsize>>,
+    /// What the commands that made the last few batches noted, by the
+    /// version each batch made: kept with the batches, so each handle (a
+    /// clone's too) reads a batch with its note.
+    notes: Vec<(Version, Note)>,
 }
 
 impl fmt::Debug for Feed {
@@ -188,6 +192,7 @@ impl Feed {
             batches: Vec::new(),
             dropped: 0,
             consumers: vec![Arc::downgrade(&seen)],
+            notes: Vec::new(),
         };
         Self {
             state: Arc::new(Mutex::new(state)),
@@ -206,6 +211,20 @@ impl Feed {
         state.receive();
         let from = self.seen.load(Ordering::Relaxed).max(state.dropped) - state.dropped;
         state.batches[from..].to_vec()
+    }
+
+    /// What the commands that made the last few batches noted.
+    fn notes(&self) -> Vec<(Version, Note)> {
+        self.lock().notes.clone()
+    }
+
+    /// Notes `note` about the batch that made `version`.
+    fn note(&self, version: Version, note: Note) {
+        let notes = &mut self.lock().notes;
+        if notes.len() == NOTES {
+            notes.remove(0);
+        }
+        notes.push((version, note));
     }
 
     /// This handle has caught up with everything received so far.
@@ -633,12 +652,53 @@ struct Changes {
     /// The last of vim's batches read: an undo's or a redo's next batch
     /// spans the rows of both.
     last: Option<(TransactionId, EditKind)>,
-    /// What the commands that made the last few batches noted, by the
-    /// version each batch made.
-    notes: Vec<(Version, Note)>,
     /// The transactions of the last few insert sessions, vim's own before
     /// their carets record is kept (once they end).
     owned: Vec<TransactionId>,
+    /// While an insert session this state left to another state ending it
+    /// ([`Marks::closing`]) is yet to be adopted, which marks were set
+    /// since: those are newer than what it left, which the batches ending
+    /// it ([`Note::Ending`]) don't set and adopting it doesn't either.
+    closing: Option<Newer>,
+}
+
+/// Which of the marks an insert session sets were set since it was left to
+/// another state ending it, kept apart as nvim's commands set them apart: a
+/// yank sets only `'[` and `']`, `m[` and `m]` one of them, a change `'.`
+/// too, and only another session `'^`.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+struct Newer {
+    start: bool,
+    end: bool,
+    change: bool,
+    exit: bool,
+}
+
+impl Newer {
+    /// `'[` and `']`.
+    const ENDS: Self = Self {
+        start: true,
+        end: true,
+        change: false,
+        exit: false,
+    };
+    const CHANGE: Self = Self {
+        change: true,
+        ..Self::ENDS
+    };
+    const ALL: Self = Self {
+        exit: true,
+        ..Self::CHANGE
+    };
+
+    fn or(self, other: Self) -> Self {
+        Self {
+            start: self.start || other.start,
+            end: self.end || other.end,
+            change: self.change || other.change,
+            exit: self.exit || other.exit,
+        }
+    }
 }
 
 /// What a command noted about the batch it made, which the batch can't say
@@ -648,6 +708,9 @@ pub(crate) enum Note {
     /// Whole rows deleted, the operator having begun at this column, which
     /// `'[` takes, as nvim's.
     Deleted { column: usize },
+    /// A characterwise delete: rows it takes whole, line breaks and all,
+    /// are text taken out like any other, `'.` going to the row after.
+    Chars,
     /// A shift of the rows from the first to the last, begun at `column`:
     /// `'[` and `']` span them, whether or not it changed them all.
     Shifted { column: usize, rows: (u32, u32) },
@@ -657,11 +720,23 @@ pub(crate) enum Note {
     /// Rows joined (`J`): `'[` at the first join, `']` at the end of the
     /// row they're joined onto.
     Joined,
+    /// Insert mode left with this batch the session's last: `'.` at
+    /// `change` (row and byte column), where the count's copies or a
+    /// block's rows left it, whatever the batch's shape says.
+    Left { change: (u32, usize) },
+    /// The state ending an insert session made it (the count's copies, the
+    /// indentation `Esc` took out, a block's other rows): it's older than
+    /// what a clone of that state, which left the session to it, did since.
+    Ending,
 }
 
-/// How many batches' notes, and insert sessions' transactions, [`Changes`]
-/// keeps.
-const NOTES: usize = 16;
+/// How many insert sessions' transactions [`Changes`] keeps.
+const SESSIONS: usize = 16;
+
+/// How many batches' notes a [`Feed`] keeps: those the commands of every
+/// handle (each clone's) made, a few for each, so a handle reading the
+/// batches only some commands later still finds them.
+const NOTES: usize = 64;
 
 impl PartialEq for Changes {
     fn eq(&self, other: &Self) -> bool {
@@ -679,8 +754,8 @@ impl PartialEq for Changes {
             && self.typing == other.typing
             && self.run == other.run
             && self.last == other.last
-            && self.notes == other.notes
             && self.owned == other.owned
+            && self.closing == other.closing
     }
 }
 
@@ -830,12 +905,14 @@ impl Changes {
 
     /// Reads the pending batches up to those that end by `limit`, `own`
     /// saying which are vim's (besides those typed in its insert session),
-    /// `caret` the column of a transaction's first caret before it.
+    /// `caret` the column of a transaction's first caret before it, `notes`
+    /// what their commands noted.
     fn commit(
         &mut self,
         limit: Option<Version>,
         own: &dyn Fn(TransactionId) -> bool,
         caret: &dyn Fn(TransactionId) -> Option<usize>,
+        notes: &[(Version, Note)],
     ) {
         let batches = std::mem::take(&mut self.pending);
         let read = match limit {
@@ -856,8 +933,13 @@ impl Changes {
                 .as_ref()
                 .is_some_and(|(from, origin)| batch.from >= *from && batch.origin == *origin);
             let owned = self.owned.contains(&batch.transaction);
+            let noted: Vec<&Note> = notes
+                .iter()
+                .filter(|(at, _)| *at == batch.to)
+                .map(|(_, note)| note)
+                .collect();
             match typed || owned || own(batch.transaction) {
-                true => self.read(batch, before.as_ref(), typed, caret),
+                true => self.read(batch, before.as_ref(), typed, caret, &noted),
                 false => self.run = None,
             }
             self.text = Some((batch.to, batch.text.clone()));
@@ -866,17 +948,56 @@ impl Changes {
     }
 
     /// Sets the marks from vim's own `batch`, the text before it `before`
-    /// if known (see [`Changes`]).
+    /// if known (see [`Changes`]), with what its command noted.
     fn read(
         &mut self,
         batch: &Batch,
         before: Option<&Text>,
         typed: bool,
         caret: &dyn Fn(TransactionId) -> Option<usize>,
+        noted: &[&Note],
+    ) {
+        // The state ending a session this one left doesn't set the marks set
+        // since; anything else is newer than it.
+        let kept = match &mut self.closing {
+            Some(newer) if noted.contains(&&Note::Ending) => Some((
+                *newer,
+                [&self.start, &self.end, &self.change].map(Clone::clone),
+            )),
+            Some(newer) => {
+                *newer = Newer::CHANGE.or(*newer);
+                None
+            }
+            None => None,
+        };
+        self.set(batch, before, typed, caret, noted);
+        if let Some((newer, [start, end, change])) = kept {
+            let marks = [&mut self.start, &mut self.end, &mut self.change];
+            for ((mark, kept), newer) in marks.into_iter().zip([start, end, change]).zip([
+                newer.start,
+                newer.end,
+                newer.change,
+            ]) {
+                if newer {
+                    *mark = kept;
+                }
+            }
+        }
+    }
+
+    /// [`Changes::read`], for whichever state's command made `batch`.
+    fn set(
+        &mut self,
+        batch: &Batch,
+        before: Option<&Text>,
+        typed: bool,
+        caret: &dyn Fn(TransactionId) -> Option<usize>,
+        noted: &[&Note],
     ) {
         let (Some(first), Some(last)) = (batch.edits.first(), batch.edits.last()) else {
             return;
         };
+        let note = noted.iter().find(|note| ***note != Note::Ending);
         let (text, version) = (&batch.text, batch.to);
         let point = |offset: usize| {
             let point = text.offset_to_point(offset);
@@ -905,11 +1026,7 @@ impl Changes {
             (self.start, self.end, self.change) = (on(top, 0), on(bottom, 0), on(top, 0));
             return;
         }
-        let note = self
-            .notes
-            .iter()
-            .find(|(at, _)| *at == batch.to)
-            .map(|(_, note)| note.clone());
+        let note = note.map(|note| (*note).clone());
         let one_line = |range: &Range<usize>| point(range.start).0 == point(range.end).0;
         // Typing on with no line break: `'.` stays where it began.
         let types_on =
@@ -946,6 +1063,7 @@ impl Changes {
             let all = first.old == (0..before.len());
             match (&note, all) {
                 (Some(Note::Deleted { .. }), true) => Some(0),
+                (Some(Note::Chars), _) => None,
                 (_, true) => None,
                 _ => taken_rows(before, &first.old),
             }
@@ -973,6 +1091,19 @@ impl Changes {
         self.end = end;
         if !keeps_change {
             self.change = change;
+        }
+        if let Some(Note::Left {
+            change: (row, column),
+        }) = note
+        {
+            self.change = on(row, column);
+        }
+    }
+
+    /// `marks` were set since a session was left to the state ending it.
+    fn newer(&mut self, marks: Newer) {
+        if let Some(newer) = &mut self.closing {
+            *newer = marks.or(*newer);
         }
     }
 
@@ -1098,6 +1229,7 @@ impl Marks {
     /// it types from there on leaves `'.` where typing began, until a line
     /// break, and leaving insert mode leaves `'[` at `at`.
     pub(crate) fn inserting(&mut self, snapshot: &BufferSnapshot, at: usize, origin: Origin) {
+        self.changes.newer(Newer::ALL);
         self.changes.typing = Some((snapshot.version(), origin));
         self.changes.run = None;
         // Typing at its row's start goes after it, as nvim's `'[` stays.
@@ -1111,18 +1243,24 @@ impl Marks {
     /// What the command whose batch made `version` noted about it, which
     /// the batch can't say.
     pub(crate) fn note(&mut self, version: Version, note: Note) {
-        let notes = &mut self.changes.notes;
-        if notes.len() == NOTES {
-            notes.remove(0);
+        if let Some(feed) = &self.feed {
+            feed.note(version, note);
         }
-        notes.push((version, note));
+    }
+
+    /// The open insert session is left to another state ending it (a clone
+    /// of this one's, which shares its session): its outcome is adopted
+    /// once that publishes it ([`Marks::adopting`]), unless the marks were
+    /// set since.
+    pub(crate) fn closing(&mut self) {
+        self.changes.closing = Some(Newer::default());
     }
 
     /// Transaction `id` is an insert session's: its batches are vim's own,
     /// before its carets record is kept.
     pub(crate) fn own(&mut self, id: TransactionId) {
         let owned = &mut self.changes.owned;
-        if owned.len() == NOTES {
+        if owned.len() == SESSIONS {
             owned.remove(0);
         }
         owned.push(id);
@@ -1563,7 +1701,8 @@ impl Mark {
                 let mut changes = changes.clone();
                 changes.pending.extend(feed.batches());
                 let caret = |id| carets.iter().find(|(at, _)| *at == id).map(|&(_, at)| at);
-                changes.commit(Some(snapshot.version()), &|id| own.contains(&id), &caret);
+                let own = |id| own.contains(&id);
+                changes.commit(Some(snapshot.version()), &own, &caret, &feed.notes());
                 return match changes.mark(*name) {
                     Some(Spot { row: Row::Past, .. }) => Found::Past,
                     spot => found(spot.and_then(|spot| spot.position(snapshot))),
@@ -1697,8 +1836,20 @@ pub(crate) fn set(
         '[' | ']' => {
             let spot = Some(Spot::placed_at(snapshot, at));
             match name {
-                '[' => marks.changes.start = spot,
-                _ => marks.changes.end = spot,
+                '[' => {
+                    marks.changes.newer(Newer {
+                        start: true,
+                        ..Newer::default()
+                    });
+                    marks.changes.start = spot;
+                }
+                _ => {
+                    marks.changes.newer(Newer {
+                        end: true,
+                        ..Newer::default()
+                    });
+                    marks.changes.end = spot;
+                }
             }
         }
         // `m'` adds a jump, as nvim's does.
@@ -1803,9 +1954,10 @@ pub(crate) fn catch_up(state: &mut VimState) {
     state.marks.advance();
     let VimState { marks, carets, .. } = state;
     let caret = |id| Some(carets.get(id)?.first()?.1);
+    let notes = marks.feed.as_ref().map(Feed::notes).unwrap_or_default();
     marks
         .changes
-        .commit(None, &|id| carets.get(id).is_some(), &caret);
+        .commit(None, &|id| carets.get(id).is_some(), &caret, &notes);
 }
 
 /// Catches the marks up with the text before a command that may change it
@@ -1846,6 +1998,7 @@ pub(crate) fn yanked(state: &mut VimState, model: &mut EditorModel, yanked: Yank
             Spot::placed_at(snapshot, last.max(start)),
         ),
     };
+    state.marks.changes.newer(Newer::ENDS);
     state.marks.changes.start = Some(start);
     state.marks.changes.end = Some(end);
 }
@@ -1871,6 +2024,7 @@ pub(crate) fn shifted(
     let snapshot = model.snapshot();
     let last_byte = (snapshot.text().row_len(last) as usize).saturating_sub(1);
     let changes = &mut state.marks.changes;
+    changes.newer(Newer::CHANGE);
     changes.start = Some(Spot::placed(Place::on(snapshot, first, column)));
     changes.end = Some(Spot::placed(Place::on(snapshot, last, last_byte)));
     changes.change = Some(Spot::placed(Place::on(snapshot, first, 0)));
@@ -1883,12 +2037,16 @@ pub(crate) struct Left {
     start: Place,
     end: Place,
     exit: Place,
+    /// `'.`, where the count's copies or a block's rows put it: a clone
+    /// may have read their batch before it was noted ([`Note::Left`]).
+    change: Option<Place>,
 }
 
 /// Insert mode left at `exit` in `model`'s text, what it typed ending at
 /// `end` (on a block's last row; else `exit`): `'[` is where the session
 /// began, `']` at `end` and `'^` at `exit`, as nvim's, and `'.` at `change`
-/// if the count's copies or a block's rows went in last.
+/// if the count's copies or a block's rows went in last, which is noted
+/// with the last batch too, for a clone of the state that reads it.
 pub(crate) fn left_insert(
     state: &mut VimState,
     model: &mut EditorModel,
@@ -1897,6 +2055,14 @@ pub(crate) fn left_insert(
     change: Option<usize>,
 ) -> Left {
     state.marks.watch(model);
+    // With the session's last batch, for every state reading it: a clone's
+    // too, which shares the session.
+    if let Some(change) = change {
+        let snapshot = model.snapshot();
+        let point = snapshot.text().offset_to_point(change);
+        let change = (point.row, point.column as usize);
+        state.marks.note(snapshot.version(), Note::Left { change });
+    }
     catch_up(state);
     let snapshot = model.snapshot();
     let changes = &mut state.marks.changes;
@@ -1910,29 +2076,46 @@ pub(crate) fn left_insert(
         }) => place,
         _ => Place::at(snapshot, exit),
     };
-    if let Some(change) = change {
-        changes.change = Some(Spot::placed_at(snapshot, change));
-    }
     let left = Left {
         start,
         end: Place::at(snapshot, end),
         exit: Place::at(snapshot, exit),
+        change: change.map(|change| Place::at(snapshot, change)),
     };
     adopt_insert(state, left.clone());
     left
 }
 
 /// Takes the marks a clone of this state left insert mode with ([`Left`]),
-/// leaving a newer session open here as it is.
+/// leaving a newer session open here as it is, and those set since it was
+/// left to the clone ([`Marks::closing`]).
 pub(crate) fn adopt_insert(state: &mut VimState, left: Left) {
     // The batches before it don't set them after.
     catch_up(state);
     let marks = &mut state.marks;
+    let newer = marks.changes.closing.take().unwrap_or_default();
     if state.session.is_none() {
         marks.changes.typing = None;
         marks.changes.began = None;
     }
-    marks.changes.start = Some(Spot::placed(left.start));
-    marks.changes.end = Some(Spot::placed(left.end));
-    marks.named.insert('^', left.exit);
+    let changes = &mut marks.changes;
+    if !newer.start {
+        changes.start = Some(Spot::placed(left.start));
+    }
+    if !newer.end {
+        changes.end = Some(Spot::placed(left.end));
+    }
+    if let Some(change) = left.change.filter(|_| !newer.change) {
+        changes.change = Some(Spot::placed(change));
+    }
+    if !newer.exit {
+        marks.named.insert('^', left.exit);
+    }
+}
+
+/// A session this state left to a clone ending it ([`Marks::closing`]) was
+/// published without marks to adopt (or is newer than its change): the
+/// marks go on as they are.
+pub(crate) fn closed(state: &mut VimState) {
+    state.marks.changes.closing = None;
 }

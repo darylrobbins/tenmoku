@@ -3301,6 +3301,816 @@
           ]
         }
       }
+    },
+    {
+      "name": "count_insert_yank_start",
+      "buffer": "one two\nfour",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3ix<Esc>wyiwgg`[",
+      "expect": {
+        "buffer": "xxxone two\nfour",
+        "cursor": [
+          0,
+          7
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two",
+            "linewise": false
+          },
+          "0": {
+            "text": "two",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "count_insert_yank_end",
+      "buffer": "one two\nfour",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3ix<Esc>wyiwgg`]",
+      "expect": {
+        "buffer": "xxxone two\nfour",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two",
+            "linewise": false
+          },
+          "0": {
+            "text": "two",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "count_insert_set_start",
+      "buffer": "one two\nfour",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3ix<Esc>$m[0`[",
+      "expect": {
+        "buffer": "xxxone two\nfour",
+        "cursor": [
+          0,
+          9
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "block_insert_set_end",
+      "buffer": "abcd\nefgh\nijkl",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jIX<Esc>Gm]gg`]",
+      "expect": {
+        "buffer": "aXbcd\neXfgh\nijkl",
+        "cursor": [
+          2,
+          1
+        ],
+        "mode": "n",
+        "registers": {},
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_yank_short_end",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "<C-v>jygg`]",
+      "expect": {
+        "buffer": "abc\ndef",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "a\nd",
+            "linewise": false,
+            "block_width": 1
+          },
+          "0": {
+            "text": "a\nd",
+            "linewise": false,
+            "block_width": 1
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            1,
+            0
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_yank_short_mid_end",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jygg`]",
+      "expect": {
+        "buffer": "abc\ndef",
+        "cursor": [
+          1,
+          1
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "b\ne",
+            "linewise": false,
+            "block_width": 1
+          },
+          "0": {
+            "text": "b\ne",
+            "linewise": false,
+            "block_width": 1
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_yank_short_last_end",
+      "buffer": "abc\ndef",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "<C-v>jygg`]",
+      "expect": {
+        "buffer": "abc\ndef",
+        "cursor": [
+          1,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c\nf",
+            "linewise": false,
+            "block_width": 1
+          },
+          "0": {
+            "text": "c\nf",
+            "linewise": false,
+            "block_width": 1
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "block_yank_short_start",
+      "buffer": "abc\ndef",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "<C-v>kyG`[",
+      "expect": {
+        "buffer": "abc\ndef",
+        "cursor": [
+          0,
+          2
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "c\nf",
+            "linewise": false,
+            "block_width": 1
+          },
+          "0": {
+            "text": "c\nf",
+            "linewise": false,
+            "block_width": 1
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            2
+          ],
+          ">": [
+            1,
+            2
+          ]
+        }
+      }
+    },
+    {
+      "name": "count_insert_yank_change",
+      "buffer": "one two\nfour",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3ixy<Esc>wyiwG`.",
+      "expect": {
+        "buffer": "xyxyxyone two\nfour",
+        "cursor": [
+          0,
+          4
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "two",
+            "linewise": false
+          },
+          "0": {
+            "text": "two",
+            "linewise": false
+          }
+        }
+      }
+    },
+    {
+      "name": "block_A_yank_change",
+      "buffer": "abcd\nefgh\nijkl",
+      "cursor": [
+        0,
+        1
+      ],
+      "keys": "<C-v>jAX<Esc>yiwG`.",
+      "expect": {
+        "buffer": "abXcd\nefXgh\nijkl",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abXcd",
+            "linewise": false
+          },
+          "0": {
+            "text": "abXcd",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            1
+          ],
+          ">": [
+            1,
+            1
+          ]
+        }
+      }
+    },
+    {
+      "name": "count_insert_empty_last_change",
+      "buffer": "one two three\nfour five\nsix",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "3ia<CR><Esc>gg`.",
+      "expect": {
+        "buffer": "one two three\nfoa\na\na\nur five\nsix",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_insert_breaks_change",
+      "buffer": "one two three\nfour five\nsix",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "3i<CR><Esc>gg`.",
+      "expect": {
+        "buffer": "one two three\nfo\n\n\nur five\nsix",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_insert_two_breaks_change",
+      "buffer": "one two three\nfour five\nsix",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "2ia<CR><CR><Esc>gg`.",
+      "expect": {
+        "buffer": "one two three\nfoa\n\na\n\nur five\nsix",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_insert_break_at_end_change",
+      "buffer": "one two three\nfour five\nsix",
+      "cursor": [
+        1,
+        8
+      ],
+      "keys": "3ab<CR><Esc>gg`.",
+      "expect": {
+        "buffer": "one two three\nfour fiveb\nb\nb\n\nsix",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_o_change",
+      "buffer": "one two three\nfour five\nsix",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "3oab<Esc>gg`.",
+      "expect": {
+        "buffer": "one two three\nfour five\nab\nab\nab\nsix",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_O_change",
+      "buffer": "one two three\nfour five\nsix",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "3Oab<Esc>G`.",
+      "expect": {
+        "buffer": "one two three\nab\nab\nab\nfour five\nsix",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_o_empty_change",
+      "buffer": "one two three\nfour five\nsix",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "3o<Esc>gg`.",
+      "expect": {
+        "buffer": "one two three\nfour five\n\n\n\nsix",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_O_empty_change",
+      "buffer": "one two three\nfour five\nsix",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "3O<Esc>G`.",
+      "expect": {
+        "buffer": "one two three\n\n\n\nfour five\nsix",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_o_break_change",
+      "buffer": "one two three\nfour five\nsix",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "2oa<CR>b<Esc>gg`.",
+      "expect": {
+        "buffer": "one two three\nfour five\na\nb\na\nb\nsix",
+        "cursor": [
+          5,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_o_empty_last_change",
+      "buffer": "one two three\nfour five\nsix",
+      "cursor": [
+        1,
+        2
+      ],
+      "keys": "2oa<CR><Esc>gg`.",
+      "expect": {
+        "buffer": "one two three\nfour five\na\n\na\n\nsix",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_o_last_row_change",
+      "buffer": "one two three\nfour five\nsix",
+      "cursor": [
+        2,
+        0
+      ],
+      "keys": "3oab<Esc>gg`.",
+      "expect": {
+        "buffer": "one two three\nfour five\nsix\nab\nab\nab",
+        "cursor": [
+          5,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_O_first_row_change",
+      "buffer": "one two three\nfour five\nsix",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "3Oab<Esc>G`.",
+      "expect": {
+        "buffer": "ab\nab\nab\none two three\nfour five\nsix",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "visual_delete_whole_row_change",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v$dgg`.",
+      "expect": {
+        "buffer": "def\nghi",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc\n",
+            "linewise": false
+          },
+          "1": {
+            "text": "abc\n",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "visual_delete_whole_rows_change",
+      "buffer": "abc\ndef\nghi\njkl",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "vj$dgg`.",
+      "expect": {
+        "buffer": "ghi\njkl",
+        "cursor": [
+          1,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc\ndef\n",
+            "linewise": false
+          },
+          "1": {
+            "text": "abc\ndef\n",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "visual_delete_whole_mid_row_change",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        1,
+        0
+      ],
+      "keys": "v$dgg`.",
+      "expect": {
+        "buffer": "abc\nghi",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "def\n",
+            "linewise": false
+          },
+          "1": {
+            "text": "def\n",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            1,
+            0
+          ],
+          ">": [
+            1,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "visual_delete_whole_row_start",
+      "buffer": "abc\ndef\nghi",
+      "cursor": [
+        0,
+        0
+      ],
+      "keys": "v$dG`[",
+      "expect": {
+        "buffer": "def\nghi",
+        "cursor": [
+          0,
+          0
+        ],
+        "mode": "n",
+        "registers": {
+          "\"": {
+            "text": "abc\n",
+            "linewise": false
+          },
+          "1": {
+            "text": "abc\n",
+            "linewise": false
+          }
+        },
+        "marks": {
+          "<": [
+            0,
+            0
+          ],
+          ">": [
+            0,
+            3
+          ]
+        }
+      }
+    },
+    {
+      "name": "count_o_indented_empty_change",
+      "buffer": "  one two three\nfour five\nsix",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "3o<Esc>G`.",
+      "expect": {
+        "buffer": "  one two three\n\n\n\nfour five\nsix",
+        "cursor": [
+          3,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_o_indented_change",
+      "buffer": "  one two three\nfour five\nsix",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "3ox<Esc>G`.",
+      "expect": {
+        "buffer": "  one two three\n  x\n  x\n  x\nfour five\nsix",
+        "cursor": [
+          3,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_o_indented_break_change",
+      "buffer": "  one two three\nfour five\nsix",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "2ox<CR><Esc>G`.",
+      "expect": {
+        "buffer": "  one two three\n  x\n\n  x\n\nfour five\nsix",
+        "cursor": [
+          4,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_o_indented_break_text_change",
+      "buffer": "  one two three\nfour five\nsix",
+      "cursor": [
+        0,
+        2
+      ],
+      "keys": "2ox<CR>y<Esc>G`.",
+      "expect": {
+        "buffer": "  one two three\n  x\n  y\n  x\n  y\nfour five\nsix",
+        "cursor": [
+          4,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_insert_indented_break_change",
+      "buffer": "  one two three\nfour five\nsix",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "3ix<CR><Esc>G`.",
+      "expect": {
+        "buffer": "  onx\n  x\n  x\n  e two three\nfour five\nsix",
+        "cursor": [
+          2,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_insert_indented_break_text_change",
+      "buffer": "  one two three\nfour five\nsix",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "3ix<CR>y<Esc>G`.",
+      "expect": {
+        "buffer": "  onx\n  yx\n  yx\n  ye two three\nfour five\nsix",
+        "cursor": [
+          3,
+          2
+        ],
+        "mode": "n",
+        "registers": {}
+      }
+    },
+    {
+      "name": "count_A_indented_break_change",
+      "buffer": "  one two three\nfour five\nsix",
+      "cursor": [
+        0,
+        4
+      ],
+      "keys": "2Ax<CR><Esc>G`.",
+      "expect": {
+        "buffer": "  one two threex\n  x\n\nfour five\nsix",
+        "cursor": [
+          2,
+          0
+        ],
+        "mode": "n",
+        "registers": {}
+      }
     }
   ]
 }

@@ -3,10 +3,14 @@
 # (charwise and linewise), `dw`, `dd`, `cw…<Esc>`, `>>`, `x` and a visual
 # `d`, and `'[` and `']` linewise; `` `. `` after changes and after undo;
 # `` `^ `` after `i…<Esc>` and `A…<Esc>`; `mA` with its `'A`, `` `A `` and
-# `d'A`, and rows put in or taken out above the marks. An unset mark's
-# jump is a case's last key (nvim flushes the keys after it). nvim's
-# buffer starts with `'.` on its first row (setting the lines is a
-# change), so no case jumps to `'.` before one.
+# `d'A`, and rows put in or taken out above the marks; `` `. `` after
+# counted inserts (`o` and `O` too, with nothing typed past a line break,
+# and with indentation) and block inserts, and `'[`, `']` and `'.` after a
+# yank or `m[` following one; a block yank's corners; and `'.` after a
+# characterwise delete of whole rows. An unset mark's jump is a case's
+# last key (nvim flushes the keys after it). nvim's buffer starts with
+# `'.` on its first row (setting the lines is a change), so no case jumps
+# to `'.` before one.
 # Hand-written: name, buffer (rows joined with \n, no trailing newline),
 # cursor = [row, byte column] and keys in vim notation. What nvim does with
 # each is recorded in marks_special.expected.json by the ignored
@@ -779,3 +783,201 @@ name = "block_A_rows_change"
 buffer = "abcd\nefgh\nijkl"
 cursor = [0, 1]
 keys = "<C-v>jjAX<Esc>gg`."
+
+[[case]]
+name = "count_insert_yank_start"
+buffer = "one two\nfour"
+cursor = [0, 0]
+keys = "3ix<Esc>wyiwgg`["
+
+[[case]]
+name = "count_insert_yank_end"
+buffer = "one two\nfour"
+cursor = [0, 0]
+keys = "3ix<Esc>wyiwgg`]"
+
+[[case]]
+name = "count_insert_set_start"
+buffer = "one two\nfour"
+cursor = [0, 0]
+keys = "3ix<Esc>$m[0`["
+
+[[case]]
+name = "block_insert_set_end"
+buffer = "abcd\nefgh\nijkl"
+cursor = [0, 1]
+keys = "<C-v>jIX<Esc>Gm]gg`]"
+
+[[case]]
+name = "block_yank_short_end"
+buffer = "abc\ndef"
+cursor = [0, 0]
+keys = "<C-v>jygg`]"
+
+[[case]]
+name = "block_yank_short_mid_end"
+buffer = "abc\ndef"
+cursor = [0, 1]
+keys = "<C-v>jygg`]"
+
+[[case]]
+name = "block_yank_short_last_end"
+buffer = "abc\ndef"
+cursor = [0, 2]
+keys = "<C-v>jygg`]"
+
+[[case]]
+name = "block_yank_short_start"
+buffer = "abc\ndef"
+cursor = [1, 2]
+keys = "<C-v>kyG`["
+
+[[case]]
+name = "count_insert_yank_change"
+buffer = "one two\nfour"
+cursor = [0, 0]
+keys = "3ixy<Esc>wyiwG`."
+
+[[case]]
+name = "block_A_yank_change"
+buffer = "abcd\nefgh\nijkl"
+cursor = [0, 1]
+keys = "<C-v>jAX<Esc>yiwG`."
+
+[[case]]
+name = "count_insert_empty_last_change"
+buffer = "one two three\nfour five\nsix"
+cursor = [1, 2]
+keys = "3ia<CR><Esc>gg`."
+
+[[case]]
+name = "count_insert_breaks_change"
+buffer = "one two three\nfour five\nsix"
+cursor = [1, 2]
+keys = "3i<CR><Esc>gg`."
+
+[[case]]
+name = "count_insert_two_breaks_change"
+buffer = "one two three\nfour five\nsix"
+cursor = [1, 2]
+keys = "2ia<CR><CR><Esc>gg`."
+
+[[case]]
+name = "count_insert_break_at_end_change"
+buffer = "one two three\nfour five\nsix"
+cursor = [1, 8]
+keys = "3ab<CR><Esc>gg`."
+
+[[case]]
+name = "count_o_change"
+buffer = "one two three\nfour five\nsix"
+cursor = [1, 2]
+keys = "3oab<Esc>gg`."
+
+[[case]]
+name = "count_O_change"
+buffer = "one two three\nfour five\nsix"
+cursor = [1, 2]
+keys = "3Oab<Esc>G`."
+
+[[case]]
+name = "count_o_empty_change"
+buffer = "one two three\nfour five\nsix"
+cursor = [1, 2]
+keys = "3o<Esc>gg`."
+
+[[case]]
+name = "count_O_empty_change"
+buffer = "one two three\nfour five\nsix"
+cursor = [1, 2]
+keys = "3O<Esc>G`."
+
+[[case]]
+name = "count_o_break_change"
+buffer = "one two three\nfour five\nsix"
+cursor = [1, 2]
+keys = "2oa<CR>b<Esc>gg`."
+
+[[case]]
+name = "count_o_empty_last_change"
+buffer = "one two three\nfour five\nsix"
+cursor = [1, 2]
+keys = "2oa<CR><Esc>gg`."
+
+[[case]]
+name = "count_o_last_row_change"
+buffer = "one two three\nfour five\nsix"
+cursor = [2, 0]
+keys = "3oab<Esc>gg`."
+
+[[case]]
+name = "count_O_first_row_change"
+buffer = "one two three\nfour five\nsix"
+cursor = [0, 0]
+keys = "3Oab<Esc>G`."
+
+[[case]]
+name = "visual_delete_whole_row_change"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "v$dgg`."
+
+[[case]]
+name = "visual_delete_whole_rows_change"
+buffer = "abc\ndef\nghi\njkl"
+cursor = [0, 0]
+keys = "vj$dgg`."
+
+[[case]]
+name = "visual_delete_whole_mid_row_change"
+buffer = "abc\ndef\nghi"
+cursor = [1, 0]
+keys = "v$dgg`."
+
+[[case]]
+name = "visual_delete_whole_row_start"
+buffer = "abc\ndef\nghi"
+cursor = [0, 0]
+keys = "v$dG`["
+
+[[case]]
+name = "count_o_indented_empty_change"
+buffer = "  one two three\nfour five\nsix"
+cursor = [0, 2]
+keys = "3o<Esc>G`."
+
+[[case]]
+name = "count_o_indented_change"
+buffer = "  one two three\nfour five\nsix"
+cursor = [0, 2]
+keys = "3ox<Esc>G`."
+
+[[case]]
+name = "count_o_indented_break_change"
+buffer = "  one two three\nfour five\nsix"
+cursor = [0, 2]
+keys = "2ox<CR><Esc>G`."
+
+[[case]]
+name = "count_o_indented_break_text_change"
+buffer = "  one two three\nfour five\nsix"
+cursor = [0, 2]
+keys = "2ox<CR>y<Esc>G`."
+
+[[case]]
+name = "count_insert_indented_break_change"
+buffer = "  one two three\nfour five\nsix"
+cursor = [0, 4]
+keys = "3ix<CR><Esc>G`."
+
+[[case]]
+name = "count_insert_indented_break_text_change"
+buffer = "  one two three\nfour five\nsix"
+cursor = [0, 4]
+keys = "3ix<CR>y<Esc>G`."
+
+[[case]]
+name = "count_A_indented_break_change"
+buffer = "  one two three\nfour five\nsix"
+cursor = [0, 4]
+keys = "2Ax<CR><Esc>G`."

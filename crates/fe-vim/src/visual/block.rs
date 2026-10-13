@@ -375,13 +375,19 @@ pub(super) fn operate_block(
             .map_err(|error| CommandError::new(error.to_string()))?;
     }
     // A yank edits nothing, so it sets `'[` and `']` itself, on the block's
-    // top left and bottom right corners: the graphemes at its columns (past
-    // the last row's end after `$`), as nvim's.
+    // top left and bottom right corners: the graphemes at its columns, or
+    // past the row's end where a row is short of its column (and on the last
+    // row after `$`), as nvim's, whose visual cursor stops there.
     if args.operator == Operator::Yank {
-        let start = at_column(&text, block.first, block.left, tab);
+        let row_end = |row| text.row_start(row) + text.row_len(row) as usize;
+        let corner = |row, column| match column < width_from(&text.row_to_string(row), 0, tab) {
+            true => at_column(&text, row, column, tab),
+            false => row_end(row),
+        };
+        let start = corner(block.first, block.left);
         let last = match block.right {
-            Some(right) => at_column(&text, block.last, right, tab),
-            None => text.row_start(block.last) + text.row_len(block.last) as usize,
+            Some(right) => corner(block.last, right),
+            None => row_end(block.last),
         };
         crate::marks::yanked(state, model, crate::marks::Yanked::Chars { start, last });
     }

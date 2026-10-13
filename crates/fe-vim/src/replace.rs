@@ -371,6 +371,15 @@ impl Act {
 /// whose caret lands where that one's does. Each goes in as its text put in
 /// at its start and what it replaces taken out after that.
 fn act(model: &mut EditorModel, origin: Origin, acts: Vec<Act>) -> Vec<Option<usize>> {
+    act_on(model, origin, acts).0
+}
+
+/// [`act`], with the version its batch made, if it made one.
+fn act_on(
+    model: &mut EditorModel,
+    origin: Origin,
+    acts: Vec<Act>,
+) -> (Vec<Option<usize>>, Option<Version>) {
     let mut edits: Vec<(Range<usize>, String)> = Vec::new();
     let mut heads: Vec<usize> = Vec::with_capacity(acts.len());
     let mut starts = Vec::with_capacity(acts.len());
@@ -397,11 +406,11 @@ fn act(model: &mut EditorModel, origin: Origin, acts: Vec<Act>) -> Vec<Option<us
     }
     if edits.is_empty() {
         model.set_selections(heads.into_iter().map(caret));
-        return starts;
+        return (starts, None);
     }
     let (_, snapshot) = apply(model, edits, origin);
     insert::place(model, &snapshot, &heads);
-    starts
+    (starts, Some(snapshot.version()))
 }
 
 /// Each caret's planned entries (offsets from its act's start), placed
@@ -779,7 +788,9 @@ pub(crate) fn repeat_typed(
         .collect::<Vec<Act>>();
     #[cfg(test)]
     COPIES_EDITED.set(acts.iter().filter(|act| !act.text.is_empty()).count());
-    act(model, session.origin.clone(), acts);
+    if let (_, Some(version)) = act_on(model, session.origin.clone(), acts) {
+        session.ending(version);
+    }
 }
 
 /// Types the copy that ended `out` (it cut `cut` bytes, all of it once no

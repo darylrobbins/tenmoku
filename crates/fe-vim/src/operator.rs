@@ -1062,12 +1062,13 @@ fn operate_unless_failing(
                             op.as_ref().filter(|op| op.linewise)?;
                             Some(start.unwrap_or(selection.head()))
                         });
-                if let Some(at) = began {
-                    let column = history::pair(&text, at).1;
-                    state
-                        .marks
-                        .note(snapshot.version(), marks::Note::Deleted { column });
-                }
+                let note = match began {
+                    Some(at) => marks::Note::Deleted {
+                        column: history::pair(&text, at).1,
+                    },
+                    None => marks::Note::Chars,
+                };
+                state.marks.note(snapshot.version(), note);
             }
             let after = snapshot.text().clone();
             let carets: Vec<usize> = before

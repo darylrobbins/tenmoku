@@ -393,6 +393,10 @@ struct Ledger {
     end: End,
     /// Whether the session's origin edited the text since it opened.
     edited: bool,
+    /// The versions the batches ending it made (the count's copies, the
+    /// indentation `Esc` takes out, a block's other rows), until noted
+    /// for the marks (see `marks::Note::Ending`).
+    ending: Vec<Version>,
 }
 
 /// How far ending a session has got.
@@ -444,16 +448,18 @@ pub(crate) fn adopt_closing(state: &mut VimState) {
     else {
         return;
     };
-    // A change made while it was closing is newer than it, marks and all.
-    let current = state.changes == changes;
-    if current {
+    // A change made while it was closing is newer than it for `.`. The
+    // marks it left go only where nothing set them since (see
+    // `marks::adopt_insert`): a yank or `m[` sets some, but not `'.`.
+    if state.changes == changes {
         state.set_last_change(closed.last_change);
     }
     if !replaying {
         state.carets.settle(carets, closed.transaction);
     }
-    if let Some(left) = closed.left.filter(|_| current) {
-        marks::adopt_insert(state, *left);
+    match closed.left {
+        Some(left) => marks::adopt_insert(state, *left),
+        None => marks::closed(state),
     }
 }
 
@@ -498,6 +504,9 @@ struct Copy {
     last: String,
     /// That indentation, from the last copy's start.
     open: Vec<Indent>,
+    /// The last rows of `each` and of `last`.
+    each_tail: Tail,
+    last_tail: Tail,
 }
 
 /// The rows `o` and `O` open for a count's copies: each is indented with
@@ -661,6 +670,11 @@ fn resume(model: &mut EditorModel, state: &mut VimState, origin: Origin, block: 
 impl Session {
     fn ledger(&self) -> MutexGuard<'_, Ledger> {
         self.ledger.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// A batch ending the session made `version` (see [`Ledger::ending`]).
+    pub(crate) fn ending(&self, version: Version) {
+        self.ledger().ending.push(version);
     }
 
     /// Follows the buffer's edits since the last call, so none wait to be:
@@ -946,6 +960,22 @@ impl Indents {
             .collect()
     }
 
+    /// How much of the indentation the session made, whether used or not,
+    /// starts `range`'s last row (`range` holds `typed`), for `'.`: the
+    /// count's copies of it get that as typing it again would.
+    fn lead_in(&self, range: Range<usize>, typed: &str) -> usize {
+        let start = range.start + typed.rfind('\n').map_or(0, |at| at + 1);
+        let low = self.0.partition_point(|indent| indent.range.end <= start);
+        let mut lead = start;
+        for indent in self.0[low..].iter().filter(|indent| !indent.changed) {
+            if indent.range.start > lead || indent.range.start >= range.end {
+                break;
+            }
+            lead = lead.max(indent.range.end.min(range.end));
+        }
+        lead - start
+    }
+
     /// What `Esc` removes: every piece nothing was typed on the row of and
     /// no other origin changed, if its row holds nothing but blanks. Never
     /// more than blanks on a row of them.
@@ -1146,6 +1176,7 @@ fn open(
         copies: None,
         end: End::Open,
         edited: false,
+        ending: Vec::new(),
     }));
     let Opening {
         origin,
@@ -1644,6 +1675,7 @@ fn end(model: &mut EditorModel, state: &mut VimState, how: Ending) -> Option<Tra
                     }
                 }
                 None => {
+                    state.marks.closing();
                     state.closing = Some(Closing {
                         ledger: Arc::clone(&session.ledger),
                         replaying,
@@ -1699,6 +1731,8 @@ fn end(model: &mut EditorModel, state: &mut VimState, how: Ending) -> Option<Tra
         first.end(edited);
         esc.then(|| block.typed(&first, model.primary_selection().head()))?
     });
+    // Where `'.` goes in the count's copies at the primary caret.
+    let mut copied = None;
     if esc {
         // Over a block, only as many copies as fit on all of its rows, with
         // what goes in on its other rows besides (see [`type_on_rows`]).
@@ -1714,12 +1748,15 @@ fn end(model: &mut EditorModel, state: &mut VimState, how: Ending) -> Option<Tra
             let fit = u32::try_from((room / each).max(1)).unwrap_or(u32::MAX);
             session.count = session.count.min(fit);
         }
-        match &keys {
-            Some((keys, _)) => crate::replace::repeat_typed(model, &session, session.count, keys),
+        copied = match &keys {
+            Some((keys, _)) => {
+                crate::replace::repeat_typed(model, &session, session.count, keys);
+                None
+            }
             None => repeat_typed(model, &session, &ended),
-        }
+        };
     }
-    drop_unused_indent(model, &session, matches!(how, Ending::Moved(_)));
+    let unindented = drop_unused_indent(model, &session, matches!(how, Ending::Moved(_)));
     // Where insert mode is left, for `'^`.
     let exit = esc.then(|| {
         model
@@ -1732,7 +1769,7 @@ fn end(model: &mut EditorModel, state: &mut VimState, how: Ending) -> Option<Tra
     let corner = match (&session.block, &block_typed) {
         (Some(block), Some(typed)) => {
             step_back(model);
-            let end = type_on_rows(model, &session.origin, block, typed, session.count);
+            let end = type_on_rows(model, &session, block, typed, session.count);
             Some((typed.corner, end))
         }
         _ => None,
@@ -1740,15 +1777,16 @@ fn end(model: &mut EditorModel, state: &mut VimState, how: Ending) -> Option<Tra
     // Leaving insert mode sets `'^` where it was left, and `'[` and `']`
     // from where typing began to that (over a block, but for `c`, to the end
     // of what went in on its last row), as nvim's does.
-    // `'.` is where the last of the count's copies began (the text it typed
-    // after its last line break), or at the start of a block's first row
-    // typed on, as nvim's are.
-    let copied = ended
-        .last()
-        .filter(|_| keys.is_none() && session.block.is_none() && session.count > 1)
-        .and_then(|primary| primary.typed.rsplit('\n').next())
-        .filter(|piece| !piece.is_empty())
-        .map(str::len);
+    // `'.` is where typing the last of the count's copies again left it
+    // (see [`last_change`]), or where `Esc` took indentation out of the row
+    // it's left on after them, or at the start of a block's first row typed
+    // on, as nvim's are.
+    let copied = copied.filter(|_| session.block.is_none());
+    // A clone of this state that left the session to it reads these
+    // batches as older than what it did since.
+    for version in std::mem::take(&mut session.ledger().ending) {
+        state.marks.note(version, marks::Note::Ending);
+    }
     let left = exit.map(|exit| {
         let snapshot = model.snapshot();
         let exit = snapshot.resolve(&exit);
@@ -1764,7 +1802,13 @@ fn end(model: &mut EditorModel, state: &mut VimState, how: Ending) -> Option<Tra
                 let text = snapshot.text();
                 Some(text.row_start(text.offset_to_point(snapshot.resolve(first)).row))
             }
-            None => copied.and_then(|len| exit.checked_sub(len)),
+            None => copied.map(|change| {
+                let text = snapshot.text();
+                let row = text.offset_to_point(exit).row;
+                let on_row = |&at: &usize| text.offset_to_point(at).row == row;
+                (unindented.iter().copied().find(on_row))
+                    .unwrap_or_else(|| snapshot.resolve(&change))
+            }),
         };
         let end = typed_end.unwrap_or(exit);
         Box::new(marks::left_insert(state, model, exit, end, change))
@@ -1848,11 +1892,12 @@ fn step_back(model: &mut EditorModel) {
 /// (`c`), which then lands on what went in.
 fn type_on_rows(
     model: &mut EditorModel,
-    origin: &Origin,
+    session: &Session,
     block: &Block,
     typed: &Typed,
     count: u32,
 ) -> Option<(Anchor, Anchor)> {
+    let origin = &session.origin;
     sync(model);
     let rows = &block.rows;
     let snapshot = model.snapshot();
@@ -1920,6 +1965,7 @@ fn type_on_rows(
     }
     let carets = history::pairs(model);
     let (_, snapshot) = apply(model, edits, origin.clone());
+    session.ending(snapshot.version());
     let typed = ends
         .first()
         .zip(ends.last())
@@ -1968,8 +2014,50 @@ struct Put {
     /// Where they go.
     at: usize,
     text: String,
+    /// Where `'.` goes in `text` ([`last_change`]).
+    change: usize,
     /// What they are, for the session: their start is set once they're in.
     copies: Copies,
+}
+
+/// The last row of a copy, after its last line break, for `'.`: how much
+/// of the indentation the session made starts it, and whether nvim, typing
+/// the copy again, would have indented it only for `Esc` to take that out.
+#[derive(Copy, Clone, Debug, Default)]
+struct Tail {
+    lead: usize,
+    stripped: bool,
+}
+
+impl Tail {
+    /// With `lead` the indentation the session made at the row's start,
+    /// unless that's taken out of the copy.
+    fn lead(self, lead: usize) -> Self {
+        Self {
+            lead: if self.stripped { 0 } else { lead },
+            ..self
+        }
+    }
+}
+
+/// Where `'.` goes in a caret's copies, `text`, the last of which starts at
+/// `last`, as nvim's typing them again leaves it: at the text typed after
+/// the last copy's last line break (past the indentation it got), else at
+/// that row's start if `Esc` took indentation out there, else at the line
+/// break; at the last copy's start if it has none.
+fn last_change(text: &str, last: usize, tail: Tail) -> usize {
+    let copy = &text[last..];
+    match copy.rfind('\n') {
+        None => last,
+        Some(at) => {
+            let row = last + at + 1;
+            match () {
+                _ if text.len() - row > tail.lead => row + tail.lead,
+                _ if tail.stripped => row,
+                _ => row - 1,
+            }
+        }
+    }
 }
 
 /// Puts each region's typed text in `count - 1` more times at its caret,
@@ -1979,11 +2067,12 @@ struct Put {
 /// the row each one starts on as typing them would; the rows `o` and `O`
 /// open get indentation unless it would go unused. The session is told
 /// what they are before they go in, as measuring text while the model
-/// catches up may follow their batch (see [`Ledger`]).
-fn repeat_typed(model: &mut EditorModel, session: &Session, ended: &[Ended]) {
+/// catches up may follow their batch (see [`Ledger`]). Returns where `'.`
+/// goes in the last region's copies, if it has any ([`last_change`]).
+fn repeat_typed(model: &mut EditorModel, session: &Session, ended: &[Ended]) -> Option<Anchor> {
     let more = session.count as usize - 1;
     if more == 0 {
-        return;
+        return None;
     }
     let text = model.text().clone();
     let tab = model.tab_size().max(1);
@@ -1996,6 +2085,7 @@ fn repeat_typed(model: &mut EditorModel, session: &Session, ended: &[Ended]) {
                 let head = region.head?;
                 let typed = region.typed.as_str();
                 let indents = ledger.indents.removable_in(region.start..head);
+                let lead = ledger.indents.lead_in(region.start..head, typed);
                 match session.opens {
                     true => {
                         // Unused indentation goes at `Esc` from a row
@@ -2009,10 +2099,27 @@ fn repeat_typed(model: &mut EditorModel, session: &Session, ended: &[Ended]) {
                             tab,
                         };
                         let copy = copy_of(typed, &indents, true);
+                        let (copies, last) = reopened(typed, &copy.each, rows, more, carets);
+                        // One row typed is the whole copy's last: nvim
+                        // indents it as the row before (that indentation
+                        // going at `Esc` if nothing's typed past it).
+                        let tail = copy.each_tail.lead(lead);
+                        let tail = match typed.contains('\n') {
+                            true => tail,
+                            false => {
+                                let indent = copies[last..].len() - copy.each.len() - 1;
+                                let blank = copy.each.len() <= tail.lead;
+                                Tail {
+                                    lead: indent + tail.lead,
+                                    stripped: blank && (rows.width > 0 || tail.stripped),
+                                }
+                            }
+                        };
                         Some(Put {
                             head,
                             at: row_end(&text, row),
-                            text: reopened(typed, &copy.each, rows, more, carets),
+                            change: last_change(&copies, last, tail),
+                            text: copies,
                             copies: Copies {
                                 start: 0,
                                 types: false,
@@ -2035,6 +2142,7 @@ fn repeat_typed(model: &mut EditorModel, session: &Session, ended: &[Ended]) {
                         Some(Put {
                             head,
                             at: head,
+                            change: last_change(&copies, before, copy.last_tail.lead(lead)),
                             text: copies,
                             copies: Copies {
                                 start: 0,
@@ -2056,7 +2164,7 @@ fn repeat_typed(model: &mut EditorModel, session: &Session, ended: &[Ended]) {
     // `o` and `O` may have had no room left for a row.
     puts.retain(|put| !put.text.is_empty());
     if puts.is_empty() {
-        return;
+        return None;
     }
     let heads: Vec<usize> = model.selections().iter().map(|s| s.head()).collect();
     // Where each put starts once all are in, in the text right after them.
@@ -2082,6 +2190,11 @@ fn repeat_typed(model: &mut EditorModel, session: &Session, ended: &[Ended]) {
             after.get(&head).copied().unwrap_or(head + shift)
         })
         .collect();
+    let primary = ended.last().and_then(|region| region.head);
+    let change = puts
+        .iter()
+        .find(|put| Some(put.head) == primary)
+        .map(|put| put.copies.start + put.change);
     let (edits, copies): (Vec<_>, Vec<_>) = puts
         .into_iter()
         .map(|put| ((put.at..put.at, put.text), put.copies))
@@ -2095,7 +2208,9 @@ fn repeat_typed(model: &mut EditorModel, session: &Session, ended: &[Ended]) {
     COPIES_NOTED.set(copied.entries());
     session.ledger().copies = Some(copied);
     let (_, snapshot) = apply(model, edits, session.origin.clone());
+    session.ending(snapshot.version());
     place(model, &snapshot, &carets);
+    change.map(|offset| snapshot.anchor_before(offset))
 }
 
 /// A copy of `typed` for a count: at the caret, or with `opens` in a row of
@@ -2120,6 +2235,8 @@ fn copy_of(typed: &str, indents: &[Indent], opens: bool) -> Copy {
         each: String::with_capacity(typed.len()),
         last: String::with_capacity(typed.len()),
         open: Vec::new(),
+        each_tail: Tail::default(),
+        last_tail: Tail::default(),
     };
     let (mut at, mut next) = (0, 0);
     for (row, line) in typed.split('\n').enumerate() {
@@ -2137,6 +2254,24 @@ fn copy_of(typed: &str, indents: &[Indent], opens: bool) -> Copy {
             _ if last => None,
             _ => Some(blank && !types_first),
         };
+        if row + 1 == rows {
+            // The indentation the row starts with, kept or taken out.
+            let mut lead = at;
+            for piece in pieces {
+                if piece.range.start != lead {
+                    break;
+                }
+                lead = piece.range.end;
+            }
+            let made = lead > at;
+            // The lead is set from all the indentation made ([`Tail::lead`]).
+            let tail = |strip: bool| Tail {
+                lead: 0,
+                stripped: strip && made,
+            };
+            copy.each_tail = tail(removed(false) == Some(true));
+            copy.last_tail = tail(removed(true) == Some(true));
+        }
         push_row(
             &mut copy.each,
             typed,
@@ -2182,23 +2317,31 @@ fn push_row(out: &mut String, typed: &str, range: Range<usize>, pieces: &[Indent
 /// What `o` or `O` with a count adds below the row its session ended on:
 /// up to `more` rows, each holding `each` (the copy of `typed`) after the
 /// indentation `rows` gives it, as many as fit in [`MAX_PUT`] bytes over
-/// `carets` carets, counted as typing `typed` again would put them in.
-fn reopened(typed: &str, each: &str, mut rows: Rows, more: usize, carets: usize) -> String {
+/// `carets` carets, counted as typing `typed` again would put them in;
+/// with where the last of them starts.
+fn reopened(
+    typed: &str,
+    each: &str,
+    mut rows: Rows,
+    more: usize,
+    carets: usize,
+) -> (String, usize) {
     let last = typed
         .rsplit_once('\n')
         .map(|(_, last)| blank_width(last, 0, rows.tab));
-    let (mut copies, mut size) = (String::new(), 0usize);
+    let (mut copies, mut size, mut start) = (String::new(), 0usize, 0);
     for _ in 0..more {
         let indent = rows.next(typed, last);
         size += 1 + indent + typed.len();
         if size.saturating_mul(carets) > MAX_PUT {
             break;
         }
+        start = copies.len();
         copies.push('\n');
         copies.extend(std::iter::repeat_n(' ', indent));
         copies.push_str(each);
     }
-    copies
+    (copies, start)
 }
 
 impl Rows {
@@ -2257,8 +2400,13 @@ impl Copied {
 /// 'autoindent' does on `Esc`: see [`Indents::unused`]. With `off_caret_rows`,
 /// only from rows no caret is on, as nvim does when the cursor leaves a row
 /// in insert mode. The selections move with the text, and are left alone
-/// (their goal columns too) if nothing before them went.
-fn drop_unused_indent(model: &mut EditorModel, session: &Session, off_caret_rows: bool) {
+/// (their goal columns too) if nothing before them went. Returns where
+/// each piece taken out was, in the text after.
+fn drop_unused_indent(
+    model: &mut EditorModel,
+    session: &Session,
+    off_caret_rows: bool,
+) -> Vec<usize> {
     sync(model);
     let mut removed = {
         let mut ledger = session.ledger();
@@ -2272,8 +2420,16 @@ fn drop_unused_indent(model: &mut EditorModel, session: &Session, off_caret_rows
         removed.retain(|range| !rows.contains(&row(text, range.start)));
     }
     if removed.is_empty() {
-        return;
+        return Vec::new();
     }
+    let mut gone = 0;
+    let unindented = removed
+        .iter()
+        .map(|range| {
+            gone += range.len();
+            range.end - gone
+        })
+        .collect();
     let ends: Vec<usize> = selections
         .iter()
         .flat_map(|s| [s.range.start, s.range.end])
@@ -2281,8 +2437,9 @@ fn drop_unused_indent(model: &mut EditorModel, session: &Session, off_caret_rows
     let mapped = through_deletes(&ends, &removed);
     let edits = removed.iter().map(|range| (range.clone(), ""));
     let (_, snapshot) = apply(model, edits, session.origin.clone());
+    session.ending(snapshot.version());
     if mapped == ends {
-        return;
+        return unindented;
     }
     let anchors: Vec<Anchor> = mapped
         .iter()
@@ -2305,4 +2462,5 @@ fn drop_unused_indent(model: &mut EditorModel, session: &Session, off_caret_rows
     if model.selections() != target {
         model.set_selections(target);
     }
+    unindented
 }
