@@ -4,7 +4,8 @@
 //! [`Repo`] answers the two questions the Changes panel and the editor's
 //! changed-row highlighting ask of a repository: which files differ from HEAD
 //! ([`Repo::status`]) and what a file's text is at HEAD ([`Repo::head_text`]);
-//! and which commit last changed each row of a file ([`Repo::blame`]).
+//! which commit last changed each row of a file ([`Repo::blame`]); and which
+//! commits changed a file, following renames ([`Repo::file_log`], through the `git` CLI).
 //! Every path in and out is absolute. `Repo` is `Send + Sync`, so the workbench
 //! can run it on a background thread. Reads use gix. Writes ([`Repo::stage`],
 //! [`Repo::unstage`], [`Repo::discard`], [`Repo::set_index_text`], [`Repo::commit`], [`Repo::switch`], [`Repo::create_branch`]) and
@@ -17,6 +18,7 @@ mod branch;
 mod cli;
 mod commit;
 mod index;
+mod log;
 mod refs;
 mod remote;
 mod stage;
@@ -25,6 +27,7 @@ pub use blame::{BlameRun, CommitInfo};
 pub use branch::SwitchError;
 pub use commit::CommitError;
 pub use index::SplitStatus;
+pub use log::FileCommit;
 pub use refs::{Branch, Head};
 pub use remote::{PullMode, RemoteError};
 

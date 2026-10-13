@@ -7,6 +7,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use gix::ObjectId;
+use gix::bstr::ByteSlice;
 use imara_diff::{Algorithm, Diff, InternedInput, TokenSource};
 
 use crate::{GitError, Repo, commit_blob, commit_text, is_binary};
@@ -82,11 +83,20 @@ impl Repo {
         }
         let head_rows = rows(&blob.data);
 
-        let git_path = gix::path::to_unix_separators_on_windows(
-            gix::path::into_bstr(rela_path).map_err(GitError::from_gix)?,
-        );
+        // The same normalized components the blob lookup used (no `.` or
+        // doubled separators), joined with `/`.
+        let git_path = rela_path
+            .components()
+            .map(|part| part.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+        // As `git blame` does, follow a file across a rename.
+        let options = gix::repository::blame_file::Options {
+            rewrites: Some(gix::diff::Rewrites::default()),
+            ..Default::default()
+        };
         let outcome = repo
-            .blame_file(git_path.as_ref(), head.id, Default::default())
+            .blame_file(git_path.as_bytes().as_bstr(), head.id, options)
             .map_err(GitError::from_gix)?;
         let mut head_commits: Vec<Option<ObjectId>> = vec![None; head_rows.0.len()];
         for entry in &outcome.entries {
@@ -167,7 +177,7 @@ fn resolve_commit<'repo>(
     repo.find_commit(id).map_err(GitError::from_gix)
 }
 
-fn commit_info(repo: &gix::Repository, id: ObjectId) -> Result<CommitInfo, GitError> {
+pub(crate) fn commit_info(repo: &gix::Repository, id: ObjectId) -> Result<CommitInfo, GitError> {
     let commit = repo.find_commit(id).map_err(GitError::from_gix)?;
     let author = commit.author().map_err(GitError::from_gix)?;
     let time = author.time().map_err(GitError::from_gix)?;
