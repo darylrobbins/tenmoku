@@ -33,6 +33,10 @@ pub enum TextInputEvent {
 /// [`TextInput::clear`] and [`TextInput::paste`]: this crate knows no
 /// command registry.
 ///
+/// While [`TextInput::set_typing`] has turned typing off, it takes no
+/// text: it registers no input handler, so typed keys insert nothing, and
+/// it draws no caret. A picker's vim normal mode does that.
+///
 /// A click focuses it. It has no border unless [`TextInput::bordered`]
 /// gives it one. Its colours are the active theme's, read as it renders.
 pub struct TextInput {
@@ -40,6 +44,8 @@ pub struct TextInput {
     placeholder: SharedString,
     focus: FocusHandle,
     bordered: bool,
+    /// Whether typed text goes in: see [`TextInput::set_typing`].
+    typing: bool,
     /// The composition after the text, and the selected bytes within it.
     marked: Option<(String, Range<usize>)>,
     /// The font and size it was last drawn in, which it inherits from its
@@ -66,6 +72,7 @@ impl TextInput {
             placeholder: placeholder.into(),
             focus: cx.focus_handle(),
             bordered: false,
+            typing: true,
             marked: None,
             change_owed: false,
             drawn_font: None,
@@ -100,6 +107,25 @@ impl TextInput {
         self.change_owed = false;
         self.text = text.into();
         cx.notify();
+    }
+
+    /// Whether typed text goes in, as it does unless turned off here. Off,
+    /// it registers no input handler and draws no caret; an open
+    /// composition is dropped. Its editing methods still edit.
+    pub fn set_typing(&mut self, typing: bool, cx: &mut Context<Self>) {
+        if self.typing == typing {
+            return;
+        }
+        self.typing = typing;
+        if !typing {
+            self.marked = None;
+            self.finish_edit(false, cx);
+        }
+        cx.notify();
+    }
+
+    pub fn typing(&self) -> bool {
+        self.typing
     }
 
     /// Adds `text` at the end, up to its first line break. This and the other
@@ -399,6 +425,7 @@ impl Render for TextInput {
         let focused = self.focus.is_focused(window);
         let border = self.border_color(focused, colors);
         let focus = self.focus.clone();
+        let typing = self.typing;
         let input = cx.entity();
         div()
             .key_context(Self::KEY_CONTEXT)
@@ -420,7 +447,7 @@ impl Render for TextInput {
             .when_some(self.marked.as_ref(), |row, (marked, _)| {
                 row.child(div().underline().child(marked.clone()))
             })
-            .when(focused, |row| {
+            .when(focused && typing, |row| {
                 row.child(div().w(px(1.)).h(px(14.)).bg(text))
             })
             .when(self.text.is_empty() && self.marked.is_none(), |row| {
@@ -433,6 +460,9 @@ impl Render for TextInput {
                         let style = window.text_style();
                         let drawn = (style.font(), style.font_size.to_pixels(window.rem_size()));
                         input.update(cx, |input, _| input.drawn_font = Some(drawn));
+                        if !typing {
+                            return;
+                        }
                         window.handle_input(&focus, ElementInputHandler::new(bounds, input), cx)
                     },
                 )

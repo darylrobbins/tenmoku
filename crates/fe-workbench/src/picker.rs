@@ -8,6 +8,10 @@
 //! `quick_open.toggle` and `go_to_line.toggle`, in [`registry`], in the workbench's
 //! [`crate::KEY_CONTEXT`]: its handler only says it ran, and the workbench
 //! does it.
+//!
+//! With vim on, the pickers have telescope's insert and normal modes
+//! (`kiln_shell::picker`'s module docs): [`init`] hands kiln-shell
+//! [`fe_gpui::vim_enabled`] as its switch.
 
 use std::rc::Rc;
 
@@ -40,9 +44,11 @@ struct Commands(Rc<Registry<PaletteCommands>>);
 
 impl Global for Commands {}
 
-/// Installs the picker's commands and `quick_open.toggle`.
+/// Installs the picker's commands and `quick_open.toggle`, and has the
+/// pickers take vim keys while vim is on ([`fe_gpui::vim_enabled`]).
 pub(crate) fn init(cx: &mut App) {
     kiln_shell::picker::init(cx);
+    kiln_shell::picker::set_vim_keys(cx, fe_gpui::vim_enabled);
     cx.set_global(Commands(Rc::new(registry())));
 }
 

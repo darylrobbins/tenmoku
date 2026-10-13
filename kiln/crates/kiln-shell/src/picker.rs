@@ -17,15 +17,35 @@
 //! [`PickerOp::edit`]. A key reaches them as a [`RunCommand`]; a command
 //! the picker doesn't know goes on to its host. Opening a palette is the
 //! host's command.
+//!
+//! ## Vim keys
+//!
+//! With the host's switch on ([`set_vim_keys`]), the picker has telescope's
+//! two modes. [`Picker::show`] opens it in insert mode, which is as with the
+//! switch off but for `picker.dismiss` (escape) and an unbound `ctrl-[`:
+//! they go to normal mode rather than dismissing. In normal mode the query
+//! is kept but takes no text ([`TextInput::set_typing`]; focus stays on the
+//! input): `j` and `k` move the selection, `g g` selects the first match and
+//! `G` the last (a `g` then anything else is dropped), `picker.confirm`
+//! (enter) accepts, `picker.dismiss`, `ctrl-[` and `q` dismiss, and `i`,
+//! `a`, `I` and `A` go back to insert mode, typing appending to the query.
+//! The other picker commands work as in insert mode; the input's do
+//! nothing. The letters reach the picker's key listener only when no
+//! binding matched them. The switch is read live: once it's off, the next
+//! keystroke or frame is back in insert mode.
+//!
+//! While the switch is on, the picker's key context also sets `vim_mode` to
+//! `insert` or `normal`, so a host keymap can bind more keys in either.
 
 use std::{ops::Range, rc::Rc};
 
 use gpui::Bounds;
 use gpui::{
     AnyElement, App, AppContext as _, Context, DismissEvent, ElementId, Entity, EventEmitter,
-    FocusHandle, Focusable, Global, InteractiveElement as _, IntoElement, ParentElement as _,
-    Render, ScrollStrategy, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Subscription, UniformListScrollHandle, Window, div, prelude::FluentBuilder as _, uniform_list,
+    FocusHandle, Focusable, Global, InteractiveElement as _, IntoElement, KeyContext, KeyDownEvent,
+    ParentElement as _, Render, ScrollStrategy, SharedString, StatefulInteractiveElement as _,
+    Styled as _, Subscription, UniformListScrollHandle, Window, div, prelude::FluentBuilder as _,
+    uniform_list,
 };
 use kiln_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry};
 use kiln_core::CommandCatalog;
@@ -34,6 +54,10 @@ use kiln_ui::{PaletteFrame, ROW_HEIGHT, TextInput, TextInputEvent, UiTheme, ui_t
 
 /// The key context a picker's element sets.
 pub const KEY_CONTEXT: &str = "picker";
+
+/// The key context key that holds the vim mode, `insert` or `normal`,
+/// while the vim switch is on.
+pub const VIM_MODE: &str = "vim_mode";
 
 /// Rows shown before the list scrolls.
 pub const VISIBLE_ROWS: usize = 12;
@@ -66,12 +90,52 @@ pub trait PickerDelegate: Sized + 'static {
     }
 }
 
+/// A picker's vim mode: see the module docs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Mode {
+    /// Typing filters, as with vim off.
+    #[default]
+    Insert,
+    /// Keys move and pick; nothing is typed.
+    Normal,
+}
+
+impl Mode {
+    /// Its name in the key context's [`VIM_MODE`].
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Insert => "insert",
+            Self::Normal => "normal",
+        }
+    }
+}
+
+/// The host's vim switch, read live.
+struct VimKeys(fn(&App) -> bool);
+
+impl Global for VimKeys {}
+
+/// Installs the host's vim switch, which pickers read on each keystroke
+/// and frame. Without one, vim keys are off.
+pub fn set_vim_keys(cx: &mut App, enabled: fn(&App) -> bool) {
+    cx.set_global(VimKeys(enabled));
+}
+
+/// Whether pickers take vim keys: the switch [`set_vim_keys`] installed.
+pub fn vim_keys(cx: &App) -> bool {
+    cx.try_global::<VimKeys>()
+        .is_some_and(|switch| (switch.0)(cx))
+}
+
 /// A picker over `D`'s matches. It emits [`DismissEvent`] once confirmed
 /// or dismissed, for its host to hide it.
 pub struct Picker<D: PickerDelegate> {
     pub delegate: D,
     input: Entity<TextInput>,
     selected: usize,
+    mode: Mode,
+    /// Normal mode's `g` waits for a second.
+    pending_g: bool,
     scroll: UniformListScrollHandle,
     _input: Subscription,
 }
@@ -95,6 +159,8 @@ impl<D: PickerDelegate> Picker<D> {
             delegate,
             input,
             selected: 0,
+            mode: Mode::Insert,
+            pending_g: false,
             scroll: UniformListScrollHandle::new(),
             _input: changed,
         }
@@ -108,9 +174,16 @@ impl<D: PickerDelegate> Picker<D> {
         self.selected
     }
 
-    /// Clears the input, focuses it and matches the empty query.
+    /// Its vim mode, insert unless the switch is on: see the module docs.
+    pub fn mode(&self) -> Mode {
+        self.mode
+    }
+
+    /// Clears the input, focuses it and matches the empty query, in insert
+    /// mode.
     pub fn show(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.input.update(cx, |input, cx| input.set_text("", cx));
+        self.set_mode(Mode::Insert, cx);
         self.selected = 0;
         window.focus(&self.input.focus_handle(cx), cx);
         self.delegate.update_matches(String::new(), cx);
@@ -153,22 +226,97 @@ impl<D: PickerDelegate> Picker<D> {
         cx.emit(DismissEvent);
     }
 
+    fn set_mode(&mut self, mode: Mode, cx: &mut Context<Self>) {
+        self.pending_g = false;
+        if self.mode != mode {
+            self.mode = mode;
+            cx.notify();
+        }
+        let typing = mode == Mode::Insert;
+        self.input
+            .update(cx, |input, cx| input.set_typing(typing, cx));
+    }
+
+    /// Back to insert mode if the vim switch has been turned off.
+    fn sync_mode(&mut self, cx: &mut Context<Self>) {
+        if self.mode == Mode::Normal && !vim_keys(cx) {
+            self.set_mode(Mode::Insert, cx);
+        }
+    }
+
+    /// Escape with vim keys on: to normal mode from insert, else dismissed.
+    fn escape(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.mode {
+            Mode::Insert => self.set_mode(Mode::Normal, cx),
+            Mode::Normal => self.dismiss(window, cx),
+        }
+    }
+
     /// Runs a picker or input command; others go on to the host.
     fn on_run_command(&mut self, run: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
         let Some(op) = op(run, cx) else {
             return cx.propagate();
         };
+        self.sync_mode(cx);
+        self.pending_g = false;
         match op {
             PickerOp::SelectPrev => self.select(self.selected.saturating_sub(1), cx),
             PickerOp::SelectNext => self.select(self.selected + 1, cx),
             PickerOp::Confirm => self.confirm(self.selected, window, cx),
+            PickerOp::Dismiss if vim_keys(cx) => self.escape(window, cx),
             PickerOp::Dismiss => self.dismiss(window, cx),
             edit => {
-                if let Some(edit) = edit.edit() {
+                if let Some(edit) = edit.edit()
+                    && self.mode == Mode::Insert
+                {
                     self.input.update(cx, edit);
                 }
             }
         }
+    }
+
+    /// A keystroke no binding matched: vim's keys, with the switch on.
+    fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let keystroke = &event.keystroke;
+        if self.mode == Mode::Normal && !vim_keys(cx) {
+            // Switched off in normal mode: this key types, though the frame
+            // it arrived in registered no input handler.
+            self.set_mode(Mode::Insert, cx);
+            if let Some(text) = &keystroke.key_char {
+                self.input.update(cx, |input, cx| input.insert(text, cx));
+                cx.stop_propagation();
+            }
+            return;
+        }
+        if !vim_keys(cx) {
+            return;
+        }
+        let m = keystroke.modifiers;
+        let escape = (keystroke.key == "escape" && !m.modified())
+            || (keystroke.key == "[" && m.control && !(m.alt || m.platform || m.shift));
+        if escape {
+            self.escape(window, cx);
+            return cx.stop_propagation();
+        }
+        if self.mode == Mode::Insert || m.control || m.alt || m.platform || m.function {
+            return;
+        }
+        let Some(key) = keystroke.key_char.as_deref() else {
+            return;
+        };
+        let pending_g = std::mem::take(&mut self.pending_g);
+        match key {
+            "j" => self.select(self.selected + 1, cx),
+            "k" => self.select(self.selected.saturating_sub(1), cx),
+            "g" if pending_g => self.select(0, cx),
+            "g" => self.pending_g = true,
+            "G" => self.select(usize::MAX, cx),
+            "q" => self.dismiss(window, cx),
+            "i" | "a" | "I" | "A" => self.set_mode(Mode::Insert, cx),
+            // Anything else is dropped: normal mode types nothing.
+            _ => {}
+        }
+        cx.stop_propagation();
     }
 
     fn render_rows(&mut self, range: Range<usize>, cx: &mut Context<Self>) -> Vec<AnyElement> {
@@ -225,6 +373,12 @@ impl<D: PickerDelegate> Focusable for Picker<D> {
 
 impl<D: PickerDelegate> Render for Picker<D> {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_mode(cx);
+        let mut context = KeyContext::default();
+        context.add(KEY_CONTEXT);
+        if vim_keys(cx) {
+            context.set(VIM_MODE, self.mode.name());
+        }
         let count = self.delegate.match_count();
         let list = (count > 0).then(|| {
             uniform_list(
@@ -240,8 +394,9 @@ impl<D: PickerDelegate> Render for Picker<D> {
             .when_some(self.delegate.status(), PaletteFrame::status)
             .when_some(list, PaletteFrame::list);
         div()
-            .key_context(KEY_CONTEXT)
+            .key_context(context)
             .on_action(cx.listener(Self::on_run_command))
+            .on_key_down(cx.listener(Self::on_key_down))
             .absolute()
             .inset_0()
             .child(frame)

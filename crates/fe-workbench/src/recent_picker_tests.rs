@@ -338,16 +338,28 @@ fn vim(cx: &mut TestAppContext) {
     assert!(cx.update(|window, cx| first.focus_handle(cx).is_focused(window)));
     assert_eq!(first.read_with(cx, |e, _| e.vim_mode()), Some("normal"));
 
-    // Opened from normal mode and escaped: back in the editor, in normal
-    // mode, and j typed into the query rather than moving.
+    // Opened from normal mode, in insert mode: j types into the query
+    // rather than moving. The first escape goes to the picker's normal
+    // mode, keeping the query; the second closes it, back in the editor,
+    // in normal mode.
     run("workbench.open_recent", cx);
     cx.simulate_keystrokes("j");
     draw(cx);
-    let query = workbench.read_with(cx, |workbench, cx| {
-        let picker = workbench.recent_picker().read(cx);
-        picker.input().read(cx).text().to_string()
+    let query = |cx: &mut VisualTestContext| {
+        workbench.read_with(cx, |workbench, cx| {
+            let picker = workbench.recent_picker().read(cx);
+            picker.input().read(cx).text().to_string()
+        })
+    };
+    assert_eq!(query(cx), "j");
+    cx.simulate_keystrokes("escape");
+    draw(cx);
+    assert_eq!(palette(&workbench, cx), Some(Palette::Recent));
+    assert_eq!(query(cx), "j");
+    let mode = workbench.read_with(cx, |workbench, cx| {
+        workbench.recent_picker().read(cx).mode()
     });
-    assert_eq!(query, "j");
+    assert_eq!(mode, kiln_shell::picker::Mode::Normal);
     cx.simulate_keystrokes("escape");
     draw(cx);
     assert_eq!(palette(&workbench, cx), None);
