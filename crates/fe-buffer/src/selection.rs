@@ -56,13 +56,30 @@ impl SelectionSet {
         )
     }
 
-    /// Sorts and merges `selections`. Non-empty selections don't grow when
+    /// Clips `selections` to the text, then sorts and merges them, so carets
+    /// that clip together are one and a range clipped to empty is a caret. Non-empty selections don't grow when
     /// text is inserted at their edges; carets stay before text inserted at them.
     pub fn from_resolved(
         snapshot: &BufferSnapshot,
         selections: impl IntoIterator<Item = ResolvedSelection>,
     ) -> Self {
-        let selections = merge(selections.into_iter().collect())
+        let text = snapshot.text();
+        let clipped = selections
+            .into_iter()
+            .map(|selection| {
+                let range = selection.range;
+                let range = if range.is_empty() {
+                    let caret = text.clip_offset(range.start, Bias::Left);
+                    caret..caret
+                } else {
+                    let start = text.clip_offset(range.start, Bias::Right);
+                    let end = text.clip_offset(range.end, Bias::Left);
+                    start..end.max(start)
+                };
+                ResolvedSelection { range, ..selection }
+            })
+            .collect();
+        let selections = merge(clipped)
             .into_iter()
             .map(|selection| {
                 let range = selection.range;
