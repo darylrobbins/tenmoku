@@ -26,6 +26,7 @@ fn cell(ch: char) -> Cell {
         fg: Color::Foreground,
         bg: Color::Background,
         flags: CellFlags::empty(),
+        link: None,
     }
 }
 
@@ -36,6 +37,7 @@ fn styled(ch: char, fg: Color, bg: Color, flags: CellFlags) -> Cell {
         fg,
         bg,
         flags,
+        link: None,
     }
 }
 
@@ -61,6 +63,7 @@ fn snapshot(rows: Vec<Vec<Cell>>, cols: usize, cursor: (usize, usize, CursorShap
         history_size: 0,
         selection: Vec::new(),
         modes: Modes::default(),
+        links: Vec::new(),
     }
 }
 

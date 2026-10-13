@@ -3,7 +3,7 @@
 
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line};
-use alacritty_terminal::term::cell::{Cell as TermCell, Flags};
+use alacritty_terminal::term::cell::{Cell as TermCell, Flags, Hyperlink};
 use alacritty_terminal::term::{Term, TermMode};
 use alacritty_terminal::vte::ansi::{
     Color as TermColor, CursorShape as TermCursorShape, NamedColor,
@@ -24,6 +24,9 @@ pub struct Snapshot {
     /// The selection's visible part, one span per row, top to bottom.
     pub selection: Vec<SelectionSpan>,
     pub modes: Modes,
+    /// The URIs of the OSC 8 hyperlinks on screen, which [`Cell::link`]
+    /// indexes.
+    pub links: Vec<String>,
 }
 
 impl Snapshot {
@@ -62,6 +65,9 @@ pub struct Cell {
     pub fg: Color,
     pub bg: Color,
     pub flags: CellFlags,
+    /// The OSC 8 hyperlink the cell belongs to, an index into
+    /// [`Snapshot::links`]; the cells of one hyperlink share it.
+    pub link: Option<u32>,
 }
 
 /// A cell colour, resolved against the view's theme at render time.
@@ -227,11 +233,14 @@ pub(crate) fn take<T>(term: &Term<T>) -> Snapshot {
     let screen_lines = grid.screen_lines();
     let cols = grid.columns();
 
+    let mut hyperlinks = Vec::new();
     let rows = (0..screen_lines)
         .map(|row| {
             let line = Line(row as i32 - display_offset as i32);
             let grid_row = &grid[line];
-            (0..cols).map(|col| cell(&grid_row[Column(col)])).collect()
+            (0..cols)
+                .map(|col| cell(&grid_row[Column(col)], &mut hyperlinks))
+                .collect()
         })
         .collect();
 
@@ -269,6 +278,7 @@ pub(crate) fn take<T>(term: &Term<T>) -> Snapshot {
         history_size: grid.history_size(),
         selection: selection_spans(term, display_offset, screen_lines, cols),
         modes: Modes::from_term(mode),
+        links: hyperlinks.iter().map(|h| h.uri().to_owned()).collect(),
     }
 }
 
@@ -331,7 +341,8 @@ fn selection_spans<T>(
         .collect()
 }
 
-fn cell(cell: &TermCell) -> Cell {
+/// Converts `cell`, adding its hyperlink to `hyperlinks` if it is new there.
+fn cell(cell: &TermCell, hyperlinks: &mut Vec<Hyperlink>) -> Cell {
     let mut flags = CellFlags::empty();
     for (theirs, ours) in [
         (Flags::BOLD, CellFlags::BOLD),
@@ -354,12 +365,23 @@ fn cell(cell: &TermCell) -> Cell {
         .zerowidth()
         .filter(|chars| !chars.is_empty())
         .map(|chars| chars.iter().collect());
+    let link = cell.hyperlink().map(|hyperlink| {
+        let index = match hyperlinks.iter().position(|h| *h == hyperlink) {
+            Some(index) => index,
+            None => {
+                hyperlinks.push(hyperlink);
+                hyperlinks.len() - 1
+            }
+        };
+        index as u32
+    });
     Cell {
         ch: cell.c,
         extra,
         fg: color(cell.fg),
         bg: color(cell.bg),
         flags,
+        link,
     }
 }
 

@@ -5,11 +5,13 @@
 //! doesn't name it. Must not depend on GPUI.
 
 pub mod keys;
+mod links;
 mod pty_loop;
 mod search;
 mod session;
 mod snapshot;
 
+pub use links::{Link, LinkTarget, link_at};
 pub use search::{GridPoint, QueryError, TerminalMatch, TerminalQuery};
 pub use session::{GridSize, SelectionKind, Side, Terminal, TerminalEvent, TerminalOptions};
 pub use snapshot::{
