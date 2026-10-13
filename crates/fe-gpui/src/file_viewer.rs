@@ -27,6 +27,7 @@ use gpui::{
 use crate::{EditorSettings, EditorTheme, commands::RunCommand, pane_item::file_name};
 
 mod element;
+mod find;
 mod pane_item;
 
 use element::{FileViewerElement, ViewerLayout};
@@ -57,6 +58,10 @@ pub enum FileViewerEvent {
     Changed,
     /// [`FileViewer::reload`] reopened the file and shows it now.
     Reloaded,
+    /// A search selected a match; `wrapped` if it went round the file.
+    Found { wrapped: bool },
+    /// A search found no match; the selection stays.
+    NotFound,
 }
 
 /// A read-only view of a [`FileView`], with its rows from `index`.
@@ -103,6 +108,8 @@ pub struct FileViewer {
     /// The cursor texts worked out.
     #[cfg(test)]
     pub(crate) cursors_worked_out: usize,
+    /// The query, and the search running.
+    find: find::FindState,
     /// The banner the last frame drew.
     #[cfg(test)]
     pub(crate) drawn_banner: SharedString,
@@ -180,6 +187,7 @@ impl FileViewer {
             generation: 0,
             cursor: None,
             cursor_task: None,
+            find: Default::default(),
             #[cfg(test)]
             cursors_worked_out: 0,
             #[cfg(test)]
@@ -439,6 +447,7 @@ impl FileViewer {
     /// opened, the banner says so and still offers a reload.
     pub fn reload(&mut self, cx: &mut Context<Self>) {
         use gpui::AppContext as _;
+        self.find.stop();
         let path = self.view.path().to_owned();
         let opening = cx.background_spawn(async move { open(&path) });
         self.reload = Some(cx.spawn(async move |this, cx| {
@@ -454,6 +463,7 @@ impl FileViewer {
         cx: &mut Context<Self>,
     ) {
         self.reload = None;
+        self.find.stop();
         let (view, index) = match opened {
             Ok(opened) => opened,
             Err(error) => {
@@ -691,3 +701,6 @@ mod tests;
 
 #[cfg(test)]
 mod pane_item_tests;
+
+#[cfg(test)]
+mod find_tests;
