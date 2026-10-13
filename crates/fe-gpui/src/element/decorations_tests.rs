@@ -222,7 +222,7 @@ fn row_backgrounds_and_bars_cover_every_display_row(cx: &mut TestAppContext) {
                 gpui::point(gutter_x, row_4_top - px(1.5)),
                 gpui::size(lane.size.width, px(3.))
             ),
-            theme.error.opacity(0.6)
+            theme.change_deleted.opacity(0.6)
         )]
     );
     // Clear of the diagnostics' dot at the gutter's left.
