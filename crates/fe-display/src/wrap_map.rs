@@ -24,6 +24,7 @@ use std::{borrow::Cow, ops::Range};
 
 use fe_text::TextSource;
 use sum_tree::{Bias, ContextLessSummary, Dimension, Dimensions, Item, SumTree};
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::CharWidth;
 
@@ -468,9 +469,12 @@ impl<'a> Wrapper<'a> {
             LineItem::Wrapped(Box::default())
         } else {
             let (ascii, widths) = (self.ascii, &mut *self.widths);
-            LineItem::Wrapped(break_points(&line, self.width, self.tab_size, |ch| {
-                ascii.get(ch).unwrap_or_else(|| widths.char_width(ch))
-            }))
+            LineItem::Wrapped(break_points(
+                &line,
+                self.width,
+                self.tab_size,
+                &mut Cached { ascii, widths },
+            ))
         };
         self.line = line;
         (item, len)
@@ -549,17 +553,43 @@ impl<'a> RowReader<'a> {
     }
 }
 
+/// Measures chars and grapheme clusters for [`break_points`].
+trait Measure {
+    fn char_width(&mut self, ch: char) -> f32;
+    /// A cluster of more than one char.
+    fn cluster_width(&mut self, cluster: &str) -> f32;
+}
+
+/// Measures with the cached ASCII widths, then `widths`.
+struct Cached<'a> {
+    ascii: &'a AsciiWidths,
+    widths: &'a mut dyn CharWidth,
+}
+
+impl Measure for Cached<'_> {
+    fn char_width(&mut self, ch: char) -> f32 {
+        self.ascii
+            .get(ch)
+            .unwrap_or_else(|| self.widths.char_width(ch))
+    }
+
+    fn cluster_width(&mut self, cluster: &str) -> f32 {
+        if cluster.len() > crate::MAX_CLUSTER_BYTES {
+            // As `RowIndex` caps it: the chars summed, so the cost stays bounded.
+            cluster.chars().map(|ch| self.char_width(ch)).sum()
+        } else {
+            self.widths.cluster_width(cluster)
+        }
+    }
+}
+
 /// Breaks `line` into rows no wider than `width`, after the whitespace
-/// before a word where possible, otherwise mid-word. Every row keeps at
-/// least one char, and whitespace may hang past the edge. Tab stops count
+/// before a word where possible, otherwise mid-word. Rows break only
+/// between grapheme clusters, never beside a no-break space, and each keeps
+/// at least one cluster. Whitespace may hang past the edge. Tab stops count
 /// from the start of each row, as the rows are laid out.
-fn break_points(
-    line: &str,
-    width: f32,
-    tab_size: usize,
-    mut char_width: impl FnMut(char) -> f32,
-) -> Box<[u32]> {
-    let space = char_width(' ');
+fn break_points(line: &str, width: f32, tab_size: usize, measure: &mut impl Measure) -> Box<[u32]> {
+    let space = measure.char_width(' ');
     let mut breaks = Vec::new();
     let mut row_start = 0;
     'rows: loop {
@@ -567,23 +597,31 @@ fn break_points(
         let mut column = 0;
         let mut word_start = None;
         let mut after_space = false;
-        for (ix, ch) in line[row_start..].char_indices() {
-            let is_space = ch.is_whitespace();
+        for (ix, cluster) in line[row_start..].grapheme_indices(true) {
+            let mut chars = cluster.chars();
+            let first = chars.next().unwrap_or(' ');
+            let single = chars.next().is_none();
+            // No-break spaces glue their neighbours, as UAX #14 has it.
+            let is_space = single
+                && first.is_whitespace()
+                && !matches!(first, '\u{a0}' | '\u{2007}' | '\u{202f}');
             if after_space && !is_space {
                 word_start = Some(ix);
             }
-            let (ch_width, columns) = if ch == '\t' {
+            let (cluster_width, columns) = if first == '\t' && single {
                 let columns = tab_size - column % tab_size;
                 (space * columns as f32, columns)
+            } else if single {
+                (measure.char_width(first), 1)
             } else {
-                (char_width(ch), 1)
+                (measure.cluster_width(cluster), cluster.chars().count())
             };
-            if ix > 0 && !is_space && x + ch_width > width {
+            if ix > 0 && !is_space && x + cluster_width > width {
                 row_start += word_start.unwrap_or(ix);
                 breaks.push(row_start as u32);
                 continue 'rows;
             }
-            x += ch_width;
+            x += cluster_width;
             column += columns;
             after_space = is_space;
         }
@@ -645,6 +683,19 @@ mod tests {
         assert_eq!(wrapped("abc\tdef", 5.), [vec!["abc\t", "def"]]);
         // Each row keeps a char even if it's wider than the wrap width.
         assert_eq!(wrapped("abc", 0.5), [vec!["a", "b", "c"]]);
+    }
+
+    /// A cluster measures as its chars summed.
+    struct Plain<'a>(&'a mut Uneven);
+
+    impl Measure for Plain<'_> {
+        fn char_width(&mut self, ch: char) -> f32 {
+            self.0.char_width(ch)
+        }
+
+        fn cluster_width(&mut self, cluster: &str) -> f32 {
+            self.0.cluster_width(cluster)
+        }
     }
 
     /// ASCII chars one to three `scale`s wide; others four.
@@ -726,7 +777,7 @@ mod tests {
                 let start = text.row_start(row);
                 let line = text.slice_to_string(start..start + text.row_len(row) as usize);
                 let mut measured = Uneven { scale };
-                let want = break_points(&line, width, 4, |ch| measured.char_width(ch));
+                let want = break_points(&line, width, 4, &mut Plain(&mut measured));
                 prop_assert_eq!(breaks, want, "row {:?}", line);
             }
         }
