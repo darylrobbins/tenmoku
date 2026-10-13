@@ -48,13 +48,21 @@ views, layout and forms).
 `kiln-command` and `kiln-core` stay GPUI-free, so headless tools, tests and
 an app's AI backend can load the same commands, config and keymaps.
 
-## 3. API: extend GPUI, never wrap it
+## 3. API: default the composition, wrap nothing on the paint path
 
 - **Setup** is plain GPUI: `kiln::application().run(|cx| …)`, then
   `kiln::init(cx, Config::new(app_id, name))`, then `cx.open_window(
   kiln::window_options(&spec, cx), |window, cx| …)`, whose view is
-  `cx.new(|cx| Root::new(content, window, cx))`. There is
-  no kiln `App` type; `&mut App` and `Window` are reachable everywhere.
+  `cx.new(|cx| Root::new(content, window, cx))`. This manual path stays as
+  documented. On top of it kiln offers `kiln::app(id, name)` and attribute
+  macros, under one rule: *default the composition; wrap nothing on the paint
+  path; every convention has a one-line override, and every sugar has a
+  GPUI-shaped escape hatch.* The framework's owner approved this on
+  2026-10-13, replacing the earlier "no kiln `App` type". `&mut App` and
+  `Window` stay reachable everywhere. Library crates register commands and
+  other contributions through an explicit `kiln::Module` passed to
+  `.module(..)`; `inventory` auto-registration covers only the app crate's own
+  items.
 - **Extension traits** in `kiln::prelude`: `cx.theme()`, `cx.settings::<S>()`,
   `cx.set_theme_mode(..)`, `cx.binding_label(..)`, `window.run_command(..)`.
   `window.prompt(..)` stays GPUI's, made the same everywhere by `init`.

@@ -1,6 +1,7 @@
 # App framework: `kiln`, a GPUI-idiomatic layer that replaces `fe-shell`
 
 Status: **build**. Decided 2026-10-10. Supersedes `app-shell.md` (see §6).
+Amended 2026-10-13: §3 now allows a kiln `App` layer; see `kiln-app-layer.md`.
 The name `kiln` is a placeholder; the final name is chosen before the
 framework is open-sourced, and renamed in one change (card K6.4).
 `kiln/docs/` holds the framework's standalone copy of this record and of
@@ -47,13 +48,19 @@ and a widget kit (app chrome, basic controls, data views, layout and forms).
 (`scripts/check-no-gpui.sh`), so headless tools and the AI backend can load
 the same commands, config and keymaps.
 
-## 3. API: extend GPUI, never wrap it
+## 3. API: default the composition, wrap nothing on the paint path
 
 - **Setup** is plain GPUI: `kiln::application().run(|cx| …)`, then
   `kiln::init(cx, Config::new(app_id, name))`, then `cx.open_window(
   kiln::window_options(cx, spec), |window, cx| cx.new(|cx| Root::new(content,
-  window, cx)))`. There is no kiln `App` type; `&mut App` and `Window` are
-  reachable everywhere.
+  window, cx)))`. This manual path (`kiln::application()`, `kiln::init`,
+  `Config`, `Root`/`Shell`) stays as documented. On top of it kiln now offers
+  `kiln::app(id, name)` and attribute macros, under the rule: *default the
+  composition; wrap nothing on the paint path; every convention has a
+  one-line override, and every sugar has a GPUI-shaped escape hatch.* The
+  owner decided this 2026-10-13, reversing the earlier "no kiln `App` type";
+  see `kiln-app-layer.md`. `&mut App` and `Window` stay reachable
+  everywhere.
 - **Extension traits** in `kiln::prelude`: `cx.theme()`, `cx.settings::<S>()`,
   `cx.set_platform_menus(..)`, `cx.bind_commands(..)`, `window.run_command(..)`.
   `window.prompt(..)` stays GPUI's, made the same everywhere by `init`.

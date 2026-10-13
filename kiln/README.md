@@ -50,9 +50,18 @@ command model in [`docs/command-model.md`](docs/command-model.md).
 
 ## Using it
 
-There is no kiln `App` type. Setup is plain GPUI plus `kiln::init`, the
-extension traits in `kiln::prelude`, and typed commands that are real GPUI
-actions. This is how the gallery example starts, slightly shortened:
+The rule: *default the composition; wrap nothing on the paint path. Every
+convention has a one-line override, and every sugar has a GPUI-shaped escape
+hatch.* Kiln is gaining a `kiln::app(id, name)` builder and attribute macros
+on that rule (approved 2026-10-13). Library crates register through an
+explicit `kiln::Module` passed to `.module(..)`; `inventory` auto-registration
+covers only the app crate's own items.
+
+### The manual path
+
+Underneath, setup is plain GPUI plus `kiln::init`, the extension traits in
+`kiln::prelude`, and typed commands that are real GPUI actions. This stays
+supported. This is how the gallery example starts, slightly shortened:
 
 ```rust
 use kiln::{Config, WindowSpec, gpui::{App, AppContext as _}, prelude::*};
