@@ -31,7 +31,7 @@
 
 use std::{collections::HashSet, ops::Range, path::Path, sync::Arc};
 
-use crate::{Diagnostic, Layer, Os, Severity, platform::PlatformFilter};
+use crate::{Diagnostic, Key, Layer, Os, Severity, platform::PlatformFilter};
 use kiln_command::{
     CommandId, ContextFrame, ContextPredicate, ContextStack, Invocation, Source, Value,
 };
@@ -336,11 +336,12 @@ impl MenuItem {
 
 impl CommandItem {
     /// The first single-keystroke entry of [`shortcuts`] in the item's
-    /// `shortcut_context`: the key a menu shows, which can't be a chord.
+    /// `shortcut_context` that isn't a mouse click: the key a menu shows,
+    /// which can't be a chord or a click.
     pub fn shortcut(&self, keymap: &Keymap) -> Option<KeySequence> {
         shortcuts(keymap, &self.command, &self.args, &self.shortcut_context)
             .into_iter()
-            .find(|keys| keys.keystrokes().len() == 1)
+            .find(|keys| matches!(keys.keystrokes(), [key] if key.key != Key::Click))
     }
 
     /// What choosing the item asks for in `stack`: the first alternative
