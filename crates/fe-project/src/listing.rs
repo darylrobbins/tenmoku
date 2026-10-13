@@ -204,7 +204,7 @@ impl Listing {
             });
         }
         checkpoint(Point::Read);
-        let after = self.reach(Access::Search, lost)?;
+        let after = self.reach(Access::Read, lost)?;
         if identity(after.last().expect("`/` is always opened"))? != id {
             return Err(self.lost(lost, Lost::Itself));
         }
@@ -688,8 +688,11 @@ pub(crate) fn is_git_dir(name: &OsStr) -> bool {
 }
 
 /// How a directory is opened: to read its entries, or only to reach and
-/// look up what is in it. On macOS that is `O_SEARCH`, which needs search
-/// permission alone; elsewhere it is a read-only open too.
+/// look up what is in it. On macOS that is `O_SEARCH` and on Linux and
+/// Android `O_PATH`, which need search permission alone, and so reach a
+/// directory that can be searched but not listed; elsewhere it is a
+/// read-only open too. A search handle is only an `openat` or `fstatat`
+/// base, for its metadata, or cloned: never read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Access {
     Read,
@@ -699,7 +702,9 @@ pub(crate) enum Access {
 fn dir_flags(access: Access) -> c_int {
     #[cfg(target_os = "macos")]
     const SEARCH: c_int = libc::O_SEARCH;
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    const SEARCH: c_int = libc::O_PATH;
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
     const SEARCH: c_int = libc::O_RDONLY;
     let mode = match access {
         Access::Read => libc::O_RDONLY,
