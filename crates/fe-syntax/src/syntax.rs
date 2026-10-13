@@ -672,7 +672,7 @@ pub(crate) fn for_each_query_root<'tree>(
             return;
         }
         let mut children = node.walk();
-        if children.goto_first_child_for_byte(range.start).is_none() {
+        if !goto_first_child_reaching(&mut children, range.start) {
             return;
         }
         loop {
@@ -714,12 +714,33 @@ pub(crate) fn flat_paths<'tree>(root: Node<'tree>, range: &Range<usize>) -> Vec<
             if node.child_count() > FLAT_CHILDREN {
                 split.append(&mut path);
             }
-            if cursor.goto_first_child_for_byte(offset).is_none() {
+            if !goto_first_child_reaching(&mut cursor, offset) {
                 break;
             }
         }
     }
     split
+}
+
+/// Moves `cursor` to its first child that ends after `offset`, or returns
+/// false if there is none. tree-sitter's `goto_first_child_for_byte` doesn't
+/// backtrack: it can answer none inside a hidden node that ends on a blank
+/// row below its item, as in Go and bash, with later children still in
+/// range. So when it finds nothing, look at the children one by one.
+fn goto_first_child_reaching(cursor: &mut tree_sitter::TreeCursor<'_>, offset: usize) -> bool {
+    if cursor.goto_first_child_for_byte(offset).is_some() {
+        return true;
+    }
+    if !cursor.goto_first_child() {
+        return false;
+    }
+    while cursor.node().end_byte() <= offset {
+        if !cursor.goto_next_sibling() {
+            cursor.goto_parent();
+            return false;
+        }
+    }
+    true
 }
 
 pub(crate) fn chunks(text: &Text, range: Range<usize>) -> impl Iterator<Item = &[u8]> {
