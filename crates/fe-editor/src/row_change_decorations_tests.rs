@@ -29,17 +29,11 @@ fn added_modified_and_deleted_rows() {
             .iter()
             .map(|d| (&d.kind, d.tint, d.range.clone(), d.priority))
             .collect::<Vec<_>>(),
-        [
-            (&RowBackground, Tint::Added, 4..6, -100),
-            (&Gutter(Bar), Tint::Added, 4..6, -100)
-        ]
+        [(&Gutter(Bar), Tint::Added, 4..6, -100)]
     );
     let modified = all(&model("a\nx\nc\n", Some(base)));
-    assert_eq!(
-        summary(&modified),
-        [(2..4, Tint::Modified, true), (2..4, Tint::Modified, false)]
-    );
-    assert_eq!(modified[1].kind, Gutter(Bar));
+    assert_eq!(summary(&modified), [(2..4, Tint::Modified, false)]);
+    assert_eq!(modified[0].kind, Gutter(Bar));
     let deleted = all(&model("a\nc\n", Some(base)));
     assert_eq!(deleted.len(), 1);
     assert_eq!(deleted[0].kind, Gutter(Deletion));
@@ -58,9 +52,9 @@ fn queries_return_only_overlapping_changes() {
     let model = model("a\nB\nc\nd\nE\n", Some(base));
     assert_eq!(model.decorations(0..1).len(), 0);
     assert_eq!(summary(&model.decorations(2..3))[0].0, 2..4);
-    assert_eq!(model.decorations(2..3).len(), 2);
+    assert_eq!(model.decorations(2..3).len(), 1);
     assert_eq!(model.decorations(4..6).len(), 0);
-    assert_eq!(model.decorations(8..9).len(), 2);
+    assert_eq!(model.decorations(8..9).len(), 1);
 }
 
 #[test]
@@ -72,7 +66,7 @@ fn follows_edits_and_diffs_once_per_version() {
     model.sync_display();
     let before = crate::row_changes::diff_count();
     for _ in 0..3 {
-        assert_eq!(all(&model).len(), 2);
+        assert_eq!(all(&model).len(), 1);
         assert_eq!(model.row_changes().len(), 1);
     }
     assert_eq!(crate::row_changes::diff_count() - before, 1);
@@ -81,27 +75,27 @@ fn follows_edits_and_diffs_once_per_version() {
 #[test]
 fn provider_follows_the_base() {
     let mut model = model("a\nx\n", Some("a\nb\n"));
-    assert_eq!(all(&model).len(), 2);
+    assert_eq!(all(&model).len(), 1);
     model.set_diff_base(Some("a\nb\n".into()));
     model.set_diff_base(Some("a\nx\n".into()));
     model.set_diff_base(Some("a\ny\n".into()));
-    assert_eq!(all(&model).len(), 2);
+    assert_eq!(all(&model).len(), 1);
     model.set_diff_base(None);
     assert!(all(&model).is_empty());
     model.set_diff_base(Some("a\nb\n".into()));
-    assert_eq!(all(&model).len(), 2);
+    assert_eq!(all(&model).len(), 1);
 }
 
 #[test]
 fn splits_share_the_base_and_provider() {
     let mut model = model("a\nx\n", Some("a\nb\n"));
     let mut split = model.split();
-    assert_eq!(all(&split).len(), 2);
+    assert_eq!(all(&split).len(), 1);
     split.set_diff_base(Some("a\nx\n".into()));
     assert!(all(&split).is_empty());
     assert!(all(&model).is_empty());
     model.set_diff_base(Some("a\nb\n".into()));
-    assert_eq!(all(&split).len(), 2);
+    assert_eq!(all(&split).len(), 1);
 }
 
 #[test]
@@ -124,7 +118,7 @@ fn end_of_text_changes_are_found() {
     assert_eq!(deleted.decorations(1..1).len(), 1);
     let added = model("a\n", Some("a"));
     let items = all(&added);
-    assert_eq!(items.len(), 2);
+    assert_eq!(items.len(), 1);
     assert!(
         items
             .iter()
@@ -137,22 +131,22 @@ fn a_provider_is_registered_whichever_split_sets_the_base() {
     let mut model = EditorModel::new(Buffer::new("a\nx\n"), None);
     let mut split = model.split();
     split.set_diff_base(Some("a\nb\n".into()));
-    assert_eq!(all(&split).len(), 2);
-    assert_eq!(all(&model).len(), 2);
+    assert_eq!(all(&split).len(), 1);
+    assert_eq!(all(&model).len(), 1);
     model.set_diff_base(None);
     assert!(all(&model).is_empty());
     assert!(all(&split).is_empty());
     split.sync_display();
     assert!(all(&split).is_empty());
     split.set_diff_base(Some("a\nb\n".into()));
-    assert_eq!(all(&split).len(), 2);
-    assert_eq!(all(&model).len(), 2);
+    assert_eq!(all(&split).len(), 1);
+    assert_eq!(all(&model).len(), 1);
     model.set_diff_base(Some("a\nb\n".into()));
-    assert_eq!(all(&model).len(), 2);
+    assert_eq!(all(&model).len(), 1);
     model.sync_display();
     split.sync_display();
-    assert_eq!(all(&model).len(), 2);
-    assert_eq!(all(&split).len(), 2);
+    assert_eq!(all(&model).len(), 1);
+    assert_eq!(all(&split).len(), 1);
 }
 
 #[test]
@@ -164,12 +158,12 @@ fn splits_at_different_versions_diff_each_version_once() {
     model.sync_display();
     let before = crate::row_changes::diff_count();
     for _ in 0..3 {
-        assert_eq!(all(&model).len(), 2);
+        assert_eq!(all(&model).len(), 1);
         assert!(all(&split).is_empty());
     }
     assert_eq!(crate::row_changes::diff_count() - before, 2);
     split.sync_display();
-    assert_eq!(all(&split).len(), 2);
+    assert_eq!(all(&split).len(), 1);
 }
 
 #[test]
@@ -194,7 +188,7 @@ fn a_base_outlives_the_split_that_set_it() {
     let mut split = model.split();
     split.set_diff_base(Some("a\nb\n".into()));
     drop(split);
-    assert_eq!(all(&model).len(), 2);
+    assert_eq!(all(&model).len(), 1);
 }
 
 #[test]
@@ -203,7 +197,7 @@ fn buffer_mut_catch_ups_count_as_live_versions() {
     let mut a = model("a\nb\n", Some("a\nb\n"));
     let mut b = a.split();
     a.buffer_mut().edit([(0..0, "x\n")], Origin::User).unwrap();
-    assert_eq!(all(&a).len(), 2);
+    assert_eq!(all(&a).len(), 1);
     let before = crate::row_changes::diff_count();
     b.buffer_mut().edit([(0..0, "y\n")], Origin::User).unwrap();
     for _ in 0..6 {

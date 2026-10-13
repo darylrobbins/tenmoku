@@ -20,7 +20,7 @@ use crate::{EditorTheme, EditorView};
 /// highlight as a search match ([`super::search_match_color`]).
 const ROW_BACKGROUND_ALPHA: f32 = 0.08;
 const HIGHLIGHT_ALPHA: f32 = 0.22;
-const GUTTER_ALPHA: f32 = 0.8;
+const GUTTER_ALPHA: f32 = 0.6;
 const AFTER_LINE_ALPHA: f32 = 0.6;
 
 /// A gutter bar's width, and a deletion mark's height, in pixels, rounded
@@ -375,3 +375,7 @@ mod tests;
 #[cfg(test)]
 #[path = "change_bar_tests.rs"]
 mod change_bar_tests;
+
+#[cfg(test)]
+#[path = "change_rail_tests.rs"]
+mod change_rail_tests;

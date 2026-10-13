@@ -81,12 +81,10 @@ impl DecorationProvider for RowChangeDecorations {
                         RowChangeKind::Added => Tint::Added,
                         _ => Tint::Modified,
                     };
-                    for kind in [
-                        DecorationKind::RowBackground,
-                        DecorationKind::Gutter(GutterMark::Bar),
-                    ] {
-                        out.push(Decoration::new(span.clone(), kind, tint).with_priority(PRIORITY));
-                    }
+                    out.push(
+                        Decoration::new(span, DecorationKind::Gutter(GutterMark::Bar), tint)
+                            .with_priority(PRIORITY),
+                    );
                 }
             }
         }

@@ -209,7 +209,7 @@ fn row_backgrounds_and_bars_cover_every_display_row(cx: &mut TestAppContext) {
             (bounds.origin.y, bounds.size.height),
             (top + px(1.), height - px(2.))
         );
-        assert_eq!(*color, theme.change_modified.opacity(0.8));
+        assert_eq!(*color, theme.change_modified.opacity(0.6));
     }
 
     // On row 4's top edge, centred on it.
@@ -222,7 +222,7 @@ fn row_backgrounds_and_bars_cover_every_display_row(cx: &mut TestAppContext) {
                 gpui::point(gutter_x, row_4_top - px(1.5)),
                 gpui::size(lane.size.width, px(3.))
             ),
-            theme.error.opacity(0.8)
+            theme.error.opacity(0.6)
         )]
     );
     // Clear of the diagnostics' dot at the gutter's left.
