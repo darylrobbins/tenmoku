@@ -77,15 +77,30 @@ impl fmt::Display for Escaped<'_> {
     }
 }
 
-/// The 1-based line and column (in chars) of byte `offset` in `source`.
-pub(crate) fn line_column(source: &str, offset: usize) -> (usize, usize) {
-    let mut offset = offset.min(source.len());
-    while !source.is_char_boundary(offset) {
-        offset -= 1;
+/// The byte offsets where each line of a source starts, built once so that
+/// many offsets can be turned into lines and columns without rescanning.
+pub(crate) struct LineIndex {
+    starts: Vec<usize>,
+}
+
+impl LineIndex {
+    pub(crate) fn new(source: &str) -> Self {
+        let starts = std::iter::once(0)
+            .chain(source.match_indices('\n').map(|(at, _)| at + 1))
+            .collect();
+        Self { starts }
     }
-    let before = &source[..offset];
-    let line_start = before.rfind('\n').map_or(0, |newline| newline + 1);
-    let line = before.matches('\n').count() + 1;
-    let column = before[line_start..].chars().count() + 1;
-    (line, column)
+
+    /// The 1-based line and column (in chars) of byte `offset` in `source`,
+    /// which must be the string this index was built from. An offset inside
+    /// a char moves back to its start; one past the end is clamped.
+    pub(crate) fn line_column(&self, source: &str, offset: usize) -> (usize, usize) {
+        let mut offset = offset.min(source.len());
+        while !source.is_char_boundary(offset) {
+            offset -= 1;
+        }
+        let line = self.starts.partition_point(|&start| start <= offset);
+        let line_start = self.starts[line - 1];
+        (line, source[line_start..offset].chars().count() + 1)
+    }
 }

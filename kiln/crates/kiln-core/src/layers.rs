@@ -18,7 +18,7 @@ use toml::{
     de::{DeTable, DeValue},
 };
 
-use crate::diagnostic::{Diagnostic, Severity, line_column};
+use crate::diagnostic::{Diagnostic, LineIndex, Severity};
 
 /// One config file: its text, its parsed table, and what's wrong with it.
 #[derive(Clone, Debug, Default)]
@@ -155,7 +155,25 @@ impl Layer {
         offset: usize,
         message: String,
     ) -> Diagnostic {
-        let (line, column) = line_column(&self.source, offset);
+        self.diagnostic_indexed(
+            &LineIndex::new(&self.source),
+            severity,
+            key,
+            offset,
+            message,
+        )
+    }
+
+    /// `diagnostic_at`, with the source's line index already built.
+    fn diagnostic_indexed(
+        &self,
+        index: &LineIndex,
+        severity: Severity,
+        key: Option<String>,
+        offset: usize,
+        message: String,
+    ) -> Diagnostic {
+        let (line, column) = index.line_column(&self.source, offset);
         Diagnostic {
             severity,
             file: self.path.clone(),
@@ -213,7 +231,9 @@ impl Layer {
     /// shorter than `minLength` are errors at the value.
     pub fn check_schema(&self, schema: &Json) -> Vec<Diagnostic> {
         let mut diagnostics = Vec::new();
+        let index = LineIndex::new(&self.source);
         self.check_table(
+            &index,
             &self.table,
             schema,
             schema,
@@ -225,6 +245,7 @@ impl Layer {
 
     fn check_table(
         &self,
+        index: &LineIndex,
         table: &Table,
         node: &Json,
         root: &Json,
@@ -244,16 +265,29 @@ impl Layer {
                     if problem.is_none()
                         && let toml::Value::Table(table) = value
                     {
-                        self.check_table(table, property, root, path, diagnostics);
+                        self.check_table(index, table, property, root, path, diagnostics);
                     } else if let Some(message) = problem.or_else(|| out_of_range(value, property))
                     {
-                        diagnostics.push(self.value_diagnostic(Severity::Error, path, message));
+                        let offset = self
+                            .spans
+                            .get(&path[..])
+                            .map_or(0, |spans| spans.value.start);
+                        diagnostics.push(self.diagnostic_indexed(
+                            index,
+                            Severity::Error,
+                            Some(path.join(".")),
+                            offset,
+                            message,
+                        ));
                     }
                 }
                 None => {
-                    diagnostics.push(self.key_diagnostic(
+                    let offset = self.spans.get(&path[..]).map_or(0, |spans| spans.key.start);
+                    diagnostics.push(self.diagnostic_indexed(
+                        index,
                         Severity::Warning,
-                        path,
+                        Some(path.join(".")),
+                        offset,
                         "unknown key, ignored".into(),
                     ));
                 }
