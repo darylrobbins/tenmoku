@@ -5,7 +5,9 @@
 //! changed-row highlighting ask of a repository: which files differ from HEAD
 //! ([`Repo::status`]) and what a file's text is at HEAD ([`Repo::head_text`]);
 //! which commit last changed each row of a file ([`Repo::blame`]); and which
-//! commits changed a file, following renames ([`Repo::file_log`], through the `git` CLI).
+//! commits changed a file, following renames ([`Repo::file_log`], through the `git` CLI);
+//! a branch's or every branch's commits with parents and ref names ([`Repo::log`]) and the
+//! files a commit changed ([`Repo::commit_files`]), with [`graph`] laying out their lanes.
 //! Every path in and out is absolute. `Repo` is `Send + Sync`, so the workbench
 //! can run it on a background thread. Reads use gix. Writes ([`Repo::stage`],
 //! [`Repo::unstage`], [`Repo::discard`], [`Repo::set_index_text`], [`Repo::commit`], [`Repo::switch`], [`Repo::create_branch`]) and
@@ -17,6 +19,8 @@ mod blame;
 mod branch;
 mod cli;
 mod commit;
+mod commit_log;
+pub mod graph;
 mod index;
 mod log;
 mod refs;
@@ -26,6 +30,7 @@ mod stage;
 pub use blame::{BlameRun, CommitInfo};
 pub use branch::SwitchError;
 pub use commit::CommitError;
+pub use commit_log::{CommitFile, LogCommit, LogScope, RefKind, RefLabel};
 pub use index::SplitStatus;
 pub use log::FileCommit;
 pub use refs::{Branch, Head};
