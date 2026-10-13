@@ -329,3 +329,50 @@ fn shared_buffer_edit_drops_it_in_one_frame(cx: &mut TestAppContext) {
     assert_eq!((painted, kept), (None, false));
     assert_eq!(taken(&events), [None]);
 }
+
+#[gpui::test]
+fn blur_repaints_without_another_draw(cx: &mut TestAppContext) {
+    let (view, cx) = editor(false, cx);
+    suggest(&view, "bar()", cx);
+    draw(cx);
+    assert!(view.read_with(cx, |view, _| view.painted_ghost.is_some()));
+    cx.update(|window, cx| window.blur(cx));
+    cx.run_until_parked();
+    assert_eq!(remaining(&view, cx), None);
+    // No draw is forced: the window repainted on its own.
+    assert!(view.read_with(cx, |view, _| view.painted_ghost.is_none()));
+}
+
+#[gpui::test]
+fn escape_dismisses_before_bindings(cx: &mut TestAppContext) {
+    let (view, cx) = editor(false, cx);
+    let user = {
+        let source = "[[bindings]]\nkeys = \"escape\"\ncommand = \"ghost_text.accept\"\ncontext = \"ghost_text\"\n";
+        let (layer, diagnostics) = KeymapLayer::parse(Path::new("user.toml"), source, None);
+        assert_eq!(diagnostics, []);
+        layer.unwrap()
+    };
+    let (default, _) = KeymapLayer::parse(Path::new(DEFAULT_KEYMAP_PATH), DEFAULT_MACOS, None);
+    cx.update(|_, cx| init_with_keymap(cx, Keymap::from_layers(vec![default.unwrap(), user])));
+    let events = events(&view, cx);
+    suggest(&view, "bar()", cx);
+    keys("escape", cx);
+    assert_eq!(remaining(&view, cx), None);
+    assert_eq!(text(&view, cx), TEXT);
+    draw(cx);
+    assert_eq!(taken(&events), [None]);
+
+    // In vim's insert mode, the same escape also leaves it.
+    cx.update(|_, cx| set_vim_enabled(cx, true));
+    keys("i", cx);
+    suggest(&view, "bar()", cx);
+    keys("escape", cx);
+    assert_eq!(
+        view.read_with(cx, |view, _| view.vim_mode()),
+        Some("normal")
+    );
+    assert_eq!(remaining(&view, cx), None);
+    assert_eq!(text(&view, cx), TEXT);
+    draw(cx);
+    assert_eq!(taken(&events), [None]);
+}

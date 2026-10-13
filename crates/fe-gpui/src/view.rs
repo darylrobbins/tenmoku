@@ -1274,7 +1274,7 @@ impl Render for EditorView {
             Self::close_completion_on_escape_and_blur(self, window, cx);
         }
         if self.ghost_text_subscriptions.is_empty() {
-            Self::dismiss_ghost_text_on_escape_and_blur(self, window, cx);
+            Self::dismiss_ghost_text_on_blur(self, window, cx);
         }
         if !self.signature_help_subscribed() {
             self.hide_signature_help_on_escape_and_blur(window, cx);

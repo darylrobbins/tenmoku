@@ -117,23 +117,22 @@ impl EditorView {
         }
     }
 
-    /// Has `escape` drop the suggestion wherever it's pressed, before any
-    /// binding takes it, and losing focus drop it too.
-    pub(crate) fn dismiss_ghost_text_on_escape_and_blur(
+    /// Has losing focus drop the suggestion. `escape` does too, through
+    /// [`dismiss_ghost_text_on_escape`], before any binding takes it.
+    pub(crate) fn dismiss_ghost_text_on_blur(
         view: &mut EditorView,
         window: &mut gpui::Window,
         cx: &mut Context<EditorView>,
     ) {
-        let this = cx.weak_entity();
-        let escape = cx.intercept_keystrokes(move |event, _, cx| {
-            if event.keystroke.key == "escape" {
-                this.update(cx, |view, cx| view.dismiss_ghost_text(cx)).ok();
+        // Blur listeners run at the end of a draw, which asks for no frame
+        // after it: the redraw waits until it's over.
+        let blur = cx.on_blur(&view.focus, window, |view, window, cx| {
+            if view.ghost_text.is_some() {
+                view.dismiss_ghost_text(cx);
+                cx.defer_in(window, |_, _, cx| cx.notify());
             }
         });
-        let blur = cx.on_blur(&view.focus, window, |view, _, cx| {
-            view.dismiss_ghost_text(cx)
-        });
-        view.ghost_text_subscriptions = vec![escape, blur];
+        view.ghost_text_subscriptions = vec![blur];
     }
 
     /// Runs one of the suggestion's commands, which the registry has
@@ -192,4 +191,29 @@ pub(crate) fn stamp(stack: ContextStack, shown: bool) -> ContextStack {
             frame
         })
         .collect()
+}
+
+/// Holds the app-wide `escape` interceptor.
+struct EscapeInterceptor(#[allow(dead_code)] gpui::Subscription);
+
+impl gpui::Global for EscapeInterceptor {}
+
+/// Has an unmodified `escape` drop the focused editor's suggestion before
+/// any key binding is matched; the keystroke then goes on as usual, so vim
+/// still leaves insert mode. Installed once: a second call does nothing.
+/// Call it before the keymap's interceptor, which runs in registration
+/// order.
+pub(crate) fn dismiss_ghost_text_on_escape(cx: &mut gpui::App) {
+    if cx.has_global::<EscapeInterceptor>() {
+        return;
+    }
+    let subscription = cx.intercept_keystrokes(|event, window, cx| {
+        if event.keystroke.key != "escape" || event.keystroke.modifiers.modified() {
+            return;
+        }
+        if let Some(editor) = crate::vim::focused_editor(window, cx) {
+            editor.update(cx, |view, cx| view.dismiss_ghost_text(cx));
+        }
+    });
+    cx.set_global(EscapeInterceptor(subscription));
 }

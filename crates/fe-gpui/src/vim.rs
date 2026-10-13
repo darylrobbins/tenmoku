@@ -270,7 +270,7 @@ pub(crate) fn register(focus: &FocusHandle, cx: &mut Context<EditorView>) {
 }
 
 /// The focused editor, if the focused element is one.
-fn focused_editor(window: &Window, cx: &App) -> Option<Entity<EditorView>> {
+pub(crate) fn focused_editor(window: &Window, cx: &App) -> Option<Entity<EditorView>> {
     let focused = window.focused(cx)?;
     cx.try_global::<Vim>()?
         .editors

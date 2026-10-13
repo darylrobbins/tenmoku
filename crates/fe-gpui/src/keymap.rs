@@ -68,6 +68,7 @@ pub fn default_keymap() -> Keymap {
 /// Installs the interceptor, matching against `keymap`, with vim as its
 /// key owner. Called again, it only swaps the keymap.
 pub(crate) fn init(keymap: Arc<Keymap>, cx: &mut App) {
+    crate::view::ghost_text::dismiss_ghost_text_on_escape(cx);
     keys::init(cx, keymap);
     keys::set_key_owner(cx, VimKeys);
     keys::register_context_namespace(cx, VIM_NAMESPACE);
