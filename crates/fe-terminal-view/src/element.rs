@@ -101,6 +101,9 @@ pub struct PaintedText {
     pub text: String,
     /// The shaped line's natural width.
     pub width: Pixels,
+    /// The font size it was shaped at: smaller than the style's when a
+    /// symbol was scaled to fit its cells.
+    pub font_size: Pixels,
     /// Each shaped glyph's byte index in `text` and x offset from `origin`.
     pub glyphs: Vec<(usize, Pixels)>,
 }
@@ -156,6 +159,7 @@ impl Prepainted {
                     origin: text.origin,
                     text: text.line.text.to_string(),
                     width: text.line.width,
+                    font_size: text.line.font_size,
                     glyphs: text
                         .line
                         .runs
@@ -299,9 +303,33 @@ impl Element for TerminalElement {
         let shape = |row: usize, run: &Run, window: &mut Window| -> Vec<Text> {
             run.clusters()
                 .filter(|(_, text, _)| !text.trim_start_matches(' ').is_empty())
-                .map(|(col, text, _)| Text {
-                    origin: at(row, col),
-                    line: shape_cluster(text, run, &font, &style, window),
+                .map(|(col, text, _)| {
+                    let origin = at(row, col);
+                    let line = shape_cluster(text, run, &font, style.font_size, window);
+                    let Some(symbol) = text.chars().next().filter(|&ch| is_symbol(ch)) else {
+                        return Text { origin, line };
+                    };
+                    let blank = blank_after(&snapshot, row, col);
+                    let Some((span, scale)) = fit_symbol(symbol, line.width, cell.width, blank)
+                    else {
+                        return Text { origin, line };
+                    };
+                    let line = if scale < 1. {
+                        shape_cluster(text, run, &font, style.font_size * scale, window)
+                    } else {
+                        line
+                    };
+                    // Powerline symbols stay at the cell's left edge; other
+                    // symbols are centred in their span.
+                    let left = if is_powerline(symbol) {
+                        px(0.)
+                    } else {
+                        (cell.width * span as f32 - line.width) / 2.
+                    };
+                    Text {
+                        origin: origin + point(left, px(0.)),
+                        line,
+                    }
                 })
                 .collect()
         };
@@ -545,13 +573,63 @@ fn shape_marked(
         .shape_line(SharedString::from(text), style.font_size, &[run], None)
 }
 
-/// Shapes one cell's `text` in `run`'s style, at its natural width. The
+/// Whether `ch` is in a private-use range, where Nerd Font icons and
+/// Powerline symbols live.
+fn is_symbol(ch: char) -> bool {
+    matches!(ch, '\u{E000}'..='\u{F8FF}' | '\u{F0000}'..='\u{FFFFD}' | '\u{100000}'..='\u{10FFFD}')
+}
+
+/// Whether `ch` is a Powerline separator or arrow.
+fn is_powerline(ch: char) -> bool {
+    matches!(ch, '\u{E0A0}'..='\u{E0D7}')
+}
+
+/// Whether the cell after `col` on `row` is blank with the default
+/// background, so a symbol may spill into it.
+fn blank_after(snapshot: &fe_terminal::Snapshot, row: usize, col: usize) -> bool {
+    snapshot
+        .rows
+        .get(row)
+        .and_then(|cells| cells.get(col + 1))
+        .is_some_and(|cell| {
+            cell.ch == ' '
+                && cell.extra.is_none()
+                && cell.bg == fe_terminal::Color::Background
+                && !cell.flags.contains(fe_terminal::CellFlags::INVERSE)
+        })
+}
+
+/// How a private-use symbol `ch`, shaped `natural` wide, fits `cell`-wide
+/// cells: the cells it spans and the factor to scale its font size by.
+/// `None` when it already fits one cell and stays at the cell's origin.
+/// Powerline symbols always take one cell; other symbols take two when
+/// `next_blank`, else one. The scale is below 1 only when the glyph is wider
+/// than its span, and no lower than a half.
+fn fit_symbol(ch: char, natural: Pixels, cell: Pixels, next_blank: bool) -> Option<(usize, f32)> {
+    if !is_symbol(ch) || natural <= cell {
+        return None;
+    }
+    let span = if next_blank && !is_powerline(ch) {
+        2
+    } else {
+        1
+    };
+    let room = cell * span as f32;
+    let scale = if natural > room {
+        (f32::from(room) / f32::from(natural)).max(0.5)
+    } else {
+        1.
+    };
+    Some((span, scale))
+}
+
+/// Shapes one cell's `text` in `run`'s style at `font_size`. The
 /// decorations are painted by the caller across the cells.
 fn shape_cluster(
     text: &str,
     run: &Run,
     font: &Font,
-    style: &TerminalStyle,
+    font_size: Pixels,
     window: &mut Window,
 ) -> ShapedLine {
     let mut font = font.clone();
@@ -571,7 +649,7 @@ fn shape_cluster(
     };
     window.text_system().shape_line(
         SharedString::from(text.to_owned()),
-        style.font_size,
+        font_size,
         &[text_run],
         None,
     )
