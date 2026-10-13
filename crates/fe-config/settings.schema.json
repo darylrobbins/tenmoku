@@ -294,6 +294,14 @@
     "TerminalSettings": {
       "description": "Settings for the terminal panel. A project file may set all but the\nprogram it runs.",
       "properties": {
+        "font_fallbacks": {
+          "default": [],
+          "description": "Fonts to take a character from when the terminal's font lacks it, in\norder: \"Symbols Nerd Font Mono\" gives Nerd Font icons with any font.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
         "font_family": {
           "description": "The terminal's font family. Unset uses the editor's.",
           "minLength": 1,
@@ -471,6 +479,7 @@
     "terminal": {
       "$ref": "#/$defs/TerminalSettings",
       "default": {
+        "font_fallbacks": [],
         "scrollback": 10000,
         "shell": "",
         "shell_args": []

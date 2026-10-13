@@ -71,3 +71,7 @@
 # font_family = "JetBrains Mono"
 # The terminal's font size, in points. Unset uses the editor's.
 # font_size = 13.0
+# Fonts to take a character from when the terminal's font lacks it, in
+# order: "Symbols Nerd Font Mono" gives Nerd Font icons with any font.
+# Or set font_family to a Nerd Font, such as "JetBrainsMono Nerd Font Mono".
+# font_fallbacks = []

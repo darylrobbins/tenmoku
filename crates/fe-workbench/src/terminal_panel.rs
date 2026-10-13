@@ -461,6 +461,7 @@ fn style(theme: &EditorTheme, settings: &TerminalSettings) -> TerminalStyle {
             || theme.font_family.clone(),
             |family| family.to_owned().into(),
         ),
+        font_fallbacks: settings.font_fallbacks.iter().map(Into::into).collect(),
         font_size: settings
             .font_size
             .map_or(theme.font_size, |size| px(size as f32)),
@@ -652,6 +653,10 @@ impl TerminalPanel {
 #[cfg(test)]
 #[path = "terminal_settings_tests.rs"]
 mod terminal_settings_tests;
+
+#[cfg(test)]
+#[path = "terminal_font_fallbacks_tests.rs"]
+mod terminal_font_fallbacks_tests;
 
 #[cfg(test)]
 #[path = "terminal_panel_tests.rs"]

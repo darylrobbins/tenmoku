@@ -22,6 +22,7 @@ fn style() -> TerminalStyle {
         cursor: rgb(0xffcc00).into(),
         selection: rgb(0x334466).into(),
         ansi: TerminalStyle::ansi_for(background),
+        font_fallbacks: Vec::new(),
     }
 }
 

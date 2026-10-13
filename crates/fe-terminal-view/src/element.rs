@@ -42,7 +42,7 @@ impl IntoElement for TerminalElement {
 /// size times the line height, in whole pixels, high.
 pub fn cell_size(style: &TerminalStyle, window: &Window) -> Size<Pixels> {
     let text_system = window.text_system();
-    let font_id = text_system.resolve_font(&gpui::font(style.font_family.clone()));
+    let font_id = text_system.resolve_font(&style.font());
     let width = text_system
         .advance(font_id, style.font_size, 'm')
         .map(|advance| advance.width)
@@ -297,7 +297,7 @@ impl Element for TerminalElement {
         let cells = |row: usize, col: usize, cells: usize| {
             Bounds::new(at(row, col), size(cell.width * cells as f32, cell.height))
         };
-        let font = gpui::font(style.font_family.clone());
+        let font = style.font();
         // One shaped line per cell, at its column: no glyph's advance moves
         // the next, and no ligature spans two cells.
         let shape = |row: usize, run: &Run, window: &mut Window| -> Vec<Text> {
@@ -314,10 +314,17 @@ impl Element for TerminalElement {
                     else {
                         return Text { origin, line };
                     };
-                    let line = if scale < 1. {
-                        shape_cluster(text, run, &font, style.font_size * scale, window)
+                    // A smaller size changes the ascent and descent, which
+                    // moves the baseline GPUI paints at; shift the origin
+                    // back so the symbol keeps its natural baseline.
+                    let (line, baseline) = if scale < 1. {
+                        let scaled =
+                            shape_cluster(text, run, &font, style.font_size * scale, window);
+                        let shift =
+                            ((line.ascent - line.descent) - (scaled.ascent - scaled.descent)) / 2.;
+                        (scaled, shift)
                     } else {
-                        line
+                        (line, px(0.))
                     };
                     // Powerline symbols stay at the cell's left edge; other
                     // symbols are centred in their span.
@@ -327,7 +334,7 @@ impl Element for TerminalElement {
                         (cell.width * span as f32 - line.width) / 2.
                     };
                     Text {
-                        origin: origin + point(left, px(0.)),
+                        origin: origin + point(left, baseline),
                         line,
                     }
                 })

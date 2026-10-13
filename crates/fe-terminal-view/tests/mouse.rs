@@ -17,6 +17,7 @@ fn style() -> TerminalStyle {
     let background: Hsla = rgb(0x101010).into();
     TerminalStyle {
         font_family: "Menlo".into(),
+        font_fallbacks: Vec::new(),
         font_size: px(14.),
         line_height: TerminalStyle::LINE_HEIGHT,
         background,

@@ -1,9 +1,11 @@
-use gpui::{Hsla, Pixels, SharedString, rgb};
+use gpui::{Font, FontFallbacks, Hsla, Pixels, SharedString, rgb};
 
 /// How a terminal looks: its font, and the colours its cells resolve to.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TerminalStyle {
     pub font_family: SharedString,
+    /// Fonts to take a character from when `font_family` lacks it, in order.
+    pub font_fallbacks: Vec<SharedString>,
     pub font_size: Pixels,
     /// A cell's height as a multiple of the font size, rounded to whole
     /// pixels. [`TerminalStyle::LINE_HEIGHT`] by default.
@@ -22,6 +24,21 @@ impl TerminalStyle {
     /// Tighter than the editor's 1.6, so box drawing and full-screen
     /// programs' rows meet.
     pub const LINE_HEIGHT: f32 = 1.25;
+
+    /// The font cells are shaped in: `font_family`, with `font_fallbacks`
+    /// when there are any.
+    pub fn font(&self) -> Font {
+        let mut font = gpui::font(self.font_family.clone());
+        if !self.font_fallbacks.is_empty() {
+            font.fallbacks = Some(FontFallbacks::from_fonts(
+                self.font_fallbacks
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+            ));
+        }
+        font
+    }
 
     /// The 16 ANSI colours for a dark background: xterm's hues, with the
     /// normal blue lifted so it reads on black.

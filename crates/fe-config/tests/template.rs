@@ -55,6 +55,7 @@ fn template_is_all_defaults() {
     assert_eq!(
         keys,
         [
+            "font_fallbacks",
             "font_family",
             "font_size",
             "scrollback",

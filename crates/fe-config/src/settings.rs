@@ -68,6 +68,9 @@ pub struct TerminalSettings {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(range(min = 6.0, max = 72.0))]
     pub font_size: Option<f64>,
+    /// Fonts to take a character from when the terminal's font lacks it, in
+    /// order: "Symbols Nerd Font Mono" gives Nerd Font icons with any font.
+    pub font_fallbacks: Vec<String>,
 }
 
 impl Default for TerminalSettings {
@@ -78,6 +81,7 @@ impl Default for TerminalSettings {
             scrollback: 10_000,
             font_family: None,
             font_size: None,
+            font_fallbacks: Vec::new(),
         }
     }
 }

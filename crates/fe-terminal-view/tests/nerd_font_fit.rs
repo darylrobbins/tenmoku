@@ -17,6 +17,7 @@ fn style() -> TerminalStyle {
     let background: Hsla = rgb(0x101010).into();
     TerminalStyle {
         font_family: "Menlo".into(),
+        font_fallbacks: Vec::new(),
         font_size: px(14.),
         line_height: TerminalStyle::LINE_HEIGHT,
         background,
@@ -89,6 +90,10 @@ const CELL: f32 = 0.6;
 const ICON: f32 = 1.6;
 const NARROW_ICON: f32 = 0.5;
 const POWERLINE: f32 = 1.2;
+/// The shaped line's ascent and descent as a multiple of the font size, so a
+/// scaled symbol's baseline offset differs from the natural one.
+const ASCENT: f32 = 0.9;
+const DESCENT: f32 = 0.1;
 
 struct Shaping(NoopTextSystem);
 
@@ -149,6 +154,8 @@ impl PlatformTextSystem for Shaping {
             x += font_size * em;
         }
         layout.width = x;
+        layout.ascent = font_size * ASCENT;
+        layout.descent = font_size * DESCENT;
         if let Some(run) = layout.runs.first_mut() {
             run.glyphs = glyphs;
         }
@@ -242,6 +249,29 @@ fn an_icon_before_a_blank_takes_two_cells() {
     assert_eq!(report.text.iter().filter(|t| icons(t)).count(), 1);
 }
 
+/// Where GPUI paints a line's baseline below the top of its cell: the line
+/// is centred in the cell by its ascent and descent.
+fn baseline(text: &PaintedText, cell: Size<Pixels>, row: usize) -> f32 {
+    let em = f32::from(text.font_size);
+    f32::from(text.origin.y - cell.height * row as f32)
+        + (f32::from(cell.height) + em * ASCENT - em * DESCENT) / 2.
+}
+
+#[test]
+fn scaled_symbols_keep_their_natural_baseline() {
+    let (report, cell) = painted(
+        &format!("{FOLDER}x{POWERLINE_ARROW} \\r\\nab\\r\\ndone"),
+        "done",
+    );
+    let text = at(&report.text, cell, 1, 0);
+    let natural = baseline(text, cell, 1);
+    for col in [0, 2] {
+        let symbol = at(&report.text, cell, 0, col);
+        assert!(symbol.font_size < style().font_size, "{symbol:?}");
+        near(baseline(symbol, cell, 0), natural);
+    }
+}
+
 #[test]
 fn powerline_symbols_take_one_cell_at_the_origin() {
     let (report, cell) = painted(&format!("{POWERLINE_ARROW} \\r\\ndone"), "done");
@@ -276,4 +306,15 @@ fn a_block_cursor_draws_its_icon_fitted() {
         extent(icon).0 + f32::from(icon.width) / 2.,
         f32::from(cell.width) / 2.,
     );
+}
+
+#[test]
+fn a_block_cursor_icon_keeps_its_natural_baseline() {
+    let (report, cell) = painted(&format!("{FOLDER}x\\r\\nab\\r\\ndone\\033[1;1H"), "done");
+    let [icon] = &report.cursor_text[..] else {
+        panic!("{:?}", report.cursor_text);
+    };
+    assert!(icon.font_size < style().font_size);
+    let natural = baseline(at(&report.text, cell, 1, 0), cell, 1);
+    near(baseline(icon, cell, 0), natural);
 }
