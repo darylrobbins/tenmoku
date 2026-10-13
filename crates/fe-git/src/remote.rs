@@ -118,14 +118,15 @@ impl Repo {
     /// `branch.<name>.mergeOptions`, and `-c commit.gpgSign=false` reaches the
     /// `git am` an apply-backend rebase runs): when the merge or rebase would
     /// sign its commits, one that needs a new commit is [`RemoteError::Failed`]
-    /// with nothing changed, and a fast-forward goes ahead. Signatures are
-    /// verified as configured.
+    /// with nothing changed, and a fast-forward goes ahead. A merge would sign
+    /// as `commit.gpgSign` and `branch.<name>.mergeOptions` say, a rebase as
+    /// `commit.gpgSign` says. Signatures are verified as configured.
     pub fn pull(&self, mode: PullMode) -> Result<(), RemoteError> {
         let branch = self.branch()?.ok_or(RemoteError::Detached)?;
         if self.upstream_of(&branch)?.is_none() {
             return Err(RemoteError::NoUpstream);
         }
-        let signs = mode != PullMode::FastForwardOnly && self.signs_commits(&branch)?;
+        let signs = self.signs_commits(&branch, mode)?;
         let mut args: Vec<OsString> = [
             "-c",
             "commit.gpgSign=false",
@@ -194,16 +195,25 @@ impl Repo {
         outcome(output)
     }
 
-    /// Whether a merge or rebase on `branch` signs its commits:
-    /// `commit.gpgSign`, unless `branch.<name>.mergeOptions` says otherwise.
-    fn signs_commits(&self, branch: &str) -> Result<bool, GitError> {
+    /// Whether a pull in `mode` on `branch` signs its commits. A merge reads
+    /// `commit.gpgSign`, then `branch.<name>.mergeOptions` as git parses it,
+    /// later options overriding earlier ones. A rebase ignores mergeOptions
+    /// and reads `commit.gpgSign` alone. A fast-forward never signs.
+    fn signs_commits(&self, branch: &str, mode: PullMode) -> Result<bool, GitError> {
+        if mode == PullMode::FastForwardOnly {
+            return Ok(false);
+        }
         let mut signs = self.config_bool("commit.gpgSign")?;
-        let options = self.config(&format!("branch.{branch}.mergeOptions"))?;
-        for option in options.as_deref().unwrap_or("").split_whitespace() {
-            if option.starts_with("-S") || option.starts_with("--gpg-sign") {
-                signs = true;
-            } else if option == "--no-gpg-sign" {
-                signs = false;
+        if mode == PullMode::Merge {
+            let options = self.config(&format!("branch.{branch}.mergeOptions"))?;
+            let Some(tokens) = split_cmdline(options.as_deref().unwrap_or("")) else {
+                // Unterminated quote: the policy can't be told.
+                return Ok(true);
+            };
+            for token in tokens {
+                if let Some(sign) = merge_option_signs(&token) {
+                    signs = sign;
+                }
             }
         }
         Ok(signs)
@@ -269,9 +279,9 @@ impl Repo {
                 None => (&*entry, None),
             };
             match key {
-                // `check` and git's false values don't push submodules.
+                // Git's false values don't push submodules; `check` checks them.
                 "push.recursesubmodules" => {
-                    recurses = value.is_none_or(|value| value != "check" && parse_bool(value));
+                    recurses = value.is_none_or(|value| value == "check" || parse_bool(value));
                 }
                 "submodule.recurse" => recurses = value.is_none_or(parse_bool),
                 _ => {}
@@ -393,6 +403,80 @@ fn parse_bool(value: &str) -> bool {
         "" | "false" | "no" | "off" => false,
         "true" | "yes" | "on" => true,
         number => number.parse::<i64>() != Ok(0),
+    }
+}
+
+/// Splits `line` into words as git's `split_cmdline` does: whitespace
+/// separates, single quotes are literal, double quotes allow `\` escapes, and
+/// `\` outside quotes escapes the next character. `None` for an unterminated
+/// quote or a trailing `\`.
+fn split_cmdline(line: &str) -> Option<Vec<String>> {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut in_word = false;
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            c if c.is_whitespace() => {
+                if in_word {
+                    words.push(std::mem::take(&mut word));
+                    in_word = false;
+                }
+            }
+            '\'' => {
+                in_word = true;
+                loop {
+                    match chars.next()? {
+                        '\'' => break,
+                        c => word.push(c),
+                    }
+                }
+            }
+            '"' => {
+                in_word = true;
+                loop {
+                    match chars.next()? {
+                        '"' => break,
+                        '\\' => word.push(chars.next()?),
+                        c => word.push(c),
+                    }
+                }
+            }
+            '\\' => {
+                in_word = true;
+                word.push(chars.next()?);
+            }
+            c => {
+                in_word = true;
+                word.push(c);
+            }
+        }
+    }
+    if in_word {
+        words.push(word);
+    }
+    Some(words)
+}
+
+/// What one `merge` option does to signing: `Some(true)` signs,
+/// `Some(false)` doesn't, `None` says nothing about it. Abbreviations of
+/// `--gpg-sign` (from `--g`) and `--no-gpg-sign` (from `--no-g`) count, and
+/// any single-dash option containing `S` counts as signing, since the `S` may
+/// be `-S` in a cluster; refusing when it's another option's value is fine.
+fn merge_option_signs(token: &str) -> Option<bool> {
+    if let Some(long) = token.strip_prefix("--") {
+        let name = long.split_once('=').map_or(long, |(name, _)| name);
+        if !name.is_empty() && "gpg-sign".starts_with(name) {
+            return Some(true);
+        }
+        if name.len() >= 4 && "no-gpg-sign".starts_with(name) {
+            return Some(false);
+        }
+        None
+    } else if token.starts_with('-') && token.contains('S') {
+        Some(true)
+    } else {
+        None
     }
 }
 

@@ -467,7 +467,13 @@ fn signing_is_refused() {
         for (key, value) in config {
             git(&r.a, &["config", key, value]);
         }
-        for mode in [PullMode::Merge, PullMode::Rebase] {
+        // A rebase ignores mergeOptions: only commit.gpgSign makes it sign.
+        let modes: &[PullMode] = if what == "commit.gpgSign" {
+            &[PullMode::Merge, PullMode::Rebase]
+        } else {
+            &[PullMode::Merge]
+        };
+        for &mode in modes {
             expect_signing_refused(a.pull(mode), &format!("{what} {mode:?}"));
             assert_eq!(rev(&r.a, "HEAD"), a_head);
             assert_eq!(git(&r.a, &["status", "--porcelain"]), "");
@@ -596,6 +602,19 @@ fn submodules_never_sign_or_stash() {
     assert!(a.publish("origin").is_err());
     assert_eq!(rev(&sub_url, "main"), origin_sub);
     assert!(!has_ref(&sub_url, "refs/heads/feat"));
+    assert!(!ran.exists());
+
+    // push.recurseSubmodules=check stays in force: the unpublished submodule
+    // commit stops the push, and neither the superproject nor the submodule
+    // is pushed.
+    git(&r.a, &["config", "push.recurseSubmodules", "check"]);
+    let origin_main = rev(&r.origin, "main");
+    assert!(a.publish("origin").is_err());
+    assert!(!has_ref(&r.origin, "refs/heads/feat"));
+    git(&r.a, &["switch", "-q", "main"]);
+    assert!(a.push(false).is_err());
+    assert_eq!(rev(&r.origin, "main"), origin_main);
+    assert_eq!(rev(&sub_url, "main"), origin_sub);
     assert!(!ran.exists());
 }
 
