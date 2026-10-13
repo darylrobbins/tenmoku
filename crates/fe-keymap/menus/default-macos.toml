@@ -121,6 +121,37 @@ os_action = "select_all"
 separator = true
 
 [[menus.items]]
+title = "Indent"
+command = "editor.indent"
+
+[[menus.items]]
+title = "Outdent"
+command = "editor.outdent"
+
+[[menus.items]]
+title = "Move Line Up"
+command = "editor.move_rows_up"
+
+[[menus.items]]
+title = "Move Line Down"
+command = "editor.move_rows_down"
+
+[[menus.items]]
+title = "Duplicate Line"
+command = "editor.duplicate_rows"
+
+[[menus.items]]
+title = "Delete Line"
+command = "editor.delete_rows"
+
+[[menus.items]]
+title = "Toggle Line Comment"
+command = "editor.toggle_comment"
+
+[[menus.items]]
+separator = true
+
+[[menus.items]]
 title = "Find in Files"
 command = "search.show"
 
@@ -216,6 +247,10 @@ separator = true
 [[menus.items]]
 title = "Go to File…"
 command = "quick_open.toggle"
+
+[[menus.items]]
+title = "Go to Line/Column…"
+command = "go_to_line.toggle"
 
 [[menus.items]]
 title = "Go to Symbol in Workspace…"

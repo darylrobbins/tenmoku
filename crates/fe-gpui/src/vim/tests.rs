@@ -505,7 +505,10 @@ fn vim_layer_of_the_default_keymap(_: &mut TestAppContext) {
         .filter(|binding| binding.depth(&stack).is_some())
         .map(|binding| binding.keys.to_string())
         .collect();
-    assert_eq!(ctrl, ["ctrl--", "ctrl-shift--", "ctrl-`", "ctrl-space"]);
+    assert_eq!(
+        ctrl,
+        ["ctrl--", "ctrl-shift--", "ctrl-`", "ctrl-space", "ctrl-g"]
+    );
 }
 
 #[gpui::test]

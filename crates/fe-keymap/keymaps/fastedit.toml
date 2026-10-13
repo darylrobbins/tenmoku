@@ -196,6 +196,65 @@ keys = "escape"
 command = "editor.single_selection"
 context = "editor && !vim.enabled"
 
+# Row commands and line comments, as VS Code binds them. vim claims `ctrl-[`
+# (escape) in every mode, so there the outdent is off with vim; shift-tab,
+# alt-up, alt-down and the duplicate's keys reach vim's key handler in its
+# normal, operator-pending and visual modes, so they work with vim off and in
+# its insert and replace modes only.
+[[bindings]]
+keys = { macos = "cmd-]", default = "ctrl-]" }
+command = "editor.indent"
+context = "editor"
+
+[[bindings]]
+keys = "cmd-["
+command = "editor.outdent"
+context = "editor"
+platform = "macos"
+
+[[bindings]]
+keys = "ctrl-["
+command = "editor.outdent"
+context = "editor && !vim.enabled"
+platform = "!macos"
+
+[[bindings]]
+keys = "shift-tab"
+command = "editor.outdent"
+context = "editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"
+
+[[bindings]]
+keys = "alt-up"
+command = "editor.move_rows_up"
+context = "editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"
+
+[[bindings]]
+keys = "alt-down"
+command = "editor.move_rows_down"
+context = "editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"
+
+[[bindings]]
+keys = "shift-alt-down"
+command = "editor.duplicate_rows"
+context = "editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"
+platform = "macos"
+
+[[bindings]]
+keys = "ctrl-shift-alt-down"
+command = "editor.duplicate_rows"
+context = "editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"
+platform = "!macos"
+
+[[bindings]]
+keys = { macos = "cmd-shift-k", default = "ctrl-shift-k" }
+command = "editor.delete_rows"
+context = "editor"
+
+[[bindings]]
+keys = { macos = "cmd-/", default = "ctrl-/" }
+command = "editor.toggle_comment"
+context = "editor"
+
 [[bindings]]
 keys = "backspace"
 command = "editor.backspace"
@@ -822,12 +881,12 @@ context = "editor && vim.visual"
 platform = "!macos"
 
 [[bindings]]
-keys = "secondary-g"
+keys = { macos = "cmd-g", default = "f3" }
 command = "find.next"
 context = "editor || find_bar"
 
 [[bindings]]
-keys = "secondary-shift-g"
+keys = { macos = "cmd-shift-g", default = "shift-f3" }
 command = "find.previous"
 context = "editor || find_bar"
 
@@ -912,6 +971,11 @@ context = "completion"
 [[bindings]]
 keys = "secondary-shift-p"
 command = "command_palette.toggle"
+context = "workbench"
+
+[[bindings]]
+keys = "ctrl-g"
+command = "go_to_line.toggle"
 context = "workbench"
 
 # A new window on the same folder.

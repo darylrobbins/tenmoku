@@ -178,6 +178,51 @@ keys = "escape"
 command = "editor.single_selection"
 context = "editor && !vim.enabled"
 
+# Row commands and line comments, as VS Code binds them. vim claims `ctrl-[`
+# (escape) in every mode, so there the outdent is off with vim; shift-tab,
+# alt-up, alt-down and the duplicate's keys reach vim's key handler in its
+# normal, operator-pending and visual modes, so they work with vim off and in
+# its insert and replace modes only.
+[[bindings]]
+keys = "cmd-]"
+command = "editor.indent"
+context = "editor"
+
+[[bindings]]
+keys = "cmd-["
+command = "editor.outdent"
+context = "editor"
+
+[[bindings]]
+keys = "shift-tab"
+command = "editor.outdent"
+context = "editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"
+
+[[bindings]]
+keys = "alt-up"
+command = "editor.move_rows_up"
+context = "editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"
+
+[[bindings]]
+keys = "alt-down"
+command = "editor.move_rows_down"
+context = "editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"
+
+[[bindings]]
+keys = "shift-alt-down"
+command = "editor.duplicate_rows"
+context = "editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"
+
+[[bindings]]
+keys = "cmd-shift-k"
+command = "editor.delete_rows"
+context = "editor"
+
+[[bindings]]
+keys = "cmd-/"
+command = "editor.toggle_comment"
+context = "editor"
+
 [[bindings]]
 keys = "backspace"
 command = "editor.backspace"
@@ -787,6 +832,11 @@ context = "completion"
 [[bindings]]
 keys = "cmd-shift-p"
 command = "command_palette.toggle"
+context = "workbench"
+
+[[bindings]]
+keys = "ctrl-g"
+command = "go_to_line.toggle"
 context = "workbench"
 
 # A new window on the same folder.

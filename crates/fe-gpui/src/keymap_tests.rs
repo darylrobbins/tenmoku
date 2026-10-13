@@ -100,6 +100,30 @@ const OLD_TABLE: &[(&str, &str, Option<&str>)] = &[
         "editor.single_selection",
         Some("editor && !vim.enabled"),
     ),
+    ("cmd-]", "editor.indent", Some("editor")),
+    ("cmd-[", "editor.outdent", Some("editor")),
+    (
+        "shift-tab",
+        "editor.outdent",
+        Some("editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"),
+    ),
+    (
+        "alt-up",
+        "editor.move_rows_up",
+        Some("editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"),
+    ),
+    (
+        "alt-down",
+        "editor.move_rows_down",
+        Some("editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"),
+    ),
+    (
+        "shift-alt-down",
+        "editor.duplicate_rows",
+        Some("editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"),
+    ),
+    ("cmd-shift-k", "editor.delete_rows", Some("editor")),
+    ("cmd-/", "editor.toggle_comment", Some("editor")),
     ("backspace", "editor.backspace", Some("editor")),
     ("shift-backspace", "editor.backspace", Some("editor")),
     ("delete", "editor.delete", Some("editor")),
@@ -189,7 +213,7 @@ fn default_keymap_matches_the_old_table(cx: &mut TestAppContext) {
     let store = KeymapStore::load(DEFAULT_MACOS, None, None);
     assert_eq!(store.diagnostics(), []);
     let bindings = store.keymap().bindings();
-    assert_eq!(bindings.len(), 158);
+    assert_eq!(bindings.len(), 167);
     for (binding, &(keys, command, context)) in bindings.iter().zip(OLD_TABLE) {
         assert_eq!(binding.keys, KeySequence::parse(keys).unwrap(), "{command}");
         assert_eq!(binding.command.as_str(), command, "{keys}");
@@ -227,7 +251,7 @@ fn default_keymap_matches_the_old_table(cx: &mut TestAppContext) {
     {
         assert_eq!(catalog.check(&binding.command, &binding.args), Ok(()));
     }
-    assert_eq!(bindings.iter().filter(workbench).count(), 62);
+    assert_eq!(bindings.iter().filter(workbench).count(), 63);
 
     cx.update(|cx| init_with_keymap(cx, store.keymap().clone()));
     let issues = cx.update(|cx| keymap_report(cx));

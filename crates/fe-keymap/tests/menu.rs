@@ -341,7 +341,15 @@ fn hosts_extend_and_replace() {
             "editor.cut",
             "editor.copy",
             "editor.paste",
-            "editor.select_all"
+            "editor.select_all",
+            "-",
+            "editor.indent",
+            "editor.outdent",
+            "editor.move_rows_up",
+            "editor.move_rows_down",
+            "editor.duplicate_rows",
+            "editor.delete_rows",
+            "editor.toggle_comment"
         ]
     );
 

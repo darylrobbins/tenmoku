@@ -34,6 +34,7 @@ fn go_menu_lists_navigation_commands() {
             "nav.forward",
             "-",
             "quick_open.toggle",
+            "go_to_line.toggle",
             "nav.workspace_symbols",
             "-",
             "nav.goto_definition",
