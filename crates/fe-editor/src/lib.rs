@@ -313,7 +313,11 @@ impl EditorModel {
     }
 
     pub fn set_indent_style(&mut self, style: Option<IndentStyle>) {
-        self.indent_style = style;
+        // A zero width would divide by zero in `tab`: use the default.
+        self.indent_style = match style {
+            Some(IndentStyle::Spaces(0)) => None,
+            style => style,
+        };
     }
 
     /// One level of indentation: a tab, `n` spaces for

@@ -7,7 +7,7 @@ use fe_buffer::Text;
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum IndentStyle {
     Tabs,
-    /// A width of spaces, from 2 to 8.
+    /// A width of spaces: from 2 to 8 when detected, 1 or more when set.
     Spaces(u8),
 }
 
@@ -62,8 +62,21 @@ pub fn detect_indent_style(text: &Text) -> Option<IndentStyle> {
                     }
                 }
                 _ => {
-                    row.first.get_or_insert(byte);
-                    row.past_indent = true;
+                    // Other whitespace (form feed, U+00A0, ...) is blank too.
+                    let blank = match chunk.get(i - 1..).and_then(|rest| rest.chars().next()) {
+                        Some(c) if c.is_whitespace() => {
+                            i += c.len_utf8() - 1;
+                            true
+                        }
+                        _ => false,
+                    };
+                    if blank {
+                        row.first.get_or_insert(byte);
+                        row.only_spaces = false;
+                    } else {
+                        row.first.get_or_insert(byte);
+                        row.past_indent = true;
+                    }
                 }
             }
         }
