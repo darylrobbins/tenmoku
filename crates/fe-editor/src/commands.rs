@@ -39,6 +39,12 @@ pub trait EditorHost {
     fn viewport(&self) -> Option<Viewport> {
         None
     }
+    /// The display row the view starts at, which may be partway down a
+    /// soft-wrapped [`Viewport::top_row`]; `None` (the default) if that
+    /// isn't known.
+    fn top_display_row(&self) -> Option<u32> {
+        None
+    }
     /// Changes what the view shows; the default does nothing.
     fn scroll(&mut self, request: ScrollRequest) {
         let _ = request;

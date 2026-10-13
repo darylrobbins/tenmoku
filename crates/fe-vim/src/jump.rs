@@ -20,9 +20,10 @@
 //! # The labelled session
 //!
 //! Without a count, [`VimState::feed`] commits `vim.jump` ([`JumpArgs`])
-//! instead. It finds the targets in the view ([`EditorHost::viewport`], or
-//! `page_rows() + 2` rows from the first where the host doesn't know it,
-//! as `vim.scroll` takes it); matches outside it get no label.
+//! instead. It finds the targets in the view's rows ([`view_rows`] of
+//! [`EditorHost::viewport`], or of `page_rows() + 2` rows from the first
+//! where the host doesn't know it, as `vim.scroll` takes it); matches
+//! outside them, or in rows a fold hides, get no label.
 //!
 //! - No target: it fails as the motion does.
 //! - One target, or an autojump (not after an operator, the targets after
@@ -57,11 +58,14 @@
 
 pub mod label;
 
+#[cfg(test)]
+mod rows_tests;
+
 use std::ops::{ControlFlow, Range};
 
 use fe_buffer::{ResolvedSelection, TransactionId, Version};
 use fe_command::{Actor, CommandError, ContextPredicate, Dispatched, Effect, Registry};
-use fe_editor::EditorModel;
+use fe_editor::{EditorModel, commands::Viewport};
 use fe_text::Text;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -306,9 +310,10 @@ fn run(target: &mut VimTarget<'_>, actor: &Actor, args: JumpArgs) -> Handled {
     target.model.sync_display();
     let caret = caret(target.model, target.state);
     let view = scroll::viewport(&*target.host);
-    let rows = view.top_row..view.top_row.saturating_add(view.rows);
+    let rows = view_rows(target.model, view, target.host.top_display_row());
     let text = target.model.text();
-    let found = label::targets(text, rows, caret, jump.chars.0, jump.forward);
+    let mut found = label::targets(text, rows, caret, jump.chars.0, jump.forward);
+    found.retain(|&offset| shown(target.model, text.offset_to_point(offset).row));
     if found.is_empty() {
         target.state.failed = true;
         return Ok(Dispatched::new(Effect::Nothing));
@@ -344,6 +349,36 @@ fn run(target: &mut VimTarget<'_>, actor: &Actor, args: JumpArgs) -> Handled {
         wait(target.state, session);
     }
     Ok(landed)
+}
+
+/// The text's rows a jump looks for targets in when `view` is what the view
+/// shows: as many display rows as it has from `top_display_row`, where it
+/// starts (partway down its top row if that's soft-wrapped; if `None` or
+/// not on that row, the row's first), so a fold or a soft-wrapped row in
+/// view takes one display row each, not one per text row. A host shows
+/// labels over these rows ([`VimState::jump_overlay`]), so the letters
+/// after `{c1}` are the labels after `{c2}`.
+pub fn view_rows(model: &EditorModel, view: Viewport, top_display_row: Option<u32>) -> Range<u32> {
+    let row_count = model.text().row_count();
+    let top = view.top_row.min(row_count);
+    if view.rows == 0 || top == row_count {
+        return top..top;
+    }
+    let display = model.display();
+    let first = top_display_row
+        .filter(|&row| row < display.row_count() && display.row(row).buffer_row == top)
+        .unwrap_or_else(|| display.row_for_buffer_row(top));
+    let bottom = first.saturating_add(view.rows - 1);
+    let end = match bottom < display.row_count() {
+        true => display.row(bottom).buffer_row + 1,
+        false => row_count,
+    };
+    top..end.max(top)
+}
+
+/// Whether text row `row` shows: one a fold hides takes no label.
+fn shown(model: &EditorModel, row: u32) -> bool {
+    model.display().hidden_rows(row).is_none()
 }
 
 /// Runs the jump as the motion counted `count`, through the code a
@@ -649,7 +684,8 @@ impl VimState {
 
     /// The labels a host paints in `rows` of `model`'s text while a jump is
     /// pending: after `{c1}`, the label each match would get in its
-    /// `{c2}` group ([`label::preview`]), or a direct marker on the one
+    /// `{c2}` group ([`label::preview`]) over `rows`, which are then the
+    /// view's [`view_rows`] for the labels to be the session's, or a direct marker on the one
     /// that `{c2}` jumps straight to; while labels wait, the current
     /// page's, then the other pages' as concealed. A target jumped to has
     /// none. `None` with no jump pending.
@@ -682,7 +718,8 @@ impl VimState {
             (None, Some(c1)) => {
                 let caret = caret(model, self);
                 let op = self.pending.has_operator();
-                label::preview(text, rows, caret, c1, prefix.forward, op)
+                let shown = |row| shown(model, row);
+                label::preview(text, rows, &shown, caret, c1, prefix.forward, op)
                     .into_iter()
                     .map(|(offset, label)| match label {
                         Some(label) => JumpLabel {

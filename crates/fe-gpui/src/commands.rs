@@ -169,6 +169,8 @@ thread_local! {
     /// What the last frame of the view about to dispatch showed: set by
     /// [`EditorView::page_rows`], which every dispatch asks first.
     pub(crate) static VIEWPORT: Cell<Option<Viewport>> = const { Cell::new(None) };
+    /// The display row [`VIEWPORT`] starts at, set with it.
+    pub(crate) static TOP_DISPLAY_ROW: Cell<Option<u32>> = const { Cell::new(None) };
     /// The first row a command asked to show, which the view takes in
     /// [`EditorView::dispatched`].
     static SCROLLED: Cell<Option<u32>> = const { Cell::new(None) };
@@ -213,6 +215,10 @@ impl EditorHost for ViewHost<'_> {
     fn viewport(&self) -> Option<Viewport> {
         VIEWPORT_ASKED.set(true);
         VIEWPORT.get()
+    }
+
+    fn top_display_row(&self) -> Option<u32> {
+        TOP_DISPLAY_ROW.get()
     }
 
     fn scroll(&mut self, request: ScrollRequest) {

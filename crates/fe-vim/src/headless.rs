@@ -378,10 +378,10 @@ impl HeadlessVim {
     }
 
     /// The labels a host would paint for a pending jump over the view's
-    /// rows ([`VimState::jump_overlay`]).
+    /// rows ([`VimState::jump_overlay`]), those the jump's session takes
+    /// ([`crate::jump::view_rows`]).
     pub fn jump_overlay(&self) -> Option<JumpOverlay> {
-        let Viewport { top_row, rows } = self.view;
-        let rows = top_row..top_row.saturating_add(rows);
+        let rows = crate::jump::view_rows(&self.model, self.view, None);
         self.state.jump_overlay(&self.model, rows)
     }
 

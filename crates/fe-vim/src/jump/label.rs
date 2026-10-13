@@ -96,10 +96,12 @@ fn on_row(line: &Line, [c1, c2]: [char; 2]) -> Vec<usize> {
 /// targets of that pair in `rows`, labelled after an operator if
 /// `op_pending`. The label is `None` for the match its group would jump
 /// straight to. A match its group doesn't take (inside a same-char run) is
-/// left out. In text order.
+/// left out. Rows `shown` says no to (hidden in a fold) are left out of
+/// both. In text order.
 pub fn preview(
     text: &Text,
     rows: Range<u32>,
+    shown: &dyn Fn(u32) -> bool,
     caret: usize,
     c1: char,
     forward: bool,
@@ -110,7 +112,7 @@ pub fn preview(
     // Each group's labels, by offset.
     let mut groups: HashMap<char, HashMap<usize, Option<Label>>> = HashMap::new();
     let mut found = Vec::new();
-    for row in rows.clone() {
+    for row in rows.clone().filter(|&row| shown(row)) {
         let line = Line::new(text, row);
         let candidates: Vec<(usize, char)> = match line.len() {
             0 if c1 == ' ' => vec![(line.start, ' ')],
@@ -129,7 +131,8 @@ pub fn preview(
         };
         for (offset, c2) in candidates {
             let group = groups.entry(c2).or_insert_with(|| {
-                let targets = targets(text, rows.clone(), caret, [c1, c2], forward);
+                let mut targets = targets(text, rows.clone(), caret, [c1, c2], forward);
+                targets.retain(|&offset| shown(text.offset_to_point(offset).row));
                 let labeled = label(targets.len(), op_pending);
                 let labels = targets.into_iter().zip(labeled.labels);
                 labels.collect()

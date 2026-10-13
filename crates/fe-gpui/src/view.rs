@@ -469,6 +469,14 @@ impl EditorView {
         })
     }
 
+    /// The display row first in view: where a vim scroll put it since the
+    /// last frame, or where that frame began, partway down a wrapped row as
+    /// it may be.
+    fn top_display_row(&self) -> Option<u32> {
+        let frame = &self.layout.as_ref()?.frame;
+        Some(self.scrolled_display_top.unwrap_or(frame.first_row))
+    }
+
     /// What the view shows, in the text's rows as the vim engine counts
     /// them; the rows are the frame's whole display rows.
     pub(crate) fn viewport(&self) -> Option<fe_editor::commands::Viewport> {
@@ -510,6 +518,7 @@ impl EditorView {
     /// hands the dispatch this view's viewport.
     pub(crate) fn page_rows(&self) -> u32 {
         crate::commands::VIEWPORT.set(self.viewport());
+        crate::commands::TOP_DISPLAY_ROW.set(self.top_display_row());
         self.layout.as_ref().map_or(20, |layout| {
             layout.frame.visible_rows().saturating_sub(2).max(1)
         })
