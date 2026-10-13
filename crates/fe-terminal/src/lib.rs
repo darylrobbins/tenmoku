@@ -11,6 +11,7 @@ mod search;
 mod session;
 mod shell;
 mod snapshot;
+mod vi;
 
 pub use links::{Link, LinkTarget, link_at};
 pub use search::{GridPoint, QueryError, TerminalMatch, TerminalQuery};
@@ -18,3 +19,4 @@ pub use session::{GridSize, SelectionKind, Side, Terminal, TerminalEvent, Termin
 pub use snapshot::{
     Cell, CellFlags, Color, Cursor, CursorShape, Modes, SelectionSpan, Snapshot, indexed_rgb,
 };
+pub use vi::ViMove;

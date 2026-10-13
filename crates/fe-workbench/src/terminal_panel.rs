@@ -9,7 +9,8 @@
 //! new session starts where the active one's shell last said it was (OSC 7;
 //! docs/terminal-shell-integration.md), and `terminal.previous_prompt` and
 //! `terminal.next_prompt` scroll the active one between the prompts its
-//! shell marked (OSC 133). When
+//! shell marked (OSC 133); `terminal.vi_mode` turns the active one's vi copy
+//! mode on or off. When
 //! a shell exits the panel drops its session; when none is left it tells
 //! the workbench ([`TerminalPanelEvent::Exited`]), which hides the dock,
 //! and the next show starts a new one. Closing the window drops the
@@ -289,6 +290,15 @@ impl TerminalPanel {
                 cx.notify();
             });
         }
+    }
+
+    /// Turns vi copy mode on or off in the active session and focuses it,
+    /// as `terminal.vi_mode` does.
+    pub(crate) fn toggle_vi_mode(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(view) = self.view() {
+            view.update(cx, |view, cx| view.toggle_vi_mode(cx));
+        }
+        self.focus_active(window, cx);
     }
 
     /// Activates the session `by` places on from the active one, wrapping,
@@ -591,6 +601,8 @@ pub(crate) enum TerminalOp {
     PreviousPrompt,
     /// `terminal.next_prompt`.
     NextPrompt,
+    /// `terminal.vi_mode`.
+    ViMode,
 }
 
 /// The [`CommandTarget`] of the terminal's commands: the one that ran.
@@ -613,7 +625,7 @@ pub(crate) fn init(cx: &mut App) {
 pub(crate) fn registry() -> Registry<TerminalCommands> {
     use TerminalOp::*;
     let mut registry = Registry::new();
-    // The prompt commands apply only in a focused terminal.
+    // The prompt and vi mode commands apply only in a focused terminal.
     let (workbench, terminal) = (crate::KEY_CONTEXT, fe_terminal_view::KEY_CONTEXT);
     for (id, title, op, context) in [
         ("terminal.toggle", "Toggle Terminal", Toggle, workbench),
@@ -637,6 +649,12 @@ pub(crate) fn registry() -> Registry<TerminalCommands> {
             "terminal.next_prompt",
             "Terminal: Next Prompt",
             NextPrompt,
+            terminal,
+        ),
+        (
+            "terminal.vi_mode",
+            "Terminal: Vi Copy Mode",
+            ViMode,
             terminal,
         ),
     ] {
@@ -719,3 +737,7 @@ mod terminal_find_tests;
 #[cfg(test)]
 #[path = "terminal_shell_integration_tests.rs"]
 mod terminal_shell_integration_tests;
+
+#[cfg(test)]
+#[path = "terminal_vi_mode_tests.rs"]
+mod terminal_vi_mode_tests;

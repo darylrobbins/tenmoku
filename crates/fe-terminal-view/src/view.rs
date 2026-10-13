@@ -1,20 +1,29 @@
+use std::cell::Cell;
 use std::io;
 use std::ops::Range;
+use std::rc::Rc;
 
 use fe_terminal::{
     GridSize, Terminal, TerminalEvent, TerminalMatch, TerminalOptions, TerminalQuery,
 };
 use gpui::{
-    App, ClipboardItem, Context, EventEmitter, FocusHandle, Focusable, InteractiveElement,
-    IntoElement, ParentElement, Render, Styled, Subscription, Task, Window, div,
+    App, Bounds, ClipboardItem, Context, EventEmitter, FocusHandle, Focusable, InteractiveElement,
+    IntoElement, KeyContext, ParentElement, Pixels, Render, Styled, Subscription, Task, Window,
+    canvas, div, prelude::FluentBuilder as _, px,
 };
 
 use crate::TerminalStyle;
 use crate::element::{PaintReport, TerminalElement};
 use crate::mouse::{Button, Drag, WheelTo};
+use crate::vi::ViKeys;
 
 /// The key context a terminal view's bindings are scoped to.
 pub const KEY_CONTEXT: &str = "terminal";
+
+/// The key context identifier with which an element keeps keystrokes from
+/// the app's keymap: `kiln_platform::keys::HOLDS_KEYS`. Vi mode reads its
+/// keys itself, ctrl-b and the rest, whatever the keymap binds them to.
+const HOLDS_KEYS: &str = "holds_keys";
 
 /// What a [`TerminalView`] tells its owner.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -67,6 +76,10 @@ pub struct TerminalView {
     pub(crate) painted: PaintReport,
     /// Whether prepaint fills `painted`: off outside tests.
     pub(crate) record_paint: bool,
+    /// Vi copy mode's count, pending key and search prompt.
+    pub(crate) vi: ViKeys,
+    /// Where the last frame drew the vi search prompt.
+    vi_prompt_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     _focus_reports: [Subscription; 2],
     /// Redraws the cursor when the window gains or loses focus.
     _activation: Subscription,
@@ -117,6 +130,8 @@ impl TerminalView {
             last_primary: None,
             painted: PaintReport::default(),
             record_paint: false,
+            vi: ViKeys::default(),
+            vi_prompt_bounds: Rc::default(),
             _focus_reports: focus_reports,
             _activation: activation,
         })
@@ -149,6 +164,13 @@ impl TerminalView {
     #[doc(hidden)]
     pub fn painted(&self) -> &PaintReport {
         &self.painted
+    }
+
+    /// Where the last frame drew the vi search prompt, if it drew one. For
+    /// tests.
+    #[doc(hidden)]
+    pub fn vi_prompt_bounds(&self) -> Option<Bounds<Pixels>> {
+        self.vi_prompt_bounds.get()
     }
 
     pub fn style(&self) -> &TerminalStyle {
@@ -234,26 +256,72 @@ impl TerminalView {
         }
     }
 
-    /// Sends `CSI I` or `CSI O` when the program asked to hear of focus.
+    /// Sends `CSI I` or `CSI O` when the program asked to hear of focus,
+    /// leaving the view where it is.
     fn report_focus(&self, focused: bool) {
         let Some(terminal) = &self.terminal else {
             return;
         };
         if terminal.snapshot().modes.focus_reporting {
-            terminal.input(if focused { &b"\x1b[I"[..] } else { b"\x1b[O" });
+            terminal.input_in_place(if focused { &b"\x1b[I"[..] } else { b"\x1b[O" });
         }
+    }
+
+    /// The vi search prompt, a row across the bottom of the view drawn over
+    /// the grid: `/` or `?`, the query and a caret.
+    fn vi_prompt_row(&self, text: String) -> impl IntoElement {
+        let bounds = self.vi_prompt_bounds.clone();
+        let height = (self.style.font_size * self.style.line_height).round();
+        div()
+            .absolute()
+            .left_0()
+            .right_0()
+            .bottom_0()
+            .h(height)
+            .flex()
+            .items_center()
+            .bg(self.style.background)
+            .text_color(self.style.foreground)
+            .font(self.style.font())
+            .text_size(self.style.font_size)
+            .line_height(height)
+            .child(text)
+            .child(
+                div()
+                    .w(px(2.))
+                    .h(self.style.font_size)
+                    .bg(self.style.cursor),
+            )
+            .child(
+                canvas(move |drawn, _, _| bounds.set(Some(drawn)), |_, _, _, _| {})
+                    .absolute()
+                    .size_full(),
+            )
     }
 }
 
 impl Render for TerminalView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let prompt = self.vi.prompt();
+        if prompt.is_none() {
+            self.vi_prompt_bounds.set(None);
+        }
+        let mut context = KeyContext::default();
+        context.add(KEY_CONTEXT);
+        if self.is_vi_mode() {
+            context.add(HOLDS_KEYS);
+        }
         div()
-            .key_context(KEY_CONTEXT)
+            .key_context(context)
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key_down))
+            .relative()
             .size_full()
             .bg(self.style.background)
             .child(TerminalElement::new(cx.entity()))
+            .when_some(prompt, |view, prompt| {
+                view.child(self.vi_prompt_row(prompt))
+            })
     }
 }
 

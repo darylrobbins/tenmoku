@@ -172,6 +172,8 @@ pub struct Modes {
     pub mouse_drag: bool,
     pub mouse_motion: bool,
     pub sgr_mouse: bool,
+    /// Vi copy mode: [`Snapshot::cursor`] is the vi cursor.
+    pub vi: bool,
 }
 
 impl Modes {
@@ -187,6 +189,7 @@ impl Modes {
             mouse_drag: mode.contains(TermMode::MOUSE_DRAG),
             mouse_motion: mode.contains(TermMode::MOUSE_MOTION),
             sgr_mouse: mode.contains(TermMode::SGR_MOUSE),
+            vi: mode.contains(TermMode::VI),
         }
     }
 }
@@ -245,17 +248,23 @@ pub(crate) fn take<T>(term: &Term<T>) -> Snapshot {
         .collect();
 
     let mode = *term.mode();
-    let point = grid.cursor.point;
+    // In vi mode the vi cursor is the one drawn, a block wherever it is.
+    let vi = mode.contains(TermMode::VI);
+    let point = if vi {
+        term.vi_mode_cursor.point
+    } else {
+        grid.cursor.point
+    };
     let cursor_row = point.line.0 + display_offset as i32;
-    let mut cursor_col = point.column.0;
-    if cursor_col > 0 && grid[point].flags.contains(Flags::WIDE_CHAR_SPACER) {
+    let in_view = (0..screen_lines as i32).contains(&cursor_row) && point.column.0 < cols;
+    let mut cursor_col = point.column.0.min(cols - 1);
+    if in_view && cursor_col > 0 && grid[point].flags.contains(Flags::WIDE_CHAR_SPACER) {
         cursor_col -= 1;
     }
-    let shape = if !mode.contains(TermMode::SHOW_CURSOR)
-        || cursor_row < 0
-        || cursor_row >= screen_lines as i32
-    {
+    let shape = if (!vi && !mode.contains(TermMode::SHOW_CURSOR)) || !in_view {
         CursorShape::Hidden
+    } else if vi {
+        CursorShape::Block
     } else {
         match term.cursor_style().shape {
             TermCursorShape::Block | TermCursorShape::HollowBlock => CursorShape::Block,

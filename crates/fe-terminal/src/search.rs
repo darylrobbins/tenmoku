@@ -121,7 +121,7 @@ pub struct TerminalMatch {
 
 /// `range` in this crate's types. Not a `From` impl, which would put
 /// alacritty's types in the public API.
-fn to_match(range: &Match) -> TerminalMatch {
+pub(crate) fn to_match(range: &Match) -> TerminalMatch {
     let point = |point: &Point| GridPoint {
         line: point.line.0,
         col: point.column.0,
@@ -136,13 +136,34 @@ fn to_match(range: &Match) -> TerminalMatch {
 const MAX_VISIBLE_MATCHES: usize = 1_000;
 
 /// `query` compiled, or `None` for an empty query, which matches nothing.
-fn compile(query: &TerminalQuery) -> Result<Option<RegexSearch>, QueryError> {
+pub(crate) fn compile(query: &TerminalQuery) -> Result<Option<RegexSearch>, QueryError> {
     if query.text.is_empty() {
         return Ok(None);
     }
     RegexSearch::new(&query.pattern())
         .map(Some)
         .map_err(|error| QueryError(error.to_string()))
+}
+
+/// `query`'s next match from `origin` in `forward`'s direction, wrapping
+/// through the whole grid once: forward, the first whose `side` end is at or
+/// after `origin`; back, the last whose `side` end is at or before it.
+pub(crate) fn find_from<T>(
+    term: &Term<T>,
+    query: &TerminalQuery,
+    origin: Point,
+    forward: bool,
+    side: Side,
+) -> Result<Option<Match>, QueryError> {
+    let Some(mut regex) = compile(query)? else {
+        return Ok(None);
+    };
+    let direction = if forward {
+        Direction::Right
+    } else {
+        Direction::Left
+    };
+    Ok(term.search_next(&mut regex, origin, direction, side, None))
 }
 
 /// The next match from the selection, else the cursor, in `forward`'s
@@ -153,9 +174,6 @@ pub(crate) fn find<T: EventListener>(
     query: &TerminalQuery,
     forward: bool,
 ) -> Result<Option<TerminalMatch>, QueryError> {
-    let Some(mut regex) = compile(query)? else {
-        return Ok(None);
-    };
     let selected = term.selection.as_ref().and_then(|s| s.to_range(term));
     // Past the selection, so the selected match isn't found again.
     let origin = match (selected, forward) {
@@ -163,12 +181,8 @@ pub(crate) fn find<T: EventListener>(
         (Some(range), false) => range.start.sub(term, Boundary::None, 1),
         (None, _) => term.grid().cursor.point,
     };
-    let (direction, side) = if forward {
-        (Direction::Right, Side::Left)
-    } else {
-        (Direction::Left, Side::Right)
-    };
-    let Some(found) = term.search_next(&mut regex, origin, direction, side, None) else {
+    let side = if forward { Side::Left } else { Side::Right };
+    let Some(found) = find_from(term, query, origin, forward, side)? else {
         return Ok(None);
     };
 

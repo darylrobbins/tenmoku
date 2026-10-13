@@ -636,7 +636,9 @@ impl Workbench {
     /// previous one, if there's another; `terminal.find` shows the dock
     /// with the active session's find row open, focused;
     /// `terminal.previous_prompt` and `terminal.next_prompt` scroll the
-    /// active session between its shell's prompts.
+    /// active session between its shell's prompts; `terminal.vi_mode`
+    /// shows the dock and turns the active session's vi copy mode on or
+    /// off, focused.
     fn run_terminal_op(&mut self, op: TerminalOp, window: &mut Window, cx: &mut Context<Self>) {
         let terminal = self.terminal.clone();
         let show = match op {
@@ -665,6 +667,12 @@ impl Workbench {
             TerminalOp::PreviousPrompt | TerminalOp::NextPrompt => {
                 let forward = op == TerminalOp::NextPrompt;
                 terminal.update(cx, |terminal, cx| terminal.scroll_to_prompt(forward, cx));
+                return;
+            }
+            TerminalOp::ViMode => {
+                self.terminal_dock
+                    .update(cx, |dock, cx| dock.show(TERMINAL, window, cx));
+                terminal.update(cx, |terminal, cx| terminal.toggle_vi_mode(window, cx));
                 return;
             }
         };

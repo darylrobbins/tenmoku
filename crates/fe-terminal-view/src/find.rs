@@ -23,6 +23,10 @@ impl TerminalView {
         if query.is_none() {
             self.find_matches.clear();
         }
+        // Vi mode's n goes forward through a query that replaces another.
+        if query != self.find {
+            self.vi.backward = false;
+        }
         self.find = query;
         cx.notify();
         Ok(())

@@ -25,7 +25,9 @@
 //! keystroke is matched in, can hold every keystroke while its own command
 //! is pending, can have matches to its own commands handed back rather
 //! than dispatched, and can take the keystrokes a failed chord swallowed.
-//! Without one, all of that is the plain behaviour above.
+//! Without one, all of that is the plain behaviour above. An element can
+//! also keep keystrokes from the keymap while it reads them itself: see
+//! [`HOLDS_KEYS`].
 //!
 //! [`RunCommand`]: crate::commands::RunCommand
 
@@ -43,6 +45,13 @@ use crate::command_actions::dispatch_invocation;
 /// How long a chord prefix waits for its next keystroke, after which
 /// [`Matcher::flush`] ends the chord.
 pub const CHORD_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// A key context identifier: while the focused element's own context
+/// carries it, the keymap isn't consulted for keystrokes without the
+/// platform modifier, which go on to the element's key listener. For a
+/// mode that reads keys itself, such as a terminal's vi copy mode; the
+/// platform modifier's bindings stay the app's.
+pub const HOLDS_KEYS: &str = "holds_keys";
 
 /// An app's say in key input, registered with [`set_key_owner`]. Each hook
 /// is called at the point its doc names, in the order the module doc
@@ -317,6 +326,11 @@ fn on_keystroke(event: &KeystrokeEvent, window: &mut Window, cx: &mut App) {
         // The owner's key listener has it.
         return;
     }
+    if holds_keys(event) {
+        // The focused element's key listener has it.
+        cx.global_mut::<KeyInput>().abandon();
+        return;
+    }
     let input = cx.global_mut::<KeyInput>();
     let Some(keystroke) = keystroke(&event.keystroke) else {
         // A standalone modifier goes on as GPUI sends it, leaving the chord
@@ -437,6 +451,12 @@ fn replay(
     }
     cx.global_mut::<KeyInput>().redelivering = false;
     cx.propagate();
+}
+
+/// Whether the focused element holds `event`'s keystroke ([`HOLDS_KEYS`]).
+fn holds_keys(event: &KeystrokeEvent) -> bool {
+    !event.keystroke.modifiers.platform
+        && (event.context_stack.last()).is_some_and(|context| context.contains(HOLDS_KEYS))
 }
 
 /// Whether `keystroke` is a modifier pressed and released alone, which GPUI

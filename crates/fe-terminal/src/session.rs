@@ -24,6 +24,7 @@ use crate::pty_loop::{LoopSender, Msg, PtyLoop, lock};
 use crate::search::{self, QueryError, TerminalMatch, TerminalQuery};
 use crate::shell::{ShellState, UNBOUNDED_HISTORY};
 use crate::snapshot::{self, Snapshot};
+use crate::vi;
 
 /// What to run and how much history to keep.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -129,6 +130,8 @@ pub enum SelectionKind {
     Word,
     /// Whole lines.
     Line,
+    /// The rectangle of cells between the two ends.
+    Block,
 }
 
 /// Which half of a cell a selection point is on.
@@ -136,6 +139,17 @@ pub enum SelectionKind {
 pub enum Side {
     Left,
     Right,
+}
+
+impl From<SelectionKind> for SelectionType {
+    fn from(kind: SelectionKind) -> SelectionType {
+        match kind {
+            SelectionKind::Simple => SelectionType::Simple,
+            SelectionKind::Word => SelectionType::Semantic,
+            SelectionKind::Line => SelectionType::Lines,
+            SelectionKind::Block => SelectionType::Block,
+        }
+    }
 }
 
 impl From<Side> for Direction {
@@ -150,7 +164,7 @@ impl From<Side> for Direction {
 /// Forwards `Term` and event-loop events to the app's channel, and answers
 /// the ones the pty needs answered.
 #[derive(Clone)]
-struct Listener {
+pub(crate) struct Listener {
     events: async_channel::Sender<TerminalEvent>,
     /// The event loop's input, set once it exists (the `Term` it drives is
     /// built first).
@@ -218,9 +232,9 @@ impl EventListener for Listener {
 
 /// A running terminal session. Dropping it hangs up the child.
 pub struct Terminal {
-    term: Arc<FairMutex<Term<Listener>>>,
+    pub(crate) term: Arc<FairMutex<Term<Listener>>>,
     /// What the shell reported. Locked after `term`.
-    shell: Arc<Mutex<ShellState>>,
+    pub(crate) shell: Arc<Mutex<ShellState>>,
     /// The `Term`'s options with a history too long to fill, set while it
     /// resizes on the alternate screen: the only way to the hidden primary
     /// grid's limit.
@@ -399,6 +413,8 @@ impl Terminal {
             shell.after_resize(&mut term, anchors);
         }
         shell.view_moved(offset, &term);
+        // Trimming history back may have taken the vi cursor's text.
+        vi::keep_in_view(&mut term);
         drop((shell, term));
         let _ = self.pty.send(Msg::Resize(window_size));
     }
@@ -420,20 +436,6 @@ impl Terminal {
     pub fn scroll_to_prompt(&self, forward: bool) -> bool {
         let mut term = self.term.lock();
         lock(&self.shell).scroll_to_prompt(&mut term, forward)
-    }
-
-    /// The grid lines of the prompt marks (negative in history), oldest
-    /// first.
-    #[allow(dead_code, reason = "for vi copy mode's [[ and ]]")]
-    pub(crate) fn prompt_lines(&self) -> Vec<i32> {
-        let term = self.term.lock();
-        lock(&self.shell).prompt_lines(&term)
-    }
-
-    /// The rows scrolled into history so far, as of the last output.
-    #[allow(dead_code, reason = "for vi copy mode's frozen view")]
-    pub(crate) fn scrolled_rows(&self) -> u64 {
-        lock(&self.shell).scrolled
     }
 
     /// Scrolls the view by `lines`: negative moves back into history, positive
@@ -464,12 +466,7 @@ impl Terminal {
     pub fn select(&self, kind: SelectionKind, row: usize, col: usize, side: Side) {
         let mut term = self.term.lock();
         let point = viewport_point(&term, row, col);
-        let ty = match kind {
-            SelectionKind::Simple => SelectionType::Simple,
-            SelectionKind::Word => SelectionType::Semantic,
-            SelectionKind::Line => SelectionType::Lines,
-        };
-        term.selection = Some(Selection::new(ty, point, side.into()));
+        term.selection = Some(Selection::new(kind.into(), point, side.into()));
     }
 
     /// Moves the selection's moving end to viewport cell (`row`, `col`).
@@ -479,6 +476,11 @@ impl Terminal {
         if let Some(selection) = term.selection.as_mut() {
             selection.update(point, side.into());
         }
+    }
+
+    /// Whether anything is selected, even blank cells.
+    pub fn has_selection(&self) -> bool {
+        (self.term.lock().selection.as_ref()).is_some_and(|selection| !selection.is_empty())
     }
 
     pub fn clear_selection(&self) {

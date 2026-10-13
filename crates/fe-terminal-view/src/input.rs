@@ -12,10 +12,11 @@ use gpui::{
 
 use crate::TerminalView;
 use crate::element::cell_size;
+use crate::vi;
 
 /// Option is not meta on macOS: option-letter composes a character, as
 /// Terminal.app's default does.
-const OPTION_COMPOSES: bool = cfg!(target_os = "macos");
+pub(crate) const OPTION_COMPOSES: bool = cfg!(target_os = "macos");
 
 /// What a key press does in a terminal.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -35,7 +36,7 @@ pub(crate) enum KeyInput {
 
 /// The platform's copy and paste keys: cmd-c and cmd-v on macOS,
 /// ctrl-shift-c and ctrl-shift-v elsewhere.
-fn clipboard_key(keystroke: &Keystroke) -> Option<KeyInput> {
+pub(crate) fn clipboard_key(keystroke: &Keystroke) -> Option<KeyInput> {
     let m = &keystroke.modifiers;
     let held = if cfg!(target_os = "macos") {
         m.platform && !m.control && !m.alt && !m.shift
@@ -196,6 +197,18 @@ impl TerminalView {
         let Some(terminal) = &self.terminal else {
             return;
         };
+        // Vi mode takes every key, so none reaches the pty or the input
+        // handler.
+        if vi::is_toggle(&event.keystroke) {
+            self.toggle_vi_mode(cx);
+            cx.stop_propagation();
+            return;
+        }
+        if terminal.is_vi_mode() {
+            self.vi_key(&event.keystroke, cx);
+            cx.stop_propagation();
+            return;
+        }
         match key_input(&event.keystroke) {
             KeyInput::Copy => {
                 // Nothing selected: the key isn't the terminal's.
@@ -227,7 +240,11 @@ impl TerminalView {
     }
 
     /// Writes `text` as a paste, bracketed when the program asked for that.
+    /// A paste leaves vi mode.
     pub(crate) fn paste_text(&mut self, text: &str, cx: &mut Context<Self>) {
+        if self.is_vi_mode() {
+            self.set_vi_mode(false, cx);
+        }
         let Some(terminal) = &self.terminal else {
             return;
         };
@@ -296,6 +313,12 @@ impl EntityInputHandler for TerminalView {
         })
     }
 
+    /// Not in vi mode, whose keys are commands: an input method would take
+    /// them as text before they reach the view.
+    fn accepts_text_input(&self, _: &mut Window, _: &mut Context<Self>) -> bool {
+        !self.is_vi_mode()
+    }
+
     fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
         self.marked.as_deref().map(|text| 0..utf16_len(text))
     }
@@ -322,6 +345,10 @@ impl EntityInputHandler for TerminalView {
         if self.marked.take().is_some() {
             cx.notify();
         }
+        // Vi mode's keys aren't text.
+        if self.is_vi_mode() {
+            return;
+        }
         self.write(text.as_bytes().to_vec(), cx);
     }
 
@@ -333,6 +360,9 @@ impl EntityInputHandler for TerminalView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.is_vi_mode() {
+            return;
+        }
         let (text, selection) = compose(
             self.marked.as_deref().unwrap_or(""),
             range,

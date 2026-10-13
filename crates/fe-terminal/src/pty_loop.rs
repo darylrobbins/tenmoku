@@ -27,6 +27,7 @@ use alacritty_terminal::tty::{self, EventedPty, EventedReadWrite};
 use alacritty_terminal::vte::ansi::{Processor, Timeout};
 
 use crate::shell::{Found, MAX_ADVANCE, Scanner, ShellState};
+use crate::vi::{self, Hold};
 
 /// Max bytes to read from the pty before forced terminal synchronization.
 const READ_BUFFER_SIZE: usize = 0x10_0000;
@@ -416,8 +417,14 @@ impl Feeder {
     ) -> Option<usize> {
         let len = bytes.len();
         let mut advance = |bytes: &[u8], terminal: &mut Term<U>, shell: &mut ShellState| {
+            // Vi mode's view stays on its text as rows scroll into history.
+            let hold = Hold::before(terminal, shell);
             self.parser.advance(terminal, bytes);
             shell.advanced(terminal);
+            if let Some(hold) = hold {
+                hold.after(terminal, shell);
+            }
+            vi::keep_in_view(terminal);
         };
         while !bytes.is_empty() {
             let chunk = &bytes[..bytes.len().min(MAX_ADVANCE)];
@@ -433,7 +440,7 @@ impl Feeder {
                     shell.event(event, terminal);
                     false
                 }
-                Found::ClearsHistory => {
+                Found::ClearsHistory | Found::LeavesAlternateScreen => {
                     advance(&bytes[..1], terminal, shell);
                     bytes = &bytes[1..];
                     false

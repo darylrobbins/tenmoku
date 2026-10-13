@@ -69,6 +69,11 @@ pub(crate) enum Found {
     /// first ([`ShellState::freeze`]). `sync` if the same CSI starts a
     /// synchronized update (`CSI ? 1049 ; 2026 h`), which starts after it.
     EntersAlternateScreen { sync: bool },
+    /// `CSI ? 1049 l`, which shows the primary grid again, with its final
+    /// byte at the offset returned with it: the loop feeds that byte on its
+    /// own, so the parser call after it starts on the primary screen, its
+    /// history in step with a resize made while it was hidden.
+    LeavesAlternateScreen,
     /// `CSI ? 2026 h`, the start of a synchronized update, ended just
     /// before the offset returned with it.
     StartsSync,
@@ -88,9 +93,9 @@ enum State {
     OscEscape,
 }
 
-/// The most CSI parameter bytes kept: a longer CSI is none of those
-/// [`Found`] names.
-const MAX_CSI: usize = 32;
+/// The most parameters and sub-parameters a CSI has, as alacritty's parser
+/// (vte) counts them: it ignores a CSI with more, and so does the scanner.
+const MAX_CSI_PARAMS: usize = 32;
 
 /// Finds OSC 7 and OSC 133 sequences, ended by BEL or ST, and the CSIs
 /// [`Found`] names, in a byte stream fed in slices that may split a sequence
@@ -98,12 +103,24 @@ const MAX_CSI: usize = 32;
 #[derive(Debug, Default)]
 pub(crate) struct Scanner {
     state: State,
-    /// The OSC's payload, or the CSI's parameter bytes.
+    /// The OSC's payload.
     payload: Vec<u8>,
+    /// The CSI's parameters' first values, as the parser reads them: digits
+    /// accumulate, saturating, and sub-parameters (after `:`) are left out.
+    params: Vec<u16>,
+    /// The CSI's parameters and sub-parameters ended so far, which the
+    /// parser counts up to [`MAX_CSI_PARAMS`].
+    slots: usize,
+    /// The CSI's parameter or sub-parameter being read.
+    param: u16,
+    /// Whether `param` is a sub-parameter.
+    sub: bool,
+    /// Whether the CSI has had a parameter byte.
+    has_params: bool,
     /// Whether the CSI started with the private marker `?`.
     private: bool,
-    /// Whether the payload outgrew its limit, or the CSI has intermediates
-    /// or another marker.
+    /// Whether the OSC outgrew its limit, or the CSI has more parameters
+    /// than the parser keeps, intermediates or another marker.
     overflow: bool,
 }
 
@@ -116,7 +133,9 @@ impl Scanner {
             if let Some(found) = self.byte(byte) {
                 let end = match found {
                     Found::Shell(_) | Found::StartsSync => ix + 1,
-                    Found::ClearsHistory | Found::EntersAlternateScreen { .. } => ix,
+                    Found::ClearsHistory
+                    | Found::EntersAlternateScreen { .. }
+                    | Found::LeavesAlternateScreen => ix,
                 };
                 return Some((end, found));
             }
@@ -127,8 +146,28 @@ impl Scanner {
     fn start(&mut self, state: State) {
         self.state = state;
         self.payload.clear();
+        self.params.clear();
+        self.slots = 0;
+        self.param = 0;
+        self.sub = false;
+        self.has_params = false;
         self.private = false;
         self.overflow = false;
+    }
+
+    /// Ends the CSI parameter or sub-parameter being read, as the parser
+    /// does at `;`, `:` and the final byte; past the parser's limit, the CSI
+    /// is ignored.
+    fn end_param(&mut self) {
+        if self.slots == MAX_CSI_PARAMS {
+            self.overflow = true;
+            return;
+        }
+        if !self.sub {
+            self.params.push(self.param);
+        }
+        self.slots += 1;
+        self.param = 0;
     }
 
     fn byte(&mut self, byte: u8) -> Option<Found> {
@@ -151,18 +190,26 @@ impl Scanner {
             (State::Escape, _) => self.state = State::Ground,
             // The parser runs C0 controls in a CSI, and goes on with it.
             (State::Csi, 0x00..=0x1f) => {}
-            (State::Csi, b'0'..=b'9' | b';' | b':') => {
-                if self.payload.len() < MAX_CSI {
-                    self.payload.push(byte);
-                } else {
+            (State::Csi, b'0'..=b'9') => {
+                self.has_params = true;
+                if self.slots == MAX_CSI_PARAMS {
                     self.overflow = true;
+                } else {
+                    let digit = u16::from(byte - b'0');
+                    self.param = self.param.saturating_mul(10).saturating_add(digit);
                 }
             }
-            (State::Csi, b'?') if self.payload.is_empty() && !self.private => self.private = true,
+            (State::Csi, b';' | b':') => {
+                self.has_params = true;
+                self.end_param();
+                self.sub = byte == b':';
+            }
+            (State::Csi, b'?') if !self.has_params && !self.private => self.private = true,
             // Intermediates and other markers.
             (State::Csi, 0x20..=0x2f | 0x3c..=0x3f) => self.overflow = true,
             (State::Csi, _) => {
                 self.state = State::Ground;
+                self.end_param();
                 return self.csi_end(byte);
             }
             (State::Osc, 0x07) => {
@@ -192,16 +239,12 @@ impl Scanner {
         if self.overflow {
             return None;
         }
-        // The parameters' first values; sub-parameters are skipped.
-        let mut params = (self.payload.split(|&byte| byte == b';'))
-            .map(|param| param.split(|&byte| byte == b':').next().unwrap_or_default())
-            .map(|param| std::str::from_utf8(param).ok()?.parse::<u16>().ok());
+        let params = &self.params;
         match (self.private, last) {
             (false, b'J') => {
-                (params.next().flatten().unwrap_or(0) == 3).then_some(Found::ClearsHistory)
+                (params.first().copied().unwrap_or(0) == 3).then_some(Found::ClearsHistory)
             }
             (true, b'h') => {
-                let params: Vec<_> = params.flatten().collect();
                 let sync = params.contains(&2026);
                 if params.contains(&1049) {
                     Some(Found::EntersAlternateScreen { sync })
@@ -211,6 +254,9 @@ impl Scanner {
                     None
                 }
             }
+            (true, b'l') => params
+                .contains(&1049)
+                .then_some(Found::LeavesAlternateScreen),
             _ => None,
         }
     }
@@ -609,7 +655,9 @@ mod tests {
                 // As the loop does, past a final byte fed alone.
                 let alone = matches!(
                     next,
-                    Found::ClearsHistory | Found::EntersAlternateScreen { .. }
+                    Found::ClearsHistory
+                        | Found::EntersAlternateScreen { .. }
+                        | Found::LeavesAlternateScreen
                 );
                 let end = if alone { end + 1 } else { end };
                 found.push(next);
@@ -672,15 +720,17 @@ mod tests {
     fn finds_screen_switches_and_synchronized_updates() {
         let bytes = b"\x1b[?1049h\x1b[?1;1049h\x1b[?2026h\x1b[?2004;2026h\
             \x1b[1049h\x1b[?1049l\x1b[?2026l\x1b[>2026h\x1b[?1047h\
-            \x1b[?1049;2026h\x1b[?2026;1049h";
+            \x1b[?1049;2026h\x1b[?2026;1049h\x1b[?47l\x1b[?1;1049l";
         let alt = |sync| Found::EntersAlternateScreen { sync };
         let expected = vec![
             alt(false),
             alt(false),
             Found::StartsSync,
             Found::StartsSync,
+            Found::LeavesAlternateScreen,
             alt(true),
             alt(true),
+            Found::LeavesAlternateScreen,
         ];
         for split in 1..=bytes.len() {
             assert_eq!(found(bytes, split), expected, "in slices of {split}");
@@ -693,6 +743,47 @@ mod tests {
         assert_eq!(
             scanner.next(b"\x1b[?1049h"),
             Some((7, Found::EntersAlternateScreen { sync: false }))
+        );
+        assert_eq!(
+            scanner.next(b"x\x1b[?1049ly"),
+            Some((8, Found::LeavesAlternateScreen))
+        );
+    }
+
+    #[test]
+    fn counts_csi_parameters_as_the_parser_does() {
+        // More than 32 bytes of parameters, but 9 of them: the parser reads
+        // it, and so does the scanner.
+        let long = b"\x1b[?1;1000;1002;1003;1004;1005;1006;2004;1049l";
+        for split in 1..=long.len() {
+            assert_eq!(
+                found(long, split),
+                [Found::LeavesAlternateScreen],
+                "in slices of {split}"
+            );
+        }
+        // Leading zeros and sub-parameters, as the parser takes them.
+        let mut scanner = Scanner::default();
+        let bytes = b"\x1b[?000001049:5:6;2026h";
+        assert_eq!(
+            scanner.next(bytes),
+            Some((bytes.len() - 1, Found::EntersAlternateScreen { sync: true }))
+        );
+        // 33 parameters and sub-parameters: the parser ignores the CSI.
+        let mut many = b"\x1b[?".to_vec();
+        for _ in 0..16 {
+            many.extend_from_slice(b"1:2;");
+        }
+        many.extend_from_slice(b"1049l");
+        assert_eq!(Scanner::default().next(&many), None);
+        let mut most = b"\x1b[?".to_vec();
+        for _ in 0..31 {
+            most.extend_from_slice(b"1;");
+        }
+        most.extend_from_slice(b"1049l");
+        assert_eq!(
+            Scanner::default().next(&most),
+            Some((most.len() - 1, Found::LeavesAlternateScreen))
         );
     }
 
