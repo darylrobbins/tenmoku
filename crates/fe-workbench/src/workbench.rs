@@ -26,6 +26,7 @@ use crate::{
     config_problems::{self, ConfigProblemsPicker},
     disk_sync::DiskSync,
     dock::{self, DockEvent, DockOp, ProblemsOp, ProblemsPanel},
+    find_bar::FindOp,
     git::GitState,
     go_to_line::GoToLine,
     language_picker::LanguagePicker,
@@ -595,11 +596,21 @@ impl Workbench {
     /// Runs a terminal command: `terminal.new` shows the bottom dock with a
     /// new session, focused; `terminal.close` drops the active session;
     /// `terminal.next` and `terminal.previous` show and focus the next or
-    /// previous one, if there's another.
+    /// previous one, if there's another; `terminal.find` shows the dock
+    /// with the active session's find row open, focused.
     fn run_terminal_op(&mut self, op: TerminalOp, window: &mut Window, cx: &mut Context<Self>) {
         let terminal = self.terminal.clone();
         let show = match op {
             TerminalOp::Toggle => return self.toggle_terminal(window, cx),
+            TerminalOp::Find => {
+                terminal.update(cx, |terminal, cx| terminal.start(window, cx));
+                self.terminal_dock
+                    .update(cx, |dock, cx| dock.show(TERMINAL, window, cx));
+                terminal.update(cx, |terminal, cx| {
+                    terminal.run_find(FindOp::Show, window, cx)
+                });
+                return;
+            }
             TerminalOp::New => {
                 terminal.update(cx, |terminal, cx| terminal.add(window, cx));
                 true

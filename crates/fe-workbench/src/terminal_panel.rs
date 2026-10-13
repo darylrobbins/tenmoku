@@ -9,7 +9,8 @@
 //! a shell exits the panel drops its session; when none is left it tells
 //! the workbench ([`TerminalPanelEvent::Exited`]), which hides the dock,
 //! and the next show starts a new one. Closing the window drops the
-//! sessions, which hangs their shells up.
+//! sessions, which hangs their shells up. `terminal.find` opens a find row
+//! above the active one ([`terminal_find`]).
 
 use std::{path::PathBuf, rc::Rc};
 
@@ -25,6 +26,12 @@ use gpui::{
     div, prelude::FluentBuilder as _, px,
 };
 use kiln_shell::{DockItem, PanelId};
+
+use crate::find_bar::FindOp;
+use terminal_find::TerminalFind;
+
+#[path = "terminal_find.rs"]
+mod terminal_find;
 
 /// The panel's id in the bottom dock.
 pub(crate) const TERMINAL: PanelId = PanelId("terminal");
@@ -65,8 +72,12 @@ pub struct TerminalPanel {
     theme: EditorTheme,
     /// The user's `terminal` settings.
     settings: TerminalSettings,
-    /// Focused while there's no session, which starts one as the panel
-    /// draws.
+    /// The find row, made by the first `terminal.find`.
+    find: Option<TerminalFind>,
+    /// The panel's, tracked by its root, so it contains the find row and
+    /// the sessions. Focused itself, as when the dock shows the panel, it
+    /// hands focus to the active session as the panel draws, starting one
+    /// if there's none.
     focus: FocusHandle,
     /// The shell a session runs instead of the user's.
     #[cfg(test)]
@@ -96,6 +107,7 @@ impl TerminalPanel {
             style: style(theme, &TerminalSettings::default()),
             theme: theme.clone(),
             settings: TerminalSettings::default(),
+            find: None,
             focus: cx.focus_handle(),
             #[cfg(test)]
             shell: None,
@@ -149,7 +161,7 @@ impl TerminalPanel {
         self.active
     }
 
-    /// Whether the terminal has focus.
+    /// Whether the terminal, or its find row, has focus.
     pub(crate) fn is_focused(&self, window: &Window, cx: &App) -> bool {
         self.focus_handle(cx).contains_focused(window, cx)
     }
@@ -202,6 +214,7 @@ impl TerminalPanel {
         self.next_number += 1;
         self.active = self.sessions.len() - 1;
         self.reveal = true;
+        self.follow_find(cx);
         cx.notify();
     }
 
@@ -223,6 +236,7 @@ impl TerminalPanel {
         if self.sessions.is_empty() {
             self.active = 0;
             self.next_number = 1;
+            self.update_find(|find, _, cx| find.run(FindOp::Close, None, window, cx), cx);
             cx.emit(TerminalPanelEvent::Exited);
             cx.notify();
             return;
@@ -231,6 +245,7 @@ impl TerminalPanel {
             self.active -= 1;
         }
         self.reveal = true;
+        self.follow_find(cx);
         if focused {
             self.focus_active(window, cx);
         }
@@ -247,6 +262,7 @@ impl TerminalPanel {
         if ix < self.sessions.len() {
             self.active = ix;
             self.reveal = true;
+            self.follow_find(cx);
             self.focus_active(window, cx);
             cx.notify();
         }
@@ -268,6 +284,42 @@ impl TerminalPanel {
         if let Some(view) = self.view() {
             window.focus(&view.focus_handle(cx), cx);
         }
+    }
+
+    /// Does `op` in the find row, made by the first `terminal.find`
+    /// ([`FindOp::Show`]): before that, nothing else does anything. Closing
+    /// it focuses the active terminal.
+    pub(crate) fn run_find(&mut self, op: FindOp, window: &mut Window, cx: &mut Context<Self>) {
+        if op == FindOp::Show && self.find.is_none() {
+            self.find = Some(TerminalFind::new(&fe_ui::ui_theme(cx), cx));
+        }
+        self.update_find(|find, view, cx| find.run(op, view, window, cx), cx);
+        if op == FindOp::Close {
+            self.focus_active(window, cx);
+        }
+        cx.notify();
+    }
+
+    /// Changes the find row, if there is one, given the active terminal.
+    pub(crate) fn update_find(
+        &mut self,
+        update: impl FnOnce(&mut TerminalFind, Option<&Entity<TerminalView>>, &mut App),
+        cx: &mut App,
+    ) {
+        let view = self.view().cloned();
+        if let Some(find) = &mut self.find {
+            update(find, view.as_ref(), cx);
+        }
+    }
+
+    /// Moves the open find row's query to the active terminal.
+    fn follow_find(&mut self, cx: &mut App) {
+        self.update_find(|find, view, cx| find.follow(view, cx), cx);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn find(&self) -> Option<&TerminalFind> {
+        self.find.as_ref()
     }
 
     /// Session `ix`'s tab label: the title its shell set, else
@@ -422,12 +474,10 @@ fn style(theme: &EditorTheme, settings: &TerminalSettings) -> TerminalStyle {
 }
 
 impl Focusable for TerminalPanel {
-    /// The active session's, or the panel's own while there's none.
-    fn focus_handle(&self, cx: &App) -> FocusHandle {
-        match self.view() {
-            Some(view) => view.focus_handle(cx),
-            None => self.focus.clone(),
-        }
+    /// The panel's own, which contains the find row and the sessions:
+    /// focused, it hands focus to the active session as the panel draws.
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
     }
 }
 
@@ -463,18 +513,22 @@ impl DockItem for TerminalPanel {
 
 impl Render for TerminalPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Shown with no session, as by a rail click after the shell exited:
-        // start one, focused if the panel is.
-        if self.sessions.is_empty() {
-            let focused = self.focus.is_focused(window);
-            self.start(window, cx);
-            if focused {
-                self.focus_active(window, cx);
-            }
+        // Focused itself, as when the dock shows it: the active session
+        // takes focus. Shown with no session, as by a rail click after the
+        // shell exited: start one.
+        let focused = self.focus.is_focused(window);
+        self.start(window, cx);
+        if focused {
+            self.focus_active(window, cx);
         }
+        // A query set before its session started is checked once it has.
+        self.update_find(|find, view, cx| find.settle(view, cx), cx);
         #[cfg(test)]
         self.drawn_tabs.clear();
         let strip = (self.sessions.len() > 1).then(|| self.tab_strip(cx));
+        let view = self.view().cloned();
+        let ui = fe_ui::ui_theme(cx);
+        let find = (self.find.as_ref()).and_then(|find| find.render(view.as_ref(), &ui, cx));
         div()
             .track_focus(&self.focus)
             .size_full()
@@ -482,6 +536,7 @@ impl Render for TerminalPanel {
             .flex_col()
             .bg(self.style.background)
             .children(strip)
+            .children(find)
             .child(
                 div()
                     .flex()
@@ -506,6 +561,8 @@ pub(crate) enum TerminalOp {
     Next,
     /// `terminal.previous`.
     Previous,
+    /// `terminal.find`.
+    Find,
 }
 
 /// The [`CommandTarget`] of the terminal's commands: the one that ran.
@@ -534,6 +591,7 @@ pub(crate) fn registry() -> Registry<TerminalCommands> {
         ("terminal.close", "Close Terminal", Close),
         ("terminal.next", "Next Terminal", Next),
         ("terminal.previous", "Previous Terminal", Previous),
+        ("terminal.find", "Terminal: Find", Find),
     ] {
         registry
             .register(
@@ -602,3 +660,7 @@ mod terminal_panel_tests;
 #[cfg(test)]
 #[path = "terminal_tabs_tests.rs"]
 mod terminal_tabs_tests;
+
+#[cfg(test)]
+#[path = "terminal_find_tests.rs"]
+mod terminal_find_tests;
