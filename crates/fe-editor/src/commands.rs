@@ -17,7 +17,7 @@ use fe_display::Fold;
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
-use crate::{EditorModel, Movement};
+use crate::{CommentTokens, EditorModel, Movement};
 
 /// The context frame name an editor has focus in, and every editor
 /// command's context predicate.
@@ -43,6 +43,11 @@ pub trait EditorHost {
     /// soft-wrapped [`Viewport::top_row`]; `None` (the default) if that
     /// isn't known.
     fn top_display_row(&self) -> Option<u32> {
+        None
+    }
+    /// The comment delimiters of the buffer's language; `None` (the
+    /// default) if it has none or isn't known.
+    fn comment_tokens(&self) -> Option<CommentTokens> {
         None
     }
     /// Changes what the view shows; the default does nothing.
@@ -509,6 +514,7 @@ pub fn registry() -> Registry<Editor> {
         .context(ContextPredicate::identifier(CONTEXT));
     crate::multi_cursor::register(&mut registry);
     crate::rows::register(&mut registry);
+    crate::comment::register(&mut registry);
     registry
 }
 

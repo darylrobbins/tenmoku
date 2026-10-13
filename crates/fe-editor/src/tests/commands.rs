@@ -114,6 +114,7 @@ fn every_editor_command_is_registered() {
         "delete_rows",
     ];
     expected.extend(rows.map(|name| format!("editor.{name}")));
+    expected.push("editor.toggle_comment".to_string());
     assert_eq!(ids, expected);
     let mutating = [
         "backspace",
@@ -132,6 +133,7 @@ fn every_editor_command_is_registered() {
         "move_rows_down",
         "duplicate_rows",
         "delete_rows",
+        "toggle_comment",
     ];
     for meta in registry.commands() {
         let name = meta.id.as_str().strip_prefix("editor.").unwrap();

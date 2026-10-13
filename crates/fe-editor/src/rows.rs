@@ -50,8 +50,8 @@ pub(crate) fn register(registry: &mut Registry<Editor>) {
 
 /// Selections touching the same or adjacent rows: those rows, and the
 /// selections' indices.
-struct Block {
-    rows: RangeInclusive<u32>,
+pub(crate) struct Block {
+    pub(crate) rows: RangeInclusive<u32>,
     selections: Range<usize>,
 }
 
@@ -308,7 +308,7 @@ impl EditorModel {
     /// Applies `edits`, which each insert at or delete from a row's start,
     /// mapping the selections across them: an offset at an insertion moves
     /// past it, and one in a deletion goes to its start.
-    fn edit_rows_in_place(&mut self, edits: Vec<(Range<usize>, String)>) {
+    pub(crate) fn edit_rows_in_place(&mut self, edits: Vec<(Range<usize>, String)>) {
         let selections = self
             .selections()
             .into_iter()
@@ -360,7 +360,7 @@ impl EditorModel {
 
     /// Each block of selections, by row. With `whole_folds`, a block
     /// touching a folded range takes in all of it.
-    fn blocks(&self, whole_folds: bool) -> Vec<Block> {
+    pub(crate) fn blocks(&self, whole_folds: bool) -> Vec<Block> {
         let text = self.text();
         let mut blocks: Vec<Block> = Vec::new();
         for (index, selection) in self.selections().iter().enumerate() {

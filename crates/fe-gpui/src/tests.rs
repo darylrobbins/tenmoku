@@ -69,7 +69,7 @@ fn render(model: &EditorModel) -> String {
 }
 
 /// A focused editor showing `marked`, in a headless window.
-fn editor<'a>(
+pub(crate) fn editor<'a>(
     cx: &'a mut TestAppContext,
     marked: &str,
 ) -> (Entity<EditorView>, &'a mut VisualTestContext) {
@@ -85,7 +85,7 @@ fn editor<'a>(
     (view, cx)
 }
 
-fn state(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> String {
+pub(crate) fn state(view: &Entity<EditorView>, cx: &mut VisualTestContext) -> String {
     view.update(cx, |view, _| render(view.model()))
 }
 

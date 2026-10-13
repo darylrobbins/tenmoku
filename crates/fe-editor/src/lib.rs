@@ -22,6 +22,7 @@ use unicode_segmentation::{GraphemeCursor, GraphemeIncomplete};
 
 pub mod auto_save;
 pub mod commands;
+mod comment;
 pub mod completion;
 pub mod decorations;
 pub mod diagnostics;
@@ -39,6 +40,7 @@ pub mod text_diff;
 mod typing;
 mod viewer;
 
+pub use comment::CommentTokens;
 pub use disk::{SaveError, SaveJob, Saved};
 pub use indent_style::{IndentStyle, detect_indent_style};
 pub use multi_cursor::MAX_OCCURRENCES;

@@ -10,7 +10,10 @@ use fe_command::{
     Actor, CommandError, CommandId, CommandMeta, ContextPredicate, DispatchError, Dispatched,
     Effect, Invocation, Registry, Source, Value,
 };
-use fe_editor::commands::{Editor, EditorHost, EditorTarget, ScrollRequest, Viewport};
+use fe_editor::{
+    CommentTokens,
+    commands::{Editor, EditorHost, EditorTarget, ScrollRequest, Viewport},
+};
 use fe_keymap::{CatalogError, CommandCatalog};
 use fe_syntax::Syntax;
 use gpui::{App, ClipboardItem, Context, Window};
@@ -220,6 +223,14 @@ impl EditorHost for ViewHost<'_> {
         self.syntax
             .map(|syntax| fe_syntax::fold_ranges(syntax, rows))
             .unwrap_or_default()
+    }
+
+    fn comment_tokens(&self) -> Option<CommentTokens> {
+        let tokens = fe_syntax::comment_tokens(self.syntax?.language().name())?;
+        Some(CommentTokens {
+            line: tokens.line,
+            block: tokens.block,
+        })
     }
 
     fn viewport(&self) -> Option<Viewport> {
@@ -532,3 +543,7 @@ impl EditorView {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "comment_host_tests.rs"]
+mod comment_host_tests;
