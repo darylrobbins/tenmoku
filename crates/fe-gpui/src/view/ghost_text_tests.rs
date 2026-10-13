@@ -301,6 +301,8 @@ fn scroll_right(view: &Entity<EditorView>, x: f32, cx: &mut VisualTestContext) {
     draw(cx);
 }
 
+mod oversized_cluster_tests;
+
 #[gpui::test]
 fn wide_rows_scroll_into_view(cx: &mut TestAppContext) {
     use fe_display::layout::MAX_SHAPED_ROW_BYTES;

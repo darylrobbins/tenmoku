@@ -7,7 +7,7 @@
 use std::ops::Range;
 
 use fe_display::{
-    Block, CharWidth, ExpandedRow, ScreenRow,
+    Block, CharWidth, ExpandedRow, MAX_CLUSTER_BYTES, ScreenRow,
     layout::{
         Frame, MAX_SHAPED_ROW_BYTES, MeasuredLine as _, Rect, RowLayout, StyleRun, TextMeasure,
         Vec2,
@@ -163,25 +163,50 @@ fn runs(text: &str, view: &EditorView) -> [StyleRun<Hsla>; 1] {
 }
 
 /// Each grapheme cluster of `text`, as fe-display's long rows measure
-/// them ([`CharWidth::cluster_width`]): its bytes, and the x it starts and
-/// ends at from column 0.
+/// them: its bytes, and the x it starts and ends at from column 0. A
+/// cluster longer than [`MAX_CLUSTER_BYTES`] is cut into pieces of at most
+/// that many bytes at char boundaries, each as wide as its chars measured
+/// alone; the others measure as [`CharWidth::cluster_width`] has them.
 pub(super) fn clusters<'a>(
     text: &'a str,
     widths: &'a mut dyn CharWidth,
 ) -> impl Iterator<Item = (Range<usize>, f64, f64)> + 'a {
     use unicode_segmentation::UnicodeSegmentation as _;
     let mut x = 0.;
-    text.grapheme_indices(true).map(move |(at, cluster)| {
+    let units = text.grapheme_indices(true).flat_map(|(at, cluster)| {
+        let mut rest = cluster;
+        let mut cut = at;
+        std::iter::from_fn(move || {
+            if rest.is_empty() {
+                return None;
+            }
+            let whole = rest.len() <= MAX_CLUSTER_BYTES;
+            let len = match whole {
+                true => rest.len(),
+                false => rest.floor_char_boundary(MAX_CLUSTER_BYTES),
+            };
+            let (piece, tail) = rest.split_at(len);
+            let range = cut..cut + len;
+            rest = tail;
+            cut += len;
+            Some((range, piece, whole && piece.len() == cluster.len()))
+        })
+    });
+    units.map(move |(range, piece, is_cluster)| {
         let start = x;
-        x += f64::from(widths.cluster_width(cluster));
-        (at..at + cluster.len(), start, x)
+        x += f64::from(match is_cluster {
+            true => widths.cluster_width(piece),
+            false => piece.chars().map(|ch| widths.char_width(ch)).sum::<f32>(),
+        });
+        (range, start, x)
     })
 }
 
 /// Of a line longer than [`MAX_SHAPED_ROW_BYTES`], the part around the
 /// view scrolled to `scroll_x`, a view's width either side, as much of it
-/// as is shaped at once, cut between grapheme clusters: its bytes and the
-/// x it starts at, from column 0.
+/// as is shaped at once, cut between [`clusters`]: its bytes, at most
+/// [`MAX_SHAPED_ROW_BYTES`] of them, on char boundaries, and the x it
+/// starts at, from column 0.
 pub(super) fn slice(
     text: &str,
     frame: &Frame<Line>,
