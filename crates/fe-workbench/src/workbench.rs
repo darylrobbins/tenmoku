@@ -36,7 +36,7 @@ use crate::{
     outline_panel,
     pane::{PaneEvent, Peers, TabId},
     pane_drag::TabDropped,
-    pane_group::{self, Destination, Direction, PaneOp},
+    pane_group::{self, Destination, Direction, PaneOp, RESIZE_STEP},
     pane_toolbar::{self, NavButtons, SymbolChain, ToolbarRequest},
     persist,
     picker::{self, Toggle},
@@ -994,6 +994,21 @@ impl Workbench {
             }
             PaneOp::MoveTab(direction) => self.move_tab(direction, window, cx),
             PaneOp::Close => self.close_active_pane(window, cx),
+            PaneOp::Resize(axis, grow) => {
+                let delta = if grow { RESIZE_STEP } else { -RESIZE_STEP };
+                if self.panes.resize(&self.active, axis, delta) {
+                    cx.notify();
+                }
+            }
+            PaneOp::Equalize => {
+                self.panes.equalize();
+                cx.notify();
+            }
+            PaneOp::FocusNext(forward) => {
+                if let Some(pane) = self.panes.next(&self.active, forward) {
+                    self.activate(pane, window, cx);
+                }
+            }
         }
     }
 

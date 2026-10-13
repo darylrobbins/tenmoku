@@ -99,7 +99,16 @@ pub(crate) enum PaneOp {
     MoveTab(Direction),
     /// Closes the active pane with its tabs.
     Close,
+    /// Grows or shrinks the active pane by [`RESIZE_STEP`] along an axis.
+    Resize(Axis, bool),
+    /// Evens out every axis's panes.
+    Equalize,
+    /// Activates the next (or previous) pane, wrapping.
+    FocusNext(bool),
 }
+
+/// How far a resize command moves a border.
+pub(crate) const RESIZE_STEP: gpui::Pixels = gpui::px(32.);
 
 /// The [`CommandTarget`] of pane commands: the op to do.
 pub(crate) struct PaneCommands;
@@ -133,6 +142,33 @@ pub(crate) fn registry() -> Registry<PaneCommands> {
         ("pane.move_tab_up", "Move Tab Up", MoveTab(Up)),
         ("pane.move_tab_down", "Move Tab Down", MoveTab(Down)),
         ("pane.close", "Close Pane", Close),
+        (
+            "pane.grow_width",
+            "Grow Pane Width",
+            Resize(Axis::Horizontal, true),
+        ),
+        (
+            "pane.shrink_width",
+            "Shrink Pane Width",
+            Resize(Axis::Horizontal, false),
+        ),
+        (
+            "pane.grow_height",
+            "Grow Pane Height",
+            Resize(Axis::Vertical, true),
+        ),
+        (
+            "pane.shrink_height",
+            "Shrink Pane Height",
+            Resize(Axis::Vertical, false),
+        ),
+        ("pane.equalize", "Equalize Panes", Equalize),
+        ("pane.focus_next", "Focus Next Pane", FocusNext(true)),
+        (
+            "pane.focus_previous",
+            "Focus Previous Pane",
+            FocusNext(false),
+        ),
     ];
     let mut registry = Registry::new();
     for (id, title, op) in commands {
@@ -157,3 +193,7 @@ pub(crate) fn op(run: &RunCommand, cx: &App) -> Option<PaneOp> {
     }
     op
 }
+
+#[cfg(test)]
+#[path = "pane_resize_tests.rs"]
+mod resize_tests;

@@ -9,6 +9,8 @@
 //! key or a drop, which can split a new pane off for it.
 
 use std::{
+    cell::RefCell,
+    collections::HashMap,
     ops::{Deref, DerefMut},
     rc::Rc,
 };
@@ -16,8 +18,8 @@ use std::{
 use gpui::{
     AnyElement, App, AppContext as _, Bounds, Context, CursorStyle, DragMoveEvent, Entity,
     InteractiveElement as _, IntoElement as _, MouseButton, MouseDownEvent, ParentElement as _,
-    Pixels, Point, Render, StatefulInteractiveElement as _, Styled as _, WeakEntity, Window, div,
-    prelude::FluentBuilder as _, px,
+    Pixels, Point, Render, Size, StatefulInteractiveElement as _, Styled as _, WeakEntity, Window,
+    canvas, div, prelude::FluentBuilder as _, px,
 };
 use kiln_ui::{UiTheme, ui_theme};
 
@@ -279,6 +281,7 @@ impl<V: PaneView> Member<V> {
         &self,
         path: &mut Vec<usize>,
         ui: &UiTheme,
+        sizes: &AxisSizes,
         group: GroupOf<H, V>,
         cx: &mut Context<H>,
     ) -> AnyElement {
@@ -290,13 +293,26 @@ impl<V: PaneView> Member<V> {
         };
         let horizontal = *axis == Axis::Horizontal;
         let at = path.clone();
+        let record = {
+            let (sizes, at) = (sizes.clone(), at.clone());
+            canvas(
+                move |laid_out, _, _| {
+                    sizes.borrow_mut().insert(at.clone(), laid_out.size);
+                },
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+        };
         let cells: Vec<_> = members
             .iter()
             .zip(&members.ratios)
             .enumerate()
             .map(|(ix, (member, ratio))| {
                 path.push(ix);
-                let child = member.render(path, ui, group, cx);
+                let child = member.render(path, ui, sizes, group, cx);
                 path.pop();
                 let divider = Divider {
                     path: at.clone(),
@@ -333,10 +349,14 @@ impl<V: PaneView> Member<V> {
                     }
                 }),
             )
+            .child(record)
             .children(cells)
             .into_any_element()
     }
 }
+
+/// Each axis's size in the last frame drawn, by its path.
+type AxisSizes = Rc<RefCell<HashMap<Vec<usize>, Size<Pixels>>>>;
 
 /// How a host reaches its pane group, for the dividers' drags.
 pub type GroupOf<H, V> = fn(&mut H) -> &mut PaneGroup<V>;
@@ -487,6 +507,8 @@ pub struct PaneGroup<V> {
     press: Option<Press>,
     /// Counts changes to the tree's topology, which invalidate a press.
     generation: u64,
+    /// Where the last frame laid each axis out, for [`PaneGroup::resize`].
+    sizes: AxisSizes,
 }
 
 impl<V: PaneView> PaneGroup<V> {
@@ -495,6 +517,7 @@ impl<V: PaneView> PaneGroup<V> {
             root: Member::Pane(pane),
             press: None,
             generation: 0,
+            sizes: AxisSizes::default(),
         }
     }
 
@@ -507,6 +530,7 @@ impl<V: PaneView> PaneGroup<V> {
     pub fn set_root(&mut self, root: Member<V>) {
         self.generation += 1;
         self.press = None;
+        self.sizes.borrow_mut().clear();
         self.root = root;
     }
 
@@ -539,12 +563,14 @@ impl<V: PaneView> PaneGroup<V> {
     /// Puts `new` beside `old`, in `direction` from it.
     pub fn split(&mut self, old: &Entity<V>, new: Entity<V>, direction: Direction) {
         self.generation += 1;
+        self.sizes.borrow_mut().clear();
         self.root.split(old, new, direction);
     }
 
     /// Removes `pane`, unless it's the last.
     pub fn remove(&mut self, pane: &Entity<V>) {
         self.generation += 1;
+        self.sizes.borrow_mut().clear();
         self.root.remove(pane);
     }
 
@@ -644,6 +670,90 @@ impl<V: PaneView> PaneGroup<V> {
         members.ratios[a] = size / space;
         members.ratios[b] = pair - members.ratios[a];
         Some(())
+    }
+
+    /// Grows (`delta > 0`) or shrinks the member holding `pane` along the
+    /// nearest enclosing axis running `axis`, taking the space from, or
+    /// giving it to, its next sibling (its previous one if it's last). Only
+    /// those two ratios change, within the members' minimums as dragging
+    /// is. False, changing nothing, if there's no such axis, no room, or no
+    /// frame drawn yet.
+    pub fn resize(&mut self, pane: &Entity<V>, axis: Axis, delta: Pixels) -> bool {
+        let Some(path) = self.path_of(pane) else {
+            return false;
+        };
+        let Some(depth) = (0..path.len()).rev().find(|&depth| {
+            matches!(self.root.axis_ref(&path[..depth]), Some((found, _)) if found == axis)
+        }) else {
+            return false;
+        };
+        let Some(length) = self
+            .sizes
+            .borrow()
+            .get(&path[..depth])
+            .map(|size| match axis {
+                Axis::Horizontal => f32::from(size.width),
+                Axis::Vertical => f32::from(size.height),
+            })
+        else {
+            return false;
+        };
+        let Some((_, members)) = self.root.axis_at(&path[..depth]) else {
+            return false;
+        };
+        let ix = path[depth];
+        let other = if ix + 1 < members.len() {
+            ix + 1
+        } else if ix > 0 {
+            ix - 1
+        } else {
+            return false;
+        };
+        let space = length - BORDER * (members.len() - 1) as f32;
+        let pair = members.ratios[ix] + members.ratios[other];
+        let (min, other_min) = (members[ix].min_size(axis), members[other].min_size(axis));
+        let max = pair * space - other_min;
+        if space <= 0. || min > max {
+            return false;
+        }
+        let current = members.ratios[ix] * space;
+        let size = (current + f32::from(delta)).clamp(min, max);
+        if (size - current).abs() < f32::EPSILON {
+            return false;
+        }
+        members.ratios[ix] = size / space;
+        members.ratios[other] = pair - members.ratios[ix];
+        // A press in progress holds the old ratios.
+        self.generation += 1;
+        self.press = None;
+        true
+    }
+
+    /// Gives every axis's members equal ratios.
+    pub fn equalize(&mut self) {
+        fn even<V>(member: &mut Member<V>) {
+            if let Member::Axis { members, .. } = member {
+                let share = 1. / members.members.len() as f32;
+                members.ratios.fill(share);
+                members.members.iter_mut().for_each(even);
+            }
+        }
+        even(&mut self.root);
+        self.generation += 1;
+        self.press = None;
+    }
+
+    /// The pane after (`forward`) or before `from` in [`panes`](Self::panes)
+    /// order, wrapping; none if it's the only one.
+    pub fn next(&self, from: &Entity<V>, forward: bool) -> Option<Entity<V>> {
+        let panes = self.panes();
+        let at = panes.iter().position(|pane| *pane == from)?;
+        let to = if forward {
+            (at + 1) % panes.len()
+        } else {
+            (at + panes.len() - 1) % panes.len()
+        };
+        (to != at).then(|| panes[to].clone())
     }
 
     /// Moves item `item` from `source` to `destination`: the only way a
@@ -749,7 +859,10 @@ impl<V: PaneView> PaneGroup<V> {
             .min_w_0()
             .h_full()
             .flex()
-            .child(self.root.render(&mut Vec::new(), &ui, group, cx))
+            .child(
+                self.root
+                    .render(&mut Vec::new(), &ui, &self.sizes, group, cx),
+            )
             .into_any_element()
     }
 }
