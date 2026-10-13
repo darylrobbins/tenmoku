@@ -715,6 +715,12 @@ impl FakeServer {
         self.crash_at(self.launches());
     }
 
+    /// Closes the latest launch's transport (the client reads EOF) without
+    /// exiting it.
+    pub fn close_output(&self) {
+        let _ = self.session().socket.emit(Stop);
+    }
+
     /// Crashes launch `launch`, as [`crash`](Self::crash).
     pub fn crash_at(&self, launch: usize) {
         let session = self.lock().sessions[launch - 1].clone();

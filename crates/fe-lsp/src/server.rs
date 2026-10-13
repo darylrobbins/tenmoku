@@ -861,12 +861,18 @@ impl Actor {
             End::Crash(why) => {
                 // Callers waiting get `ServerDown` now.
                 self.pending = FuturesUnordered::new();
+                // Retired before the wait, so the dead server's
+                // diagnostics stop counting while the process goes;
+                // `crashed` ends the session again, to no effect.
+                self.end_session();
                 kill(process).await;
                 self.crashed(why, at)
             }
             End::Recycle(why) => {
                 self.pending = FuturesUnordered::new();
                 log::warn!("{why}; recycling the session");
+                // As for a crash: before the shutdown's wait.
+                self.end_session();
                 self.shut_down(process).await;
                 self.crashed(why, at)
             }
