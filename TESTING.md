@@ -259,6 +259,9 @@ AppKit's traffic lights aren't part of an off-screen render. Its failures write
 uploads with fe-gpui's. `render` shows a folder in the workbench with nothing
 opened. A change to the default layout's look regenerates this golden in the
 same change.
+A change to the gutter or text layout (`gutter_width`, `layout_frame*`) regenerates the
+goldens in the same change; made off the Mac, it needs a Mac follow-up to do that, as
+147b9f1a and ef074cdf did in 2026-10.
 
 Scenes render through GPUI's `VisualTestAppContext`: a window at
 (-10000, -10000), 800×480 logical pixels, drawn by Metal and read back from
