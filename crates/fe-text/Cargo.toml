@@ -13,8 +13,13 @@ encoding_rs.workspace = true
 ropey.workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
 proptest.workspace = true
 rand.workspace = true
+
+[[bench]]
+name = "text"
+harness = false
 
 [lints]
 workspace = true
