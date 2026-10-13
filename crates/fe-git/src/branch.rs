@@ -11,8 +11,8 @@ use crate::{GitError, Repo};
 /// Why a branch wasn't switched to or created.
 #[derive(Debug, thiserror::Error)]
 pub enum SwitchError {
-    /// Local changes to these files (absolute paths) differ on the target, so
-    /// switching would lose them. Nothing was changed.
+    /// Local changes to these paths (absolute; files, or directories holding
+    /// untracked files) differ on the target, so switching would lose them. Nothing was changed.
     #[error("local changes would be overwritten by switching branches ({} files)", paths.len())]
     WouldOverwrite { paths: Vec<PathBuf> },
     /// Not a valid branch name.
@@ -53,7 +53,8 @@ impl Repo {
     pub fn create_branch(&self, name: &str) -> Result<(), SwitchError> {
         let args = ["check-ref-format", "--branch", name].map(OsString::from);
         let output = run_raw(&self.workdir, Access::Read, &args, None, &[])?;
-        if !output.status.success() || name.starts_with('-') {
+        let expanded = String::from_utf8_lossy(&output.stdout);
+        if !output.status.success() || name.starts_with('-') || expanded.trim() != name {
             return Err(SwitchError::InvalidName);
         }
         let args = ["switch", "-q", "-c", name].map(OsString::from);
@@ -130,9 +131,12 @@ fn failed(output: &std::process::Output) -> SwitchError {
     }
 }
 
-/// The tab-indented file list under git's "would be overwritten" error.
+/// The tab-indented path list under git's "would be overwritten" and
+/// "would lose untracked files in them" errors.
 fn overwritten_paths(stderr: &str) -> Vec<&str> {
-    if !stderr.contains("would be overwritten") {
+    if !stderr.contains("would be overwritten")
+        && !stderr.contains("would lose untracked files in them")
+    {
         return Vec::new();
     }
     stderr
