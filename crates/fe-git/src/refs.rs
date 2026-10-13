@@ -20,12 +20,26 @@ pub enum Head {
     Unborn(String),
 }
 
+/// Splits a remote-tracking short name into its remote and branch: the longest
+/// configured remote name followed by `/` and a non-empty rest, else (a remote
+/// since removed) the split at the first `/`.
+fn split_remote<'a>(remotes: &[String], short: &'a str) -> Option<(&'a str, &'a str)> {
+    remotes
+        .iter()
+        .filter_map(|remote| {
+            let rest = short.strip_prefix(remote.as_str())?.strip_prefix('/')?;
+            (!rest.is_empty()).then(|| (&short[..remote.len()], rest))
+        })
+        .max_by_key(|(remote, _)| remote.len())
+        .or_else(|| short.split_once('/'))
+}
+
 /// A local or remote-tracking branch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Branch {
     /// Short name: `main` for a local branch, `origin/main` for a remote one.
     pub name: String,
-    /// The remote's name for a remote-tracking branch, `None` for a local one.
+    /// The configured remote's whole name for a remote-tracking branch, `None` for a local one.
     pub remote: Option<String>,
     pub is_current: bool,
     /// The short name of the remote-tracking branch a local branch tracks.
@@ -99,6 +113,11 @@ impl Repo {
             .map_err(GitError::from_gix)?
             .referent_name()
             .map(|name| name.as_bstr().to_owned());
+        let remotes: Vec<String> = repo
+            .remote_names()
+            .iter()
+            .map(|name| name.to_string())
+            .collect();
         let mut tracks = self.upstream_tracks()?;
         let mut branches = Vec::new();
         let refs = repo.references().map_err(GitError::from_gix)?;
@@ -112,17 +131,14 @@ impl Repo {
             let remote = match category {
                 Category::LocalBranch => None,
                 Category::RemoteBranch => {
-                    let Some((remote, branch)) = short
-                        .to_string()
-                        .split_once('/')
-                        .map(|(remote, branch)| (remote.to_string(), branch.to_string()))
-                    else {
+                    let short = short.to_string();
+                    let Some((remote, branch)) = split_remote(&remotes, &short) else {
                         continue;
                     };
                     if branch == "HEAD" {
                         continue;
                     }
-                    Some(remote)
+                    Some(remote.to_string())
                 }
                 _ => continue,
             };
