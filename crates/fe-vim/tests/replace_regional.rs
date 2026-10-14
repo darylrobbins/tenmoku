@@ -59,8 +59,11 @@ fn counted_replace_of_regional_indicators_stays_bounded() {
     // Every count this large writes as much as a put may insert, which
     // takes a while in a debug build and longer under load: each session
     // is timed against copies typed without a `<BS>` to replay, writing as
-    // much, just before it. Replaying the count one copy at a time would
-    // take many times longer.
+    // much. Load comes and goes mid-run, so while a session is over the
+    // bound it is timed again, up to ROUNDS times in all, each side the
+    // fastest of its runs. A stall rarely spoils every one, and replaying
+    // the count one copy at a time would take many times longer in each.
+    const ROUNDS: usize = 3;
     let count = u32::MAX;
     let timed = |keys: &str| {
         let started = Instant::now();
@@ -73,14 +76,21 @@ fn counted_replace_of_regional_indicators_stays_bounded() {
         // Each copy leaves one indicator, paired by the next copy's.
         ("R🇦<CR><BS><Esc>", "🇦🇦🇦🇦🇦"),
     ] {
-        let (plain, _) = timed(&format!("{count}R🇦🇧<Esc>"));
         for keys in [format!("{count}{keys}"), format!("{keys}0{count}.")] {
-            let (took, text) = timed(&keys);
+            let (mut plain, mut took) = (Duration::MAX, Duration::MAX);
+            for _ in 0..ROUNDS {
+                plain = plain.min(timed(&format!("{count}R🇦🇧<Esc>")).0);
+                let (t, text) = timed(&keys);
+                took = took.min(t);
+                assert!(text.starts_with(starts), "{keys}");
+                if took < (plain * 4 + Duration::from_secs(1)).min(Duration::from_secs(60)) {
+                    break;
+                }
+            }
             assert!(
                 took < (plain * 4 + Duration::from_secs(1)).min(Duration::from_secs(60)),
                 "{keys}: {took:?}, {plain:?} without a `<BS>`"
             );
-            assert!(text.starts_with(starts), "{keys}");
         }
     }
 }
