@@ -11,6 +11,7 @@ use std::{
 use fe_buffer::Buffer;
 use fe_config::TerminalSettings;
 use fe_editor::EditorModel;
+use fe_git::ChangeKind;
 use fe_gpui::{EditorSettings, EditorTheme, EditorView, SettingsEvent, commands::RunCommand};
 use fe_ui::{ROW_HEIGHT, UiTheme};
 use gpui::{
@@ -29,6 +30,7 @@ use crate::{
     dock_layout::{self, DockLayoutOp},
     find_bar::FindOp,
     git::GitState,
+    git_panel,
     go_to_line::GoToLine,
     language_picker::LanguagePicker,
     lsp::{self, Lsp},
@@ -703,6 +705,7 @@ impl Workbench {
                         .map(|(path, kind)| (path.to_owned(), kind))
                         .collect();
                     (workbench.panel).update(cx, |panel, cx| panel.set_git_statuses(statuses, cx));
+                    workbench.tint_tabs(cx);
                 }
             },
         )
@@ -1300,7 +1303,25 @@ impl Workbench {
             }
         }
         self.git.update(cx, |git, cx| git.track(&editors, cx));
+        self.tint_tabs(cx);
         self.sync_problems(cx);
+    }
+
+    /// Tints each open editor's tab title in its file's status colour from
+    /// the Changes panel's list, and clears the tint of a file not in it.
+    fn tint_tabs(&mut self, cx: &mut Context<Self>) {
+        let changes = self.dock.read(cx).changes().clone();
+        let tints: HashMap<PathBuf, ChangeKind> = (changes.read(cx).changed_paths())
+            .map(|(path, kind)| (resolved(path), kind))
+            .collect();
+        let ui = self.ui;
+        for editor in self.open_editors(cx) {
+            let tint = editor.read(cx).model().path().and_then(|path| {
+                let kind = tints.get(&resolved(path))?;
+                Some(git_panel::letter_color(*kind, &ui))
+            });
+            editor.update(cx, |editor, cx| editor.set_tab_tint(tint, cx));
+        }
     }
 
     #[cfg(test)]
@@ -2275,6 +2296,39 @@ mod dock_resize_tests;
 #[cfg(test)]
 #[path = "dock_position_tests.rs"]
 mod dock_position_tests;
+
+/// One identity for the spellings of `path`: its folder with the longest
+/// existing ancestor resolved through symlinks and `..` (the rest, which
+/// may be deleted, kept), then its own name as is. The entry itself is
+/// never dereferenced, so a symlink keeps its own identity apart from its
+/// target's.
+fn resolved(path: &Path) -> PathBuf {
+    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+        return path.to_owned();
+    };
+    let mut rest = Vec::new();
+    let mut ancestor = parent;
+    let base = loop {
+        if let Ok(real) = ancestor.canonicalize() {
+            break real;
+        }
+        match (ancestor.file_name(), ancestor.parent()) {
+            (Some(name), Some(up)) => {
+                rest.push(name);
+                ancestor = up;
+            }
+            _ => break ancestor.to_owned(),
+        }
+    };
+    rest.iter()
+        .rev()
+        .fold(base, |base, part| base.join(part))
+        .join(name)
+}
+
+#[cfg(test)]
+#[path = "tab_git_status_tests.rs"]
+mod tab_git_status_tests;
 
 #[cfg(test)]
 #[path = "windows_tests.rs"]

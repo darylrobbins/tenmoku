@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
 use gpui::{
-    App, ClickEvent, Div, ElementId, Entity, InteractiveElement as _, IntoElement,
+    App, ClickEvent, Div, ElementId, Entity, Hsla, InteractiveElement as _, IntoElement,
     ParentElement as _, Pixels, Point, Render, RenderOnce, ScrollHandle, SharedString, Stateful,
     StatefulInteractiveElement as _, StyleRefinement, Styled as _, Window, div,
     prelude::FluentBuilder as _, px,
@@ -98,6 +98,7 @@ impl RenderOnce for TabBar {
 pub struct Tab {
     id: ElementId,
     label: SharedString,
+    label_color: Option<Hsla>,
     dirty: bool,
     active: bool,
     on_click: Option<ClickHandler>,
@@ -112,12 +113,31 @@ impl Tab {
         Self {
             id: id.into(),
             label: label.into(),
+            label_color: None,
             dirty: false,
             active: false,
             on_click: None,
             on_close: None,
             drag: Vec::new(),
         }
+    }
+
+    /// Draws the title in `color`, active or not, in place of the theme's
+    /// tab text colour. The dirty dot and close button keep theirs.
+    pub fn label_color(mut self, color: Option<Hsla>) -> Self {
+        self.label_color = color;
+        self
+    }
+
+    /// The colour the title is drawn in: the label colour if set, else the
+    /// theme's tab text colour for this tab's state.
+    pub fn title_color(&self, cx: &App) -> Hsla {
+        tab_label_color(self.active, self.label_color, cx)
+    }
+
+    /// Whether the tab shows its dirty dot.
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
     }
 
     pub fn dirty(mut self, dirty: bool) -> Self {
@@ -179,8 +199,20 @@ impl Tab {
     }
 }
 
+/// The colour a tab's title is drawn in: `tint` if set, else the theme's
+/// tab text colour for an active or inactive tab.
+fn tab_label_color(active: bool, tint: Option<Hsla>, cx: &App) -> Hsla {
+    let colors = &cx.theme().colors;
+    tint.unwrap_or(if active {
+        colors.tab.active_text
+    } else {
+        colors.text.primary
+    })
+}
+
 impl RenderOnce for Tab {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let title_color = self.title_color(cx);
         let colors = &cx.theme().colors;
         let (hover, muted) = (colors.list.row_hover, colors.text.muted);
         let close = div()
@@ -218,12 +250,17 @@ impl RenderOnce for Tab {
             .border_color(colors.border.default)
             .map(|tab| {
                 if self.active {
-                    tab.bg(colors.tab.active).text_color(colors.tab.active_text)
+                    tab.bg(colors.tab.active)
                 } else {
-                    tab.bg(colors.tab.inactive).text_color(colors.text.primary)
+                    tab.bg(colors.tab.inactive)
                 }
             })
-            .child(div().whitespace_nowrap().child(self.label))
+            .child(
+                div()
+                    .whitespace_nowrap()
+                    .text_color(title_color)
+                    .child(self.label),
+            )
             .child(close)
             .when_some(self.on_click, |tab, on_click| tab.on_click(on_click))
             .map(|tab| apply(tab, self.drag))

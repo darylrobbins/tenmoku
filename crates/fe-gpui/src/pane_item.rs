@@ -20,7 +20,7 @@ use fe_command::{Invocation, Value};
 use fe_vim::VimState;
 use futures::{FutureExt as _, channel::oneshot, future::Shared};
 use gpui::{
-    AnyView, AnyWindowHandle, App, AppContext as _, AsyncApp, Context, Entity, Global,
+    AnyView, AnyWindowHandle, App, AppContext as _, AsyncApp, Context, Entity, Global, Hsla,
     PromptButton, PromptLevel, SharedString, Task, WeakEntity, Window,
 };
 use kiln_shell::{CloseAnswer, PaneItem, StatusItem, StatusSide};
@@ -377,6 +377,10 @@ impl PaneItem for EditorView {
 
     fn tab_title(&self, _: &App) -> SharedString {
         file_name(self.model.path()).into()
+    }
+
+    fn tab_title_color(&self, _: &App) -> Option<Hsla> {
+        self.tab_tint
     }
 
     /// `main.rs — fastedit`, `main.rs ● — fastedit` with unsaved changes.

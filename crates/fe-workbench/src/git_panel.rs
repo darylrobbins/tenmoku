@@ -236,6 +236,11 @@ impl GitPanel {
         (self.entries.iter()).map(|entry| (entry.relative.as_path(), entry.kind))
     }
 
+    /// Each listed file's path as opened, and its status.
+    pub(crate) fn changed_paths(&self) -> impl Iterator<Item = (&Path, ChangeKind)> {
+        (self.entries.iter()).map(|entry| (entry.path.as_path(), entry.kind))
+    }
+
     /// Lists those of `statuses` under the root, sorted by path from it,
     /// keeping the selected file selected if it's still listed, and says
     /// so if that changed what's listed.

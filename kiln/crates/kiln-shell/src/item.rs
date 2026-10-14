@@ -33,7 +33,7 @@ use std::{
 };
 
 use gpui::{
-    AnyView, App, Context, Entity, EntityId, FocusHandle, Focusable, Render, SharedString,
+    AnyView, App, Context, Entity, EntityId, FocusHandle, Focusable, Hsla, Render, SharedString,
     Subscription, Task, Window,
 };
 use kiln_command::Value;
@@ -81,6 +81,12 @@ pub trait PaneItem: Render + Focusable + Sized + 'static {
     /// It has changes that closing would lose: the tab shows a dirty dot.
     fn is_dirty(&self, _cx: &App) -> bool {
         false
+    }
+
+    /// The colour of the tab's title, in place of the theme's tab text
+    /// colour. `None`, the default, keeps the theme's.
+    fn tab_title_color(&self, _cx: &App) -> Option<Hsla> {
+        None
     }
 
     /// Whether `other` shows the same document, so this item's unsaved
@@ -241,6 +247,7 @@ pub trait ItemHandle: 'static {
     fn tab_title(&self, cx: &App) -> SharedString;
     fn tab_icon(&self, cx: &App) -> Option<Icon>;
     fn window_title(&self, cx: &App) -> SharedString;
+    fn tab_title_color(&self, cx: &App) -> Option<Hsla>;
     fn is_dirty(&self, cx: &App) -> bool;
     /// Whether `other` shows this item's document: see
     /// [`PaneItem::shares_document`].
@@ -304,6 +311,10 @@ impl<T: PaneItem> ItemHandle for Entity<T> {
 
     fn window_title(&self, cx: &App) -> SharedString {
         self.read(cx).window_title(cx)
+    }
+
+    fn tab_title_color(&self, cx: &App) -> Option<Hsla> {
+        self.read(cx).tab_title_color(cx)
     }
 
     fn is_dirty(&self, cx: &App) -> bool {

@@ -496,37 +496,47 @@ impl<V: PaneView> PaneState<V> {
         })
     }
 
+    /// A tab per item as drawn, but for its click, close, drag and drop
+    /// handlers: its title, title colour and dirty dot from the item, and
+    /// whether it is the active one.
+    pub fn tabs(&self, cx: &App) -> Vec<kiln_ui::Tab> {
+        let ui = ui_theme(cx);
+        (self.items.iter().enumerate())
+            .map(|(ix, item)| {
+                kiln_ui::Tab::new(("tab", ix), item.tab_title(cx), &ui)
+                    .label_color(item.tab_title_color(cx))
+                    .dirty(item.is_dirty(cx))
+                    .active(ix == self.active)
+            })
+            .collect()
+    }
+
     /// The tab strip: a tab per item, its title and dirty dot from the
     /// item, which a click activates, the × closes, and a drag carries.
     pub fn tab_bar(&self, cx: &mut Context<V>) -> TabBar {
         let pane = cx.entity().downgrade();
         let ui = ui_theme(cx);
-        let tabs: Vec<_> = self
-            .items
-            .iter()
+        let tabs: Vec<_> = (self.tabs(cx).into_iter().zip(&self.items))
             .enumerate()
-            .map(|(ix, item)| {
+            .map(|(ix, (tab, item))| {
                 let label = item.tab_title(cx);
                 let dragged = DraggedTab {
                     pane: pane.clone(),
                     item: item.id(),
                 };
-                kiln_ui::Tab::new(("tab", ix), label.clone(), &ui)
-                    .dirty(item.is_dirty(cx))
-                    .on_drag(dragged, move |_, _, _, cx| {
-                        cx.new(|_| TabGhost(label.clone()))
-                    })
-                    .on_drop(self.on_drop(cx))
-                    .active(ix == self.active)
-                    .on_click(cx.listener(move |view: &mut V, _, window, cx| {
-                        view.activate_item(ix, window, cx);
-                        cx.notify();
-                    }))
-                    .on_close(cx.listener(move |view: &mut V, _, window, cx| {
-                        view.activate_item(ix, window, cx);
-                        view.close_active_item(window, cx);
-                        cx.notify();
-                    }))
+                tab.on_drag(dragged, move |_, _, _, cx| {
+                    cx.new(|_| TabGhost(label.clone()))
+                })
+                .on_drop(self.on_drop(cx))
+                .on_click(cx.listener(move |view: &mut V, _, window, cx| {
+                    view.activate_item(ix, window, cx);
+                    cx.notify();
+                }))
+                .on_close(cx.listener(move |view: &mut V, _, window, cx| {
+                    view.activate_item(ix, window, cx);
+                    view.close_active_item(window, cx);
+                    cx.notify();
+                }))
             })
             .collect();
         TabBar::new("tabs", &ui)

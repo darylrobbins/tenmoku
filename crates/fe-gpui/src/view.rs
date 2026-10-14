@@ -8,10 +8,10 @@ use fe_keymap::{Key, Keystroke};
 use fe_syntax::{Language, ParseJob, Spawner, Syntax, SyntaxDriver};
 use fe_vim::VisualKind;
 use gpui::{
-    App, AppContext as _, Context, CursorStyle, FocusHandle, Focusable, InteractiveElement as _,
-    IntoElement, KeyContext, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, ParentElement as _, Pixels, Point, Render, ScrollWheelEvent,
-    Styled as _, Subscription, Task, Window, div, px,
+    App, AppContext as _, Context, CursorStyle, FocusHandle, Focusable, Hsla,
+    InteractiveElement as _, IntoElement, KeyContext, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _, Pixels, Point,
+    Render, ScrollWheelEvent, Styled as _, Subscription, Task, Window, div, px,
 };
 
 #[cfg(test)]
@@ -44,6 +44,8 @@ pub struct EditorView {
     pub(crate) model: EditorModel,
     pub(crate) theme: EditorTheme,
     pub(crate) focus: FocusHandle,
+    /// The colour of this editor's tab title, if set: its file's git status.
+    pub(crate) tab_tint: Option<Hsla>,
     /// How far the content is scrolled, in pixels (both ≥ 0).
     pub(crate) scroll: Point<Pixels>,
     /// Scroll the primary cursor into view on the next frame.
@@ -232,6 +234,7 @@ impl EditorView {
             model,
             theme,
             focus: cx.focus_handle(),
+            tab_tint: None,
             scroll: Point::default(),
             autoscroll: true,
             reveal_hunk: None,
@@ -312,6 +315,14 @@ impl EditorView {
         let language = fe_syntax::detect_language_name(view.model.path(), &start);
         view.set_language(language, cx);
         view
+    }
+
+    /// Tints the tab title in `tint`, or not; redraws only if that changed.
+    pub fn set_tab_tint(&mut self, tint: Option<Hsla>, cx: &mut Context<Self>) {
+        if self.tab_tint != tint {
+            self.tab_tint = tint;
+            cx.notify();
+        }
     }
 
     /// Turns the Linux primary selection on or off: while on, the selection

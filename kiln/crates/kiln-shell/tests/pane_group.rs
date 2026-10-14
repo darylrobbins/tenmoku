@@ -293,6 +293,7 @@ fn moves_go_in_at_an_index_or_show_a_copy(cx: &mut TestAppContext) {
         document: other.read(cx).document.clone(),
         title: "c".into(),
         dirty: false,
+        tint: None,
         focus: cx.focus_handle(),
     });
     s.add(&right, &twin);

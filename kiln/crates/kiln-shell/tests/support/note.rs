@@ -5,7 +5,7 @@
 use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
-    AnyView, App, AppContext as _, Context, Entity, FocusHandle, Focusable,
+    AnyView, App, AppContext as _, Context, Entity, FocusHandle, Focusable, Hsla,
     InteractiveElement as _, IntoElement, Render, SharedString, Styled as _, VisualTestContext,
     Window, div,
 };
@@ -18,6 +18,7 @@ pub(crate) struct Note {
     pub(crate) document: Document,
     pub(crate) title: SharedString,
     pub(crate) dirty: bool,
+    pub(crate) tint: Option<Hsla>,
     pub(crate) focus: FocusHandle,
 }
 
@@ -44,6 +45,10 @@ impl PaneItem for Note {
         self.dirty
     }
 
+    fn tab_title_color(&self, _: &App) -> Option<Hsla> {
+        self.tint
+    }
+
     fn shares_document(&self, other: &AnyView, cx: &App) -> bool {
         other
             .clone()
@@ -57,6 +62,7 @@ impl PaneItem for Note {
             document,
             title,
             dirty: false,
+            tint: None,
             focus: cx.focus_handle(),
         }))
     }
@@ -69,6 +75,7 @@ pub(crate) fn note(title: &str, cx: &mut VisualTestContext) -> Entity<Note> {
         document: Document::default(),
         title,
         dirty: false,
+        tint: None,
         focus: cx.focus_handle(),
     })
 }
