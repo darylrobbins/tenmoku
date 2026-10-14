@@ -341,16 +341,26 @@ impl Render for Shell {
             .children(self.docks_at(DockPosition::Left))
             // Kept its least beside the docks, and measured for their
             // limits.
-            .children(self.center().cloned().map(|center| {
+            // The bottom docks under the centre only: the side docks run
+            // the main area's full height.
+            .child(
                 div()
-                    .relative()
                     .flex_1()
                     .min_w(MIN_PANE_WIDTH)
                     .min_h_0()
                     .flex()
-                    .child(center)
-                    .child(dock::track_centre())
-            }))
+                    .flex_col()
+                    .children(self.center().cloned().map(|center| {
+                        div()
+                            .relative()
+                            .flex_1()
+                            .min_h_0()
+                            .flex()
+                            .child(center)
+                            .child(dock::track_centre())
+                    }))
+                    .children(self.docks_at(DockPosition::Bottom)),
+            )
             .children(self.docks_at(DockPosition::Right));
         // Cached: frames the shell redraws for other reasons reuse the
         // bar's last render, unless the host asked for it afresh.
@@ -384,7 +394,6 @@ impl Render for Shell {
             })
             .children(top_row)
             .child(main)
-            .children(self.docks_at(DockPosition::Bottom))
             .children(status_bar)
             .child(self.modals.clone())
             // The frame's border and resize edges, over everything, unless

@@ -252,6 +252,11 @@ pub struct DrawnDock {
     /// Whether the rail's buttons were drawn in the column's title row, as
     /// a shown bottom dock's are, rather than beside or below it.
     rail_in_title: Rc<Cell<bool>>,
+    /// Whether the dock was built without a rail, which draws no rail at all.
+    no_rail: Rc<Cell<bool>>,
+    /// Whether the column was drawn: a dock without a rail draws nothing
+    /// hidden, which leaves its layout as it was.
+    column_drawn: Rc<Cell<bool>>,
 }
 
 impl DrawnDock {
@@ -266,6 +271,9 @@ impl DrawnDock {
     /// the window's edge; at the bottom, the row of buttons, in the title
     /// row while the dock shows.
     pub fn rail_bounds(&self) -> Option<Bounds<Pixels>> {
+        if self.no_rail.get() {
+            return None;
+        }
         if self.rail_in_title.get() {
             return self.column_bounds().map(|_| self.rail.bounds());
         }
@@ -276,8 +284,15 @@ impl DrawnDock {
     /// Where the dock's column, its title row then its panel, was laid
     /// out, if it showed.
     pub fn column_bounds(&self) -> Option<Bounds<Pixels>> {
+        if self.no_rail.get() && !self.column_drawn.get() {
+            return None;
+        }
         // Beside or above the rail, unless the rail is in its title row.
-        let children = if self.rail_in_title.get() { 1 } else { 2 };
+        let children = if self.rail_in_title.get() || self.no_rail.get() {
+            1
+        } else {
+            2
+        };
         (self.layout.children_count() == children)
             .then(|| self.layout.bounds_for_item(0))
             .flatten()
@@ -355,6 +370,8 @@ pub struct DockState {
     /// The key contexts a rail button's tooltip looks its show command's
     /// key up in, outermost first.
     shortcut_contexts: Vec<SharedString>,
+    /// Whether it draws no rail, at any position.
+    rail_hidden: bool,
     drawn: DrawnDock,
 }
 
@@ -375,8 +392,22 @@ impl DockState {
             built: px(240.),
             press: None,
             shortcut_contexts: Vec::new(),
+            rail_hidden: false,
             drawn: DrawnDock::default(),
         }
+    }
+
+    /// Whether the dock draws no rail, at any position: no panel buttons and
+    /// no actions, only the open panel's column. Its panels are shown by
+    /// command or by another dock's [`RailAction`]. A rail is the default.
+    pub fn hide_rail(&mut self, hidden: bool) {
+        self.rail_hidden = hidden;
+    }
+
+    /// Builds it without a rail: see [`DockState::hide_rail`].
+    pub fn without_rail(mut self) -> Self {
+        self.rail_hidden = true;
+        self
     }
 
     /// Builds it with its panel `size` across, its width at a side and its
@@ -457,7 +488,7 @@ impl DockState {
             }
             None => {
                 // A rail in the title row takes nothing beside the column.
-                let rail = match self.drawn.rail_in_title.get() {
+                let rail = match self.drawn.rail_in_title.get() || self.rail_hidden {
                     true => Pixels::ZERO,
                     false => (self.drawn.rail_bounds()).map_or(RAIL_WIDTH, |rail| along(rail.size)),
                 };
@@ -866,14 +897,19 @@ impl DockState {
         self.drawn.highlighted.borrow_mut().clear();
         self.drawn.cursor.set(None);
         let (size, min) = (self.current_size(), self.min_size());
+        self.drawn.no_rail.set(self.rail_hidden);
+        self.drawn
+            .column_drawn
+            .set(self.visible && self.active.is_some());
         let shown: Vec<_> = (0..self.panels.len())
-            .filter(|&ix| self.on_rail(self.panels[ix].id(), cx))
+            .filter(|&ix| !self.rail_hidden && self.on_rail(self.panels[ix].id(), cx))
             .collect();
         let buttons: Vec<_> = shown
             .into_iter()
             .map(|ix| self.rail_button(ix, cx))
             .collect();
         let actions: Vec<_> = (self.actions.iter().enumerate())
+            .filter(|_| !self.rail_hidden)
             .map(|(ix, (action, highlighted))| self.action_button(ix, action, *highlighted, cx))
             .collect();
         let active = self.active.and_then(|id| self.handle(id));
@@ -897,7 +933,7 @@ impl DockState {
         if self.position == DockPosition::Bottom {
             // The rail's buttons in a row before the title, the panel below;
             // hidden, the buttons alone.
-            let row_height = if buttons.is_empty() && actions.is_empty() {
+            let row_height = if self.rail_hidden || buttons.is_empty() && actions.is_empty() {
                 TAB_HEIGHT
             } else {
                 // The buttons, then the row's bottom border.
@@ -919,7 +955,10 @@ impl DockState {
                 .flex_col()
                 .track_scroll(&self.drawn.layout);
             let Some((view, title)) = body else {
-                return dock.flex_none().child(rail).into_any_element();
+                return match self.rail_hidden {
+                    true => dock.flex_none().into_any_element(),
+                    false => dock.flex_none().child(rail).into_any_element(),
+                };
             };
             let title = div()
                 .flex_none()
@@ -930,7 +969,7 @@ impl DockState {
                 .border_b_1()
                 .border_color(ui.border)
                 .text_color(ui.muted_text)
-                .child(rail)
+                .when(!self.rail_hidden, |row| row.child(rail))
                 .child(div().px_3().child(title));
             let column = div()
                 .id("dock-bottom-column")
@@ -995,7 +1034,9 @@ impl DockState {
             .on_drag_move(self.on_edge_drag(cx))
             .h_full()
             .map(|dock| match shown {
-                true => dock.flex_shrink(1.).min_w(min + RAIL_WIDTH),
+                true => dock
+                    .flex_shrink(1.)
+                    .min_w(min + if self.rail_hidden { px(0.) } else { RAIL_WIDTH }),
                 false => dock.flex_none(),
             })
             .flex()
@@ -1004,7 +1045,7 @@ impl DockState {
             .when(left, |dock| dock.flex_row_reverse())
             .track_scroll(&self.drawn.layout)
             .children(column)
-            .child(rail)
+            .when(!self.rail_hidden, |dock| dock.child(rail))
             .into_any_element()
     }
 }

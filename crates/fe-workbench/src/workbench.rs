@@ -314,7 +314,10 @@ impl Workbench {
         };
         let terminal = cx.new(|cx| TerminalPanel::new(terminal_dir(&launch), &theme, cx));
         let terminal_dock = cx.new(|cx| {
+            // Shown by the sidebar's Terminal action and `terminal.toggle`,
+            // so it draws no rail of its own.
             let state = DockState::new(DockPosition::Bottom, ui)
+                .without_rail()
                 .shortcut_contexts([KEY_CONTEXT, fe_gpui::KEY_CONTEXT]);
             let mut dock = kiln_shell::Dock::with_state(state);
             dock.add_panel(terminal.clone(), cx);
@@ -2269,6 +2272,9 @@ mod recent_picker;
 #[path = "toast.rs"]
 pub(crate) mod toast;
 
+#[cfg(test)]
+#[path = "terminal_no_rail_tests.rs"]
+mod terminal_no_rail_tests;
 #[cfg(test)]
 #[path = "terminal_rail_button_tests.rs"]
 mod terminal_rail_button_tests;
