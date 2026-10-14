@@ -18,7 +18,7 @@ use kiln_shell::{
     command_palette::{COMMAND_PALETTE, CommandPalette},
 };
 
-use super::{GitCommand, GitOp, Owner, Routed};
+use super::{Feature, GitCommand, GitOp, Owner, Routed};
 use crate::{Launch, StatusItem, StatusSide, Workbench};
 
 const TEXT: &str = "one\ntwo\nthree\nfour\n";
@@ -213,9 +213,12 @@ fn ex_routes(cx: &mut TestAppContext) {
     ];
     for (line, op) in lines {
         ex(line, cx);
-        let title = op.command.title();
+        // The branch commands are implemented; the root isn't a repository.
+        let answer = match op.command.feature() {
+            Feature::Branch => "Not in a git repository".to_owned(),
+            _ => format!("Not supported yet: {}", op.command.title()),
+        };
         assert_eq!(routed(&workbench, cx), [Routed::Op(op)], ":{line}");
-        let answer = format!("Not supported yet: {title}");
         assert_eq!(message(&editor, cx), Some(answer), ":{line}");
     }
 

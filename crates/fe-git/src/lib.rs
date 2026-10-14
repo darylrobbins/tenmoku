@@ -28,7 +28,7 @@ mod remote;
 mod stage;
 
 pub use blame::{BlameRun, CommitInfo};
-pub use branch::SwitchError;
+pub use branch::{BranchRef, SwitchError};
 pub use commit::CommitError;
 pub use commit_log::{CommitFile, LogCommit, LogScope, RefKind, RefLabel};
 pub use index::SplitStatus;

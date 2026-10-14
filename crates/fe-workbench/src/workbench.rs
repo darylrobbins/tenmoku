@@ -122,10 +122,12 @@ pub(crate) enum Palette {
     /// `lsp.code_actions`' list.
     CodeActions,
     Recent,
+    /// `git.switch_branch`'s list, or the new branch's name.
+    Branch,
 }
 
 impl Palette {
-    const ALL: [Palette; 10] = [
+    const ALL: [Palette; 11] = [
         Palette::QuickOpen,
         Palette::Language,
         Palette::Toolbar,
@@ -136,6 +138,7 @@ impl Palette {
         Palette::Rename,
         Palette::CodeActions,
         Palette::Recent,
+        Palette::Branch,
     ];
 
     /// Its id in the modal layer.
@@ -151,6 +154,7 @@ impl Palette {
             Palette::Rename => "rename",
             Palette::CodeActions => "code_actions",
             Palette::Recent => "recent",
+            Palette::Branch => "git_branch",
         })
     }
 

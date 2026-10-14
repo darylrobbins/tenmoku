@@ -18,6 +18,10 @@
 //! each open editor whose file's status changed, or of every one if HEAD
 //! moved.
 //!
+//! Each refresh that finds the repository also reads where HEAD points,
+//! which the status bar's branch item shows (`git_branch`), with whether
+//! anything changed; one that finds none hides the item.
+//!
 //! An editor opened gets its base when the workbench starts observing it:
 //! its file's text at HEAD if it has one; else, as only the status tells
 //! untracked from ignored and the last one may be older than the file,
@@ -43,7 +47,7 @@ use std::{
     time::Duration,
 };
 
-use fe_git::{ChangeKind, FileStatus, GitError, Repo};
+use fe_git::{ChangeKind, FileStatus, GitError, Head, Repo};
 use fe_gpui::EditorView;
 use fe_project::FsChange;
 use gpui::{App, AppContext as _, Context, Entity, EntityId, Task, WeakEntity};
@@ -71,11 +75,13 @@ struct Found {
     located: Located,
 }
 
-/// What a refresh read: HEAD's id and the changed files' statuses, by
-/// path from the working tree.
+/// What a refresh read: HEAD's id, where HEAD points, and the changed
+/// files' statuses, by path from the working tree.
 #[derive(Default)]
 struct Snapshot {
     head: Option<String>,
+    /// `None` if it couldn't be read.
+    branch: Option<Head>,
     kinds: HashMap<PathBuf, ChangeKind>,
 }
 
@@ -131,6 +137,9 @@ pub(crate) struct GitState {
     again: bool,
     /// Whether a refresh has started or been asked for.
     asked: bool,
+    /// The branch picker's listings started, the last one the only one
+    /// that may show (`git_branch`).
+    branch_listings: u64,
     #[cfg(test)]
     test: std::rc::Rc<std::cell::RefCell<git_panel::TestHooks>>,
 }
@@ -160,6 +169,7 @@ impl GitState {
             running: None,
             again: false,
             asked: false,
+            branch_listings: 0,
             #[cfg(test)]
             test: changes.read(cx).test_hooks(),
         }
@@ -173,6 +183,17 @@ impl GitState {
         self.due = false;
         self.running = None;
         self.again = false;
+    }
+
+    /// Starts another branch listing, superseding those before: its number.
+    pub(crate) fn start_branch_listing(&mut self) -> u64 {
+        self.branch_listings += 1;
+        self.branch_listings
+    }
+
+    /// Whether listing `number` is the last one started.
+    pub(crate) fn is_last_branch_listing(&self, number: u64) -> bool {
+        self.branch_listings == number
     }
 
     /// A batch from the watcher: refreshes [`DEBOUNCE`] after the last.
@@ -318,6 +339,9 @@ impl GitState {
         };
         let (statuses, landed) = match statuses {
             Ok(Some((repo, statuses, snapshot))) => {
+                if let Some(head) = snapshot.branch.clone() {
+                    self.show_branch(Some((head, !statuses.is_empty())), cx);
+                }
                 let after = Arc::new(snapshot);
                 let before = self.snapshot.replace(after.clone());
                 self.repo = Some(repo.clone());
@@ -328,6 +352,7 @@ impl GitState {
                 (Ok(Some((located, statuses))), false)
             }
             Ok(None) => {
+                self.show_branch(None, cx);
                 self.repo = None;
                 self.no_repo = true;
                 self.snapshot = None;
@@ -354,6 +379,14 @@ impl GitState {
         }
         if landed {
             self.finish(false, cx);
+        }
+    }
+
+    /// Has the workbench's status bar show `branch`, where HEAD points and
+    /// whether anything changed; none hides it.
+    fn show_branch(&self, branch: Option<(Head, bool)>, cx: &mut App) {
+        if let Some(workbench) = self.workbench.upgrade() {
+            workbench.update(cx, |workbench, cx| workbench.set_branch_item(branch, cx));
         }
     }
 
@@ -460,6 +493,9 @@ fn read(root: &Path, repo: Option<Arc<Found>>) -> Statuses {
     let workdir = repo.repo.workdir();
     let snapshot = Snapshot {
         head: repo.repo.head_id(),
+        branch: (repo.repo.current_branch())
+            .inspect_err(|error| log::warn!("can't read where HEAD points: {error}"))
+            .ok(),
         kinds: (statuses.iter())
             .filter_map(|status| {
                 let relative = status.path.strip_prefix(workdir).ok()?;

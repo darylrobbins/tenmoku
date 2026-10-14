@@ -28,7 +28,70 @@ pub enum SwitchError {
     Git(#[from] GitError),
 }
 
+/// A branch to switch to, by the kind of ref it is, so a short name both
+/// kinds have (a local `origin/feat` and the remote one) can't be taken for
+/// the other.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BranchRef {
+    /// A local branch, by its short name.
+    Local(String),
+    /// A remote-tracking branch: its configured remote's whole name and the
+    /// branch on it, `team/origin` and `feat` for `team/origin/feat`.
+    Remote { remote: String, branch: String },
+}
+
 impl Repo {
+    /// Switches to `target`: a local branch, or for a remote-tracking one
+    /// the local branch of its name if one exists, else a new one tracking
+    /// it. As [`Repo::switch`] otherwise.
+    pub fn switch_to(&self, target: &BranchRef, force: bool) -> Result<(), SwitchError> {
+        let mut args: Vec<OsString> = ["switch", "-q"].map(OsString::from).into();
+        if force {
+            args.push("--discard-changes".into());
+        }
+        match self.resolve_ref(target)? {
+            Some(local) => args.push(local.into()),
+            None => {
+                let BranchRef::Remote { remote, branch } = target else {
+                    unreachable!("a local target resolves to itself");
+                };
+                let tracked = format!("refs/remotes/{remote}/{branch}");
+                args.extend(["-c".into(), branch.into(), "--track".into(), tracked.into()]);
+            }
+        }
+        self.run_switch(&args)
+    }
+
+    /// Stashes local changes, untracked files included, then switches to
+    /// `target` as [`Repo::switch_to`] does. The stash is left for the user
+    /// to pop.
+    pub fn stash_and_switch_to(&self, target: &BranchRef) -> Result<(), SwitchError> {
+        let shown = match target {
+            BranchRef::Local(name) => name.clone(),
+            BranchRef::Remote { remote, branch } => format!("{remote}/{branch}"),
+        };
+        self.resolve_ref(target)?;
+        self.stash(&shown)?;
+        self.switch_to(target, false)
+    }
+
+    /// The local branch `target` switches to: none for a remote-tracking
+    /// one with no local branch of its name, which a switch creates.
+    fn resolve_ref(&self, target: &BranchRef) -> Result<Option<String>, SwitchError> {
+        let (full, local) = match target {
+            BranchRef::Local(name) => (format!("refs/heads/{name}"), name),
+            BranchRef::Remote { remote, branch } => {
+                (format!("refs/remotes/{remote}/{branch}"), branch)
+            }
+        };
+        if !self.ref_exists(&full)? {
+            return Err(SwitchError::NotFound);
+        }
+        let is_local = matches!(target, BranchRef::Local(_))
+            || self.ref_exists(&format!("refs/heads/{local}"))?;
+        Ok(is_local.then(|| local.clone()))
+    }
+
     /// Switches to the local branch `name`, or to a remote-tracking one
     /// (`origin/feature`): its local branch if one of that name exists, else a
     /// new one tracking it. Local changes that don't clash come along; with
@@ -65,6 +128,13 @@ impl Repo {
     /// `name`. The stash is left for the user to pop.
     pub fn stash_and_switch(&self, name: &str) -> Result<(), SwitchError> {
         self.resolve_target(name)?;
+        self.stash(name)?;
+        self.switch(name, false)
+    }
+
+    /// Stashes local changes, untracked files included, before switching
+    /// to `name`.
+    fn stash(&self, name: &str) -> Result<(), SwitchError> {
         let message = format!("fastedit: before switching to {name}");
         let args: Vec<OsString> = ["stash", "push", "--include-untracked", "-m"]
             .map(OsString::from)
@@ -75,7 +145,7 @@ impl Repo {
         if !output.status.success() {
             return Err(failed(&output));
         }
-        self.switch(name, false)
+        Ok(())
     }
 
     fn resolve_target(&self, name: &str) -> Result<Target, SwitchError> {
