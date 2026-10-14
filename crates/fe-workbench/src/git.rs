@@ -26,8 +26,9 @@
 //! An editor's base is its file's text at HEAD; an empty text if the file
 //! is untracked or added, so every row shows as added; and none if the
 //! file is outside the repository, ignored or binary. A base that can't be
-//! read leaves the editor's as it was, and is read again at the next
-//! refresh.
+//! read as an editor is opened has a refresh at once, as for a file not in
+//! HEAD; one that can't be read then either leaves the editor's as it was,
+//! and is read again at the next refresh.
 //!
 //! Known limit: when the repository's `.git` is outside the project root
 //! (the root is a subdirectory of the working tree), its changes aren't
@@ -93,7 +94,7 @@ struct Wanted {
 /// What reading a file's base found.
 enum Read {
     Base(Option<Arc<str>>),
-    /// Not in HEAD, and only a status read now tells what it is.
+    /// Not in HEAD or unreadable, and only a status read now tells what it is.
     Unlisted,
     /// HEAD's text couldn't be read.
     Failed,
@@ -497,7 +498,8 @@ fn rebase(
 /// The base of the file at `relative` in `repo`'s working tree: its text
 /// at HEAD; empty if it's untracked or added; none if it's outside the
 /// working tree (`relative` is `None`), ignored or binary. Unlisted if it's
-/// not in HEAD, unless `snapshot` was read just now.
+/// not in HEAD or can't be read, unless `snapshot` was read just now, when
+/// a read that fails is failed.
 fn base(repo: &Found, snapshot: &Snapshot, fresh: bool, relative: Option<&Path>) -> Read {
     let Some(relative) = relative else {
         return Read::Base(None);
@@ -514,7 +516,12 @@ fn base(repo: &Found, snapshot: &Snapshot, fresh: bool, relative: Option<&Path>)
         },
         Err(error) => {
             log::warn!("can't read {} at HEAD: {error}", relative.display());
-            Read::Failed
+            // A read not from a fresh status is tried once more, by a
+            // refresh, which reads it fresh and settles on failing.
+            match fresh {
+                true => Read::Failed,
+                false => Read::Unlisted,
+            }
         }
     }
 }
