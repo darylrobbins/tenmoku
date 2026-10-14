@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LicenseRef-Proprietary
+
 //! A menu item's shortcut is a key, never a mouse click.
 
 use std::path::Path;
