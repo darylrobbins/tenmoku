@@ -21,6 +21,8 @@
 //! the docks, the status bar and the modal layer, under the app's root key
 //! context. Whatever closes items (a tab, a pane, a window, quitting) asks
 //! them first ([`close`]). A host's root folder's workspace trust is [`trust`]'s.
+//! [`Workspace`] is a shell whose centre is a group of panes, kept in step
+//! for the host ([`workspace`]).
 //!
 //! The shell's leaf modules, which a host can use before it adopts the
 //! rest: the status bar's items ([`status`]), a picker palette over a
@@ -45,6 +47,7 @@ pub mod status;
 mod title_bar;
 pub mod trust;
 pub mod window_frame;
+pub mod workspace;
 
 use gpui::App;
 use kiln_command::{CommandId, Value};
@@ -63,6 +66,7 @@ pub use root::Root;
 pub use shell::Shell;
 pub use status::{StatusItem, StatusItems, StatusSide};
 pub use title_bar::TitleBar;
+pub use workspace::{Workspace, WorkspaceEvent};
 
 // For status items, to crates that use kiln-shell without kiln-ui.
 pub use kiln_ui::{Icon, StatusFill, StatusTone};
