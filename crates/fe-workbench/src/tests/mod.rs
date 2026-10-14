@@ -4,7 +4,7 @@
 
 mod activity_rail;
 mod default_keymaps;
-mod find_bar;
+pub(crate) mod find_bar;
 mod find_keys;
 mod launch;
 pub(crate) mod lsp;

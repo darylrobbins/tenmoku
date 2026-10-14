@@ -940,7 +940,7 @@ impl Buffer {
     /// transactions of their own even under the open one's origin, then
     /// restores it. The set-aside transaction is protected from history
     /// trimming meanwhile, so it comes back as the caller had it.
-    pub(crate) fn with_transaction_aside<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+    pub fn with_transaction_aside<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
         let open = self.open.take();
         let outer_aside = std::mem::replace(&mut self.aside, open.as_ref().map(|open| open.id));
         let result = f(self);

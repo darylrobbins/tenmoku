@@ -12,7 +12,7 @@ use crate::{Launch, Pane, Workbench};
 
 /// A workbench rooted at a temporary directory holding `files`, opened in
 /// order in its pane, the last shown and focused.
-fn opened<'a>(
+pub(crate) fn opened<'a>(
     cx: &'a mut TestAppContext,
     files: &[(&str, &str)],
 ) -> (
@@ -52,23 +52,23 @@ fn opened<'a>(
 }
 
 /// Lets background work (reads, counts) land, then draws a frame.
-fn draw(cx: &mut VisualTestContext) {
+pub(crate) fn draw(cx: &mut VisualTestContext) {
     cx.run_until_parked();
     cx.update(|window, cx| window.draw(cx).clear(cx));
 }
 
-fn pane(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Entity<Pane> {
+pub(crate) fn pane(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Entity<Pane> {
     workbench.read_with(cx, |workbench, _| workbench.pane().clone())
 }
 
-fn editor(pane: &Entity<Pane>, cx: &mut VisualTestContext) -> Entity<EditorView> {
+pub(crate) fn editor(pane: &Entity<Pane>, cx: &mut VisualTestContext) -> Entity<EditorView> {
     pane.read_with(cx, |pane, _| pane.active_editor().cloned())
         .expect("a tab is shown")
 }
 
 /// Runs `command` as a key would: on the focused element, in the context
 /// its key contexts make.
-fn run(command: &str, cx: &mut VisualTestContext) {
+pub(crate) fn run(command: &str, cx: &mut VisualTestContext) {
     cx.update(|window, cx| {
         let context: ContextStack = window
             .context_stack()
@@ -88,44 +88,44 @@ fn cycle(pane: &Entity<Pane>, back: bool, cx: &mut VisualTestContext) {
     draw(cx);
 }
 
-fn select(editor: &Entity<EditorView>, range: Range<usize>, cx: &mut VisualTestContext) {
+pub(crate) fn select(editor: &Entity<EditorView>, range: Range<usize>, cx: &mut VisualTestContext) {
     editor.update(cx, |editor, cx| editor.select_and_reveal(range, cx));
     draw(cx);
 }
 
-fn selection(editor: &Entity<EditorView>, cx: &mut VisualTestContext) -> Range<usize> {
+pub(crate) fn selection(editor: &Entity<EditorView>, cx: &mut VisualTestContext) -> Range<usize> {
     editor.read_with(cx, |editor, _| editor.model().primary_selection().range)
 }
 
-fn focus(editor: &Entity<EditorView>, cx: &mut VisualTestContext) {
+pub(crate) fn focus(editor: &Entity<EditorView>, cx: &mut VisualTestContext) {
     cx.update(|window, cx| window.focus(&editor.focus_handle(cx), cx));
     draw(cx);
 }
 
-fn editor_focused(editor: &Entity<EditorView>, cx: &mut VisualTestContext) -> bool {
+pub(crate) fn editor_focused(editor: &Entity<EditorView>, cx: &mut VisualTestContext) -> bool {
     cx.update(|window, cx| editor.focus_handle(cx).is_focused(window))
 }
 
 /// Whether the pane's find bar is open.
-fn open(pane: &Entity<Pane>, cx: &mut VisualTestContext) -> bool {
+pub(crate) fn open(pane: &Entity<Pane>, cx: &mut VisualTestContext) -> bool {
     pane.read_with(cx, |pane, _| {
         pane.find_bar().is_some_and(|bar| bar.is_open())
     })
 }
 
-fn query(pane: &Entity<Pane>, cx: &mut VisualTestContext) -> String {
+pub(crate) fn query(pane: &Entity<Pane>, cx: &mut VisualTestContext) -> String {
     pane.read_with(cx, |pane, cx| {
         pane.find_bar().unwrap().input().read(cx).text().to_owned()
     })
 }
 
-fn input_focused(pane: &Entity<Pane>, cx: &mut VisualTestContext) -> bool {
+pub(crate) fn input_focused(pane: &Entity<Pane>, cx: &mut VisualTestContext) -> bool {
     let input = pane.read_with(cx, |pane, _| pane.find_bar().unwrap().input().clone());
     cx.update(|window, cx| input.focus_handle(cx).is_focused(window))
 }
 
 /// The bar's label, and whether it's an error.
-fn label(pane: &Entity<Pane>, cx: &mut VisualTestContext) -> Option<(String, bool)> {
+pub(crate) fn label(pane: &Entity<Pane>, cx: &mut VisualTestContext) -> Option<(String, bool)> {
     pane.read_with(cx, |pane, cx| {
         let editor = pane.active_editor().map(|editor| editor.read(cx));
         let label = pane.find_bar().unwrap().label(editor);
@@ -133,7 +133,7 @@ fn label(pane: &Entity<Pane>, cx: &mut VisualTestContext) -> Option<(String, boo
     })
 }
 
-fn text_label(pane: &Entity<Pane>, cx: &mut VisualTestContext) -> Option<String> {
+pub(crate) fn text_label(pane: &Entity<Pane>, cx: &mut VisualTestContext) -> Option<String> {
     let label = label(pane, cx);
     assert!(
         !label.as_ref().is_some_and(|(_, error)| *error),
@@ -144,7 +144,7 @@ fn text_label(pane: &Entity<Pane>, cx: &mut VisualTestContext) -> Option<String>
 
 /// How many matches the editor's find has, once counted; `None` with no
 /// find.
-fn matches(editor: &Entity<EditorView>, cx: &mut VisualTestContext) -> Option<usize> {
+pub(crate) fn matches(editor: &Entity<EditorView>, cx: &mut VisualTestContext) -> Option<usize> {
     editor.read_with(cx, |editor, _| editor.find_count().map(|count| count.total))
 }
 

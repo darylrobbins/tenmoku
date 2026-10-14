@@ -919,11 +919,11 @@ impl Pane {
         }
     }
 
-    /// Does `op` in the find bar, made by the first `find.show`: before
-    /// that, nothing else does anything. Closing it focuses the active
-    /// editor.
+    /// Does `op` in the find bar, made by the first `find.show` or
+    /// `find.show_replace`: before that, nothing else does anything.
+    /// Closing it focuses the active editor.
     pub(crate) fn run_find(&mut self, op: FindOp, window: &mut Window, cx: &mut Context<Self>) {
-        if op == FindOp::Show && self.find.is_none() {
+        if matches!(op, FindOp::Show | FindOp::ShowReplace) && self.find.is_none() {
             self.find = Some(FindBar::new(&self.ui, cx));
         }
         self.update_find(|find, editor, cx| find.run(op, editor, window, cx), cx);
@@ -948,6 +948,15 @@ impl Pane {
     fn find_row(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
         let editor = self.active_editor().cloned();
         self.find.as_ref()?.render(editor.as_ref(), &self.ui, cx)
+    }
+
+    /// What the find bar shows beside its query, and whether it's an
+    /// error ([`FindBar::label`]); `None` with no bar or nothing shown. For
+    /// tests outside the crate.
+    #[doc(hidden)]
+    pub fn find_label(&self, cx: &App) -> Option<(gpui::SharedString, bool)> {
+        let editor = self.active_editor().map(|editor| editor.read(cx));
+        self.find.as_ref()?.label(editor)
     }
 
     #[cfg(test)]

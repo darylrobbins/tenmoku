@@ -106,6 +106,14 @@ impl EditorView {
         cx.notify();
     }
 
+    /// Drops a pending vim command and leaves a visual mode, as a click
+    /// does; insert and replace mode stay. For a host done with the
+    /// selection, such as a find bar's replace that found nothing to select.
+    pub fn leave_vim_visual_mode(&mut self, cx: &mut Context<Self>) {
+        self.cancel_vim(cx);
+        cx.notify();
+    }
+
     pub fn is_read_only(&self) -> bool {
         self.read_only
     }
