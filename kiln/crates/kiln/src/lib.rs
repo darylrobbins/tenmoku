@@ -2,9 +2,10 @@
 
 //! Kiln: an app framework on GPUI that hides the differences between
 //! platforms and provides high-level widgets, in GPUI's own idioms. This
-//! crate sets an app up ([`application`], [`init`]) and re-exports the
-//! others; see `docs/framework.md` in kiln.
+//! crate sets an app up ([`app()`], or [`application`] and [`init`] by
+//! hand) and re-exports the others; see `docs/framework.md` in kiln.
 
+mod app_builder;
 mod app_commands;
 mod config;
 mod ext;
@@ -17,6 +18,9 @@ pub use kiln_platform as platform;
 pub use kiln_shell as shell;
 pub use kiln_ui as ui;
 
+/// The function [`app()`] beside the module [`app`](mod@app) of app commands:
+/// `kiln::app(..)` sets an app up, and `kiln::app::Quit` is a command.
+pub use app_builder::{AppBuilder, Started, app};
 pub use ext::binding_label_for;
 /// serde, for an app's settings type without a serde dependency of its
 /// own: `#[derive(Deserialize, Serialize)]` with

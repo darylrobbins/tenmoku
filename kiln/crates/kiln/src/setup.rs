@@ -36,7 +36,7 @@
 //! on, and each change applies to every window: see
 //! [`kiln_platform::config`].
 
-use std::{borrow::Cow, path::PathBuf, rc::Rc};
+use std::{any::TypeId, borrow::Cow, path::PathBuf, rc::Rc};
 
 use gpui::{App, Global, SharedString, Task, WindowOptions};
 use kiln_command::{CommandId, Value};
@@ -108,7 +108,8 @@ pub struct Config {
     menus: Option<Source>,
     menu_shortcut_context: Vec<String>,
     theme_mode: ThemeMode,
-    settings: Vec<AddSettings>,
+    /// One store for each settings type, in the order first given.
+    settings: Vec<(TypeId, AddSettings)>,
     user_theme: Option<PathBuf>,
     theme_extensions: &'static [&'static str],
     batches: Option<Batches>,
@@ -201,8 +202,8 @@ impl Config {
     /// reloaded when they change. Read them with `cx.settings::<S>()`
     /// ([`crate::prelude::AppExt::settings`]) and follow changes with
     /// `cx.observe_global::<GlobalSettings<S>>(..)`. A file with errors
-    /// keeps its last good version. Each type is its own store: call it
-    /// once for each.
+    /// keeps its last good version. Each type is its own store, and a
+    /// later call for the same type replaces the earlier one.
     pub fn settings<S: SettingsType>(
         self,
         user: Option<PathBuf>,
@@ -214,12 +215,18 @@ impl Config {
     /// The app's settings, of its own type `S`, as [`Config::settings`]
     /// has them, from a store the app has loaded: one with a schema or a
     /// project filter ([`kiln_core::SettingsStore::load_with`]), or whose
-    /// settings it read before `init`.
+    /// settings it read before `init`. It replaces an earlier store of the
+    /// same type.
     pub fn settings_store<S: SettingsType>(mut self, store: SettingsStore<S>) -> Self {
-        self.settings.push(Box::new(move |service| {
+        let add: AddSettings = Box::new(move |service| {
             let diagnostics = store.diagnostics().to_vec();
             (service.settings(store), diagnostics)
-        }));
+        });
+        let ty = TypeId::of::<S>();
+        match self.settings.iter_mut().find(|(added, _)| *added == ty) {
+            Some((_, earlier)) => *earlier = add,
+            None => self.settings.push((ty, add)),
+        }
         self
     }
 
@@ -379,7 +386,7 @@ impl Global for Watching {}
 /// Sets kiln up for the app, on this platform, in this order:
 ///
 /// 1. kiln's command dispatch, with the app commands (`app.quit`,
-///    `window.close` and the rest) as typed actions too: [`crate::app`],
+///    `window.close` and the rest) as typed actions too: [`crate::app`](mod@crate::app),
 ///    [`crate::window`]; and the shell's, such as `menu_bar.open`;
 /// 2. the app's own commands, from [`Config::commands`];
 /// 3. the keymap and menus, kiln's bundled ones too if
@@ -438,7 +445,7 @@ pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
     if let Some(target) = config.log_target {
         service = service.log_target(target);
     }
-    for add in std::mem::take(&mut config.settings) {
+    for (_, add) in std::mem::take(&mut config.settings) {
         let found;
         (service, found) = add(service);
         diagnostics.extend(found);
