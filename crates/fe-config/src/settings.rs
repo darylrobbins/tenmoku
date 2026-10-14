@@ -207,6 +207,8 @@ pub struct EditorSettings {
     /// Used only by `after_delay`.
     #[schemars(range(min = 100, max = 60000))]
     pub auto_save_delay: u64,
+    /// Draw a thin vertical line at each indent level.
+    pub indent_guides: bool,
 }
 
 /// `editor.auto_save`.
@@ -240,6 +242,7 @@ impl Default for EditorSettings {
             auto_close_pairs: true,
             auto_save: AutoSave::default(),
             auto_save_delay: 1000,
+            indent_guides: true,
         }
     }
 }

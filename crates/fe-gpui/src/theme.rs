@@ -21,7 +21,9 @@ impl EditorTheme {
     /// Takes every colour from `palette`, leaving the metrics alone.
     pub fn set_colors(&mut self, palette: &EditorPalette) {
         let font_family = std::mem::take(&mut self.font_family);
+        let indent_guides = self.indent_guides;
         *self = Self::colored(palette, font_family, self.font_size, self.line_height);
+        self.indent_guides = indent_guides;
     }
 
     /// `palette`'s colours with the given metrics.
@@ -58,6 +60,9 @@ impl EditorTheme {
             change_added: hsla(editor.change_added),
             change_modified: hsla(editor.change_modified),
             change_deleted: hsla(editor.change_deleted),
+            indent_guide: hsla(editor.indent_guide),
+            indent_guide_active: hsla(editor.indent_guide_active),
+            indent_guides: true,
             syntax: fe_syntax::resolve_theme(&syntax),
         }
     }

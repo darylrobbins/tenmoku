@@ -67,6 +67,9 @@ jump_label_foreground = "#1c1814"
 change_added = "#7fb889"
 change_modified = "#7fa6b8"
 change_deleted = "#c47a72"
+# A thin line at each indent level, and the one of the caret's block.
+indent_guide = "#ffffff12"
+indent_guide_active = "#ffffff30"
 
 # Highlight captures by dotted name. A capture without its own colour takes
 # the colour of its longest listed prefix: "function.method" uses "function".

@@ -37,6 +37,7 @@ mod decorations;
 use decorations::{Decorations, Layer};
 mod ghost_text;
 mod host_blocks;
+mod indent_guides;
 #[cfg(test)]
 pub(crate) use host_blocks::PaintedBlock;
 mod proposal;
@@ -91,6 +92,8 @@ pub(crate) struct FrameLayout {
     composition: Option<(usize, String)>,
     /// The decorations the model's providers have for the frame's rows.
     pub(crate) decorations: Decorations,
+    /// The indent guides over the frame's rows ([`indent_guides`]).
+    pub(crate) indent_guides: Vec<indent_guides::Placed>,
     /// The host's blocks in view ([`host_blocks`]).
     host_blocks: Vec<host_blocks::Placed>,
     /// The proposals' hunks in view ([`proposal`]).
@@ -859,6 +862,7 @@ impl Element for EditorElement {
             jump: None,
             composition: composed,
             decorations: Decorations::default(),
+            indent_guides: Vec::new(),
             host_blocks: placed,
             proposals,
             proposal_texts: mem::take(proposal_texts),
@@ -870,6 +874,7 @@ impl Element for EditorElement {
         layout.brackets = bracket_rects(&mut layout, view);
         layout.jump = jump_layout(&mut layout, view);
         layout.decorations = Decorations::layout(&mut layout, view, em, window);
+        layout.indent_guides = indent_guides::layout(&mut layout, view, window);
         // A hand over each change mark, across the whole change lane.
         let lane = layout.bounds(layout.frame.change_lane);
         for placed in &layout.decorations.placed {
@@ -1098,6 +1103,7 @@ impl Element for EditorElement {
                         &mut painted_proposals,
                     );
                     layout.decorations.paint(Layer::Backgrounds, window, cx);
+                    indent_guides::paint(&layout.indent_guides, window);
                     // Under the selection, which stays visible over a match.
                     for &found in &matches {
                         let found = layout.bounds(found);

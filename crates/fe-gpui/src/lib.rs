@@ -115,12 +115,18 @@ pub struct EditorTheme {
     pub jump_label_preview: Hsla,
     /// The glyph on a jump label's box.
     pub jump_label_foreground: Hsla,
-    /// The git change bar and row background of added rows.
+    /// The git change bar of added rows.
     pub change_added: Hsla,
-    /// The git change bar and row background of modified rows.
+    /// The git change bar of modified rows.
     pub change_modified: Hsla,
     /// The git change mark where rows were deleted.
     pub change_deleted: Hsla,
+    /// A vertical line at an indent level.
+    pub indent_guide: Hsla,
+    /// The indent guide of the block the caret is in.
+    pub indent_guide_active: Hsla,
+    /// Whether indent guides are drawn, from `editor.indent_guides`.
+    pub indent_guides: bool,
     /// Text colour for each [`Highlight`], by [`Highlight::index`]; `None`
     /// uses `foreground`. Build it with [`fe_syntax::resolve_theme`].
     pub syntax: Vec<Option<Hsla>>,
@@ -138,11 +144,13 @@ impl EditorTheme {
         Self::from_palette(EditorPalette::fastedit_dark(), settings, cx)
     }
 
-    /// Takes the font family, size and line height from `settings`.
+    /// Takes the font family, size and line height from `settings`, and
+    /// whether indent guides are drawn.
     pub fn set_metrics(&mut self, settings: &EditorSettings, cx: &App) {
         self.font_family = font_family(settings, cx);
         self.font_size = px(settings.font_size as f32);
         self.line_height = settings.line_height as f32;
+        self.indent_guides = settings.indent_guides;
     }
 
     pub fn syntax_color(&self, highlight: Highlight) -> Option<Hsla> {

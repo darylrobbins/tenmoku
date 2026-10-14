@@ -36,6 +36,9 @@
 # (100 to 60000).
 # auto_save_delay = 1000
 
+# Draw a thin vertical line at each indent level.
+# indent_guides = true
+
 [vim]
 # Whether the editor starts in vim's normal mode, where keys run vim commands.
 # enabled = false

@@ -72,6 +72,11 @@
           "description": "Format a file with its language server before saving it. A server that\ndoesn't answer within a second is skipped and the file saves unformatted.",
           "type": "boolean"
         },
+        "indent_guides": {
+          "default": true,
+          "description": "Draw a thin vertical line at each indent level.",
+          "type": "boolean"
+        },
         "line_height": {
           "default": 1.6,
           "description": "The line height, as a multiple of the font size.",
@@ -445,6 +450,7 @@
         "auto_save_delay": 1000,
         "font_size": 13.0,
         "format_on_save": false,
+        "indent_guides": true,
         "line_height": 1.6,
         "soft_wrap": false,
         "tab_size": 4

@@ -93,12 +93,16 @@ colors! {
         jump_label_preview,
         /// The glyph on a jump label's box.
         jump_label_foreground,
-        /// The gutter bar and row background of rows added since the git base.
+        /// The gutter bar of rows added since the git base.
         change_added,
-        /// The gutter bar and row background of rows modified since the git base.
+        /// The gutter bar of rows modified since the git base.
         change_modified,
         /// The mark where rows were deleted since the git base.
         change_deleted,
+        /// A vertical line at an indent level.
+        indent_guide,
+        /// The indent guide of the block the caret is in.
+        indent_guide_active,
     }
 }
 
