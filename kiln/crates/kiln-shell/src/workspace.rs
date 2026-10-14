@@ -9,6 +9,11 @@
 //! goes back to it, or to the active pane while it's empty; and closing
 //! the window or quitting asks every pane's items ([`close`]).
 //!
+//! Docks go at the window's edges ([`Workspace::add_panel`]), and focus
+//! never stays in one that's hidden. A built-in status bar shows the
+//! workspace's own items over the active item's ([`Workspace::set_status_item`]),
+//! redrawing as the active item changes, with no notify from the host.
+//!
 //! A host draws the workspace and adds its own around it, hearing
 //! [`WorkspaceEvent`]s; [`Workspace::shell`] and [`Workspace::group_mut`]
 //! reach the parts.
@@ -17,15 +22,18 @@ use std::{collections::HashMap, rc::Rc};
 
 use gpui::{
     App, AppContext as _, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    IntoElement, Render, SharedString, Subscription, WeakEntity, Window, div,
+    IntoElement, Pixels, Render, SharedString, Subscription, WeakEntity, Window, div,
 };
 use kiln_platform::Capabilities;
 use kiln_ui::ui_theme;
 
 use crate::{
-    Direction, ItemHandle, ItemId, ItemPane, MenuBarView, PaneEvent, PaneGroup, PaneView, Shell,
+    Direction, Dock, DockItem, DockPosition, DockState, DockView as _, ItemHandle, ItemId,
+    ItemPane, MenuBarView, PaneEvent, PaneGroup, PaneView, Shell, StatusItem, StatusItems,
     close::{self, WindowItems},
+    dock::DockEvent,
     pane::{Peers, TabDropped},
+    status,
 };
 
 /// Makes an empty pane, not yet in a group.
@@ -66,6 +74,16 @@ pub struct Workspace<P: PaneView = ItemPane> {
     shown: (EntityId, Option<ItemId>),
     /// Per pane: its notifications, its activation and tabs dropped on it.
     panes: HashMap<EntityId, [Subscription; 3]>,
+    /// The app's root key context, which the docks' rail tooltips look the
+    /// show keys up in.
+    context: SharedString,
+    docks: HashMap<DockPosition, Entity<Dock>>,
+    /// The workspace's own status items, shown over the active item's.
+    status: StatusItems,
+    /// Called each time the bar draws.
+    status_sources: Vec<fn(&App) -> Option<StatusItem>>,
+    /// Hear the docks' rail clicks.
+    dock_events: Vec<Subscription>,
 }
 
 impl<P: PaneView> Workspace<P> {
@@ -79,17 +97,26 @@ impl<P: PaneView> Workspace<P> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let context = context.into();
         let workspace = cx.weak_entity();
         let centre = cx.new(|cx| Panes {
             workspace: workspace.clone(),
             focus: cx.focus_handle(),
         });
         let shell = cx.new(|cx| {
-            let mut shell = Shell::new(context, ui_theme(cx), window, cx)
+            let mut shell = Shell::new(context.clone(), ui_theme(cx), window, cx)
                 .platform_chrome(Capabilities::current(), cx);
             shell.set_center(centre, cx);
             shell
         });
+        let this = cx.entity();
+        let bar = cx.new(|cx| {
+            // The bar draws what the workspace holds, so it redraws as the
+            // workspace changes.
+            cx.observe(&this, |_, _, cx| cx.notify()).detach();
+            StatusBar(workspace.clone())
+        });
+        shell.update(cx, |shell, cx| shell.set_status_bar(Some(bar.into()), cx));
         // Closing the window and quitting ask every pane's items first.
         let items: WindowItems = Rc::new(move |cx| {
             (workspace.upgrade())
@@ -109,6 +136,11 @@ impl<P: PaneView> Workspace<P> {
             new_pane: Box::new(new_pane),
             shown,
             panes: HashMap::new(),
+            context,
+            docks: HashMap::new(),
+            status: StatusItems::default(),
+            status_sources: Vec::new(),
+            dock_events: Vec::new(),
         };
         workspace.watch(&first, window, cx);
         workspace
@@ -167,6 +199,109 @@ impl<P: PaneView> Workspace<P> {
     /// The active pane's active item, if it has one.
     pub fn active_item<'a>(&self, cx: &'a App) -> Option<&'a dyn ItemHandle> {
         self.active.read(cx).pane().active_item()
+    }
+
+    /// Adds `panel` to the dock at `position`, making the dock on first use,
+    /// with its rail's tooltips finding the panel's show key in the
+    /// workspace's context.
+    pub fn add_panel(
+        &mut self,
+        position: DockPosition,
+        panel: Entity<impl DockItem>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let dock = match self.docks.get(&position) {
+            Some(dock) => dock.clone(),
+            None => {
+                let state = DockState::new(position, ui_theme(cx))
+                    .shortcut_contexts([self.context.clone()]);
+                let dock = cx.new(|_| Dock::with_state(state));
+                // A rail click hid the panel that had focus.
+                let hid =
+                    cx.subscribe_in(&dock, window, |workspace, _, _: &DockEvent, window, cx| {
+                        workspace.focus_active(window, cx)
+                    });
+                self.dock_events.push(hid);
+                self.docks.insert(position, dock.clone());
+                self.shell.update(cx, |shell, cx| {
+                    shell.set_dock(position, Some(dock.clone().into()), cx)
+                });
+                dock
+            }
+        };
+        dock.update(cx, |dock, cx| dock.add_panel(panel, cx));
+    }
+
+    /// The dock at `position`, if a panel was added there.
+    pub fn dock(&self, position: DockPosition) -> Option<&Entity<Dock>> {
+        self.docks.get(&position)
+    }
+
+    /// Sets the width of the dock at `position`, or its height at the
+    /// bottom; nothing if it has none.
+    pub fn set_dock_size(&mut self, position: DockPosition, size: Pixels, cx: &mut Context<Self>) {
+        if let Some(dock) = self.docks.get(&position) {
+            dock.update(cx, |dock, cx| {
+                dock.dock_mut().set_size(size);
+                cx.notify();
+            });
+        }
+    }
+
+    /// Shows the dock at `position` if it's hidden, else hides it. Focus
+    /// doesn't stay in a panel that's hidden: it goes to the active item.
+    pub fn toggle_dock(
+        &mut self,
+        position: DockPosition,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(dock) = self.docks.get(&position).cloned() else {
+            return;
+        };
+        dock.update(cx, |dock, cx| dock.toggle(cx));
+        if dock.read(cx).dock().hidden_panel_focused(window, cx) {
+            self.focus_active(window, cx);
+        }
+    }
+
+    /// Shows `item` on the status bar over the active item's, replacing the
+    /// workspace's item with its id.
+    pub fn set_status_item(&mut self, item: StatusItem, cx: &mut Context<Self>) {
+        self.status.set(item);
+        cx.notify();
+    }
+
+    /// Removes the workspace's status item `id`.
+    pub fn remove_status_item(&mut self, id: &str, cx: &mut Context<Self>) {
+        if self.status.remove(id) {
+            cx.notify();
+        }
+    }
+
+    /// Calls `source` each time the status bar draws, showing the item it
+    /// gives. It runs on every draw, so keep it O(1): read a value, don't
+    /// compute one.
+    pub fn add_status_source(
+        &mut self,
+        source: fn(&App) -> Option<StatusItem>,
+        cx: &mut Context<Self>,
+    ) {
+        self.status_sources.push(source);
+        cx.notify();
+    }
+
+    /// Every status item to draw: the workspace's and the sources' over the
+    /// active item's.
+    fn status_items(&self, cx: &App) -> Vec<StatusItem> {
+        let mut items = self.status.clone();
+        for source in &self.status_sources {
+            if let Some(item) = source(cx) {
+                items.set(item);
+            }
+        }
+        items.items_for(self.active_item(cx), cx)
     }
 
     /// An empty pane from the factory given to [`Workspace::new`], not yet
@@ -384,6 +519,18 @@ impl<P: PaneView> Focusable for Workspace<P> {
 
 fn active_item_id<P: PaneView>(pane: &Entity<P>, cx: &App) -> Option<ItemId> {
     pane.read(cx).pane().active_item().map(|item| item.id())
+}
+
+/// The status bar: the workspace's items over the active item's.
+struct StatusBar<P: PaneView>(WeakEntity<Workspace<P>>);
+
+impl<P: PaneView> Render for StatusBar<P> {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let items = (self.0.upgrade())
+            .map(|workspace| workspace.read(cx).status_items(cx))
+            .unwrap_or_default();
+        status::status_bar(items, cx)
+    }
 }
 
 /// The shell's centre: the workspace's panes, laid out by its group.
