@@ -7,6 +7,8 @@
 //! right are tinted, modified rows on both ([`DiffTints`]). Scrolling either
 //! side scrolls the other to the same screen row, and `diff.next_change` /
 //! `diff.previous_change` move between hunks, wrapping at the ends.
+//! `diff.toggle_inline` shows the right side alone instead, the removed
+//! rows as blocks above their place ([`inline`]).
 //!
 //! The diff is redone when either side's buffer moves on, at most once a
 //! frame (on render), off the main thread when a side is over
@@ -35,6 +37,8 @@ use gpui::{
 };
 use kiln_shell::{CloseAnswer, PaneItem};
 
+mod inline;
+
 use crate::{
     EditorView,
     commands::{EditorViewEvent, HostBlock, HostBlockKind, RunCommand},
@@ -50,6 +54,9 @@ pub const NEXT_CHANGE: &str = "diff.next_change";
 /// Moves the focused side's caret to the previous hunk, wrapping to the
 /// last.
 pub const PREVIOUS_CHANGE: &str = "diff.previous_change";
+
+/// Switches between side by side and inline.
+pub const TOGGLE_INLINE: &str = "diff.toggle_inline";
 
 /// A side over this many bytes is diffed off the main thread.
 pub const ASYNC_BYTES: usize = 1024 * 1024;
@@ -129,6 +136,15 @@ pub struct DiffView {
     /// counts from that hunk, so one at the end of a side, whose start is
     /// past the last row, isn't taken for the row the caret's on.
     visited: Option<(usize, [usize; 2])>,
+    /// Whether only the right side shows, the removed rows inline.
+    inline: bool,
+    /// Whether the mode was chosen, by the user or the host, so the window's
+    /// width doesn't pick it.
+    chosen: bool,
+    /// Whether the first frame has been drawn.
+    sized: bool,
+    /// The texts last diffed.
+    texts: [Arc<str>; 2],
     _subscriptions: Vec<Subscription>,
     /// Looks for edits from elsewhere every [`POLL`].
     _poll: Task<()>,
@@ -175,7 +191,8 @@ impl DiffView {
             subscriptions.push(cx.subscribe(
                 &views[from],
                 move |this: &mut Self, _, event: &EditorViewEvent, cx| match *event {
-                    EditorViewEvent::Scrolled { top } => this.follow(to, top, cx),
+                    EditorViewEvent::Scrolled { top } if !this.inline => this.follow(to, top, cx),
+                    EditorViewEvent::Scrolled { .. } => {}
                     // A side's change bar is the host's to act on; it doesn't move the other side.
                     EditorViewEvent::ChangeBarClicked { .. } => {}
                 },
@@ -201,6 +218,10 @@ impl DiffView {
             message: None,
             dirty: false,
             visited: None,
+            inline: false,
+            chosen: false,
+            sized: false,
+            texts: [Arc::from(""), Arc::from("")],
             _subscriptions: subscriptions,
             _poll: poll,
             #[cfg(test)]
@@ -290,32 +311,45 @@ impl DiffView {
     fn land(&mut self, diffed: Diffed, cx: &mut Context<Self>) {
         let Diffed { diff, texts } = diffed;
         let large = texts.iter().any(|text| text.len() > ASYNC_BYTES);
+        self.diff = diff;
+        self.texts = texts;
         for (ix, side) in [(0, Side::Left), (1, Side::Right)] {
-            self.tints[ix].borrow_mut().rows = tinted_rows(&diff, side);
-            let blocks = (diff.fillers(side).into_iter().enumerate())
-                .map(|(id, (above, rows))| HostBlock {
-                    above,
-                    rows,
-                    kind: HostBlockKind::Filler,
-                    id: id as u64,
-                })
-                .collect();
-            let base = (!large).then(|| texts[1 - ix].clone());
+            self.tints[ix].borrow_mut().rows = tinted_rows(&self.diff, side);
+            let base = (!large).then(|| self.texts[1 - ix].clone());
             let sets_base = self.sets_base[ix];
             self.views[ix].update(cx, |view, cx| {
                 if sets_base {
                     view.model_mut().set_diff_base(base);
                 }
-                view.set_blocks(blocks, cx);
                 // The tints changed.
                 cx.notify();
             });
         }
-        self.diff = diff;
+        self.show_blocks(cx);
         // What navigation said was about the last diff.
         self.message = None;
         self.visited = None;
         cx.notify();
+    }
+
+    /// Places each side's blocks: fillers side by side, inline the removed
+    /// rows above the right side's.
+    fn show_blocks(&mut self, cx: &mut Context<Self>) {
+        for (ix, side) in [(0, Side::Left), (1, Side::Right)] {
+            let blocks = match (self.inline, ix) {
+                (true, 0) => Vec::new(),
+                (true, _) => inline::removed_blocks(&self.diff, &self.texts[0]),
+                (false, _) => (self.diff.fillers(side).into_iter().enumerate())
+                    .map(|(id, (above, rows))| HostBlock {
+                        above,
+                        rows,
+                        kind: HostBlockKind::Filler,
+                        id: id as u64,
+                    })
+                    .collect(),
+            };
+            self.views[ix].update(cx, |view, cx| view.set_blocks(blocks, cx));
+        }
     }
 
     /// Keeps both sides unwrapped and unfolded: fillers line up buffer
@@ -339,7 +373,7 @@ impl DiffView {
     /// (`forward`) or the previous one, wrapping at the ends; the other
     /// side's caret goes to the hunk's start there, and its scroll follows.
     fn go_to_change(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let focused = match self.views[0].focus_handle(cx).is_focused(window) {
+        let focused = match !self.inline && self.views[0].focus_handle(cx).is_focused(window) {
             true => 0,
             false => 1,
         };
@@ -374,19 +408,24 @@ impl DiffView {
         let other = 1 - focused;
         let other_row = hunk.range([Side::Left, Side::Right][other]).start;
         let mut carets = [0; 2];
-        carets[other] = self.views[other].update(cx, |view, cx| {
-            let at = row_offset(view.model().text(), other_row);
-            // Out of a visual mode or a pending command, which would put
-            // its own selection back.
-            view.cancel_vim(cx);
-            view.model_mut().set_cursor(at);
-            // The focused side scrolls, and this one follows it: across an
-            // added or removed hunk the two carets are on different screen
-            // rows, so revealing both would pull the sides apart.
-            view.autoscroll = false;
-            cx.notify();
-            view.model().primary_selection().head()
-        });
+        // Inline, the left side isn't shown.
+        carets[other] = if self.inline {
+            0
+        } else {
+            self.views[other].update(cx, |view, cx| {
+                let at = row_offset(view.model().text(), other_row);
+                // Out of a visual mode or a pending command, which would put
+                // its own selection back.
+                view.cancel_vim(cx);
+                view.model_mut().set_cursor(at);
+                // The focused side scrolls, and this one follows it: across an
+                // added or removed hunk the two carets are on different screen
+                // rows, so revealing both would pull the sides apart.
+                view.autoscroll = false;
+                cx.notify();
+                view.model().primary_selection().head()
+            })
+        };
         carets[focused] = self.views[focused].update(cx, |view, cx| {
             let at = row_offset(view.model().text(), hunk.range(side).start);
             view.select_and_reveal(at..at, cx);
@@ -420,6 +459,7 @@ impl DiffView {
     /// Runs the diff view's commands; any other goes on to the app.
     fn on_run_command(&mut self, run: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
         match run.0.command.as_str() {
+            TOGGLE_INLINE => self.toggle_inline(window, cx),
             NEXT_CHANGE => self.next_change(window, cx),
             PREVIOUS_CHANGE => self.previous_change(window, cx),
             _ => cx.propagate(),
@@ -528,7 +568,8 @@ impl DecorationProvider for DiffTints {
 }
 
 impl Render for DiffView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.start_narrow(window, cx);
         self.keep_aligned(cx);
         self.sync_buffers(cx);
         // The sides' theme, as the host last set it.
@@ -569,7 +610,7 @@ impl Render for DiffView {
                     .text_color(theme.gutter_active_foreground)
                     .text_size(theme.font_size)
                     .font_family(theme.font_family.clone())
-                    .child(header(&self.titles[0], None))
+                    .children((!self.inline).then(|| header(&self.titles[0], None)))
                     .child(header(&self.titles[1], self.status())),
             )
             .child(
@@ -578,11 +619,11 @@ impl Render for DiffView {
                     .min_h_0()
                     .flex()
                     .flex_row()
-                    .child(
+                    .children((!self.inline).then(|| {
                         side(&self.views[0])
                             .border_r_1()
-                            .border_color(theme.popover_border),
-                    )
+                            .border_color(theme.popover_border)
+                    }))
                     .child(side(&self.views[1])),
             )
     }
@@ -672,3 +713,7 @@ impl PaneItem for DiffView {
 #[cfg(test)]
 #[path = "diff_view_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "diff_view_inline_tests.rs"]
+mod diff_view_inline_tests;
