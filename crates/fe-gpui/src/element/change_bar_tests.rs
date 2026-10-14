@@ -1,6 +1,6 @@
 //! Git change marks in the frame's change lane, in a headless window: one
 //! rounded bar per run of rows, inset so adjacent changes stay apart, and
-//! deletion marks across the lane.
+//! deletion wedges at the lane's left edge.
 
 use std::{cell::RefCell, ops::Range, rc::Rc};
 
@@ -120,13 +120,13 @@ fn decoration(range: Range<usize>, kind: DecorationKind, tint: Tint) -> Decorati
     Decoration::new(range, kind, tint)
 }
 
-/// Each mark's corners are rounded by half its smaller side; nothing else
-/// is rounded.
+/// A bar's corners are rounded by half its smaller side; nothing else is
+/// rounded.
 fn assert_corners(placed: &[Placed]) {
     for placed in placed {
         let size = placed.bounds.size;
         let want = match placed.kind {
-            DecorationKind::Gutter(_) => size.width.min(size.height) / 2.,
+            DecorationKind::Gutter(GutterMark::Bar) => size.width.min(size.height) / 2.,
             _ => px(0.),
         };
         assert_eq!(placed.corner_radius, want, "{:?}", placed.kind);
@@ -212,34 +212,34 @@ fn adjacent_bars_stay_apart(cx: &mut TestAppContext) {
     assert_corners(&all);
 }
 
-/// Asserts `mark` is a deletion mark across `lane`, centred on `edge`.
-fn assert_deletion(mark: Bounds<Pixels>, lane: Bounds<Pixels>, edge: Pixels) {
+/// Asserts `mark` is a wedge half a line tall at the lane's left edge,
+/// half its width, centred on `edge`.
+fn assert_deletion(mark: Bounds<Pixels>, lane: Bounds<Pixels>, line_height: Pixels, edge: Pixels) {
     assert_eq!(
         mark,
         Bounds::new(
-            gpui::point(lane.origin.x, edge - px(1.5)),
-            gpui::size(lane.size.width, px(3.)),
+            gpui::point(lane.origin.x, edge - line_height / 4.),
+            gpui::size(lane.size.width / 2., line_height / 2.),
         )
     );
-    assert!(mark.left() >= lane.left() && mark.right() <= lane.right());
     assert_eq!(mark.center().y, edge);
 }
 
 #[gpui::test]
-fn a_deletion_spans_the_lane_on_a_row_edge(cx: &mut TestAppContext) {
+fn a_deletion_is_a_wedge_on_a_row_edge(cx: &mut TestAppContext) {
     let starts = row_starts(SHORT);
     let items = vec![
         decoration(starts[2]..starts[2], DELETION, Tint::Removed),
         decoration(0..starts[1], DecorationKind::Highlight, Tint::Accent),
     ];
     let (view, cx) = editor(SHORT, false, items, cx);
-    let (lane, _) = lane(&view, cx);
+    let (lane, line_height) = lane(&view, cx);
     let tops = tops(&view, 2..3, cx);
 
     let all = placed(&view, cx);
     let deletions = of_kind(&all, &DELETION);
     assert_eq!(deletions.len(), 1);
-    assert_deletion(deletions[0], lane, tops[0]);
+    assert_deletion(deletions[0], lane, line_height, tops[0]);
     assert_corners(&all);
 }
 
@@ -254,6 +254,70 @@ fn a_deletion_past_the_end_sits_on_the_last_rows_bottom_edge(cx: &mut TestAppCon
     let all = placed(&view, cx);
     let deletions = of_kind(&all, &DELETION);
     assert_eq!(deletions.len(), 1);
-    assert_deletion(deletions[0], lane, tops[0] + line_height);
+    assert_deletion(deletions[0], lane, line_height, tops[0] + line_height);
     assert_corners(&all);
+}
+
+#[gpui::test]
+fn the_bar_clears_the_text_by_0_6_em(cx: &mut TestAppContext) {
+    let starts = row_starts(SHORT);
+    let items = vec![decoration(starts[1]..starts[4], BAR, Tint::Added)];
+    let (view, cx) = editor(SHORT, false, items, cx);
+    let text_left = view.read_with(cx, |view, _| {
+        let layout = view.layout.as_ref().expect("drawn");
+        layout.bounds(layout.frame.text_bounds()).left()
+    });
+    // The em as layout measures it, from the theme's font and size.
+    let em = cx.update(|window, cx| {
+        let theme = &view.read(cx).theme;
+        let text_system = window.text_system();
+        let font_id = text_system.resolve_font(&gpui::font(theme.font_family.clone()));
+        text_system
+            .em_advance(font_id, theme.font_size)
+            .unwrap_or(theme.font_size * 0.6)
+    });
+    let all = placed(&view, cx);
+    let bars = of_kind(&all, &BAR);
+    assert!(!bars.is_empty());
+    let (lane, _) = lane(&view, cx);
+    for bar in bars {
+        assert_eq!(bar.left(), lane.left());
+        assert_eq!(bar.size.width, px(3.));
+        assert!(
+            bar.right() + em * 0.6 <= text_left,
+            "{bar:?} {em:?} {text_left:?}"
+        );
+    }
+    for placed in all.iter().filter(|placed| placed.kind == BAR) {
+        assert!((placed.color.a - 0.6).abs() < 1e-6);
+    }
+}
+
+#[gpui::test]
+fn a_deletion_is_a_full_colour_wedge_half_a_line_tall(cx: &mut TestAppContext) {
+    let starts = row_starts(SHORT);
+    let items = vec![decoration(starts[2]..starts[2], DELETION, Tint::Removed)];
+    let (view, cx) = editor(SHORT, false, items, cx);
+    let (lane_box, line_height) = lane(&view, cx);
+    let row_tops = tops(&view, 2..3, cx);
+    let all = placed(&view, cx);
+    let mark = all.iter().find(|placed| placed.kind == DELETION).unwrap();
+    assert_deletion(mark.bounds, lane_box, line_height, row_tops[0]);
+    assert_eq!(mark.color.a, 1.0);
+    assert_eq!(mark.corner_radius, px(0.));
+
+    let text = "one\ntwo";
+    let items = vec![decoration(text.len()..text.len(), DELETION, Tint::Removed)];
+    let (view, cx) = editor(text, false, items, cx);
+    let (lane_box, line_height) = lane(&view, cx);
+    let row_tops = tops(&view, 1..2, cx);
+    let all = placed(&view, cx);
+    let mark = all.iter().find(|placed| placed.kind == DELETION).unwrap();
+    assert_deletion(
+        mark.bounds,
+        lane_box,
+        line_height,
+        row_tops[0] + line_height,
+    );
+    assert_eq!(mark.color.a, 1.0);
 }

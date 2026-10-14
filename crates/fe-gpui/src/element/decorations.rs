@@ -11,7 +11,10 @@ use fe_display::{
     layout::{Rect, RowLayout},
 };
 use fe_editor::decorations::{DecorationKind, GutterMark, Tint};
-use gpui::{App, Bounds, DecorationRun, Hsla, Pixels, TextRun, UnderlineStyle, Window, fill, px};
+use gpui::{
+    App, Bounds, DecorationRun, Hsla, PathBuilder, Pixels, Point, TextRun, UnderlineStyle, Window,
+    fill, point, px,
+};
 
 use super::{FrameLayout, Line};
 use crate::{EditorTheme, EditorView};
@@ -21,12 +24,14 @@ use crate::{EditorTheme, EditorView};
 const ROW_BACKGROUND_ALPHA: f32 = 0.08;
 const HIGHLIGHT_ALPHA: f32 = 0.22;
 const GUTTER_ALPHA: f32 = 0.6;
+/// A deletion wedge is drawn in the full colour, to stand out from the bars.
+const DELETION_ALPHA: f32 = 1.0;
 const AFTER_LINE_ALPHA: f32 = 0.6;
 
-/// A gutter bar's width, and a deletion mark's height, in pixels, rounded
-/// to device pixels. Both sit in the frame's change lane
+/// A gutter bar's width, in pixels, rounded to device pixels. Bars and
+/// deletion wedges sit in the frame's change lane
 /// ([`fe_display::layout::Frame::change_lane`]), clear of the line numbers
-/// and the chevrons, with rounded ends.
+/// and the chevrons; a bar has rounded ends.
 const BAR_WIDTH: f32 = 3.;
 /// How far a gutter bar stops short of each end of its run of rows, in
 /// pixels, so the bars of two adjacent changes show a gap between them.
@@ -188,14 +193,15 @@ impl Decorations {
                     let Some(edge) = edge else {
                         continue;
                     };
-                    // Across the lane, never toward the digits.
+                    // A wedge half a line tall centred on the edge, its base
+                    // at the bars' left edge, its tip pointing at the text.
                     let rect = Rect {
                         x: lane.x,
-                        y: edge - bar / 2.,
-                        width: lane.width,
-                        height: bar,
+                        y: edge - line_height / 4.,
+                        width: lane.width / 2.,
+                        height: line_height / 2.,
                     };
-                    place(rect, tint.opacity(GUTTER_ALPHA), None);
+                    place(rect, tint.opacity(DELETION_ALPHA), None);
                 }
                 DecorationKind::Highlight | DecorationKind::Underline { .. } => {
                     for row in rows {
@@ -282,7 +288,7 @@ impl Decorations {
         out.placed = (placed.into_iter())
             .map(|(kind, rect, color, text)| Placed {
                 corner_radius: match kind {
-                    DecorationKind::Gutter(_) => px(rect.width.min(rect.height) / 2.),
+                    DecorationKind::Gutter(GutterMark::Bar) => px(rect.width.min(rect.height) / 2.),
                     _ => px(0.),
                 },
                 kind,
@@ -332,9 +338,22 @@ impl Decorations {
                 }
             }
             Layer::Gutter => {
-                for placed in of(|kind| matches!(kind, DecorationKind::Gutter(_))) {
+                for placed in of(|kind| *kind == DecorationKind::Gutter(GutterMark::Bar)) {
                     let quad = fill(placed.bounds, placed.color).corner_radii(placed.corner_radius);
                     window.paint_quad(quad);
+                    painted = true;
+                }
+                // After the bars, so a wedge sits over the end of a bar.
+                for placed in of(|kind| *kind == DecorationKind::Gutter(GutterMark::Deletion)) {
+                    let [base_top, tip, base_bottom] = wedge_points(placed.bounds);
+                    let mut path = PathBuilder::fill();
+                    path.move_to(base_top);
+                    path.line_to(tip);
+                    path.line_to(base_bottom);
+                    path.close();
+                    if let Ok(path) = path.build() {
+                        window.paint_path(path, placed.color);
+                    }
                     painted = true;
                 }
             }
@@ -351,6 +370,17 @@ impl Decorations {
         #[cfg(not(test))]
         let _ = painted;
     }
+}
+
+/// The corners of a deletion wedge in `bounds`: a triangle pointing toward
+/// the text, its tip on the middle of the right edge.
+fn wedge_points(bounds: Bounds<Pixels>) -> [Point<Pixels>; 3] {
+    let (left, right) = (bounds.left(), bounds.right());
+    [
+        point(left, bounds.top()),
+        point(right, bounds.center().y),
+        point(left, bounds.bottom()),
+    ]
 }
 
 #[cfg(test)]
@@ -379,3 +409,7 @@ mod change_bar_tests;
 #[cfg(test)]
 #[path = "change_rail_tests.rs"]
 mod change_rail_tests;
+
+#[cfg(test)]
+#[path = "deletion_wedge_tests.rs"]
+mod deletion_wedge_tests;

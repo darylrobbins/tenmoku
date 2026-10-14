@@ -9,9 +9,9 @@ use super::{
 };
 
 /// The fold column's width: 3.75 em.
-const COLUMN: f32 = 3.75 * CELL;
+const COLUMN: f32 = 3.25 * CELL;
 /// The change lane between the fold column and the text.
-const LANE: f32 = 0.5 * CELL;
+const LANE: f32 = 1.0 * CELL;
 
 /// Lays out `text` in a 400 × `height` editor scrolled right by `scroll_x`,
 /// its rows wrapped or folded by `configure`, with the rows `candidates`

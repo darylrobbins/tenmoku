@@ -56,7 +56,7 @@ const BAR: f32 = 3.;
 #[test]
 fn order() {
     for (rows, digits) in [(500, 3.), (5000, 4.), (50_000, 5.)] {
-        let gutter = CELL * (digits + 2. + 0.5 + 0.5 + 3.75);
+        let gutter = CELL * (digits + 2. + 0.5 + 1.0 + 3.25);
         assert_eq!(gutter_width(rows, CELL), gutter, "{rows} rows");
         assert_eq!(
             wrap_width(WIDTH, rows, CELL),
@@ -69,9 +69,9 @@ fn order() {
             let frame = lay_out(rows, scroll_y);
             assert_eq!(frame.text_left, gutter, "{label}");
             let lane = Rect {
-                x: frame.text_left - 0.5 * CELL,
+                x: frame.text_left - CELL,
                 y: 0.,
-                width: 0.5 * CELL,
+                width: CELL,
                 height: HEIGHT,
             };
             assert_eq!(frame.change_lane, lane, "{label}");
@@ -115,10 +115,32 @@ fn no_overlap() {
                     assert!(rect.x + rect.width <= lane.x, "{label}: {rect:?}");
                 }
                 // A 3 px bar at the lane's left edge stays off the text, and
-                // is 0.75 em clear of the chevron.
+                // is 0.5 em clear of the chevron.
                 assert!(lane.x + BAR <= frame.text_left, "{label}");
                 assert!(
-                    lane.x - (chevron.x + chevron.width) >= 0.75 * CELL,
+                    lane.x - (chevron.x + chevron.width) >= 0.5 * CELL,
+                    "{label}: {chevron:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn a_bar_at_the_lane_edge_clears_the_text_by_0_6_em() {
+    for rows in [500, 5000, 50_000] {
+        for scroll_y in [0., rows as f32 * LINE] {
+            let label = format!("{rows} rows, scrolled to {scroll_y}");
+            let frame = lay_out(rows, scroll_y);
+            let lane = frame.change_lane;
+            assert!(lane.x + BAR + 0.6 * CELL <= frame.text_left, "{label}");
+            assert_eq!(lane.width, CELL, "{label}");
+            assert_eq!(lane.x + lane.width, frame.text_left, "{label}");
+            assert!(!frame.fold_toggles.is_empty(), "{label}");
+            for toggle in &frame.fold_toggles {
+                let chevron = frame.chevron_box(toggle);
+                assert!(
+                    chevron.x + chevron.width + 0.5 * CELL <= lane.x,
                     "{label}: {chevron:?}"
                 );
             }

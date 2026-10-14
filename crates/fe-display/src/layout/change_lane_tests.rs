@@ -53,7 +53,7 @@ fn lay_out(rows: u32, scroll_y: f32) -> Frame<Line> {
 #[test]
 fn the_constants_keep_their_values() {
     assert_eq!(LINE_NUMBER_GAP_EMS, 0.5);
-    assert_eq!(CHANGE_LANE_EMS, 0.5);
-    assert_eq!(FOLD_COLUMN_EMS, 3.75);
+    assert_eq!(CHANGE_LANE_EMS, 1.0);
+    assert_eq!(FOLD_COLUMN_EMS, 3.25);
     assert_eq!(FOLD_CHEVRON_EMS, 2.25);
 }

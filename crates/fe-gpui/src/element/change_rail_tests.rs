@@ -76,12 +76,12 @@ fn changes_are_bars_in_the_lane_and_no_row_is_tinted(cx: &mut TestAppContext) {
         .filter(|placed| placed.kind == deletion)
         .collect();
     assert_eq!(marks.len(), 1);
-    assert_eq!(marks[0].color, theme.change_deleted.opacity(0.6));
+    assert_eq!(marks[0].color, theme.change_deleted.opacity(1.0));
     assert_eq!(
         marks[0].bounds,
         Bounds::new(
-            gpui::point(lane.origin.x, tops[3] - px(1.5)),
-            gpui::size(lane.size.width, px(3.)),
+            gpui::point(lane.origin.x, tops[3] - line_height / 4.),
+            gpui::size(lane.size.width / 2., line_height / 2.),
         )
     );
     assert_eq!(marks[0].bounds.center().y, tops[3]);

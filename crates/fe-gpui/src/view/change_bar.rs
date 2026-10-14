@@ -11,7 +11,8 @@ use gpui::{Bounds, Context, Pixels, Point, point, px};
 use super::{EditorView, EditorViewEvent};
 
 /// How far from the edge a deletion mark is drawn on a click still hits it,
-/// in pixels: the mark's half height and a little slack.
+/// in pixels: slack beyond the wedge, which already spans a quarter line
+/// either side of the edge.
 const MARK_REACH: f32 = 3.;
 
 impl EditorView {
@@ -53,9 +54,12 @@ impl EditorView {
         let mark = layout.decorations.placed.iter().find(|placed| {
             placed.kind == DecorationKind::Gutter(GutterMark::Deletion) && {
                 let reach = px(MARK_REACH);
+                // The wedge fills half the lane, but a click anywhere
+                // across the lane hits it.
+                let lane = layout.bounds(frame.change_lane);
                 let hit = Bounds::from_corners(
-                    placed.bounds.origin - point(px(0.), reach),
-                    placed.bounds.bottom_right() + point(px(0.), reach),
+                    point(lane.left(), placed.bounds.top() - reach),
+                    point(lane.right(), placed.bounds.bottom() + reach),
                 );
                 hit.contains(&position)
             }
@@ -107,3 +111,7 @@ impl EditorView {
         true
     }
 }
+
+#[cfg(test)]
+#[path = "deletion_wedge_click_tests.rs"]
+mod deletion_wedge_click_tests;

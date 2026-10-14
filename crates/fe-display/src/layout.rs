@@ -37,13 +37,13 @@ pub const FOLD_MARKER: &str = "⋯";
 pub const LINE_NUMBER_GAP_EMS: f32 = 0.5;
 /// The width of the change lane, the strip between the fold column and the
 /// text where git change bars and deletion marks go, in ems.
-pub const CHANGE_LANE_EMS: f32 = 0.5;
+pub const CHANGE_LANE_EMS: f32 = 1.0;
 
 /// The width of the fold column, the strip between the line numbers and the
 /// change lane where chevrons go, in ems.
-pub const FOLD_COLUMN_EMS: f32 = 3.75;
+pub const FOLD_COLUMN_EMS: f32 = 3.25;
 /// The side of a chevron's box, in ems, padded by the rest of the column on
-/// either side (0.75 em each).
+/// either side (0.5 em each).
 pub const FOLD_CHEVRON_EMS: f32 = 2.25;
 /// The most of a row's height a chevron's box takes, so it fits short rows.
 pub const FOLD_CHEVRON_LINE_FRACTION: f32 = 0.875;

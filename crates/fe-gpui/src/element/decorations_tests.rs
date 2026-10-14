@@ -219,10 +219,10 @@ fn row_backgrounds_and_bars_cover_every_display_row(cx: &mut TestAppContext) {
         deletions,
         [(
             Bounds::new(
-                gpui::point(gutter_x, row_4_top - px(1.5)),
-                gpui::size(lane.size.width, px(3.))
+                gpui::point(gutter_x, row_4_top - line_height / 4.),
+                gpui::size(lane.size.width / 2., line_height / 2.)
             ),
-            theme.change_deleted.opacity(0.6)
+            theme.change_deleted.opacity(1.0)
         )]
     );
     // Clear of the diagnostics' dot at the gutter's left.
@@ -614,5 +614,8 @@ fn a_deletion_past_the_end_sits_under_the_last_row(cx: &mut TestAppContext) {
     let line_height = shown[1].2 - shown[0].2;
     let deletions = of_kind(&placed(&view, cx), &DELETION);
     assert_eq!(deletions.len(), 1);
-    assert_eq!(deletions[0].0.top(), shown[1].2 + line_height - px(1.5));
+    assert_eq!(
+        deletions[0].0.top(),
+        shown[1].2 + line_height - line_height / 4.
+    );
 }

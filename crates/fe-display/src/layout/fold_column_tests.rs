@@ -67,7 +67,7 @@ fn the_column_pads_the_chevron() {
     let column = Rect {
         x: 55.,
         y: 0.,
-        width: 37.5,
+        width: 32.5,
         height: 200.,
     };
     assert_eq!(frame.fold_column, column);
@@ -95,9 +95,9 @@ fn the_column_pads_the_chevron() {
         let chevron = frame.chevron_box(toggle);
         assert_eq!((chevron.width, chevron.height), (22.5, 22.5));
         assert_eq!(centre(chevron), centre(row));
-        // 0.75 em on each side.
-        assert_eq!(chevron.x - column.x, 7.5);
-        assert_eq!(column.x + column.width - (chevron.x + chevron.width), 7.5);
+        // 0.5 em on each side.
+        assert_eq!(chevron.x - column.x, 5.);
+        assert_eq!(column.x + column.width - (chevron.x + chevron.width), 5.);
     }
 }
 
@@ -109,6 +109,6 @@ fn the_chevron_fits_short_rows() {
         let chevron = frame.chevron_box(toggle);
         assert_eq!((chevron.width, chevron.height), (17.5, 17.5));
         assert_eq!(centre(chevron), centre(toggle.rect));
-        assert_eq!(centre(chevron).x, frame.fold_column.x + 37.5 / 2.);
+        assert_eq!(centre(chevron).x, frame.fold_column.x + 32.5 / 2.);
     }
 }
