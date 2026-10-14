@@ -426,7 +426,7 @@ fn operate_as_wide(
                 Operator::Replace(_) => range.start,
                 _ => start,
             };
-            recase(target, actor, args.operator, range, land)
+            recase(target, actor, args.operator, range, land, lines)
         }
     };
     if let Some(marks) = target.state.last_visual.as_mut() {
@@ -504,6 +504,7 @@ fn recase(
     operator: Operator,
     range: Range<usize>,
     land: usize,
+    lines: bool,
 ) -> Dispatched<TransactionId> {
     use unicode_segmentation::UnicodeSegmentation;
     let VimTarget { model, state, .. } = target;
@@ -525,7 +526,34 @@ fn recase(
     // An undo step even when nothing changes, as in nvim (but for `r`).
     let (transaction, snapshot) = match operator {
         Operator::Replace(_) => operator::apply(model, edits, origin(actor)),
-        _ => crate::g_operators::apply(model, edits, actor),
+        _ => {
+            let (id, snapshot, changed) =
+                crate::g_operators::apply_noted(state, model, edits, actor);
+            // `'[` and `']` span the selection's ends, or its rows.
+            let last = text.clip_offset(range.end.max(range.start + 1) - 1, fe_text::Bias::Left);
+            let (first, last) = (
+                history::pair(&text, range.start),
+                history::pair(&text, last),
+            );
+            let (start, end) = match lines {
+                true => {
+                    let len = text.row_len(last.0) as usize;
+                    ((first.0, 0), (last.0, len.saturating_sub(1)))
+                }
+                false => {
+                    let clamp = |(row, column): (u32, usize)| {
+                        (
+                            row,
+                            column.min((text.row_len(row) as usize).saturating_sub(1)),
+                        )
+                    };
+                    (clamp(first), clamp(last))
+                }
+            };
+            let version = changed.then(|| snapshot.version());
+            crate::marks::recased(state, model, version, start, end);
+            (id, snapshot)
+        }
     };
     operator::land(model, &snapshot, [snapshot.resolve(&landing)]);
     if let Some(id) = transaction {

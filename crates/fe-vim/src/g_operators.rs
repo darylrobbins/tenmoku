@@ -40,6 +40,18 @@
 //! puts the caret back where the case operators left it, or where it was
 //! before `gq` and `gw`. `.` repeats them.
 //!
+//! `'[` and `']` go to what the case operators cover, whether or not they
+//! change it: the first character to the last of a charwise span (an
+//! exclusive motion's end isn't covered), or over rows the first row's
+//! column 0 to the last row's last byte; visual `u U ~ g?` use the
+//! selection's ends, or its rows. A case operator that changes nothing
+//! leaves `'.` where it was. Known limits: blockwise `u U ~ g?` (in
+//! `visual/block.rs`) don't set them so, nvim putting `'[` at the block's
+//! top left and `']` at its bottom right; `gq` and `gw` set them as any
+//! change does; and `'.` after a case operator over rows that does change
+//! text is at the first changed character, where nvim has the first row's
+//! column 0.
+//!
 //! Known differences from nvim, at the edges: its undo puts back the marks
 //! a change moved, which fe-vim's doesn't (`J` alike); with a tab in the
 //! first row's indent, nvim sometimes leaves marks on that row where they
@@ -302,7 +314,30 @@ pub(crate) fn operate(
         .into_iter()
         .flat_map(|range| recase(&text, range, args.operator))
         .collect();
-    let (transaction, after) = apply(model, edits, actor);
+    let (transaction, after, changed) = apply_noted(state, model, edits, actor);
+    let spans = covered.iter().filter_map(|covered| match &covered.span {
+        Span::Chars(range) => {
+            let last = range.end.max(range.start + 1) - 1;
+            let last = text.clip_offset(last, Bias::Left);
+            Some((
+                history::pair(&text, range.start),
+                history::pair(&text, last.max(range.start)),
+            ))
+        }
+        Span::Lines { rows, .. } => {
+            let last = *rows.end();
+            Some((
+                (*rows.start(), 0),
+                (last, (text.row_len(last) as usize).saturating_sub(1)),
+            ))
+        }
+        Span::Move(_) | Span::Failed => None,
+    });
+    let spans: Vec<_> = spans.collect();
+    if let (Some(first), Some(last)) = (spans.first(), spans.last()) {
+        let version = changed.then(|| after.version());
+        marks::recased(state, model, version, first.0, last.1);
+    }
     let begins: Vec<_> = carets.iter().map(|&at| history::pair(&text, at)).collect();
     // As in nvim, the caret keeps its byte column, which a longer character
     // before it (`ß` to `ẞ`) moves it off.
@@ -861,4 +896,38 @@ pub(crate) fn apply(
     let (_, snapshot) = operator::apply_steps(model, steps, origin(actor));
     model.buffer_mut().end_transaction();
     (Some(id), snapshot)
+}
+
+/// [`apply`] for the case operators, which also notes the batches of the
+/// undo step it makes when nothing changes ([`marks::Note::Unchanged`]) and
+/// says whether it changed anything.
+pub(crate) fn apply_noted(
+    state: &mut VimState,
+    model: &mut EditorModel,
+    edits: Vec<(Range<usize>, String)>,
+    actor: &Actor,
+) -> (Option<TransactionId>, fe_buffer::BufferSnapshot, bool) {
+    if !edits.is_empty() {
+        let (id, snapshot) = operator::apply(model, edits, origin(actor));
+        return (id, snapshot, true);
+    }
+    state.marks.watch(model);
+    let end = model.text().len();
+    let id = {
+        let mut buffer = model.buffer_mut();
+        let id = buffer.start_transaction(origin(actor));
+        for edits in [
+            vec![(end..end, " ".to_string())],
+            vec![(end..end + 1, String::new())],
+        ] {
+            buffer.edit(edits, origin(actor));
+            state
+                .marks
+                .note(buffer.snapshot().version(), marks::Note::Unchanged);
+        }
+        buffer.end_transaction();
+        id
+    };
+    let snapshot = model.buffer_mut().snapshot();
+    (Some(id), snapshot, false)
 }

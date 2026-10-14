@@ -714,6 +714,16 @@ pub(crate) enum Note {
     /// A shift of the rows from the first to the last, begun at `column`:
     /// `'[` and `']` span them, whether or not it changed them all.
     Shifted { column: usize, rows: (u32, u32) },
+    /// A case operator's change: `'[` and `']` span what it covered, from
+    /// `start` to `end` (row and byte column, in the text after), whether or
+    /// not it changed all of it.
+    Recased {
+        start: (u32, usize),
+        end: (u32, usize),
+    },
+    /// A batch that changed nothing (the hidden undo step of a case operator
+    /// that left the text as it was): it sets no mark.
+    Unchanged,
     /// Whole rows put in, from the first to the last (in the text after),
     /// which an empty row put next to an empty row can't say.
     Put { rows: (u32, u32) },
@@ -998,6 +1008,9 @@ impl Changes {
             return;
         };
         let note = noted.iter().find(|note| ***note != Note::Ending);
+        if note.is_some_and(|note| **note == Note::Unchanged) {
+            return;
+        }
         let (text, version) = (&batch.text, batch.to);
         let point = |offset: usize| {
             let point = text.offset_to_point(offset);
@@ -1044,7 +1057,9 @@ impl Changes {
             Some(Note::Put { rows }) => Some(rows),
             _ => put_rows(text, first).filter(|_| !typed),
         };
-        let (start, end, change) = if let Some(Note::Shifted {
+        let (start, end, change) = if let Some(Note::Recased { start, end }) = note {
+            (on(start.0, start.1), on(end.0, end.1), at(first.new.start))
+        } else if let Some(Note::Shifted {
             column,
             rows: (row, last_row),
         }) = note
@@ -2028,6 +2043,30 @@ pub(crate) fn shifted(
     changes.start = Some(Spot::placed(Place::on(snapshot, first, column)));
     changes.end = Some(Spot::placed(Place::on(snapshot, last, last_byte)));
     changes.change = Some(Spot::placed(Place::on(snapshot, first, 0)));
+}
+
+/// A case operator covered `start` to `end` (row and byte column) of
+/// `model`'s text: its batch, which made `version`, sets `'[` and `']` there
+/// (and `'.` as the batch says); with no batch, having changed nothing, it
+/// sets `'[` and `']` itself and leaves `'.` where it was, as nvim's does.
+pub(crate) fn recased(
+    state: &mut VimState,
+    model: &mut EditorModel,
+    version: Option<Version>,
+    start: (u32, usize),
+    end: (u32, usize),
+) {
+    if let Some(version) = version {
+        state.marks.note(version, Note::Recased { start, end });
+        return;
+    }
+    state.marks.watch(model);
+    catch_up(state);
+    let snapshot = model.snapshot();
+    let changes = &mut state.marks.changes;
+    changes.newer(Newer::ENDS);
+    changes.start = Some(Spot::placed(Place::on(snapshot, start.0, start.1)));
+    changes.end = Some(Spot::placed(Place::on(snapshot, end.0, end.1)));
 }
 
 /// Where leaving insert mode left `'[`, `']` and `'^`, for a clone of the
