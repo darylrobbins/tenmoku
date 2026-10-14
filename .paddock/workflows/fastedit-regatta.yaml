@@ -1,0 +1,511 @@
+# The Regatta lane flow fastedit runs, written as a Paddock workflow, with the improvements from
+# running it on 2026-10-12/13 applied (P1-P14 below).
+#
+# One board task becomes one lane: a drafted card (scope, criteria, regression and collateral
+# tests, the running tasks it must wait for), tests written and locked first, one worker
+# implementing them, the full gate, Codex review rounds against the criteria, a person's check of
+# any criterion no test can verify, a squash onto local main, a post-merge check only when the
+# landed tree differs from the gated one, a sync of the Linux hosts, then the lane's target/ is
+# deleted. Several finished lanes land together through fastedit-stack.yaml instead.
+#
+# Tiers: m/l/xl cards implement at deep, the rest at standard (Regatta's routing). Real failures
+# move up a tier: a failing green check, a real gate failure, rework after the lead widens a card.
+# Review rounds stay at the card's tier (regatta.toml [routing], 2026-10-08), and flakes never
+# reach an agent: the gate's failed tests are rerun alone first (P1).
+#
+# Applied: P1 rerun-failed check before triage; P4 post-check skipped on an unchanged tree; P6
+# collateral tests and P7 shared-file waits in the card, with a deps check; P8 tests locked red
+# before the implementation; P9 one person step for manual criteria before landing; P10 review
+# findings go straight to the worker; P11 pause with `paddock workflow pause|resume <run>`; P12
+# cleanup after landing; P5/P14 in fastedit-stack.yaml. Not in a workflow: P2 (a repo-wide gate
+# slot: Regatta and Paddock cap stages per pipeline only), P3 (the timing tests themselves:
+# T582, T708, T709, T710), P13 (the lead's watch).
+name: fastedit-regatta
+description: A board task through Regatta's lane flow - drafted card, tests locked red first, one worker, gate with flake reruns, up to 3 Codex review rounds, manual-criteria check, squash onto local main, post-check when needed, host sync, cleanup.
+start: spec
+inputs:
+  baseRef: { type: string, default: main }
+defaults:
+  tier: standard
+  harness: claude
+  permissions: claude:auto
+  worktree: run   # never `current`: paddock-check.sh refuses the main checkout
+  # Lanes on 2026-10-13 cost $2-5 at Opus/high for an s card (T666: $2.32 over 32 minutes).
+  # 30 covers a deep card's implementation, three review rounds and a deep gate fix.
+  budget: { usd: 30 }
+nodes:
+  # --- Card ---------------------------------------------------------------------------------
+  spec:
+    type: agent
+    profile: fastedit-readonly
+    permissions: plan
+    tier: deep
+    budget: { usd: 3 }
+    prompt: |
+      Draft the card for the board task in your context, as Regatta's card-drafter does
+      (~/code/regatta/.claude/agents/card-drafter.md). Read the code first.
+
+      - Scope: exact files, never wide globs. New tests go in new files.
+      - Collateral tests: build the reverse dependencies of the files in scope and find tests
+        outside them that pin a count, a table or an allow-list those files feed (fe-gpui's
+        binding-count and vim context tests broke T605 and T611 this way). Put those test
+        files in scope.
+      - Waits: list running tasks (`paddock task list`, and `rgt status` while Regatta runs)
+        whose scope shares a file with yours in dependsOn, so this lane waits for them rather
+        than blocking halfway (T667 on T666).
+      - Type: a test-only flake fix is a chore, never a bugfix. A bugfix names its regression
+        tests; they must fail at the base and pass with the fix.
+      - Criteria: mark every criterion no test can check (a GUI look, an API with no test hook,
+        such as GPUI's quit mode) as manual.
+      - Path: "tdd" when the card adds behaviour tests can pin (bugfix, feature), else "direct"
+        (chore, refactor, docs).
+      - Say whether this starts a feature direction the user hasn't approved.
+    context:
+      include: [{ task: true }, { notebook: true }, { files: ["docs/decisions/**/*.md"], maxTokens: 6000 }]
+      index: [{ repoMap: true }]
+      budgetTokens: 24000
+    output:
+      schema:
+        type: object
+        required: [type, complexity, path, newDirection, crates, scope, criteria, manualCriteria, regressionTests, dependsOn, spec]
+        properties:
+          type: { enum: [bugfix, feature, refactor, chore, docs] }
+          complexity: { enum: [xs, s, m, l, xl] }
+          path: { enum: [tdd, direct] }
+          newDirection: { type: boolean }
+          crates: { type: array, minItems: 1, items: { type: string, pattern: "^[A-Za-z0-9_-]+$" } }
+          scope: { type: array, minItems: 1, items: { type: string } }
+          criteria: { type: array, minItems: 1, items: { type: string } }
+          manualCriteria: { type: array, items: { type: string } }
+          regressionTests: { type: array, items: { type: string } }
+          dependsOn: { type: array, items: { type: string } }
+          spec: { type: string }
+
+  direction:
+    type: human
+    ask: "This card starts a new feature direction. Approve it, send it back with a note, or stop?"
+    show: [{ task: true }]
+    options: [approve, revise, stop]
+    route: driver
+
+  # Passes once every task in dependsOn is done. A fail waits on a person, who rechecks once
+  # they land.
+  deps:
+    type: check
+    join: any
+    run: scripts/paddock-check.sh deps {{ nodes.spec.output.dependsOn | join(" ") }}
+    expect: pass
+
+  waiting:
+    type: human
+    ask: "This lane waits for tasks that share files with it: {{ nodes.spec.output.dependsOn | join(\", \") }}. Check again once they land, or stop?"
+    show: [{ check: deps, tail: 20 }]
+    options: [recheck, stop]
+    route: driver
+
+  # --- Tests first (P8) ---------------------------------------------------------------------
+  write_tests:
+    type: agent
+    profile: fastedit-worker
+    budget: { usd: 5 }
+    skills: [rust-tdd]
+    prompt: |
+      Write the failing tests for the card below, following the rust-tdd skill: one per
+      criterion a test can check, and a bugfix's regression tests under exactly the names the
+      card gives. Add stubs so they fail on assertions, not on build errors. Commit them as
+      `tdd-lock: <card title>`, then run `scripts/paddock-check.sh red {{ nodes.spec.output.crates | join(" ") }}`
+      until it prints RED OK.
+
+      Criteria: {{ nodes.spec.output.criteria | join("; ") }}
+      Regression tests: {{ nodes.spec.output.regressionTests | join(", ") }}
+      Scope: {{ nodes.spec.output.scope | join(", ") }}
+
+      {{ nodes.spec.output.spec }}
+    context:
+      include: [{ task: true }, { files: "{{ nodes.spec.output.scope }}", maxTokens: 12000 }, { check: red, tail: 120 }]
+      index: [{ repoMap: true }]
+      budgetTokens: 24000
+
+  red:
+    type: check
+    run: scripts/paddock-check.sh red {{ nodes.spec.output.crates | join(" ") }}
+    expect: pass
+
+  # --- Implementation -----------------------------------------------------------------------
+  implement:
+    type: agent
+    profile: fastedit-worker
+    join: any
+    budget: { usd: 8 }
+    skills: [rust-tdd]
+    prompt: |
+      Implement the card below in this worktree, following the rust-tdd skill. If tests were
+      locked with a `tdd-lock:` commit, make them pass without changing them. Touch only the
+      files in scope, and commit as you go. Finish when
+      `scripts/paddock-check.sh green-if-locked {{ nodes.spec.output.crates | join(" ") }}` prints GREEN OK.
+
+      If the work needs a file outside scope, or a change another task holds, stop and report
+      blocked with the files and why. Don't work around it.
+
+      Lead's note, if any: {{ nodes.lead_decision.output.note }}
+      Person's note, if any: {{ nodes.needs_you.output.text }} {{ nodes.confirm.output.text }} {{ nodes.land_stuck.output.text }}
+
+      Scope: {{ nodes.spec.output.scope | join(", ") }}
+      Criteria: {{ nodes.spec.output.criteria | join("; ") }}
+
+      {{ nodes.spec.output.spec }}
+    context:
+      include: [{ task: true }, { files: "{{ nodes.spec.output.scope }}", maxTokens: 12000 }, { check: red, tail: 80 }, { check: green, tail: 150 }]
+      index: [{ repoMap: true }]
+      budgetTokens: 32000
+    output: &implement_output
+      schema:
+        type: object
+        required: [status, summary]
+        properties:
+          status: { enum: [done, blocked] }
+          summary: { type: string }
+          scopeNeeded: { type: array, items: { type: string } }
+
+  implement_deep:
+    type: agent
+    profile: fastedit-worker
+    tier: deep
+    join: any
+    budget: { usd: 15 }
+    skills: [rust-tdd]
+    # Rework after a block or a person's note always goes to implement (whose first tier-up
+    # retry runs at deep), so this prompt carries no notes.
+    prompt: |
+      Implement the card below in this worktree, following the rust-tdd skill. If tests were
+      locked with a `tdd-lock:` commit, make them pass without changing them. Touch only the
+      files in scope, and commit as you go. Finish when
+      `scripts/paddock-check.sh green-if-locked {{ nodes.spec.output.crates | join(" ") }}` prints GREEN OK.
+
+      If the work needs a file outside scope, or a change another task holds, stop and report
+      blocked with the files and why. Don't work around it.
+
+      Scope: {{ nodes.spec.output.scope | join(", ") }}
+      Criteria: {{ nodes.spec.output.criteria | join("; ") }}
+
+      {{ nodes.spec.output.spec }}
+    context:
+      include: [{ task: true }, { files: "{{ nodes.spec.output.scope }}", maxTokens: 12000 }, { check: red, tail: 80 }, { check: green_deep, tail: 150 }]
+      index: [{ repoMap: true }]
+      budgetTokens: 32000
+    output: *implement_output
+
+  # Locked tests unchanged and now passing; with no tdd-lock record, the crates' tests pass.
+  green:
+    type: check
+    run: scripts/paddock-check.sh green-if-locked {{ nodes.spec.output.crates | join(" ") }}
+    expect: pass
+
+  green_deep:
+    type: check
+    run: scripts/paddock-check.sh green-if-locked {{ nodes.spec.output.crates | join(" ") }}
+    expect: pass
+
+  # --- Gate and triage ----------------------------------------------------------------------
+  gate:
+    type: check
+    join: any
+    run: BASE_REF={{ inputs.baseRef }} scripts/paddock-check.sh ci
+    expect: pass
+
+  # P1: the gate's failed tests, each rerun alone three times. Passing means they fail only
+  # under load: the flake is logged for the lead's flake cards and the gate runs once more.
+  rerun_failed:
+    type: check
+    join: any
+    run: scripts/paddock-check.sh rerun-failed
+    expect: pass
+
+  # Only failures that persist alone reach an agent.
+  triage:
+    type: agent
+    profile: fastedit-readonly
+    permissions: plan
+    tier: deep
+    join: any
+    budget: { usd: 3 }
+    prompt: |
+      The gate failed, and its failing tests (if any) still fail when rerun alone. Triage it as
+      Regatta's gate-triage does (~/code/regatta/.claude/agents/gate-triage.md): find what
+      fails, and decide whether this change causes it.
+
+      - real: the change breaks it. Say what to fix.
+      - infra: the gate itself is wrong (disk full, a missing tool, a test that doesn't exist,
+        main already red without this change).
+    context:
+      include: [{ task: true }, { check: gate, tail: 200 }, { check: rerun_failed, tail: 60 }, { check: land, tail: 120 }, { diff: { base: inputs.baseRef } }]
+      budgetTokens: 32000
+    output:
+      schema:
+        type: object
+        required: [verdict, summary]
+        properties:
+          verdict: { enum: [real, infra] }
+          summary: { type: string }
+
+  fix_gate:
+    type: agent
+    profile: fastedit-worker
+    tier: fast   # entered through a tier: up retry: attempts run standard, then deep
+    budget: { usd: 6 }
+    skills: [rust-tdd]
+    prompt: |
+      The gate fails because of this change. Fix the cause in the implementation (locked tests
+      stay as they are), commit, and rerun `scripts/paddock-check.sh ci` until it prints CI OK.
+
+      Triage: {{ nodes.triage.output.summary }}
+    context:
+      include: [{ task: true }, { check: gate, tail: 200 }]
+      budgetTokens: 24000
+
+  # --- Review -------------------------------------------------------------------------------
+  review:
+    type: agent
+    profile: fastedit-review
+    model: codex:gpt-6.1-sol   # by tier, Paddock passes sonnet to Codex, which rejects it
+    budget: { usd: 4 }
+    prompt: |
+      Review this branch's diff against {{ inputs.baseRef }} for the card below. Judge each
+      automatic criterion met or unmet, with evidence. Look for correctness bugs, missing tests,
+      races and error handling. Flag any change outside the card's scope. Don't edit files.
+
+      verdict:
+      - "fail" when an automatic criterion is unmet or a finding is high or medium;
+      - "needs-human" when the only blocker is a policy exception (scope expanded, a new
+        dependency or license);
+      - "pass-manual" when it would pass and the card has manual criteria;
+      - otherwise "pass".
+      Put every finding in report as markdown, one per entry: id (F1, F2, ...), severity,
+      file:line, the issue and the fix.
+
+      Scope: {{ nodes.spec.output.scope | join(", ") }}
+      Criteria: {{ nodes.spec.output.criteria | join("; ") }}
+      Manual criteria: {{ nodes.spec.output.manualCriteria | join("; ") }}
+    context:
+      include: [{ task: true }, { diff: { base: inputs.baseRef } }]
+      budgetTokens: 40000
+    output:
+      schema:
+        type: object
+        required: [verdict, summary, report]
+        properties:
+          verdict: { enum: [pass, pass-manual, fail, needs-human] }
+          summary: { type: string }
+          report: { type: string }
+
+  # P10: the findings go to the worker in the prompt.
+  address_review:
+    type: agent
+    profile: fastedit-worker
+    budget: { usd: 6 }
+    skills: [rust-tdd]
+    prompt: |
+      Review requested changes. Fix every high and medium finding, and the low ones where the
+      fix is cheap, inside the card's scope. If a fix needs a file outside scope, stop and say
+      which. If you disagree with a finding, leave the code and say why, naming its id. Commit,
+      then run `scripts/paddock-check.sh ci` until it prints CI OK.
+
+      {{ nodes.review.output.report }}
+    context:
+      include: [{ task: true }, { diff: { base: inputs.baseRef } }]
+      budgetTokens: 24000
+
+  # P9: one person step for what no test can check, before landing, not after.
+  confirm:
+    type: human
+    ask: "Review passed. Confirm the manual criteria: {{ nodes.spec.output.manualCriteria | join(\"; \") }}"
+    show: [{ diff: { base: inputs.baseRef } }]
+    options: [confirm, rework, stop]
+    route: driver
+
+  # --- Lead and person ----------------------------------------------------------------------
+  lead_decision:
+    type: agent
+    profile: fastedit-readonly
+    permissions: plan
+    tier: deep
+    join: any
+    budget: { usd: 3 }
+    prompt: |
+      You are the lead. This lane needs a decision: the worker is blocked, the red check can't
+      lock failing tests, or review rounds ran out. Decide as Regatta's lead does
+      (~/code/regatta/docs/lead.md, "Your authority"):
+
+      - widen: the fix needs files outside scope that no running task holds (as T605, T611).
+        Name them in note.
+      - retype: the tests can't fail at the base because another change already did the work
+        (as T633); the card becomes a chore and goes on without red tests.
+      - wait: another running task holds the files; resume after it lands (as T667 on T666).
+      - split: too big for one card; say how.
+      - ask: policy, a findings override, a new direction, or anything only the user decides.
+
+      Worker: {{ nodes.implement.output.summary }} {{ nodes.implement_deep.output.summary }}
+      Review: {{ nodes.review.output.summary }}
+    context:
+      include: [{ task: true }, { check: red, tail: 80 }, { diff: { base: inputs.baseRef } }]
+      budgetTokens: 24000
+    output:
+      schema:
+        type: object
+        required: [decision, note]
+        properties:
+          decision: { enum: [widen, retype, wait, split, ask] }
+          note: { type: string }
+
+  needs_you:
+    type: human
+    join: any
+    ask: "This lane needs you. Lead: {{ nodes.lead_decision.output.note }} Review: {{ nodes.review.output.summary }} Triage: {{ nodes.triage.output.summary }}. Resume it with a note, land it as is (override the findings), or stop?"
+    show: [{ diff: { base: inputs.baseRef } }]
+    options: [resume, override, stop]
+    route: driver
+
+  # --- Merge --------------------------------------------------------------------------------
+  # Brings in the base's new commits (rerunning ci only if the base moved), then squashes onto
+  # local main by fast-forward or compare-and-swap. Nothing is pushed.
+  land:
+    type: check
+    run: BASE_REF={{ inputs.baseRef }} scripts/paddock-check.sh land
+    expect: pass
+
+  # Landing failed three times: main conflicts, or the merged result keeps failing.
+  land_stuck:
+    type: human
+    ask: "Landing on {{ inputs.baseRef }} keeps failing (a conflict, or the merged result fails its checks). Send it back for rework with a note, or stop?"
+    show: [{ check: land, tail: 80 }]
+    options: [rework, stop]
+    route: driver
+
+  # P4: build + test on the landing only when its tree isn't the tree ci passed.
+  post:
+    type: check
+    run: BASE_REF={{ inputs.baseRef }} scripts/paddock-check.sh post
+    expect: pass
+
+  # Reverts the landing on main and checks the revert. Main stays frozen until a person says.
+  revert:
+    type: check
+    run: BASE_REF={{ inputs.baseRef }} scripts/paddock-check.sh revert
+    expect: pass
+
+  frozen:
+    type: human
+    ask: "The post-merge check failed on the landing, so it was reverted. Re-land this lane after a fix, or stop?"
+    show: [{ check: post, tail: 80 }, { check: revert, tail: 40 }]
+    options: [reland, stop]
+    route: driver
+
+  # Pushes main to each Linux host's refs/remotes/mac/main and tells its lead to sync.
+  sync:
+    type: check
+    run: BASE_REF={{ inputs.baseRef }} scripts/paddock-check.sh sync-hosts
+    expect: pass
+
+  # P12: the lane's target/ is 15-19 GB.
+  cleanup:
+    type: check
+    run: scripts/paddock-check.sh cleanup
+    expect: pass
+
+  done:
+    type: end
+    status: done
+
+  stopped:
+    type: end
+    join: any
+    status: stopped
+
+edges:
+  - spec -> direction                 when: output.newDirection == true
+  - spec -> deps                      when: output.newDirection == false
+  - direction -> deps                 when: output.choice == "approve"
+  - direction -> spec                 when: output.choice == "revise"   retry: { max: 3 }
+  - direction -> stopped              when: output.choice == "stop"
+
+  # Matching edges all fire (only a retry edge holds its fallback back), so these exclude each other.
+  - deps -> write_tests               when: result == "pass" && nodes.spec.output.path == "tdd"
+  - deps -> implement_deep            when: result == "pass" && nodes.spec.output.path == "direct" && nodes.spec.output.complexity != "xs" && nodes.spec.output.complexity != "s"
+  - deps -> implement                 when: result == "pass" && nodes.spec.output.path == "direct" && nodes.spec.output.complexity == "xs"
+  - deps -> implement                 when: result == "pass" && nodes.spec.output.path == "direct" && nodes.spec.output.complexity == "s"
+  - deps -> waiting                   when: result == "fail"
+  - waiting -> deps                   when: output.choice == "recheck"   retry: { max: 10 }
+  - waiting -> stopped                when: output.choice == "recheck"
+  - waiting -> stopped                when: output.choice == "stop"
+
+  - write_tests -> red
+  - red -> implement_deep             when: result == "pass" && nodes.spec.output.complexity != "xs" && nodes.spec.output.complexity != "s"
+  - red -> implement                  when: result == "pass" && nodes.spec.output.complexity == "xs"
+  - red -> implement                  when: result == "pass" && nodes.spec.output.complexity == "s"
+  - red -> write_tests                when: result == "fail"   retry: { max: 1 }
+  # Tests that still can't be locked red after a retry: implement anyway, and review judges the
+  # criteria (the work may already be on main, as T633's was). Routing this fallback through
+  # lead_decision re-fired lead_decision after every later step in a dry-run (Paddock 2026-10).
+  - red -> implement                  when: result == "fail"
+
+  - implement -> green                when: output.status == "done"
+  - implement -> lead_decision        when: output.status == "blocked"
+  - green -> gate                     when: result == "pass"
+  - green -> implement                when: result == "fail"   retry: { max: 2, tier: up }
+  - green -> lead_decision            when: result == "fail"
+  - implement_deep -> green_deep      when: output.status == "done"
+  - implement_deep -> lead_decision   when: output.status == "blocked"
+  - green_deep -> gate                when: result == "pass"
+  - green_deep -> implement_deep      when: result == "fail"   retry: { max: 2 }
+  - green_deep -> lead_decision       when: result == "fail"
+
+  # P1: flakes rerun without an agent; a run gets one such gate rerun.
+  - gate -> review                    when: result == "pass"
+  - gate -> rerun_failed              when: result == "fail"
+  - rerun_failed -> gate              when: result == "pass"   retry: { max: 1 }
+  - rerun_failed -> triage            when: result == "pass"
+  - rerun_failed -> triage            when: result == "fail"
+  - triage -> fix_gate                when: output.verdict == "real"    retry: { max: 2, tier: up }
+  - triage -> needs_you               when: output.verdict == "real"
+  - triage -> needs_you               when: output.verdict == "infra"
+  - fix_gate -> gate
+
+  # Three rounds at the card's tier (regatta.toml [routing]); exhaustion goes to the lead.
+  - review -> land                    when: output.verdict == "pass"
+  - review -> confirm                 when: output.verdict == "pass-manual"
+  - review -> address_review          when: output.verdict == "fail"   retry: { max: 2 }
+  - review -> lead_decision           when: output.verdict == "fail"
+  - review -> needs_you               when: output.verdict == "needs-human"
+  - address_review -> gate
+  - confirm -> land                   when: output.choice == "confirm"
+  - confirm -> implement              when: output.choice == "rework"   retry: { max: 2 }
+  - confirm -> stopped                when: output.choice == "rework"
+  - confirm -> stopped                when: output.choice == "stop"
+
+  # Rework after a widened scope moves up a tier: implement's first retry runs at deep.
+  - lead_decision -> implement        when: output.decision == "widen"    retry: { max: 3, tier: up }
+  - lead_decision -> implement        when: output.decision == "retype"   retry: { max: 3 }
+  - lead_decision -> needs_you        when: output.decision == "wait"
+  - lead_decision -> needs_you        when: output.decision == "split"
+  - lead_decision -> needs_you        when: output.decision == "ask"
+  - lead_decision -> needs_you        when: output.decision == "widen"
+  - lead_decision -> needs_you        when: output.decision == "retype"
+  - needs_you -> implement            when: output.choice == "resume"     retry: { max: 3 }
+  - needs_you -> land                 when: output.choice == "override"
+  - needs_you -> stopped              when: output.choice == "resume"
+  - needs_you -> stopped              when: output.choice == "stop"
+
+  - land -> post                      when: result == "pass"
+  - land -> rerun_failed              when: result == "fail"   retry: { max: 2 }
+  - land -> land_stuck                when: result == "fail"
+  - land_stuck -> implement           when: output.choice == "rework"   retry: { max: 1 }
+  - land_stuck -> stopped             when: output.choice == "rework"
+  - land_stuck -> stopped             when: output.choice == "stop"
+  - post -> sync                      when: result == "pass"
+  - post -> revert                    when: result == "fail"
+  - revert -> frozen
+  - frozen -> gate                    when: output.choice == "reland"   retry: { max: 1 }
+  - frozen -> stopped                 when: output.choice == "reland"
+  - frozen -> stopped                 when: output.choice == "stop"
+  - sync -> cleanup
+  - cleanup -> done

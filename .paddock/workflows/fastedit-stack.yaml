@@ -1,0 +1,199 @@
+# Lands the Linux hosts' finished batches on the Mac's main as one stack (P5, P14 in
+# fastedit-regatta.yaml): read each host's ~/coordination/landing.md, rebase every batch marked
+# ready for the macOS gate onto main in one branch, gate the top once, fast-forward main
+# (user grant 2026-10-12: the lead fast-forwards main on a pass on the current tip, nothing is
+# pushed), check the landing, sync the hosts, and record it in each host's landing.md. A batch
+# that breaks the gate is dropped from the stack and reported; the rest still land.
+name: fastedit-stack
+description: The Linux hosts' finished batches rebased as one stack onto local main, gated once on the top, fast-forwarded, checked, synced back to the hosts and recorded in their landing.md.
+start: collect
+inputs:
+  baseRef: { type: string, default: main }
+  hosts: { type: string, default: "neon argon helium" }
+defaults:
+  tier: standard
+  harness: claude
+  permissions: claude:auto
+  worktree: run
+  budget: { usd: 20 }
+nodes:
+  collect:
+    type: agent
+    profile: fastedit-readonly
+    permissions: plan
+    budget: { usd: 2 }
+    prompt: |
+      Read ~/coordination/landing.md on each host ({{ inputs.hosts }}) over ssh, as `ssh <host>
+      cat ~/coordination/landing.md`. List every batch marked ready for the macOS gate that no
+      later entry records as landed on the Mac. For each, give the host, branch and sha (on the
+      host's ~/code/fastedit-lanes), the Mac task numbers it covers, whether it changes
+      Linux-only code, and the host's full Linux gate result if it gives one. Don't change
+      anything on the hosts.
+    output:
+      schema:
+        type: object
+        required: [batches]
+        properties:
+          batches:
+            type: array
+            items:
+              type: object
+              required: [host, branch, sha, macTasks, linuxOnly, linuxGate]
+              properties:
+                host: { type: string }
+                branch: { type: string }
+                sha: { type: string }
+                macTasks: { type: array, items: { type: string } }
+                linuxOnly: { type: boolean }
+                linuxGate: { type: string }
+
+  stack:
+    type: agent
+    profile: fastedit-worker
+    tier: deep
+    budget: { usd: 8 }
+    prompt: |
+      Build one stack of the batches below on this worktree's branch, which starts at
+      {{ inputs.baseRef }}. For each batch, fetch it with `git fetch ssh://<host>/home/daryl/code/fastedit-lanes <sha>`
+      and rebase its commits onto the stack in the order given. Skip commits that only merge
+      the host's trunk with mac/main. Leave out a batch that changes Linux-only code without a
+      passing full Linux gate, and a batch whose cards are already on {{ inputs.baseRef }}.
+      Resolve conflicts keeping both sides' intent; if a conflict needs a design call, leave
+      that batch out and say why. Commit nothing else.
+
+      Batches to leave out after a gate failure: {{ nodes.drop.output.drop | join(", ") }}
+
+      {{ nodes.collect.output.batches }}
+    context:
+      budgetTokens: 24000
+    output:
+      schema:
+        type: object
+        required: [included, skipped]
+        properties:
+          included: { type: array, items: { type: string } }
+          skipped: { type: array, items: { type: string } }
+
+  gate:
+    type: check
+    run: BASE_REF={{ inputs.baseRef }} scripts/paddock-check.sh ci
+    expect: pass
+
+  rerun_failed:
+    type: check
+    run: scripts/paddock-check.sh rerun-failed
+    expect: pass
+
+  # The gate fails for real: find the batch that breaks it, and leave it out.
+  drop:
+    type: agent
+    profile: fastedit-readonly
+    permissions: plan
+    tier: deep
+    budget: { usd: 3 }
+    prompt: |
+      The stack's gate fails, and its failing tests still fail alone. Find which batch causes
+      it, from the failures and each batch's diff, and name the batches to leave out (with the
+      ones already left out). Say what to tell that host's lead.
+    context:
+      include: [{ check: gate, tail: 200 }, { check: rerun_failed, tail: 60 }, { diff: { base: inputs.baseRef } }]
+      budgetTokens: 32000
+    output:
+      schema:
+        type: object
+        required: [drop, why]
+        properties:
+          drop: { type: array, items: { type: string } }
+          why: { type: string }
+
+  stuck:
+    type: human
+    ask: "The host stack still fails its gate after leaving batches out. Stop here (nothing landed), or retry once more?"
+    show: [{ check: gate, tail: 80 }]
+    options: [retry, stop]
+    route: driver
+
+  land:
+    type: check
+    run: BASE_REF={{ inputs.baseRef }} scripts/paddock-check.sh land-ff
+    expect: pass
+
+  post:
+    type: check
+    run: BASE_REF={{ inputs.baseRef }} scripts/paddock-check.sh post
+    expect: pass
+
+  revert:
+    type: check
+    run: BASE_REF={{ inputs.baseRef }} scripts/paddock-check.sh revert
+    expect: pass
+
+  frozen:
+    type: human
+    ask: "The stack's post-merge check failed, so the stack was reverted on main. Look at it, then stop."
+    show: [{ check: post, tail: 80 }, { check: revert, tail: 40 }]
+    options: [stop]
+    route: driver
+
+  sync:
+    type: check
+    run: BASE_REF={{ inputs.baseRef }} scripts/paddock-check.sh sync-hosts
+    expect: pass
+
+  # Writes the landing into each host's landing.md and lists the Mac copies of lent cards that
+  # the lead now abandons (rgt task abandon is the lead's, not this workflow's).
+  record:
+    type: agent
+    profile: fastedit-worker
+    budget: { usd: 2 }
+    prompt: |
+      Main now carries this stack. On each host with a batch in it, append to
+      ~/coordination/landing.md (over ssh) a dated entry: the Mac main sha, the batches that
+      landed, and any left out with the reason. Then list, as your final message, the Mac task
+      numbers the landed batches cover, so the lead can abandon those Mac copies.
+
+      Included: {{ nodes.stack.output.included | join(", ") }}
+      Skipped: {{ nodes.stack.output.skipped | join(", ") }}
+      Left out after the gate: {{ nodes.drop.output.drop | join(", ") }} {{ nodes.drop.output.why }}
+
+  cleanup:
+    type: check
+    run: scripts/paddock-check.sh cleanup
+    expect: pass
+
+  done:
+    type: end
+    join: any
+    status: done
+
+  stopped:
+    type: end
+    join: any
+    status: stopped
+
+edges:
+  - collect -> stack                  when: output.batches != []
+  - collect -> done                   when: output.batches == []
+  - stack -> gate
+  - gate -> land                      when: result == "pass"
+  - gate -> rerun_failed              when: result == "fail"
+  - rerun_failed -> gate              when: result == "pass"   retry: { max: 1 }
+  - rerun_failed -> drop              when: result == "pass"
+  - rerun_failed -> drop              when: result == "fail"
+  # A retry edge holds its fallback back only when both carry a condition.
+  - drop -> stack                     when: output.why != ""   retry: { max: 2 }
+  - drop -> stuck                     when: output.why != ""
+  - stuck -> stack                    when: output.choice == "retry"   retry: { max: 1 }
+  - stuck -> stopped                  when: output.choice == "retry"
+  - stuck -> stopped                  when: output.choice == "stop"
+  # land-ff refuses when main moved during the gate: rebuild the stack on the new main.
+  - land -> post                      when: result == "pass"
+  - land -> stack                     when: result == "fail"   retry: { max: 2 }
+  - land -> stuck                     when: result == "fail"
+  - post -> sync                      when: result == "pass"
+  - post -> revert                    when: result == "fail"
+  - revert -> frozen
+  - frozen -> stopped
+  - sync -> record
+  - record -> cleanup
+  - cleanup -> done
