@@ -5,7 +5,10 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    sync::{Arc, RwLock, atomic::AtomicBool},
+    sync::{
+        Arc, RwLock,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use fe_buffer::{Buffer, Text};
@@ -110,49 +113,87 @@ fn long_legacy_line(units: usize) -> Vec<u8> {
     bytes
 }
 
-/// The references found in `file.rs` once `bytes` are written there, and the
-/// least time of `runs` searches.
-fn timed_find(bytes: &[u8], runs: usize) -> (Vec<Reference>, std::time::Duration) {
+/// The references found in `file.rs` once `bytes` are written there, the
+/// least time of `runs` searches, and whether a search was cancelled for
+/// running past `limit`.
+fn timed_find(
+    bytes: &[u8],
+    runs: usize,
+    limit: Option<std::time::Duration>,
+) -> (Vec<Reference>, std::time::Duration, bool) {
     let dir = tempfile::tempdir().unwrap();
     fs::write(dir.path().join("file.rs"), bytes).unwrap();
     let mut least = std::time::Duration::MAX;
     let mut batches = Vec::new();
+    let mut cancelled = false;
     for _ in 0..runs {
+        let cancel = AtomicBool::new(false);
+        let done = AtomicBool::new(false);
         let start = std::time::Instant::now();
-        batches = find(dir.path());
+        std::thread::scope(|scope| {
+            // A search that is quadratic runs for minutes: stop it at the limit.
+            scope.spawn(|| {
+                while !done.load(Ordering::Relaxed) {
+                    if limit.is_some_and(|limit| start.elapsed() > limit) {
+                        cancel.store(true, Ordering::Relaxed);
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+            });
+            batches = Vec::new();
+            search(dir.path())
+                .references(&request(dir.path()), &cancel, &mut |batch| {
+                    batches.push(batch)
+                })
+                .unwrap();
+            done.store(true, Ordering::Relaxed);
+        });
+        cancelled |= cancel.load(Ordering::Relaxed);
         least = least.min(start.elapsed());
+        if cancelled {
+            break;
+        }
     }
     let refs = (batches.into_iter().flatten())
         .filter(|file| file.rel == Path::new("file.rs"))
         .flat_map(|file| file.refs)
         .collect();
-    (refs, least)
+    (refs, least, cancelled)
 }
 
 /// A long line in a legacy encoding with many hits is decoded about once,
 /// not from its start for each hit. The check is on how the time grows with
 /// the line, not on the time, so machine load doesn't decide it: the least
-/// of a few runs of a line four times as long takes about four times as
-/// long if the line is decoded once (16 if it's decoded per hit).
+/// of a few runs of a line eight times as long takes about eight times as
+/// long if the line is decoded once (64 if it's decoded per hit). The
+/// baseline is long enough (about 0.7 s, mostly fixed cost) that load doesn't swamp it, and
+/// a search that outruns the bound is cancelled, so a quadratic one fails
+/// in seconds rather than minutes.
 #[test]
 fn a_long_legacy_line_with_many_hits_is_decoded_in_bounded_work() {
-    // One 3 MB line, and one a quarter as long.
-    let bytes = long_legacy_line(2_000);
-    let (refs, long) = timed_find(&bytes, 3);
-    let (quarter_refs, quarter) = timed_find(&long_legacy_line(500), 3);
+    // One 12 MB line, and one an eighth as long.
+    let bytes = long_legacy_line(8_000);
+    let (eighth_refs, eighth, _) = timed_find(&long_legacy_line(1_000), 5, None);
+    // Three times the slack over the 8 of linear growth, well short of the 64
+    // of quadratic.
+    let (refs, long, cancelled) = timed_find(&bytes, 3, Some(eighth * 24));
+    assert!(
+        !cancelled,
+        "8x the line took over 24x as long (the eighth took {eighth:?})"
+    );
     let buffer = Buffer::from_reader_detecting(bytes.as_slice()).unwrap();
     assert_ne!(buffer.encoding().name(), "UTF-8");
-    assert!(refs.len() >= 2_000, "{}", refs.len());
-    assert!(quarter_refs.len() >= 500, "{}", quarter_refs.len());
+    assert!(refs.len() >= 8_000, "{}", refs.len());
+    assert!(eighth_refs.len() >= 1_000, "{}", eighth_refs.len());
     for r in &refs {
         let text = buffer.text().slice_to_string(r.location.range.clone());
         assert_eq!(text, "target", "{r:?}");
     }
-    // Generous slack over the 4 of linear growth, short of the 16 of quadratic.
     assert!(
-        long < quarter * 9,
-        "4x the line took {:.1}x as long ({quarter:?}, {long:?})",
-        long.as_secs_f64() / quarter.as_secs_f64()
+        long < eighth * 24,
+        "8x the line took {:.1}x as long ({eighth:?}, {long:?})",
+        long.as_secs_f64() / eighth.as_secs_f64()
     );
 }
 
