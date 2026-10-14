@@ -30,9 +30,9 @@ pub(super) fn layout(layout: &mut FrameLayout, view: &EditorView, window: &Windo
     if !theme.indent_guides {
         return Vec::new();
     }
-    let (Some(first), Some(last)) = (frame.rows.first(), frame.rows.last()) else {
+    if frame.rows.is_empty() {
         return Vec::new();
-    };
+    }
     let model = &view.model;
     let text = model.text();
     let tab = model.tab_size() as u32;
@@ -40,7 +40,14 @@ pub(super) fn layout(layout: &mut FrameLayout, view: &EditorView, window: &Windo
         Some(IndentStyle::Spaces(n)) => u32::from(n),
         _ => tab,
     };
-    let guides = indent_guides(text, first.buffer_row..last.buffer_row + 1, width, tab);
+    let mut guides = Vec::new();
+    for rows in visible_ranges(frame.rows.iter().map(|row| row.buffer_row)) {
+        #[cfg(test)]
+        VISITED.with(|visited| visited.borrow_mut().push(rows.clone()));
+        guides.extend(indent_guides(text, rows, width, tab));
+    }
+    // Each range's guides are sorted; a guide crossing a fold is one per side.
+    guides.sort_by_key(|guide| (guide.column, guide.rows.start));
     if guides.is_empty() {
         return Vec::new();
     }
@@ -97,6 +104,21 @@ pub(super) fn layout(layout: &mut FrameLayout, view: &EditorView, window: &Windo
         .collect()
 }
 
+/// The contiguous runs of buffer rows the frame shows, a soft-wrapped row's
+/// pieces counting once; rows folded or blocked out between two shown rows
+/// split the run.
+fn visible_ranges(rows: impl Iterator<Item = u32>) -> Vec<std::ops::Range<u32>> {
+    let mut ranges: Vec<std::ops::Range<u32>> = Vec::new();
+    for row in rows {
+        match ranges.last_mut() {
+            Some(range) if row < range.end => {}
+            Some(range) if row == range.end => range.end += 1,
+            _ => ranges.push(row..row + 1),
+        }
+    }
+    ranges
+}
+
 /// Paints the guides.
 pub(super) fn paint(guides: &[Placed], window: &mut Window) {
     for guide in guides {
@@ -108,11 +130,18 @@ pub(super) fn paint(guides: &[Placed], window: &mut Window) {
 
 #[cfg(test)]
 thread_local! {
+    /// The buffer-row ranges this thread's last frames computed guides over.
+    pub(crate) static VISITED: std::cell::RefCell<Vec<std::ops::Range<u32>>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+
     /// The guides this thread's last frame painted.
     pub(crate) static PAINTED: std::cell::RefCell<Vec<Placed>> =
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
+#[cfg(test)]
+#[path = "indent_guides_fold_tests.rs"]
+mod fold_tests;
 #[cfg(test)]
 #[path = "indent_guides_tests.rs"]
 mod tests;
