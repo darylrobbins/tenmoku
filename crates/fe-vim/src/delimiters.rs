@@ -297,6 +297,12 @@ thread_local! {
 
 impl Clock {
     fn new() -> Self {
+        // Unit tests don't race the wall clock: under load a pattern-name
+        // object would run out of its 2 s and fail. [`STOPPED`] still
+        // stops one.
+        #[cfg(test)]
+        return Self(Deadline::never());
+        #[cfg(not(test))]
         Self(Deadline::new())
     }
 
