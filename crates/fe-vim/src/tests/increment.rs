@@ -135,18 +135,44 @@ fn replay_extents_are_checked() {
     }
 }
 
+/// CPU time this thread has used. Unlike wall clock it doesn't grow while the thread is
+/// descheduled, which is what heavy machine load does to a timing: the 10x longer run is
+/// descheduled far more often than the short one, so a wall-clock ratio drifts past any bound.
+fn thread_cpu_time() -> std::time::Duration {
+    #[repr(C)]
+    struct Timespec {
+        tv_sec: i64,
+        tv_nsec: i64,
+    }
+    unsafe extern "C" {
+        fn clock_gettime(clock: i32, out: *mut Timespec) -> i32;
+    }
+    #[cfg(target_os = "macos")]
+    const CLOCK_THREAD_CPUTIME_ID: i32 = 16;
+    #[cfg(not(target_os = "macos"))]
+    const CLOCK_THREAD_CPUTIME_ID: i32 = 3;
+    let mut now = Timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `now` is a valid, writable timespec for the call to fill in.
+    let status = unsafe { clock_gettime(CLOCK_THREAD_CPUTIME_ID, &mut now) };
+    assert_eq!(status, 0, "clock_gettime failed");
+    std::time::Duration::new(now.tv_sec as u64, now.tv_nsec as u32)
+}
+
 #[test]
 fn a_block_over_a_long_row_is_quick() {
-    // Compares the fastest sample of a 10x longer row, so absolute load drops out:
+    // Compares the fastest CPU-time sample of a 10x longer row, so load drops out:
     // the ratio is ~10 for linear work and ~100 for quadratic. Short and long runs
-    // alternate so they see the same load.
+    // alternate so they see the same cache state.
     fn run(len: usize) -> std::time::Duration {
         let row = format!("{}7", "x".repeat(len));
         let text = format!("{row}\n{row}");
         let mut vim = HeadlessVim::new(&text, (0, 0));
-        let started = std::time::Instant::now();
+        let started = thread_cpu_time();
         vim.feed("<C-v>j<C-a>").unwrap();
-        let elapsed = started.elapsed();
+        let elapsed = thread_cpu_time() - started;
         assert_eq!(vim.text(), text);
         elapsed
     }
