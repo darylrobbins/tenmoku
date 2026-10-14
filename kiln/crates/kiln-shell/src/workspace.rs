@@ -14,6 +14,11 @@
 //! workspace's own items over the active item's ([`Workspace::set_status_item`]),
 //! redrawing as the active item changes, with no notify from the host.
 //!
+//! Given a [`WindowLayout`] ([`Workspace::set_layout`]), the workspace
+//! saves its own layout: its panes and docks, and the app's keys
+//! ([`Workspace::on_save`]), as their shape changes, in full as the app
+//! quits and as the window closes; [`Workspace::restore`] puts one back.
+//!
 //! A host draws the workspace and adds its own around it, hearing
 //! [`WorkspaceEvent`]s; [`Workspace::shell`] and [`Workspace::group_mut`]
 //! reach the parts.
@@ -22,8 +27,10 @@ use std::{collections::HashMap, rc::Rc};
 
 use gpui::{
     App, AppContext as _, Context, Entity, EntityId, EventEmitter, FocusHandle, Focusable,
-    IntoElement, Pixels, Render, SharedString, Subscription, WeakEntity, Window, div,
+    IntoElement, Pixels, Render, SharedString, Subscription, Task, WeakEntity, Window, WindowId,
+    div,
 };
+use kiln_command::Value;
 use kiln_platform::Capabilities;
 use kiln_ui::ui_theme;
 
@@ -32,6 +39,7 @@ use crate::{
     ItemPane, MenuBarView, PaneEvent, PaneGroup, PaneView, Shell, StatusItem, StatusItems,
     close::{self, WindowItems},
     dock::DockEvent,
+    layout::{self, WindowLayout},
     pane::{Peers, TabDropped},
     status,
 };
@@ -39,11 +47,30 @@ use crate::{
 /// Makes an empty pane, not yet in a group.
 type NewPane<P> = Box<dyn Fn(&mut Window, &mut App) -> Entity<P>>;
 
+/// Gives the app's own keys for the saved entry.
+type OnSave = Box<dyn Fn(&App) -> Vec<(&'static str, Value)>>;
+
+/// The docks' positions, as their entries are named.
+const DOCKS: [(DockPosition, &str); 3] = [
+    (DockPosition::Left, "left"),
+    (DockPosition::Right, "right"),
+    (DockPosition::Bottom, "bottom"),
+];
+
+/// A restore whose items are still being read.
+struct Restoring {
+    /// Puts the items in once they're read; dropped, it never does.
+    filling: Task<()>,
+    /// The entry restored, saved in its place at quit or close meanwhile.
+    saved: Value,
+}
+
 /// What a workspace tells its host.
 pub enum WorkspaceEvent<P = ItemPane> {
     /// The active pane, or its active item, is another one.
     ActiveChanged,
-    /// A pane joined the group, split off by a command or a dropped tab.
+    /// A pane joined the group, split off by a command or a dropped tab, or
+    /// restored.
     PaneAdded(Entity<P>),
     /// The pane with this ID left the group.
     PaneRemoved(EntityId),
@@ -82,8 +109,18 @@ pub struct Workspace<P: PaneView = ItemPane> {
     status: StatusItems,
     /// Called each time the bar draws.
     status_sources: Vec<fn(&App) -> Option<StatusItem>>,
-    /// Hear the docks' rail clicks.
+    /// Hear the docks' rail clicks and changes.
     dock_events: Vec<Subscription>,
+    /// Where the layout is saved, once it's given, and the window it's
+    /// the layout of.
+    layout: Option<(WindowLayout, WindowId)>,
+    /// Each pane's items when the layout was last saved: a reorder the
+    /// shape doesn't show, its documents numbered in order, still saves.
+    saved_items: Vec<Vec<ItemId>>,
+    /// Save the layout as it changes, at quit and as the window closes.
+    layout_hooks: Vec<Subscription>,
+    on_save: Vec<OnSave>,
+    restoring: Option<Restoring>,
 }
 
 impl<P: PaneView> Workspace<P> {
@@ -141,6 +178,11 @@ impl<P: PaneView> Workspace<P> {
             status: StatusItems::default(),
             status_sources: Vec::new(),
             dock_events: Vec::new(),
+            layout: None,
+            saved_items: Vec::new(),
+            layout_hooks: Vec::new(),
+            on_save: Vec::new(),
+            restoring: None,
         };
         workspace.watch(&first, window, cx);
         workspace
@@ -222,7 +264,9 @@ impl<P: PaneView> Workspace<P> {
                     cx.subscribe_in(&dock, window, |workspace, _, _: &DockEvent, window, cx| {
                         workspace.focus_active(window, cx)
                     });
-                self.dock_events.push(hid);
+                // A toggle, a resize or another panel shown.
+                let changed = cx.observe(&dock, |workspace, _, cx| workspace.save_layout(cx));
+                self.dock_events.extend([hid, changed]);
                 self.docks.insert(position, dock.clone());
                 self.shell.update(cx, |shell, cx| {
                     shell.set_dock(position, Some(dock.clone().into()), cx)
@@ -485,6 +529,191 @@ impl<P: PaneView> Workspace<P> {
             cx.emit(WorkspaceEvent::ActiveChanged);
         }
         cx.notify();
+    }
+}
+
+// Saved layouts.
+impl<P: PaneView> Workspace<P> {
+    /// Saves the workspace's layout in `layout` from now on: its
+    /// [`entry`](Workspace::entry) whenever its shape changes (a split, a
+    /// close, a tab moved, opened or closed, another active pane or item,
+    /// a divider dragged, a dock toggled, resized or showing another
+    /// panel, or anything else that notifies the workspace), in full as
+    /// the app quits, and as its window closes or the workspace goes,
+    /// whichever is first: kept if it's the last window, else deleted
+    /// ([`layout`]). Nothing is saved while a restore is still reading.
+    ///
+    /// The first save waits for the end of this update, so a restore in
+    /// it, before or after, isn't overwritten by the layout it replaces.
+    pub fn set_layout(&mut self, layout: WindowLayout, window: &Window, cx: &mut Context<Self>) {
+        let ours = window.window_handle().window_id();
+        self.layout = Some((layout, ours));
+        self.saved_items.clear();
+        let at_quit = cx.on_app_quit(|workspace, cx| {
+            let entry = workspace.full_entry(cx);
+            let saved =
+                (workspace.layout.as_mut()).map(|(layout, _)| layout.save_at_quit(entry, cx));
+            async move {
+                if let Some(saved) = saved {
+                    saved.await;
+                }
+            }
+        });
+        let this = cx.weak_entity();
+        let closed = cx.on_window_closed(move |cx, closed| {
+            if closed == ours {
+                (this.update(cx, |workspace, cx| workspace.close_layout(cx))).ok();
+            }
+        });
+        let released = cx.on_release(|workspace, cx| workspace.close_layout(cx));
+        let changed = cx.observe_self(|workspace, cx| workspace.save_layout(cx));
+        self.layout_hooks = vec![at_quit, closed, released, changed];
+        let this = cx.weak_entity();
+        cx.defer(move |cx| {
+            (this.update(cx, |workspace, cx| workspace.save_layout(cx))).ok();
+        });
+    }
+
+    /// Adds the app's own keys to the saved entry: `save` gives them each
+    /// time it's built. They come back in the entry given to
+    /// [`Workspace::restore`], for the app to read. A change to them alone
+    /// is saved as the workspace next notifies.
+    pub fn on_save(&mut self, save: impl Fn(&App) -> Vec<(&'static str, Value)> + 'static) {
+        self.on_save.push(Box::new(save));
+    }
+
+    /// The workspace's saved entry: the app's keys ([`Workspace::on_save`]),
+    /// `panes` ([`layout::save_panes`]) and `docks`, each dock's state
+    /// ([`DockState::save`]) by its position, `left`, `right` or `bottom`.
+    pub fn entry(&self, cx: &App) -> Value {
+        let mut entry = serde_json::Map::new();
+        for save in &self.on_save {
+            for (key, value) in save(cx) {
+                entry.insert(key.into(), value);
+            }
+        }
+        let docks = (DOCKS.iter()).filter_map(|(position, name)| {
+            let dock = self.docks.get(position)?;
+            Some((*name, dock.read(cx).dock().save()))
+        });
+        let panes = layout::save_panes(&self.group, &self.active, cx);
+        entry.insert("panes".into(), panes);
+        entry.insert("docks".into(), Value::from_iter(docks));
+        Value::Object(entry)
+    }
+
+    /// Whether a restore's items are still being read.
+    pub fn restoring(&self) -> bool {
+        self.restoring.is_some()
+    }
+
+    /// Puts back the layout `saved` holds, as [`Workspace::entry`] gave
+    /// it: its panes, made with [`Workspace::new_pane`] in place of the
+    /// workspace's, and the active one, at once, their items once they're
+    /// read ([`layout::restore_panes`]), and each dock's state, for the
+    /// docks with panels by now. The panes still empty then close, unless an
+    /// item was opened in them meanwhile, and focus goes to the active item. A restore still reading is dropped. False,
+    /// changing nothing, if `saved` has no panes.
+    pub fn restore(&mut self, saved: &Value, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let new_pane = &self.new_pane;
+        let mut new_pane = |window: &mut Window, cx: &mut App| new_pane(window, cx);
+        let Some(restored) = (saved.get("panes"))
+            .and_then(|panes| layout::restore_panes(panes, &mut new_pane, window, cx))
+        else {
+            return false;
+        };
+        for pane in self.group.panes().into_iter().cloned().collect::<Vec<_>>() {
+            cx.emit(WorkspaceEvent::PaneRemoved(pane.entity_id()));
+        }
+        self.panes.clear();
+        self.group.set_root(restored.root);
+        self.active = restored.active;
+        for pane in self.group.panes().into_iter().cloned().collect::<Vec<_>>() {
+            self.watch(&pane, window, cx);
+            cx.emit(WorkspaceEvent::PaneAdded(pane));
+        }
+        for (position, name) in DOCKS {
+            let (Some(dock), Some(saved)) = (
+                self.docks.get(&position),
+                saved.get("docks").and_then(|docks| docks.get(name)),
+            ) else {
+                continue;
+            };
+            dock.update(cx, |dock, cx| {
+                dock.dock_mut().restore(saved);
+                cx.notify();
+            });
+        }
+        self.focus_active(window, cx);
+        self.follow_active(window, cx);
+        let filled = restored.filled;
+        let filling = cx.spawn_in(window, async move |workspace, cx| {
+            let empty = filled.await;
+            (workspace.update_in(cx, |workspace, window, cx| {
+                if let Some(restoring) = workspace.restoring.take() {
+                    restoring.filling.detach();
+                }
+                // Unless an item was opened in it meanwhile.
+                for pane in &empty {
+                    if pane.read(cx).pane().items().is_empty() {
+                        workspace.close_pane(pane, window, cx);
+                    }
+                }
+                workspace.focus_active(window, cx);
+                workspace.follow_active(window, cx);
+                workspace.save_layout(cx);
+            }))
+            .ok();
+        });
+        self.restoring = Some(Restoring {
+            filling,
+            saved: saved.clone(),
+        });
+        true
+    }
+
+    /// The entry to save in full: while a restore reads, the one it
+    /// restores.
+    fn full_entry(&self, cx: &App) -> Value {
+        match &self.restoring {
+            Some(restoring) => restoring.saved.clone(),
+            None => self.entry(cx),
+        }
+    }
+
+    /// Saves the entry if its shape changed, unless a restore is reading.
+    fn save_layout(&mut self, cx: &mut App) {
+        if self.layout.is_none() || self.restoring.is_some() {
+            return;
+        }
+        let entry = self.entry(cx);
+        let items: Vec<Vec<ItemId>> = (self.group.panes().into_iter())
+            .map(|pane| {
+                (pane.read(cx).pane().items().iter())
+                    .map(|item| item.id())
+                    .collect()
+            })
+            .collect();
+        let Some((layout, _)) = &mut self.layout else {
+            return;
+        };
+        if items != self.saved_items {
+            self.saved_items = items;
+            layout.save(entry, cx);
+        } else {
+            layout.save_if_changed(entry, cx);
+        }
+    }
+
+    /// The window has closed: its entry is kept if no other window is open,
+    /// else deleted.
+    fn close_layout(&mut self, cx: &mut App) {
+        if let Some((layout, ours)) = self.layout.take() {
+            let entry = self.full_entry(cx);
+            // The workspace can go before its window does.
+            let others_open = (cx.windows().iter()).any(|window| window.window_id() != ours);
+            layout.close(entry, others_open, cx);
+        }
     }
 }
 
