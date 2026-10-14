@@ -41,6 +41,9 @@ use kiln_ui::{CrumbKind, Icon};
 
 use crate::StatusItem;
 
+pub mod state;
+pub use state::ItemState;
+
 /// A tab's identity: its item's entity ID. It stays with the tab as the
 /// tab moves between panes. It isn't saved: a restored item is a new
 /// entity with a new ID.

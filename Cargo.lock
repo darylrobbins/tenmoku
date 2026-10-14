@@ -4675,6 +4675,7 @@ dependencies = [
  "kiln-platform",
  "kiln-ui",
  "log",
+ "serde_json",
 ]
 
 [[package]]

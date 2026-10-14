@@ -7,7 +7,7 @@
 use std::{borrow::Cow, path::PathBuf};
 
 use gpui::{AnyView, App, AppContext as _, QuitMode, SharedString, Window, WindowHandle};
-use kiln_core::{AppId, AppPaths, Diagnostic, PathStyle, SettingsType};
+use kiln_core::{AppId, AppPaths, Diagnostic, Os, PathStyle, SettingsType};
 use kiln_platform::WindowSpec;
 use kiln_shell::{Root, close};
 use kiln_ui::ThemeMode;
@@ -99,7 +99,7 @@ pub fn app(id: impl Into<String>, name: impl Into<SharedString>) -> AppBuilder {
         paths_given: false,
         settings: Vec::new(),
         hooks: Vec::new(),
-        quit_on_last_window: !cfg!(target_os = "macos"),
+        quit_on_last_window: Os::current() != Os::MacOs,
         window: None,
         root: None,
     }
