@@ -1,7 +1,6 @@
 //! The jump's matching and labelling, pure: which places two typed chars
-//! match ([`targets`]), how labels name them ([`label`]) and, after the
-//! first char, what each candidate would be labelled ([`preview`]). The
-//! host's overlay shares them.
+//! match ([`targets`]) and how labels name them ([`label`]). The host's
+//! overlay shares them.
 //!
 //! Matching (fastedit's own spec, after leap):
 //!
@@ -17,7 +16,7 @@
 //!   are a distinct pair, matched wherever they occur.
 //! - The match is at `{c1}`'s grapheme.
 
-use std::{collections::HashMap, ops::Range};
+use std::ops::Range;
 
 use fe_text::Text;
 use regex_syntax::hir::{ClassUnicode, ClassUnicodeRange};
@@ -88,61 +87,6 @@ fn on_row(line: &Line, [c1, c2]: [char; 2]) -> Vec<usize> {
         })
         .map(|ix| line.start + line.starts[ix])
         .collect()
-}
-
-/// After `{c1}`: each match of it in `rows` from `caret` (in the
-/// direction), with the label it gets once the char after it is typed as
-/// `{c2}` (`<Space>` for a blank or the row's end), in its group: the
-/// targets of that pair in `rows`, labelled after an operator if
-/// `op_pending`. The label is `None` for the match its group would jump
-/// straight to. A match its group doesn't take (inside a same-char run) is
-/// left out. Rows `shown` says no to (hidden in a fold) are left out of
-/// both. In text order.
-pub fn preview(
-    text: &Text,
-    rows: Range<u32>,
-    shown: &dyn Fn(u32) -> bool,
-    caret: usize,
-    c1: char,
-    forward: bool,
-    op_pending: bool,
-) -> Vec<(usize, Option<Label>)> {
-    let rows = rows.start..rows.end.min(text.row_count());
-    let typed = Typed::new(c1);
-    // Each group's labels, by offset.
-    let mut groups: HashMap<char, HashMap<usize, Option<Label>>> = HashMap::new();
-    let mut found = Vec::new();
-    for row in rows.clone().filter(|&row| shown(row)) {
-        let line = Line::new(text, row);
-        let candidates: Vec<(usize, char)> = match line.len() {
-            0 if c1 == ' ' => vec![(line.start, ' ')],
-            0 => Vec::new(),
-            len => (0..len)
-                .filter(|&ix| typed.takes(Some(line.grapheme(ix))))
-                .map(|ix| {
-                    let next = (ix + 1 < len).then(|| line.grapheme(ix + 1));
-                    let c2 = match next.and_then(|grapheme| grapheme.chars().next()) {
-                        None | Some('\t') => ' ',
-                        Some(ch) => ch,
-                    };
-                    (line.start + line.starts[ix], c2)
-                })
-                .collect(),
-        };
-        for (offset, c2) in candidates {
-            let group = groups.entry(c2).or_insert_with(|| {
-                let mut targets = targets(text, rows.clone(), caret, [c1, c2], forward);
-                targets.retain(|&offset| shown(text.offset_to_point(offset).row));
-                let labeled = label(targets.len(), op_pending);
-                let labels = targets.into_iter().zip(labeled.labels);
-                labels.collect()
-            });
-            if let Some(&label) = group.get(&offset) {
-                found.push((offset, label));
-            }
-        }
-    }
-    found
 }
 
 /// A typed char and the chars it matches: its Unicode simple case folding

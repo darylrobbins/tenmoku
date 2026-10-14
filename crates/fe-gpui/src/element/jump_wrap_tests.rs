@@ -1,6 +1,5 @@
 //! A jump in a view that starts partway down a soft-wrapped row: its labels
-//! reach the last row in view, and the letters after `{c1}` are the labels
-//! after `{c2}`.
+//! reach the last row in view after `{c2}`.
 
 use fe_buffer::Buffer;
 use fe_editor::EditorModel;
@@ -70,10 +69,11 @@ fn labels_reach_the_last_row_from_partway_down_a_wrapped_row(cx: &mut TestAppCon
     });
     assert!(bottom > 2, "{bottom}");
 
-    cx.simulate_keystrokes("g s a");
+    cx.simulate_keystrokes("g s a c");
     draw(&view, cx);
+    assert_eq!(head(&view, cx), 0);
     let letters: Vec<(usize, String)> = (labels(&view, cx).into_iter())
-        .filter(|(.., state)| *state == JumpLabelState::Preview)
+        .filter(|(.., state)| *state == JumpLabelState::Live)
         .map(|(offset, text, _)| (offset, text))
         .collect();
     let rows: Vec<u32> = view.read_with(cx, |view, _| {
@@ -85,14 +85,6 @@ fn labels_reach_the_last_row_from_partway_down_a_wrapped_row(cx: &mut TestAppCon
     // Every whole row in view, to the last, has its targets labelled.
     assert_eq!(rows.last(), Some(&bottom), "{rows:?}");
 
-    cx.simulate_keystrokes("c");
-    draw(&view, cx);
-    assert_eq!(head(&view, cx), 0);
-    let live: Vec<(usize, String)> = (labels(&view, cx).into_iter())
-        .filter(|(.., state)| *state == JumpLabelState::Live)
-        .map(|(offset, text, _)| (offset, text))
-        .collect();
-    assert_eq!(live, letters);
     let (offset, letter) = letters.last().unwrap().clone();
     cx.simulate_keystrokes(&letter);
     assert_eq!(head(&view, cx), offset);

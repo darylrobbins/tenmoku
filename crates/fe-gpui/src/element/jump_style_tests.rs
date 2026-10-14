@@ -205,19 +205,11 @@ fn labels_use_theme_slots(cx: &mut TestAppContext) {
     assert_eq!(glyph, Hsla::from(rgb(0x345678)));
     let bold = Some((glyph, FontWeight::BOLD));
 
+    // Nothing is painted after `{c1}`.
     cx.simulate_keystrokes("g s a");
     draw(&view, cx);
-    // A direct target is a marker, not a label.
-    let labels: Vec<_> = (laid_out(&view, cx).into_iter())
-        .filter(|(_, state)| *state != JumpLabelState::Direct)
-        .collect();
-    let painted = label_paints(&paints());
-    assert!(!labels.is_empty());
-    assert_eq!(painted.len(), labels.len());
-    for ((bounds, state), paint) in labels.iter().zip(&painted) {
-        assert_eq!(*state, JumpLabelState::Preview);
-        assert_eq!(*paint, (*bounds, preview, bold));
-    }
+    assert_eq!(laid_out(&view, cx), []);
+    assert!(label_paints(&paints()).is_empty());
 
     cx.simulate_keystrokes("b");
     draw(&view, cx);
@@ -227,17 +219,14 @@ fn labels_use_theme_slots(cx: &mut TestAppContext) {
     let count = |state| labels.iter().filter(|(_, s)| *s == state).count();
     assert!(count(JumpLabelState::Live) > 0 && count(JumpLabelState::Concealed) > 0);
     for ((bounds, state), paint) in labels.iter().zip(&after_c2) {
-        let expected = match state {
-            JumpLabelState::Live => (*bounds, live, bold),
-            JumpLabelState::Concealed => (*bounds, preview, None),
-            JumpLabelState::Preview | JumpLabelState::Direct => {
-                panic!("a {state:?} label while labels wait")
-            }
+        let expected = match *state == JumpLabelState::Live {
+            true => (*bounds, live, bold),
+            false => (*bounds, preview, None),
         };
         assert_eq!(*paint, expected);
     }
 
-    for (_, fill, glyph) in painted.iter().chain(&after_c2) {
+    for (_, fill, glyph) in &after_c2 {
         assert_eq!(fill.a, 1., "{fill:?} isn't opaque");
         let mut colors = vec![*fill];
         colors.extend(glyph.map(|(color, _)| color));

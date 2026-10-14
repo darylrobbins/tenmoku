@@ -1990,9 +1990,7 @@ pub(crate) struct JumpLayout {
     pub(crate) labels: Vec<JumpLabelLayout>,
 }
 
-/// One label of a [`JumpLayout`]: a box over its target's char, or for a
-/// direct target, its char's block grown by [`JUMP_DIRECT_BORDER`] on
-/// every side, for the border to ring it.
+/// One label of a [`JumpLayout`]: a box over its target's char.
 pub(crate) struct JumpLabelLayout {
     /// Its target's, for the tests.
     #[cfg(test)]
@@ -2008,18 +2006,11 @@ pub(crate) struct JumpLabelLayout {
 /// text stays readable while the labels stand out.
 const JUMP_BACKDROP_ALPHA: f32 = 0.3;
 
-/// The width of a direct target's border, which rings its char's block
-/// from outside so nothing covers the char.
-const JUMP_DIRECT_BORDER: Pixels = px(2.);
-
 /// While vim has a jump pending, its labels on the frame's rows
 /// ([`fe_vim::VimState::jump_overlay`]), each a block over its target's
-/// char (a direct target's ring around it), and a backdrop once a char is
-/// typed. The rows are those the jump's session takes from this frame's
-/// viewport ([`fe_vim::jump::view_rows`]), so the letters after `{c1}` are
-/// the labels after `{c2}`: a partly shown last row has none. At most
-/// [`MAX_MATCHES`] labels, live, preview and direct ones before concealed
-/// ones, so a jump over more targets still shows the labels it waits for.
+/// char, and a backdrop once a char is typed. The rows are those the jump's
+/// session takes from this frame's viewport ([`fe_vim::jump::view_rows`]).
+/// At most [`MAX_MATCHES`] labels, live ones before concealed ones, so a jump over more targets still shows the labels it waits for.
 /// `None` with no jump pending. Labels off to a side of a scrolled line are
 /// left out.
 fn jump_layout(layout: &mut FrameLayout, view: &EditorView) -> Option<JumpLayout> {
@@ -2039,21 +2030,11 @@ fn jump_layout(layout: &mut FrameLayout, view: &EditorView) -> Option<JumpLayout
     let overlay = vim.jump_overlay(&view.model, rows)?;
     let text = view.model.text();
     let visible = frame.text_bounds();
-    let ring = f32::from(JUMP_DIRECT_BORDER);
     let mut labels: Vec<(usize, JumpLabelLayout)> = (overlay.labels.into_iter())
         .filter_map(|label| {
             let rect = block_rect(layout, text, label.offset)?;
             let beside = rect.x + rect.width <= visible.x || rect.x >= visible.x + visible.width;
             (!beside).then(|| {
-                let rect = match label.state {
-                    JumpLabelState::Direct => Rect {
-                        x: rect.x - ring,
-                        y: rect.y - ring,
-                        width: rect.width + 2. * ring,
-                        height: rect.height + 2. * ring,
-                    },
-                    _ => rect,
-                };
                 let layout = JumpLabelLayout {
                     #[cfg(test)]
                     offset: label.offset,
@@ -2092,18 +2073,6 @@ pub(crate) enum JumpPaint {
         fill: Hsla,
         glyph: Option<(Hsla, FontWeight)>,
     },
-    /// A direct target's marker: a border around its char's block, no fill.
-    Direct {
-        bounds: Bounds<Pixels>,
-        color: Hsla,
-        width: Pixels,
-    },
-    /// A piece of a direct target's border, as painted: the border less
-    /// what overlaps another target's char or a label.
-    DirectEdge {
-        bounds: Bounds<Pixels>,
-        color: Hsla,
-    },
     /// A block caret, painted over the backdrop.
     BlockCaret {
         bounds: Bounds<Pixels>,
@@ -2118,71 +2087,10 @@ thread_local! {
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
-/// The [`JUMP_DIRECT_BORDER`] border just inside `ring`, a direct target's
-/// laid-out rect, as rects to fill: less every other direct target's char
-/// block and every label's box, so where targets sit side by side (or a row
-/// apart) no border covers another's char or label, and their borders
-/// merge.
-fn direct_ring(
-    ring: Bounds<Pixels>,
-    labels: &[(Bounds<Pixels>, SharedString, JumpLabelState)],
-) -> Vec<Bounds<Pixels>> {
-    let w = JUMP_DIRECT_BORDER;
-    let (x0, y0) = (ring.origin.x, ring.origin.y);
-    let (x1, y1) = (ring.right(), ring.bottom());
-    let rect = |x0: Pixels, y0: Pixels, x1: Pixels, y1: Pixels| {
-        Bounds::from_corners(point(x0, y0), point(x1, y1))
-    };
-    let mut edges = vec![
-        rect(x0, y0, x1, y0 + w),
-        rect(x0, y1 - w, x1, y1),
-        rect(x0, y0 + w, x0 + w, y1 - w),
-        rect(x1 - w, y0 + w, x1, y1 - w),
-    ];
-    let others = (labels.iter()).filter(|(other, ..)| *other != ring);
-    for (other, _, state) in others {
-        let other = match state {
-            JumpLabelState::Direct => rect(
-                other.origin.x + w,
-                other.origin.y + w,
-                other.right() - w,
-                other.bottom() - w,
-            ),
-            _ => *other,
-        };
-        edges = (edges.into_iter())
-            .flat_map(|edge| subtract(edge, other))
-            .collect();
-    }
-    edges
-}
-
-/// What of `a` is outside `b`: up to four rects.
-fn subtract(a: Bounds<Pixels>, b: Bounds<Pixels>) -> Vec<Bounds<Pixels>> {
-    if !a.intersects(&b) {
-        return vec![a];
-    }
-    let (top, bottom) = (b.origin.y.max(a.origin.y), b.bottom().min(a.bottom()));
-    let pieces = [
-        // Above, below, then beside within b's rows.
-        (a.origin.x, a.origin.y, a.right(), top),
-        (a.origin.x, bottom, a.right(), a.bottom()),
-        (a.origin.x, top, b.origin.x.min(a.right()), bottom),
-        (b.right().max(a.origin.x), top, a.right(), bottom),
-    ];
-    (pieces.into_iter())
-        .filter(|&(x0, y0, x1, y1)| x1 > x0 && y1 > y0)
-        .map(|(x0, y0, x1, y1)| Bounds::from_corners(point(x0, y0), point(x1, y1)))
-        .collect()
-}
-
 /// A pending jump over the text: the backdrop, if any, then each label, an
 /// opaque box with its glyph in bold in the theme's `jump_label_foreground`.
-/// A live label's box is `jump_label`; a preview's is `jump_label_preview`,
-/// and so is a concealed one's, which has no glyph. A direct target, the one
-/// its `{c2}` jumps straight to, is no label but a [`JUMP_DIRECT_BORDER`]
-/// border of `jump_label` just outside its char's block, so nothing covers
-/// the char, cut back where it meets another target ([`direct_ring`]).
+/// A live label's box is `jump_label`; a concealed one's is
+/// `jump_label_preview`, with no glyph.
 fn paint_jump(
     backdrop: Option<Bounds<Pixels>>,
     labels: &[(Bounds<Pixels>, SharedString, JumpLabelState)],
@@ -2206,33 +2114,9 @@ fn paint_jump(
         ..gpui::font(theme.font_family.clone())
     };
     for (rect, label, state) in labels {
-        if *state == JumpLabelState::Direct {
-            let color = theme.jump_label;
-            #[cfg(test)]
-            JUMP_PAINTS.with(|paints| {
-                paints.borrow_mut().push(JumpPaint::Direct {
-                    bounds: *rect,
-                    color,
-                    width: JUMP_DIRECT_BORDER,
-                })
-            });
-            for edge in direct_ring(*rect, labels) {
-                window.paint_quad(fill(edge, color));
-                #[cfg(test)]
-                JUMP_PAINTS.with(|paints| {
-                    paints.borrow_mut().push(JumpPaint::DirectEdge {
-                        bounds: edge,
-                        color,
-                    })
-                });
-            }
-            continue;
-        }
         let fill_color = match state {
             JumpLabelState::Live => theme.jump_label,
-            JumpLabelState::Preview | JumpLabelState::Concealed | JumpLabelState::Direct => {
-                theme.jump_label_preview
-            }
+            JumpLabelState::Concealed => theme.jump_label_preview,
         };
         window.paint_quad(fill(*rect, fill_color));
         let glyph = (*state != JumpLabelState::Concealed)
@@ -2351,11 +2235,7 @@ mod jump_tests;
 mod jump_style_tests;
 
 #[cfg(test)]
-mod jump_direct_tests;
-
 #[cfg(test)]
-mod jump_ring_tests;
-
 #[cfg(test)]
 mod jump_wrap_tests;
 

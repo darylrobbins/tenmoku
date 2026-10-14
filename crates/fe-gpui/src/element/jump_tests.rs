@@ -1,6 +1,6 @@
 //! A pending vim jump in the editor: its labels painted over the targets on
-//! a dimmed backdrop, readable, its query in the status bar, and the letters
-//! shown after `{c1}` being the labels that, typed after `{c2}`, jump.
+//! a dimmed backdrop, readable, its query in the status bar, and none shown
+//! after `{c1}`.
 
 use fe_buffer::Buffer;
 use fe_config::EditorPalette;
@@ -159,79 +159,26 @@ fn laid_out(
     })
 }
 
-/// After `g s {c1}`, the targets of `{c1}{c2}` shown: the direct ones
-/// and those with a letter, with it.
-fn preview(
-    view: &Entity<EditorView>,
-    cx: &mut VisualTestContext,
-    c2: char,
-) -> (Vec<usize>, Vec<(usize, String)>) {
-    let text = view.read_with(cx, |view, _| view.model().text().to_string());
-    let group = |offset: usize| text[offset + 1..].starts_with(c2);
-    let shown: Vec<(usize, String, JumpLabelState)> = (laid_out(view, cx).into_iter())
-        .filter(|&(offset, ..)| group(offset))
-        .collect();
-    let direct = (shown.iter())
-        .filter(|(.., state)| *state == JumpLabelState::Direct)
-        .map(|&(offset, ..)| offset)
-        .collect();
-    let letters: Vec<(usize, String)> = (shown.iter())
-        .filter(|(.., state)| *state == JumpLabelState::Preview)
-        .map(|(offset, text, _)| (*offset, text.clone()))
-        .collect();
-    assert!(letters.len() > 1, "{shown:?}");
-    (direct, letters)
-}
-
-/// From the caret at the text's start, `g s {c1}` then `{c2}`: the letter
-/// each target of `{c1}{c2}` shows after `{c1}` is its label after `{c2}`,
-/// and the target with none is where it autojumped.
-fn preview_labels_match_live(
-    view: &Entity<EditorView>,
-    cx: &mut VisualTestContext,
-    c1: char,
-    c2: char,
-) {
+/// From the caret at the text's start, `g s {c1}`: no label shown. Then
+/// `{c2}`: the target it autojumps to, or the caret stays at 0 and Live
+/// labels wait, the last of which, typed, lands the caret on its target.
+fn labels_only_after_c2(view: &Entity<EditorView>, cx: &mut VisualTestContext, c1: char, c2: char) {
     assert_eq!(head(view, cx), 0);
     cx.simulate_keystrokes(&format!("g s {c1}"));
     draw(view, cx);
-    let (direct, letters) = preview(view, cx, c2);
+    assert_eq!(laid_out(view, cx), []);
     cx.simulate_keystrokes(&c2.to_string());
     draw(view, cx);
-    let labels: Vec<(usize, String)> = (laid_out(view, cx).into_iter())
+    let live: Vec<(usize, String)> = (laid_out(view, cx).into_iter())
         .filter(|(.., state)| *state == JumpLabelState::Live)
         .map(|(offset, text, _)| (offset, text))
         .collect();
-    assert_eq!(letters, labels, "{c1}{c2}: after {{c1}}, then after {{c2}}");
-    match direct[..] {
-        [] => assert_eq!(head(view, cx), 0, "{c1}{c2} waits"),
-        [first] => assert_eq!(head(view, cx), first, "{c1}{c2} autojumps"),
-        _ => panic!("{c1}{c2}: {direct:?} direct"),
-    }
-    cx.simulate_keystrokes("escape g g");
+    assert!(live.len() > 1, "{c1}{c2}: {live:?}");
+    let (offset, letter) = live.last().unwrap().clone();
+    cx.simulate_keystrokes(&letter);
+    assert_eq!(head(view, cx), offset, "{c1}{c2} then {letter}");
+    cx.simulate_keystrokes("g g");
     draw(view, cx);
-}
-
-/// From the caret at the text's start, `g s {c1} {c2}` then the letter a
-/// target of `{c1}{c2}` showed after `{c1}`, for the first and last such
-/// target: the caret lands on it.
-fn type_ahead_lands(view: &Entity<EditorView>, cx: &mut VisualTestContext, c1: char, c2: char) {
-    for last in [false, true] {
-        assert_eq!(head(view, cx), 0);
-        cx.simulate_keystrokes(&format!("g s {c1}"));
-        draw(view, cx);
-        let (_, letters) = preview(view, cx, c2);
-        let (offset, letter) = match last {
-            true => letters.last(),
-            false => letters.first(),
-        }
-        .cloned()
-        .unwrap();
-        cx.simulate_keystrokes(&format!("{c2} {letter}"));
-        assert_eq!(head(view, cx), offset, "{c1}{c2} then {letter}");
-        cx.simulate_keystrokes("g g");
-        draw(view, cx);
-    }
 }
 
 /// Rows of two `ab`s and three `ac`s after a row with neither: with nine
@@ -256,32 +203,44 @@ fn folded(cx: &mut TestAppContext) -> (Entity<EditorView>, &mut VisualTestContex
 }
 
 #[gpui::test]
-fn preview_labels_match_live_with_partial_row(cx: &mut TestAppContext) {
-    let (view, cx) = partial_row(cx);
-    preview_labels_match_live(&view, cx, 'a', 'b');
-    preview_labels_match_live(&view, cx, 'a', 'c');
-}
-
-#[gpui::test]
-fn preview_labels_match_live_with_a_fold(cx: &mut TestAppContext) {
-    let (view, cx) = folded(cx);
-    preview_labels_match_live(&view, cx, 'a', 'b');
-    preview_labels_match_live(&view, cx, 'a', 'c');
-}
-
-#[gpui::test]
-fn type_ahead_from_preview_lands_on_target(cx: &mut TestAppContext) {
+fn labels_only_after_c2_with_partial_row(cx: &mut TestAppContext) {
     // `ab` autojumps, `ac` waits.
     let (view, cx) = partial_row(cx);
-    type_ahead_lands(&view, cx, 'a', 'b');
-    type_ahead_lands(&view, cx, 'a', 'c');
+    labels_only_after_c2(&view, cx, 'a', 'b');
+    labels_only_after_c2(&view, cx, 'a', 'c');
 }
 
 #[gpui::test]
-fn type_ahead_from_preview_lands_on_target_with_a_fold(cx: &mut TestAppContext) {
+fn labels_only_after_c2_with_a_fold(cx: &mut TestAppContext) {
     let (view, cx) = folded(cx);
-    type_ahead_lands(&view, cx, 'a', 'b');
-    type_ahead_lands(&view, cx, 'a', 'c');
+    labels_only_after_c2(&view, cx, 'a', 'b');
+    labels_only_after_c2(&view, cx, 'a', 'c');
+}
+
+#[gpui::test]
+fn no_labels_after_first_char(cx: &mut TestAppContext) {
+    // Many `p`s, each followed by a different char, `u` among them often.
+    let text = ('a'..='z').map(|c| format!("p{c} pu ")).collect::<String>();
+    let (view, cx) = editor_of(cx, text, 10.);
+    cx.simulate_keystrokes("g s p");
+    draw(&view, cx);
+    assert_eq!(vim_status(&view, cx), "JUMP p");
+    assert_eq!(laid_out(&view, cx), []);
+    let marks = paints()
+        .into_iter()
+        .filter(|paint| matches!(paint, JumpPaint::Label { .. }));
+    assert_eq!(marks.count(), 0);
+    // `u` autojumps to the nearest `pu` or waits; a shown Live label then
+    // moves the caret to its target.
+    cx.simulate_keystrokes("u");
+    draw(&view, cx);
+    let live: Vec<(usize, String)> = (laid_out(&view, cx).into_iter())
+        .filter(|(.., state)| *state == JumpLabelState::Live)
+        .map(|(offset, text, _)| (offset, text))
+        .collect();
+    let (offset, letter) = live.last().expect("Live labels after pu").clone();
+    cx.simulate_keystrokes(&letter);
+    assert_eq!(head(&view, cx), offset);
 }
 
 #[gpui::test]
@@ -310,71 +269,6 @@ fn paints() -> Vec<JumpPaint> {
     JUMP_PAINTS.with(|paints| paints.borrow().clone())
 }
 
-#[gpui::test]
-fn direct_target_shows_its_char(cx: &mut TestAppContext) {
-    let (view, cx) = editor_of(cx, "ab ab ab ac\nab".to_string(), 10.);
-    for (name, palette) in palettes() {
-        view.update(cx, |view, cx| view.set_colors(&palette, cx));
-        cx.simulate_keystrokes("g s a");
-        draw(&view, cx);
-        // `ab` autojumps to (0, 3), `ac` to (0, 9).
-        let direct: Vec<usize> = (laid_out(&view, cx).into_iter())
-            .filter(|(.., state)| *state == JumpLabelState::Direct)
-            .map(|(offset, ..)| offset)
-            .collect();
-        assert_eq!(direct, [3, 9], "{name}");
-        let cells: Vec<Bounds<Pixels>> = view.update(cx, |view, _| {
-            let layout = view.layout.as_mut().unwrap();
-            (direct.iter())
-                .map(|&offset| {
-                    let at = layout.caret_bounds(offset).unwrap();
-                    let next = layout.caret_bounds(offset + 1).unwrap();
-                    Bounds {
-                        origin: at.origin,
-                        size: size(next.origin.x - at.origin.x, at.size.height),
-                    }
-                })
-                .collect()
-        });
-        let paints = paints();
-        let rings: Vec<(Bounds<Pixels>, Pixels)> = (paints.iter())
-            .filter_map(|paint| match *paint {
-                JumpPaint::Direct { bounds, width, .. } => Some((bounds, width)),
-                _ => None,
-            })
-            .collect();
-        assert_eq!(rings.len(), cells.len(), "{name}: {paints:?}");
-        for (cell, (ring, width)) in cells.iter().zip(rings) {
-            // The border is outside the char's block.
-            let inside = Bounds {
-                origin: point(ring.origin.x + width, ring.origin.y + width),
-                size: size(ring.size.width - width * 2., ring.size.height - width * 2.),
-            };
-            let within = |a: Pixels, b: Pixels| a >= b - px(0.01);
-            assert!(
-                within(cell.origin.x, inside.origin.x)
-                    && within(cell.origin.y, inside.origin.y)
-                    && within(inside.right(), cell.right())
-                    && within(inside.bottom(), cell.bottom()),
-                "{name}: the ring {ring:?} covers {cell:?}"
-            );
-            for paint in &paints {
-                if let JumpPaint::Label { bounds, .. } = paint {
-                    let cell = Bounds {
-                        origin: point(cell.origin.x + px(0.01), cell.origin.y + px(0.01)),
-                        size: size(cell.size.width - px(0.02), cell.size.height - px(0.02)),
-                    };
-                    assert!(
-                        !bounds.intersects(&cell),
-                        "{name}: a label {bounds:?} covers {cell:?}"
-                    );
-                }
-            }
-        }
-        cx.simulate_keystrokes("escape");
-    }
-}
-
 /// WCAG relative luminance.
 fn luminance(color: Rgba) -> f32 {
     let linear = |c: f32| {
@@ -398,10 +292,7 @@ fn label_glyphs_readable(cx: &mut TestAppContext) {
     let (view, cx) = editor(cx);
     for (name, palette) in palettes() {
         view.update(cx, |view, cx| view.set_colors(&palette, cx));
-        for (keys, state) in [
-            ("g s a", JumpLabelState::Preview),
-            ("b", JumpLabelState::Live),
-        ] {
+        for (keys, state) in [("g s a b", JumpLabelState::Live)] {
             cx.simulate_keystrokes(keys);
             draw(&view, cx);
             let shown = (laid_out(&view, cx).into_iter())

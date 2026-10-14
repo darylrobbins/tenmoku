@@ -799,30 +799,20 @@ fn operator_visual_label_extends_the_selection() {
 }
 
 #[test]
-fn operator_overlay_previews_then_shows_live_labels() {
+fn overlay_shows_labels_only_after_c2() {
     let mut vim = session("ab ab ab ac", (0, 0), 10, "");
     assert_eq!(vim.jump_overlay(), None);
     assert_eq!(vim.state().jump_query(), None);
     vim.feed("gs").unwrap();
     assert_eq!(vim.state().jump_query(), Some(""));
     assert_eq!(shown(&vim), []);
-    // After `{c1}`, each match's label in its `{c2}` group: `ab` would
-    // autojump to (0, 3), marked direct, labelling (0, 6); `ac` has one
-    // target, marked direct.
+    // After `{c1}`, nothing.
     vim.feed("a").unwrap();
     assert_eq!(vim.state().jump_query(), Some("a"));
-    let preview = |at, l: &str| (at, l.to_string(), JumpLabelState::Preview);
-    let direct = |at| (at, String::new(), JumpLabelState::Direct);
-    assert_eq!(
-        shown(&vim),
-        [direct((0, 3)), preview((0, 6), "s"), direct((0, 9))]
-    );
+    assert_eq!(shown(&vim), []);
     // After an operator, `ab` takes the full set and doesn't autojump.
     let mut vim = session("ab ab ab ac", (0, 0), 10, "dgsa");
-    assert_eq!(
-        shown(&vim),
-        [preview((0, 3), "s"), preview((0, 6), "f"), direct((0, 9))]
-    );
+    assert_eq!(shown(&vim), []);
     vim.feed("b").unwrap();
     assert_eq!(vim.state().jump_query(), Some("ab"));
     let live = |at, l: &str| (at, l.to_string(), JumpLabelState::Live);
@@ -832,9 +822,6 @@ fn operator_overlay_previews_then_shows_live_labels() {
     // A blank or the row's end is `<Space>`'s group.
     let vim = session("a\nab a\ta", (0, 0), 10, "dgSa");
     assert_eq!(vim.jump_overlay(), Some(Default::default()));
-    let vim = session("a\nab a\ta", (1, 0), 10, "dgsa");
-    let want = [preview((1, 3), "s"), preview((1, 5), "f")];
-    assert_eq!(shown(&vim), want);
 }
 
 #[test]

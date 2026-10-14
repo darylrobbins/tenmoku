@@ -27,21 +27,18 @@ fn labels(vim: &HeadlessVim, state: JumpLabelState) -> Vec<(u32, u32, String)> {
 }
 
 #[test]
-fn preview_letters_are_labels_with_a_fold() {
+fn labels_are_after_c2_only_with_a_fold() {
     let mut vim = vim();
     vim.feed("gsa").unwrap();
-    let direct = labels(&vim, JumpLabelState::Direct);
-    let letters = labels(&vim, JumpLabelState::Preview);
+    assert_eq!(vim.jump_overlay().unwrap().labels, []);
     // Rows 1, 2 and, past the fold, 12 to 18: 18 targets, which autojump.
-    assert_eq!(direct, [(1, 0, String::new())]);
+    vim.feed("b").unwrap();
+    assert_eq!(vim.cursor(), (1, 0));
+    let letters = labels(&vim, JumpLabelState::Live);
     let rows: Vec<u32> = letters.iter().map(|&(row, ..)| row).collect();
     let mut want = vec![1, 2, 2];
     want.extend((12..19).flat_map(|row| [row, row]));
     assert_eq!(rows, want);
-
-    vim.feed("b").unwrap();
-    assert_eq!(vim.cursor(), (1, 0));
-    assert_eq!(labels(&vim, JumpLabelState::Live), letters);
     let (row, column, letter) = letters.last().unwrap().clone();
     vim.feed(&letter).unwrap();
     assert_eq!(vim.cursor(), (row, column as usize));
