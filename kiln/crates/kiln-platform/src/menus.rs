@@ -42,7 +42,8 @@ impl Installed {
 
 /// Sets `menus` as the app's menu bar, each item showing the single key
 /// the keymap runs it with, if any. They're set again whenever
-/// [`keys::set_keymap`] swaps the keymap. Call after [`keys::init`].
+/// [`keys::set_keymap`] swaps the keymap. Windows redraw, so a menu bar
+/// drawn in one follows. Call after [`keys::init`].
 pub fn install(cx: &mut App, menus: MenuBar) {
     if !cx.has_global::<Installed>() {
         // Nothing in the element tree handles `MenuCommand`, so it always
@@ -51,6 +52,7 @@ pub fn install(cx: &mut App, menus: MenuBar) {
     }
     cx.set_global(Installed(menus));
     refresh(cx);
+    cx.refresh_windows();
 }
 
 /// The menus [`install`] set, if any: for a menu bar the host draws itself

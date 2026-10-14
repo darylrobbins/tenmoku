@@ -26,11 +26,14 @@
 //! });
 //! ```
 //!
-//! The app's commands are registered through the config, not after
-//! `init`, because `init` checks the keymap and menus against every
-//! command registered when it runs: one registered later would be dropped
-//! from them as unknown. Taking them in the config makes that order the
-//! only one there is.
+//! `init` checks the keymap and menus against every command registered
+//! when it runs, so the app's commands are registered through the config
+//! ([`Config::commands`]), before that check. A command added through
+//! [`crate::Contributions`] instead may come before `init` or any time
+//! after, with its default keys and menu item: each addition after `init`
+//! resolves the keymap and menus again, checking the app's and the user's
+//! against the grown set, so a binding or item naming a command added
+//! later takes it up then.
 //!
 //! The user's files (settings, keymap and theme) are watched from `init`
 //! on, and each change applies to every window: see
@@ -54,9 +57,14 @@ use kiln_platform::{
 };
 use kiln_ui::{Assets, TextField, Theme, ThemeMode, set_themes};
 
-use crate::config::UserTheme;
+use crate::{
+    config::UserTheme,
+    contributions::{self, Shipped},
+};
 
 mod defaults;
+
+pub(crate) use defaults::toml_escape;
 
 /// GPUI's application for this platform, with kiln-ui's icons and other
 /// assets installed. GPUI's Linux backends (X11 and Wayland) come with
@@ -80,7 +88,7 @@ type Hook = Box<dyn FnMut(&mut App)>;
 type AddSettings = Box<dyn FnOnce(ConfigService) -> (ConfigService, Vec<Diagnostic>)>;
 
 /// Each catalog in turn, until one knows the command.
-struct Catalogs(Vec<Rc<dyn CommandCatalog>>);
+pub(crate) struct Catalogs(pub(crate) Vec<Rc<dyn CommandCatalog>>);
 
 impl CommandCatalog for Catalogs {
     fn check(&self, command: &CommandId, args: &Value) -> Result<(), CatalogError> {
@@ -101,12 +109,12 @@ pub struct Config {
     app_id: String,
     app_name: SharedString,
     commands: Vec<Register>,
-    catalogs: Vec<Rc<dyn CommandCatalog>>,
+    pub(crate) catalogs: Vec<Rc<dyn CommandCatalog>>,
     keymap: Option<Source>,
     user_keymap: Option<PathBuf>,
     keymap_reloaded: Option<Hook>,
     menus: Option<Source>,
-    menu_shortcut_context: Vec<String>,
+    pub(crate) menu_shortcut_context: Vec<String>,
     theme_mode: ThemeMode,
     /// One store for each settings type, in the order first given.
     settings: Vec<(TypeId, AddSettings)>,
@@ -315,7 +323,7 @@ impl Config {
         os: Os,
         catalog: Option<&dyn CommandCatalog>,
     ) -> (Keymap, Vec<Diagnostic>) {
-        let (mut layers, mut diagnostics) = self.own_keymap(os, catalog);
+        let (mut layers, mut diagnostics) = self.own_keymap(os, catalog, None);
         if let Some(path) = &self.user_keymap {
             let (layer, found) = load_keymap_layer(path, catalog);
             layers.extend(layer);
@@ -388,12 +396,15 @@ impl Global for Watching {}
 /// 1. kiln's command dispatch, with the app commands (`app.quit`,
 ///    `window.close` and the rest) as typed actions too: [`crate::app`](mod@crate::app),
 ///    [`crate::window`]; and the shell's, such as `menu_bar.open`;
-/// 2. the app's own commands, from [`Config::commands`];
+/// 2. the app's own commands, from [`Config::commands`], and those
+///    contributed so far ([`crate::Contributions`]);
 /// 3. the keymap and menus, kiln's bundled ones too if
-///    [`Config::default_keys`] and [`Config::default_menus`] are on,
-///    parsed for this platform and checked against every command
-///    registered so far ([`catalog`]: the shell's picker commands too),
-///    and the app's own catalogs ([`Config::catalog`]), then installed;
+///    [`Config::default_keys`] and [`Config::default_menus`] are on, and
+///    the contributed commands' keys and items, parsed for this platform
+///    and checked against every command registered so far ([`catalog`]:
+///    the shell's picker commands too), and the app's own catalogs
+///    ([`Config::catalog`]), then installed; from here on, each command
+///    contributed resolves them again;
 /// 4. in-window prompts where the platform has no native ones, and
 ///    `TextField`'s editing keys for this platform;
 /// 5. kiln's dark and light themes, in [`Config::theme_mode`];
@@ -408,7 +419,9 @@ impl Global for Watching {}
 /// # Panics
 ///
 /// With [`Config::fail_fast`] on, if the keymap or menus the app ships
-/// have any diagnostic.
+/// have any diagnostic, such as two contributed commands with the same
+/// default keys in the same context; and when a command contributed later
+/// brings one.
 pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
     commands::init(cx, config.app_name.clone());
     crate::app_commands::init(cx);
@@ -416,22 +429,26 @@ pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
     for register in std::mem::take(&mut config.commands) {
         register(cx);
     }
+    contributions::register_early(cx);
     cx.set_global(AppInfo {
         id: config.app_id.clone(),
         name: config.app_name.clone(),
     });
 
     let os = Os::current();
-    let mut catalogs = vec![catalog(cx)];
-    catalogs.append(&mut config.catalogs);
-    let catalog: Rc<dyn CommandCatalog> = Rc::new(Catalogs(catalogs));
-    let (layers, keymap_diagnostics) = config.own_keymap(os, Some(&*catalog));
-    let (menu_bar, menu_diagnostics) = config.menu_bar_for(os, Some(&*catalog));
-    config.check_fail_fast(&[keymap_diagnostics.as_slice(), &menu_diagnostics].concat());
-    let keymap = config.keymap_store(layers, keymap_diagnostics, catalog.clone());
+    let catalog = contributions::shipped_catalog(&config, cx);
+    let shipped = contributions::shipped(&config, os, &*catalog, cx);
+    config.check_fail_fast(&shipped.diagnostics());
+    let Shipped {
+        layers,
+        keymap_diagnostics,
+        menu_bar,
+        menu_diagnostics,
+    } = shipped;
+    let keymap = config.keymap_store(layers, keymap_diagnostics, catalog);
     let mut diagnostics = keymap.diagnostics().to_vec();
     keys::init(cx, keymap.keymap().clone());
-    diagnostics.extend(menu_diagnostics);
+    diagnostics.extend(menu_diagnostics.iter().cloned());
     menus::install(cx, menu_bar);
 
     kiln_shell::init(cx);
@@ -457,6 +474,7 @@ pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
     }
     let target = config.log_target.unwrap_or(DEFAULT_LOG_TARGET);
     log_diagnostics_as(target, &diagnostics);
+    let shared_keymap = service.keymap_store().expect("the service has the keymap");
     let task = match config.batches.take() {
         Some(batches) => service.start_with(batches, cx),
         None if service.paths().is_empty() => {
@@ -473,6 +491,7 @@ pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
         },
     };
     cx.set_global(Watching(task));
+    contributions::start(cx, config, os, shared_keymap, menu_diagnostics);
     diagnostics
 }
 

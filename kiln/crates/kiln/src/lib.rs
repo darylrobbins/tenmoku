@@ -8,6 +8,7 @@
 mod app_builder;
 mod app_commands;
 mod config;
+mod contributions;
 mod ext;
 mod setup;
 
@@ -21,6 +22,10 @@ pub use kiln_ui as ui;
 /// The function [`app()`] beside the module [`app`](mod@app) of app commands:
 /// `kiln::app(..)` sets an app up, and `kiln::app::Quit` is a command.
 pub use app_builder::{AppBuilder, Started, app};
+pub use contributions::{
+    CONTRIBUTED_KEYS_PATH, CONTRIBUTED_MENUS_PATH, CommandSpec, Contributions, Keys, MenuSpec,
+    RegisterCommand,
+};
 pub use ext::binding_label_for;
 /// serde, for an app's settings type without a serde dependency of its
 /// own: `#[derive(Deserialize, Serialize)]` with

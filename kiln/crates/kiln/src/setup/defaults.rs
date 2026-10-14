@@ -60,22 +60,27 @@ impl Config {
 
     /// The keymap layers the app ships, as on `os`, their bindings checked
     /// against `catalog` if given: kiln's bundled keys if
-    /// [`Config::default_keys`] is on, then the app's. With their
-    /// diagnostics, which a layer with errors is left out over.
-    pub(super) fn own_keymap(
+    /// [`Config::default_keys`] is on, then `contributed` (the contributed
+    /// commands' default keys), then the app's. With their diagnostics,
+    /// which a layer with errors is left out over.
+    pub(crate) fn own_keymap(
         &self,
         os: Os,
         catalog: Option<&dyn CommandCatalog>,
+        contributed: Option<KeymapLayer>,
     ) -> (Vec<KeymapLayer>, Vec<Diagnostic>) {
         let mut layers = Vec::new();
         let mut diagnostics = Vec::new();
-        let bundled = self.default_keys.then(|| (Path::new(KEYMAP_PATH), KEYMAP));
+        let parse = |path: &Path, text: &str| KeymapLayer::parse_for(path, text, catalog, os);
+        let bundled = self
+            .default_keys
+            .then(|| parse(Path::new(KEYMAP_PATH), KEYMAP));
         let app = self
             .keymap
             .as_ref()
-            .map(|source| (source.path.as_path(), &*source.text));
-        for (path, text) in bundled.into_iter().chain(app) {
-            let (layer, found) = KeymapLayer::parse_for(path, text, catalog, os);
+            .map(|source| parse(&source.path, &source.text));
+        let contributed = contributed.map(|layer| (Some(layer), Vec::new()));
+        for (layer, found) in bundled.into_iter().chain(contributed).chain(app) {
             layers.extend(layer);
             diagnostics.extend(found);
         }
@@ -102,7 +107,7 @@ impl Config {
 
     /// Panics with every one of `diagnostics` if [`Config::fail_fast`] is
     /// on and there are any: those of the keymap and menus the app ships.
-    pub(super) fn check_fail_fast(&self, diagnostics: &[Diagnostic]) {
+    pub(crate) fn check_fail_fast(&self, diagnostics: &[Diagnostic]) {
         if !self.fail_fast || diagnostics.is_empty() {
             return;
         }
@@ -145,7 +150,7 @@ pub(super) fn name_app_menu(bar: &mut MenuBar, app_name: &str) {
 
 /// `text` as the inside of a TOML basic string: `"` and `\` escaped, and
 /// control characters as `\uXXXX`.
-fn toml_escape(text: &str) -> String {
+pub(crate) fn toml_escape(text: &str) -> String {
     let mut escaped = String::with_capacity(text.len());
     for c in text.chars() {
         match c {

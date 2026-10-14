@@ -29,16 +29,18 @@
 //! ([`ConfigService::log_target`]).
 
 use std::{
+    cell::RefCell,
     collections::VecDeque,
     future::poll_fn,
     io,
     path::{Path, PathBuf},
+    rc::Rc,
     sync::{Arc, Mutex, PoisonError},
     task::{Poll, Waker},
 };
 
 use gpui::{App, Global, Task};
-use kiln_core::{ConfigWatcher, Diagnostic, KeymapStore, SettingsStore, SettingsType};
+use kiln_core::{ConfigWatcher, Diagnostic, KeymapEvent, KeymapStore, SettingsStore, SettingsType};
 
 /// The log target the service logs under unless the app names its own:
 /// `kiln_platform::config`.
@@ -160,6 +162,70 @@ pub struct ConfigService {
     sources: Vec<Box<dyn ConfigSource>>,
     dirs: Vec<PathBuf>,
     log_target: Option<&'static str>,
+    keymap: Option<SharedKeymap>,
+}
+
+type Sources = RefCell<Vec<Box<dyn ConfigSource>>>;
+
+/// The sources of the service that started last, kept once its task ends
+/// (its batches closed, or nothing to watch): for [`SharedKeymap::update`]
+/// to publish every source's diagnostics.
+struct Running(Rc<Sources>);
+
+impl Global for Running {}
+
+/// The keymap store a [`ConfigService`] reloads, shared so the app can
+/// reach it after the service starts ([`ConfigService::keymap_store`]):
+/// to lay new default layers under the user's file, say, as commands are
+/// registered.
+#[derive(Clone)]
+pub struct SharedKeymap(Rc<RefCell<KeymapStore>>);
+
+impl SharedKeymap {
+    /// The store's effective keymap now.
+    pub fn keymap(&self) -> Arc<kiln_core::Keymap> {
+        self.0.borrow().keymap().clone()
+    }
+
+    /// The store's diagnostics now.
+    pub fn diagnostics(&self) -> Vec<Diagnostic> {
+        self.0.borrow().diagnostics().to_vec()
+    }
+
+    /// Changes the store with `change`, such as
+    /// [`KeymapStore::set_defaults`], and applies what it says changed as
+    /// a reload of the user's file does: a new keymap goes to
+    /// [`keys::init`] (which swaps it, reinstalling the menus), and new
+    /// diagnostics are logged and published in [`ConfigDiagnostics`]. The
+    /// service's `reloaded` hook isn't called: that's for the user's file.
+    pub fn update(
+        &self,
+        cx: &mut App,
+        change: impl FnOnce(&mut KeymapStore) -> Option<KeymapEvent>,
+    ) {
+        let (event, previous) = {
+            let mut store = self.0.borrow_mut();
+            let previous = store.diagnostics().to_vec();
+            (change(&mut store), previous)
+        };
+        let Some(event) = event else {
+            return;
+        };
+        if event.keymap != event.previous {
+            keys::init(cx, event.keymap);
+        }
+        if event.diagnostics != previous {
+            log_diagnostics_as(log_target(cx), &event.diagnostics);
+            let running = cx.try_global::<Running>().map(|running| running.0.clone());
+            // Borrowed only while a batch applies, which publishes once
+            // it's done.
+            if let Some(sources) = running
+                && let Ok(sources) = sources.try_borrow()
+            {
+                publish(&sources, cx);
+            }
+        }
+    }
 }
 
 impl ConfigService {
@@ -185,11 +251,24 @@ impl ConfigService {
     /// [`ConfigService::keymap`], calling `reloaded` after each reload
     /// that swaps the keymap, once it's in use: to report on the new
     /// keymap, say.
-    pub fn keymap_with(self, store: KeymapStore, reloaded: impl FnMut(&mut App) + 'static) -> Self {
+    pub fn keymap_with(
+        mut self,
+        store: KeymapStore,
+        reloaded: impl FnMut(&mut App) + 'static,
+    ) -> Self {
+        let store = SharedKeymap(Rc::new(RefCell::new(store)));
+        self.keymap = Some(store.clone());
         self.source(KeymapSource {
             store,
             reloaded: Box::new(reloaded),
         })
+    }
+
+    /// The keymap store, shared with the service, so the app can change
+    /// it once the service has started: the last one given to
+    /// [`ConfigService::keymap`] or [`ConfigService::keymap_with`], if any.
+    pub fn keymap_store(&self) -> Option<SharedKeymap> {
+        self.keymap.clone()
     }
 
     /// Logs diagnostics and reloads under `target`, such as the app's
@@ -296,33 +375,44 @@ impl ConfigService {
     }
 
     fn run(self, mut batches: Batches, watcher: Option<ConfigWatcher>, cx: &mut App) -> Task<()> {
-        let mut sources = self.sources;
+        let sources = Rc::new(RefCell::new(self.sources));
+        cx.set_global(Running(sources.clone()));
         cx.spawn(async move |cx| {
             // Watching for as long as this task runs.
             let _watcher = watcher;
             while let Some(batch) = batches.next().await {
-                cx.update(|cx| apply(&mut sources, &batch, cx));
+                cx.update(|cx| apply(&sources, &batch, cx));
             }
         })
     }
 }
 
-/// Hands `batch` to every source, logging and publishing diagnostics that
-/// changed.
-fn apply(sources: &mut [Box<dyn ConfigSource>], batch: &[PathBuf], cx: &mut App) {
-    let mut changed = false;
+/// Hands `batch` to every source, logging diagnostics that changed, then
+/// publishing them all if they did.
+fn apply(sources: &Sources, batch: &[PathBuf], cx: &mut App) {
+    let mut sources = sources.borrow_mut();
     for source in sources.iter_mut() {
         let previous = source.diagnostics();
         source.reload(batch, cx);
         let diagnostics = source.diagnostics();
         if diagnostics != previous {
             log_diagnostics_as(log_target(cx), &diagnostics);
-            changed = true;
         }
     }
-    if changed {
-        let all = sources.iter().flat_map(|source| source.diagnostics());
-        cx.set_global(ConfigDiagnostics(all.collect()));
+    publish(&sources, cx);
+}
+
+/// Sets [`ConfigDiagnostics`] to every source's diagnostics, if they
+/// differ from it.
+fn publish(sources: &[Box<dyn ConfigSource>], cx: &mut App) {
+    let all = ConfigDiagnostics(
+        sources
+            .iter()
+            .flat_map(|source| source.diagnostics())
+            .collect(),
+    );
+    if cx.try_global::<ConfigDiagnostics>() != Some(&all) {
+        cx.set_global(all);
     }
 }
 
@@ -376,25 +466,27 @@ impl<S: SettingsType> ConfigSource for SettingsSource<S> {
 }
 
 struct KeymapSource {
-    store: KeymapStore,
+    store: SharedKeymap,
     reloaded: Box<dyn FnMut(&mut App)>,
 }
 
 impl ConfigSource for KeymapSource {
     fn paths(&self) -> Vec<PathBuf> {
-        self.store.paths()
+        self.store.0.borrow().paths()
     }
 
     fn user_files(&self) -> Vec<PathBuf> {
-        self.store.paths()
+        self.paths()
     }
 
     fn install(&mut self, cx: &mut App) {
-        keys::init(cx, self.store.keymap().clone());
+        keys::init(cx, self.store.keymap());
     }
 
     fn reload(&mut self, changed: &[PathBuf], cx: &mut App) {
-        let Some(event) = self.store.reload(changed) else {
+        // Not borrowed while the hook runs, which may change it.
+        let event = self.store.0.borrow_mut().reload(changed);
+        let Some(event) = event else {
             return;
         };
         if event.keymap != event.previous {
@@ -405,7 +497,7 @@ impl ConfigSource for KeymapSource {
     }
 
     fn diagnostics(&self) -> Vec<Diagnostic> {
-        self.store.diagnostics().to_vec()
+        self.store.diagnostics()
     }
 }
 

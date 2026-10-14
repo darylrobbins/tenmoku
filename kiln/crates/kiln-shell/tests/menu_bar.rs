@@ -92,6 +92,29 @@ fn clicks_open_switch_choose_and_close(cx: &mut TestAppContext) {
     assert_eq!(ran(&pad, cx), ["pad.clear"]);
 }
 
+/// The menus can change while one is open, as when a command is
+/// contributed: one whose menu is gone closes, giving focus back, and the
+/// arrows don't step through an empty bar.
+#[gpui::test]
+fn a_menu_removed_while_open_closes(cx: &mut TestAppContext) {
+    let (root, pad, cx) = open(cx, linux());
+    let bar = cx.update(|_, cx| kiln_platform::menus::installed(cx).cloned().unwrap());
+    cx.simulate_keystrokes("f10 down");
+    assert_eq!(open_menu(&root, cx), Some((0, Some(2))));
+    cx.update(|_, cx| kiln_platform::menus::install(cx, Default::default()));
+    cx.run_until_parked();
+    assert_eq!(open_menu(&root, cx), None);
+    assert!(pad_focused(&pad, cx), "focus is back");
+
+    cx.update(|_, cx| kiln_platform::menus::install(cx, bar));
+    cx.simulate_keystrokes("f10");
+    assert_eq!(open_menu(&root, cx), Some((0, Some(0))));
+    cx.update(|_, cx| kiln_platform::menus::install(cx, Default::default()));
+    cx.simulate_keystrokes("left right");
+    assert_eq!(open_menu(&root, cx), None);
+    assert!(pad_focused(&pad, cx));
+}
+
 #[gpui::test]
 fn the_bar_sits_above_the_content(cx: &mut TestAppContext) {
     let (_, _, cx) = open(cx, linux());

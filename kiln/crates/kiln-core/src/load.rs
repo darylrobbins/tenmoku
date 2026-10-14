@@ -174,6 +174,31 @@ impl KeymapStore {
             return None;
         }
         user.read(self.catalog.as_deref());
+        self.update()
+    }
+
+    /// Replaces the default layers, their diagnostics and the catalog,
+    /// as [`KeymapStore::with_defaults`] takes them, then re-reads the
+    /// user's file against the new catalog: for commands registered since
+    /// the store was made, which bindings to them in the user's file then
+    /// take up. Returns what changed, as [`KeymapStore::reload`] does.
+    pub fn set_defaults(
+        &mut self,
+        defaults: Vec<KeymapLayer>,
+        default_diagnostics: Vec<Diagnostic>,
+        catalog: Option<Box<dyn CommandCatalog>>,
+    ) -> Option<KeymapEvent> {
+        self.defaults = defaults;
+        self.default_diagnostics = default_diagnostics;
+        self.catalog = catalog;
+        if let Some(user) = &mut self.user {
+            user.read(self.catalog.as_deref());
+        }
+        self.update()
+    }
+
+    /// Recombines the layers, returning what changed, if anything did.
+    fn update(&mut self) -> Option<KeymapEvent> {
         let (keymap, diagnostics) = self.effective();
         if keymap == self.keymap && diagnostics == self.diagnostics {
             return None;

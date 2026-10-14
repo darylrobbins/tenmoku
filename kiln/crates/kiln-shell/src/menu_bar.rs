@@ -154,13 +154,46 @@ impl MenuBarView {
         });
     }
 
+    /// The open menu, reconciled with `bar`, which may have changed since
+    /// it opened (as when a command is contributed): closed, giving focus
+    /// back, if `bar` has no menu at its index; its highlight dropped if
+    /// that's no longer a command item.
+    fn reconcile(
+        &mut self,
+        bar: &MenuBar,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<OpenMenu> {
+        let open = self.open?;
+        let Some(menu) = bar.menus.get(open.menu) else {
+            self.close(window, cx);
+            return None;
+        };
+        let item = open.item.filter(|&item| {
+            menu.items
+                .get(item)
+                .and_then(|item| item.command())
+                .is_some()
+        });
+        if item != open.item {
+            self.open = Some(OpenMenu { item, ..open });
+            cx.notify();
+        }
+        self.open
+    }
+
     fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let (Some(open), Some(bar)) = (self.open, Self::bar(cx)) else {
+        let (Some(_), Some(bar)) = (self.open, Self::bar(cx)) else {
             return;
         };
         if event.keystroke.modifiers.modified() {
             return;
         }
+        let Some(open) = self.reconcile(&bar, window, cx) else {
+            // Its menu is gone: the key closed it.
+            cx.stop_propagation();
+            return;
+        };
         let menus = bar.menus.len();
         match event.keystroke.key.as_str() {
             "escape" => self.close(window, cx),
@@ -202,7 +235,7 @@ impl Focusable for MenuBarView {
 }
 
 impl Render for MenuBarView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // The strip and panel read `cx.theme()`; they still take the flat
         // colours, which they ignore.
         let ui = ui_theme(cx);
@@ -232,9 +265,26 @@ impl Render for MenuBarView {
                     })
                 }
             });
+        if self
+            .open
+            .is_some_and(|open| bar.menus.get(open.menu).is_none())
+        {
+            // The installed menus changed under it: close it once drawn,
+            // when focus can move.
+            cx.defer_in(window, |this, window, cx| {
+                let bar = Self::bar(cx).unwrap_or_default();
+                this.reconcile(&bar, window, cx);
+            });
+        }
         if let Some(open) = self.open
             && let Some(menu) = bar.menus.get(open.menu)
         {
+            let highlighted = open.item.filter(|&item| {
+                menu.items
+                    .get(item)
+                    .and_then(|item| item.command())
+                    .is_some()
+            });
             let keymap = keys::current_keymap(cx);
             let entries = menu
                 .items
@@ -251,7 +301,7 @@ impl Render for MenuBarView {
                 .collect();
             let menu_ix = open.menu;
             let panel = MenuPanel::new(entries, &ui)
-                .highlighted(open.item)
+                .highlighted(highlighted)
                 .on_click({
                     let entity = entity.clone();
                     move |item, window, cx| {
