@@ -278,8 +278,10 @@ impl Text {
         self.utf16_to_offset(target)
     }
 
+    /// The char starting at `offset`; `None` at or past the end and inside a
+    /// char.
     pub fn char_at(&self, offset: usize) -> Option<char> {
-        (offset < self.len()).then(|| self.rope.char(offset))
+        (offset < self.len() && self.rope.is_char_boundary(offset)).then(|| self.rope.char(offset))
     }
 
     /// Iterates the text's chunks, borrowed straight from the rope.

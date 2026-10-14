@@ -39,6 +39,8 @@ pub trait TextSource: Send + Sync {
 
     fn is_char_boundary(&self, offset: usize) -> bool;
 
+    /// The char starting at `offset`; `None` at or past the end and inside a
+    /// char.
     fn char_at(&self, offset: usize) -> Option<char>;
 
     /// The chunks covering `range`, trimmed to it. A rope yields borrowed
