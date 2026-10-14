@@ -199,6 +199,10 @@ title = "Toggle Dock"
 command = "dock.toggle"
 
 [[menus.items]]
+title = "Toggle Terminal"
+command = "terminal.toggle"
+
+[[menus.items]]
 title = "Toggle Breadcrumbs"
 command = "view.toggle_breadcrumbs"
 
