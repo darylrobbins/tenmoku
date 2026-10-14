@@ -32,7 +32,6 @@ cd "$(git rev-parse --show-toplevel)"
 # inherited CARGO_TARGET_DIR can't put parallel items in one target (stale-binary race).
 export CARGO_TARGET_DIR="$PWD/target"
 
-BASE_REF="${BASE_REF:-main}"
 TEST_RE='(^|/)(tests|benches)/|(^|/)tests?\.rs$|_tests?\.rs$'
 JUNIT=target/nextest/ci/junit.xml
 STATE="$(git rev-parse --git-dir)/paddock-tdd"
@@ -41,6 +40,24 @@ die() {
   printf 'FAIL: %s\n' "$*" >&2
   exit 1
 }
+
+# A string field of the Paddock run that has branch $1 checked out ("taskId", "inputs.baseRef"),
+# or nothing. Steps read run data here rather than from `run:` templates: Paddock pastes those
+# into the shell unescaped, so a templated value could run as a command.
+run_field() {
+  paddock --json workflow runs --limit 100000 2>/dev/null | python3 -c '
+import json, sys
+value = next((r for r in json.load(sys.stdin) if r.get("branch") == sys.argv[1]), {})
+for key in sys.argv[2].split("."):
+    value = value.get(key) if isinstance(value, dict) else None
+print(value if isinstance(value, str) else "")
+' "$1" "$2" 2>/dev/null || true
+}
+
+# $BASE_REF overrides the run's baseRef input, for running a step by hand.
+BASE_REF="${BASE_REF:-$(run_field "$(git symbolic-ref --short -q HEAD || true)" inputs.baseRef)}"
+BASE_REF="${BASE_REF:-main}"
+git check-ref-format --branch "$BASE_REF" >/dev/null 2>&1 || die "not a branch name: $BASE_REF"
 
 require_clean() {
   [ -z "$(git status --porcelain)" ] || die "$1; git status is not clean"
@@ -125,14 +142,11 @@ check_commit() {
 
 # The title of the board task whose run has this branch checked out, or nothing.
 task_title() {
-  paddock --json workflow runs 2>/dev/null | python3 -c '
-import json, subprocess, sys
-runs = json.load(sys.stdin)
-task = next((r.get("taskId") for r in runs if r.get("branch") == sys.argv[1]), None)
-if task:
-    out = subprocess.run(["paddock", "--json", "task", "show", task], capture_output=True, text=True)
-    print(json.loads(out.stdout).get("title", "") if out.returncode == 0 else "")
-' "$1" 2>/dev/null || true
+  local task
+  task=$(run_field "$1" taskId)
+  [ -n "$task" ] || return 0
+  paddock --json task show "$task" 2>/dev/null |
+    python3 -c 'import json, sys; print(json.load(sys.stdin).get("title", ""))' 2>/dev/null || true
 }
 
 # The worktree that has branch $1 checked out, or nothing.
@@ -234,6 +248,7 @@ rerun-failed)
   ;;
 deps)
   for t in "$@"; do
+    [[ $t =~ ^[A-Za-z0-9_-]+$ ]] || die "not a Paddock task id: $t"
     state=$(paddock --json task show "$t" 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("state",""))' || true)
     [ "$state" = "done" ] || die "$t is not done (state: ${state:-unknown}); this lane shares files with it"
   done

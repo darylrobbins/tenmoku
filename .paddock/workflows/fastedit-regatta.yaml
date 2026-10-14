@@ -73,12 +73,14 @@ nodes:
           complexity: { enum: [xs, s, m, l, xl] }
           path: { enum: [tdd, direct] }
           newDirection: { type: boolean }
+          # crates and dependsOn go on a check's command line, which Paddock doesn't shell-escape:
+          # the pattern, which Paddock enforces on the output, is what keeps them safe there.
           crates: { type: array, minItems: 1, items: { type: string, pattern: "^[A-Za-z0-9_-]+$" } }
           scope: { type: array, minItems: 1, items: { type: string } }
           criteria: { type: array, minItems: 1, items: { type: string } }
           manualCriteria: { type: array, items: { type: string } }
           regressionTests: { type: array, items: { type: string } }
-          dependsOn: { type: array, items: { type: string } }
+          dependsOn: { type: array, items: { type: string, pattern: "^[A-Za-z0-9_-]+$" } }
           spec: { type: string }
 
   direction:
@@ -210,7 +212,7 @@ nodes:
   gate:
     type: check
     join: any
-    run: BASE_REF={{ inputs.baseRef }} scripts/paddock-check.sh ci
+    run: scripts/paddock-check.sh ci
     expect: pass
 
   # P1: the gate's failed tests, each rerun alone three times. Passing means they fail only
@@ -370,7 +372,7 @@ nodes:
   # local main by fast-forward or compare-and-swap. Nothing is pushed.
   land:
     type: check
-    run: BASE_REF={{ inputs.baseRef }} scripts/paddock-check.sh land
+    run: scripts/paddock-check.sh land
     expect: pass
 
   # Landing failed three times: main conflicts, or the merged result keeps failing.
@@ -384,13 +386,13 @@ nodes:
   # P4: build + test on the landing only when its tree isn't the tree ci passed.
   post:
     type: check
-    run: BASE_REF={{ inputs.baseRef }} scripts/paddock-check.sh post
+    run: scripts/paddock-check.sh post
     expect: pass
 
   # Reverts the landing on main and checks the revert. Main stays frozen until a person says.
   revert:
     type: check
-    run: BASE_REF={{ inputs.baseRef }} scripts/paddock-check.sh revert
+    run: scripts/paddock-check.sh revert
     expect: pass
 
   frozen:
@@ -403,7 +405,7 @@ nodes:
   # Pushes main to each Linux host's refs/remotes/mac/main and tells its lead to sync.
   sync:
     type: check
-    run: BASE_REF={{ inputs.baseRef }} scripts/paddock-check.sh sync-hosts
+    run: scripts/paddock-check.sh sync-hosts
     expect: pass
 
   # P12: the lane's target/ is 15-19 GB.

@@ -89,6 +89,8 @@ nodes:
               properties:
                 title: { type: string }
                 spec: { type: string }
+                # crates go on a check's command line, which Paddock doesn't shell-escape:
+                # the pattern, which Paddock enforces on the output, is what keeps them safe there.
                 crates: { type: array, minItems: 1, items: { type: string, pattern: "^[A-Za-z0-9_-]+$" } }
                 paths: { type: array, minItems: 1, items: { type: string } }
                 tests: { type: string }
@@ -105,7 +107,7 @@ nodes:
   ci:
     type: check
     join: any
-    run: BASE_REF={{ inputs.baseRef }} scripts/paddock-check.sh ci
+    run: scripts/paddock-check.sh ci
     expect: pass
 
   fix-ci:
@@ -226,7 +228,7 @@ nodes:
   recheck:
     type: check
     join: any
-    run: BASE_REF={{ inputs.baseRef }} scripts/paddock-check.sh ci
+    run: scripts/paddock-check.sh ci
     expect: pass
 
   # Lands on the local base like Regatta: a squash commit, fast-forwarded in its clean
@@ -234,7 +236,7 @@ nodes:
   land:
     type: check
     join: any
-    run: BASE_REF={{ inputs.baseRef }} scripts/paddock-check.sh land
+    run: scripts/paddock-check.sh land
     expect: pass
 
   land-failed:
