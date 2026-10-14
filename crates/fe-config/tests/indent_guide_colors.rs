@@ -18,7 +18,7 @@ fn alpha(color: Color) -> f32 {
 
 #[test]
 fn bundled_themes_set_faint_guides() {
-    assert_eq!(EditorColors::KEYS.len(), 21);
+    assert_eq!(EditorColors::KEYS.len(), 27);
     for (name, source) in [
         ("dark", include_str!("../themes/fastedit-dark.toml")),
         ("light", include_str!("../themes/fastedit-light.toml")),

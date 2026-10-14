@@ -31,6 +31,13 @@ change_deleted = "#d6a2a7"
 # A thin line at each indent level, and the one of the caret's block.
 indent_guide = "#0000001a"
 indent_guide_active = "#00000040"
+# The vim mode's segment in the status bar.
+vim_mode_normal = "#2f6fc7"
+vim_mode_insert = "#2e7d32"
+vim_mode_visual = "#9a2fa0"
+vim_mode_replace = "#c42b3a"
+vim_mode_command = "#8a5800"
+vim_mode_foreground = "#ffffff"
 
 # Highlight captures by dotted name. A capture without its own colour takes
 # the colour of its longest listed prefix: "function.method" uses "function".

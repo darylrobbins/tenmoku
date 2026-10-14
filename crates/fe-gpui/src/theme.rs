@@ -62,6 +62,12 @@ impl EditorTheme {
             change_deleted: hsla(editor.change_deleted),
             indent_guide: hsla(editor.indent_guide),
             indent_guide_active: hsla(editor.indent_guide_active),
+            vim_mode_normal: hsla(editor.vim_mode_normal),
+            vim_mode_insert: hsla(editor.vim_mode_insert),
+            vim_mode_visual: hsla(editor.vim_mode_visual),
+            vim_mode_replace: hsla(editor.vim_mode_replace),
+            vim_mode_command: hsla(editor.vim_mode_command),
+            vim_mode_foreground: hsla(editor.vim_mode_foreground),
             indent_guides: true,
             syntax: fe_syntax::resolve_theme(&syntax),
         }

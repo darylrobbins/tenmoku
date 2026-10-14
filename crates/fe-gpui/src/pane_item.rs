@@ -33,6 +33,9 @@ use crate::{EditorSettings, EditorTheme, EditorView};
 /// consts are their ids; a host item with one of them shows in its place.
 pub mod status {
     use gpui::SharedString;
+    use kiln_shell::StatusFill;
+
+    use crate::EditorTheme;
 
     /// `NORMAL`, `INSERT`, `VISUAL`, `VISUAL LINE` or `VISUAL BLOCK`, only
     /// with vim on, or `JUMP` and the chars typed (`JUMP ab`) while a jump
@@ -113,6 +116,21 @@ pub mod status {
             "visual_line" => "VISUAL LINE".into(),
             "visual_block" => "VISUAL BLOCK".into(),
             other => other.to_uppercase().into(),
+        }
+    }
+
+    /// The vim mode item's segment for a `vim.mode`, in `theme`'s colours:
+    /// an operator waiting is still normal mode.
+    pub(super) fn vim_mode_fill(mode: &str, theme: &EditorTheme) -> StatusFill {
+        let background = match mode {
+            "insert" => theme.vim_mode_insert,
+            "visual" | "visual_line" | "visual_block" => theme.vim_mode_visual,
+            "replace" => theme.vim_mode_replace,
+            _ => theme.vim_mode_normal,
+        };
+        StatusFill {
+            background,
+            foreground: theme.vim_mode_foreground,
         }
     }
 
@@ -557,11 +575,13 @@ pub(crate) fn status_items(editor: &EditorView) -> Vec<StatusItem> {
         None => status::PLAIN_TEXT.into(),
     };
     let vim_mode = editor.vim_mode().map(|mode| {
-        let text = match editor.vim_state().and_then(VimState::jump_query) {
-            Some(query) => status::jump_label(query),
-            None => status::vim_mode_label(mode),
+        // A pending jump is normal mode's colour, whatever mode it left.
+        let (text, fill_mode) = match editor.vim_state().and_then(VimState::jump_query) {
+            Some(query) => (status::jump_label(query), "normal"),
+            None => (status::vim_mode_label(mode), mode),
         };
         StatusItem::new(status::VIM_MODE, StatusSide::Left, 0, text)
+            .fill(status::vim_mode_fill(fill_mode, editor.theme()))
     });
     let vim_message = editor
         .vim_state()
@@ -619,3 +639,7 @@ mod save_tests;
 #[cfg(test)]
 #[path = "indent_status_tests.rs"]
 mod indent_status_tests;
+
+#[cfg(test)]
+#[path = "vim_mode_status_tests.rs"]
+mod vim_mode_status_tests;

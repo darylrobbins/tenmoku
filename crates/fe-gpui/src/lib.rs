@@ -125,6 +125,19 @@ pub struct EditorTheme {
     pub indent_guide: Hsla,
     /// The indent guide of the block the caret is in.
     pub indent_guide_active: Hsla,
+    /// The vim mode's status bar segment in normal mode, operator pending
+    /// and while a jump is pending.
+    pub vim_mode_normal: Hsla,
+    /// The vim mode's segment in insert mode.
+    pub vim_mode_insert: Hsla,
+    /// The vim mode's segment in the three visual modes.
+    pub vim_mode_visual: Hsla,
+    /// The vim mode's segment in replace mode.
+    pub vim_mode_replace: Hsla,
+    /// The segment on vim's command line.
+    pub vim_mode_command: Hsla,
+    /// The label on every vim mode's segment.
+    pub vim_mode_foreground: Hsla,
     /// Whether indent guides are drawn, from `editor.indent_guides`.
     pub indent_guides: bool,
     /// Text colour for each [`Highlight`], by [`Highlight::index`]; `None`

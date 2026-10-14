@@ -103,6 +103,20 @@ colors! {
         indent_guide,
         /// The indent guide of the block the caret is in.
         indent_guide_active,
+        /// The vim mode's segment in the status bar in normal mode, operator
+        /// pending or while a jump is pending.
+        vim_mode_normal,
+        /// The vim mode's segment in insert mode.
+        vim_mode_insert,
+        /// The vim mode's segment in the visual, visual line and visual block
+        /// modes.
+        vim_mode_visual,
+        /// The vim mode's segment in replace mode.
+        vim_mode_replace,
+        /// The segment on vim's command line, for `:`, `/` and `?`.
+        vim_mode_command,
+        /// The label on every vim mode's segment.
+        vim_mode_foreground,
     }
 }
 

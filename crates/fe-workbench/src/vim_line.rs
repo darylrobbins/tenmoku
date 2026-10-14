@@ -23,7 +23,7 @@ use fe_gpui::{EditorView, commands::RunCommand, vim_registers};
 use fe_ui::{ROW_HEIGHT, TextInput, TextInputEvent};
 use fe_vim::{CommandLineKind, HistoryRecall, HostCommand, Mode, VimKey, VimState};
 use gpui::{
-    AppContext as _, Context, Entity, EntityId, EventEmitter, Focusable as _,
+    AppContext as _, Context, Entity, EntityId, EventEmitter, Focusable as _, FontWeight,
     InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Styled as _,
     Subscription, WeakEntity, Window, div, px,
 };
@@ -60,6 +60,9 @@ pub(super) struct VimLine {
     recall: HistoryRecall,
     _blur: Option<Subscription>,
     _changed: Option<Subscription>,
+    /// The mode segment's background and label colours in the last render.
+    #[cfg(test)]
+    drawn_mode: Option<(gpui::Hsla, gpui::Hsla)>,
 }
 
 /// The kind of line `editor` has open, if any.
@@ -327,10 +330,43 @@ impl StatusBar {
         }
     }
 
-    /// The line, while it's open: its prefix, then its input.
-    pub(super) fn render_line(&self, cx: &mut Context<Self>) -> Option<impl IntoElement + use<>> {
-        let (_, prefix) = self.line.open.as_ref()?;
+    /// The line, while it's open: a `COMMAND` segment in the editor
+    /// theme's `vim_mode_command`, as kiln-ui draws a filled status entry,
+    /// then its prefix, then its input.
+    pub(super) fn render_line(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Option<impl IntoElement + use<>> {
+        #[cfg(test)]
+        {
+            self.line.drawn_mode = None;
+        }
+        let (editor, prefix) = self.line.open.as_ref()?;
+        let prefix = *prefix;
         let input = self.line.input.clone()?;
+        let (background, foreground) =
+            editor
+                .upgrade()
+                .map_or((self.ui.panel_background, self.ui.text), |editor| {
+                    let theme = editor.read(cx).theme();
+                    (theme.vim_mode_command, theme.vim_mode_foreground)
+                });
+        #[cfg(test)]
+        {
+            self.line.drawn_mode = Some((background, foreground));
+        }
+        let mode = div()
+            .debug_selector(|| "vim-line-mode".into())
+            .flex()
+            .flex_none()
+            .items_center()
+            .h_full()
+            .px_3()
+            .whitespace_nowrap()
+            .bg(background)
+            .text_color(foreground)
+            .font_weight(FontWeight::SEMIBOLD)
+            .child("COMMAND");
         let line = div()
             .key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::on_line_command))
@@ -343,12 +379,18 @@ impl StatusBar {
             .w_full()
             .h(ROW_HEIGHT)
             .overflow_hidden()
-            .pl_2()
             .bg(self.ui.panel_background)
             .border_t_1()
             .border_color(self.ui.border)
             .text_color(self.ui.text)
-            .child(prefix.to_string())
+            .child(mode)
+            .child(
+                div()
+                    .debug_selector(|| "vim-line-prefix".into())
+                    .flex_none()
+                    .ml_2()
+                    .child(prefix.to_string()),
+            )
             // The input pads its text; the line's follows the prefix, as
             // Vim's does.
             .child(div().flex_1().min_w_0().ml(px(-12.)).child(input));
@@ -381,12 +423,22 @@ fn run_in(
 mod history_tests;
 
 #[cfg(test)]
+#[path = "vim_line/mode_segment_tests.rs"]
+mod mode_segment_tests;
+
+#[cfg(test)]
 impl StatusBar {
     /// The open line's prefix and text.
     pub(crate) fn line(&self, cx: &gpui::App) -> Option<(char, String)> {
         let (_, prefix) = self.line.open.as_ref()?;
         let text = self.line.input.as_ref()?.read(cx).text().to_owned();
         Some((*prefix, text))
+    }
+
+    /// The mode segment's background and label colours in the last
+    /// render, if it drew the line.
+    pub(crate) fn line_mode_colors(&self) -> Option<(gpui::Hsla, gpui::Hsla)> {
+        self.line.drawn_mode
     }
 
     /// The line's input, once a line has opened.
