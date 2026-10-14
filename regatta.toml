@@ -64,7 +64,8 @@ needs = ["build"]
 [[pipeline.stages]]
 name = "no_gpui"
 run = "no_gpui"
-when = { paths = ["**/Cargo.toml", "Cargo.lock", "scripts/check-no-gpui.sh"] }
+# No path filter (2026-10-14): it also refuses OS branches outside the platform modules, which any .rs
+# file can add (T667's cfg!(target_os) landed past a Cargo.toml-only filter). It takes about 8 s.
 
 [[pipeline.stages]]
 name = "syntax_features"
@@ -109,6 +110,9 @@ shared_append_only = [
 # 2 since 2026-10-10 (user-approved), down from 4: the Mac hit load 150+, and more lanes run on neon's own
 # board. Disk headroom is guarded by scripts/ci-env.sh (T158).
 lanes_max = 2
+# 2 builds at a time on the host, down from the default 4 (2026-10-14, user-approved): a gate takes 6.2 min
+# alone and 14.2 min beside two others, and two or more ran at once 59% of the time, tripping timing flakes.
+host_pipeline_slots = 2
 
 [review]
 on_finish = true
