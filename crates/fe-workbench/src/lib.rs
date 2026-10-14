@@ -102,6 +102,7 @@ pub fn init(cx: &mut App) {
     dock::init(cx);
     dock_layout::init(cx);
     lsp::init(cx);
+    workbench::git_commands::init(cx);
     kiln_shell::menu_bar::register(cx);
     // `command_palette.toggle`, the palette listing these commands too.
     kiln_shell::command_palette::register(cx);
@@ -167,6 +168,7 @@ pub fn command_catalog() -> Box<dyn CommandCatalog> {
         Box::new(dock_layout::registry()),
         Box::new(find_bar::registry()),
         Box::new(lsp::registry()),
+        Box::new(workbench::git_commands::registry()),
         kiln_shell::menu_bar::catalog(),
         kiln_shell::command_palette::catalog(),
         Box::new(nav::registry()),
@@ -193,6 +195,7 @@ fn command_list() -> Vec<CommandMeta> {
     list.extend(dock_layout::registry().commands().cloned());
     list.extend(find_bar::registry().commands().cloned());
     list.extend(lsp::registry().commands().cloned());
+    list.extend(workbench::git_commands::registry().commands().cloned());
     list.extend(nav::registry().commands().cloned());
     list.extend(open::registry().commands().cloned());
     list.extend(outline_panel::registry().commands().cloned());

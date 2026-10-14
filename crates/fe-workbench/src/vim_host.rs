@@ -5,6 +5,10 @@
 //! pane and this window. Every answer, such as `E37`, is the editor's vim
 //! message, which the status bar shows.
 //!
+//! The other commands named with a capital, fugitive's and gitsigns', and
+//! `:diffsplit`, run as [`super::git_commands`] says; so do the host
+//! commands typed in an editor a git feature shows outside the tabs.
+//!
 //! Closing a tab here never asks (no [`kiln_shell::close::confirm`], no
 //! Discard/Cancel prompt): `:q` refuses a dirty tab with `E37`, and `:q!`
 //! discards by decision. A window left with no tab closes, as does one
@@ -21,12 +25,12 @@ use gpui::{App, Context, Entity, Task, WeakEntity, Window};
 use kiln_shell::{ItemHandle, PaneView as _};
 
 use super::Workbench;
+use super::git_commands::{self, GitCommand, GitOp};
 use crate::Pane;
 
 const E32: &str = "E32: No file name";
 const E37: &str = "E37: No write since last change (add ! to override)";
 const E99: &str = "E99: Current buffer is not in diff mode";
-const DIFFSPLIT: &str = "Not supported yet: :diffsplit";
 const RELOAD: &str = "Not supported yet: reloading a file from disk";
 
 impl Workbench {
@@ -43,7 +47,7 @@ impl Workbench {
             return;
         };
         if self.tab_of(&editor, cx).is_none() {
-            return;
+            return git_commands::owned_host_command(self, editor, command, window, cx);
         }
         match command {
             HostCommand::Write { .. } => self.vim_write(editor, false, window, cx),
@@ -64,19 +68,59 @@ impl Workbench {
             HostCommand::QuitAll { force } => self.vim_quit_all(&editor, force, window, cx),
             HostCommand::WriteAll => self.vim_write_all(&editor, window, cx),
             HostCommand::User {
-                name, bang, args, ..
-            } => {
-                let bang = if bang { "!" } else { "" };
-                let line = format!("{name}{bang} {args}");
-                message(
-                    &editor,
-                    format!("E492: Not an editor command: {}", line.trim_end()),
-                    cx,
-                );
-            }
+                name,
+                bang,
+                range,
+                args,
+            } => match git_commands::ex_command(&name, bang, range.is_some(), &args) {
+                Ok((command, args)) => {
+                    let op = GitOp {
+                        command,
+                        args,
+                        range,
+                        editor: Some(editor),
+                        typed: true,
+                    };
+                    self.run_git_op(op, window, cx);
+                }
+                Err(answer) => message(&editor, answer, cx),
+            },
             HostCommand::DiffGet { .. } | HostCommand::DiffPut { .. } => message(&editor, E99, cx),
-            HostCommand::DiffSplit { .. } => message(&editor, DIFFSPLIT, cx),
+            HostCommand::DiffSplit { path } => {
+                let op = GitOp {
+                    command: GitCommand::CompareFile,
+                    args: path,
+                    range: None,
+                    editor: Some(editor),
+                    typed: true,
+                };
+                self.run_git_op(op, window, cx);
+            }
         }
+    }
+
+    /// Has the host commands vim's keys leave in `editor`, the active one,
+    /// run as the line's do: `do` and `dp`, which fe-vim hands over as
+    /// `:diffget` and `:diffput`. The line takes its own as it submits.
+    pub(super) fn follow_vim_keys(
+        &mut self,
+        editor: Option<&Entity<EditorView>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let id = editor.map(Entity::entity_id);
+        if self.vim_keys.as_ref().map(|(followed, _)| *followed) == id {
+            return;
+        }
+        self.vim_keys = editor.map(|editor| {
+            let keys = cx.observe_in(editor, window, |workbench, editor, window, cx| {
+                let command = editor.update(cx, |editor, _| editor.take_vim_host_command());
+                if let Some(command) = command {
+                    workbench.run_vim_host_command(&editor.downgrade(), command, window, cx);
+                }
+            });
+            (editor.entity_id(), keys)
+        });
     }
 
     /// The pane showing `editor` and its tab's index there.

@@ -12,7 +12,9 @@ use fe_buffer::Buffer;
 use fe_config::TerminalSettings;
 use fe_editor::EditorModel;
 use fe_git::ChangeKind;
-use fe_gpui::{EditorSettings, EditorTheme, EditorView, SettingsEvent, commands::RunCommand};
+use fe_gpui::{
+    DiffView, EditorSettings, EditorTheme, EditorView, SettingsEvent, commands::RunCommand,
+};
 use fe_ui::{ROW_HEIGHT, UiTheme};
 use gpui::{
     AnyView, App, AppContext as _, Context, Entity, EntityId, EventEmitter, ExternalPaths,
@@ -286,6 +288,18 @@ pub struct Workbench {
     /// An editor a problem opened in, left in vim's insert or replace mode,
     /// and the problem's start: see [`Workbench::land_problem`].
     pub(crate) problem_landing: Option<(WeakEntity<EditorView>, usize)>,
+    /// The editors shown outside the tabs, and what shows each: see
+    /// [`Workbench::own_editor`].
+    owned_editors: Vec<(WeakEntity<EditorView>, git_commands::Owner)>,
+    /// The diff view whose left side had focus last: [`Self::active_editor`]
+    /// is that side while it's the active item, else the right one.
+    diff_left: Option<EntityId>,
+    /// Runs the host commands vim's keys leave in the active editor:
+    /// see [`Workbench::follow_vim_keys`].
+    vim_keys: Option<(EntityId, Subscription)>,
+    /// Every git op run and owned editor's host command, oldest first.
+    #[cfg(test)]
+    pub(crate) git_routed: Vec<git_commands::Routed>,
 }
 
 impl EventEmitter<RootChanged> for Workbench {}
@@ -516,6 +530,11 @@ impl Workbench {
             _layout_hooks: Vec::new(),
             disk_sync: DiskSync::new(window, cx),
             problem_landing: None,
+            owned_editors: Vec::new(),
+            diff_left: None,
+            vim_keys: None,
+            #[cfg(test)]
+            git_routed: Vec::new(),
         };
         // Under test, the chrome's window moves are recorded, not made.
         #[cfg(test)]
@@ -1876,9 +1895,29 @@ impl Workbench {
     }
 
     /// The active tab's editor, unless a file being read or a read error
-    /// shows in its place.
+    /// shows in its place; for a [`DiffView`], the side focused last, so
+    /// the vim line, the status bar and the editor commands follow it.
     pub fn active_editor<'a>(&self, cx: &'a App) -> Option<&'a Entity<EditorView>> {
-        self.active.read(cx).active_editor()
+        let pane = self.active.read(cx);
+        pane.active_editor().or_else(|| {
+            let diff = active_diff_view(pane)?;
+            let view = diff.read(cx);
+            let left = !view.is_inline() && self.diff_left == Some(diff.entity_id());
+            Some(if left { view.left() } else { view.right() })
+        })
+    }
+
+    /// Notes which side of the active diff view has focus, if one does.
+    fn follow_diff_side(&mut self, window: &Window, cx: &App) {
+        let Some(diff) = active_diff_view(self.active.read(cx)) else {
+            return;
+        };
+        let view = diff.read(cx);
+        if view.left().focus_handle(cx).is_focused(window) {
+            self.diff_left = Some(diff.entity_id());
+        } else if view.right().focus_handle(cx).is_focused(window) {
+            self.diff_left = None;
+        }
     }
 
     /// Tells the outline and the status bar which editor is active, if that
@@ -1888,16 +1927,15 @@ impl Workbench {
     /// it's the active pane's active editor. Whether the status bar's editor
     /// changed.
     fn follow_active_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        self.follow_diff_side(window, cx);
         let editor = self.active_editor(cx).cloned();
         let outline = self.dock.read(cx).outline().clone();
         outline.update(cx, |outline, cx| outline.set_editor(editor.as_ref(), cx));
         self.push_symbols(editor.as_ref(), cx);
         let id = editor.as_ref().map(Entity::entity_id);
-        let item = self
-            .active
-            .read(cx)
-            .active_item()
-            .map(ItemHandle::boxed_clone);
+        self.follow_vim_keys(editor.as_ref(), window, cx);
+        // The pane's active item, or a diff view's side.
+        let item = (editor.clone()).map(|editor| Box::new(editor) as Box<dyn ItemHandle>);
         let followed = self.status_bar.update(cx, |bar, cx| {
             let followed = bar.item_id() != item.as_ref().map(|item| item.id());
             bar.set_active_item(item.as_deref(), window, cx);
@@ -2059,6 +2097,9 @@ impl Workbench {
             }
             if let Some(op) = lsp::op(run, cx) {
                 return self.run_lsp_op(op, window, cx);
+            }
+            if let Some(command) = git_commands::op(run, cx) {
+                return self.run_git_command(command, window, cx);
             }
             if let Some(op) = pane_group::op(run, cx) {
                 return self.run_pane_op(op, window, cx);
@@ -2249,6 +2290,11 @@ fn restore_terminal_dock_sizes(dock: &mut DockState, saved: &Value) {
     dock.set_position(position);
 }
 
+/// The active item of `pane`, if it's a diff view.
+fn active_diff_view(pane: &Pane) -> Option<&Entity<DiffView>> {
+    pane.pane().active_item()?.downcast_ref::<DiffView>()
+}
+
 /// The prompt shown when the open panel fails with `error`: see
 /// [`kiln_platform::dialogs::open_panel_failed`].
 pub(crate) fn open_panel_failed(error: &str) -> (&'static str, String) {
@@ -2257,6 +2303,24 @@ pub(crate) fn open_panel_failed(error: &str) -> (&'static str, String) {
 
 #[path = "vim_host.rs"]
 mod vim_host;
+
+#[path = "git_commands.rs"]
+pub(crate) mod git_commands;
+
+#[path = "git_diff.rs"]
+mod git_diff;
+
+#[path = "git_stage.rs"]
+mod git_stage;
+
+#[path = "git_commit.rs"]
+mod git_commit;
+
+#[path = "git_blame.rs"]
+mod git_blame;
+
+#[path = "git_branch.rs"]
+mod git_branch;
 
 #[path = "external_drop.rs"]
 mod external_drop;
