@@ -547,7 +547,8 @@ impl Workbench {
         git
     }
 
-    /// Subscribes to a root's project panel.
+    /// Subscribes to a root's project panel. Its tree opening reads the git
+    /// status, so the tree shows it without the Changes panel drawn.
     fn follow_root(
         panel: &Entity<ProjectPanel>,
         window: &mut Window,
@@ -570,6 +571,7 @@ impl Workbench {
                         .update(cx, |git, cx| git.fs_changed(changes, cx));
                     workbench.disk_fs_changed(changes, window, cx);
                 }
+                PanelEvent::Opened => workbench.git.update(cx, GitState::refresh_once),
             },
         )
     }
@@ -683,7 +685,7 @@ impl Workbench {
     }
 
     /// Subscribes to a root's Changes panel: its rows open as the project
-    /// panel's do.
+    /// panel's do, and the project panel shows the statuses it lists.
     fn follow_changes(
         changes: &Entity<GitPanel>,
         window: &mut Window,
@@ -692,10 +694,16 @@ impl Workbench {
         cx.subscribe_in(
             changes,
             window,
-            |workbench, _, GitPanelEvent::OpenFile(path), window, cx| {
-                workbench
+            |workbench, changes, event, window, cx| match event {
+                GitPanelEvent::OpenFile(path) => workbench
                     .active
-                    .update(cx, |pane, cx| pane.open(path.clone(), window, cx))
+                    .update(cx, |pane, cx| pane.open(path.clone(), window, cx)),
+                GitPanelEvent::Listed => {
+                    let statuses: Vec<_> = (changes.read(cx).statuses())
+                        .map(|(path, kind)| (path.to_owned(), kind))
+                        .collect();
+                    (workbench.panel).update(cx, |panel, cx| panel.set_git_statuses(statuses, cx));
+                }
             },
         )
     }
@@ -1441,9 +1449,8 @@ impl Workbench {
             self.dock.update(cx, |dock, cx| dock.restore(saved, cx));
         }
         if let Some(saved) = entry.get("terminal_dock") {
-            let sizes = terminal_dock_sizes(saved);
             self.terminal_dock.update(cx, |dock, cx| {
-                dock.dock_mut().restore(&sizes);
+                restore_terminal_dock_sizes(dock.dock_mut(), saved);
                 cx.notify();
             });
         }
@@ -2189,6 +2196,33 @@ fn terminal_dock_sizes(saved: &Value) -> Value {
             .into_iter()
             .filter_map(size),
     )
+}
+
+/// Puts back the terminal dock's sizes as [`terminal_dock_sizes`] kept
+/// them, as [`DockState::restore`] does, but leaving its panel,
+/// visibility and rail as they are: `restore` puts the active panel on the
+/// rail, as if it had shown, and a terminal never shown takes no room.
+fn restore_terminal_dock_sizes(dock: &mut DockState, saved: &Value) {
+    let size = |key: &str| {
+        let size = saved.get(key)?.as_f64()?;
+        Some(px(size as f32))
+    };
+    let position = dock.position();
+    // Saved before the dock kept both: its size at its position.
+    if let Some(size) = size("size") {
+        dock.set_size(size);
+    }
+    let sizes = [
+        ("side_size", DockPosition::Right),
+        ("bottom_size", DockPosition::Bottom),
+    ];
+    for (key, at) in sizes {
+        if let Some(size) = size(key) {
+            dock.set_position(at);
+            dock.set_size(size);
+        }
+    }
+    dock.set_position(position);
 }
 
 /// The prompt shown when the open panel fails with `error`: see

@@ -342,3 +342,58 @@ fn the_terminal_keeps_its_width_and_height_in_the_layout(cx: &mut TestAppContext
     let [_, column] = drawn(&second, cx);
     assert_eq!(column.size.height, px(400.));
 }
+
+/// The terminal dock's state that a never-shown terminal must leave alone:
+/// whether it shows, whether the terminal is on the rail and drew a button
+/// there, whether its rail took room (a side's always does) and whether a
+/// column was drawn.
+fn terminal_untouched(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> [bool; 5] {
+    workbench.read_with(cx, |workbench, cx| {
+        let dock = workbench.terminal_dock().read(cx).dock();
+        let terminal = crate::terminal_panel::TERMINAL;
+        let rail = dock.drawn().rail_bounds();
+        [
+            dock.is_visible(),
+            dock.on_rail(terminal, cx),
+            dock.drawn().rail_button_bounds(terminal).is_some(),
+            rail.is_some_and(|rail| rail.size.width > px(0.) && rail.size.height > px(0.)),
+            dock.drawn().column_bounds().is_some(),
+        ]
+    })
+}
+
+#[gpui::test]
+fn restoring_a_never_shown_terminals_sizes_leaves_it_off_the_rail(cx: &mut TestAppContext) {
+    let mut app = cx.clone();
+    let (first, cx, _dir) = opened(cx);
+    size_terminal(px(400.), &first, cx);
+    run("terminal.move_to_right", cx);
+    size_terminal(px(320.), &first, cx);
+    let entry = first.read_with(cx, |workbench, cx| workbench.layout_entry(cx));
+    // Saved before the dock kept both sizes, with no places.
+    let legacy = Value::from_iter([(
+        "terminal_dock",
+        Value::from_iter([("size", Value::from(300.))]),
+    )]);
+
+    for (entry, at, size) in [(entry, Right, px(320.)), (legacy, Left, px(300.))] {
+        let (second, cx, _dir) = opened(&mut app);
+        // Where the layout puts it, so only the restored sizes differ.
+        run(&format!("terminal.move_to_{}", position_name(at)), cx);
+        let pane = |cx: &mut VisualTestContext| {
+            let pane = second.read_with(cx, |workbench, _| workbench.pane().clone());
+            pane.read_with(cx, |pane, _| pane.bounds())
+        };
+        let before = pane(cx);
+        let untouched = terminal_untouched(&second, cx);
+        assert_eq!(untouched[..3], [false; 3], "hidden, off the rail");
+        second.update_in(cx, |workbench, window, cx| {
+            workbench.restore_layout(&entry, window, cx)
+        });
+        draw(cx);
+        assert_eq!(positions(&second, cx).1, at);
+        assert_eq!(terminal_size(&second, cx), size);
+        assert_eq!(terminal_untouched(&second, cx), untouched, "{size:?}");
+        assert_eq!(pane(cx), before, "no room taken");
+    }
+}

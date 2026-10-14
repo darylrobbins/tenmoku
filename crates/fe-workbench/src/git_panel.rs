@@ -6,13 +6,18 @@
 //!
 //! The workbench's [`GitState`] reads the status of the repository
 //! containing the project root, on the background executor, one run at a
-//! time: when the panel's first drawn, on `git.refresh`, and as files and
-//! `.git` change. Each run, and each list given by
-//! [`GitPanel::set_statuses`], has a sequence number from the panel, and a
-//! run's result shows only if nothing newer has. Only files under the
+//! time: when the project tree opens, when the panel's first drawn unless a
+//! run has started, on `git.refresh`, and as files and `.git` change. Each
+//! run, and each list given by [`GitPanel::set_statuses`], has a sequence
+//! number from the panel, and a run's result shows only if nothing newer
+//! has. Only files under the
 //! project root are listed: the repository may be larger. Where the root is
 //! in the repository is found through symlinks and `..`, so a list given
 //! before that's known is kept and listed again once it is.
+//!
+//! The list is also the project tree's: whenever it changes the panel emits
+//! [`GitPanelEvent::Listed`], and the workbench hands
+//! [`GitPanel::statuses`] to the root's project panel.
 
 use std::{
     ops::Range,
@@ -43,6 +48,9 @@ pub enum GitPanelEvent {
     /// A row was clicked, or Enter pressed on it: open this file in the
     /// active pane.
     OpenFile(PathBuf),
+    /// The files listed, or their statuses, changed: see
+    /// [`GitPanel::statuses`].
+    Listed,
 }
 
 /// Where the project root is in its repository, once found.
@@ -93,7 +101,8 @@ pub struct GitPanel {
     entries: Vec<Entry>,
     selected: Option<usize>,
     /// Whether a run has started or been asked for: the first is when the
-    /// panel's first drawn, unless files changed before.
+    /// project tree opens, or when the panel's first drawn if that's
+    /// sooner or files changed before.
     read: bool,
     /// The last run started's, or list given's, sequence number.
     started: u64,
@@ -175,7 +184,7 @@ impl GitPanel {
                 self.located = Some(located);
                 if self.status == Status::Listed {
                     let listed = std::mem::take(&mut self.listed);
-                    self.show(self.shown, listed);
+                    self.show(self.shown, listed, cx);
                     cx.notify();
                 }
             }
@@ -184,25 +193,31 @@ impl GitPanel {
         match found {
             Ok(Some((located, statuses))) => {
                 self.located = Some(located);
-                self.show(seq, statuses);
+                self.show(seq, statuses, cx);
             }
             Ok(None) => {
                 self.located = None;
                 self.shown = seq;
                 self.status = Status::NotARepository;
-                self.listed.clear();
-                self.entries.clear();
-                self.selected = None;
+                self.clear(cx);
             }
             Err(error) => {
                 self.shown = seq;
                 self.status = Status::Failed(error.to_string());
-                self.listed.clear();
-                self.entries.clear();
-                self.selected = None;
+                self.clear(cx);
             }
         }
         cx.notify();
+    }
+
+    /// Lists nothing, saying so if something was listed.
+    fn clear(&mut self, cx: &mut Context<Self>) {
+        self.listed.clear();
+        self.selected = None;
+        if !self.entries.is_empty() {
+            self.entries.clear();
+            cx.emit(GitPanelEvent::Listed);
+        }
     }
 
     /// Replaces the list with `statuses`, the repository's, as of now: a
@@ -211,13 +226,20 @@ impl GitPanel {
     /// are listed; the rest are once it is.
     pub fn set_statuses(&mut self, statuses: Vec<FileStatus>, cx: &mut Context<Self>) {
         self.started += 1;
-        self.show(self.started, statuses);
+        self.show(self.started, statuses, cx);
         cx.notify();
     }
 
+    /// Each listed file's path from the root, and its status, sorted by
+    /// path.
+    pub(crate) fn statuses(&self) -> impl Iterator<Item = (&Path, ChangeKind)> {
+        (self.entries.iter()).map(|entry| (entry.relative.as_path(), entry.kind))
+    }
+
     /// Lists those of `statuses` under the root, sorted by path from it,
-    /// keeping the selected file selected if it's still listed.
-    fn show(&mut self, seq: u64, statuses: Vec<FileStatus>) {
+    /// keeping the selected file selected if it's still listed, and says
+    /// so if that changed what's listed.
+    fn show(&mut self, seq: u64, statuses: Vec<FileStatus>, cx: &mut Context<Self>) {
         let selected = self.selected_entry().map(|entry| entry.path.clone());
         self.shown = seq;
         let Some(root) = &self.root else {
@@ -238,8 +260,12 @@ impl GitPanel {
             .collect();
         entries.sort_by(|a, b| a.relative.cmp(&b.relative));
         self.selected = selected.and_then(|path| entries.iter().position(|e| e.path == path));
+        let changed = entries != self.entries;
         self.entries = entries;
         self.listed = statuses;
+        if changed {
+            cx.emit(GitPanelEvent::Listed);
+        }
     }
 
     fn selected_entry(&self) -> Option<&Entry> {
@@ -403,7 +429,7 @@ fn relative_to(root: &Path, located: Option<&Located>, path: &Path) -> Option<Pa
 }
 
 /// A status's letter in its row.
-fn letter(kind: ChangeKind) -> &'static str {
+pub(crate) fn letter(kind: ChangeKind) -> &'static str {
     match kind {
         ChangeKind::Modified => "M",
         ChangeKind::Added => "A",
@@ -415,7 +441,7 @@ fn letter(kind: ChangeKind) -> &'static str {
 
 /// A status letter's colour: deletions and conflicts in the error colour,
 /// modifications in the accent, additions in the accent turned green.
-fn letter_color(kind: ChangeKind, ui: &UiTheme) -> Hsla {
+pub(crate) fn letter_color(kind: ChangeKind, ui: &UiTheme) -> Hsla {
     match kind {
         ChangeKind::Deleted | ChangeKind::Conflicted => ui.error_text,
         ChangeKind::Modified => ui.accent,

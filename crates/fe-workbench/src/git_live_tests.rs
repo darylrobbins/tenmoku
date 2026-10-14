@@ -186,7 +186,11 @@ fn a_batch_naming_a_changed_file_lists_it_after_the_debounce(cx: &mut TestAppCon
     let dir = repo(&["a.rs", "b.rs"]);
     let (workbench, cx) = open(cx, dir.path());
     let (git, panel) = (git_state(&workbench, cx), changes(&workbench, cx));
-    assert_eq!(runs(&git, cx).0, 0, "nothing runs until something changes");
+    assert_eq!(
+        runs(&git, cx).0,
+        1,
+        "the tree's opening runs, then nothing until something changes"
+    );
 
     write(dir.path(), "a.rs", "one\nTWO\nthree\n");
     batch(
@@ -195,11 +199,11 @@ fn a_batch_naming_a_changed_file_lists_it_after_the_debounce(cx: &mut TestAppCon
         cx,
     );
     draw(cx);
-    assert_eq!(runs(&git, cx).0, 0, "not before the debounce");
+    assert_eq!(runs(&git, cx).0, 1, "not before the debounce");
     assert!(rows(&panel, cx).is_empty());
 
     settle(cx);
-    assert_eq!(runs(&git, cx), (1, (1, 1)), "read off the main thread");
+    assert_eq!(runs(&git, cx), (2, (2, 2)), "read off the main thread");
     assert_eq!(rows(&panel, cx), [("M", "a.rs".to_owned())]);
 
     // Fifty batches within the debounce, each restarting it.
@@ -215,7 +219,7 @@ fn a_batch_naming_a_changed_file_lists_it_after_the_debounce(cx: &mut TestAppCon
     }
     settle(cx);
     let (started, _) = runs(&git, cx);
-    assert!(started - 1 <= 2, "{} runs for fifty batches", started - 1);
+    assert!(started - 2 <= 2, "{} runs for fifty batches", started - 2);
     assert_eq!(
         rows(&panel, cx),
         [("M", "a.rs".to_owned()), ("M", "b.rs".to_owned())]
@@ -319,7 +323,8 @@ fn a_batch_while_status_runs_runs_it_exactly_once_more(cx: &mut TestAppContext) 
         cx,
     );
     settle(cx);
-    assert_eq!(runs(&git, cx), (1, (1, 1)));
+    // The tree's opening ran, and this one waits to land.
+    assert_eq!(runs(&git, cx), (2, (2, 2)));
     assert!(git.read_with(cx, |git, _| git.is_running()));
 
     // Batches while it runs, the debounce running out again.
@@ -332,12 +337,12 @@ fn a_batch_while_status_runs_runs_it_exactly_once_more(cx: &mut TestAppContext) 
     settle(cx);
     batch(&workbench, vec![FsChange::Rescan], cx);
     settle(cx);
-    assert_eq!(runs(&git, cx).0, 1, "batches wait for the run");
+    assert_eq!(runs(&git, cx).0, 2, "batches wait for the run");
 
     git.update(cx, |git, _| git.release_runs());
     draw(cx);
     settle(cx);
-    assert_eq!(runs(&git, cx), (2, (2, 2)), "exactly one more");
+    assert_eq!(runs(&git, cx), (3, (3, 3)), "exactly one more");
     assert!(!git.read_with(cx, |git, _| git.is_running()));
     assert_eq!(
         rows(&panel, cx),
@@ -485,14 +490,17 @@ fn set_statuses(panel: &Entity<GitPanel>, statuses: Vec<FileStatus>, cx: &mut Vi
 
 #[gpui::test]
 fn statuses_given_before_the_panel_shows_still_let_it_read(cx: &mut TestAppContext) {
-    let (_dir, real, link) = aliased();
-    let (workbench, cx) = open(cx, &link);
-    let panel = changes(&workbench, cx);
+    let (dir, real, link) = aliased();
     let added = FileStatus {
         path: real.join("z.rs"),
         kind: ChangeKind::Added,
     };
-    set_statuses(&panel, vec![added], cx);
+    // Given before anything ran, the tree's opening's run included.
+    let (_workbench, cx, panel) = open_held(cx, dir.path(), &link, |panel, cx| {
+        panel.set_statuses(vec![added], cx)
+    });
+    panel.update(cx, |panel, _| panel.release_runs());
+    draw(cx);
 
     dispatch("git.show_changes", cx);
     assert_eq!(panel.read_with(cx, |panel, _| panel.runs_started()), 1);
@@ -503,14 +511,45 @@ fn statuses_given_before_the_panel_shows_still_let_it_read(cx: &mut TestAppConte
     );
 }
 
+/// A workbench opened on `first`, then on `root`, whose Changes panel
+/// `prepare` is given before anything for `root` has run, and whose status
+/// runs for it, the first its tree's opening starts, wait for
+/// [`GitPanel::release_runs`] once they've read the status; and that
+/// panel.
+fn open_held<'a>(
+    cx: &'a mut TestAppContext,
+    first: &Path,
+    root: &Path,
+    prepare: impl FnOnce(&mut GitPanel, &mut gpui::Context<GitPanel>),
+) -> (
+    Entity<Workbench>,
+    &'a mut VisualTestContext,
+    Entity<GitPanel>,
+) {
+    let (workbench, cx) = open(cx, first);
+    let root = root.to_owned();
+    let panel = workbench.update_in(cx, |workbench, window, cx| {
+        workbench.set_root(root, window, cx);
+        // Its tree opens in the background: nothing has run.
+        let panel = workbench.dock().read(cx).changes().clone();
+        panel.update(cx, |panel, cx| {
+            panel.hold_runs();
+            prepare(panel, cx);
+        });
+        panel
+    });
+    draw(cx);
+    (workbench, cx, panel)
+}
+
 #[gpui::test]
 fn statuses_given_while_the_panel_first_reads_list_once_it_has(cx: &mut TestAppContext) {
-    let (_dir, real, link) = aliased();
-    let (workbench, cx) = open(cx, &link);
-    let panel = changes(&workbench, cx);
-    panel.update(cx, |panel, _| panel.hold_runs());
+    let (dir, real, link) = aliased();
+    let (_workbench, cx, panel) = open_held(cx, dir.path(), &link, |_, _| {});
     dispatch("git.show_changes", cx);
+    // The tree's opening's run, the first.
     assert!(panel.read_with(cx, |panel, _| panel.is_running()));
+    assert_eq!(panel.read_with(cx, |panel, _| panel.runs_started()), 1);
 
     let statuses = vec![
         FileStatus {
@@ -562,7 +601,8 @@ fn a_run_landing_while_a_batch_is_due_leaves_the_refresh_to_its_debounce(cx: &mu
         cx,
     );
     settle(cx);
-    assert_eq!(runs(&git, cx).0, 1);
+    // The tree's opening ran, and this one waits to land.
+    assert_eq!(runs(&git, cx).0, 2);
 
     // One batch's debounce runs out while the run does, asking for one
     // more; another's is still to when the run lands.
@@ -577,12 +617,12 @@ fn a_run_landing_while_a_batch_is_due_leaves_the_refresh_to_its_debounce(cx: &mu
     cx.executor().advance_clock(DEBOUNCE / 2);
     git.update(cx, |git, _| git.release_runs());
     draw(cx);
-    assert_eq!(runs(&git, cx).0, 1, "the latest batch's debounce stands");
+    assert_eq!(runs(&git, cx).0, 2, "the latest batch's debounce stands");
 
     cx.executor().advance_clock(DEBOUNCE / 2);
     draw(cx);
     settle(cx);
-    assert_eq!(runs(&git, cx).0, 2, "exactly one more");
+    assert_eq!(runs(&git, cx).0, 3, "exactly one more");
     assert_eq!(rows(&panel, cx), [("U", "b.rs".to_owned())]);
 }
 
@@ -672,7 +712,9 @@ fn a_base_that_failed_to_read_is_read_again_at_the_next_refresh(cx: &mut TestApp
     let a = open_file(&workbench, &dir.path().join("a.rs"), cx);
     assert!(row_changes(&a, cx).is_empty(), "no base yet");
     let git = git_state(&workbench, cx);
-    assert_eq!(runs(&git, cx).0, 1, "not read again until a refresh");
+    // The tree's opening read the status, and a.rs, whose HEAD text it then
+    // couldn't find, had it read again.
+    assert_eq!(runs(&git, cx).0, 2, "not read again until a refresh");
 
     // HEAD and the statuses are as they were, but the base is read again.
     fs::rename(&aside, &object).unwrap();
@@ -733,23 +775,24 @@ fn the_panel_and_the_watcher_share_one_status_run(cx: &mut TestAppContext) {
     state.update(cx, |git, _| git.hold_runs());
     batch(&workbench, vec![FsChange::Path(root.join("a.rs"))], cx);
     settle(cx);
-    assert_eq!(runs(&state, cx).0, 1);
+    // The tree's opening ran, and this one waits to land.
+    assert_eq!(runs(&state, cx).0, 2);
 
     // Committed with `.git` outside the root: no batch. Showing the panel
     // reads nothing more while the run's in flight; a refresh waits for it.
     git(dir.path(), &["commit", "-q", "-am", "commit"]);
     dispatch("git.show_changes", cx);
     dispatch("git.refresh", cx);
-    assert_eq!(runs(&state, cx).0, 1, "one runner");
+    assert_eq!(runs(&state, cx).0, 2, "one runner");
     assert_eq!(
         panel.read_with(cx, |panel, _| panel.runs_started()),
-        1,
+        2,
         "the panel's runs are the state's"
     );
 
     state.update(cx, |git, _| git.release_runs());
     draw(cx);
-    assert_eq!(runs(&state, cx), (2, (2, 2)));
+    assert_eq!(runs(&state, cx), (3, (3, 3)));
     assert_eq!(rows(&panel, cx), [], "the newer run's list, not the older");
     assert_eq!(
         panel
@@ -767,6 +810,8 @@ fn an_older_run_never_replaces_a_newer_list(cx: &mut TestAppContext) {
     let (git, panel) = (git_state(&workbench, cx), changes(&workbench, cx));
     git.update(cx, |git, _| git.hold_runs());
     dispatch("git.show_changes", cx);
+    // The tree's opening read the status already: this run waits to land.
+    dispatch("git.refresh", cx);
     assert!(panel.read_with(cx, |panel, _| panel.is_running()));
 
     // A newer list, given while the run reads.

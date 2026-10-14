@@ -165,8 +165,8 @@ fn show_changes_lists_the_changed_files_sorted_with_their_status(cx: &mut TestAp
     let (workbench, cx) = open(cx, Some(dir.path()));
     let dock = workbench.read_with(cx, |workbench, _| workbench.dock().clone());
     let panel = changes(&workbench, cx);
-    // Nothing is read until the panel shows.
-    assert_eq!(runs(&panel, cx).0, 0);
+    // The tree's opening read the status before the panel shows.
+    assert_eq!(runs(&panel, cx).0, 1);
 
     dispatch("git.show_changes", cx);
     assert_eq!(
@@ -317,27 +317,35 @@ fn a_refresh_while_status_runs_runs_once_more_off_the_main_thread(cx: &mut TestA
     let dir = changed();
     let (workbench, cx) = open(cx, Some(dir.path()));
     let panel = changes(&workbench, cx);
+    // The tree's opening read the status.
+    assert_eq!(runs(&panel, cx), (1, (1, 1)));
+    let listed = [
+        ("M", "a.rs".to_owned()),
+        ("D", "b.rs".to_owned()),
+        ("U", "c/d.rs".to_owned()),
+    ];
     panel.update(cx, |panel, _| panel.hold_runs());
     dispatch("git.show_changes", cx);
-    // The first run has read the status, and waits to land.
-    assert_eq!(runs(&panel, cx), (1, (1, 1)));
+    dispatch("git.refresh", cx);
+    // The second run has read the status, and waits to land.
+    assert_eq!(runs(&panel, cx), (2, (2, 2)));
     assert!(panel.read_with(cx, |panel, _| panel.is_running()));
-    assert!(rows(&panel, cx).is_empty());
+    assert_eq!(rows(&panel, cx), listed);
 
     write(dir.path(), "f.rs", "newer\n");
     dispatch("git.refresh", cx);
     dispatch("git.refresh", cx);
-    assert_eq!(runs(&panel, cx).0, 1, "refreshes wait for the run");
+    assert_eq!(runs(&panel, cx).0, 2, "refreshes wait for the run");
 
     panel.update(cx, |panel, _| panel.release_runs());
     draw(cx);
     assert_eq!(
         runs(&panel, cx),
-        (2, (2, 2)),
+        (3, (3, 3)),
         "exactly one more, off the main thread"
     );
     assert!(!panel.read_with(cx, |panel, _| panel.is_running()));
-    // The second run's result, which has the newer file.
+    // The third run's result, which has the newer file.
     assert_eq!(
         rows(&panel, cx),
         [
@@ -350,7 +358,7 @@ fn a_refresh_while_status_runs_runs_once_more_off_the_main_thread(cx: &mut TestA
 
     // A refresh with none running runs at once.
     dispatch("git.refresh", cx);
-    assert_eq!(runs(&panel, cx).0, 3);
+    assert_eq!(runs(&panel, cx).0, 4);
 }
 
 #[gpui::test]
@@ -360,6 +368,8 @@ fn a_run_older_than_the_list_set_lands_unshown(cx: &mut TestAppContext) {
     let panel = changes(&workbench, cx);
     panel.update(cx, |panel, _| panel.hold_runs());
     dispatch("git.show_changes", cx);
+    // The tree's opening read the status already: this run waits to land.
+    dispatch("git.refresh", cx);
     assert!(panel.read_with(cx, |panel, _| panel.is_running()));
 
     let root = dir.path().to_owned();

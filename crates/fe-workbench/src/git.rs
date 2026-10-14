@@ -3,8 +3,11 @@
 //! are found against.
 //!
 //! [`GitState`] is the workbench's, one per root, and the one thing that
-//! reads the repository's status: for the Changes panel when it's first
-//! drawn and on `git.refresh`, and as files change. Every batch from the
+//! reads the repository's status: as soon as the root's project tree opens
+//! (unless something read it already), as the tree shows the Changes
+//! panel's list too, so the status is read whether or not that panel's
+//! ever drawn; for the Changes panel when it's first drawn if nothing has
+//! run yet; on `git.refresh`; and as files change. Every batch from the
 //! project panel's watcher, `.git/` paths and rescans included, schedules a
 //! refresh [`DEBOUNCE`] after the last batch. A refresh reads the status
 //! and HEAD's id on the background executor, one run at a time: a refresh
@@ -125,14 +128,17 @@ pub(crate) struct GitState {
     running: Option<Task<()>>,
     /// Whether a refresh was asked for while something ran.
     again: bool,
+    /// Whether a refresh has started or been asked for.
+    asked: bool,
     #[cfg(test)]
     test: std::rc::Rc<std::cell::RefCell<git_panel::TestHooks>>,
 }
 
 impl GitState {
     /// The state for `root`, listing in `changes` and giving `workbench`'s
-    /// editors their bases. Nothing runs until the panel's drawn, an
-    /// editor's tracked, a batch comes or a refresh is asked for.
+    /// editors their bases. Nothing runs until a refresh is asked for (the
+    /// workbench asks once the root's tree opens), the panel's drawn, an
+    /// editor's tracked or a batch comes.
     pub(crate) fn new(
         root: Option<PathBuf>,
         changes: &Entity<GitPanel>,
@@ -152,6 +158,7 @@ impl GitState {
             due: false,
             running: None,
             again: false,
+            asked: false,
             #[cfg(test)]
             test: changes.read(cx).test_hooks(),
         }
@@ -191,6 +198,7 @@ impl GitState {
         let Some(root) = self.root.clone() else {
             return;
         };
+        self.asked = true;
         if self.running.is_some() {
             self.again = true;
             return;
@@ -218,6 +226,15 @@ impl GitState {
             git.update(cx, |git, cx| git.read_status(seq, statuses, &files, cx))
                 .ok();
         }));
+    }
+
+    /// Refreshes unless a refresh has started or been asked for already, as
+    /// for an editor opened first: what the root's tree opening asks, so
+    /// the tree shows the status without reading it twice.
+    pub(crate) fn refresh_once(&mut self, cx: &mut Context<Self>) {
+        if !self.asked {
+            self.refresh(cx);
+        }
     }
 
     /// Gives the editors among `editors` that have no base for their file

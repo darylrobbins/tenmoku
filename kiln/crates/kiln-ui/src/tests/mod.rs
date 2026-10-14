@@ -15,4 +15,5 @@ mod text_input_ime;
 mod theme_tokens;
 mod tree;
 mod tree_row;
+mod tree_row_status;
 mod ui_theme_compat;

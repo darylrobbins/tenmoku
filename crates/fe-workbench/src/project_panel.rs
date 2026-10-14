@@ -5,6 +5,12 @@
 //! Clicks and the keys of [`init`]'s registry (in the panel's
 //! [`KEY_CONTEXT`]) move it; [`ProjectPanel::reveal`] selects a file's row,
 //! expanding its collapsed ancestors.
+//!
+//! Rows show git's status as the Changes panel lists it
+//! ([`ProjectPanel::set_git_statuses`]): a changed file's name in its
+//! status letter's colour with the letter at the row's end, and a folder
+//! holding changes, expanded or collapsed, in the colour of the
+//! highest-precedence status beneath it with a dot.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -15,6 +21,7 @@ use std::{
 };
 
 use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry};
+use fe_git::ChangeKind;
 use fe_gpui::commands::RunCommand;
 use fe_project::{EntryKind, FileTree, FsChange, Listed, NodeId, ProjectWatcher, TreeOptions};
 use fe_ui::{Icon, TreeRow, UiTheme, file_icon, folder_icon};
@@ -23,6 +30,8 @@ use gpui::{
     InteractiveElement as _, IntoElement, ParentElement as _, Render, ScrollStrategy, Styled as _,
     Task, UniformListScrollHandle, Window, div, px, uniform_list,
 };
+
+use crate::git_panel;
 
 /// The key context the panel's element sets.
 pub(crate) const KEY_CONTEXT: &str = "project_panel";
@@ -38,6 +47,8 @@ pub enum PanelEvent {
     OpenFile(PathBuf),
     /// A watcher batch came, for others that follow the disk too.
     FsChanged(Vec<FsChange>),
+    /// The root opened: its tree shows.
+    Opened,
 }
 
 enum State {
@@ -81,6 +92,12 @@ pub struct ProjectPanel {
     focus: FocusHandle,
     scroll: UniformListScrollHandle,
     theme: UiTheme,
+    /// Changed files' statuses, by path from the root.
+    git_files: HashMap<PathBuf, ChangeKind>,
+    /// Each folder holding changed files, by path from the root (the root
+    /// itself not included), and the status it shows: the one of highest
+    /// precedence beneath it.
+    git_dirs: HashMap<PathBuf, ChangeKind>,
     /// The row ranges the last frame built: the list builds the visible
     /// rows and measures its first row twice.
     #[cfg(test)]
@@ -88,6 +105,9 @@ pub struct ProjectPanel {
     /// The row the last frame drew selected.
     #[cfg(test)]
     drawn_selected: Option<usize>,
+    /// Each row the last frame built, by name, and the status it drew.
+    #[cfg(test)]
+    drawn_status: Vec<(String, DrawnStatus)>,
     _watch: Option<Task<()>>,
 }
 
@@ -98,6 +118,7 @@ impl ProjectPanel {
     /// listed and watched in the background; nothing touches the file system
     /// on this thread.
     pub fn new(root: Option<PathBuf>, theme: UiTheme, cx: &mut Context<Self>) -> Self {
+        let options = tree_options();
         let watch = root.clone().map(|root| {
             let (sender, batches) = async_channel::unbounded::<Vec<FsChange>>();
             let opened = cx.background_spawn(async move {
@@ -117,7 +138,7 @@ impl ProjectPanel {
                     })
                     .ok()
                 };
-                (FileTree::open(&root, TreeOptions::default()), watcher)
+                (FileTree::open(&root, options), watcher)
             });
             cx.spawn(async move |this, cx| {
                 let (tree, _watcher) = opened.await;
@@ -154,10 +175,14 @@ impl ProjectPanel {
             focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
             theme,
+            git_files: HashMap::new(),
+            git_dirs: HashMap::new(),
             #[cfg(test)]
             built: Vec::new(),
             #[cfg(test)]
             drawn_selected: None,
+            #[cfg(test)]
+            drawn_status: Vec::new(),
             _watch: watch,
         }
     }
@@ -171,7 +196,10 @@ impl ProjectPanel {
 
     fn opened(&mut self, tree: io::Result<FileTree>, cx: &mut Context<Self>) {
         self.state = match tree {
-            Ok(tree) => State::Open(tree),
+            Ok(tree) => {
+                cx.emit(PanelEvent::Opened);
+                State::Open(tree)
+            }
             Err(error) => {
                 let root = self.root.as_deref().unwrap_or(Path::new(""));
                 log::error!("cannot open {}: {error}", root.display());
@@ -180,6 +208,40 @@ impl ProjectPanel {
         };
         self.advance_reveal(cx);
         cx.notify();
+    }
+
+    /// Shows `statuses`, each a changed file's path from the root and its
+    /// status, in place of those before: on the file's row, and on each
+    /// folder above it, which shows the status of highest precedence
+    /// beneath it (conflicted, modified, deleted, added, then untracked).
+    /// A deleted file has no row, but its folders show it.
+    pub fn set_git_statuses(
+        &mut self,
+        statuses: impl IntoIterator<Item = (PathBuf, ChangeKind)>,
+        cx: &mut Context<Self>,
+    ) {
+        let mut files = HashMap::new();
+        let mut dirs: HashMap<PathBuf, ChangeKind> = HashMap::new();
+        for (path, kind) in statuses {
+            for dir in path.ancestors().skip(1) {
+                if dir.as_os_str().is_empty() {
+                    break;
+                }
+                let shown = dirs.entry(dir.to_owned()).or_insert(kind);
+                if precedence(*shown) > precedence(kind) {
+                    // Its folders show this or higher already.
+                    break;
+                }
+                *shown = kind;
+            }
+            let shown = files.entry(path).or_insert(kind);
+            *shown = std::cmp::max_by_key(*shown, kind, |kind| precedence(*kind));
+        }
+        if files != self.git_files || dirs != self.git_dirs {
+            self.git_files = files;
+            self.git_dirs = dirs;
+            cx.notify();
+        }
     }
 
     /// Brings the tree up to date with a batch from the file watcher, then
@@ -536,6 +598,9 @@ impl ProjectPanel {
         let focused = self.focus.contains_focused(window, cx);
         #[cfg(test)]
         self.built.push(range.clone());
+        let git = !self.git_files.is_empty() || !self.git_dirs.is_empty();
+        #[cfg(test)]
+        let mut drawn = Vec::new();
         let mut seen = None;
         let rows = tree
             .rows(range.clone())
@@ -563,9 +628,24 @@ impl ProjectPanel {
                 if row.kind == EntryKind::Dir {
                     element = element.directory(row.expanded);
                 }
+                // An ignored row is left as it is.
+                let status = (git && !row.ignored)
+                    .then(|| self.git_status(tree, id, row.kind))
+                    .flatten();
+                if let Some((kind, badge)) = status {
+                    let color = git_panel::letter_color(kind, &self.theme);
+                    element = element.label_color(color).badge(badge, color);
+                }
+                #[cfg(test)]
+                drawn.push((row.name.to_string_lossy().into_owned(), {
+                    let (label, badge) = element.status();
+                    (label, badge.map(|(text, color)| (text.to_string(), color)))
+                }));
                 element
             })
             .collect();
+        #[cfg(test)]
+        self.drawn_status.extend(drawn);
         if let Some(ix) = seen {
             self.selected_hint = ix;
             #[cfg(test)]
@@ -574,6 +654,26 @@ impl ProjectPanel {
             }
         }
         rows
+    }
+
+    /// Node `id`'s git status, if it's a changed file or a folder holding
+    /// changes (`kind` says which it is), and its badge: the file's status
+    /// letter, or a dot.
+    fn git_status(
+        &self,
+        tree: &FileTree,
+        id: NodeId,
+        kind: EntryKind,
+    ) -> Option<(ChangeKind, &'static str)> {
+        let path = tree.path(id)?;
+        let relative = path.strip_prefix(tree.root_path()).ok()?;
+        match kind {
+            EntryKind::Dir => Some((*self.git_dirs.get(relative)?, "•")),
+            EntryKind::File | EntryKind::Symlink => {
+                let kind = *self.git_files.get(relative)?;
+                Some((kind, git_panel::letter(kind)))
+            }
+        }
     }
 
     fn message(&self, text: String) -> gpui::AnyElement {
@@ -592,6 +692,7 @@ impl Render for ProjectPanel {
         {
             self.built.clear();
             self.drawn_selected = None;
+            self.drawn_status.clear();
         }
         let title = match &self.state {
             State::Open(tree) => tree.root_path().file_name(),
@@ -636,6 +737,27 @@ impl Render for ProjectPanel {
 impl Focusable for ProjectPanel {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus.clone()
+    }
+}
+
+/// What the tree lists: ignored entries only if a test asks.
+fn tree_options() -> TreeOptions {
+    #[cfg(test)]
+    return TreeOptions {
+        show_ignored: tests::SHOW_IGNORED.get(),
+    };
+    #[cfg(not(test))]
+    TreeOptions::default()
+}
+
+/// Which status a folder holding several shows: the highest.
+fn precedence(kind: ChangeKind) -> u8 {
+    match kind {
+        ChangeKind::Untracked => 0,
+        ChangeKind::Added => 1,
+        ChangeKind::Deleted => 2,
+        ChangeKind::Modified => 3,
+        ChangeKind::Conflicted => 4,
     }
 }
 
@@ -769,6 +891,23 @@ impl ProjectPanel {
     }
 }
 
+/// What a row was built with: its label's colour, if it set one, and its
+/// badge and the badge's colour, if any.
+#[cfg(test)]
+pub(crate) type DrawnStatus = (Option<gpui::Hsla>, Option<(String, gpui::Hsla)>);
+
+#[cfg(test)]
+impl ProjectPanel {
+    /// Each row the last frame built, by name, and the status it drew.
+    pub(crate) fn drawn_status(&self) -> Vec<(String, DrawnStatus)> {
+        self.drawn_status.clone()
+    }
+}
+
 #[cfg(test)]
 #[path = "project_panel_hover_tests.rs"]
 mod hover_tests;
+
+#[cfg(test)]
+#[path = "project_panel_git_status_tests.rs"]
+pub(crate) mod tests;

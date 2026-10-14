@@ -24,10 +24,13 @@ pub(crate) const PADDING: Pixels = px(6.);
 const BOX_INSET: Pixels = px(4.);
 const CHEVRON_GAP: Pixels = px(2.);
 const ICON_GAP: Pixels = px(6.);
+const BADGE_GAP: Pixels = px(6.);
 
 /// One row of a file tree: indented by depth, with indent guides for its
-/// ancestors, a chevron for a directory, an optional icon, and its name,
-/// muted when ignored and in the error colour when it couldn't be read.
+/// ancestors, a chevron for a directory, an optional icon, its name, and
+/// an optional badge at its right end. The name is muted when ignored and
+/// in the error colour when it couldn't be read, else in its label colour
+/// if it has one.
 #[derive(IntoElement)]
 pub struct TreeRow {
     id: ElementId,
@@ -38,6 +41,9 @@ pub struct TreeRow {
     icon: Option<Icon>,
     ignored: bool,
     error: bool,
+    label_color: Option<Hsla>,
+    /// A short text after the label, and its colour.
+    badge: Option<(SharedString, Hsla)>,
     selected: bool,
     focused: bool,
     on_click: Option<ClickHandler>,
@@ -51,6 +57,7 @@ pub(crate) struct RowColors {
     pub label: Hsla,
     pub icon: Hsla,
     pub chevron: Hsla,
+    pub badge: Option<Hsla>,
 }
 
 impl TreeRow {
@@ -65,6 +72,8 @@ impl TreeRow {
             icon: None,
             ignored: false,
             error: false,
+            label_color: None,
+            badge: None,
             selected: false,
             focused: false,
             on_click: None,
@@ -97,6 +106,27 @@ impl TreeRow {
     pub fn error(mut self, error: bool) -> Self {
         self.error = error;
         self
+    }
+
+    /// The label's colour, not the icon's or the chevron's, unless the row
+    /// is an error's (the error colour wins) or ignored (muted wins).
+    pub fn label_color(mut self, color: Hsla) -> Self {
+        self.label_color = Some(color);
+        self
+    }
+
+    /// A short text drawn in `color` at the row's right end; a long label
+    /// ellipsizes before it.
+    pub fn badge(mut self, text: impl Into<SharedString>, color: Hsla) -> Self {
+        self.badge = Some((text.into(), color));
+        self
+    }
+
+    /// What [`Self::label_color`] and [`Self::badge`] set, for a host's
+    /// tests to see what it built.
+    pub fn status(&self) -> (Option<Hsla>, Option<(&SharedString, Hsla)>) {
+        let badge = self.badge.as_ref().map(|(text, color)| (text, *color));
+        (self.label_color, badge)
     }
 
     pub fn selected(mut self, selected: bool) -> Self {
@@ -132,9 +162,11 @@ impl TreeRow {
         } else if self.ignored {
             (text.muted, text.muted, text.muted)
         } else if self.expanded.is_some() {
-            (text.primary, list.folder_icon, list.chevron)
+            let label = self.label_color.unwrap_or(text.primary);
+            (label, list.folder_icon, list.chevron)
         } else {
-            (text.primary, list.icon, list.chevron)
+            let label = self.label_color.unwrap_or(text.primary);
+            (label, list.icon, list.chevron)
         };
         RowColors {
             background,
@@ -142,6 +174,7 @@ impl TreeRow {
             label,
             icon,
             chevron,
+            badge: self.badge.as_ref().map(|(_, color)| *color),
         }
     }
 }
@@ -205,6 +238,15 @@ impl RenderOnce for TreeRow {
                 .text_color(colors.icon)
                 .debug_selector(|| format!("tree-icon:{label}:{}", icon.name()))
         });
+        let badge = self.badge.zip(colors.badge).map(|((text, _), color)| {
+            div()
+                .flex_none()
+                .ml(BADGE_GAP)
+                .whitespace_nowrap()
+                .text_color(color)
+                .debug_selector(|| format!("tree-badge:{label}"))
+                .child(text)
+        });
         div()
             .id(self.id)
             .relative()
@@ -232,8 +274,10 @@ impl RenderOnce for TreeRow {
                     .whitespace_nowrap()
                     .text_ellipsis()
                     .text_color(colors.label)
+                    .debug_selector(|| format!("tree-label:{label}"))
                     .child(self.label.clone()),
             )
+            .children(badge)
             .when_some(self.on_click, |row, on_click| row.on_click(on_click))
     }
 }
