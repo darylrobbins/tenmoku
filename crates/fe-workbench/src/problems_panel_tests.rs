@@ -469,7 +469,17 @@ fn selection_kept(cx: &mut TestAppContext) {
     // Two problems alike but for their column, the second selected.
     let twin = |column| diagnostic(1, column, 1, DiagnosticSeverity::WARNING, "twin");
     publish(&s, "src/main.rs", vec![twin(4), twin(8)]);
-    s.until("the twins", |s| rows(s).len() == 5);
+    // Not `len() == 5`: setup's rows are already five, so that held before
+    // the twins arrived, and they then replaced the row selected below.
+    s.until("the twins", |s| {
+        rows(s).get(3)
+            == Some(&ShownRow::Problem(
+                "W",
+                "twin".into(),
+                Some("rustc".into()),
+                "2:5".into(),
+            ))
+    });
     s.run("problems.show");
     for _ in 0..3 {
         in_panel(&mut s, "problems.select_next");
