@@ -16,6 +16,7 @@ mod setup;
 mod tables;
 #[cfg(feature = "test-support")]
 pub mod testing;
+mod view;
 
 pub use gpui;
 pub use kiln_command as command;
@@ -151,6 +152,105 @@ pub use kiln_core::{SettingsType, settings::SettingsEvent};
 /// #[kiln::command]
 /// fn new_note(_: &mut Workspace) {}
 /// ```
+///
+/// # A view's own commands
+///
+/// On a view's `impl`, with the view's key context, it makes each method
+/// marked `#[command(..)]` a command that runs on the view focus is in:
+///
+/// ```
+/// use kiln::{
+///     Cx, ViewCommands as _,
+///     gpui::{Context, FocusHandle, IntoElement, Render, Window, div, prelude::*},
+/// };
+///
+/// struct NoteView {
+///     focus: FocusHandle,
+///     title: String,
+/// }
+///
+/// #[kiln::command(context = "note")]
+/// impl NoteView {
+///     /// Rename Note
+///     #[command(key = "f2", menu = "Edit")]
+///     fn rename(&mut self, cx: &mut Cx<Self>) {
+///         self.title = "Renamed".into();
+///         cx.notify();
+///     }
+///
+///     /// Unmarked, so left alone.
+///     fn title(&self) -> &str {
+///         &self.title
+///     }
+/// }
+///
+/// impl Render for NoteView {
+///     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+///         // Sets the key context "note", with a handler of `Rename`.
+///         Self::attach(div(), cx)
+///             .track_focus(&self.focus)
+///             .child(self.title().to_owned())
+///     }
+/// }
+/// ```
+///
+/// - The impl stays as it is, the marks taken off, and the view gets
+///   [`ViewCommands`]: its `CONTEXT` is `context`, and its `attach` puts
+///   an element in that key context with a handler of each command that
+///   calls its method with a [`Cx`]. A handwritten `Render` calls
+///   `Self::attach(div(), cx)` on its root element, as above; the view
+///   macros attach a view they host themselves.
+/// - Each marked method makes a command as a fn does: `Rename`, the
+///   method's name in PascalCase, is its type, with the method's
+///   visibility; its ID is `<crate>.rename` unless `id = ".."`; its title
+///   is the method's first doc line; and `key`, `menu` and `order` are as
+///   a fn's. Its context is the impl's, so its keys, its menu item and
+///   its palette entry hold only while focus is inside the view, unless
+///   `context = ".."` on the method gives another.
+/// - Unmarked methods are left alone.
+///
+/// A marked method's signature is `fn(&mut self, &mut Cx<Self>)`, or the
+/// error is on its name:
+///
+/// ```compile_fail,E0061
+/// use kiln::Cx;
+///
+/// struct NoteView;
+///
+/// #[kiln::command(context = "note")]
+/// impl NoteView {
+///     /// Rename Note
+///     #[command]
+///     fn rename(&mut self) {}
+/// }
+/// ```
+///
+/// and a method makes a command only in such an impl, the error naming
+/// the attribute it needs there:
+///
+/// ```compile_fail
+/// use kiln::Cx;
+///
+/// struct NoteView;
+///
+/// impl NoteView {
+///     /// Rename Note
+///     #[kiln::command(key = "f2")]
+///     fn rename(&mut self, _: &mut Cx<Self>) {}
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use kiln::{Cx, command};
+///
+/// struct NoteView;
+///
+/// impl NoteView {
+///     /// Rename Note
+///     #[command(key = "f2")]
+///     fn rename(&mut self, _: &mut Cx<Self>) {}
+/// }
+/// ```
 pub use kiln_macros::command;
 pub use kiln_platform::WindowSpec;
 pub use kiln_platform::config::{ConfigDiagnostics, GlobalSettings};
@@ -160,6 +260,7 @@ pub use kiln_shell::Root;
 pub use model::provide;
 pub use setup::{AppInfo, Config, application, catalog, init, window_options};
 pub use tables::{KeyBinding, KeyTable, MenuTable, TableItem, TableMenu};
+pub use view::ViewCommands;
 
 /// The extension traits that put kiln's calls on GPUI's own types:
 /// `use kiln::prelude::*;` then `cx.theme()`, `cx.settings::<S>()`,
@@ -275,9 +376,11 @@ macro_rules! __command {
 /// What kiln's macros expand to names: not for use by hand.
 #[doc(hidden)]
 pub mod __private {
+    pub use crate::__attach as attach;
     pub use crate::contributions::{
         CommandRecord, RunRecorded, add_crate_commands, register_recorded as register_command,
     };
+    pub use crate::view::{Attach, AttachNothing, AttachViewCommands, run_in_view, view_handler};
     pub use inventory;
 }
 
