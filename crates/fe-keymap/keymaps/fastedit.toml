@@ -311,6 +311,34 @@ keys = "secondary-k secondary-i"
 command = "editor.show_hover"
 context = "editor"
 
+# Language-server commands, as VS Code binds them. The reducer reads ctrl-shift-i
+# as vim's <C-i> (jump forward), so formatting is off in vim's other modes.
+
+[[bindings]]
+keys = "f2"
+command = "lsp.rename"
+context = "editor"
+
+[[bindings]]
+keys = { macos = "cmd-.", default = "ctrl-." }
+command = "lsp.code_actions"
+context = "editor"
+
+[[bindings]]
+keys = { macos = "shift-alt-f", default = "ctrl-shift-i" }
+command = "lsp.format_document"
+context = "editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"
+
+[[bindings]]
+keys = "secondary-k secondary-f"
+command = "lsp.format_selection"
+context = "editor"
+
+[[bindings]]
+keys = "secondary-shift-space"
+command = "editor.show_signature_help"
+context = "editor"
+
 [[bindings]]
 keys = "alt-z"
 command = "editor.toggle_soft_wrap"

@@ -212,7 +212,9 @@ const CASES: &[Case] = &[
 /// and `ctrl-space` (`editor.trigger_completion`) is
 /// `view::completion_tests::menu_opens_narrows_and_accepts`'. The row and
 /// comment keys (`cmd-]`, `cmd-[`, `cmd-shift-k`, `cmd-/`) are checked to resolve to their commands by
-/// fe-keymap's `editing_bindings`.
+/// fe-keymap's `editing_bindings`, and the language-server keys (`f2`,
+/// `cmd-.`, `cmd-k cmd-f`, `cmd-shift-space`) by its
+/// `lsp_bindings`.
 const DEDICATED: &[&str] = &[
     "cmd-s",
     "cmd-alt-]",
@@ -223,6 +225,10 @@ const DEDICATED: &[&str] = &[
     "cmd-[",
     "cmd-shift-k",
     "cmd-/",
+    "f2",
+    "cmd-.",
+    "cmd-k cmd-f",
+    "cmd-shift-space",
 ];
 
 fn run_case(case: &Case) {

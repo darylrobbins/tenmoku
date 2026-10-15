@@ -349,7 +349,12 @@ fn hosts_extend_and_replace() {
             "editor.move_rows_down",
             "editor.duplicate_rows",
             "editor.delete_rows",
-            "editor.toggle_comment"
+            "editor.toggle_comment",
+            "-",
+            "lsp.rename",
+            "lsp.code_actions",
+            "lsp.format_document",
+            "lsp.format_selection"
         ]
     );
 

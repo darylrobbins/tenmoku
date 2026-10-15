@@ -135,6 +135,19 @@ const OLD_TABLE: &[(&str, &str, Option<&str>)] = &[
     ("cmd-k cmd-0", "editor.fold_all", Some("editor")),
     ("cmd-k cmd-j", "editor.unfold_all", Some("editor")),
     ("cmd-k cmd-i", "editor.show_hover", Some("editor")),
+    ("f2", "lsp.rename", Some("editor")),
+    ("cmd-.", "lsp.code_actions", Some("editor")),
+    (
+        "shift-alt-f",
+        "lsp.format_document",
+        Some("editor && (!vim.enabled || vim.mode == insert || vim.mode == replace)"),
+    ),
+    ("cmd-k cmd-f", "lsp.format_selection", Some("editor")),
+    (
+        "cmd-shift-space",
+        "editor.show_signature_help",
+        Some("editor"),
+    ),
     ("alt-z", "editor.toggle_soft_wrap", Some("editor")),
     ("cmd-c", "editor.copy", Some("editor")),
     ("cmd-x", "editor.cut", Some("editor")),
@@ -222,7 +235,7 @@ fn default_keymap_matches_the_old_table(cx: &mut TestAppContext) {
     let store = KeymapStore::load(DEFAULT_MACOS, None, None);
     assert_eq!(store.diagnostics(), []);
     let bindings = store.keymap().bindings();
-    assert_eq!(bindings.len(), 202);
+    assert_eq!(bindings.len(), 207);
     assert_eq!(bindings.iter().filter(|b| is_window_key(b)).count(), 32);
     for (binding, &(keys, command, context)) in bindings.iter().zip(OLD_TABLE) {
         assert_eq!(binding.keys, KeySequence::parse(keys).unwrap(), "{command}");
@@ -255,8 +268,12 @@ fn default_keymap_matches_the_old_table(cx: &mut TestAppContext) {
                 )
             )
     };
-    // `find.show` is the workbench's too, though bound in `editor`.
-    let find = |binding: &&fe_keymap::Binding| binding.command.as_str().starts_with("find.");
+    // `find.show` and the `lsp.` commands are the workbench's too, though
+    // bound in `editor`.
+    let find = |binding: &&fe_keymap::Binding| {
+        let command = binding.command.as_str();
+        command.starts_with("find.") || command.starts_with("lsp.")
+    };
     for binding in bindings
         .iter()
         .filter(|binding| !workbench(binding) && !find(binding))

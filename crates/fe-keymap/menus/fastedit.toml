@@ -176,6 +176,25 @@ command = "editor.toggle_comment"
 separator = true
 
 [[menus.items]]
+title = "Rename Symbol…"
+command = "lsp.rename"
+
+[[menus.items]]
+title = "Code Actions…"
+command = "lsp.code_actions"
+
+[[menus.items]]
+title = "Format Document"
+command = "lsp.format_document"
+
+[[menus.items]]
+title = "Format Selection"
+command = "lsp.format_selection"
+
+[[menus.items]]
+separator = true
+
+[[menus.items]]
 title = "Find in Files"
 command = "search.show"
 
