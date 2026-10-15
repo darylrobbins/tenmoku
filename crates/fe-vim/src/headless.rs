@@ -11,7 +11,7 @@ use fe_editor::{
 
 use crate::{
     CancelArgs, HistoryRecall, KeyError, Mode, Registers, Splits, Step, SubmitArgs, VimCommands,
-    VimKey, VimState, VimTarget, context, jump::JumpOverlay, parse_keys, registry,
+    VimKey, VimState, VimTarget, context, jump::JumpOverlay, parse_keys, registry, scroll,
 };
 
 /// An [`EditorModel`] with a [`HeadlessHost`], a [`VimState`], registers
@@ -400,38 +400,50 @@ impl HeadlessVim {
 
     /// Scrolls the view to show the cursor, as nvim's window does with
     /// 'scrolloff' 0 (found by probing windows of 2 to 22 rows), and not
-    /// past the text's last row.
+    /// past the text's last row. Counted in display rows, so a closed fold
+    /// or a wrapped row in view takes the rows it shows; the top is always
+    /// a text row's first.
     fn follow_cursor(&mut self) {
         let row = self.cursor().0;
-        let last = self.model.text().row_count().saturating_sub(1);
-        let Viewport { top_row: top, rows } = self.view;
+        let screen = scroll::Screen::new(&self.model);
+        let last = screen.count - 1;
+        let Viewport { top_row, rows } = self.view;
+        let top_row = top_row.min(self.model.text().row_count().saturating_sub(1));
+        let top = screen.first(top_row);
+        // The cursor's row's display rows.
+        let (row, bottom) = (screen.first(row), screen.end(row));
         // Centring doesn't scroll further than showing the last row at the
         // bottom.
         let halfway = |above: u32| {
             row.saturating_sub(above)
                 .min((last + 1).saturating_sub(rows))
         };
-        let top = top.min(last);
-        self.view.top_row = if row < top {
+        let new_top = if row < top {
             // Close above it puts the cursor at the top, further centres it.
             match top - row >= (rows / 2).saturating_sub(1).max(2) {
                 true => halfway((rows - 1) / 2),
                 false => row,
             }
-        } else if row >= top.saturating_add(rows) {
+        } else if bottom >= top.saturating_add(rows) {
             // Below it: at the bottom if close, centred if further (a row
             // more above the cursor than below, to within a view's
             // height).
             let after = (last + 1).saturating_sub(top.saturating_add(rows));
-            match row - (top.saturating_add(rows)) + 1 {
+            match bottom - (top.saturating_add(rows)) + 1 {
                 // Where the rest of the text fits in one view's height, the
                 // cursor goes to the bottom whatever the gap.
-                gap if gap <= rows.div_ceil(2) || after <= rows => row + 1 - rows,
+                gap if gap <= rows.div_ceil(2) || after <= rows => {
+                    (bottom + 1).saturating_sub(rows)
+                }
                 gap if gap <= rows + 1 => halfway(rows / 2),
                 _ => halfway((rows - 1) / 2),
             }
         } else {
             top
+        };
+        self.view.top_row = match new_top == top {
+            true => top_row,
+            false => screen.round_up(new_top, screen.at(row)),
         };
     }
 }

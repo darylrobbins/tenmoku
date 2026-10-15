@@ -7,6 +7,7 @@
 -- before the cursor is set, with 'scroll' half of it, and the result holds
 -- `top`, the first row it shows (line('w0') - 1). 'scrolloff' is the
 -- default, 0.
+-- A case may hold `folds`, {first, last} rows to close, and `soft_wrap`.
 -- Keys after a failed command record nonsense: nvim flushes the keys queued
 -- after an error (a failed search's E486 among them), so end a case there.
 -- A result also holds `visual = {row, byte_col}`, the visual anchor
@@ -81,6 +82,14 @@ for _, case in ipairs(vim.json.decode(read(input))) do
   end
 
   vim.api.nvim_buf_set_lines(0, 0, -1, false, vim.split(case.buffer, "\n", { plain = true }))
+  -- Closed folds (manual folds start closed); soft wrap is nvim's default
+  -- 'wrap', at the 80 columns the window has.
+  for _, fold in ipairs(case.folds or {}) do
+    vim.cmd((fold[1] + 1) .. "," .. (fold[2] + 1) .. "fold")
+  end
+  if case.soft_wrap then
+    assert(vim.api.nvim_win_get_width(0) == 80, "the window is 80 columns wide")
+  end
   if case.window_rows then
     set_rows(case.window_rows)
     vim.fn.winrestview({ topline = 1 })

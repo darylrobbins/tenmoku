@@ -6,9 +6,12 @@
 //! {"action", "count"}` ([`ScrollArgs`]). It reads the view from the host's
 //! [`EditorHost::viewport`] and asks for a new one through
 //! [`EditorHost::scroll`]; a host that doesn't know its view (`None`) is
-//! taken as showing `page_rows() + 2` rows from the first. Rows are the
-//! text's rows: a fold or a wrapped row doesn't change how far they go.
-//! As nvim's, with 'scrolloff' 0:
+//! taken as showing `page_rows() + 2` rows from the first. Distances are
+//! the display rows the window shows (the model's `DisplayMap`
+//! rows): a closed fold is one, a wrapped text row is as many as it wraps
+//! into, and a new top is always a text row's first, asked for as a text
+//! row. With no fold and no wrapped row these are the text's rows. As
+//! nvim's, with 'scrolloff' 0:
 //!
 //! - `<C-d>` and `<C-u>` scroll by 'scroll' rows and move the cursor as
 //!   many (as `j` and `k` would, keeping the goal column). 'scroll' is half
@@ -17,7 +20,8 @@
 //!   `<C-d>` doesn't scroll past showing the last row at the bottom, though
 //!   the cursor still moves. Even where the cursor's row doesn't change, it
 //!   goes to its goal column.
-//! - `<C-e>` and `<C-y>` scroll one row (count rows), `<C-e>` until the last
+//! - `<C-e>` and `<C-y>` scroll one text row (count rows; a fold or a
+//!   wrapped row is one), `<C-e>` until the last
 //!   row is at the top; the cursor moves only to stay in view.
 //! - `<C-f>` and `<C-b>` scroll a page (count pages) less two rows of
 //!   overlap (less in a view under 5 rows, or where the rows kept would be
@@ -38,6 +42,7 @@
 //! moves, keeping the anchor.
 
 use fe_command::{Actor, CommandError, ContextPredicate, Dispatched, Effect, Registry};
+use fe_editor::EditorModel;
 use fe_editor::commands::{EditorHost, ScrollRequest, Viewport};
 use fe_text::Bias;
 use schemars::JsonSchema;
@@ -184,6 +189,14 @@ fn run(target: &mut VimTarget<'_>, args: ScrollArgs) -> Dispatched<fe_buffer::Tr
     }
     // The z keys' row: the count's (from 1), else the cursor's.
     let z_row = count.map_or(row, |count| (count - 1).min(last));
+    let screen = Screen::new(target.model);
+    let first = screen.first(top);
+    let top_d = target
+        .host
+        .top_display_row()
+        .filter(|&d| d < screen.count && screen.at(d) == top)
+        .unwrap_or(first);
+    let cursor_d = screen.first(row);
     let (new_top, new_row) = match args.action {
         HalfPageDown | HalfPageUp => {
             if let Some(count) = count {
@@ -194,38 +207,73 @@ fn run(target: &mut VimTarget<'_>, args: ScrollArgs) -> Dispatched<fe_buffer::Tr
                 _ => (rows / 2).max(1),
             };
             if args.action == HalfPageDown {
-                // Not past showing the last row at the bottom.
-                let room = (last + 1).saturating_sub(top).saturating_sub(rows);
-                (top + amount.min(room), row.saturating_add(amount).min(last))
+                // Not past showing the last display row at the bottom.
+                let room = screen.count.saturating_sub(top_d).saturating_sub(rows);
+                (
+                    screen.at(top_d + amount.min(room)),
+                    screen.at(cursor_d.saturating_add(amount)),
+                )
             } else {
-                (top.saturating_sub(amount), row.saturating_sub(amount))
+                (
+                    screen.at(top_d.saturating_sub(amount)),
+                    screen.at(cursor_d.saturating_sub(amount)),
+                )
             }
         }
         LineDown => {
-            let new_top = top.saturating_add(count.unwrap_or(1)).min(last).max(top);
+            let mut at = top_d;
+            for _ in 0..count.unwrap_or(1) {
+                match screen.after(at) {
+                    Some(next) => at = next,
+                    None => break,
+                }
+            }
+            let new_top = screen.at(at).max(top);
             (new_top, row.max(new_top))
         }
         LineUp => {
-            let new_top = top.saturating_sub(count.unwrap_or(1));
-            (new_top, row.min(new_top.saturating_add(rows - 1)))
+            let mut at = top_d;
+            for _ in 0..count.unwrap_or(1) {
+                match screen.before(at) {
+                    Some(prev) => at = prev,
+                    None => break,
+                }
+            }
+            let new_top = screen.at(at).min(top);
+            let bottom = screen.first(new_top).saturating_add(rows - 1);
+            // The cursor's row stays only where all its display rows show.
+            let fits = screen.end(row) <= bottom;
+            (new_top, if fits { row } else { screen.at(bottom) }.min(row))
         }
         PageDown => {
-            let page = page(rows, top, last, true);
-            let new_top = top
+            let page = page(rows, top_d, screen.count.saturating_sub(1), true);
+            let at = top_d
                 .saturating_add(page.saturating_mul(count.unwrap_or(1)))
-                .min(last)
-                .max(top);
+                .min(screen.count.saturating_sub(1))
+                .max(top_d);
+            let new_top = screen.at(at).max(top);
             (new_top, if new_top == top { row } else { new_top })
         }
         PageUp => {
-            let page = page(rows, top, last, false);
-            let new_top = top.saturating_sub(page.saturating_mul(count.unwrap_or(1)));
-            let bottom = new_top.saturating_add(rows - 1).min(last);
-            (new_top, if new_top == top { row } else { bottom })
+            let page = page(rows, top_d, screen.count.saturating_sub(1), false);
+            let at = top_d.saturating_sub(page.saturating_mul(count.unwrap_or(1)));
+            let new_top = screen.at(at).min(top);
+            let bottom = at.saturating_add(rows - 1);
+            (
+                new_top,
+                if new_top == top {
+                    row
+                } else {
+                    screen.at(bottom)
+                },
+            )
         }
         Top | TopFirstNonBlank => (z_row, z_row),
-        Center | CenterFirstNonBlank => (z_row.saturating_sub((rows - 1) / 2), z_row),
-        Bottom | BottomFirstNonBlank => (z_row.saturating_sub(rows - 1), z_row),
+        Center | CenterFirstNonBlank => (screen.centered(z_row, rows), z_row),
+        Bottom | BottomFirstNonBlank => {
+            let at = (screen.end(z_row) + 1).saturating_sub(rows);
+            (screen.round_up(at, z_row), z_row)
+        }
     };
     if new_top != top {
         target.host.scroll(ScrollRequest::TopRow(new_top));
@@ -364,4 +412,89 @@ fn page(rows: u32, top: u32, last: u32, forward: bool) -> u32 {
         return whole - 1;
     }
     whole - 2
+}
+
+/// The display rows of a model, by text row.
+pub(crate) struct Screen<'a> {
+    model: &'a EditorModel,
+    /// How many display rows there are.
+    pub(crate) count: u32,
+}
+
+impl<'a> Screen<'a> {
+    pub(crate) fn new(model: &'a EditorModel) -> Self {
+        Self {
+            model,
+            count: model.display().row_count().max(1),
+        }
+    }
+
+    /// The text row display row `d` shows (the last, past the end).
+    pub(crate) fn at(&self, d: u32) -> u32 {
+        self.model.display().row(d.min(self.count - 1)).buffer_row
+    }
+
+    /// Text row `row`'s first display row (its fold's header's, if hidden).
+    pub(crate) fn first(&self, row: u32) -> u32 {
+        self.model.display().row_for_buffer_row(row)
+    }
+
+    /// Text row `row`'s last display row.
+    pub(crate) fn end(&self, row: u32) -> u32 {
+        let mut d = self.first(row);
+        while d + 1 < self.count && !self.model.display().row(d + 1).first {
+            d += 1;
+        }
+        d
+    }
+
+    /// The first display row of the text row after the one `d` is in.
+    fn after(&self, d: u32) -> Option<u32> {
+        let next = self.end(self.at(d)) + 1;
+        (next < self.count).then_some(next)
+    }
+
+    /// The first display row of the text row before the one `d` is in.
+    fn before(&self, d: u32) -> Option<u32> {
+        let start = self.first(self.at(d));
+        (start > 0).then(|| self.first(self.at(start - 1)))
+    }
+
+    /// The text row to put at the top to centre `row` in `rows` display rows,
+    /// as nvim's window does: rows are added below and above it in turn
+    /// while they fit, the rows past the text's end one display row each.
+    fn centered(&self, row: u32, rows: u32) -> u32 {
+        let start = self.first(row);
+        let height = |d: u32| self.end(self.at(d)) - d + 1;
+        let mut used = self.end(row) - start + 1;
+        let (mut below, mut above) = (self.after(start), self.before(start));
+        let mut top = row;
+        loop {
+            let h = below.map_or(1, height);
+            if used.saturating_add(h) > rows {
+                break;
+            }
+            used += h;
+            below = below.and_then(|d| self.after(d));
+            let Some(d) = above else { break };
+            if used.saturating_add(height(d)) > rows {
+                break;
+            }
+            used += height(d);
+            top = self.at(d);
+            above = self.before(d);
+        }
+        top
+    }
+
+    /// The text row to put at the top for a view starting at display row
+    /// `at`: the row `at` is in, or the next if `at` is partway down it
+    /// (the row's own, at most `row`).
+    pub(crate) fn round_up(&self, at: u32, row: u32) -> u32 {
+        let shown = self.at(at);
+        if self.first(shown) == at {
+            return shown;
+        }
+        self.after(at).map_or(shown, |d| self.at(d)).min(row)
+    }
 }

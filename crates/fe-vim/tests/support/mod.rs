@@ -37,6 +37,12 @@ pub(crate) struct Case {
     /// (the jump, swapped for a mark motion to the same place).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) oracle_keys: Option<String>,
+    /// Closed folds, a first and a last row from 0.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) folds: Vec<(u32, u32)>,
+    /// Soft wrap on, at nvim's 80 columns.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) soft_wrap: bool,
 }
 
 #[derive(Deserialize)]
@@ -66,6 +72,12 @@ pub(crate) struct Recorded {
     pub(crate) window_rows: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) oracle_keys: Option<String>,
+    /// Closed folds, a first and a last row from 0.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) folds: Vec<(u32, u32)>,
+    /// Soft wrap on, at nvim's 80 columns.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) soft_wrap: bool,
     pub(crate) expect: Expect,
 }
 
@@ -78,6 +90,8 @@ impl Recorded {
             keys,
             window_rows,
             oracle_keys,
+            folds,
+            soft_wrap,
         } = case;
         Self {
             name,
@@ -86,6 +100,8 @@ impl Recorded {
             keys,
             window_rows,
             oracle_keys,
+            folds,
+            soft_wrap,
             expect: expect.into(),
         }
     }
@@ -98,6 +114,8 @@ impl Recorded {
             keys: self.keys.clone(),
             window_rows: self.window_rows,
             oracle_keys: self.oracle_keys.clone(),
+            folds: self.folds.clone(),
+            soft_wrap: self.soft_wrap,
         }
     }
 }
@@ -465,6 +483,15 @@ fn marks(vim: &HeadlessVim) -> BTreeMap<String, (u32, usize)> {
 pub(crate) fn check(recorded: &Recorded) -> Result<(), String> {
     let (case, expect) = (recorded.case(), &recorded.expect);
     let mut vim = HeadlessVim::new(&case.buffer, case.cursor);
+    for &(first, last) in &case.folds {
+        vim.model_mut().fold_rows(first..=last);
+    }
+    if case.soft_wrap {
+        let model = vim.model_mut();
+        model.set_soft_wrap(true);
+        model.set_wrap_width(80.);
+        while model.wrap_pending(0) {}
+    }
     if let Some(rows) = case.window_rows {
         vim.set_window_rows(rows);
     }
