@@ -264,7 +264,8 @@ macro_rules! __keys {
 /// ```
 ///
 /// It is checked as the file is, at init: a command kiln doesn't know is
-/// left out of the menu, with a warning.
+/// left out of the menu, with a warning; a menu named twice, or a command
+/// twice in one menu, is an error, and the table is left out.
 #[macro_export]
 macro_rules! menus {
     ($($name:literal => [$($items:tt)*]),* $(,)?) => {{

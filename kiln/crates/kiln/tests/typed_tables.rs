@@ -6,10 +6,12 @@
 //! user's file; `.menu_bar(..)` installs its menus, with each command's
 //! title and separators, in place of the contributed placement and any
 //! `.menus(path, toml)`. A misspelt command type is a compile error
-//! (`tables.rs`'s doctests).
+//! (`tables.rs`'s doctests); a menu named twice, or a command twice in a
+//! menu, is an error as in a menu table, the table left out.
 
 use std::{
     fs,
+    panic::{AssertUnwindSafe, catch_unwind},
     path::PathBuf,
     sync::atomic::{AtomicUsize, Ordering},
 };
@@ -20,7 +22,7 @@ use gpui::{
 use kiln::{
     CommandSpec, Config, Contributions, Cx,
     command::{CommandId, ContextFrame, ContextStack},
-    core::{KeySequence, Keystroke, Severity},
+    core::{Diagnostic, KeySequence, Keystroke, Severity},
     platform::{config::batch_channel, keys, menus},
     shell::Workspace,
     testing::TestApp,
@@ -289,4 +291,112 @@ fn menu_items_show_the_shortcuts_the_keys_table_gives(cx: &mut TestAppContext) {
         item.shortcut(&keymap).map(|keys| keys.to_string())
     });
     assert_eq!(shortcut, Some(shown("secondary-shift-n")));
+}
+
+mod drafts {
+    kiln::commands!(
+        drafts,
+        [
+            /// Rename Draft
+            RenameDraft,
+        ]
+    );
+}
+
+/// `kiln::init` with the menu table over the notes and drafts commands,
+/// failing fast if `fail_fast`.
+fn init_with_menus(table: kiln::MenuTable, fail_fast: bool, cx: &mut App) -> Vec<Diagnostic> {
+    let (_sender, batches) = batch_channel();
+    Contributions::set_menu_table(cx, table);
+    kiln::init(
+        cx,
+        Config::new("com.example.Notes", "Notes")
+            .commands(|cx| {
+                notes::register(cx);
+                drafts::register(cx);
+            })
+            .watch_with(batches)
+            .fail_fast(fail_fast),
+    )
+}
+
+/// What `init` panics with over the menu table, failing fast.
+fn menus_panic(table: kiln::MenuTable, cx: &mut TestAppContext) -> String {
+    let panicked = catch_unwind(AssertUnwindSafe(|| {
+        cx.update(|cx| init_with_menus(table, true, cx));
+    }));
+    let payload = panicked.expect_err("init panics");
+    match payload.downcast::<String>() {
+        Ok(message) => *message,
+        Err(payload) => (*payload.downcast::<&str>().unwrap()).to_owned(),
+    }
+}
+
+/// The errors among `diagnostics`, by key and message.
+fn errors(diagnostics: &[Diagnostic]) -> Vec<(String, String)> {
+    (diagnostics.iter())
+        .filter(|diagnostic| diagnostic.severity == Severity::Error)
+        .map(|diagnostic| {
+            let key = diagnostic.key.clone().unwrap_or_default();
+            (key, diagnostic.message.clone())
+        })
+        .collect()
+}
+
+#[gpui::test]
+fn a_menu_named_twice_is_an_error_and_the_table_left_out(cx: &mut TestAppContext) {
+    let table = kiln::menus! {
+        "File" => [notes::NewNote],
+        "File" => [drafts::RenameDraft],
+    };
+    let diagnostics = cx.update(|cx| init_with_menus(table, false, cx));
+    assert_eq!(
+        errors(&diagnostics),
+        [("File".to_owned(), "menu \"File\" is repeated".to_owned())]
+    );
+    // As a menu table with errors is: no menu shows, so no menu named
+    // File hides the second's items.
+    let names = cx.read(|cx| {
+        let bar = menus::installed(cx).expect("the menus are installed");
+        bar.menus
+            .iter()
+            .map(|menu| menu.name.clone())
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(names, Vec::<String>::new());
+}
+
+#[gpui::test]
+fn a_command_twice_in_a_menu_is_an_error_and_the_table_left_out(cx: &mut TestAppContext) {
+    let table = kiln::menus! { "File" => [notes::NewNote, Separator, notes::NewNote] };
+    let diagnostics = cx.update(|cx| init_with_menus(table, false, cx));
+    assert_eq!(
+        errors(&diagnostics),
+        [(
+            "File.items[2]".to_owned(),
+            "id \"notes.new_note\" is repeated in menu \"File\"".to_owned()
+        )]
+    );
+    let installed = cx.read(|cx| menus::installed(cx).map(|bar| bar.menus.len()));
+    assert_eq!(installed, Some(0));
+}
+
+#[gpui::test]
+fn a_repeated_menu_fails_fast(cx: &mut TestAppContext) {
+    let table = kiln::menus! {
+        "File" => [notes::NewNote],
+        "File" => [drafts::RenameDraft],
+    };
+    let message = menus_panic(table, cx);
+    assert!(message.contains("menu \"File\" is repeated"), "{message}");
+}
+
+#[gpui::test]
+fn a_repeated_item_fails_fast(cx: &mut TestAppContext) {
+    let table = kiln::menus! { "File" => [notes::NewNote, notes::NewNote] };
+    let message = menus_panic(table, cx);
+    assert!(
+        message.contains("id \"notes.new_note\" is repeated in menu \"File\""),
+        "{message}"
+    );
 }

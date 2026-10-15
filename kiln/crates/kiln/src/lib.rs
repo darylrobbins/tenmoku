@@ -252,6 +252,243 @@ pub use kiln_core::{SettingsType, settings::SettingsEvent};
 /// }
 /// ```
 pub use kiln_macros::command;
+/// Makes a struct that implements [`View`] a dock panel, in each
+/// workspace window [`app()`] opens, with its toggle command, key, View
+/// menu item and rail button; `title`, `icon`, `dock`, `toggle_key`,
+/// `order`, `id` and `new` optional:
+///
+/// ```
+/// use kiln::{Cx, View, gpui::{IntoElement, ParentElement as _, div}};
+///
+/// #[kiln::panel(title = "Notes", icon = FileText, dock = Left, toggle_key = "secondary-b")]
+/// #[derive(Default)]
+/// struct Notes {
+///     filter: String,
+/// }
+///
+/// impl View for Notes {
+///     fn render(&mut self, cx: &mut Cx<Self>) -> impl IntoElement {
+///         div().child(format!("notes matching {}", self.filter))
+///     }
+/// }
+/// ```
+///
+/// - The struct gets a hidden field, `__kiln:
+///   kiln::__private::ViewState`, which holds its focus handle: a unit
+///   struct becomes one with that field, a tuple struct's is the last.
+///   It's [`Default`], and kiln fills it as it builds the panel. Put
+///   `#[kiln::panel]` above the struct's derives, as above, so they see
+///   the field: a derive above it sees the struct without it.
+/// - It gets GPUI's `Render`, through [`View::render`] around its element
+///   tracking its focus handle, at the dock's full size, its
+///   [`ViewCommands`] attached if it has them (`#[kiln::command(context =
+///   "..")]` on its impl); `Focusable`, that handle; and
+///   [`shell::DockItem`], from the arguments.
+/// - It's built for each window from [`Default`], or by `new = path`, a
+///   `fn(&mut Cx<Self>) -> Self`, which fills `__kiln` with
+///   `Default::default()`.
+/// - Its ID is `<crate>.<name>`, `<name>` the struct's in snake case
+///   (`macro_panel.notes`), unless `id = ".."`; its toggle command's is
+///   `<id>.toggle`, titled `Toggle <title>`: on `toggle_key`, if given,
+///   in the palette, and in the View menu. Its title is `title`'s, else
+///   the struct's first doc line.
+/// - `dock` is `Left` unless `Right` or `Bottom`; `icon` is a
+///   [`ui::Icon`], `Files` unless given; `order` places it on its dock's
+///   rail and its toggle in the View menu, lower first, `0` unless given,
+///   then by file and line.
+/// - Whether it shows, and the dock's size, are in the saved layout.
+///
+/// The macro records the panel with `inventory`, as `#[kiln::command]`
+/// records a command: [`app()`] adds the app's own target's, a library
+/// crate's [`module!`] its own ([`Contributions::add_panel`]).
+///
+/// It expands to the struct, its field added, then:
+///
+/// ```ignore
+/// impl Render for Notes {
+///     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+///         let focus = self.__kiln.focus_handle(cx);
+///         let element = div().track_focus(&focus).size_full()
+///             .child(View::render(self, &mut Cx { window, cx }).into_any_element());
+///         kiln::__private::attach!(Notes, element, cx) // `Notes::attach(element, cx)` if it has commands
+///     }
+/// }
+/// impl Focusable for Notes { /* self.__kiln.focus_handle(cx) */ }
+/// impl DockItem for Notes { /* id, title, icon, and the toggle as show_command */ }
+/// inventory::submit!(PanelRecord {
+///     id: "<crate>.notes", title: "Notes", icon: Icon::FileText, position: DockPosition::Left,
+///     toggle_key: Some("secondary-b"), make, file: file!(), line: line!(), ..
+/// });
+/// ```
+///
+/// which is, by hand, in a crate named `notes`:
+///
+/// ```
+/// use kiln::{
+///     Contributions, Cx, PanelSpec,
+///     gpui::{App, AppContext as _, Context, FocusHandle, Focusable, IntoElement, Render,
+///         SharedString, Window, div, prelude::*},
+///     shell::{DockItem, DockPosition, PanelId},
+///     ui::Icon,
+/// };
+///
+/// struct Notes {
+///     focus: FocusHandle,
+///     filter: String,
+/// }
+///
+/// impl Render for Notes {
+///     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+///         div()
+///             .track_focus(&self.focus)
+///             .size_full()
+///             .child(format!("notes matching {}", self.filter))
+///     }
+/// }
+///
+/// impl Focusable for Notes {
+///     fn focus_handle(&self, _: &App) -> FocusHandle {
+///         self.focus.clone()
+///     }
+/// }
+///
+/// impl DockItem for Notes {
+///     fn id(&self) -> PanelId {
+///         PanelId("notes.notes")
+///     }
+///     fn title(&self, _: &App) -> SharedString {
+///         "Notes".into()
+///     }
+///     fn icon(&self, _: &App) -> Icon {
+///         Icon::FileText
+///     }
+///     fn show_command(&self) -> Option<&'static str> {
+///         Some("notes.notes.toggle")
+///     }
+/// }
+///
+/// fn module(cx: &mut App) {
+///     Contributions::add_panel(cx, PanelSpec {
+///         id: PanelId("notes.notes"),
+///         title: "Notes".into(),
+///         icon: Icon::FileText,
+///         position: DockPosition::Left,
+///         order: 0,
+///         toggle_key: "secondary-b".into(),
+///         make: |_, cx| {
+///             cx.new(|cx| Notes { focus: cx.focus_handle(), filter: String::new() }).into()
+///         },
+///     });
+/// }
+/// # let _: kiln::Module = module;
+/// ```
+///
+/// A struct that isn't a [`View`] doesn't compile, the error on its name:
+///
+/// ```compile_fail,E0277
+/// #[kiln::panel(title = "Notes")]
+/// #[derive(Default)]
+/// struct Notes;
+/// ```
+///
+/// nor does an argument it doesn't know, the error on its name:
+///
+/// ```compile_fail
+/// use kiln::{Cx, View, gpui::{IntoElement, div}};
+///
+/// #[kiln::panel(title = "Notes", shortcut = "secondary-b")]
+/// #[derive(Default)]
+/// struct Notes;
+///
+/// impl View for Notes {
+///     fn render(&mut self, _: &mut Cx<Self>) -> impl IntoElement {
+///         div()
+///     }
+/// }
+/// ```
+pub use kiln_macros::panel;
+/// Makes a fn a status bar source, in each workspace window [`app()`]
+/// opens: `fn(cx: &App) -> T`, `T` a `String`, an `Option<String>` (`None`
+/// showing nothing) or a [`shell::StatusItem`]; `side`, `order` and `id`
+/// optional:
+///
+/// ```
+/// use kiln::gpui::App;
+///
+/// #[derive(Default)]
+/// struct NoteCount(usize);
+///
+/// impl kiln::gpui::Global for NoteCount {}
+///
+/// /// The note count, on the left of the bar.
+/// #[kiln::status(side = Left, order = 0)]
+/// fn count(cx: &App) -> String {
+///     let count = cx.try_global::<NoteCount>().map_or(0, |count| count.0);
+///     format!("{count} notes")
+/// }
+/// ```
+///
+/// - The fn stays as it is, and is called each time the bar draws, its
+///   text shown as the item `<crate>.<fn>` (`notes.count`), unless `id =
+///   ".."`, on `side` (`Left` unless `Right`), by `order` (`0` unless
+///   given), then by file and line. A [`shell::StatusItem`] is shown as
+///   it is, its own ID, side and priority.
+/// - The bar draws as the workspace changes: its active item, its focus,
+///   its docks. To show a change at once, notify the workspace
+///   ([`Cx::workspace`]).
+/// - It runs on every draw, so keep it O(1): read a value, don't compute
+///   one.
+///
+/// The macro records the source with `inventory`, as `#[kiln::command]`
+/// records a command: [`app()`] adds the app's own target's, a library
+/// crate's [`module!`] its own ([`Contributions::add_status`]).
+///
+/// It expands to the fn, then:
+///
+/// ```ignore
+/// fn source(cx: &App) -> Option<StatusItem> {
+///     IntoStatus::into_status(count(cx), "<crate>.count", StatusSide::Left, 0)
+/// }
+/// inventory::submit!(StatusRecord {
+///     id: "<crate>.count", side: StatusSide::Left, order: 0, item: source,
+///     file: file!(), line: line!(), ..
+/// });
+/// ```
+///
+/// which is, by hand, in a crate named `notes`, the
+/// [`shell::Workspace::add_status_source`] of each window:
+///
+/// ```
+/// use kiln::{
+///     Contributions, StatusSpec,
+///     gpui::App,
+///     shell::{StatusItem, StatusSide},
+/// };
+///
+/// fn count(_: &App) -> Option<StatusItem> {
+///     Some(StatusItem::new("notes.count", StatusSide::Left, 0, "12 notes"))
+/// }
+///
+/// fn module(cx: &mut App) {
+///     Contributions::add_status(cx, StatusSpec {
+///         side: StatusSide::Left,
+///         order: 0,
+///         item: count,
+///     });
+/// }
+/// # let _: kiln::Module = module;
+/// ```
+///
+/// A fn whose signature isn't a source's doesn't compile, the error on
+/// its name:
+///
+/// ```compile_fail,E0061
+/// #[kiln::status]
+/// fn count() -> String {
+///     "12 notes".to_owned()
+/// }
+/// ```
+pub use kiln_macros::status;
 pub use kiln_platform::WindowSpec;
 pub use kiln_platform::config::{ConfigDiagnostics, GlobalSettings};
 /// A window's root view, around the app's: the chrome the platform wants
@@ -260,7 +497,7 @@ pub use kiln_shell::Root;
 pub use model::provide;
 pub use setup::{AppInfo, Config, application, catalog, init, window_options};
 pub use tables::{KeyBinding, KeyTable, MenuTable, TableItem, TableMenu};
-pub use view::ViewCommands;
+pub use view::{View, ViewCommands};
 
 /// The extension traits that put kiln's calls on GPUI's own types:
 /// `use kiln::prelude::*;` then `cx.theme()`, `cx.settings::<S>()`,
@@ -380,7 +617,11 @@ pub mod __private {
     pub use crate::contributions::{
         CommandRecord, RunRecorded, add_crate_commands, register_recorded as register_command,
     };
-    pub use crate::view::{Attach, AttachNothing, AttachViewCommands, run_in_view, view_handler};
+    pub use crate::contributions::{PanelRecord, StatusRecord};
+    pub use crate::view::{
+        Attach, AttachNothing, AttachViewCommands, IntoStatus, ViewState, make_panel, run_in_view,
+        view_handler, view_root,
+    };
     pub use inventory;
 }
 

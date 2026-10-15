@@ -329,7 +329,7 @@ pub(crate) fn doc_lines(attrs: &[Attribute]) -> Vec<String> {
 
 /// `id`'s segments, if it's a command ID as kiln's `CommandId::parse`
 /// takes it, else why not.
-fn check_id(id: &str) -> Result<Vec<&str>, String> {
+pub(crate) fn check_id(id: &str) -> Result<Vec<&str>, String> {
     let segments: Vec<&str> = id.split('.').collect();
     for segment in &segments {
         check_segment(segment).map_err(|why| format!("`{id}` isn't a command ID: {why}"))?;

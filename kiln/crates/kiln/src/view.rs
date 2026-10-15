@@ -1,15 +1,164 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-//! [`ViewCommands`]: a view's own commands, which run where focus is,
-//! on the view focus is in. `#[kiln::command(context = "..")]` on the
-//! view's impl implements it.
+//! [`View`]: the `Render` of a view kiln hosts, which `#[kiln::panel]`
+//! puts in a dock; and [`ViewCommands`]: a view's own commands, which run
+//! where focus is, on the view focus is in. `#[kiln::command(context =
+//! "..")]` on the view's impl implements it.
 
-use std::marker::PhantomData;
+use std::{cell::OnceCell, fmt, marker::PhantomData};
 
-use gpui::{Action, App, Context, InteractiveElement, Window};
-use kiln_shell::Workspace;
+use gpui::{
+    Action, App, AppContext as _, Context, Div, FocusHandle, InteractiveElement, IntoElement,
+    ParentElement as _, SharedString, Styled as _, Window, div,
+};
+use kiln_shell::{DockItem, StatusItem, StatusSide, Workspace};
 
-use crate::Cx;
+use crate::{AnyDockPanel, Cx};
+
+/// What a view kiln hosts draws: GPUI's `Render`, with a [`Cx`].
+/// `#[kiln::panel]` ([`crate::panel`]) on the view's struct implements
+/// `Render` through it, around the view's element: the view's focus handle
+/// tracked, its [`ViewCommands`] attached, and the dock's full size.
+///
+/// ```
+/// use kiln::{Cx, View, gpui::{IntoElement, ParentElement as _, div}};
+///
+/// #[derive(Default)]
+/// struct Count(usize);
+///
+/// #[kiln::panel(title = "Notes", toggle_key = "secondary-b")]
+/// #[derive(Default)]
+/// struct Notes;
+///
+/// impl View for Notes {
+///     fn render(&mut self, cx: &mut Cx<Self>) -> impl IntoElement {
+///         // Redraws each time `Count` changes, no Subscription stored.
+///         let count = cx.watch::<Count>().0;
+///         div().child(format!("{count} notes"))
+///     }
+/// }
+/// ```
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a kiln::View",
+    label = "#[kiln::panel] needs `impl kiln::View for {Self}`",
+    note = "`impl View for {Self} {{ fn render(&mut self, cx: &mut Cx<Self>) -> impl IntoElement {{ .. }} }}`"
+)]
+pub trait View: Sized + 'static {
+    /// The view's element, drawn each time it's notified or a model it
+    /// watches changes ([`Cx::watch`]).
+    fn render(&mut self, cx: &mut Cx<'_, '_, Self>) -> impl IntoElement;
+}
+
+/// What a view kiln's macros host keeps of kiln's: its focus handle, made
+/// the first time it's asked for, which kiln does as it builds the view.
+/// `#[kiln::panel]` adds it to the struct as the hidden field `__kiln`;
+/// a `new` fn fills that with `Default::default()`.
+#[derive(Default)]
+pub struct ViewState {
+    focus: OnceCell<FocusHandle>,
+}
+
+impl ViewState {
+    /// The view's focus handle, made now if it has none yet.
+    pub fn focus_handle(&self, cx: &App) -> FocusHandle {
+        self.focus.get_or_init(|| cx.focus_handle()).clone()
+    }
+}
+
+/// A copy has a focus handle of its own: two views never share one.
+impl Clone for ViewState {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl fmt::Debug for ViewState {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ViewState").finish_non_exhaustive()
+    }
+}
+
+/// Each equal to every other, so a view deriving `PartialEq` compares by
+/// its own fields.
+impl PartialEq for ViewState {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for ViewState {}
+
+/// `view`'s [`View::render`] in a full-size element tracking `focus`: the
+/// root the view macros give a hosted view, before attaching its
+/// [`ViewCommands`].
+#[doc(hidden)]
+pub fn view_root<V: View>(
+    view: &mut V,
+    focus: &FocusHandle,
+    window: &mut Window,
+    cx: &mut Context<V>,
+) -> Div {
+    // Made an element at once: the view's element may borrow the `Cx`.
+    let content = view.render(&mut Cx { window, cx }).into_any_element();
+    div().track_focus(focus).size_full().child(content)
+}
+
+/// The panel `new` builds, its focus handle made: `#[kiln::panel]`'s
+/// [`crate::MakePanel`].
+#[doc(hidden)]
+pub fn make_panel<V: DockItem>(
+    window: &mut Window,
+    cx: &mut App,
+    new: impl FnOnce(&mut Cx<'_, '_, V>) -> V,
+) -> AnyDockPanel {
+    let panel = cx.new(|cx| {
+        let view = new(&mut Cx { window, cx });
+        view.focus_handle(cx);
+        view
+    });
+    panel.into()
+}
+
+/// What a `#[kiln::status]` fn returns: its text, shown as the item `id`
+/// on `side` by `priority`, or the item as it is; `None` shows nothing.
+#[doc(hidden)]
+#[diagnostic::on_unimplemented(
+    message = "a #[kiln::status] fn returns a String, an Option<String> or a StatusItem, not `{Self}`",
+    label = "returns `{Self}`"
+)]
+pub trait IntoStatus {
+    fn into_status(self, id: &'static str, side: StatusSide, priority: i32) -> Option<StatusItem>;
+}
+
+impl IntoStatus for StatusItem {
+    fn into_status(self, _: &'static str, _: StatusSide, _: i32) -> Option<StatusItem> {
+        Some(self)
+    }
+}
+
+impl IntoStatus for String {
+    fn into_status(self, id: &'static str, side: StatusSide, priority: i32) -> Option<StatusItem> {
+        Some(StatusItem::new(id, side, priority, self))
+    }
+}
+
+impl IntoStatus for &'static str {
+    fn into_status(self, id: &'static str, side: StatusSide, priority: i32) -> Option<StatusItem> {
+        Some(StatusItem::new(id, side, priority, self))
+    }
+}
+
+impl IntoStatus for SharedString {
+    fn into_status(self, id: &'static str, side: StatusSide, priority: i32) -> Option<StatusItem> {
+        Some(StatusItem::new(id, side, priority, self))
+    }
+}
+
+impl<T: IntoStatus> IntoStatus for Option<T> {
+    fn into_status(self, id: &'static str, side: StatusSide, priority: i32) -> Option<StatusItem> {
+        self?.into_status(id, side, priority)
+    }
+}
 
 /// A view's own commands: [`ViewCommands::attach`] sets the view's key
 /// context, [`ViewCommands::CONTEXT`], on its element, with a handler of

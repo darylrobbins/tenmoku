@@ -88,6 +88,10 @@ struct TypedCommands {
     current: Option<Invocation>,
     /// The window it's dispatched in.
     window: Option<AnyWindowHandle>,
+    /// Whether whoever dispatches `current` tells the observers of it
+    /// once it's handled, as [`dispatch_invocation`] does of a typed
+    /// command a view on the focus path handles.
+    notifies: bool,
 }
 
 impl Global for TypedCommands {}
@@ -208,11 +212,13 @@ pub fn dispatch_invocation(
         Some(focus) => {
             let previous = set_current(Some(invocation), cx);
             let previous_window = set_window(Some(window.window_handle()), cx);
+            let previous_notifies = set_notifies(handled, cx);
             focus.dispatch_action(action.as_ref(), window, cx);
             // A nested dispatch puts back the invocation it replaced, so
             // this is the one set above.
             let invocation = set_current(previous, cx);
             set_window(previous_window, cx);
+            set_notifies(previous_notifies, cx);
             if handled && let Some(invocation) = invocation {
                 notify_observers(&invocation, cx);
             }
@@ -225,11 +231,13 @@ pub fn dispatch_invocation(
             cx.defer(move |cx| {
                 set_current(Some(invocation), cx);
                 set_window(Some(handle), cx);
+                set_notifies(handled, cx);
             });
             window.dispatch_action(action, cx);
             cx.defer(|cx| {
                 set_current(None, cx);
                 set_window(None, cx);
+                set_notifies(false, cx);
             });
             if let Some(invocation) = observed {
                 notify_observers(&invocation, cx);
@@ -261,6 +269,21 @@ fn set_window(window: Option<AnyWindowHandle>, cx: &mut App) -> Option<AnyWindow
 /// manager has none).
 pub fn dispatch_window(cx: &App) -> Option<AnyWindowHandle> {
     cx.try_global::<TypedCommands>()?.window
+}
+
+/// Whether the observers hear of [`current_invocation`] from its
+/// dispatch, once it's handled: as [`dispatch_invocation`] tells them of a
+/// typed command a view on the focus path handles, as it found before
+/// dispatching. A handler of the app's that tells them itself, as one
+/// that runs once the dispatch is over must, reads it during the dispatch,
+/// so that they hear of each run once whatever focus does in between.
+pub fn dispatch_notifies(cx: &App) -> bool {
+    cx.try_global::<TypedCommands>()
+        .is_some_and(|commands| commands.current.is_some() && commands.notifies)
+}
+
+fn set_notifies(notifies: bool, cx: &mut App) -> bool {
+    std::mem::replace(&mut cx.default_global::<TypedCommands>().notifies, notifies)
 }
 
 /// Sets what [`current_invocation`] and [`dispatch_window`] give,

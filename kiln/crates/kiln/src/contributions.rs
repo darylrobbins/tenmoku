@@ -43,10 +43,12 @@
 //! the app crate's own items by themselves, and a library crate's would go
 //! missing when nothing referenced the crate.
 //!
-//! `#[kiln::command]` records its command as a [`CommandRecord`], which
-//! [`Contributions::add_recorded`] adds when the record was compiled into
-//! the app's own target (a binary, an example or an integration test), and
-//! the crate's `kiln::module!` when it was compiled into a library.
+//! `#[kiln::command]` records its command as a [`CommandRecord`],
+//! `#[kiln::panel]` its panel as a [`PanelRecord`] and `#[kiln::status]`
+//! its source as a [`StatusRecord`], which [`Contributions::add_recorded`]
+//! adds when the record was compiled into the app's own target (a binary,
+//! an example or an integration test), and the crate's `kiln::module!`
+//! when it was compiled into a library.
 
 use std::{any::TypeId, borrow::Cow, collections::HashSet, path::PathBuf, rc::Rc};
 
@@ -61,8 +63,8 @@ use kiln_core::{
 };
 use kiln_platform::{
     command_actions::{
-        Command, CommandInfo, current_invocation, dispatch_window, register_command, set_dispatch,
-        typed_command,
+        Command, CommandInfo, current_invocation, dispatch_notifies, dispatch_window,
+        register_command, set_dispatch, typed_command,
     },
     commands::{notify_observers, register_app_commands},
     config::SharedKeymap,
@@ -308,12 +310,6 @@ inventory::collect!(CommandRecord);
 pub type RunRecorded = fn(&mut Workspace, &mut Cx<'_, '_, Workspace>);
 
 impl CommandRecord {
-    /// Whether it was compiled into the app's own target, a binary, an
-    /// example or an integration test, rather than a library.
-    fn in_app(&self) -> bool {
-        self.bin.is_some() || self.test_dir.is_some()
-    }
-
     fn spec(&self) -> CommandSpec {
         let id = CommandId::parse(self.id).unwrap_or_else(|error| {
             panic!(
@@ -336,59 +332,204 @@ impl CommandRecord {
     }
 }
 
-/// Every record linked in.
-fn linked() -> Vec<&'static CommandRecord> {
-    inventory::iter::<CommandRecord>.into_iter().collect()
+/// A panel `#[kiln::panel]` declared, as it records it with `inventory`:
+/// what [`PanelSpec`] has, and where it was declared, as a
+/// [`CommandRecord`] has it.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug)]
+pub struct PanelRecord {
+    pub id: &'static str,
+    pub title: &'static str,
+    pub icon: Icon,
+    pub position: DockPosition,
+    pub order: i32,
+    pub toggle_key: Option<&'static str>,
+    pub make: MakePanel,
+    pub file: &'static str,
+    pub line: u32,
+    pub krate: &'static str,
+    pub bin: Option<&'static str>,
+    pub test_dir: Option<&'static str>,
+}
+
+inventory::collect!(PanelRecord);
+
+impl PanelRecord {
+    fn spec(&self) -> PanelSpec {
+        PanelSpec {
+            id: PanelId(self.id),
+            title: self.title.into(),
+            icon: self.icon,
+            position: self.position,
+            order: self.order,
+            toggle_key: self.toggle_key.map_or(Keys::None, Keys::from),
+            make: self.make,
+        }
+    }
+}
+
+/// A status source `#[kiln::status]` declared, as it records it with
+/// `inventory`: what [`StatusSpec`] has, its item's ID, and where it was
+/// declared.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug)]
+pub struct StatusRecord {
+    pub id: &'static str,
+    pub side: StatusSide,
+    pub order: i32,
+    pub item: fn(&App) -> Option<StatusItem>,
+    pub file: &'static str,
+    pub line: u32,
+    pub krate: &'static str,
+    pub bin: Option<&'static str>,
+    pub test_dir: Option<&'static str>,
+}
+
+inventory::collect!(StatusRecord);
+
+impl StatusRecord {
+    fn spec(&self) -> StatusSpec {
+        StatusSpec {
+            side: self.side,
+            order: self.order,
+            item: self.item,
+        }
+    }
+}
+
+/// A record one of kiln's macros submitted: what it's called, where it
+/// was declared, and which crate and target it was compiled into.
+trait Recorded {
+    /// The attribute that recorded it, as a warning names it in the
+    /// plural: `#[kiln::command]s`.
+    const ATTRIBUTE: &'static str;
+
+    fn id(&self) -> &'static str;
+    fn site(&self) -> (&'static str, u32);
+    /// `CARGO_CRATE_NAME`.
+    fn krate(&self) -> &'static str;
+    /// Whether it was compiled into the app's own target, a binary, an
+    /// example or an integration test (`CARGO_BIN_NAME` or
+    /// `CARGO_TARGET_TMPDIR` set), rather than a library.
+    fn in_app(&self) -> bool;
+}
+
+macro_rules! recorded {
+    ($record:ty, $attribute:literal) => {
+        impl Recorded for $record {
+            const ATTRIBUTE: &'static str = $attribute;
+
+            fn id(&self) -> &'static str {
+                self.id
+            }
+
+            fn site(&self) -> (&'static str, u32) {
+                (self.file, self.line)
+            }
+
+            fn krate(&self) -> &'static str {
+                self.krate
+            }
+
+            fn in_app(&self) -> bool {
+                self.bin.is_some() || self.test_dir.is_some()
+            }
+        }
+    };
+}
+
+recorded!(CommandRecord, "#[kiln::command]s");
+recorded!(PanelRecord, "#[kiln::panel]s");
+recorded!(StatusRecord, "#[kiln::status]es");
+
+/// Every record of a kind linked in.
+fn linked<R: inventory::Collect>() -> Vec<&'static R> {
+    inventory::iter::<R>.into_iter().collect()
 }
 
 /// The records compiled into the app's own targets, by file, then line:
-/// the order their menu items take within an `order`.
-fn app_records<'a>(records: impl IntoIterator<Item = &'a CommandRecord>) -> Vec<&'a CommandRecord> {
+/// the order their menu items take within an `order`, and their panels
+/// and status sources within theirs.
+fn app_records<'a, R: Recorded>(records: impl IntoIterator<Item = &'a R>) -> Vec<&'a R> {
     sorted(records.into_iter().filter(|record| record.in_app()))
 }
 
 /// The records compiled into the library crate `krate`, by file, then
 /// line.
-fn crate_records<'a>(
-    records: impl IntoIterator<Item = &'a CommandRecord>,
+fn crate_records<'a, R: Recorded>(
+    records: impl IntoIterator<Item = &'a R>,
     krate: &str,
-) -> Vec<&'a CommandRecord> {
-    sorted((records.into_iter()).filter(|record| !record.in_app() && record.krate == krate))
+) -> Vec<&'a R> {
+    sorted((records.into_iter()).filter(|record| !record.in_app() && record.krate() == krate))
 }
 
-fn sorted<'a>(records: impl Iterator<Item = &'a CommandRecord>) -> Vec<&'a CommandRecord> {
+fn sorted<'a, R: Recorded>(records: impl Iterator<Item = &'a R>) -> Vec<&'a R> {
     let mut records: Vec<_> = records.collect();
-    records.sort_by_key(|record| (record.file, record.line));
+    records.sort_by_key(|record| record.site());
     records
 }
 
-/// A warning for each library crate whose records are linked in but no
-/// `kiln::module!` in `claimed` added, naming the crate and its commands.
+/// What a library crate left out records: the attributes, and the IDs.
+#[derive(Default)]
+struct LeftOut {
+    attributes: Vec<&'static str>,
+    ids: Vec<&'static str>,
+}
+
+impl LeftOut {
+    /// Adds `records`' library crates not in `claimed` to `crates`.
+    fn add<'a, R: Recorded + 'a>(
+        crates: &mut Vec<(&'static str, LeftOut)>,
+        records: impl IntoIterator<Item = &'a R>,
+        claimed: &[&str],
+    ) {
+        for record in sorted(records.into_iter()) {
+            let krate = record.krate();
+            if record.in_app() || claimed.contains(&krate) {
+                continue;
+            }
+            let ix = match crates.iter().position(|(name, _)| *name == krate) {
+                Some(ix) => ix,
+                None => {
+                    crates.push((krate, LeftOut::default()));
+                    crates.len() - 1
+                }
+            };
+            let left = &mut crates[ix].1;
+            if !left.attributes.contains(&R::ATTRIBUTE) {
+                left.attributes.push(R::ATTRIBUTE);
+            }
+            left.ids.push(record.id());
+        }
+    }
+}
+
+/// A warning for each library crate in `crates` whose records are linked
+/// in but no `kiln::module!` claimed, naming the crate and its records.
+fn warnings(mut crates: Vec<(&'static str, LeftOut)>) -> Vec<String> {
+    crates.sort_by_key(|(krate, _)| *krate);
+    (crates.into_iter())
+        .map(|(krate, left)| {
+            format!(
+                "the crate {krate}'s {} ({}) are left out: no kiln::module! \
+                 claimed them. Add `kiln::module!(pub fn module);` to {krate} and pass \
+                 `.module({krate}::module)` to kiln::app",
+                left.attributes.join(" and "),
+                left.ids.join(", ")
+            )
+        })
+        .collect()
+}
+
+/// [`warnings`] of commands alone.
+#[cfg(test)]
 fn unclaimed<'a>(
     records: impl IntoIterator<Item = &'a CommandRecord>,
     claimed: &[&str],
 ) -> Vec<String> {
-    let mut crates: Vec<(&str, Vec<&str>)> = Vec::new();
-    for record in sorted(records.into_iter()) {
-        if record.in_app() || claimed.contains(&record.krate) {
-            continue;
-        }
-        match crates.iter_mut().find(|(krate, _)| *krate == record.krate) {
-            Some((_, ids)) => ids.push(record.id),
-            None => crates.push((record.krate, vec![record.id])),
-        }
-    }
-    crates.sort();
-    (crates.into_iter())
-        .map(|(krate, ids)| {
-            format!(
-                "the crate {krate}'s #[kiln::command]s ({}) are left out: no kiln::module! \
-                 claimed them. Add `kiln::module!(pub fn module);` to {krate} and pass \
-                 `.module({krate}::module)` to kiln::app",
-                ids.join(", ")
-            )
-        })
-        .collect()
+    let mut crates = Vec::new();
+    LeftOut::add(&mut crates, records, claimed);
+    warnings(crates)
 }
 
 /// Registers `A`, the type `#[kiln::command]` made, with `info`, and its
@@ -410,19 +551,19 @@ pub fn register_recorded<A: Command>(cx: &mut App, info: CommandInfo, run: RunRe
 /// [`dispatch_window`] give the invocation and window as in a handler run
 /// during the dispatch; and the invocation observers
 /// ([`kiln_platform::commands::observe_invocations`]) hear of it once,
-/// after `run`, unless [`dispatch_invocation`](crate::dispatch_invocation)
-/// already told them, a view on the focus path handling `A` too.
+/// after `run`, unless its dispatch tells them
+/// ([`dispatch_notifies`]): [`dispatch_invocation`](crate::dispatch_invocation)
+/// does when a view on the focus path handles `A` too, as it found before
+/// dispatching, whatever focus does before `run`.
 pub fn workspace_handler<A: Command>(
     run: fn(&mut Workspace, &mut Cx<'_, '_, Workspace>),
 ) -> impl Fn(&A, &mut App) + 'static {
-    move |action: &A, cx: &mut App| {
+    move |_: &A, cx: &mut App| {
         let id = A::id();
         let invocation = current_invocation(cx).filter(|invocation| invocation.command == id);
-        let action = action.boxed_clone();
+        // Read now, during the dispatch, from what the dispatch decided.
+        let told = invocation.is_some() && dispatch_notifies(cx);
         on_workspace(cx, move |workspace, window, cx| {
-            // `dispatch_invocation` tells the observers when a view on the
-            // focus path handles `A`, as it found before dispatching.
-            let told = invocation.is_some() && window.is_action_available(action.as_ref(), cx);
             let invocation = invocation.unwrap_or_else(|| Invocation::new(id));
             let previous = set_dispatch(Some(invocation.clone()), Some(window.window_handle()), cx);
             run(workspace, &mut Cx { window, cx });
@@ -446,7 +587,28 @@ pub fn add_crate_commands(cx: &mut App, krate: &'static str) {
         .map(CommandRecord::spec)
         .collect();
     Contributions::add_commands(cx, specs);
+    add_panels_and_statuses(
+        cx,
+        crate_records(linked(), krate),
+        crate_records(linked(), krate),
+    );
 }
+
+/// Adds `panels` and `statuses`, each placed by where it was declared
+/// among those of its `order`, whatever adds them.
+fn add_panels_and_statuses(cx: &mut App, panels: Vec<&PanelRecord>, statuses: Vec<&StatusRecord>) {
+    for panel in panels {
+        Contributions::add_panel_declared(cx, panel.spec(), Some(panel.site()));
+    }
+    for status in statuses {
+        Contributions::add_status_declared(cx, status.spec(), Some(status.site()));
+    }
+}
+
+/// Where a record was declared, file then line, for those placed by it;
+/// `None` for one added by hand, which goes before them in its `order`, as
+/// [`MenuSpec::declared`] does.
+type Declared = Option<(&'static str, u32)>;
 
 /// Makes a contributed panel for a workspace window.
 pub type MakePanel = fn(&mut Window, &mut App) -> AnyDockPanel;
@@ -466,7 +628,7 @@ pub struct PanelSpec {
     pub icon: Icon,
     pub position: DockPosition,
     /// Lower comes first on the dock's rail, and in the View menu; equal
-    /// ones go in the order added.
+    /// ones go in the order added, then `#[kiln::panel]`s by file and line.
     pub order: i32,
     /// The toggle command's default keys: [`Keys::None`] for none.
     pub toggle_key: Keys,
@@ -483,8 +645,8 @@ impl PanelSpec {
 /// A status source for each workspace window's bar, called each time it
 /// draws ([`Workspace::add_status_source`]): the item it gives sits on
 /// the item's own side, by its priority. The sources are added by `side`,
-/// then `order`, then the order added, which places items whose side and
-/// priority tie.
+/// then `order`, then the order added (`#[kiln::status]`es after, by file
+/// and line), which places items whose side and priority tie.
 #[derive(Clone, Copy, Debug)]
 pub struct StatusSpec {
     pub side: StatusSide,
@@ -499,8 +661,8 @@ pub struct Contributions {
     commands: Vec<CommandSpec>,
     /// Those added before `init`, to register when it runs.
     unregistered: Vec<CommandSpec>,
-    panels: Vec<PanelSpec>,
-    statuses: Vec<StatusSpec>,
+    panels: Vec<(PanelSpec, Declared)>,
+    statuses: Vec<(StatusSpec, Declared)>,
     settings: Vec<fn(Config) -> Config>,
     /// The item kinds and models added before `init`, to set up once it
     /// has run, in the order added.
@@ -570,25 +732,33 @@ impl Contributions {
 
     /// Adds every `#[kiln::command]` compiled into the app's own target (a
     /// binary, an example or an integration test), by file, then line, as
-    /// [`Contributions::add_commands`] does: [`crate::app()`] calls it
-    /// first when it starts. A library crate's are left to its
-    /// `kiln::module!`.
+    /// [`Contributions::add_commands`] does, then its `#[kiln::panel]`s and
+    /// `#[kiln::status]`es the same way ([`Contributions::add_panel`],
+    /// [`Contributions::add_status`]), so that those tying on `order` go by
+    /// file and line: [`crate::app()`] calls it first when it starts. A
+    /// library crate's are left to its `kiln::module!`.
     pub fn add_recorded(cx: &mut App) {
         let specs: Vec<CommandSpec> = (app_records(linked()).into_iter())
             .map(CommandRecord::spec)
             .collect();
         Self::add_commands(cx, specs);
+        add_panels_and_statuses(cx, app_records(linked()), app_records(linked()));
     }
 
-    /// Warns of each library crate whose `#[kiln::command]`s are linked in
-    /// but no `kiln::module!` added, naming it: in a debug build,
+    /// Warns of each library crate whose `#[kiln::command]`s,
+    /// `#[kiln::panel]`s or `#[kiln::status]`es are linked in but no
+    /// `kiln::module!` added, naming it: in a debug build,
     /// [`crate::app()`] calls it once its modules have run.
     pub fn warn_unclaimed(cx: &App) {
         let claimed = cx
             .try_global::<Self>()
             .map(|this| this.claimed.clone())
             .unwrap_or_default();
-        for warning in unclaimed(linked(), &claimed) {
+        let mut crates = Vec::new();
+        LeftOut::add(&mut crates, linked::<CommandRecord>(), &claimed);
+        LeftOut::add(&mut crates, linked::<PanelRecord>(), &claimed);
+        LeftOut::add(&mut crates, linked::<StatusRecord>(), &claimed);
+        for warning in warnings(crates) {
             log::warn!("{warning}");
         }
     }
@@ -665,7 +835,9 @@ impl Contributions {
     /// and its toggle command, `<id>.toggle` titled `Toggle <title>`, on
     /// `toggle_key` and in the View menu, by `order`. [`crate::app()`] adds
     /// the panels to each workspace window, by `order`, then in the order
-    /// added, after its own [`crate::AppBuilder::panel`]s. The command
+    /// added, `#[kiln::panel]`s after by file and line (their View menu
+    /// items too, among the commands' declared there), after its own
+    /// [`crate::AppBuilder::panel`]s. The command
     /// hides the dock if it shows the panel, through
     /// [`Workspace::toggle_dock`], else shows the dock with it, as a click
     /// on its rail button does (focusing it if it's
@@ -728,6 +900,12 @@ impl Contributions {
     /// # let _: kiln::Module = module;
     /// ```
     pub fn add_panel(cx: &mut App, spec: PanelSpec) {
+        Self::add_panel_declared(cx, spec, None);
+    }
+
+    /// [`Contributions::add_panel`], the panel and its View menu item
+    /// placed by `declared` among those of its order.
+    fn add_panel_declared(cx: &mut App, spec: PanelSpec, declared: Declared) {
         if Self::started(cx) {
             log::warn!(
                 "the panel {} was contributed after init, and is left out: contribute it before, \
@@ -745,7 +923,7 @@ impl Contributions {
                 menu: Some(MenuSpec {
                     menu: Cow::Borrowed("View"),
                     order: spec.order,
-                    declared: None,
+                    declared,
                 }),
                 // Registered in the app's registry by `register_early`.
                 register: |_, _| {},
@@ -756,8 +934,8 @@ impl Contributions {
             }
         };
         let this = cx.default_global::<Self>();
-        this.panels.retain(|added| added.id != spec.id);
-        this.panels.push(spec);
+        this.panels.retain(|(added, _)| added.id != spec.id);
+        this.panels.push((spec, declared));
         this.added += 1;
         Self::add_commands(cx, toggle);
     }
@@ -825,8 +1003,14 @@ impl Contributions {
     /// # let _: kiln::Module = module;
     /// ```
     pub fn add_status(cx: &mut App, spec: StatusSpec) {
+        Self::add_status_declared(cx, spec, None);
+    }
+
+    /// [`Contributions::add_status`], placed by `declared` among those of
+    /// its side and order.
+    fn add_status_declared(cx: &mut App, spec: StatusSpec, declared: Declared) {
         let this = cx.default_global::<Self>();
-        this.statuses.push(spec);
+        this.statuses.push((spec, declared));
         this.added += 1;
     }
 
@@ -913,25 +1097,28 @@ impl Contributions {
         config
     }
 
-    /// Every panel contributed, by order, then in the order added.
+    /// Every panel contributed, by order, then those added by hand in the
+    /// order added, then `#[kiln::panel]`s by file and line, whatever
+    /// module added them.
     pub fn panels(cx: &App) -> Vec<PanelSpec> {
         let mut panels = cx
             .try_global::<Self>()
             .map(|this| this.panels.clone())
             .unwrap_or_default();
-        panels.sort_by_key(|panel| panel.order);
-        panels
+        panels.sort_by_key(|(panel, declared)| (panel.order, *declared));
+        panels.into_iter().map(|(panel, _)| panel).collect()
     }
 
-    /// Every status source contributed, by side, then order, then in the
-    /// order added.
+    /// Every status source contributed, by side, then order, then those
+    /// added by hand in the order added, then `#[kiln::status]`es by file
+    /// and line, whatever module added them.
     pub fn statuses(cx: &App) -> Vec<StatusSpec> {
         let mut statuses = cx
             .try_global::<Self>()
             .map(|this| this.statuses.clone())
             .unwrap_or_default();
-        statuses.sort_by_key(|status| (status.side, status.order));
-        statuses
+        statuses.sort_by_key(|(status, declared)| (status.side, status.order, *declared));
+        statuses.into_iter().map(|(status, _)| status).collect()
     }
 
     /// How many additions of any kind there have been: a module that adds
@@ -1089,7 +1276,7 @@ pub(crate) fn start(
 /// registry, where the palette lists it: before the keymap and menus are
 /// checked against it, which share the registry from then on.
 fn register_toggles(cx: &mut App) {
-    let panels = cx.global::<Contributions>().panels.clone();
+    let panels = Contributions::panels(cx);
     register_app_commands(cx, |registry| {
         for panel in panels {
             let Ok(id) = panel.toggle_id() else {
@@ -1256,13 +1443,18 @@ fn keymap_layer(
 /// shortcuts resolved in `frames`, each titled as the command is registered
 /// else as the table has it. An item whose command `catalog` doesn't know,
 /// or won't run without args, is left out, with a warning, as a menu
-/// table's is.
+/// table's is. A menu named twice, or a command twice in one menu, is an
+/// error, as in a menu table, and the table is left out: no menu shows.
 fn table_menu_bar(
     table: &MenuTable,
     catalog: &dyn CommandCatalog,
     frames: &[String],
     cx: &App,
 ) -> (MenuBar, Vec<Diagnostic>) {
+    let repeated = repeats(table);
+    if !repeated.is_empty() {
+        return (MenuBar::default(), repeated);
+    }
     let mut diagnostics = Vec::new();
     let mut bar = MenuBar::default();
     for menu in table.menus() {
@@ -1322,6 +1514,42 @@ fn table_menu_bar(
         });
     }
     (bar, diagnostics)
+}
+
+/// An error for each menu `table` names again, and each command a menu
+/// has again, worded as a menu table's: menu dispatch finds a menu by its
+/// name and an item by its ID, so the second would never run.
+fn repeats(table: &MenuTable) -> Vec<Diagnostic> {
+    let error = |key: String, line: usize, message: String| Diagnostic {
+        severity: Severity::Error,
+        file: PathBuf::from(CONTRIBUTED_MENUS_PATH),
+        key: Some(key),
+        line,
+        column: 1,
+        message,
+    };
+    let mut diagnostics = Vec::new();
+    let mut names = HashSet::new();
+    for (menu_ix, menu) in table.menus().iter().enumerate() {
+        if !names.insert(menu.name) {
+            let message = format!("menu {:?} is repeated", menu.name);
+            diagnostics.push(error(menu.name.to_owned(), menu_ix + 1, message));
+        }
+        let mut ids = HashSet::new();
+        for (ix, item) in menu.items.iter().enumerate() {
+            if let TableItem::Command { command, .. } = item
+                && !ids.insert(command)
+            {
+                let message = format!(
+                    "id {:?} is repeated in menu {:?}",
+                    command.as_str(),
+                    menu.name
+                );
+                diagnostics.push(error(format!("{}.items[{ix}]", menu.name), ix + 1, message));
+            }
+        }
+    }
+    diagnostics
 }
 
 /// Puts each contributed command's item in its menu: in place of an item
@@ -1564,5 +1792,110 @@ mod tests {
                 declared: Some(("src/main.rs", 1)),
             })
         );
+    }
+
+    fn no_panel(_: &mut Window, _: &mut App) -> AnyDockPanel {
+        unreachable!("not made")
+    }
+
+    /// A `#[kiln::panel]`'s record of `id` at `file`'s `line`, in a library.
+    const fn panel(id: &'static str, order: i32, file: &'static str, line: u32) -> PanelRecord {
+        PanelRecord {
+            id,
+            title: "Title",
+            icon: Icon::Files,
+            position: DockPosition::Left,
+            order,
+            toggle_key: None,
+            make: no_panel,
+            file,
+            line,
+            krate: "lib",
+            bin: None,
+            test_dir: None,
+        }
+    }
+
+    fn a_item(_: &App) -> Option<StatusItem> {
+        Some(StatusItem::new("a", StatusSide::Left, 0, "a"))
+    }
+
+    fn z_item(_: &App) -> Option<StatusItem> {
+        Some(StatusItem::new("z", StatusSide::Left, 0, "z"))
+    }
+
+    fn hand_item(_: &App) -> Option<StatusItem> {
+        Some(StatusItem::new("hand", StatusSide::Left, 0, "hand"))
+    }
+
+    const fn status(
+        item: fn(&App) -> Option<StatusItem>,
+        file: &'static str,
+        line: u32,
+    ) -> StatusRecord {
+        StatusRecord {
+            id: "lib.status",
+            side: StatusSide::Left,
+            order: 0,
+            item,
+            file,
+            line,
+            krate: "lib",
+            bin: None,
+            test_dir: None,
+        }
+    }
+
+    const Z_PANEL: PanelRecord = panel("z.panel", 0, "src/z.rs", 1);
+    const A_PANEL: PanelRecord = panel("a.panel", 0, "src/a.rs", 9);
+    const A_LATE: PanelRecord = panel("a.late", 1, "src/a.rs", 2);
+    const Z_STATUS: StatusRecord = status(z_item, "src/z.rs", 1);
+    const A_STATUS: StatusRecord = status(a_item, "src/a.rs", 9);
+
+    #[gpui::test]
+    fn recorded_panels_and_statuses_go_by_file_and_line_whatever_module_adds_them(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| {
+            // The module of z.rs adds its records before that of a.rs.
+            add_panels_and_statuses(cx, vec![&Z_PANEL], vec![&Z_STATUS]);
+            add_panels_and_statuses(cx, vec![&A_LATE, &A_PANEL], vec![&A_STATUS]);
+            // By hand: first among its order, as added.
+            Contributions::add_panel(
+                cx,
+                PanelSpec {
+                    id: PanelId("hand"),
+                    ..A_PANEL.spec()
+                },
+            );
+            Contributions::add_status(
+                cx,
+                StatusSpec {
+                    side: StatusSide::Left,
+                    order: 0,
+                    item: hand_item,
+                },
+            );
+
+            let panels: Vec<&str> = (Contributions::panels(cx).iter())
+                .map(|panel| panel.id.0)
+                .collect();
+            assert_eq!(panels, ["hand", "a.panel", "z.panel", "a.late"]);
+            let statuses: Vec<String> = (Contributions::statuses(cx).iter())
+                .map(|status| (status.item)(cx).unwrap().id.to_string())
+                .collect();
+            assert_eq!(statuses, ["hand", "a", "z"]);
+
+            // The toggles' View menu items are placed where the panels are
+            // declared, among the commands' declared there.
+            let declared = |id: &str| {
+                (Contributions::commands(cx).iter())
+                    .find(|command| command.id.as_str() == id)
+                    .and_then(|command| command.menu.clone())
+                    .map(|menu| menu.declared)
+            };
+            assert_eq!(declared("a.panel.toggle"), Some(Some(("src/a.rs", 9))));
+            assert_eq!(declared("hand.toggle"), Some(None));
+        });
     }
 }
