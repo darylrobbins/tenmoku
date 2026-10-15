@@ -14,6 +14,7 @@
 
 use std::{io, ops::Range, path::Path, sync::Arc, time::Duration};
 
+use fe_buffer::Bias;
 use fe_editor::{CopyError, Outcome, ViewerModel, commands::CONTEXT};
 use fe_fileview::{FileText, FileView, Freshness, IndexState, LineIndex};
 use fe_text::TextSource as _;
@@ -63,6 +64,10 @@ pub enum FileViewerEvent {
     Found { wrapped: bool },
     /// A search found no match; the selection stays.
     NotFound,
+    /// The user asked to edit the file: the banner's Edit This File button.
+    /// The host converts the viewer, as [`FileViewer::set_converting`]
+    /// and [`FileViewer::refuse_changed`] let it show.
+    EditRequested,
 }
 
 /// A read-only view of a [`FileView`], with its rows from `index`.
@@ -78,6 +83,9 @@ pub struct FileViewer {
     host_banner: SharedString,
     /// The banner has a Reload button.
     offers_reload: bool,
+    /// The host is converting the file to an editor: the Edit This File
+    /// button is off.
+    converting: bool,
     pub(crate) theme: EditorTheme,
     pub(crate) focus: FocusHandle,
     /// How far the text is scrolled, in pixels (both ≥ 0).
@@ -140,8 +148,21 @@ type CursorKey = (u64, usize, usize);
 struct Restore {
     anchor: usize,
     head: usize,
+    /// A row to put the head in, once the index has found it, in place of
+    /// `head`.
+    row: Option<RowTarget>,
     /// `None` scrolls the head into view instead.
     scroll_y: Option<Pixels>,
+}
+
+/// A place by row and byte column, which an index still building may not
+/// have reached.
+#[derive(Clone, Copy)]
+struct RowTarget {
+    row: u32,
+    column: usize,
+    /// Stop at the row's end rather than run on into the next row.
+    within_row: bool,
 }
 
 /// Opens `path` and starts indexing it, as a host does a large file.
@@ -174,6 +195,7 @@ impl FileViewer {
             banner: banner.clone(),
             host_banner: banner,
             offers_reload: false,
+            converting: false,
             theme,
             focus: cx.focus_handle(),
             scroll: Point::default(),
@@ -237,6 +259,47 @@ impl FileViewer {
         self.offers_reload
     }
 
+    /// The file the viewer shows.
+    pub fn view(&self) -> &Arc<FileView> {
+        &self.view
+    }
+
+    /// Whether the host is converting the file to an editor.
+    pub fn is_converting(&self) -> bool {
+        self.converting
+    }
+
+    /// Turns the Edit This File button off while the host converts the
+    /// file; turning it on again puts the host's banner back, unless the
+    /// file changed.
+    pub fn set_converting(&mut self, converting: bool, cx: &mut Context<Self>) {
+        self.converting = converting;
+        if !converting && !self.offers_reload {
+            self.banner = self.host_banner.clone();
+        }
+        cx.notify();
+    }
+
+    /// Shows `banner` in place of the current one, until the next change
+    /// or reload puts another back.
+    pub fn set_banner(&mut self, banner: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.banner = banner.into();
+        cx.notify();
+    }
+
+    /// The host found the file changed on disk, so it won't edit it: the
+    /// banner says so and offers a reload, as a check of the file does.
+    pub fn refuse_changed(&mut self, cx: &mut Context<Self>) {
+        self.converting = false;
+        self.mark_changed(cx);
+        self.banner = format!(
+            "{} changed on disk. Reload it before editing.",
+            self.file_name()
+        )
+        .into();
+        cx.notify();
+    }
+
     /// Whether a [`FileViewer::reload`] is reopening the file.
     pub fn is_reloading(&self) -> bool {
         self.reload.is_some()
@@ -286,7 +349,29 @@ impl FileViewer {
         let Some(restore) = &self.restore else {
             return;
         };
-        self.model.set_selection(restore.anchor, restore.head);
+        match restore.row {
+            None => self.model.set_selection(restore.anchor, restore.head),
+            Some(target) => {
+                let text = self.model.text();
+                if target.row < text.row_count() {
+                    let start = text.row_start(target.row);
+                    let limit = if target.within_row {
+                        text.row_len(target.row) as usize
+                    } else {
+                        usize::MAX
+                    };
+                    let head = text
+                        .clip_offset(start.saturating_add(target.column.min(limit)), Bias::Left);
+                    self.model.set_selection(head, head);
+                } else if last {
+                    let end = text.len();
+                    self.model.set_selection(end, end);
+                } else {
+                    // Its row isn't indexed yet: wait for it.
+                    return;
+                }
+            }
+        }
         match restore.scroll_y {
             Some(y) => {
                 self.scroll.y = y;
@@ -312,9 +397,23 @@ impl FileViewer {
         self.restore = Some(Restore {
             anchor,
             head,
+            row: None,
             scroll_y,
         });
         // While it polls, the poll puts it back once the index is done.
+        self.put_back(self.poll.is_none());
+        cx.notify();
+    }
+
+    /// Puts the head at byte `column` of row `row`, as the index finds the
+    /// row, until it's done or the user moves; shows it.
+    fn restore_row(&mut self, target: RowTarget, cx: &mut Context<Self>) {
+        self.restore = Some(Restore {
+            anchor: 0,
+            head: 0,
+            row: Some(target),
+            scroll_y: None,
+        });
         self.put_back(self.poll.is_none());
         cx.notify();
     }
@@ -499,6 +598,7 @@ impl FileViewer {
         self.restore = Some(Restore {
             anchor,
             head,
+            row: None,
             scroll_y: Some(self.scroll.y),
         });
         self.put_back(false);
@@ -651,6 +751,26 @@ impl Render for FileViewer {
                 .child("Reload")
                 .on_click(cx.listener(|viewer, _, _, cx| viewer.reload(cx)))
         });
+        let converting = self.converting;
+        let edit = (!self.offers_reload).then(|| {
+            let button = div()
+                .id("file-viewer-edit")
+                .debug_selector(|| "file-viewer-edit".into())
+                .flex_none()
+                .px(px(6.))
+                .border_1()
+                .border_color(theme.popover_border)
+                .rounded(px(3.))
+                .text_color(theme.foreground)
+                .child("Edit This File");
+            if converting {
+                button.opacity(0.5)
+            } else {
+                button
+                    .cursor_pointer()
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(FileViewerEvent::EditRequested)))
+            }
+        });
         let banner = div()
             .flex_none()
             .flex()
@@ -674,6 +794,7 @@ impl Render for FileViewer {
                     .overflow_hidden()
                     .child(self.banner.clone()),
             )
+            .children(edit)
             .children(reload);
         let text = div()
             .id("file-viewer-text")

@@ -10,7 +10,7 @@ use fe_command::Value;
 use gpui::{AnyView, App, AppContext as _, Context, Entity, SharedString, Task, Window};
 use kiln_shell::{Icon, PaneItem, StatusItem, StatusSide};
 
-use super::{FileViewer, open};
+use super::{FileViewer, RowTarget, open};
 use crate::pane_item::{file_name, restore_style, status};
 
 /// The id of the `Read-only` status item: on the right, before the cursor.
@@ -126,6 +126,21 @@ impl PaneItem for FileViewer {
 /// Puts `viewer`'s head where `state` says, as its index reaches it, and
 /// scrolls to it.
 fn place_head(viewer: &mut FileViewer, state: &Value, cx: &mut Context<FileViewer>) {
+    if let Some(row) = state.get("row").and_then(Value::as_u64) {
+        let column = state.get("column").and_then(Value::as_u64).unwrap_or(0);
+        viewer.restore_row(
+            RowTarget {
+                row: u32::try_from(row).unwrap_or(u32::MAX),
+                column: usize::try_from(column).unwrap_or(usize::MAX),
+                within_row: state
+                    .get("within_row")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            },
+            cx,
+        );
+        return;
+    }
     let Some(head) = state.get("head").and_then(Value::as_u64) else {
         return;
     };

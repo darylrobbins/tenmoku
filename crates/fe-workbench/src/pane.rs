@@ -18,18 +18,19 @@ use fe_buffer::{Bias, ResolvedSelection};
 use fe_command::Source;
 use fe_config::{EditorConfig, EndOfLine, IndentKind, IndentSize};
 use fe_editor::{EditorModel, IndentStyle};
-use fe_fileview::{FileView, LineIndex};
+use fe_fileview::{FileView, Freshness, LineIndex};
 use fe_gpui::{
-    EditorSettings, EditorTheme, EditorView, FileViewer, SettingsEvent, commands::RunCommand,
+    EditorSettings, EditorTheme, EditorView, FileViewer, FileViewerEvent, SettingsEvent,
+    commands::RunCommand,
 };
 use fe_ui::{
     Breadcrumbs, Crumb, CrumbKind, Icon, IconButton, TAB_HEIGHT, TOOLBAR_HEIGHT, TabBar, Tooltip,
     UiTheme, file_icon,
 };
 use gpui::{
-    App, AppContext as _, Bounds, Context, DragMoveEvent, Entity, EntityId, EventEmitter,
-    FocusHandle, Focusable, InteractiveElement as _, IntoElement, ParentElement as _, Pixels,
-    Render, Styled as _, Task, Window, div,
+    AnyWindowHandle, App, AppContext as _, Bounds, Context, DragMoveEvent, Entity, EntityId,
+    EventEmitter, FocusHandle, Focusable, InteractiveElement as _, IntoElement, ParentElement as _,
+    Pixels, PromptLevel, Render, Styled as _, Subscription, Task, WeakEntity, Window, div,
 };
 pub use kiln_shell::PaneEvent;
 use kiln_shell::{ItemHandle, ItemId, PaneState, PaneView};
@@ -129,6 +130,14 @@ pub struct Pane {
     toolbar: Toolbar,
     /// Made by the first `find.show`.
     find: Option<FindBar>,
+    /// The window the last frame drew the pane in, which a viewer's
+    /// request to edit its file prompts in.
+    window: Option<AnyWindowHandle>,
+    this: WeakEntity<Pane>,
+    /// Hears each viewer tab's [`FileViewerEvent::EditRequested`].
+    viewer_events: HashMap<TabId, Subscription>,
+    /// Reads of the files of viewer tabs being converted to editors.
+    conversions: HashMap<TabId, Task<()>>,
     /// The tab bar's buttons' laid-out bounds.
     #[cfg(test)]
     actions: gpui::ScrollHandle,
@@ -164,6 +173,10 @@ impl Pane {
             ui,
             toolbar: Toolbar::default(),
             find: None,
+            window: None,
+            this: cx.weak_entity(),
+            viewer_events: HashMap::new(),
+            conversions: HashMap::new(),
             #[cfg(test)]
             actions: gpui::ScrollHandle::new(),
             #[cfg(test)]
@@ -346,6 +359,186 @@ impl Pane {
         for editor in self.tabs.iter().filter_map(Tab::editor) {
             configs::read(editor, cx);
         }
+        let open: Vec<TabId> = self.tabs.iter().map(Tab::id).collect();
+        self.viewer_events.retain(|id, _| open.contains(id));
+        // A converting viewer that left the pane isn't converted by it.
+        for tab in old.iter().filter(|tab| !open.contains(&tab.id())) {
+            if let (Some(_), Some(viewer)) = (self.conversions.remove(&tab.id()), tab.viewer()) {
+                viewer.update(cx, |viewer, cx| viewer.set_converting(false, cx));
+            }
+        }
+        for tab in &self.tabs {
+            let Some(viewer) = tab.viewer() else {
+                continue;
+            };
+            if !self.viewer_events.contains_key(&tab.id()) {
+                let subscription = self.hear_edit_requests(viewer, cx);
+                self.viewer_events.insert(tab.id(), subscription);
+            }
+        }
+    }
+
+    /// Hears `viewer` ask to be edited, and handles it in the window the
+    /// pane was last drawn in.
+    fn hear_edit_requests(&self, viewer: &Entity<FileViewer>, cx: &mut App) -> Subscription {
+        let pane = self.this.clone();
+        cx.subscribe(viewer, move |viewer, event: &FileViewerEvent, cx| {
+            if *event != FileViewerEvent::EditRequested {
+                return;
+            }
+            let Some(pane) = pane.upgrade() else {
+                return;
+            };
+            let Some(window) = pane.read(cx).window else {
+                return;
+            };
+            cx.spawn(async move |cx| {
+                cx.update_window(window, |_, window, cx| {
+                    pane.update(cx, |pane, cx| pane.edit_requested(&viewer, window, cx))
+                })
+                .ok();
+            })
+            .detach();
+        })
+    }
+
+    /// Converts the viewer tab `viewer` to an editor of its file, after
+    /// asking if the file is over [`edit_warning`].
+    fn edit_requested(
+        &mut self,
+        viewer: &Entity<FileViewer>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if viewer.read(cx).is_converting() || self.viewer_position(viewer).is_none() {
+            return;
+        }
+        let view = viewer.read(cx).view().clone();
+        if view.len() <= edit_warning(view.path()) {
+            self.convert(viewer.clone(), window, cx);
+            return;
+        }
+        viewer.update(cx, |viewer, cx| viewer.set_converting(true, cx));
+        let name = file_name(Some(view.path()));
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            &format!("Edit {name}?"),
+            Some(&format!(
+                "It loads all {} into memory, which takes several seconds and about 1.5 times its size.",
+                size_text(view.len())
+            )),
+            &["Edit", "Cancel"],
+            cx,
+        );
+        let viewer = viewer.clone();
+        cx.spawn_in(window, async move |pane, cx| {
+            let confirmed = answer.await.ok() == Some(0);
+            pane.update_in(cx, |pane, window, cx| {
+                viewer.update(cx, |viewer, cx| viewer.set_converting(false, cx));
+                if confirmed {
+                    pane.convert(viewer, window, cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn viewer_position(&self, viewer: &Entity<FileViewer>) -> Option<usize> {
+        let id = viewer.entity_id();
+        (self.tabs.iter()).position(|tab| tab.viewer().is_some_and(|v| v.entity_id() == id))
+    }
+
+    /// Reads `viewer`'s file on the background executor, unless it has
+    /// changed on disk, and then replaces the tab with an editor.
+    fn convert(&mut self, viewer: Entity<FileViewer>, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(ix) = self.viewer_position(&viewer) else {
+            return;
+        };
+        let view = viewer.read(cx).view().clone();
+        if view.check() == Freshness::Changed {
+            viewer.update(cx, |viewer, cx| viewer.refuse_changed(cx));
+            return;
+        }
+        let name = file_name(Some(view.path()));
+        viewer.update(cx, |viewer, cx| {
+            viewer.set_converting(true, cx);
+            viewer.set_banner(format!("Loading {name} for editing…"), cx);
+        });
+        let read = cx.background_spawn({
+            let path = view.path().to_owned();
+            async move { loader::read(path) }
+        });
+        let task = cx.spawn_in(window, async move |pane, cx| {
+            let result = read.await;
+            pane.update_in(cx, |pane, window, cx| {
+                pane.converted(viewer, view, result, window, cx)
+            })
+            .ok();
+        });
+        self.conversions.insert(self.tabs[ix].id(), task);
+    }
+
+    /// Replaces the tab of `viewer`, at the same index, with an editor on
+    /// `result`, unless the file changed since the viewer opened it or
+    /// couldn't be read: the viewer stays and its banner says why.
+    fn converted(
+        &mut self,
+        viewer: Entity<FileViewer>,
+        view: Arc<FileView>,
+        result: io::Result<Option<fe_buffer::Buffer>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ix) = self.viewer_position(&viewer) else {
+            return;
+        };
+        self.conversions.remove(&self.tabs[ix].id());
+        // The viewer was reloaded meanwhile: it shows another view of the
+        // file now, which this read isn't of.
+        if !Arc::ptr_eq(viewer.read(cx).view(), &view) {
+            viewer.update(cx, |viewer, cx| viewer.set_converting(false, cx));
+            return;
+        }
+        let buffer = match result {
+            Ok(Some(buffer)) if view.check() == Freshness::Unchanged => buffer,
+            Ok(_) => {
+                viewer.update(cx, |viewer, cx| viewer.refuse_changed(cx));
+                return;
+            }
+            Err(error) => {
+                let name = file_name(Some(view.path()));
+                viewer.update(cx, |viewer, cx| {
+                    viewer.set_converting(false, cx);
+                    viewer.set_banner(format!("Cannot read {name}: {error}"), cx);
+                });
+                return;
+            }
+        };
+        let head = viewer.read(cx).model().head();
+        let model = EditorModel::new(buffer, Some(view.path().to_owned()));
+        let editor = self.new_editor(model, cx);
+        editor.update(cx, |editor, cx| {
+            let text = editor.model().text();
+            let at = text.clip_offset(head.min(text.len()), Bias::Left);
+            editor.select_and_reveal(at..at, cx);
+        });
+        // The editor goes in before the viewer, which then goes. The
+        // active index is put back before the viewer's removal so that
+        // `take_item` activates no tab: a newer open pending, and the
+        // window's focus, stay as they are.
+        let was_active = self.state.active() == Some(ix);
+        let had_focus = viewer.focus_handle(cx).contains_focused(window, cx);
+        let focus = editor.focus_handle(cx);
+        self.state.insert(ix, Box::new(editor), cx);
+        if was_active {
+            self.state.set_active(ix);
+        }
+        self.take_item(ix + 1, window, cx);
+        if was_active && had_focus {
+            window.focus(&focus, cx);
+        }
+        cx.notify();
     }
 
     /// Shows the tab for `path` if it's open; otherwise reads the file in the
@@ -496,9 +689,14 @@ impl Pane {
     /// viewer, puts the caret at its start.
     fn apply(&mut self, reveal: &Reveal, ix: usize, window: &mut Window, cx: &mut App) {
         let tab = &self.tabs[ix];
-        if let Some(viewer) = tab.viewer() {
-            let head = reveal.start_in(viewer.read(cx).model().text());
-            let state = fe_command::Value::from_iter([("head", fe_command::Value::from(head))]);
+        if tab.viewer().is_some() {
+            // The viewer puts it at the place as its index reaches it:
+            // clipping to the rows found so far would lose it.
+            let state = fe_command::Value::from_iter([
+                ("row", fe_command::Value::from(reveal.row)),
+                ("column", fe_command::Value::from(reveal.columns.start)),
+                ("within_row", fe_command::Value::from(reveal.within_row)),
+            ]);
             tab.item().apply_state(&state, window, cx);
             return;
         }
@@ -798,18 +996,6 @@ impl Reveal {
         }
     }
 
-    /// Where the range starts in `text`, clamped to it: a viewer's caret.
-    fn start_in(&self, text: &dyn fe_text::TextSource) -> usize {
-        let row = self.row.min(text.row_count() - 1);
-        let start = text.row_start(row);
-        let limit = if self.within_row {
-            text.row_len(row) as usize
-        } else {
-            text.len() - start
-        };
-        text.clip_offset(start + self.columns.start.min(limit), Bias::Left)
-    }
-
     /// Selects the range, widened to char boundaries (a byte match can
     /// split a char), against the editor's text as it is now, and scrolls
     /// to it; `select_and_reveal` clamps a stale one.
@@ -828,6 +1014,35 @@ impl Reveal {
             editor.select_and_reveal(range, cx);
         });
     }
+}
+
+/// Converting a viewer's file to an editor asks first above this size.
+const EDIT_WARNING_BYTES: u64 = 1024 * 1024 * 1024;
+
+#[cfg(not(test))]
+fn edit_warning(_: &Path) -> u64 {
+    EDIT_WARNING_BYTES
+}
+
+/// The warning threshold for the files under `dir`, which a test lowers.
+#[cfg(test)]
+static EDIT_WARNINGS: std::sync::Mutex<Vec<(PathBuf, u64)>> = std::sync::Mutex::new(Vec::new());
+
+#[cfg(test)]
+fn edit_warning(path: &Path) -> u64 {
+    let lowered = EDIT_WARNINGS.lock().unwrap();
+    (lowered.iter())
+        .find(|(dir, _)| path.starts_with(dir))
+        .map_or(EDIT_WARNING_BYTES, |(_, bytes)| *bytes)
+}
+
+/// Asks before converting files of more than `bytes` under `dir`, in a
+/// test.
+#[cfg(test)]
+pub(crate) fn lower_edit_warning(dir: &Path, bytes: u64) {
+    let mut lowered = EDIT_WARNINGS.lock().unwrap();
+    lowered.retain(|(at, _)| at != dir);
+    lowered.push((dir.to_owned(), bytes));
 }
 
 /// `bytes` for a banner: `1.5 GiB`, `512 MiB`, `12 KiB`.
@@ -951,7 +1166,8 @@ impl PaneView for Pane {
 }
 
 impl Render for Pane {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.window = Some(window.window_handle());
         self.state.end_hover(cx);
         let tab_bar = self.state.tab_bar(cx);
         let body = if let Some(path) = &self.opening {
@@ -1293,6 +1509,10 @@ mod editorconfig_tests;
 #[cfg(test)]
 #[path = "large_file_tests.rs"]
 mod large_file_tests;
+
+#[cfg(test)]
+#[path = "large_file_edit_tests.rs"]
+mod large_file_edit_tests;
 
 /// `editor.auto_close_pairs` reaches the open editors' models on a reload,
 /// and those opened after it.
