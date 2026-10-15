@@ -19,7 +19,10 @@ use kiln_shell::{
 };
 use kiln_ui::{ThemeMode, follow_system_appearance};
 
-use crate::setup::{Config, application, init, window_options};
+use crate::{
+    Contributions,
+    setup::{Config, application, init, window_options},
+};
 
 /// Changes the [`Config`] the conventions built: see [`AppBuilder::config`].
 type ConfigHook = Box<dyn FnOnce(Config) -> Config>;
@@ -35,6 +38,13 @@ type RootView = Box<dyn FnOnce(&mut Window, &mut App) -> AnyView>;
 /// restores several windows calls it for each.
 type WorkspaceHook = Rc<dyn Fn(&mut Workspace, &mut Window, &mut Context<Workspace>)>;
 
+/// Adds to [`Contributions`]: a [`crate::Module`], named for the warning
+/// if it adds nothing, or the inline form.
+struct Contribute {
+    add: Box<dyn FnOnce(&mut App)>,
+    module: Option<&'static str>,
+}
+
 /// An app with the reverse-DNS ID `id` (`dev.kiln.Chat`) and the name
 /// people see (`Kiln Chat`), set up by kiln's conventions. Each has a
 /// one-line override:
@@ -47,7 +57,7 @@ type WorkspaceHook = Rc<dyn Fn(&mut Workspace, &mut Window, &mut Context<Workspa
 /// | [`AppBuilder::settings`] reads `settings.toml` in the config directory, and no project file | [`AppBuilder::config`] with [`Config::settings`], which replaces the store |
 /// | Closing the last window quits, except on macOS | [`AppBuilder::quit_on_last_window`] |
 /// | Its windows from [`WindowSpec::main`] with the app's name and ID | [`AppBuilder::window`] |
-/// | Each window a [`Workspace`] of [`ItemPane`](kiln_shell::ItemPane)s under the key context `workspace`, titled with the app's name, with the items, panels and status sources the builder adds | [`AppBuilder::key_context`], [`AppBuilder::root`] for a view of the app's own in a [`Root`] |
+/// | Each window a [`Workspace`] of [`ItemPane`](kiln_shell::ItemPane)s under the key context `workspace`, titled with the app's name, with the items, panels and status sources the builder adds, then those contributed ([`Contributions`]) | [`AppBuilder::key_context`], [`AppBuilder::root`] for a view of the app's own in a [`Root`] |
 /// | The workspaces' layout saved in the state directory's `layouts`, the state directory standing for the root folder, and on start every saved window no live one holds opened again, else one fresh window | [`AppBuilder::restore_layout`] |
 /// | kiln's own keys under the app's keymap, and its menus if the app has no table | [`AppBuilder::config`] with [`Config::default_keys`] or [`Config::default_menus`] |
 /// | In a debug build, a mistake in the keymap or menus the app ships panics at start | [`AppBuilder::config`] with [`Config::fail_fast`] |
@@ -58,7 +68,10 @@ type WorkspaceHook = Rc<dyn Fn(&mut Workspace, &mut Window, &mut Context<Workspa
 /// The window is a workspace once the app adds an item kind
 /// ([`AppBuilder::item`]), a panel ([`AppBuilder::panel`]) or a setup hook
 /// ([`AppBuilder::workspace`]), or a [`Root`] around the app's view from
-/// [`AppBuilder::root`]: one of them is required.
+/// [`AppBuilder::root`]: one of them is required. A library crate's
+/// panels, item kinds, status sources, commands and settings come in
+/// through its [`crate::Module`] ([`AppBuilder::module`]), and the app's
+/// own may too ([`AppBuilder::contributions`]).
 ///
 /// ```ignore
 /// kiln::app("com.example.Notes", "Notes")
@@ -145,6 +158,7 @@ pub fn app(id: impl Into<String>, name: impl Into<SharedString>) -> AppBuilder {
         dock_sizes: Vec::new(),
         status: Vec::new(),
         setup: Vec::new(),
+        contribute: Vec::new(),
         restore_layout: true,
     }
 }
@@ -174,6 +188,7 @@ pub struct AppBuilder {
     status: Vec<fn(&App) -> Option<StatusItem>>,
     /// The app's own setup of each workspace, once the rest is in.
     setup: Vec<WorkspaceHook>,
+    contribute: Vec<Contribute>,
     restore_layout: bool,
 }
 
@@ -340,6 +355,35 @@ impl AppBuilder {
         self
     }
 
+    /// Adds what a library crate contributes, its [`crate::Module`]: `start`
+    /// calls it first, before [`init`], so what it adds is set up with the
+    /// app's own ([`Contributions`]). In a debug build, a module that adds
+    /// nothing logs a warning naming it. Each call adds one, run in order.
+    ///
+    /// ```ignore
+    /// kiln::app("com.example.Notes", "Notes")
+    ///     .module(outline::module)
+    ///     .run();
+    /// ```
+    pub fn module(mut self, module: impl FnOnce(&mut App) + 'static) -> Self {
+        let name = std::any::type_name_of_val(&module);
+        self.contribute.push(Contribute {
+            add: Box::new(module),
+            module: Some(name),
+        });
+        self
+    }
+
+    /// Adds to [`Contributions`] inline, as a [`AppBuilder::module`] does:
+    /// `.contributions(|cx| Contributions::add_panel(cx, ..))`.
+    pub fn contributions(mut self, add: impl FnOnce(&mut App) + 'static) -> Self {
+        self.contribute.push(Contribute {
+            add: Box::new(add),
+            module: None,
+        });
+        self
+    }
+
     /// Whether the workspaces' layout is saved and restored: by default it
     /// is. Off, the app opens one fresh window and saves nothing.
     pub fn restore_layout(mut self, restore: bool) -> Self {
@@ -403,9 +447,11 @@ impl AppBuilder {
         });
     }
 
-    /// Sets the app up in `cx`: [`init`] with the [`Config`], the item
-    /// kinds registered, quitting on the last window's close if it should
-    /// (and GPUI's [`QuitMode`] [`QuitMode::Explicit`]), then the windows:
+    /// Sets the app up in `cx`: the modules and inline contributions added
+    /// ([`AppBuilder::module`]), [`init`] with the [`Config`] and the
+    /// contributed settings, the item kinds registered, quitting on the
+    /// last window's close if it should (and GPUI's [`QuitMode`]
+    /// [`QuitMode::Explicit`]), then the windows:
     /// the [`Root`] window, or a workspace window for each saved layout no
     /// live window holds, else one fresh one.
     ///
@@ -413,13 +459,30 @@ impl AppBuilder {
     ///
     /// Without [`AppBuilder::root`] and with no item kind, panel or
     /// workspace hook ([`AppBuilder::item`], [`AppBuilder::panel`],
-    /// [`AppBuilder::workspace`]); with [`Config::fail_fast`] on, as
-    /// [`init`] does; or if a window doesn't open.
+    /// [`AppBuilder::workspace`], or an item kind or panel contributed);
+    /// with [`Config::fail_fast`] on, as [`init`] does; or if a window
+    /// doesn't open.
     pub fn start(self, cx: &mut App) -> Started {
+        for Contribute { add, module } in self.contribute {
+            let before = Contributions::count(cx);
+            add(cx);
+            if let Some(name) = module
+                && cfg!(debug_assertions)
+                && Contributions::count(cx) == before
+            {
+                log::warn!("the kiln module {name} contributes nothing");
+            }
+        }
+        let panels = Contributions::panels(cx);
+        let statuses = Contributions::statuses(cx);
         let workspace = self.root.is_none();
         assert!(
             !workspace
-                || !(self.items.is_empty() && self.panels.is_empty() && self.setup.is_empty()),
+                || !(self.items.is_empty()
+                    && self.panels.is_empty()
+                    && self.setup.is_empty()
+                    && panels.is_empty()
+                    && !Contributions::has_item_kinds(cx)),
             "kiln::app needs a window: `.root(..)` for a view of the app's own, or \
              `.item::<T>()`, `.panel(..)` or `.workspace(..)` for a workspace"
         );
@@ -428,6 +491,7 @@ impl AppBuilder {
         for add in self.settings {
             config = add(config, user_settings.clone());
         }
+        config = Contributions::configure(cx, config);
         if let Some(dir) = self.paths.config_dir() {
             config = config
                 .user_keymap(dir.join("keymap.toml"))
@@ -489,11 +553,18 @@ impl AppBuilder {
                                 for panel in &self.panels {
                                     panel(&mut workspace, window, cx);
                                 }
+                                for panel in &panels {
+                                    let made = (panel.make)(window, cx);
+                                    made.add(panel.position, panel.id, &mut workspace, window, cx);
+                                }
                                 for (position, size) in &self.dock_sizes {
                                     workspace.set_dock_size(*position, *size, cx);
                                 }
                                 for source in &self.status {
                                     workspace.add_status_source(*source, cx);
+                                }
+                                for status in &statuses {
+                                    workspace.add_status_source(status.item, cx);
                                 }
                                 for setup in &self.setup {
                                     setup(&mut workspace, window, cx);

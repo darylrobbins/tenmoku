@@ -24,6 +24,7 @@ pub use kiln_ui as ui;
 /// The function [`app()`] beside the module [`app`](mod@app) of app commands:
 /// `kiln::app(..)` sets an app up, and `kiln::app::Quit` is a command.
 pub use app_builder::{AppBuilder, AppWindow, Started, app};
+pub use contributions::{AnyDockPanel, MakePanel, Module, PanelSpec, StatusSpec};
 pub use contributions::{
     CONTRIBUTED_KEYS_PATH, CONTRIBUTED_MENUS_PATH, CommandSpec, Contributions, Keys, MenuSpec,
     RegisterCommand,

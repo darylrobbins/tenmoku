@@ -29,20 +29,39 @@
 //! The new keymap is swapped in ([`kiln_platform::keys::set_keymap`]) and
 //! the menus reinstalled ([`kiln_platform::menus::install`]). A reload of
 //! the user's keymap keeps the contributed layer under it.
+//!
+//! The rest is added before `init`, as a [`Module`] does when
+//! [`crate::app()`] starts: panels ([`Contributions::add_panel`]), each with
+//! a toggle command, which [`crate::app()`] puts in each workspace window;
+//! status sources ([`Contributions::add_status`]); settings stores
+//! ([`Contributions::add_settings`]); and item kinds and models
+//! ([`Contributions::add_item_kind`], [`Contributions::add_model`]), which
+//! `init` sets up once it has run, and an addition after it at once.
+//!
+//! A library crate contributes through a [`Module`], one function the app
+//! passes to [`crate::AppBuilder::module`]: kiln's macros register only
+//! the app crate's own items by themselves, and a library crate's would go
+//! missing when nothing referenced the crate.
 
 use std::{borrow::Cow, path::PathBuf, rc::Rc};
 
-use gpui::{App, Global};
-use kiln_command::{CommandId, ContextFrame, ContextPredicate, ContextStack, Value};
+use gpui::{App, Context, Entity, Global, SharedString, Window};
+use kiln_command::{
+    CommandId, ContextFrame, ContextPredicate, ContextStack, Dispatched, Effect, RegisterError,
+    Value,
+};
 use kiln_core::{
     CatalogError, CommandCatalog, CommandItem, Diagnostic, Entry, ItemKind, KeymapLayer, Location,
     Menu, MenuBar, MenuItem, Os, Severity,
 };
 use kiln_platform::{
-    command_actions::{Command, CommandInfo, register_command},
+    command_actions::{Command, CommandInfo, dispatch_window, register_command},
+    commands::register_app_commands,
     config::SharedKeymap,
     menus,
 };
+use kiln_shell::{DockItem, DockPosition, PanelId, StatusItem, StatusSide, Workspace};
+use kiln_ui::Icon;
 
 use crate::setup::{Catalogs, Config, toml_escape};
 
@@ -165,6 +184,121 @@ impl CommandSpec {
     }
 }
 
+/// What a library crate contributes to an app, as one function that adds
+/// it all to [`Contributions`]: the app passes it to
+/// [`crate::AppBuilder::module`], which calls it before `init`. In a debug
+/// build, one that contributes nothing logs a warning naming it.
+///
+/// ```
+/// use kiln::{CommandSpec, Contributions, gpui::App};
+///
+/// mod outline {
+///     kiln::commands!(outline, [
+///         /// Collapse All
+///         CollapseAll,
+///     ]);
+/// }
+///
+/// /// The outline crate's module: `kiln::app(..).module(outline_module)`.
+/// pub fn outline_module(cx: &mut App) {
+///     Contributions::add_command(cx, CommandSpec::new::<outline::CollapseAll>("Collapse All"));
+/// }
+///
+/// let module: kiln::Module = outline_module;
+/// # let _ = module;
+/// ```
+pub type Module = fn(&mut App);
+
+/// A panel, made anew for each workspace window, entity and type both
+/// hidden: `Entity<T>` for a [`DockItem`] `T` converts into one.
+pub struct AnyDockPanel(AddPanel);
+
+/// Adds a panel to a workspace's dock at a position, the panel's ID
+/// expected.
+type AddPanel =
+    Box<dyn FnOnce(DockPosition, PanelId, &mut Workspace, &mut Window, &mut Context<Workspace>)>;
+
+impl AnyDockPanel {
+    pub fn new<T: DockItem>(panel: Entity<T>) -> Self {
+        Self(Box::new(
+            move |position, expected, workspace, window, cx| {
+                let id = panel.read(cx).id();
+                if id != expected {
+                    log::warn!(
+                        "the panel contributed as {} is {}: `{}.toggle` won't find it",
+                        expected.0,
+                        id.0,
+                        expected.0
+                    );
+                }
+                workspace.add_panel(position, panel, window, cx);
+            },
+        ))
+    }
+
+    /// Adds the panel to `workspace`'s dock at `position`.
+    pub(crate) fn add(
+        self,
+        position: DockPosition,
+        expected: PanelId,
+        workspace: &mut Workspace,
+        window: &mut Window,
+        cx: &mut Context<Workspace>,
+    ) {
+        (self.0)(position, expected, workspace, window, cx);
+    }
+}
+
+impl<T: DockItem> From<Entity<T>> for AnyDockPanel {
+    fn from(panel: Entity<T>) -> Self {
+        Self::new(panel)
+    }
+}
+
+/// Makes a contributed panel for a workspace window.
+pub type MakePanel = fn(&mut Window, &mut App) -> AnyDockPanel;
+
+/// A panel for each workspace window's dock at `position`, and the command
+/// that toggles it, `<id>.toggle` titled `Toggle <title>`, in the View
+/// menu.
+#[derive(Clone)]
+pub struct PanelSpec {
+    /// The panel's [`DockItem::id`].
+    pub id: PanelId,
+    /// What the toggle command is titled after: the panel's
+    /// [`DockItem::title`].
+    pub title: SharedString,
+    /// The panel's [`DockItem::icon`], for those listing panels without
+    /// making one.
+    pub icon: Icon,
+    pub position: DockPosition,
+    /// Lower comes first on the dock's rail, and in the View menu; equal
+    /// ones go in the order added.
+    pub order: i32,
+    /// The toggle command's default keys: [`Keys::None`] for none.
+    pub toggle_key: Keys,
+    pub make: MakePanel,
+}
+
+impl PanelSpec {
+    /// The toggle command's ID, `<id>.toggle`, or why it isn't one.
+    fn toggle_id(&self) -> Result<CommandId, kiln_command::InvalidCommandId> {
+        CommandId::parse(&format!("{}.toggle", self.id.0))
+    }
+}
+
+/// A status source for each workspace window's bar, called each time it
+/// draws ([`Workspace::add_status_source`]): the item it gives sits on
+/// the item's own side, by its priority. The sources are added by `side`,
+/// then `order`, then the order added, which places items whose side and
+/// priority tie.
+#[derive(Clone, Copy, Debug)]
+pub struct StatusSpec {
+    pub side: StatusSide,
+    pub order: i32,
+    pub item: fn(&App) -> Option<StatusItem>,
+}
+
 /// Everything contributed to the app, as a GPUI global: see the module
 /// docs.
 #[derive(Default)]
@@ -172,6 +306,15 @@ pub struct Contributions {
     commands: Vec<CommandSpec>,
     /// Those added before `init`, to register when it runs.
     unregistered: Vec<CommandSpec>,
+    panels: Vec<PanelSpec>,
+    statuses: Vec<StatusSpec>,
+    settings: Vec<fn(Config) -> Config>,
+    /// The item kinds and models added before `init`, to set up once it
+    /// has run, in the order added.
+    unrun: Vec<fn(&mut App)>,
+    /// How many additions of any kind there have been.
+    added: usize,
+    item_kinds: usize,
     /// Set by `init`, from when additions re-resolve.
     resolver: Option<Resolver>,
     scheduled: bool,
@@ -195,11 +338,58 @@ impl Contributions {
     /// the app's commands, and its keys and menu item are resolved with
     /// the app's. After, it's registered now, and the keymap and menus are
     /// resolved again once the current update is over.
+    ///
+    /// What `#[kiln::command]` writes, by hand:
+    ///
+    /// ```
+    /// use kiln::{CommandSpec, Contributions, gpui::App};
+    ///
+    /// mod notes {
+    ///     kiln::commands!(notes, [
+    ///         /// New Note
+    ///         NewNote,
+    ///     ]);
+    /// }
+    ///
+    /// fn module(cx: &mut App) {
+    ///     Contributions::add_command(
+    ///         cx,
+    ///         CommandSpec::new::<notes::NewNote>("New Note")
+    ///             .keys("secondary-n")
+    ///             .menu("File", 10),
+    ///     );
+    /// }
+    /// # let _: kiln::Module = module;
+    /// ```
     pub fn add_command(cx: &mut App, spec: CommandSpec) {
         Self::add_commands(cx, [spec]);
     }
 
     /// [`Contributions::add_command`] for each of `specs`, in order.
+    ///
+    /// ```
+    /// use kiln::{CommandSpec, Contributions, gpui::App};
+    ///
+    /// mod notes {
+    ///     kiln::commands!(notes, [
+    ///         /// Archive
+    ///         Archive,
+    ///         /// Pin
+    ///         #[command(context = "notes_list")]
+    ///         Pin,
+    ///     ]);
+    /// }
+    ///
+    /// fn module(cx: &mut App) {
+    ///     Contributions::add_commands(cx, [
+    ///         CommandSpec::new::<notes::Archive>("Archive Note").menu("Note", 0),
+    ///         CommandSpec::new::<notes::Pin>("Pin Note")
+    ///             .context("notes_list")
+    ///             .keys("secondary-p"),
+    ///     ]);
+    /// }
+    /// # let _: kiln::Module = module;
+    /// ```
     pub fn add_commands(cx: &mut App, specs: impl IntoIterator<Item = CommandSpec>) {
         let started = cx
             .try_global::<Self>()
@@ -215,10 +405,297 @@ impl Contributions {
                 this.unregistered.push(spec.clone());
             }
             this.commands.push(spec);
+            this.added += 1;
         }
         if started {
             schedule(cx);
         }
+    }
+
+    /// Adds `spec`'s panel, replacing one contributed before with its ID,
+    /// and its toggle command, `<id>.toggle` titled `Toggle <title>`, on
+    /// `toggle_key` and in the View menu, by `order`. [`crate::app()`] adds
+    /// the panels to each workspace window, by `order`, then in the order
+    /// added, after its own [`crate::AppBuilder::panel`]s. The command
+    /// shows the dock with the panel, or toggles the dock if the panel is
+    /// the one it shows, through [`Workspace::toggle_dock`]: focus doesn't
+    /// stay in a panel it hides. Before `init` only, since the command is
+    /// registered with the app's: after, the panel is left out, with a
+    /// warning.
+    ///
+    /// What `#[kiln::panel]` writes, by hand:
+    ///
+    /// ```
+    /// use kiln::{
+    ///     Contributions, PanelSpec,
+    ///     gpui::{App, AppContext as _, Context, FocusHandle, Focusable, IntoElement, Render,
+    ///         SharedString, Window, div, prelude::*},
+    ///     shell::{DockItem, DockPosition, PanelId},
+    ///     ui::Icon,
+    /// };
+    ///
+    /// struct Outline(FocusHandle);
+    ///
+    /// impl Render for Outline {
+    ///     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    ///         div().track_focus(&self.0)
+    ///     }
+    /// }
+    ///
+    /// impl Focusable for Outline {
+    ///     fn focus_handle(&self, _: &App) -> FocusHandle {
+    ///         self.0.clone()
+    ///     }
+    /// }
+    ///
+    /// impl DockItem for Outline {
+    ///     fn id(&self) -> PanelId {
+    ///         PanelId("outline")
+    ///     }
+    ///     fn title(&self, _: &App) -> SharedString {
+    ///         "Outline".into()
+    ///     }
+    ///     fn icon(&self, _: &App) -> Icon {
+    ///         Icon::Files
+    ///     }
+    ///     fn show_command(&self) -> Option<&'static str> {
+    ///         Some("outline.toggle")
+    ///     }
+    /// }
+    ///
+    /// fn module(cx: &mut App) {
+    ///     Contributions::add_panel(cx, PanelSpec {
+    ///         id: PanelId("outline"),
+    ///         title: "Outline".into(),
+    ///         icon: Icon::Files,
+    ///         position: DockPosition::Left,
+    ///         order: 10,
+    ///         toggle_key: "secondary-shift-o".into(),
+    ///         make: |_, cx| cx.new(|cx| Outline(cx.focus_handle())).into(),
+    ///     });
+    /// }
+    /// # let _: kiln::Module = module;
+    /// ```
+    pub fn add_panel(cx: &mut App, spec: PanelSpec) {
+        if Self::started(cx) {
+            log::warn!(
+                "the panel {} was contributed after init, and is left out: contribute it before, \
+                 from a kiln::Module",
+                spec.id.0
+            );
+            return;
+        }
+        let toggle = match spec.toggle_id() {
+            Ok(id) => Some(CommandSpec {
+                id,
+                title: format!("Toggle {}", spec.title),
+                context: None,
+                keys: spec.toggle_key.clone(),
+                menu: Some(MenuSpec {
+                    menu: Cow::Borrowed("View"),
+                    order: spec.order,
+                }),
+                // Registered in the app's registry by `register_early`.
+                register: |_, _| {},
+            }),
+            Err(error) => {
+                log::warn!("the panel {} has no toggle command: {error}", spec.id.0);
+                None
+            }
+        };
+        let this = cx.default_global::<Self>();
+        this.panels.retain(|added| added.id != spec.id);
+        this.panels.push(spec);
+        this.added += 1;
+        Self::add_commands(cx, toggle);
+    }
+
+    /// Has saved items of a kind come back with the saved layout: `register`
+    /// is [`kiln_shell::layout::register_item`] for the item's type. It
+    /// runs once `init` has, or now after it.
+    ///
+    /// What `#[kiln::item]` writes, by hand:
+    ///
+    /// ```
+    /// use kiln::{Contributions, gpui::App, shell::layout};
+    /// # use kiln::{command::Value, gpui::{AppContext as _, Context, Entity, FocusHandle,
+    /// #     Focusable, IntoElement, Render, SharedString, Task, Window, div}, shell::PaneItem};
+    /// # struct Note(FocusHandle);
+    /// # impl Render for Note {
+    /// #     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement { div() }
+    /// # }
+    /// # impl Focusable for Note {
+    /// #     fn focus_handle(&self, _: &App) -> FocusHandle { self.0.clone() }
+    /// # }
+    /// # impl PaneItem for Note {
+    /// #     const KIND: &'static str = "notes.note";
+    /// #     fn tab_title(&self, _: &App) -> SharedString { "Note".into() }
+    /// #     fn serialize(&self, _: &App) -> Option<Value> { Some(Value::Null) }
+    /// #     fn restore(_: Value, _: &mut Window, cx: &mut App) -> Task<Option<Entity<Self>>> {
+    /// #         Task::ready(Some(cx.new(|cx| Note(cx.focus_handle()))))
+    /// #     }
+    /// # }
+    ///
+    /// fn module(cx: &mut App) {
+    ///     Contributions::add_item_kind(cx, layout::register_item::<Note>);
+    /// }
+    /// # let _: kiln::Module = module;
+    /// ```
+    pub fn add_item_kind(cx: &mut App, register: fn(&mut App)) {
+        cx.default_global::<Self>().item_kinds += 1;
+        Self::add_run(cx, register);
+    }
+
+    /// Shows the item `spec.item` gives on each workspace window's status
+    /// bar, as [`crate::AppBuilder::status`] does, after the app's own
+    /// sources, by side, then order. For windows opened from now on.
+    ///
+    /// What `#[kiln::status]` writes, by hand:
+    ///
+    /// ```
+    /// use kiln::{
+    ///     Contributions, StatusSpec,
+    ///     gpui::App,
+    ///     shell::{StatusItem, StatusSide},
+    /// };
+    ///
+    /// fn word_count(_: &App) -> Option<StatusItem> {
+    ///     Some(StatusItem::new("notes.words", StatusSide::Right, 10, "12 words"))
+    /// }
+    ///
+    /// fn module(cx: &mut App) {
+    ///     Contributions::add_status(cx, StatusSpec {
+    ///         side: StatusSide::Right,
+    ///         order: 10,
+    ///         item: word_count,
+    ///     });
+    /// }
+    /// # let _: kiln::Module = module;
+    /// ```
+    pub fn add_status(cx: &mut App, spec: StatusSpec) {
+        let this = cx.default_global::<Self>();
+        this.statuses.push(spec);
+        this.added += 1;
+    }
+
+    /// Adds a settings store to the app's [`Config`] before `init`:
+    /// `add` is a [`Config::settings`] call, say. [`crate::app()`] applies
+    /// them after its own; by hand, [`Contributions::configure`] does.
+    /// After `init` it's too late: it's left out, with a warning.
+    ///
+    /// What `#[kiln::settings]` writes, by hand:
+    ///
+    /// ```
+    /// use kiln::{Config, Contributions, gpui::App, serde::{Deserialize, Serialize}};
+    ///
+    /// #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+    /// #[serde(crate = "kiln::serde", default)]
+    /// struct OutlineSettings {
+    ///     depth: u32,
+    /// }
+    ///
+    /// fn module(cx: &mut App) {
+    ///     Contributions::add_settings(cx, |config: Config| {
+    ///         config.settings::<OutlineSettings>(None, None)
+    ///     });
+    /// }
+    /// # let _: kiln::Module = module;
+    /// ```
+    pub fn add_settings(cx: &mut App, add: fn(Config) -> Config) {
+        if Self::started(cx) {
+            log::warn!("settings contributed after init are left out: contribute them before");
+            return;
+        }
+        let this = cx.default_global::<Self>();
+        this.settings.push(add);
+        this.added += 1;
+    }
+
+    /// Sets up a model, such as a global the module's views read: `make`
+    /// runs once `init` has, or now after it.
+    ///
+    /// What `#[kiln::model]` writes, by hand:
+    ///
+    /// ```
+    /// use kiln::{Contributions, gpui::{App, Global}};
+    ///
+    /// #[derive(Default)]
+    /// struct Recent(Vec<String>);
+    ///
+    /// impl Global for Recent {}
+    ///
+    /// fn module(cx: &mut App) {
+    ///     Contributions::add_model(cx, |cx| cx.set_global(Recent::default()));
+    /// }
+    /// # let _: kiln::Module = module;
+    /// ```
+    pub fn add_model(cx: &mut App, make: fn(&mut App)) {
+        Self::add_run(cx, make);
+    }
+
+    /// Runs `run` now after `init`, else once it has.
+    fn add_run(cx: &mut App, run: fn(&mut App)) {
+        let started = Self::started(cx);
+        let this = cx.default_global::<Self>();
+        this.added += 1;
+        if !started {
+            this.unrun.push(run);
+            return;
+        }
+        run(cx);
+    }
+
+    /// `config` with the contributed settings stores added, for an app
+    /// that calls [`crate::init`] itself: `kiln::init(cx,
+    /// Contributions::configure(cx, config))`.
+    pub fn configure(cx: &App, mut config: Config) -> Config {
+        let adds = cx
+            .try_global::<Self>()
+            .map(|this| this.settings.clone())
+            .unwrap_or_default();
+        for add in adds {
+            config = add(config);
+        }
+        config
+    }
+
+    /// Every panel contributed, by order, then in the order added.
+    pub fn panels(cx: &App) -> Vec<PanelSpec> {
+        let mut panels = cx
+            .try_global::<Self>()
+            .map(|this| this.panels.clone())
+            .unwrap_or_default();
+        panels.sort_by_key(|panel| panel.order);
+        panels
+    }
+
+    /// Every status source contributed, by side, then order, then in the
+    /// order added.
+    pub fn statuses(cx: &App) -> Vec<StatusSpec> {
+        let mut statuses = cx
+            .try_global::<Self>()
+            .map(|this| this.statuses.clone())
+            .unwrap_or_default();
+        statuses.sort_by_key(|status| (status.side, status.order));
+        statuses
+    }
+
+    /// How many additions of any kind there have been: a module that adds
+    /// nothing leaves it as it was.
+    pub fn count(cx: &App) -> usize {
+        cx.try_global::<Self>().map_or(0, |this| this.added)
+    }
+
+    /// Whether an item kind was contributed.
+    pub(crate) fn has_item_kinds(cx: &App) -> bool {
+        cx.try_global::<Self>()
+            .is_some_and(|this| this.item_kinds > 0)
+    }
+
+    /// Whether `init` has run.
+    fn started(cx: &App) -> bool {
+        cx.try_global::<Self>()
+            .is_some_and(|this| this.resolver.is_some())
     }
 
     /// Every command contributed, in the order added.
@@ -249,6 +726,7 @@ pub(crate) fn register_early(cx: &mut App) {
     if !cx.has_global::<Contributions>() {
         return;
     }
+    register_toggles(cx);
     // One at a time, so one a registration contributes, or replaces, is
     // registered too, as it now is.
     loop {
@@ -324,6 +802,68 @@ pub(crate) fn start(
         menu_diagnostics,
     });
     this.scheduled = false;
+    // One at a time, so one that contributes another runs it now.
+    loop {
+        let unrun = &mut cx.global_mut::<Contributions>().unrun;
+        if unrun.is_empty() {
+            return;
+        }
+        let run = unrun.remove(0);
+        run(cx);
+    }
+}
+
+/// Registers each contributed panel's toggle command in the app's
+/// registry, where the palette lists it: before the keymap and menus are
+/// checked against it, which share the registry from then on.
+fn register_toggles(cx: &mut App) {
+    let panels = cx.global::<Contributions>().panels.clone();
+    register_app_commands(cx, |registry| {
+        for panel in panels {
+            let Ok(id) = panel.toggle_id() else {
+                continue;
+            };
+            let (position, panel_id) = (panel.position, panel.id);
+            let title = format!("Toggle {}", panel.title);
+            let registered = registry.register(id.as_str(), &title, move |cx: &mut &mut App, _| {
+                toggle_panel(cx, position, panel_id);
+                Ok(Dispatched::new(Effect::Nothing))
+            });
+            match registered {
+                Ok(_) | Err(RegisterError::Duplicate(_)) => {}
+                Err(error) => log::warn!("the panel {} has no toggle command: {error}", panel_id.0),
+            }
+        }
+    });
+}
+
+/// `<id>.toggle`, in the window it was dispatched in, else the active one,
+/// once the dispatch is over (the window is out for it): shows the dock at
+/// `position` with the panel `id`, or toggles the dock if that's the panel
+/// it shows.
+fn toggle_panel(cx: &mut App, position: DockPosition, id: PanelId) {
+    let Some(handle) = dispatch_window(cx).or_else(|| cx.active_window()) else {
+        return;
+    };
+    cx.defer(move |cx| {
+        handle
+            .update(cx, |root, window, cx| {
+                let Ok(workspace) = root.downcast::<Workspace>() else {
+                    return;
+                };
+                workspace.update(cx, |workspace, cx| {
+                    let Some(dock) = workspace.dock(position).cloned() else {
+                        return;
+                    };
+                    if dock.read(cx).active() == Some(id) {
+                        workspace.toggle_dock(position, window, cx);
+                    } else {
+                        dock.update(cx, |dock, cx| dock.show(id, window, cx));
+                    }
+                });
+            })
+            .ok();
+    });
 }
 
 /// Resolves the keymap and menus again, with every command registered and
