@@ -19,7 +19,16 @@ log.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+kiln-platform = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
+
+# The platform's real text system, which paints glyphs; on Linux the
+# windowing backends select it, as `kiln` has them.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+gpui_platform = { workspace = true, features = ["wayland", "x11"] }
+
+[target.'cfg(not(target_os = "linux"))'.dev-dependencies]
+gpui_platform.workspace = true
 
 [lints]
 workspace = true

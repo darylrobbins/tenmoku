@@ -2,15 +2,21 @@
 
 //! A tab's title colour: an item's `tab_title_color` replaces the theme's
 //! tab text colour, active or not, with the dirty dot unchanged, and the
-//! default keeps the theme's. Read from the tabs the pane draws.
+//! default keeps the theme's. Read from the tabs the pane builds, and from
+//! the glyphs of the frame it paints.
 
 mod support;
 
+use std::{borrow::Cow, cell::RefCell, rc::Rc, sync::Arc};
+
 use gpui::{
-    AppContext as _, Context, Entity, FocusHandle, Focusable, Hsla, InteractiveElement as _,
-    IntoElement, ParentElement as _, Render, SharedString, Styled as _, TestAppContext,
-    VisualTestContext, Window, div, hsla,
+    AppContext as _, AtlasKey, AtlasTextureId, AtlasTextureKind, AtlasTile, Bounds, Context,
+    DevicePixels, Entity, FocusHandle, Focusable, HeadlessAppContext, Hsla,
+    InteractiveElement as _, IntoElement, ParentElement as _, PlatformAtlas,
+    PlatformHeadlessRenderer, Render, Scene, SharedString, Size, Styled as _, TestAppContext,
+    TileId, VisualTestContext, Window, div, hsla, px, size,
 };
+use kiln_platform::screenshots::RgbaImage;
 use kiln_shell::{ItemHandle, ItemPane, PaneItem, PaneView as _};
 use kiln_ui::{ActiveTheme as _, UiTheme};
 use support::note::{Note, note};
@@ -78,9 +84,8 @@ fn dots(pane: &Entity<ItemPane>, colour: Hsla, cx: &mut VisualTestContext) -> Ve
     })
 }
 
-// Checks the tabs `PaneState` builds for drawing, and the painted dirty dots.
-// Asserting the drawn glyph colour through the render path is follow-up T715:
-// GPUI's test harness doesn't expose painted glyph colours.
+// Checks the tabs `PaneState` builds for drawing, and the painted dirty dots;
+// the colour the glyphs are painted in is checked below.
 #[gpui::test]
 fn a_tinted_title_is_drawn_in_its_tint_active_or_not(cx: &mut TestAppContext) {
     let (host, cx) =
@@ -128,4 +133,169 @@ fn a_tinted_title_is_drawn_in_its_tint_active_or_not(cx: &mut TestAppContext) {
     );
     assert_eq!(dots(&pane, dirty, cx), [0, 1, 0]);
     assert_eq!(dots(&pane, tint, cx), [0, 0, 0]);
+}
+
+/// The colour of each glyph the last frame painted, with its bounds.
+type Glyphs = Rc<RefCell<Vec<(Hsla, Bounds<gpui::ScaledPixels>)>>>;
+
+/// A renderer that draws nothing and keeps the glyphs of each scene it's
+/// given, so a test can read the colours the text was painted in on any
+/// platform, with no GPU. Its atlas hands out a tile per glyph.
+struct Recorder(Glyphs, Arc<Tiles>);
+
+#[derive(Default)]
+struct Tiles(std::sync::atomic::AtomicU32);
+
+impl PlatformAtlas for Tiles {
+    fn get_or_insert_with<'a>(
+        &self,
+        _: AtlasKey,
+        build: &mut dyn FnMut() -> gpui::Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
+    ) -> gpui::Result<Option<AtlasTile>> {
+        let Some((size, _)) = build()? else {
+            return Ok(None);
+        };
+        let id = self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(Some(AtlasTile {
+            texture_id: AtlasTextureId {
+                index: 0,
+                kind: AtlasTextureKind::Monochrome,
+            },
+            tile_id: TileId(id),
+            padding: 0,
+            bounds: gpui::Bounds {
+                origin: Default::default(),
+                size,
+            },
+        }))
+    }
+
+    fn remove(&self, _: &AtlasKey) {}
+}
+
+impl PlatformHeadlessRenderer for Recorder {
+    fn render_scene_to_image(
+        &mut self,
+        scene: &Scene,
+        size: Size<DevicePixels>,
+    ) -> gpui::Result<RgbaImage> {
+        self.render_scene(scene, size)?;
+        Ok(RgbaImage::new(1, 1))
+    }
+
+    fn render_scene(&mut self, scene: &Scene, _: Size<DevicePixels>) -> gpui::Result<()> {
+        *self.0.borrow_mut() = (scene.monochrome_sprites.iter())
+            .map(|sprite| (sprite.color, sprite.bounds))
+            .chain(
+                scene
+                    .subpixel_sprites
+                    .iter()
+                    .map(|sprite| (sprite.color, sprite.bounds)),
+            )
+            .collect();
+        Ok(())
+    }
+
+    fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
+        self.1.clone()
+    }
+}
+
+/// Draws a pane of a tinted note and a `Plain` item, `active` the active tab,
+/// and returns each tab's glyph colours, in its bounds, as painted.
+fn painted(active: usize, tint: Hsla) -> [Vec<Hsla>; 2] {
+    let glyphs = Glyphs::default();
+    let recorder = glyphs.clone();
+    let text_system = gpui_platform::current_platform(true).text_system();
+    let mut cx = HeadlessAppContext::with_platform(text_system, Arc::new(()), move || {
+        let renderer = Recorder(recorder.clone(), Arc::default());
+        Ok(Some(Box::new(renderer) as Box<dyn PlatformHeadlessRenderer>))
+    });
+    let window = cx
+        .open_window(size(px(480.), px(160.)), |_, cx| {
+            let pane = cx.new(|cx| ItemPane::new(UiTheme::default_dark(), cx));
+            cx.new(|_| Host(pane))
+        })
+        .expect("open a window");
+    let pane = window
+        .read_with(&cx, |host, _| host.0.clone())
+        .expect("host");
+    let tinted = cx.update(|cx| {
+        cx.new(|cx| Note {
+            document: Default::default(),
+            title: "tinted".into(),
+            dirty: false,
+            tint: Some(tint),
+            focus: cx.focus_handle(),
+        })
+    });
+    // `Plain` keeps the trait's default `tab_title_color`.
+    let plain = cx.update(|cx| cx.new(|cx| Plain(cx.focus_handle())));
+    let items: [Box<dyn ItemHandle>; 2] = [Box::new(tinted), Box::new(plain)];
+    for item in items {
+        cx.update(|cx| pane.update(cx, |pane, cx| pane.add_item(item, cx)));
+    }
+    cx.update(|cx| pane.update(cx, |pane, _| pane.pane_mut().set_active(active)));
+    cx.run_until_parked();
+    let bounds = cx
+        .update_window(window.into(), |_, window, cx| {
+            window.draw(cx).clear(cx);
+            // Hands the frame's scene to the recorder.
+            window.render_to_image().expect("record the scene");
+            let scale = window.scale_factor();
+            [0, 1].map(|ix| {
+                pane.read(cx)
+                    .pane()
+                    .tab_bounds(ix)
+                    .expect("drawn")
+                    .scale(scale)
+            })
+        })
+        .expect("draw");
+    let glyphs = glyphs.borrow();
+    bounds.map(|tab| {
+        (glyphs.iter())
+            .filter(|(_, glyph)| tab.contains(&glyph.center()))
+            .map(|(colour, _)| *colour)
+            .collect()
+    })
+}
+
+// Reads the colour of the glyphs the frame paints, so the colour the title
+// is drawn in is checked past the tab that carries it. The × is muted.
+#[gpui::test]
+fn a_title_is_painted_in_its_colour_active_or_not(cx: &mut TestAppContext) {
+    let tint = hsla(0.3, 0.6, 0.5, 1.);
+    let (active_text, text, muted) = {
+        let (_, cx) = cx
+            .add_window_view(|_, cx| Host(cx.new(|cx| ItemPane::new(UiTheme::default_dark(), cx))));
+        cx.update(|_, cx| {
+            let colors = &cx.theme().colors;
+            (
+                colors.tab.active_text,
+                colors.text.primary,
+                colors.text.muted,
+            )
+        })
+    };
+    assert_ne!(active_text, text);
+    // The tinted tab (0) is active, then the plain one (1).
+    for (active, plain) in [(0, text), (1, active_text)] {
+        let [tinted_tab, plain_tab] = painted(active, tint);
+        let title = |glyphs: Vec<Hsla>| {
+            glyphs
+                .into_iter()
+                .filter(|c| *c != muted)
+                .collect::<Vec<_>>()
+        };
+        let (tinted_tab, plain_tab) = (title(tinted_tab), title(plain_tab));
+        assert!(
+            !tinted_tab.is_empty() && tinted_tab.iter().all(|c| *c == tint),
+            "{tinted_tab:?}"
+        );
+        assert!(
+            !plain_tab.is_empty() && plain_tab.iter().all(|c| *c == plain),
+            "{plain_tab:?}"
+        );
+    }
 }
