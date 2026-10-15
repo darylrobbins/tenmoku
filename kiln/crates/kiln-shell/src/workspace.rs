@@ -31,6 +31,7 @@ use gpui::{
     div,
 };
 use kiln_command::Value;
+use kiln_core::serde::{Serialize, de::DeserializeOwned};
 use kiln_platform::Capabilities;
 use kiln_ui::ui_theme;
 
@@ -49,6 +50,9 @@ type NewPane<P> = Box<dyn Fn(&mut Window, &mut App) -> Entity<P>>;
 
 /// Gives the app's own keys for the saved entry.
 type OnSave = Box<dyn Fn(&App) -> Vec<(&'static str, Value)>>;
+
+/// Reads the app's own state back from an entry being restored.
+type OnRestore = Box<dyn Fn(&Value, &mut Window, &mut App)>;
 
 /// The docks' positions, as their entries are named.
 const DOCKS: [(DockPosition, &str); 3] = [
@@ -120,6 +124,7 @@ pub struct Workspace<P: PaneView = ItemPane> {
     /// Save the layout as it changes, at quit and as the window closes.
     layout_hooks: Vec<Subscription>,
     on_save: Vec<OnSave>,
+    on_restore: Vec<OnRestore>,
     restoring: Option<Restoring>,
 }
 
@@ -183,6 +188,7 @@ impl<P: PaneView> Workspace<P> {
             saved_items: Vec::new(),
             layout_hooks: Vec::new(),
             on_save: Vec::new(),
+            on_restore: Vec::new(),
             restoring: None,
         };
         workspace.watch(&first, window, cx);
@@ -339,7 +345,7 @@ impl<P: PaneView> Workspace<P> {
 
     /// Every status item to draw: the workspace's and the sources' over the
     /// active item's.
-    fn status_items(&self, cx: &App) -> Vec<StatusItem> {
+    pub fn status_items(&self, cx: &App) -> Vec<StatusItem> {
         let mut items = self.status.clone();
         for source in &self.status_sources {
             if let Some(item) = source(cx) {
@@ -583,6 +589,43 @@ impl<P: PaneView> Workspace<P> {
         self.on_save.push(Box::new(save));
     }
 
+    /// Reads the app's own keys back from an entry [`Workspace::restore`]
+    /// puts back: `restore` gets the whole entry once the panes are
+    /// restored, before their items are read, which may need it. Not called
+    /// for an entry the workspace can't restore.
+    pub fn on_restore(&mut self, restore: impl Fn(&Value, &mut Window, &mut App) + 'static) {
+        self.on_restore.push(Box::new(restore));
+    }
+
+    /// Keeps the app's own state, of a serde type `S`, in the saved entry
+    /// under `key`: `save` gives it each time the entry is built
+    /// ([`Workspace::on_save`]), and [`Workspace::restore`] hands it back
+    /// to `restore` before it reads the items ([`Workspace::on_restore`]). A value
+    /// that doesn't encode or decode is logged and left out.
+    pub fn persist<S: Serialize + DeserializeOwned>(
+        &mut self,
+        key: &'static str,
+        save: impl Fn(&App) -> S + 'static,
+        restore: impl Fn(S, &mut Window, &mut App) + 'static,
+    ) {
+        self.on_save(move |cx| match serde_json::to_value(save(cx)) {
+            Ok(value) => vec![(key, value)],
+            Err(error) => {
+                log::warn!("not saving the workspace's {key}: {error}");
+                Vec::new()
+            }
+        });
+        self.on_restore(move |saved, window, cx| {
+            let Some(value) = saved.get(key) else {
+                return;
+            };
+            match S::deserialize(value) {
+                Ok(state) => restore(state, window, cx),
+                Err(error) => log::warn!("not restoring the workspace's {key}: {error}"),
+            }
+        });
+    }
+
     /// The workspace's saved entry: the app's keys ([`Workspace::on_save`]),
     /// `panes` ([`layout::save_panes`]) and `docks`, each dock's state
     /// ([`DockState::save`]) by its position, `left`, `right` or `bottom`.
@@ -614,13 +657,21 @@ impl<P: PaneView> Workspace<P> {
     /// read ([`layout::restore_panes`]), and each dock's state, for the
     /// docks with panels by now. The panes still empty then close, unless an
     /// item was opened in them meanwhile, and focus goes to the active item. A restore still reading is dropped. False,
-    /// changing nothing, if `saved` has no panes.
+    /// changing nothing, if `saved` has no panes. The app's state
+    /// ([`Workspace::persist`]) is handed back once the panes are, before
+    /// their items are read.
     pub fn restore(&mut self, saved: &Value, window: &mut Window, cx: &mut Context<Self>) -> bool {
         let new_pane = &self.new_pane;
         let mut new_pane = |window: &mut Window, cx: &mut App| new_pane(window, cx);
-        let Some(restored) = (saved.get("panes"))
-            .and_then(|panes| layout::restore_panes(panes, &mut new_pane, window, cx))
-        else {
+        let on_restore = &self.on_restore;
+        let mut before_items = |window: &mut Window, cx: &mut App| {
+            for restore in on_restore {
+                restore(saved, window, cx);
+            }
+        };
+        let Some(restored) = (saved.get("panes")).and_then(|panes| {
+            layout::restore_panes_with(panes, &mut new_pane, &mut before_items, window, cx)
+        }) else {
             return false;
         };
         for pane in self.group.panes().into_iter().cloned().collect::<Vec<_>>() {

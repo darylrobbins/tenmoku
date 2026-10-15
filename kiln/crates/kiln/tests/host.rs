@@ -1,111 +1,90 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
-//! The host example, Kiln Chat, headless: it sets up cleanly on every
-//! platform; a message typed and sent shows in its conversation; its
-//! command starts a conversation by key, from the palette and from the
-//! menus drawn in the window; a pane splits, and the panel opens a conversation; the status
-//! bar follows the active conversation; a conversation with unsent text
-//! asks before it closes; its layout comes back in a new window; and its
-//! colour comes from the user's theme file, or its default.
+//! The host example, Kiln Chat, headless through `kiln::testing`: it sets
+//! up cleanly on every platform; a message typed and sent shows in its
+//! conversation; its command starts a conversation by key, from the palette
+//! and from the menus, the menus drawn in the window too; a pane splits,
+//! and the panel opens a conversation; the status bar follows the active
+//! conversation; a conversation with unsent text asks before it closes;
+//! its layout, conversations and all, comes back in a new window, leaving
+//! the first's be, as does one saved before `kiln::app`; and its colour
+//! comes from the user's theme file, or its default.
 
 #[path = "../examples/host/app.rs"]
 mod app;
-#[path = "../examples/host/commands.rs"]
-mod commands;
 #[path = "../examples/host/conversation.rs"]
 mod conversation;
-#[path = "../examples/host/panel.rs"]
-mod panel;
 #[path = "../examples/host/setup.rs"]
 mod setup;
 #[path = "../examples/host/threads.rs"]
 mod threads;
 
-use std::{
-    fs,
-    path::PathBuf,
-    sync::atomic::{AtomicUsize, Ordering},
-};
+use std::{fs, path::Path};
 
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use kiln::{
     Config,
-    core::Os,
-    platform::{
-        Capabilities,
-        config::{BatchSender, batch_channel},
-    },
+    command::Value,
+    core::{AppId, AppPaths, Os, PathStyle, layout::LayoutStore},
+    platform::config::{BatchSender, batch_channel},
     prelude::*,
     shell::{
-        ItemPane, PaneItem as _, PaneView, StatusItem, command_palette::COMMAND_PALETTE, layout,
+        DockPosition, DockView as _, ItemPane, PaneItem as _, PaneView, Workspace,
+        command_palette::COMMAND_PALETTE,
     },
-    ui::{Color, ThemeMode, hsla},
+    testing::{TestApp, assert_clean_config},
+    ui::{Color, List, ThemeMode, hsla},
 };
 
-use app::ChatWindow;
 use conversation::Conversation;
-use threads::Threads;
+use threads::{ConversationList, Rows, Threads};
 
-/// Sets the app up with `config`, as `main` does (but for the user's files
-/// and a saved layout), and opens its window as on Linux, the chat's first
-/// conversation focused.
-fn open(config: Config, cx: &mut TestAppContext) -> (Entity<ChatWindow>, &mut VisualTestContext) {
-    cx.update(|cx| {
-        let diagnostics = kiln::init(cx, config);
-        assert_eq!(diagnostics, []);
-        // The test platform answers prompts (`simulate_prompt_answer`), not
-        // the in-window prompt `init` sets up where there are no native
-        // ones.
-        cx.reset_prompt_builder();
-        layout::register_item::<Conversation>(cx);
-        Threads::load(None, cx);
-    });
-    let (chat, cx) = cx.add_window_view(|window, cx| {
-        let mut chat = ChatWindow::new(Capabilities::for_os(Os::Linux), window, cx);
-        chat.start(None, window, cx);
-        chat
-    });
-    draw(cx);
-    (chat, cx)
+/// The chat, opened by `kiln::testing` as `main` opens it, but with no user
+/// file or saved layout and its window's chrome as on Linux: its first
+/// conversation shown and focused.
+fn chat(cx: &mut TestAppContext) -> TestApp {
+    TestApp::open(setup::app(), cx)
 }
 
-fn chat(cx: &mut TestAppContext) -> (Entity<ChatWindow>, &mut VisualTestContext) {
-    open(setup::config(), cx)
+/// The chat's config as `kiln::app` makes it: its own keymap and menus over
+/// kiln's keys.
+fn config() -> Config {
+    let config = Config::new(setup::APP_ID, setup::APP_NAME);
+    setup::config(config.default_keys(true).default_menus(true))
 }
 
-fn draw(cx: &mut VisualTestContext) {
-    cx.run_until_parked();
-    cx.update(|window, cx| window.draw(cx).clear(cx));
-    cx.run_until_parked();
-}
-
-/// Presses `keys`, with this platform's `secondary`, then draws a frame.
-fn press(keys: &str, cx: &mut VisualTestContext) {
-    let secondary = if Os::current() == Os::MacOs {
-        "cmd"
-    } else {
-        "ctrl"
-    };
-    cx.simulate_keystrokes(&keys.replace("secondary", secondary));
-    draw(cx);
-}
-
-fn active(chat: &Entity<ChatWindow>, cx: &mut VisualTestContext) -> Entity<Conversation> {
-    chat.read_with(cx, |chat, cx| chat.active_conversation(cx))
+fn active(app: &mut TestApp) -> Entity<Conversation> {
+    app.active_item::<Conversation>()
         .expect("a conversation is shown")
+}
+
+fn active_pane(app: &mut TestApp) -> Entity<ItemPane> {
+    let workspace = app.workspace();
+    workspace.read_with(app.cx(), |workspace, _| workspace.active_pane().clone())
+}
+
+fn panes(app: &mut TestApp) -> Vec<Entity<ItemPane>> {
+    let workspace = app.workspace();
+    workspace.read_with(app.cx(), |workspace, _| {
+        workspace.group().panes().into_iter().cloned().collect()
+    })
 }
 
 fn title(conversation: &Entity<Conversation>, cx: &mut VisualTestContext) -> String {
     conversation.read_with(cx, |conversation, cx| {
-        conversation.thread().read(cx).title.to_string()
+        conversation.thread.read(cx).title.to_string()
     })
 }
 
 fn messages(conversation: &Entity<Conversation>, cx: &mut VisualTestContext) -> Vec<String> {
     conversation.read_with(cx, |conversation, cx| {
-        let thread = conversation.thread().read(cx);
+        let thread = conversation.thread.read(cx);
         thread.messages.iter().map(ToString::to_string).collect()
     })
+}
+
+fn draft(conversation: &Entity<Conversation>, cx: &mut VisualTestContext) -> String {
+    conversation.read_with(cx, |conversation, cx| conversation.draft(cx).to_owned())
 }
 
 fn titles(pane: &Entity<ItemPane>, cx: &mut VisualTestContext) -> Vec<String> {
@@ -115,25 +94,37 @@ fn titles(pane: &Entity<ItemPane>, cx: &mut VisualTestContext) -> Vec<String> {
     })
 }
 
-fn status(chat: &Entity<ChatWindow>, cx: &mut VisualTestContext) -> Vec<String> {
-    chat.read_with(cx, |chat, cx| {
-        let items = chat.status_items(cx).into_iter();
-        items
-            .map(|item: StatusItem| item.text.to_string())
-            .collect()
+/// What the status bar shows.
+fn status(app: &mut TestApp) -> Vec<String> {
+    let workspace = app.workspace();
+    workspace.read_with(app.cx(), |workspace, cx| {
+        let items = workspace.status_items(cx).into_iter();
+        items.map(|item| item.text.to_string()).collect()
+    })
+}
+
+/// The conversations panel's list.
+fn list(app: &mut TestApp) -> Entity<List<Rows>> {
+    let workspace = app.workspace();
+    app.cx().read(|cx| {
+        let dock = workspace.read(cx).dock(DockPosition::Left).unwrap();
+        let panel = dock.read(cx).panel::<ConversationList>().unwrap();
+        panel.read(cx).0.clone()
     })
 }
 
 #[gpui::test]
 fn keymap_and_menus_load_cleanly_on_every_platform(cx: &mut TestAppContext) {
-    let _ = chat(cx);
+    let _app = chat(cx);
     cx.update(|cx| {
+        let config = config();
+        assert_clean_config(&config, cx);
         let catalog = kiln::catalog(cx);
-        let config = setup::config();
         for os in [Os::MacOs, Os::Linux, Os::Windows] {
             let (keymap, diagnostics) = config.keymap_for(os, Some(&*catalog));
             assert_eq!(diagnostics, [], "keymap on {os:?}");
-            // F10 opens the menus drawn in the window, which macOS hasn't.
+            // The chat's six over kiln's nine, F10 among them, which opens
+            // the menus drawn in the window: macOS hasn't them.
             let bindings = if os == Os::MacOs { 14 } else { 15 };
             assert_eq!(keymap.bindings().len(), bindings, "keymap on {os:?}");
             let (menus, diagnostics) = config.menu_bar_for(os, Some(&*catalog));
@@ -145,58 +136,63 @@ fn keymap_and_menus_load_cleanly_on_every_platform(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn a_message_typed_and_sent_shows_in_the_conversation(cx: &mut TestAppContext) {
-    let (chat, cx) = chat(cx);
-    let general = active(&chat, cx);
-    assert_eq!(title(&general, cx), "General");
-    assert_eq!(messages(&general, cx), ["Welcome to Kiln Chat."]);
+    let mut app = chat(cx);
+    let general = active(&mut app);
+    assert_eq!(title(&general, app.cx()), "General");
+    assert_eq!(messages(&general, app.cx()), ["Welcome to Kiln Chat."]);
 
     // Enter in the field sends it, and clears the field.
-    cx.simulate_input("Hello there");
-    press("enter", cx);
+    app.cx().simulate_input("Hello there");
+    app.press("enter");
     assert_eq!(
-        messages(&general, cx),
+        messages(&general, app.cx()),
         ["Welcome to Kiln Chat.", "Hello there"]
     );
-    assert_eq!(general.read_with(cx, |c, cx| c.draft(cx).to_owned()), "");
+    assert_eq!(draft(&general, app.cx()), "");
 
     // So does the command, by its key; an empty field sends nothing.
-    cx.simulate_input("Second");
-    press("secondary-enter", cx);
-    press("secondary-enter", cx);
-    assert_eq!(messages(&general, cx).len(), 3);
-    assert!(cx.debug_bounds("messages").is_some(), "drawn");
+    app.cx().simulate_input("Second");
+    app.press("secondary-enter");
+    app.press("secondary-enter");
+    assert_eq!(messages(&general, app.cx()).len(), 3);
+    assert!(app.cx().debug_bounds("messages").is_some(), "drawn");
 }
 
 #[gpui::test]
 fn the_host_command_runs_by_key_from_the_palette_and_the_menus(cx: &mut TestAppContext) {
-    let (chat, cx) = chat(cx);
-    press("secondary-n", cx);
-    assert_eq!(title(&active(&chat, cx), cx), "Conversation 3");
-    let pane = chat.read_with(cx, |chat, _| chat.active_pane().clone());
-    assert_eq!(titles(&pane, cx), ["General", "Conversation 3"]);
+    let mut app = chat(cx);
+    app.press("secondary-n");
+    assert_eq!(title(&active(&mut app), app.cx()), "Conversation 3");
+    let pane = active_pane(&mut app);
+    assert_eq!(titles(&pane, app.cx()), ["General", "Conversation 3"]);
 
     // The palette lists it where the conversation has focus, and runs it.
-    press("secondary-shift-p", cx);
-    let shell = chat.read_with(cx, |chat, _| chat.shell().clone());
-    let modal = shell.read_with(cx, |shell, cx| shell.modal(cx));
+    app.press("secondary-shift-p");
+    let workspace = app.workspace();
+    let shell = workspace.read_with(app.cx(), |workspace, _| workspace.shell().clone());
+    let modal = shell.read_with(app.cx(), |shell, cx| shell.modal(cx));
     assert_eq!(modal, Some(COMMAND_PALETTE));
-    cx.simulate_input("new conv");
-    press("enter", cx);
-    assert_eq!(shell.read_with(cx, |shell, cx| shell.modal(cx)), None);
-    assert_eq!(title(&active(&chat, cx), cx), "Conversation 4");
-    assert_eq!(cx.read(|cx| Threads::all(cx).len()), 4);
-    assert_eq!(titles(&pane, cx).len(), 3);
+    app.cx().simulate_input("new conv");
+    app.press("enter");
+    assert_eq!(shell.read_with(app.cx(), |shell, cx| shell.modal(cx)), None);
+    assert_eq!(title(&active(&mut app), app.cx()), "Conversation 4");
+    assert_eq!(app.cx().read(|cx| Threads::all(cx).len()), 4);
+    assert_eq!(titles(&pane, app.cx()).len(), 3);
+
+    // And from its menu.
+    app.menu("Conversation", "New Conversation");
+    assert_eq!(title(&active(&mut app), app.cx()), "Conversation 5");
 }
 
 /// The menus drawn in the window, as on Linux: F10 opens them, and
 /// Conversation, New Conversation runs the command.
 #[gpui::test]
 fn f10_opens_the_menus_in_the_window(cx: &mut TestAppContext) {
-    let (chat, cx) = chat(cx);
-    // `init` loads the keymap and menus for the host, and the chat binds
-    // F10 everywhere but macOS: load them as on Linux, as the window draws.
-    cx.update(|_, cx| {
-        let config = setup::config();
+    let mut app = chat(cx);
+    // kiln binds F10 everywhere but macOS: load the keymap and menus as on
+    // Linux, as the window draws its chrome.
+    app.cx().update(|_, cx| {
+        let config = config();
         let catalog = kiln::catalog(cx);
         let (keymap, diagnostics) = config.keymap_for(Os::Linux, Some(&*catalog));
         assert_eq!(diagnostics, []);
@@ -205,186 +201,267 @@ fn f10_opens_the_menus_in_the_window(cx: &mut TestAppContext) {
         kiln::platform::keys::set_keymap(cx, keymap);
         kiln::platform::menus::install(cx, menus);
     });
-    draw(cx);
-    assert!(cx.debug_bounds("menu:Conversation").is_some());
-    cx.simulate_keystrokes("f10 right");
-    draw(cx);
-    let shell = chat.read_with(cx, |chat, _| chat.shell().clone());
-    let bar = shell.read_with(cx, |shell, _| shell.menu_bar().cloned().unwrap());
-    let open = bar.read_with(cx, |bar, _| bar.open_menu());
+    app.draw();
+    assert!(app.cx().debug_bounds("menu:Conversation").is_some());
+    app.press("f10 right");
+    let workspace = app.workspace();
+    let shell = workspace.read_with(app.cx(), |workspace, _| workspace.shell().clone());
+    let bar = shell.read_with(app.cx(), |shell, _| shell.menu_bar().cloned().unwrap());
+    let open = bar.read_with(app.cx(), |bar, _| bar.open_menu());
     assert_eq!(open, Some((1, Some(0))), "Conversation, New Conversation");
-    cx.simulate_keystrokes("enter");
-    draw(cx);
-    assert_eq!(title(&active(&chat, cx), cx), "Conversation 3");
+    app.press("enter");
+    assert_eq!(title(&active(&mut app), app.cx()), "Conversation 3");
 }
 
 #[gpui::test]
 fn a_split_shows_the_conversation_twice_and_the_panel_opens_another(cx: &mut TestAppContext) {
-    let (chat, cx) = chat(cx);
-    let general = active(&chat, cx);
-    press("secondary-\\", cx);
-    let panes: Vec<_> = chat.read_with(cx, |chat, _| {
-        chat.group().panes().into_iter().cloned().collect()
-    });
+    let mut app = chat(cx);
+    let general = active(&mut app);
+    app.press("secondary-\\");
+    let panes = panes(&mut app);
     assert_eq!(panes.len(), 2);
-    let copy = active(&chat, cx);
+    let copy = active(&mut app);
     assert_ne!(copy, general, "a second view");
-    assert_eq!(
-        chat.read_with(cx, |chat, _| chat.active_pane().clone()),
-        panes[1]
-    );
+    assert_eq!(active_pane(&mut app), panes[1]);
 
     // Both views show what either sends.
-    cx.simulate_input("To both");
-    press("enter", cx);
-    assert_eq!(messages(&general, cx).last().unwrap(), "To both");
+    app.cx().simulate_input("To both");
+    app.press("enter");
+    assert_eq!(messages(&general, app.cx()).last().unwrap(), "To both");
 
     // The panel's row opens Random in the active pane, as a click would.
-    let list = chat.read_with(cx, |chat, cx| chat.panel().read(cx).list().clone());
-    list.update(cx, |list, cx| list.confirm(1, cx));
-    draw(cx);
-    assert_eq!(title(&active(&chat, cx), cx), "Random");
-    assert_eq!(titles(&panes[1], cx), ["General", "Random"]);
-    assert_eq!(titles(&panes[0], cx), ["General"]);
+    let list = list(&mut app);
+    list.update(app.cx(), |list, cx| list.confirm(1, cx));
+    app.draw();
+    assert_eq!(title(&active(&mut app), app.cx()), "Random");
+    assert_eq!(titles(&panes[1], app.cx()), ["General", "Random"]);
+    assert_eq!(titles(&panes[0], app.cx()), ["General"]);
     // The panel selects the conversation shown.
-    press("secondary-w", cx);
-    assert_eq!(list.read_with(cx, |list, _| list.selected()), Some(0));
+    app.press("secondary-w");
+    assert_eq!(list.read_with(app.cx(), |list, _| list.selected()), Some(0));
 
     // Closing the split's last tab closes the pane.
-    press("secondary-w", cx);
-    let count = chat.read_with(cx, |chat, _| chat.group().panes().len());
-    assert_eq!(count, 1);
-    assert_eq!(active(&chat, cx), general);
+    app.press("secondary-w");
+    assert_eq!(self::panes(&mut app).len(), 1);
+    assert_eq!(active(&mut app), general);
 }
 
 #[gpui::test]
 fn the_status_bar_follows_the_active_conversation(cx: &mut TestAppContext) {
-    let (chat, cx) = chat(cx);
-    assert_eq!(status(&chat, cx), ["2 conversations", "1 message"]);
-    cx.simulate_input("One more");
-    press("enter", cx);
-    assert_eq!(status(&chat, cx), ["2 conversations", "2 messages"]);
-    assert!(cx.debug_bounds("status-item:chat.messages").is_some());
+    let mut app = chat(cx);
+    assert_eq!(status(&mut app), ["2 conversations", "1 message"]);
+    app.cx().simulate_input("One more");
+    app.press("enter");
+    assert_eq!(status(&mut app), ["2 conversations", "2 messages"]);
+    assert!(app.cx().debug_bounds("status-item:chat.messages").is_some());
 
-    press("secondary-n", cx);
-    assert_eq!(status(&chat, cx), ["3 conversations", "0 messages"]);
+    app.press("secondary-n");
+    assert_eq!(status(&mut app), ["3 conversations", "0 messages"]);
     // The previous tab, by its click.
-    let pane = chat.read_with(cx, |chat, _| chat.active_pane().clone());
-    cx.update(|window, cx| pane.update(cx, |pane, cx| pane.activate_item(0, window, cx)));
-    draw(cx);
-    assert_eq!(status(&chat, cx), ["3 conversations", "2 messages"]);
+    let pane = active_pane(&mut app);
+    (app.cx()).update(|window, cx| pane.update(cx, |pane, cx| pane.activate_item(0, window, cx)));
+    app.draw();
+    assert_eq!(status(&mut app), ["3 conversations", "2 messages"]);
 }
 
 #[gpui::test]
 fn a_conversation_with_unsent_text_asks_before_it_closes(cx: &mut TestAppContext) {
-    let (chat, cx) = chat(cx);
-    let general = active(&chat, cx);
-    let pane = chat.read_with(cx, |chat, _| chat.active_pane().clone());
-    cx.simulate_input("Not sent yet");
-    draw(cx);
-    assert!(general.read_with(cx, |general, cx| general.is_dirty(cx)));
+    let mut app = chat(cx);
+    let general = active(&mut app);
+    let pane = active_pane(&mut app);
+    app.cx().simulate_input("Not sent yet");
+    app.draw();
+    assert!(general.read_with(app.cx(), |general, cx| general.is_dirty(cx)));
 
     // Cancel keeps it, unsent text and all.
-    press("secondary-w", cx);
-    assert!(cx.has_pending_prompt());
-    cx.simulate_prompt_answer("Cancel");
-    draw(cx);
-    assert_eq!(titles(&pane, cx), ["General"]);
-    assert_eq!(
-        general.read_with(cx, |c, cx| c.draft(cx).to_owned()),
-        "Not sent yet"
-    );
+    app.press("secondary-w");
+    assert!(app.cx().has_pending_prompt());
+    app.cx().simulate_prompt_answer("Cancel");
+    app.draw();
+    assert_eq!(titles(&pane, app.cx()), ["General"]);
+    assert_eq!(draft(&general, app.cx()), "Not sent yet");
 
     // Discard closes it.
-    press("secondary-w", cx);
-    cx.simulate_prompt_answer("Discard");
-    draw(cx);
-    assert_eq!(titles(&pane, cx), Vec::<String>::new());
+    app.press("secondary-w");
+    app.cx().simulate_prompt_answer("Discard");
+    app.draw();
+    assert_eq!(titles(&pane, app.cx()), Vec::<String>::new());
 
     // With nothing unsent, it closes without asking.
-    let random = cx.read(|cx| Threads::all(cx)[1].clone());
-    cx.update(|window, cx| chat.update(cx, |chat, cx| chat.open(random, window, cx)));
-    press("secondary-w", cx);
-    assert!(!cx.has_pending_prompt());
-    assert_eq!(titles(&pane, cx), Vec::<String>::new());
+    let random = app.cx().read(|cx| Threads::all(cx)[1].clone());
+    let workspace = app.workspace();
+    app.cx().update(|window, cx| {
+        workspace.update(cx, |workspace, cx| app::open(workspace, random, window, cx))
+    });
+    app.press("secondary-w");
+    assert!(!app.cx().has_pending_prompt());
+    assert_eq!(titles(&pane, app.cx()), Vec::<String>::new());
 }
 
 #[gpui::test]
 fn the_layout_comes_back_in_a_new_window(cx: &mut TestAppContext) {
-    let (chat, cx) = chat(cx);
-    press("secondary-\\", cx);
-    cx.simulate_input("Unsent");
-    draw(cx);
-    let entry = chat.read_with(cx, |chat, cx| chat.entry(cx));
+    let mut app = chat(cx);
+    app.press("secondary-\\");
+    app.cx().simulate_input("Unsent");
+    app.draw();
+    let first = app.workspace();
+    let entry = first.read_with(app.cx(), |workspace, cx| workspace.entry(cx));
     assert_eq!(entry["threads"].as_array().map(Vec::len), Some(2));
+    // A conversation started since, with a message, isn't in the entry.
+    app.press("secondary-n");
+    app.cx().simulate_input("Later");
+    app.press("enter");
+    let later = active(&mut app);
 
-    let mut app = cx.cx.clone();
-    let (restored, cx) = app.add_window_view(|window, cx| {
-        let mut chat = ChatWindow::new(Capabilities::for_os(Os::Linux), window, cx);
-        chat.start(Some(&entry), window, cx);
-        chat
+    // A window as the chat's: its setup, then the restore.
+    let mut cx = app.cx().cx.clone();
+    let (restored, cx) = cx.add_window_view(|window, cx| {
+        let mut workspace = Workspace::item_panes(app::KEY_CONTEXT, window, cx);
+        app::setup(&mut workspace, window, cx);
+        workspace.restore(&entry, window, cx);
+        workspace
     });
-    draw(cx);
-    let panes: Vec<_> = restored.read_with(cx, |chat, _| {
-        chat.group().panes().into_iter().cloned().collect()
+    cx.run_until_parked();
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    cx.run_until_parked();
+    let panes: Vec<_> = restored.read_with(cx, |workspace, _| {
+        workspace.group().panes().into_iter().cloned().collect()
     });
     assert_eq!(panes.len(), 2);
     assert_eq!(titles(&panes[0], cx), ["General"]);
     assert_eq!(titles(&panes[1], cx), ["General"]);
-    let active = restored.read_with(cx, |chat, _| chat.active_pane().clone());
+    let active = restored.read_with(cx, |workspace, _| workspace.active_pane().clone());
     assert_eq!(active, panes[1]);
-    let draft = active_draft(&restored, cx);
-    assert_eq!(draft, "Unsent", "the split's own field");
+    let conversation = restored.read_with(cx, |workspace, cx| {
+        let item = workspace.active_item(cx).unwrap();
+        item.downcast_ref::<Conversation>().unwrap().clone()
+    });
+    assert_eq!(draft(&conversation, cx), "Unsent", "the split's own field");
+
+    // The first window's conversations are as they were: the app's list
+    // still holds them, its panel lists them, and its entry keeps them.
+    let threads = cx.read(Threads::all);
+    assert_eq!(threads.len(), 3);
+    assert_eq!(messages(&later, cx), ["Later"]);
+    let shown = later.read_with(cx, |later, _| later.thread.clone());
+    assert_eq!(threads[2], shown);
+    let rows = list(&mut app).read_with(app.cx(), |list, _| list.delegate().0.clone());
+    assert_eq!(rows, threads);
+    let entry = first.read_with(app.cx(), |workspace, cx| workspace.entry(cx));
+    assert_eq!(entry["threads"][2]["messages"], Value::from(vec!["Later"]));
+    let state = &entry["panes"]["tree"]["members"][1]["pane"]["items"][1]["state"];
+    assert_eq!(state["thread"], 2, "the new conversation's tab is saved");
 }
 
-fn active_draft(chat: &Entity<ChatWindow>, cx: &mut VisualTestContext) -> String {
-    let conversation = active(chat, cx);
-    conversation.read_with(cx, |conversation, cx| conversation.draft(cx).to_owned())
-}
-
-struct TempDir(PathBuf);
-
-impl TempDir {
-    fn new() -> Self {
-        static NEXT: AtomicUsize = AtomicUsize::new(0);
-        let name = format!(
-            "kiln-host-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        );
-        let dir = std::env::temp_dir().join(name);
-        fs::create_dir_all(&dir).unwrap();
-        Self(dir)
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
-
-fn save(path: &PathBuf, text: &str, sender: &BatchSender, cx: &mut VisualTestContext) {
-    fs::write(path, text).unwrap();
-    sender.send(vec![path.clone()]);
-    draw(cx);
-}
+/// A layout as Kiln Chat saved it before `kiln::app`: its conversations
+/// with their IDs, its tabs' states and its panel's dock as `dock`.
+const BEFORE_KILN_APP: &str = r#"{
+    "panes": {
+        "tree": {
+            "axis": "horizontal",
+            "ratios": [0.5, 0.5],
+            "members": [
+                {"pane": {"items": [
+                    {"kind": "chat.conversation", "document": 0, "state": {"thread": 0, "draft": ""}},
+                    {"kind": "chat.conversation", "document": 1, "state": {"thread": 1, "draft": "Later"}}
+                ], "active": 1}},
+                {"pane": {"items": [
+                    {"kind": "chat.conversation", "document": 2, "state": {"thread": 0, "draft": "Unsent"}}
+                ], "active": 0}}
+            ]
+        },
+        "active": [1]
+    },
+    "dock": {
+        "visible": false, "active": "conversations", "joined": [],
+        "size": 300.0, "side_size": 300.0, "bottom_size": 240.0
+    },
+    "threads": [
+        {"id": 0, "title": "General", "messages": ["Welcome to Kiln Chat.", "Hi"]},
+        {"id": 1, "title": "Random", "messages": []}
+    ]
+}"#;
 
 #[gpui::test]
+fn a_layout_saved_before_kiln_app_comes_back(cx: &mut TestAppContext) {
+    let dir = tempfile::TempDir::new().unwrap();
+    let paths = paths(&dir);
+    let store = LayoutStore::new(paths.layouts_dir().unwrap(), paths.state_dir().unwrap());
+    let claim = store.claim_new().unwrap();
+    store
+        .write(&claim, BEFORE_KILN_APP.parse().unwrap())
+        .unwrap();
+    claim.release(false);
+
+    let started = cx.update(|cx| setup::app().paths(paths).start(cx));
+    assert_eq!(started.diagnostics, []);
+    cx.run_until_parked();
+    let workspace = started.window.root::<Workspace>(cx).unwrap();
+    let cx = &mut VisualTestContext::from_window(started.window.0, cx);
+    cx.run_until_parked();
+    let threads = cx.read(Threads::all);
+    assert_eq!(threads.len(), 2);
+    let general = threads[0].read_with(cx, |thread, _| thread.messages.clone());
+    assert_eq!(general, ["Welcome to Kiln Chat.", "Hi"]);
+
+    let panes: Vec<_> = workspace.read_with(cx, |workspace, _| {
+        workspace.group().panes().into_iter().cloned().collect()
+    });
+    assert_eq!(panes.len(), 2);
+    assert_eq!(titles(&panes[0], cx), ["General", "Random"]);
+    assert_eq!(titles(&panes[1], cx), ["General"]);
+    let drafts = |pane: &Entity<ItemPane>, cx: &mut VisualTestContext| {
+        let items = pane.read_with(cx, |pane, _| pane.pane().items().to_vec());
+        (items.iter())
+            .map(|item| draft(item.downcast_ref::<Conversation>().unwrap(), cx))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(drafts(&panes[0], cx), ["", "Later"]);
+    assert_eq!(drafts(&panes[1], cx), ["Unsent"]);
+
+    let dock = workspace.read_with(cx, |workspace, cx| {
+        let dock = workspace.dock(DockPosition::Left).unwrap().read(cx).dock();
+        (dock.is_visible(), f32::from(dock.current_size()))
+    });
+    assert_eq!(dock, (false, 300.));
+}
+
+/// The chat's directories, as `kiln::app` makes them, under `dir`.
+fn paths(dir: &tempfile::TempDir) -> AppPaths {
+    let home = dir.path().as_os_str().to_owned();
+    let id = AppId::new(setup::APP_ID, "kiln-chat", setup::APP_NAME);
+    AppPaths::resolve(&id, PathStyle::Native, Os::current(), |name| {
+        matches!(name, "HOME" | "APPDATA" | "LOCALAPPDATA").then(|| home.clone())
+    })
+}
+
+fn save(path: &Path, text: &str, sender: &BatchSender, cx: &mut TestAppContext) {
+    fs::write(path, text).unwrap();
+    sender.send(vec![path.to_owned()]);
+    cx.run_until_parked();
+}
+
+/// The user's theme file is one thing `kiln::testing` keeps from the app,
+/// so this opens the chat by `kiln::app` itself, its directories in a
+/// temporary one and the files' changes sent as the watcher would.
+#[gpui::test]
 fn the_bubble_colour_comes_from_the_users_theme_or_its_default(cx: &mut TestAppContext) {
-    let dir = TempDir::new();
-    let path = dir.0.join("theme.toml");
+    let dir = tempfile::TempDir::new().unwrap();
+    let paths = paths(&dir);
+    let path = paths.config_dir().unwrap().join("theme.toml");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
     let theme = |bubble: &str| {
         format!("kiln_theme = 1\nappearance = \"dark\"\n[chat]\nbubble = \"{bubble}\"\n")
     };
     fs::write(&path, theme("#123456")).unwrap();
     let (sender, batches) = batch_channel();
-    let config = setup::config()
+    let chat = (setup::app().paths(paths))
         .theme_mode(ThemeMode::Dark)
-        .user_theme(&path)
-        .watch_with(batches);
-    let (_, cx) = open(config, cx);
-    let bubble = |cx: &mut VisualTestContext| cx.read(conversation::bubble_color);
+        .config(|config| config.watch_with(batches));
+    let started = cx.update(|cx| chat.start(cx));
+    assert_eq!(started.diagnostics, []);
+    cx.run_until_parked();
+    let bubble = |cx: &mut TestAppContext| cx.read(conversation::bubble_color);
     assert_eq!(bubble(cx), hsla(Color::rgb(0x123456)));
 
     // It follows the file as it's saved.
@@ -392,7 +469,7 @@ fn the_bubble_colour_comes_from_the_users_theme_or_its_default(cx: &mut TestAppC
     assert_eq!(bubble(cx), hsla(Color::rgb(0xabcdef)));
 
     // kiln's light theme has no `chat` table: the accent's tint instead.
-    cx.update(|_, cx| cx.set_theme_mode(ThemeMode::Light));
+    cx.update(|cx| cx.set_theme_mode(ThemeMode::Light));
     let subtle = cx.read(|cx| cx.theme().colors.accent.subtle);
     assert_eq!(bubble(cx), subtle);
 }
