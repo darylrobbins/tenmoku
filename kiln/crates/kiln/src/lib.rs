@@ -13,6 +13,7 @@ mod cx;
 mod ext;
 pub mod model;
 mod setup;
+mod tables;
 #[cfg(feature = "test-support")]
 pub mod testing;
 
@@ -158,6 +159,7 @@ pub use kiln_platform::config::{ConfigDiagnostics, GlobalSettings};
 pub use kiln_shell::Root;
 pub use model::provide;
 pub use setup::{AppInfo, Config, application, catalog, init, window_options};
+pub use tables::{KeyBinding, KeyTable, MenuTable, TableItem, TableMenu};
 
 /// The extension traits that put kiln's calls on GPUI's own types:
 /// `use kiln::prelude::*;` then `cx.theme()`, `cx.settings::<S>()`,

@@ -20,7 +20,7 @@ use kiln_shell::{
 use kiln_ui::{ThemeMode, follow_system_appearance};
 
 use crate::{
-    Contributions,
+    Contributions, KeyTable, MenuTable,
     setup::{Config, application, init, window_options},
 };
 
@@ -404,6 +404,28 @@ impl AppBuilder {
         source: impl Into<Cow<'static, str>>,
     ) -> Self {
         self.config = self.config.keymap(path, source);
+        self
+    }
+
+    /// The app's default keys as a typed table, [`keymap!`](crate::keymap!):
+    /// in place of the commands' attribute keys (`#[kiln::command(key =
+    /// ..)]`), under the app's [`AppBuilder::keymap`] and the user's file.
+    pub fn keys(mut self, table: KeyTable) -> Self {
+        self.contribute.push(Contribute {
+            add: Box::new(move |cx| Contributions::set_key_table(cx, table)),
+            module: None,
+        });
+        self
+    }
+
+    /// The app's menu bar as a typed table, [`menus!`](crate::menus!): in
+    /// place of the contributed commands' menu placement and any
+    /// [`AppBuilder::menus`].
+    pub fn menu_bar(mut self, table: MenuTable) -> Self {
+        self.contribute.push(Contribute {
+            add: Box::new(move |cx| Contributions::set_menu_table(cx, table)),
+            module: None,
+        });
         self
     }
 

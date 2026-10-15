@@ -62,6 +62,7 @@ use kiln_core::{
 use kiln_platform::{
     command_actions::{
         Command, CommandInfo, current_invocation, dispatch_window, register_command, set_dispatch,
+        typed_command,
     },
     commands::{notify_observers, register_app_commands},
     config::SharedKeymap,
@@ -75,6 +76,7 @@ use kiln_ui::Icon;
 use crate::{
     Cx,
     setup::{Catalogs, Config, toml_escape},
+    tables::{KeyBinding, KeyTable, MenuTable, TableItem},
 };
 
 /// The path the contributed keys' diagnostics and bindings name.
@@ -515,6 +517,11 @@ pub struct Contributions {
     handled: HashSet<TypeId>,
     /// The library crates whose records a `kiln::module!` added.
     claimed: Vec<&'static str>,
+    /// The app's typed keys, in place of the commands' own.
+    key_table: Option<KeyTable>,
+    /// The app's typed menu bar, in place of the table and contributed
+    /// items.
+    menu_table: Option<MenuTable>,
 }
 
 impl Global for Contributions {}
@@ -629,6 +636,27 @@ impl Contributions {
             this.added += 1;
         }
         if started {
+            schedule(cx);
+        }
+    }
+
+    /// Puts `table` in place of the contributed commands' default keys:
+    /// [`crate::AppBuilder::keys`] calls it. The keymap is resolved again
+    /// once the current update is over if `init` has run.
+    pub fn set_key_table(cx: &mut App, table: KeyTable) {
+        cx.default_global::<Self>().key_table = Some(table);
+        Self::table_changed(cx);
+    }
+
+    /// Puts `table` in place of the menu table and the contributed items:
+    /// [`crate::AppBuilder::menu_bar`] calls it.
+    pub fn set_menu_table(cx: &mut App, table: MenuTable) {
+        cx.default_global::<Self>().menu_table = Some(table);
+        Self::table_changed(cx);
+    }
+
+    fn table_changed(cx: &mut App) {
+        if cx.global::<Self>().resolver.is_some() {
             schedule(cx);
         }
     }
@@ -993,17 +1021,34 @@ pub(crate) fn shipped_catalog(config: &Config, cx: &App) -> Rc<dyn CommandCatalo
 /// `catalog`.
 pub(crate) fn shipped(config: &Config, os: Os, catalog: &dyn CommandCatalog, cx: &App) -> Shipped {
     let commands = Contributions::commands(cx);
-    let (contributed, mut keymap_diagnostics) = keymap_layer(commands, os, catalog);
+    let this = cx.try_global::<Contributions>();
+    let bindings: Vec<KeyBinding> = match this.and_then(|this| this.key_table.as_ref()) {
+        Some(table) => table.bindings.clone(),
+        None => (commands.iter())
+            .map(|command| KeyBinding {
+                command: command.id.clone(),
+                keys: command.keys.clone(),
+                context: command.context,
+            })
+            .collect(),
+    };
+    let (contributed, mut keymap_diagnostics) = keymap_layer(&bindings, os, catalog);
     let (layers, found) = config.own_keymap(os, Some(catalog), Some(contributed));
     keymap_diagnostics.extend(found);
-    let (mut menu_bar, mut menu_diagnostics) = config.menu_bar_for(os, Some(catalog));
-    let found = place_items(
-        &mut menu_bar,
-        commands,
-        catalog,
-        &config.menu_shortcut_context,
-    );
-    menu_diagnostics.extend(found);
+    let (menu_bar, menu_diagnostics) = match this.and_then(|this| this.menu_table.as_ref()) {
+        Some(table) => table_menu_bar(table, catalog, &config.menu_shortcut_context, cx),
+        None => {
+            let (mut menu_bar, mut menu_diagnostics) = config.menu_bar_for(os, Some(catalog));
+            let found = place_items(
+                &mut menu_bar,
+                commands,
+                catalog,
+                &config.menu_shortcut_context,
+            );
+            menu_diagnostics.extend(found);
+            (menu_bar, menu_diagnostics)
+        }
+    };
     Shipped {
         layers,
         keymap_diagnostics,
@@ -1148,7 +1193,7 @@ fn resolve(cx: &mut App) {
 /// command. So are the same keys in the same context for two commands,
 /// the later one winning.
 fn keymap_layer(
-    commands: &[CommandSpec],
+    commands: &[KeyBinding],
     os: Os,
     catalog: &dyn CommandCatalog,
 ) -> (KeymapLayer, Vec<Diagnostic>) {
@@ -1161,7 +1206,7 @@ fn keymap_layer(
         };
         let mut source = format!(
             "[[bindings]]\ncommand = \"{}\"\nkeys = {keys}\n",
-            toml_escape(command.id.as_str())
+            toml_escape(command.command.as_str())
         );
         if let Some(context) = command.context {
             source.push_str(&format!("context = \"{}\"\n", toml_escape(context)));
@@ -1172,8 +1217,8 @@ fn keymap_layer(
         let line = ix + 1;
         diagnostics.extend(found.into_iter().map(|diagnostic| Diagnostic {
             key: Some(match diagnostic.key {
-                Some(key) => key.replacen("bindings[0]", command.id.as_str(), 1),
-                None => command.id.to_string(),
+                Some(key) => key.replacen("bindings[0]", command.command.as_str(), 1),
+                None => command.command.to_string(),
             }),
             line,
             column: 1,
@@ -1187,10 +1232,13 @@ fn keymap_layer(
                 diagnostics.push(Diagnostic {
                     severity: Severity::Warning,
                     file: path.clone(),
-                    key: Some(format!("{}.keys", command.id)),
+                    key: Some(format!("{}.keys", command.command)),
                     line,
                     column: 1,
-                    message: format!("{} is bound to both {other} and {}", entry.keys, command.id),
+                    message: format!(
+                        "{} is bound to both {other} and {}",
+                        entry.keys, command.command
+                    ),
                 });
             }
             entry.location = Location {
@@ -1202,6 +1250,78 @@ fn keymap_layer(
         }
     }
     (KeymapLayer { path, entries }, diagnostics)
+}
+
+/// The menu bar `table` is, its items checked against `catalog` and their
+/// shortcuts resolved in `frames`, each titled as the command is registered
+/// else as the table has it. An item whose command `catalog` doesn't know,
+/// or won't run without args, is left out, with a warning, as a menu
+/// table's is.
+fn table_menu_bar(
+    table: &MenuTable,
+    catalog: &dyn CommandCatalog,
+    frames: &[String],
+    cx: &App,
+) -> (MenuBar, Vec<Diagnostic>) {
+    let mut diagnostics = Vec::new();
+    let mut bar = MenuBar::default();
+    for menu in table.menus() {
+        let mut items = Vec::new();
+        for (ix, item) in menu.items.iter().enumerate() {
+            let (command, title) = match item {
+                TableItem::Separator => {
+                    items.push(MenuItem {
+                        kind: ItemKind::Separator,
+                        place: None,
+                    });
+                    continue;
+                }
+                TableItem::Command { command, title } => (command, title),
+            };
+            let message = match catalog.check(command, &Value::Null) {
+                Ok(()) => None,
+                Err(CatalogError::UnknownCommand) => {
+                    Some(format!("unknown command {command}; the item is left out"))
+                }
+                Err(CatalogError::BadArgs(message)) => Some(format!(
+                    "bad args for {command}: {message}; the item is left out"
+                )),
+            };
+            if let Some(message) = message {
+                diagnostics.push(Diagnostic {
+                    severity: Severity::Warning,
+                    file: PathBuf::from(CONTRIBUTED_MENUS_PATH),
+                    key: Some(format!("{}.items[{ix}]", menu.name)),
+                    line: ix + 1,
+                    column: 1,
+                    message,
+                });
+                continue;
+            }
+            let title =
+                typed_command(command, cx).map_or_else(|| title.clone(), |typed| typed.title);
+            items.push(MenuItem {
+                kind: ItemKind::Command(CommandItem {
+                    id: command.to_string(),
+                    title,
+                    command: command.clone(),
+                    args: Value::Null,
+                    os_action: None,
+                    alternatives: Vec::new(),
+                    shortcut_context: frames
+                        .iter()
+                        .map(|frame| ContextFrame::new(frame.as_str()))
+                        .collect(),
+                }),
+                place: None,
+            });
+        }
+        bar.menus.push(Menu {
+            name: menu.name.to_owned(),
+            items,
+        });
+    }
+    (bar, diagnostics)
 }
 
 /// Puts each contributed command's item in its menu: in place of an item
