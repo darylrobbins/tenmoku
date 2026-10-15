@@ -40,7 +40,7 @@ use crate::{AnyDockPanel, Cx};
 /// ```
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a kiln::View",
-    label = "#[kiln::panel] needs `impl kiln::View for {Self}`",
+    label = "#[kiln::panel] and #[kiln::item] need `impl kiln::View for {Self}`",
     note = "`impl View for {Self} {{ fn render(&mut self, cx: &mut Cx<Self>) -> impl IntoElement {{ .. }} }}`"
 )]
 pub trait View: Sized + 'static {

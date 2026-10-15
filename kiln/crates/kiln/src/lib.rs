@@ -11,6 +11,7 @@ mod config;
 mod contributions;
 mod cx;
 mod ext;
+mod item;
 pub mod model;
 mod setup;
 mod tables;
@@ -35,6 +36,7 @@ pub use contributions::{
 };
 pub use cx::{Cx, with_cx};
 pub use ext::binding_label_for;
+pub use item::{Item, WorkspaceExt};
 /// serde, for an app's settings type without a serde dependency of its
 /// own: `#[derive(Deserialize, Serialize)]` with
 /// `#[serde(crate = "kiln::serde", default)]`.
@@ -252,6 +254,228 @@ pub use kiln_core::{SettingsType, settings::SettingsEvent};
 /// }
 /// ```
 pub use kiln_macros::command;
+/// Makes a struct that implements [`Item`] and [`View`] a pane item, a
+/// tab as a function of its state, its kind restoring from the saved
+/// layout with no register call; `kind` optional:
+///
+/// ```
+/// use kiln::{
+///     Cx, Item, View,
+///     gpui::{App, AppContext as _, FocusHandle, IntoElement, SharedString, Window, div,
+///         prelude::*},
+///     prelude::*,
+///     serde::{Deserialize, Serialize},
+///     shell::Workspace,
+/// };
+///
+/// #[derive(Clone, PartialEq, Serialize, Deserialize)]
+/// #[serde(crate = "kiln::serde")]
+/// struct NoteState {
+///     name: String,
+/// }
+///
+/// #[kiln::item]
+/// struct Note {
+///     name: String,
+///     focus: FocusHandle,
+/// }
+///
+/// impl Item for Note {
+///     type State = NoteState;
+///
+///     fn new(state: NoteState, _: &mut Window, cx: &mut App) -> Option<Self> {
+///         Some(Self { name: state.name, focus: cx.focus_handle() })
+///     }
+///
+///     fn state(&self) -> NoteState {
+///         NoteState { name: self.name.clone() }
+///     }
+///
+///     fn title(&self, _: &App) -> SharedString {
+///         self.name.clone().into()
+///     }
+///
+///     fn focus(&self, _: &App) -> FocusHandle {
+///         self.focus.clone()
+///     }
+/// }
+///
+/// impl View for Note {
+///     fn render(&mut self, _: &mut Cx<Self>) -> impl IntoElement {
+///         div().child(self.name.clone())
+///     }
+/// }
+///
+/// /// Open Inbox
+/// #[kiln::command(key = "secondary-i")]
+/// fn open_inbox(workspace: &mut Workspace, cx: &mut Cx<Workspace>) {
+///     // The inbox's tab if it's open in the active pane, else a new one.
+///     let inbox = NoteState { name: "Inbox".into() };
+///     workspace.open::<Note>(inbox, cx.window, cx.cx);
+/// }
+/// ```
+///
+/// - The struct stays as it is. It gets GPUI's `Render`, through
+///   [`View::render`] around its element tracking [`Item::focus`], at the
+///   pane's full size, its [`ViewCommands`] attached if it has them
+///   (`#[kiln::command(context = "..")]` on its impl); `Focusable`,
+///   [`Item::focus`]; and [`shell::PaneItem`], its tab's title, icon, dirty
+///   dot and status items from [`Item`]'s, its saved state [`Item::state`]
+///   through [`shell::item::ItemState`].
+/// - Its kind in saved layouts is `<crate>.<name>`, `<name>` the struct's
+///   in snake case (`notes.note`), unless `kind = ".."`, which keeps an
+///   existing one (`kind = "chat.conversation"`). A saved item of its kind
+///   restores through [`Item::new`]; one it gives `None` for is left out.
+/// - [`WorkspaceExt::open`] shows the item of a state in the active pane:
+///   its tab, if one there has an equal [`Item::state`], else a new one;
+///   [`WorkspaceExt::active_state`] gives the active item's state.
+/// - An item whose restore reads a file first, or that splits, implements
+///   [`shell::PaneItem`] by hand, as below, its restore a `Task`.
+///
+/// The macro records the kind with `inventory`, as `#[kiln::command]`
+/// records a command: [`app()`] adds the app's own target's, a library
+/// crate's [`module!`] its own ([`Contributions::add_item_kind`]).
+///
+/// It expands to the struct, then:
+///
+/// ```ignore
+/// impl Render for Note {
+///     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+///         let focus = Item::focus(self, cx);
+///         let element = div().track_focus(&focus).size_full()
+///             .child(View::render(self, &mut Cx { window, cx }).into_any_element());
+///         kiln::__private::attach!(Note, element, cx) // `Note::attach(element, cx)` if it has commands
+///     }
+/// }
+/// impl Focusable for Note { /* Item::focus(self, cx) */ }
+/// impl PaneItem for Note {
+///     const KIND: &'static str = "<crate>.note";
+///     /* tab_title, tab_icon, is_dirty and status_items: Item's */
+///     /* serialize, restore and apply_state: item::state's, through ItemState */
+/// }
+/// impl ItemState for Note {
+///     type State = NoteState;
+///     /* state: Some(Item::state(self)); from_state: Item::new's, at once */
+/// }
+/// inventory::submit!(ItemRecord {
+///     kind: "<crate>.note", register: layout::register_item::<Note>, file: file!(), line: line!(), ..
+/// });
+/// ```
+///
+/// which is, by hand, in a crate named `notes`:
+///
+/// ```
+/// use kiln::{
+///     Contributions,
+///     command::Value,
+///     gpui::{App, AppContext as _, Context, Entity, FocusHandle, Focusable, IntoElement,
+///         Render, SharedString, Task, Window, div, prelude::*},
+///     serde::{Deserialize, Serialize},
+///     shell::{PaneItem, item::{ItemState, state}, layout},
+/// };
+///
+/// #[derive(Clone, PartialEq, Serialize, Deserialize)]
+/// #[serde(crate = "kiln::serde")]
+/// struct NoteState {
+///     name: String,
+/// }
+///
+/// struct Note {
+///     name: String,
+///     focus: FocusHandle,
+/// }
+///
+/// impl Render for Note {
+///     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+///         div()
+///             .track_focus(&self.focus)
+///             .size_full()
+///             .child(self.name.clone())
+///     }
+/// }
+///
+/// impl Focusable for Note {
+///     fn focus_handle(&self, _: &App) -> FocusHandle {
+///         self.focus.clone()
+///     }
+/// }
+///
+/// impl ItemState for Note {
+///     type State = NoteState;
+///
+///     fn state(&self, _: &App) -> Option<NoteState> {
+///         Some(NoteState { name: self.name.clone() })
+///     }
+///
+///     fn from_state(state: NoteState, _: &mut Window, cx: &mut App) -> Task<Option<Entity<Self>>> {
+///         let note = cx.new(|cx| Note { name: state.name, focus: cx.focus_handle() });
+///         Task::ready(Some(note))
+///     }
+/// }
+///
+/// impl PaneItem for Note {
+///     const KIND: &'static str = "notes.note";
+///
+///     fn tab_title(&self, _: &App) -> SharedString {
+///         self.name.clone().into()
+///     }
+///
+///     fn serialize(&self, cx: &App) -> Option<Value> {
+///         state::serialize(self, cx)
+///     }
+///
+///     fn restore(state: Value, window: &mut Window, cx: &mut App) -> Task<Option<Entity<Self>>> {
+///         state::restore::<Self>(state, window, cx)
+///     }
+///
+///     fn apply_state(&mut self, state: &Value, window: &mut Window, cx: &mut Context<Self>) {
+///         state::apply(self, state, window, cx)
+///     }
+/// }
+///
+/// fn module(cx: &mut App) {
+///     Contributions::add_item_kind(cx, layout::register_item::<Note>);
+/// }
+/// # let _: kiln::Module = module;
+/// ```
+///
+/// with the "open or activate" of [`WorkspaceExt::open`] written for it,
+/// over the active pane's items.
+///
+/// A struct that isn't an [`Item`] doesn't compile, the error on its name:
+///
+/// ```compile_fail,E0277
+/// use kiln::{Cx, View, gpui::{IntoElement, div}};
+///
+/// #[kiln::item]
+/// struct Note;
+///
+/// impl View for Note {
+///     fn render(&mut self, _: &mut Cx<Self>) -> impl IntoElement {
+///         div()
+///     }
+/// }
+/// ```
+///
+/// nor does a kind that isn't one, the error on it:
+///
+/// ```compile_fail
+/// use kiln::{Cx, Item, View, gpui::{App, FocusHandle, IntoElement, SharedString, Window, div}};
+///
+/// #[kiln::item(kind = "Notes")]
+/// struct Note(FocusHandle);
+/// # impl Item for Note {
+/// #     type State = ();
+/// #     fn new(_: (), _: &mut Window, _: &mut App) -> Option<Self> { None }
+/// #     fn state(&self) {}
+/// #     fn title(&self, _: &App) -> SharedString { "Note".into() }
+/// #     fn focus(&self, _: &App) -> FocusHandle { self.0.clone() }
+/// # }
+/// # impl View for Note {
+/// #     fn render(&mut self, _: &mut Cx<Self>) -> impl IntoElement { div() }
+/// # }
+/// ```
+pub use kiln_macros::item;
 /// Makes a struct that implements [`View`] a dock panel, in each
 /// workspace window [`app()`] opens, with its toggle command, key, View
 /// menu item and rail button; `title`, `icon`, `dock`, `toggle_key`,
@@ -501,11 +725,12 @@ pub use view::{View, ViewCommands};
 
 /// The extension traits that put kiln's calls on GPUI's own types:
 /// `use kiln::prelude::*;` then `cx.theme()`, `cx.settings::<S>()`,
-/// `cx.set_theme_mode(..)`, `cx.binding_label(..)` or
-/// `window.run_command(..)`; and [`Command`], for a typed command's ID:
-/// `NewNote::id()`.
+/// `cx.set_theme_mode(..)`, `cx.binding_label(..)`,
+/// `window.run_command(..)` or `workspace.open::<Note>(..)`; and
+/// [`Command`], for a typed command's ID: `NewNote::id()`.
 pub mod prelude {
     pub use crate::ext::{AppExt, WindowExt};
+    pub use crate::item::WorkspaceExt;
     pub use kiln_platform::command_actions::Command;
     pub use kiln_ui::ActiveTheme;
 }
@@ -617,7 +842,8 @@ pub mod __private {
     pub use crate::contributions::{
         CommandRecord, RunRecorded, add_crate_commands, register_recorded as register_command,
     };
-    pub use crate::contributions::{PanelRecord, StatusRecord};
+    pub use crate::contributions::{ItemRecord, PanelRecord, StatusRecord};
+    pub use crate::item::restore_item;
     pub use crate::view::{
         Attach, AttachNothing, AttachViewCommands, IntoStatus, ViewState, make_panel, run_in_view,
         view_handler, view_root,

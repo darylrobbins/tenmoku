@@ -44,8 +44,9 @@
 //! missing when nothing referenced the crate.
 //!
 //! `#[kiln::command]` records its command as a [`CommandRecord`],
-//! `#[kiln::panel]` its panel as a [`PanelRecord`] and `#[kiln::status]`
-//! its source as a [`StatusRecord`], which [`Contributions::add_recorded`]
+//! `#[kiln::panel]` its panel as a [`PanelRecord`], `#[kiln::status]`
+//! its source as a [`StatusRecord`] and `#[kiln::item]` its kind as an
+//! [`ItemRecord`], which [`Contributions::add_recorded`]
 //! adds when the record was compiled into the app's own target (a binary,
 //! an example or an integration test), and the crate's `kiln::module!`
 //! when it was compiled into a library.
@@ -397,6 +398,23 @@ impl StatusRecord {
     }
 }
 
+/// An item kind `#[kiln::item]` declared, as it records it with
+/// `inventory`: its kind, what [`Contributions::add_item_kind`] takes, and
+/// where it was declared.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug)]
+pub struct ItemRecord {
+    pub kind: &'static str,
+    pub register: fn(&mut App),
+    pub file: &'static str,
+    pub line: u32,
+    pub krate: &'static str,
+    pub bin: Option<&'static str>,
+    pub test_dir: Option<&'static str>,
+}
+
+inventory::collect!(ItemRecord);
+
 /// A record one of kiln's macros submitted: what it's called, where it
 /// was declared, and which crate and target it was compiled into.
 trait Recorded {
@@ -416,11 +434,14 @@ trait Recorded {
 
 macro_rules! recorded {
     ($record:ty, $attribute:literal) => {
+        recorded!($record, $attribute, id);
+    };
+    ($record:ty, $attribute:literal, $id:ident) => {
         impl Recorded for $record {
             const ATTRIBUTE: &'static str = $attribute;
 
             fn id(&self) -> &'static str {
-                self.id
+                self.$id
             }
 
             fn site(&self) -> (&'static str, u32) {
@@ -441,6 +462,7 @@ macro_rules! recorded {
 recorded!(CommandRecord, "#[kiln::command]s");
 recorded!(PanelRecord, "#[kiln::panel]s");
 recorded!(StatusRecord, "#[kiln::status]es");
+recorded!(ItemRecord, "#[kiln::item]s", kind);
 
 /// Every record of a kind linked in.
 fn linked<R: inventory::Collect>() -> Vec<&'static R> {
@@ -592,6 +614,14 @@ pub fn add_crate_commands(cx: &mut App, krate: &'static str) {
         crate_records(linked(), krate),
         crate_records(linked(), krate),
     );
+    add_items(cx, crate_records(linked(), krate));
+}
+
+/// Adds the item kinds of `items`, so their saved items restore.
+fn add_items(cx: &mut App, items: Vec<&ItemRecord>) {
+    for item in items {
+        Contributions::add_item_kind(cx, item.register);
+    }
 }
 
 /// Adds `panels` and `statuses`, each placed by where it was declared
@@ -735,20 +765,22 @@ impl Contributions {
     /// [`Contributions::add_commands`] does, then its `#[kiln::panel]`s and
     /// `#[kiln::status]`es the same way ([`Contributions::add_panel`],
     /// [`Contributions::add_status`]), so that those tying on `order` go by
-    /// file and line: [`crate::app()`] calls it first when it starts. A
-    /// library crate's are left to its `kiln::module!`.
+    /// file and line, and its `#[kiln::item]`s' kinds
+    /// ([`Contributions::add_item_kind`]): [`crate::app()`] calls it first
+    /// when it starts. A library crate's are left to its `kiln::module!`.
     pub fn add_recorded(cx: &mut App) {
         let specs: Vec<CommandSpec> = (app_records(linked()).into_iter())
             .map(CommandRecord::spec)
             .collect();
         Self::add_commands(cx, specs);
         add_panels_and_statuses(cx, app_records(linked()), app_records(linked()));
+        add_items(cx, app_records(linked()));
     }
 
     /// Warns of each library crate whose `#[kiln::command]`s,
-    /// `#[kiln::panel]`s or `#[kiln::status]`es are linked in but no
-    /// `kiln::module!` added, naming it: in a debug build,
-    /// [`crate::app()`] calls it once its modules have run.
+    /// `#[kiln::panel]`s, `#[kiln::status]`es or `#[kiln::item]`s are
+    /// linked in but no `kiln::module!` added, naming it: in a debug
+    /// build, [`crate::app()`] calls it once its modules have run.
     pub fn warn_unclaimed(cx: &App) {
         let claimed = cx
             .try_global::<Self>()
@@ -758,6 +790,7 @@ impl Contributions {
         LeftOut::add(&mut crates, linked::<CommandRecord>(), &claimed);
         LeftOut::add(&mut crates, linked::<PanelRecord>(), &claimed);
         LeftOut::add(&mut crates, linked::<StatusRecord>(), &claimed);
+        LeftOut::add(&mut crates, linked::<ItemRecord>(), &claimed);
         for warning in warnings(crates) {
             log::warn!("{warning}");
         }
