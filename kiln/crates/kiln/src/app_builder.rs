@@ -473,19 +473,6 @@ impl AppBuilder {
                 log::warn!("the kiln module {name} contributes nothing");
             }
         }
-        let panels = Contributions::panels(cx);
-        let statuses = Contributions::statuses(cx);
-        let workspace = self.root.is_none();
-        assert!(
-            !workspace
-                || !(self.items.is_empty()
-                    && self.panels.is_empty()
-                    && self.setup.is_empty()
-                    && panels.is_empty()
-                    && !Contributions::has_item_kinds(cx)),
-            "kiln::app needs a window: `.root(..)` for a view of the app's own, or \
-             `.item::<T>()`, `.panel(..)` or `.workspace(..)` for a workspace"
-        );
         let mut config = self.config;
         let user_settings = self.paths.settings_file();
         for add in self.settings {
@@ -504,6 +491,22 @@ impl AppBuilder {
         for register in &self.items {
             register(cx);
         }
+        // Once `init` has run what was contributed before it, which may
+        // contribute more: a model's setup a status source, a command's
+        // registration a panel.
+        let panels = Contributions::panels(cx);
+        let statuses = Contributions::statuses(cx);
+        let workspace = self.root.is_none();
+        assert!(
+            !workspace
+                || !(self.items.is_empty()
+                    && self.panels.is_empty()
+                    && self.setup.is_empty()
+                    && panels.is_empty()
+                    && !Contributions::has_item_kinds(cx)),
+            "kiln::app needs a window: `.root(..)` for a view of the app's own, or \
+             `.item::<T>()`, `.panel(..)` or `.workspace(..)` for a workspace"
+        );
 
         cx.set_quit_mode(QuitMode::Explicit);
         if self.quit_on_last_window {
@@ -546,7 +549,7 @@ impl AppBuilder {
                         .open_window(window_options(&spec, cx), |window, cx| {
                             // As `Root` does: the shell has no such hook.
                             follow_system_appearance(window, cx);
-                            cx.new(|cx| {
+                            let workspace = cx.new(|cx| {
                                 let mut workspace =
                                     Workspace::item_panes(self.key_context.clone(), window, cx)
                                         .title(title.clone());
@@ -582,7 +585,9 @@ impl AppBuilder {
                                     workspace.focus_active(window, cx);
                                 }
                                 workspace
-                            })
+                            });
+                            crate::cx::record_workspace(window, &workspace, cx);
+                            workspace
                         })
                         .expect("the app's window opens");
                     AppWindow(window.into())

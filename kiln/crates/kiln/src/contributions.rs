@@ -612,7 +612,9 @@ impl Contributions {
     }
 
     /// Sets up a model, such as a global the module's views read: `make`
-    /// runs once `init` has, or now after it.
+    /// runs once `init` has, or now after it. `kiln::model::register::<M>`
+    /// makes one of kiln's models, which a view reads with
+    /// [`crate::Cx::watch`].
     ///
     /// What `#[kiln::model]` writes, by hand:
     ///
@@ -726,17 +728,18 @@ pub(crate) fn register_early(cx: &mut App) {
     if !cx.has_global::<Contributions>() {
         return;
     }
-    register_toggles(cx);
     // One at a time, so one a registration contributes, or replaces, is
     // registered too, as it now is.
     loop {
         let unregistered = &mut cx.global_mut::<Contributions>().unregistered;
         if unregistered.is_empty() {
-            return;
+            break;
         }
         let spec = unregistered.remove(0);
         (spec.register)(cx, spec.info());
     }
+    // After, so a panel a registration contributed has its toggle too.
+    register_toggles(cx);
 }
 
 /// The keymap layers and menus the app ships, its contributions with

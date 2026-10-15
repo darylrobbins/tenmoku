@@ -9,7 +9,9 @@ mod app_builder;
 mod app_commands;
 mod config;
 mod contributions;
+mod cx;
 mod ext;
+pub mod model;
 mod setup;
 #[cfg(feature = "test-support")]
 pub mod testing;
@@ -29,6 +31,7 @@ pub use contributions::{
     CONTRIBUTED_KEYS_PATH, CONTRIBUTED_MENUS_PATH, CommandSpec, Contributions, Keys, MenuSpec,
     RegisterCommand,
 };
+pub use cx::{Cx, with_cx};
 pub use ext::binding_label_for;
 /// serde, for an app's settings type without a serde dependency of its
 /// own: `#[derive(Deserialize, Serialize)]` with
@@ -40,6 +43,7 @@ pub use kiln_platform::config::{ConfigDiagnostics, GlobalSettings};
 /// A window's root view, around the app's: the chrome the platform wants
 /// and the per-window setup. See [`kiln_shell::Root`].
 pub use kiln_shell::Root;
+pub use model::provide;
 pub use setup::{AppInfo, Config, application, catalog, init, window_options};
 
 /// The extension traits that put kiln's calls on GPUI's own types:

@@ -562,3 +562,64 @@ fn a_module_that_contributes_nothing_logs_a_warning_naming_it(cx: &mut TestAppCo
         "the inline form is no module: {warnings:?}"
     );
 }
+
+fn late_count(_: &App) -> Option<StatusItem> {
+    Some(StatusItem::new("late.count", StatusSide::Left, 0, "late"))
+}
+
+/// `notes.new_note`'s registration, which contributes a panel.
+fn register_with_a_panel(cx: &mut App, info: kiln::CommandInfo) {
+    register_command::<notes::NewNote>(cx, info);
+    Contributions::add_panel(
+        cx,
+        panel("late.list", Icon::Files, 0, |_, cx| {
+            cx.new(|cx| Panel::new("late.list", "Late", Icon::Files, cx))
+                .into()
+        }),
+    );
+}
+
+/// A module whose model's setup contributes a status source, and whose
+/// command's registration a panel, both while `init` runs.
+fn contributing_late_module(cx: &mut App) {
+    Contributions::add_model(cx, |cx| {
+        Contributions::add_status(
+            cx,
+            StatusSpec {
+                side: StatusSide::Left,
+                order: 0,
+                item: late_count,
+            },
+        );
+    });
+    Contributions::add_command(
+        cx,
+        CommandSpec {
+            register: register_with_a_panel,
+            ..CommandSpec::new::<notes::NewNote>("New Note")
+        },
+    );
+}
+
+#[gpui::test]
+fn what_inits_callbacks_contribute_reaches_each_window(cx: &mut TestAppContext) {
+    let dir = TempDir::new();
+    let mut windows = open(bare(dir.paths()).module(contributing_late_module), cx);
+    let (workspace, cx) = &mut windows[0];
+    assert!(
+        cx.debug_bounds("status-item:late.count").is_some(),
+        "the model's status source"
+    );
+    assert_eq!(
+        left_dock(workspace, cx).1,
+        [PanelId("late.list")],
+        "the registration's panel"
+    );
+    cx.update(|_, cx| {
+        let palette = commands_in(&ContextStack::new(), cx);
+        assert!(
+            (palette.iter()).any(|entry| entry.id.as_str() == "late.list.toggle"),
+            "with its toggle"
+        );
+    });
+}
