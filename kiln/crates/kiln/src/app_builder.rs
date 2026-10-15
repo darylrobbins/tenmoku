@@ -488,6 +488,10 @@ impl AppBuilder {
     /// with [`Config::fail_fast`] on, as [`init`] does; or if a window
     /// doesn't open.
     pub fn start(self, cx: &mut App) -> Started {
+        // Before anything runs, for a persisted model a module registers.
+        if let Some(dir) = self.paths.state_dir() {
+            cx.set_global(crate::model::persist::StateDir(dir.to_owned()));
+        }
         Contributions::add_recorded(cx);
         for Contribute { add, module } in self.contribute {
             let before = Contributions::count(cx);

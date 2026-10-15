@@ -29,6 +29,8 @@ use std::{
     collections::HashMap,
 };
 
+pub mod persist;
+
 use gpui::{AnyEntity, App, AppContext as _, Context, Entity, EntityId, Global, Subscription};
 
 /// Every model, by its type.
@@ -58,6 +60,36 @@ pub fn entity<M: Default + 'static>(cx: &mut App) -> Entity<M> {
         return model.clone().downcast().expect("models are keyed by type");
     }
     let model = cx.new(|_| M::default());
+    let models = &mut cx.default_global::<Models>().0;
+    models.insert(TypeId::of::<M>(), model.clone().into_any());
+    model
+}
+
+/// The model `M`, if it's made.
+pub(crate) fn entity_if<M: 'static>(cx: &App) -> Option<Entity<M>> {
+    let models = cx.try_global::<Models>()?;
+    Some(
+        models
+            .0
+            .get(&TypeId::of::<M>())?
+            .clone()
+            .downcast()
+            .expect("models are keyed by type"),
+    )
+}
+
+/// Makes the model `M` from `value`, or sets it to `value` if it's made.
+pub(crate) fn insert<M: 'static>(cx: &mut App, value: M) -> Entity<M> {
+    let found = (cx.try_global::<Models>()).and_then(|models| models.0.get(&TypeId::of::<M>()));
+    if let Some(model) = found {
+        let model: Entity<M> = model.clone().downcast().expect("models are keyed by type");
+        model.update(cx, |model, cx| {
+            *model = value;
+            cx.notify();
+        });
+        return model;
+    }
+    let model = cx.new(|_| value);
     let models = &mut cx.default_global::<Models>().0;
     models.insert(TypeId::of::<M>(), model.clone().into_any());
     model
