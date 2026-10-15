@@ -323,6 +323,7 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let format_on_save = settings.format_on_save;
         let ui = UiTheme::default_dark();
         let welcome = launch.root.is_none() && launch.file.is_none();
         let root = launch.root.clone();
@@ -554,6 +555,7 @@ impl Workbench {
         Self::follow_window_items(window, cx);
         workbench.follow_trust(window, cx);
         workbench.resolve_trust(workbench.root.clone(), as_folder, window, cx);
+        workbench.lsp.format_on_save.set(format_on_save);
         workbench.start_lsp(window, cx);
         workbench.sync_config_problems(window, cx);
         workbench
@@ -2071,6 +2073,10 @@ impl Workbench {
         self.terminal
             .update(cx, |terminal, cx| terminal.set_theme(&theme, cx));
         fe_gpui::set_restore_style(cx, theme, event.settings.editor.clone());
+        self.lsp
+            .format_on_save
+            .set(event.settings.editor.format_on_save);
+        self.sync_save_hooks(cx);
         self.reload_lsp_settings(&event.settings.lsp, cx);
     }
 

@@ -11,6 +11,8 @@ use std::{
     hash::{DefaultHasher, Hash as _, Hasher as _},
     io,
     path::{Path, PathBuf},
+    rc::Rc,
+    time::Duration,
 };
 
 use fe_buffer::{Bias, Buffer, BufferId};
@@ -242,6 +244,30 @@ impl Drop for SaveGuard {
     }
 }
 
+/// How long a save waits for its [`SaveHook`] before saving anyway.
+const SAVE_HOOK_LIMIT: Duration = Duration::from_secs(1);
+
+/// Something to do to an editor's text before it's saved, such as formatting
+/// it ([`EditorView::set_save_hook`]): fe-gpui knows nothing of language
+/// servers.
+pub trait SaveHook {
+    /// Edits `editor` as it should be saved; the save goes on when the task
+    /// finishes, or after a second.
+    fn before_save(&self, editor: &Entity<EditorView>, cx: &mut App) -> Task<()>;
+}
+
+impl EditorView {
+    /// Sets what runs before each save, or nothing.
+    pub fn set_save_hook(&mut self, hook: Option<Rc<dyn SaveHook>>) {
+        self.save_hook = hook;
+    }
+
+    /// What runs before each save, if anything.
+    pub fn save_hook(&self) -> Option<&Rc<dyn SaveHook>> {
+        self.save_hook.as_ref()
+    }
+}
+
 /// Saving off the main thread.
 impl EditorView {
     /// Saves the buffer: prepares the save here, writes the file on the
@@ -269,14 +295,25 @@ impl EditorView {
             generation,
             _over: over,
         };
-        // With none running, the text as it is now; typing from here on is
-        // unsaved.
-        let job = previous.is_none().then(|| self.model.prepare_save(false));
+        // With none running, the text as it is now, or as the hook leaves
+        // it; typing from here on is unsaved.
+        let hook = self.save_hook.clone();
+        let job = (previous.is_none() && hook.is_none()).then(|| self.model.prepare_save(false));
+        let editor = cx.entity();
         let window = window.window_handle();
         let (send, result) = oneshot::channel();
         cx.spawn(async move |this, cx| {
             if let Some(previous) = previous {
                 previous.over.await.ok();
+            }
+            if let Some(hook) = hook {
+                let task = cx.update(|cx| hook.before_save(&editor, cx));
+                let limit = cx.background_executor().timer(SAVE_HOOK_LIMIT);
+                if let futures::future::Either::Right(_) =
+                    futures::future::select(task, limit).await
+                {
+                    log::debug!("the save hook took over {SAVE_HOOK_LIMIT:?}; saving anyway");
+                }
             }
             let saved = save_asking(&this, job, window, cx).await;
             drop(guard);
@@ -639,6 +676,10 @@ mod tests;
 #[cfg(test)]
 #[path = "pane_item_save_tests.rs"]
 mod save_tests;
+
+#[cfg(test)]
+#[path = "save_hook_tests.rs"]
+mod save_hook_tests;
 
 #[cfg(test)]
 #[path = "indent_status_tests.rs"]

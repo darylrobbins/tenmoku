@@ -471,6 +471,10 @@ pub(crate) struct Lsp {
     /// Every editor's hover and completion provider, following the
     /// manager.
     hover: Rc<LspHover>,
+    /// Every editor's save hook, and whether `editor.format_on_save` is on
+    /// (set from the settings each reload).
+    pub(crate) format_on_save: Rc<std::cell::Cell<bool>>,
+    save_hook: Option<Rc<dyn fe_gpui::SaveHook>>,
     /// A rename's guard while one is running ([`Workbench::rename_symbol`]).
     pub(crate) rename: std::rc::Weak<()>,
     /// The buffers whose files are being resolved.
@@ -620,6 +624,8 @@ impl Lsp {
             delivered: Vec::new(),
             resolved: HashMap::new(),
             hover: Rc::default(),
+            format_on_save: Rc::default(),
+            save_hook: None,
             resolving: HashSet::new(),
             retry: HashMap::new(),
             root_failed: None,
@@ -1046,11 +1052,43 @@ impl Workbench {
         }
     }
 
+    /// Gives every editor the save hook while `editor.format_on_save` is on,
+    /// and none otherwise, as a save with a hook starts later than one
+    /// without.
+    pub(crate) fn sync_save_hooks(&mut self, cx: &mut Context<Self>) {
+        let editors = self.open_editors(cx);
+        let save_hook = match &self.lsp.save_hook {
+            Some(hook) => hook.clone(),
+            None => {
+                let hook: Rc<dyn fe_gpui::SaveHook> =
+                    Rc::new(crate::lsp_format::FormatOnSave::new(
+                        cx.weak_entity(),
+                        self.lsp.format_on_save.clone(),
+                    ));
+                self.lsp.save_hook = Some(hook.clone());
+                hook
+            }
+        };
+        let wanted = self.lsp.format_on_save.get().then(|| save_hook.clone());
+        for editor in &editors {
+            let set = editor.read(cx).save_hook();
+            let same = match (set, &wanted) {
+                (Some(set), Some(wanted)) => Rc::ptr_eq(set, wanted),
+                (None, None) => true,
+                _ => false,
+            };
+            if !same {
+                editor.update(cx, |view, _| view.set_save_hook(wanted.clone()));
+            }
+        }
+    }
+
     /// The frame hook, run after each draw: opens buffers newly shown,
     /// closes those no longer shown, nudges those that moved, and updates
     /// the status item.
     pub(crate) fn sync_lsp(&mut self, cx: &mut Context<Self>) {
         let editors = self.open_editors(cx);
+        self.sync_save_hooks(cx);
         let hover: Rc<dyn fe_gpui::HoverProvider> = self.lsp.hover.clone();
         let completion: Rc<dyn fe_gpui::CompletionProvider> = self.lsp.hover.clone();
         let signature_help: Rc<dyn fe_gpui::SignatureHelpProvider> = self.lsp.hover.clone();

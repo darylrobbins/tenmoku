@@ -16,13 +16,13 @@
 //! - **[`Workbench::format_buffer`]** is the same for the document, for
 //!   format on save, which reports what happened instead of showing it.
 
-use std::ops::Range;
+use std::{cell::Cell, ops::Range, rc::Rc};
 
 use fe_buffer::{Origin, ProposedChange};
 use fe_editor::IndentStyle;
-use fe_gpui::EditorView;
+use fe_gpui::{EditorView, SaveHook};
 use fe_lsp::{LspError, formatting::FormatOptions};
-use gpui::{AppContext as _, Context, Entity, Task, Window};
+use gpui::{App, AppContext as _, Context, Entity, Task, WeakEntity, Window};
 
 use crate::{
     Workbench,
@@ -70,10 +70,6 @@ impl Workbench {
     }
 
     /// Formats `editor`'s whole buffer: see the [module](self).
-    #[cfg_attr(
-        not(test),
-        allow(dead_code, reason = "the format-on-save card calls it")
-    )]
     pub(crate) fn format_buffer(
         &mut self,
         editor: &Entity<EditorView>,
@@ -155,6 +151,39 @@ fn failure(error: LspError) -> Result<FormatOutcome, String> {
     }
 }
 
+/// Formats an editor before it's saved, when `editor.format_on_save` is on:
+/// a timeout, an error or no formatter is logged, never shown.
+pub(crate) struct FormatOnSave {
+    workbench: WeakEntity<Workbench>,
+    enabled: Rc<Cell<bool>>,
+}
+
+impl FormatOnSave {
+    pub(crate) fn new(workbench: WeakEntity<Workbench>, enabled: Rc<Cell<bool>>) -> Self {
+        Self { workbench, enabled }
+    }
+}
+
+impl SaveHook for FormatOnSave {
+    fn before_save(&self, editor: &Entity<EditorView>, cx: &mut App) -> Task<()> {
+        if !self.enabled.get() {
+            return Task::ready(());
+        }
+        let editor = editor.clone();
+        let task = self
+            .workbench
+            .update(cx, |workbench, cx| workbench.format_buffer(&editor, cx));
+        let Ok(task) = task else {
+            return Task::ready(());
+        };
+        cx.spawn(async move |_| match task.await {
+            Ok(FormatOutcome::Formatted | FormatOutcome::Unchanged) => {}
+            Ok(FormatOutcome::NoFormatter) => log::debug!("format on save: no formatter"),
+            Err(error) => log::debug!("format on save: {error}"),
+        })
+    }
+}
+
 /// `edits`, sorted and apart, with inserts at one place joined in their
 /// order: a [`ProposedChange`] takes no two at one place.
 fn merge_inserts(edits: Vec<(Range<usize>, String)>) -> Vec<(Range<usize>, String)> {
@@ -183,3 +212,7 @@ fn rows_of(model: &fe_editor::EditorModel, range: Range<usize>) -> Range<usize> 
 #[cfg(test)]
 #[path = "lsp_format_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "lsp_format_save_tests.rs"]
+mod save_tests;
