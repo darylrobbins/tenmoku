@@ -15,6 +15,9 @@ gpui.workspace = true
 gpui_platform.workspace = true
 kiln-command.workspace = true
 kiln-core.workspace = true
+# `#[kiln::command]`, and the records it submits, which `kiln::app` collects.
+kiln-macros.workspace = true
+inventory.workspace = true
 kiln-platform.workspace = true
 kiln-shell.workspace = true
 kiln-ui.workspace = true

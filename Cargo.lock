@@ -4617,9 +4617,11 @@ version = "0.1.0"
 dependencies = [
  "gpui-pre",
  "gpui-pre-platform",
+ "inventory",
  "kiln",
  "kiln-command",
  "kiln-core",
+ "kiln-macros",
  "kiln-platform",
  "kiln-shell",
  "kiln-ui",
@@ -4655,6 +4657,16 @@ dependencies = [
  "toml 1.1.6+spec-1.1.0",
  "toml_edit 0.25.15+spec-1.1.0",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "kiln-macros"
+version = "0.1.0"
+dependencies = [
+ "heck 0.5.0",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]

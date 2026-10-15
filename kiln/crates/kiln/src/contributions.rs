@@ -42,28 +42,40 @@
 //! passes to [`crate::AppBuilder::module`]: kiln's macros register only
 //! the app crate's own items by themselves, and a library crate's would go
 //! missing when nothing referenced the crate.
+//!
+//! `#[kiln::command]` records its command as a [`CommandRecord`], which
+//! [`Contributions::add_recorded`] adds when the record was compiled into
+//! the app's own target (a binary, an example or an integration test), and
+//! the crate's `kiln::module!` when it was compiled into a library.
 
-use std::{borrow::Cow, path::PathBuf, rc::Rc};
+use std::{any::TypeId, borrow::Cow, collections::HashSet, path::PathBuf, rc::Rc};
 
 use gpui::{App, Context, Entity, Global, SharedString, Window};
 use kiln_command::{
-    CommandId, ContextFrame, ContextPredicate, ContextStack, Dispatched, Effect, RegisterError,
-    Value,
+    CommandId, ContextFrame, ContextPredicate, ContextStack, Dispatched, Effect, Invocation,
+    RegisterError, Value,
 };
 use kiln_core::{
     CatalogError, CommandCatalog, CommandItem, Diagnostic, Entry, ItemKind, KeymapLayer, Location,
     Menu, MenuBar, MenuItem, Os, Severity,
 };
 use kiln_platform::{
-    command_actions::{Command, CommandInfo, dispatch_window, register_command},
-    commands::register_app_commands,
+    command_actions::{
+        Command, CommandInfo, current_invocation, dispatch_window, register_command, set_dispatch,
+    },
+    commands::{notify_observers, register_app_commands},
     config::SharedKeymap,
     menus,
 };
-use kiln_shell::{DockItem, DockPosition, PanelId, StatusItem, StatusSide, Workspace};
+use kiln_shell::{
+    DockItem, DockPosition, DockView as _, PanelId, StatusItem, StatusSide, Workspace,
+};
 use kiln_ui::Icon;
 
-use crate::setup::{Catalogs, Config, toml_escape};
+use crate::{
+    Cx,
+    setup::{Catalogs, Config, toml_escape},
+};
 
 /// The path the contributed keys' diagnostics and bindings name.
 pub const CONTRIBUTED_KEYS_PATH: &str = "<contributed keys>";
@@ -122,12 +134,17 @@ impl Keys {
 }
 
 /// Where a command's item goes: the menu named `menu`, after the items the
-/// app's table gives it, in `order` among the contributed ones (then in
-/// the order added).
+/// app's table gives it, in `order` among the contributed ones, then by
+/// where it was `declared`, those declared nowhere first, then in the order
+/// added.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MenuSpec {
     pub menu: Cow<'static, str>,
     pub order: i32,
+    /// The file and line `#[kiln::command]` declared the command at, so
+    /// its items go in source order whichever crate or module added them;
+    /// `None` by hand.
+    pub declared: Option<(&'static str, u32)>,
 }
 
 /// A command, its default keys and its menu item.
@@ -172,6 +189,7 @@ impl CommandSpec {
         self.menu = Some(MenuSpec {
             menu: menu.into(),
             order,
+            declared: None,
         });
         self
     }
@@ -255,6 +273,179 @@ impl<T: DockItem> From<Entity<T>> for AnyDockPanel {
     }
 }
 
+/// A command `#[kiln::command]` declared, as it records it with
+/// `inventory`: what [`CommandSpec`] has, where it was declared, and which
+/// crate and target it was compiled into.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug)]
+pub struct CommandRecord {
+    pub id: &'static str,
+    pub title: &'static str,
+    pub context: Option<&'static str>,
+    pub keys: Option<&'static str>,
+    pub menu: Option<&'static str>,
+    pub order: i32,
+    pub file: &'static str,
+    pub line: u32,
+    /// `CARGO_CRATE_NAME`.
+    pub krate: &'static str,
+    /// `CARGO_BIN_NAME`: set for a binary or an example.
+    pub bin: Option<&'static str>,
+    /// `CARGO_TARGET_TMPDIR`: set for an integration test.
+    pub test_dir: Option<&'static str>,
+    /// Registers the command, and its handler (see [`register_recorded`]).
+    pub register: RegisterCommand,
+    pub run: RunRecorded,
+}
+
+inventory::collect!(CommandRecord);
+
+/// A `#[kiln::command]` fn: the handler, run on the workspace of the
+/// window the command was dispatched in.
+#[doc(hidden)]
+pub type RunRecorded = fn(&mut Workspace, &mut Cx<'_, '_, Workspace>);
+
+impl CommandRecord {
+    /// Whether it was compiled into the app's own target, a binary, an
+    /// example or an integration test, rather than a library.
+    fn in_app(&self) -> bool {
+        self.bin.is_some() || self.test_dir.is_some()
+    }
+
+    fn spec(&self) -> CommandSpec {
+        let id = CommandId::parse(self.id).unwrap_or_else(|error| {
+            panic!(
+                "#[kiln::command] at {}:{}: {error}; give it an ID with `id = \"..\"`",
+                self.file, self.line
+            )
+        });
+        CommandSpec {
+            id,
+            title: self.title.to_owned(),
+            context: self.context,
+            keys: self.keys.map_or(Keys::None, Keys::from),
+            menu: self.menu.map(|menu| MenuSpec {
+                menu: Cow::Borrowed(menu),
+                order: self.order,
+                declared: Some((self.file, self.line)),
+            }),
+            register: self.register,
+        }
+    }
+}
+
+/// Every record linked in.
+fn linked() -> Vec<&'static CommandRecord> {
+    inventory::iter::<CommandRecord>.into_iter().collect()
+}
+
+/// The records compiled into the app's own targets, by file, then line:
+/// the order their menu items take within an `order`.
+fn app_records<'a>(records: impl IntoIterator<Item = &'a CommandRecord>) -> Vec<&'a CommandRecord> {
+    sorted(records.into_iter().filter(|record| record.in_app()))
+}
+
+/// The records compiled into the library crate `krate`, by file, then
+/// line.
+fn crate_records<'a>(
+    records: impl IntoIterator<Item = &'a CommandRecord>,
+    krate: &str,
+) -> Vec<&'a CommandRecord> {
+    sorted((records.into_iter()).filter(|record| !record.in_app() && record.krate == krate))
+}
+
+fn sorted<'a>(records: impl Iterator<Item = &'a CommandRecord>) -> Vec<&'a CommandRecord> {
+    let mut records: Vec<_> = records.collect();
+    records.sort_by_key(|record| (record.file, record.line));
+    records
+}
+
+/// A warning for each library crate whose records are linked in but no
+/// `kiln::module!` in `claimed` added, naming the crate and its commands.
+fn unclaimed<'a>(
+    records: impl IntoIterator<Item = &'a CommandRecord>,
+    claimed: &[&str],
+) -> Vec<String> {
+    let mut crates: Vec<(&str, Vec<&str>)> = Vec::new();
+    for record in sorted(records.into_iter()) {
+        if record.in_app() || claimed.contains(&record.krate) {
+            continue;
+        }
+        match crates.iter_mut().find(|(krate, _)| *krate == record.krate) {
+            Some((_, ids)) => ids.push(record.id),
+            None => crates.push((record.krate, vec![record.id])),
+        }
+    }
+    crates.sort();
+    (crates.into_iter())
+        .map(|(krate, ids)| {
+            format!(
+                "the crate {krate}'s #[kiln::command]s ({}) are left out: no kiln::module! \
+                 claimed them. Add `kiln::module!(pub fn module);` to {krate} and pass \
+                 `.module({krate}::module)` to kiln::app",
+                ids.join(", ")
+            )
+        })
+        .collect()
+}
+
+/// Registers `A`, the type `#[kiln::command]` made, with `info`, and its
+/// handler `run` ([`workspace_handler`]), once however often it's
+/// registered: GPUI keeps every listener, so a second would run it twice.
+#[doc(hidden)]
+pub fn register_recorded<A: Command>(cx: &mut App, info: CommandInfo, run: RunRecorded) {
+    register_command::<A>(cx, info);
+    let handled = &mut cx.default_global::<Contributions>().handled;
+    if handled.insert(TypeId::of::<A>()) {
+        cx.on_action(workspace_handler::<A>(run));
+    }
+}
+
+/// An app-wide handler of the command `A` (`cx.on_action(..)`) that runs
+/// `run` on the workspace of the window `A` was dispatched in, else the
+/// active one, once the dispatch is over (GPUI has the window out for it),
+/// as `#[kiln::command]` does. Within `run`, [`current_invocation`] and
+/// [`dispatch_window`] give the invocation and window as in a handler run
+/// during the dispatch; and the invocation observers
+/// ([`kiln_platform::commands::observe_invocations`]) hear of it once,
+/// after `run`, unless [`dispatch_invocation`](crate::dispatch_invocation)
+/// already told them, a view on the focus path handling `A` too.
+pub fn workspace_handler<A: Command>(
+    run: fn(&mut Workspace, &mut Cx<'_, '_, Workspace>),
+) -> impl Fn(&A, &mut App) + 'static {
+    move |action: &A, cx: &mut App| {
+        let id = A::id();
+        let invocation = current_invocation(cx).filter(|invocation| invocation.command == id);
+        let action = action.boxed_clone();
+        on_workspace(cx, move |workspace, window, cx| {
+            // `dispatch_invocation` tells the observers when a view on the
+            // focus path handles `A`, as it found before dispatching.
+            let told = invocation.is_some() && window.is_action_available(action.as_ref(), cx);
+            let invocation = invocation.unwrap_or_else(|| Invocation::new(id));
+            let previous = set_dispatch(Some(invocation.clone()), Some(window.window_handle()), cx);
+            run(workspace, &mut Cx { window, cx });
+            set_dispatch(previous.0, previous.1, cx);
+            if !told {
+                notify_observers(&invocation, cx);
+            }
+        });
+    }
+}
+
+/// Adds the records the library crate `krate` linked in, as its
+/// `kiln::module!` does, and has it claimed: see [`unclaimed`].
+#[doc(hidden)]
+pub fn add_crate_commands(cx: &mut App, krate: &'static str) {
+    let claimed = &mut cx.default_global::<Contributions>().claimed;
+    if !claimed.contains(&krate) {
+        claimed.push(krate);
+    }
+    let specs: Vec<CommandSpec> = (crate_records(linked(), krate).into_iter())
+        .map(CommandRecord::spec)
+        .collect();
+    Contributions::add_commands(cx, specs);
+}
+
 /// Makes a contributed panel for a workspace window.
 pub type MakePanel = fn(&mut Window, &mut App) -> AnyDockPanel;
 
@@ -319,6 +510,11 @@ pub struct Contributions {
     resolver: Option<Resolver>,
     scheduled: bool,
     resolutions: usize,
+    /// The `#[kiln::command]` types whose handler is set: GPUI keeps every
+    /// listener, so a second would run it twice.
+    handled: HashSet<TypeId>,
+    /// The library crates whose records a `kiln::module!` added.
+    claimed: Vec<&'static str>,
 }
 
 impl Global for Contributions {}
@@ -363,6 +559,31 @@ impl Contributions {
     /// ```
     pub fn add_command(cx: &mut App, spec: CommandSpec) {
         Self::add_commands(cx, [spec]);
+    }
+
+    /// Adds every `#[kiln::command]` compiled into the app's own target (a
+    /// binary, an example or an integration test), by file, then line, as
+    /// [`Contributions::add_commands`] does: [`crate::app()`] calls it
+    /// first when it starts. A library crate's are left to its
+    /// `kiln::module!`.
+    pub fn add_recorded(cx: &mut App) {
+        let specs: Vec<CommandSpec> = (app_records(linked()).into_iter())
+            .map(CommandRecord::spec)
+            .collect();
+        Self::add_commands(cx, specs);
+    }
+
+    /// Warns of each library crate whose `#[kiln::command]`s are linked in
+    /// but no `kiln::module!` added, naming it: in a debug build,
+    /// [`crate::app()`] calls it once its modules have run.
+    pub fn warn_unclaimed(cx: &App) {
+        let claimed = cx
+            .try_global::<Self>()
+            .map(|this| this.claimed.clone())
+            .unwrap_or_default();
+        for warning in unclaimed(linked(), &claimed) {
+            log::warn!("{warning}");
+        }
     }
 
     /// [`Contributions::add_command`] for each of `specs`, in order.
@@ -417,11 +638,13 @@ impl Contributions {
     /// `toggle_key` and in the View menu, by `order`. [`crate::app()`] adds
     /// the panels to each workspace window, by `order`, then in the order
     /// added, after its own [`crate::AppBuilder::panel`]s. The command
-    /// shows the dock with the panel, or toggles the dock if the panel is
-    /// the one it shows, through [`Workspace::toggle_dock`]: focus doesn't
-    /// stay in a panel it hides. Before `init` only, since the command is
-    /// registered with the app's: after, the panel is left out, with a
-    /// warning.
+    /// hides the dock if it shows the panel, through
+    /// [`Workspace::toggle_dock`], else shows the dock with it, as a click
+    /// on its rail button does (focusing it if it's
+    /// [`DockItem::focus_on_show`], and joining it to the rail): either
+    /// way, focus doesn't stay in a panel it hides. Before `init` only,
+    /// since the command is registered with the app's: after, the panel is
+    /// left out, with a warning.
     ///
     /// What `#[kiln::panel]` writes, by hand:
     ///
@@ -494,6 +717,7 @@ impl Contributions {
                 menu: Some(MenuSpec {
                     menu: Cow::Borrowed("View"),
                     order: spec.order,
+                    declared: None,
                 }),
                 // Registered in the app's registry by `register_early`.
                 register: |_, _| {},
@@ -841,10 +1065,34 @@ fn register_toggles(cx: &mut App) {
 }
 
 /// `<id>.toggle`, in the window it was dispatched in, else the active one,
-/// once the dispatch is over (the window is out for it): shows the dock at
-/// `position` with the panel `id`, or toggles the dock if that's the panel
-/// it shows.
+/// once the dispatch is over (the window is out for it): hides the dock at
+/// `position` if it shows the panel `id`, else shows the dock with it.
 fn toggle_panel(cx: &mut App, position: DockPosition, id: PanelId) {
+    on_workspace(cx, move |workspace, window, cx| {
+        let Some(dock) = workspace.dock(position).cloned() else {
+            return;
+        };
+        let showing = dock.read(cx).is_visible() && dock.read(cx).active() == Some(id);
+        if showing {
+            workspace.toggle_dock(position, window, cx);
+            return;
+        }
+        // Shown with its focus and on the rail, as a rail click shows it;
+        // focus doesn't stay in the panel it replaces.
+        dock.update(cx, |dock, cx| dock.show(id, window, cx));
+        if dock.read(cx).dock().hidden_panel_focused(window, cx) {
+            workspace.focus_active(window, cx);
+        }
+    });
+}
+
+/// Runs `f` on the workspace of the window the command being dispatched
+/// was dispatched in, else the active one, once the dispatch is over (the
+/// window is out for it); nothing if that window's root isn't a workspace.
+fn on_workspace(
+    cx: &mut App,
+    f: impl FnOnce(&mut Workspace, &mut Window, &mut Context<Workspace>) + 'static,
+) {
     let Some(handle) = dispatch_window(cx).or_else(|| cx.active_window()) else {
         return;
     };
@@ -854,16 +1102,7 @@ fn toggle_panel(cx: &mut App, position: DockPosition, id: PanelId) {
                 let Ok(workspace) = root.downcast::<Workspace>() else {
                     return;
                 };
-                workspace.update(cx, |workspace, cx| {
-                    let Some(dock) = workspace.dock(position).cloned() else {
-                        return;
-                    };
-                    if dock.read(cx).active() == Some(id) {
-                        workspace.toggle_dock(position, window, cx);
-                    } else {
-                        dock.update(cx, |dock, cx| dock.show(id, window, cx));
-                    }
-                });
+                workspace.update(cx, |workspace, cx| f(workspace, window, cx));
             })
             .ok();
     });
@@ -1007,7 +1246,8 @@ fn place_items(
             message,
         });
     }
-    // By order within each menu, menus in the order first named.
+    // By order within each menu, then where declared, menus in the order
+    // first named.
     let mut names: Vec<&str> = Vec::new();
     for (_, spec) in &placed {
         if !names.contains(&&*spec.menu) {
@@ -1015,7 +1255,7 @@ fn place_items(
         }
     }
     let rank = |spec: &MenuSpec| names.iter().position(|name| *name == spec.menu);
-    placed.sort_by_key(|(_, spec)| (rank(spec), spec.order));
+    placed.sort_by_key(|(_, spec)| (rank(spec), spec.order, spec.declared));
     for (command, spec) in placed {
         let menu = match bar.menus.iter().position(|menu| menu.name == spec.menu) {
             Some(ix) => &mut bar.menus[ix],
@@ -1068,5 +1308,141 @@ fn frame_name(context: &str) -> Option<String> {
     match ContextPredicate::parse(context).ok()? {
         ContextPredicate::Identifier(name) => Some(name),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn register(_: &mut App, _: CommandInfo) {}
+
+    fn run(_: &mut Workspace, _: &mut Cx<'_, '_, Workspace>) {}
+
+    /// A record of `id` in `krate`, at `file`'s `line`, compiled into a
+    /// library.
+    const fn record(
+        id: &'static str,
+        krate: &'static str,
+        file: &'static str,
+        line: u32,
+    ) -> CommandRecord {
+        CommandRecord {
+            id,
+            title: "Title",
+            context: None,
+            keys: None,
+            menu: None,
+            order: 0,
+            file,
+            line,
+            krate,
+            bin: None,
+            test_dir: None,
+            register,
+            run,
+        }
+    }
+
+    const fn in_bin(record: CommandRecord) -> CommandRecord {
+        CommandRecord {
+            bin: Some("notes"),
+            ..record
+        }
+    }
+
+    const fn in_test(record: CommandRecord) -> CommandRecord {
+        CommandRecord {
+            test_dir: Some("/target/tmp"),
+            ..record
+        }
+    }
+
+    /// Records as `inventory` might list them: in no order, from the app's
+    /// binary, its integration test, and two library crates.
+    const RECORDS: [CommandRecord; 6] = [
+        record("outline.collapse", "outline", "src/outline.rs", 9),
+        in_bin(record("notes.save", "notes", "src/main.rs", 40)),
+        record("tags.add", "tags", "src/lib.rs", 3),
+        in_test(record("app.check", "app", "tests/app.rs", 2)),
+        in_bin(record("notes.new_note", "notes", "src/main.rs", 12)),
+        record("outline.expand", "outline", "src/outline.rs", 4),
+    ];
+
+    fn ids(records: Vec<&CommandRecord>) -> Vec<&str> {
+        records.into_iter().map(|record| record.id).collect()
+    }
+
+    #[test]
+    fn the_app_collects_its_own_targets_records_by_file_then_line() {
+        assert_eq!(
+            ids(app_records(&RECORDS)),
+            ["notes.new_note", "notes.save", "app.check"]
+        );
+    }
+
+    #[test]
+    fn a_library_crates_records_apply_only_through_its_module() {
+        assert_eq!(
+            ids(crate_records(&RECORDS, "outline")),
+            ["outline.expand", "outline.collapse"]
+        );
+        assert_eq!(ids(crate_records(&RECORDS, "tags")), ["tags.add"]);
+        // The binary's are the app's, though its crate is `notes` too.
+        assert_eq!(ids(crate_records(&RECORDS, "notes")), Vec::<&str>::new());
+        assert!(
+            !app_records(&RECORDS)
+                .iter()
+                .any(|record| record.krate == "outline")
+        );
+    }
+
+    #[test]
+    fn unclaimed_library_records_warn_naming_the_crate() {
+        let warnings = unclaimed(&RECORDS, &["outline"]);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(
+            warnings[0].starts_with("the crate tags's #[kiln::command]s (tags.add) are left out"),
+            "{warnings:?}"
+        );
+        assert!(
+            warnings[0].contains(".module(tags::module)"),
+            "{warnings:?}"
+        );
+
+        let warnings = unclaimed(&RECORDS, &[]);
+        let named: Vec<&str> = (warnings.iter())
+            .map(|warning| warning.split(['\'', ' ']).nth(2).unwrap())
+            .collect();
+        assert_eq!(named, ["outline", "tags"], "{warnings:?}");
+        assert!(warnings[0].contains("(outline.expand, outline.collapse)"));
+        assert_eq!(
+            unclaimed(&RECORDS, &["outline", "tags"]),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn a_record_makes_its_spec() {
+        let record = CommandRecord {
+            context: Some("editor"),
+            keys: Some("secondary-n"),
+            menu: Some("File"),
+            order: 3,
+            ..record("notes.new_note", "notes", "src/main.rs", 1)
+        };
+        let spec = record.spec();
+        assert_eq!(spec.id.as_str(), "notes.new_note");
+        assert_eq!(spec.title, "Title");
+        assert_eq!(spec.context, Some("editor"));
+        assert_eq!(spec.keys, Keys::from("secondary-n"));
+        assert_eq!(
+            spec.menu,
+            Some(MenuSpec {
+                menu: "File".into(),
+                order: 3,
+                declared: Some(("src/main.rs", 1)),
+            })
+        );
     }
 }

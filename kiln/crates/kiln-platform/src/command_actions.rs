@@ -263,6 +263,18 @@ pub fn dispatch_window(cx: &App) -> Option<AnyWindowHandle> {
     cx.try_global::<TypedCommands>()?.window
 }
 
+/// Sets what [`current_invocation`] and [`dispatch_window`] give,
+/// returning what they gave, for the caller to put back once done: so a
+/// handler that runs once the dispatch is over, as one that updates the
+/// window it was dispatched in must, sees what one run during it does.
+pub fn set_dispatch(
+    invocation: Option<Invocation>,
+    window: Option<AnyWindowHandle>,
+    cx: &mut App,
+) -> (Option<Invocation>, Option<AnyWindowHandle>) {
+    (set_current(invocation, cx), set_window(window, cx))
+}
+
 /// Sets the invocation handlers see, returning the one it replaces.
 fn set_current(invocation: Option<Invocation>, cx: &mut App) -> Option<Invocation> {
     std::mem::replace(

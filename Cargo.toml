@@ -20,6 +20,7 @@ fe-buffer = { path = "crates/fe-buffer" }
 kiln = { path = "kiln/crates/kiln" }
 kiln-command = { path = "kiln/crates/kiln-command" }
 kiln-core = { path = "kiln/crates/kiln-core" }
+kiln-macros = { path = "kiln/crates/kiln-macros" }
 kiln-platform = { path = "kiln/crates/kiln-platform" }
 kiln-shell = { path = "kiln/crates/kiln-shell" }
 kiln-ui = { path = "kiln/crates/kiln-ui" }
@@ -110,6 +111,13 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
 thiserror = "2"
+# kiln-macros, the proc-macro crate, and the records it submits (all already
+# in the lock through gpui).
+heck = "0.5"
+inventory = "0.3"
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }
 unicode-segmentation = "1"
 
 # Test and bench tooling.

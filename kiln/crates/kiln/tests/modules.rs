@@ -3,8 +3,10 @@
 //! `kiln::Module`s and `.contributions(..)`: a library crate's panels, item
 //! kinds, status sources and commands, in each workspace window `kiln::app`
 //! opens, each panel with a toggle command on its key, in the palette and
-//! the View menu; panels by order, then in the order added; and, in a debug
-//! build, a warning naming a module that contributes nothing.
+//! the View menu, hiding its panel if it shows, else showing it as a rail
+//! click does, focus leaving the panel it hides; panels by order, then in
+//! the order added; and, in a debug build, a warning naming a module that
+//! contributes nothing.
 
 use std::{
     ffi::OsString,
@@ -22,7 +24,8 @@ use gpui::{
     Window, div,
 };
 use kiln::{
-    AppBuilder, CommandSpec, Contributions, Keys, MakePanel, PanelSpec, Started, StatusSpec,
+    AnyDockPanel, AppBuilder, CommandSpec, Contributions, Keys, MakePanel, PanelSpec, Started,
+    StatusSpec,
     command::{ContextStack, Value},
     core::{AppId, AppPaths, Os, PathStyle},
     platform::{
@@ -102,12 +105,15 @@ impl PaneItem for Note {
     }
 }
 
-/// A panel: its id, title and icon.
+/// A panel: its id, title and icon, and whether it's focused when shown
+/// and on the rail from the start.
 struct Panel {
     id: &'static str,
     title: &'static str,
     icon: Icon,
     focus: FocusHandle,
+    focus_on_show: bool,
+    always_on_rail: bool,
 }
 
 impl Panel {
@@ -117,6 +123,8 @@ impl Panel {
             title,
             icon,
             focus: cx.focus_handle(),
+            focus_on_show: false,
+            always_on_rail: true,
         }
     }
 }
@@ -144,6 +152,14 @@ impl DockItem for Panel {
 
     fn icon(&self, _: &App) -> Icon {
         self.icon
+    }
+
+    fn focus_on_show(&self) -> bool {
+        self.focus_on_show
+    }
+
+    fn always_on_rail(&self) -> bool {
+        self.always_on_rail
     }
 }
 
@@ -490,6 +506,117 @@ fn panels_sort_by_order_then_registration_in_the_dock_and_its_rail(cx: &mut Test
         toggles,
         ["early.toggle", "late.one.toggle", "late.two.toggle"]
     );
+}
+
+/// The panels `two_panels` made, by ID.
+#[derive(Default)]
+struct Made2(Vec<(&'static str, FocusHandle)>);
+
+impl Global for Made2 {}
+
+/// A panel `id`, recorded in [`Made2`].
+fn made2(panel: Panel, cx: &mut App) -> AnyDockPanel {
+    let (id, focus) = (panel.id, panel.focus.clone());
+    cx.default_global::<Made2>().0.push((id, focus));
+    cx.new(|_| panel).into()
+}
+
+/// Two panels in the left dock: `joining`, which joins the rail once
+/// shown, then `focused`, focused when shown.
+fn two_panels(cx: &mut App) {
+    Contributions::add_panel(
+        cx,
+        panel("joining", Icon::Files, 0, |_, cx| {
+            let panel = Panel::new("joining", "joining", Icon::Files, cx);
+            made2(
+                Panel {
+                    always_on_rail: false,
+                    ..panel
+                },
+                cx,
+            )
+        }),
+    );
+    Contributions::add_panel(
+        cx,
+        panel("focused", Icon::Search, 1, |_, cx| {
+            let panel = Panel::new("focused", "focused", Icon::Search, cx);
+            made2(
+                Panel {
+                    focus_on_show: true,
+                    ..panel
+                },
+                cx,
+            )
+        }),
+    );
+}
+
+/// Runs the command `id` in the window, then draws.
+fn run(id: &str, cx: &mut VisualTestContext) {
+    let invocation = kiln::command::Invocation::of(id).unwrap();
+    cx.update(|window, cx| window.run_command(invocation, cx).unwrap());
+    draw(cx);
+}
+
+/// Whether the left dock's panel `id` has focus, shows, and is on its rail.
+fn panel_state(
+    workspace: &Entity<Workspace>,
+    id: &'static str,
+    cx: &mut VisualTestContext,
+) -> (bool, bool, bool) {
+    cx.update(|window, cx| {
+        let made = &cx.global::<Made2>().0;
+        let (_, focus) = made.iter().find(|(made, _)| *made == id).unwrap();
+        let focused = focus.contains_focused(window, cx);
+        let dock = workspace.read(cx).dock(DockPosition::Left).unwrap();
+        let dock = dock.read(cx).dock();
+        let showing = dock.rail_highlighted() == Some(PanelId(id));
+        (focused, showing, dock.on_rail(PanelId(id), cx))
+    })
+}
+
+#[gpui::test]
+fn a_toggle_shows_its_hidden_panel_as_a_rail_click_does(cx: &mut TestAppContext) {
+    let dir = TempDir::new();
+    let mut windows = open(bare(dir.paths()).module(two_panels), cx);
+    let (workspace, cx) = &mut windows[0];
+    // `joining` shows from the start, as the dock's first panel, though it
+    // hasn't joined the rail; its toggle hides it, then shows it, joining
+    // it to the rail as a rail click would.
+    assert_eq!(panel_state(workspace, "joining", cx), (false, true, false));
+    run("joining.toggle", cx);
+    assert_eq!(panel_state(workspace, "joining", cx), (false, false, false));
+    run("joining.toggle", cx);
+    assert_eq!(panel_state(workspace, "joining", cx), (false, true, true));
+
+    // `focused` is focused each time its toggle shows it, the second time
+    // too, the dock having hidden it.
+    run("focused.toggle", cx);
+    assert_eq!(panel_state(workspace, "focused", cx), (true, true, true));
+    run("focused.toggle", cx);
+    assert_eq!(panel_state(workspace, "focused", cx), (false, false, true));
+    run("focused.toggle", cx);
+    assert_eq!(panel_state(workspace, "focused", cx), (true, true, true));
+}
+
+#[gpui::test]
+fn focus_leaves_the_panel_a_toggle_replaces(cx: &mut TestAppContext) {
+    let dir = TempDir::new();
+    let mut windows = open(bare(dir.paths()).module(two_panels), cx);
+    let (workspace, cx) = &mut windows[0];
+    run("focused.toggle", cx);
+    assert_eq!(panel_state(workspace, "focused", cx), (true, true, true));
+    // `joining` isn't focused when shown: focus goes to the active item,
+    // not staying in the panel it hid.
+    run("joining.toggle", cx);
+    assert_eq!(panel_state(workspace, "joining", cx), (false, true, true));
+    assert_eq!(panel_state(workspace, "focused", cx), (false, false, true));
+    let active = cx.update(|window, cx| {
+        let focus = workspace.read(cx).active_pane().focus_handle(cx);
+        focus.contains_focused(window, cx)
+    });
+    assert!(active, "the active pane has focus");
 }
 
 /// The warnings logged, as `level: message`.

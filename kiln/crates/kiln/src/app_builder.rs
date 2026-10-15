@@ -447,13 +447,16 @@ impl AppBuilder {
         });
     }
 
-    /// Sets the app up in `cx`: the modules and inline contributions added
-    /// ([`AppBuilder::module`]), [`init`] with the [`Config`] and the
-    /// contributed settings, the item kinds registered, quitting on the
-    /// last window's close if it should (and GPUI's [`QuitMode`]
-    /// [`QuitMode::Explicit`]), then the windows:
-    /// the [`Root`] window, or a workspace window for each saved layout no
-    /// live window holds, else one fresh one.
+    /// Sets the app up in `cx`: the commands `#[kiln::command]` declared in
+    /// the app's own target ([`Contributions::add_recorded`]), the modules
+    /// and inline contributions added ([`AppBuilder::module`]), in a debug
+    /// build a warning naming each library crate whose commands no module
+    /// claimed ([`Contributions::warn_unclaimed`]), [`init`] with the
+    /// [`Config`] and the contributed settings, the item kinds registered,
+    /// quitting on the last window's close if it should (and GPUI's
+    /// [`QuitMode`] [`QuitMode::Explicit`]), then the windows: the [`Root`]
+    /// window, or a workspace window for each saved layout no live window
+    /// holds, else one fresh one.
     ///
     /// # Panics
     ///
@@ -463,6 +466,7 @@ impl AppBuilder {
     /// with [`Config::fail_fast`] on, as [`init`] does; or if a window
     /// doesn't open.
     pub fn start(self, cx: &mut App) -> Started {
+        Contributions::add_recorded(cx);
         for Contribute { add, module } in self.contribute {
             let before = Contributions::count(cx);
             add(cx);
@@ -472,6 +476,9 @@ impl AppBuilder {
             {
                 log::warn!("the kiln module {name} contributes nothing");
             }
+        }
+        if cfg!(debug_assertions) {
+            Contributions::warn_unclaimed(cx);
         }
         let mut config = self.config;
         let user_settings = self.paths.settings_file();
