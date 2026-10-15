@@ -3,8 +3,7 @@
 //! The workspace's own saved layout: split panes, their items and the
 //! docks, restored into a new window as they were; each change of shape
 //! saved with no call from the host, but none while a restore reads; the
-//! app's keys saved and read back, its typed state before the items and
-//! not from a rejected restore; the full entry saved at quit and as
+//! app's keys saved and read back; the full entry saved at quit and as
 //! the window closes or the workspace goes, the last window's kept; and
 //! the panes a restore leaves empty closing, focus going to the active
 //! item.
@@ -477,53 +476,6 @@ fn the_app_keys_are_saved_and_read_back(cx: &mut TestAppContext) {
     assert!(t.restore(&restorable));
     let pane = t.active_pane();
     assert_eq!(t.names(&pane), ["a"]);
-}
-
-/// The documents on disk, kept by the app itself in the entry.
-fn persist_disk(workspace: &mut Workspace) {
-    let save = |cx: &App| {
-        let mut names: Vec<String> = cx.global::<Disk>().docs.keys().cloned().collect();
-        names.sort();
-        names
-    };
-    workspace.persist("disk", save, |names: Vec<String>, _, cx| {
-        let disk = cx.global_mut::<Disk>();
-        disk.docs = names.into_iter().map(|name| (name, ())).collect();
-    });
-}
-
-#[gpui::test]
-fn the_apps_state_comes_back_before_the_items_and_not_from_a_rejected_restore(
-    cx: &mut TestAppContext,
-) {
-    setup(cx);
-    let mut s = open(cx);
-    s.add("a");
-    s.update(|workspace, _, _| persist_disk(workspace));
-    let entry = s.entry();
-    assert_eq!(entry["disk"], Value::from(vec!["a", "b", "c"]));
-
-    // The next run's disk has none of them until the entry says so.
-    cx.update(|cx| cx.global_mut::<Disk>().docs.clear());
-    let mut app = cx.clone();
-    let mut t = open(&mut app);
-    let kept = t.add("kept");
-    t.update(|workspace, _, _| persist_disk(workspace));
-    let pane = t.active_pane();
-
-    // A tree that isn't one: nothing comes back, and nothing changes.
-    let mut bad = entry.clone();
-    bad["panes"]["tree"] = Value::Null;
-    assert!(!t.restore(&bad));
-    assert!(cx.read(|cx| cx.global::<Disk>().docs.is_empty()));
-    assert_eq!(t.panes(), slice::from_ref(&pane));
-    assert_eq!(t.docs(&pane), [kept]);
-
-    // The disk comes back before the item that reads it.
-    assert!(t.restore(&entry));
-    let pane = t.active_pane();
-    assert_eq!(t.names(&pane), ["a"]);
-    assert_eq!(cx.read(|cx| cx.global::<Disk>().docs.len()), 3);
 }
 
 #[gpui::test]

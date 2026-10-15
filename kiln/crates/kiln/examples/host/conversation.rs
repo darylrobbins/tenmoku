@@ -4,18 +4,27 @@
 //! above, a field to write the next one below. While the field holds
 //! unsent text it's dirty, so a close asks first; a split shows the same
 //! thread in a second view with a field of its own; and it saves in the
-//! window's layout as the thread it shows and its unsent text
-//! ([`ConversationState`]).
+//! window's layout as the thread it shows.
 
-use std::hash::{BuildHasher as _, BuildHasherDefault, DefaultHasher};
+use std::hash::{DefaultHasher, Hash as _, Hasher as _};
 
-use gpui::{App, Entity, FocusHandle, Focusable, Hsla, PromptButton, PromptLevel, prelude::*};
-use gpui::{ScrollHandle, SharedString, Subscription, Task, Window, div};
-use kiln::shell::{CloseAnswer, PaneItem, StatusItem, StatusSide, item::ItemState, item::state};
-use kiln::ui::{Button, Color, TextField, TextFieldEvent, h_flex, hsla, v_flex};
-use kiln::{command::Value, prelude::*, serde::Deserialize, serde::Serialize};
+use gpui::{
+    App, AppContext as _, Context, Entity, FocusHandle, Focusable, Hsla, InteractiveElement as _,
+    IntoElement, ParentElement as _, PromptButton, PromptLevel, Render, ScrollHandle, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, div, px,
+};
+use kiln::{
+    command::Value,
+    prelude::*,
+    shell::{CloseAnswer, PaneItem, StatusItem, StatusSide},
+    ui::{Button, Color, TextField, TextFieldEvent, h_flex, hsla, v_flex},
+};
 
-use crate::{app::SendMessage, threads::*};
+use crate::{
+    commands::SendMessage,
+    setup::APP_NAME,
+    threads::{Thread, Threads},
+};
 
 /// The key context a conversation sets, where `chat.send_message` applies.
 pub(crate) const KEY_CONTEXT: &str = "conversation";
@@ -23,20 +32,16 @@ pub(crate) const KEY_CONTEXT: &str = "conversation";
 /// The app's table in the user's theme file (`Config::theme_extensions`).
 pub(crate) const THEME_TABLE: &str = "chat";
 
-/// A conversation in a saved layout: the thread it shows, by its ID, and
-/// its unsent text.
-#[derive(Serialize, Deserialize)]
-#[serde(crate = "kiln::serde")]
-pub(crate) struct ConversationState {
-    thread: usize,
-    draft: String,
-}
-
-/// A conversation restored from its saved state, once it is.
-type Restored = Task<Option<Entity<Conversation>>>;
+/// The answers to the close prompt. Cancel comes first, so Return keeps
+/// the message, as Escape does; only Discard closes.
+const DISCARD_BUTTONS: [PromptButton; 2] = [
+    PromptButton::Ok(SharedString::new_static("Cancel")),
+    PromptButton::Other(SharedString::new_static("Discard")),
+];
+const DISCARD: usize = 1;
 
 pub(crate) struct Conversation {
-    pub(crate) thread: Entity<Thread>,
+    thread: Entity<Thread>,
     input: Entity<TextField>,
     scroll: ScrollHandle,
     _subscriptions: [Subscription; 2],
@@ -64,31 +69,43 @@ impl Conversation {
         }
     }
 
+    pub(crate) fn thread(&self) -> &Entity<Thread> {
+        &self.thread
+    }
+
     /// The unsent text.
     pub(crate) fn draft<'a>(&self, cx: &'a App) -> &'a str {
         self.input.read(cx).value()
     }
 
+    #[allow(dead_code, reason = "for tests/host.rs")]
+    pub(crate) fn input(&self) -> &Entity<TextField> {
+        &self.input
+    }
+
     /// Sends the field's text, if there's any, and clears the field.
     fn send(&mut self, cx: &mut Context<Self>) {
         let text = self.draft(cx).trim().to_owned();
-        if !text.is_empty() {
-            // Views of the thread redraw, as they observe it.
-            self.thread.update(cx, |thread, cx| {
-                thread.messages.push(text.into());
-                cx.notify();
-            });
-            self.input.update(cx, |input, cx| input.set_value("", cx));
+        if text.is_empty() {
+            return;
         }
+        self.thread.update(cx, |thread, cx| thread.send(text, cx));
+        self.input.update(cx, |input, cx| input.set_value("", cx));
+        cx.notify();
+    }
+
+    fn send_message(&mut self, _: &SendMessage, _: &mut Window, cx: &mut Context<Self>) {
+        self.send(cx);
     }
 }
 
 /// The fill behind a message: the theme file's `[chat] bubble`, or the
 /// accent's tint in kiln's own themes, which have no `chat` table.
 pub(crate) fn bubble_color(cx: &App) -> Hsla {
-    let table = cx.theme().data().extension(THEME_TABLE);
+    let theme = cx.theme();
+    let table = theme.data().extension(THEME_TABLE);
     let written = table.and_then(|table| table.get("bubble")?.as_str()?.parse::<Color>().ok());
-    written.map_or(cx.theme().colors.accent.subtle, hsla)
+    written.map_or(theme.colors.accent.subtle, hsla)
 }
 
 impl Focusable for Conversation {
@@ -102,14 +119,24 @@ impl Render for Conversation {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let c = cx.theme().colors;
         let bubble = bubble_color(cx);
-        let messages = &self.thread.read(cx).messages;
-        let hint = "No messages yet. Say hello.";
-        let hint = div().text_color(c.text.muted).child(hint);
-        let bubbles = (messages.iter().cloned())
-            .map(|text| div().px_3().py_1().rounded_md().bg(bubble).child(text));
+        let thread = self.thread.read(cx);
+        let messages = thread.messages.iter().map(|text| {
+            div()
+                .max_w(px(520.))
+                .px_3()
+                .py_1()
+                .rounded_md()
+                .bg(bubble)
+                .child(text.clone())
+        });
+        let empty = thread.messages.is_empty().then(|| {
+            div()
+                .text_color(c.text.muted)
+                .child("No messages yet. Say hello.")
+        });
         v_flex()
             .key_context(KEY_CONTEXT)
-            .on_action(cx.listener(|this, _: &SendMessage, _, cx| this.send(cx)))
+            .on_action(cx.listener(Self::send_message))
             .size_full()
             .bg(c.surface.background)
             .child(
@@ -123,11 +150,12 @@ impl Render for Conversation {
                     .p_4()
                     .gap_2()
                     .items_start()
-                    .children(messages.is_empty().then_some(hint))
-                    .children(bubbles),
+                    .children(empty)
+                    .children(messages),
             )
             .child(
                 h_flex()
+                    .flex_none()
                     .p_2()
                     .gap_2()
                     .border_t_1()
@@ -145,6 +173,10 @@ impl PaneItem for Conversation {
         self.thread.read(cx).title.clone()
     }
 
+    fn window_title(&self, cx: &App) -> SharedString {
+        format!("{} — {APP_NAME}", self.tab_title(cx)).into()
+    }
+
     /// Unsent text would be lost.
     fn is_dirty(&self, cx: &App) -> bool {
         !self.draft(cx).trim().is_empty()
@@ -156,64 +188,65 @@ impl PaneItem for Conversation {
             return CloseAnswer::Close;
         }
         let question = format!("Discard your message to {}?", self.tab_title(cx));
-        let detail = Some("It hasn't been sent.");
-        // Cancel comes first, so Return keeps the message, as Escape does;
-        // only Discard, the second, closes.
-        let buttons = [PromptButton::ok("Cancel"), PromptButton::new("Discard")];
-        let answer = window.prompt(PromptLevel::Warning, &question, detail, &buttons, cx);
-        CloseAnswer::Ask(cx.spawn(async move |_, _| answer.await == Ok(1)))
+        let detail = "It hasn't been sent.";
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            &question,
+            Some(detail),
+            &DISCARD_BUTTONS,
+            cx,
+        );
+        CloseAnswer::Ask(cx.spawn(async move |_, _| answer.await == Ok(DISCARD)))
     }
 
     /// Changes with every edit, so a close the user agreed to asks again
     /// if the message changed before it went ahead.
     fn close_revision(&self, cx: &App) -> u64 {
-        BuildHasherDefault::<DefaultHasher>::default().hash_one(self.draft(cx))
+        let mut hasher = DefaultHasher::new();
+        self.draft(cx).hash(&mut hasher);
+        hasher.finish()
     }
 
     /// The message count, on the right while this is the active item.
     fn status_items(&self, cx: &App) -> Vec<StatusItem> {
-        let text = plural(self.thread.read(cx).messages.len(), "message");
+        let count = self.thread.read(cx).messages.len();
+        let text = match count {
+            1 => "1 message".to_owned(),
+            count => format!("{count} messages"),
+        };
         vec![StatusItem::new("chat.messages", StatusSide::Right, 0, text)]
     }
 
     /// The same thread, with a field of its own.
     fn split(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<Entity<Self>> {
-        Some(cx.new(|cx| Self::new(self.thread.clone(), window, cx)))
+        let thread = self.thread.clone();
+        Some(cx.new(|cx| Self::new(thread, window, cx)))
     }
 
     fn serialize(&self, cx: &App) -> Option<Value> {
-        state::serialize(self, cx)
-    }
-
-    fn restore(state: Value, window: &mut Window, cx: &mut App) -> Restored {
-        state::restore::<Self>(state, window, cx)
-    }
-
-    fn apply_state(&mut self, state: &Value, window: &mut Window, cx: &mut Context<Self>) {
-        state::apply(self, state, window, cx)
-    }
-}
-
-impl ItemState for Conversation {
-    type State = ConversationState;
-
-    fn state(&self, cx: &App) -> Option<ConversationState> {
-        let thread = Threads::all(cx).iter().position(|t| *t == self.thread)?;
-        let draft = self.draft(cx).to_owned();
-        Some(ConversationState { thread, draft })
+        Some(Value::from_iter([
+            ("thread", Value::from(self.thread.read(cx).id)),
+            ("draft", Value::from(self.draft(cx))),
+        ]))
     }
 
     /// The saved thread, if it's still there, and its unsent text.
-    fn from_state(state: Self::State, window: &mut Window, cx: &mut App) -> Restored {
-        let thread = Threads::all(cx).get(state.thread).cloned();
-        let conversation = thread.map(|thread| cx.new(|cx| Self::new(thread, window, cx)));
-        if let Some(conversation) = &conversation {
-            conversation.update(cx, |this, cx| this.apply(&state, window, cx));
-        }
-        Task::ready(conversation)
+    fn restore(state: Value, window: &mut Window, cx: &mut App) -> Task<Option<Entity<Self>>> {
+        let thread = state["thread"]
+            .as_u64()
+            .and_then(|id| Threads::find(id, cx));
+        Task::ready(thread.map(|thread| {
+            cx.new(|cx| {
+                let mut conversation = Self::new(thread, window, cx);
+                conversation.apply_state(&state, window, cx);
+                conversation
+            })
+        }))
     }
 
-    fn apply(&mut self, state: &ConversationState, _: &mut Window, cx: &mut Context<Self>) {
-        (self.input).update(cx, |input, cx| input.set_value(&state.draft, cx));
+    fn apply_state(&mut self, state: &Value, _: &mut Window, cx: &mut Context<Self>) {
+        let draft = state["draft"].as_str().unwrap_or_default();
+        self.input
+            .update(cx, |input, cx| input.set_value(draft, cx));
     }
 }
