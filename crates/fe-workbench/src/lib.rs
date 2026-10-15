@@ -107,8 +107,10 @@ pub fn init(cx: &mut App) {
     // `command_palette.toggle`, the palette listing these commands too.
     kiln_shell::command_palette::register(cx);
     kiln_shell::command_palette::add_commands(cx, command_list());
-    // Saved layouts restore their editors.
+    // Saved layouts restore their editors, and their viewers of files too
+    // large to edit.
     kiln_shell::layout::register_item::<fe_gpui::EditorView>(cx);
+    kiln_shell::layout::register_item::<fe_gpui::FileViewer>(cx);
     // `app.quit` and `window.close` ask the windows' editors first.
     kiln_shell::close::init(cx);
     nav::init(cx);

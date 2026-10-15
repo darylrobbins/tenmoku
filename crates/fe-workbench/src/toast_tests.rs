@@ -186,7 +186,7 @@ fn open(
     let dir = tempfile::tempdir().unwrap();
     let launch = Launch {
         root: Some(dir.path().to_owned()),
-        file: Some((dir.path().join("a.txt"), Some(Buffer::new(text)))),
+        file: Some((dir.path().join("a.txt"), Some(Buffer::new(text).into()))),
     };
     let window = cx.add_window(move |window, cx| {
         let theme = EditorTheme::default_dark(cx);

@@ -103,7 +103,10 @@ fn capture(
     let pane = workbench.read_with(cx, |workbench, _| workbench.pane().clone());
     settle.observe(&pane, cx);
     let editors: Vec<_> = pane.read_with(cx, |pane, _| {
-        pane.tabs().iter().map(|tab| tab.editor.clone()).collect()
+        pane.tabs()
+            .iter()
+            .map(|tab| tab.editor().unwrap().clone())
+            .collect()
     });
     for editor in editors {
         settle.observe(&editor, cx);

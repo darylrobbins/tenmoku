@@ -699,7 +699,7 @@ fn empty_states(cx: &mut TestAppContext) {
     let path = root.join("src/main.rs");
     let launch = Launch {
         root: None,
-        file: Some((path, Some(Buffer::new(MAIN)))),
+        file: Some((path, Some(Buffer::new(MAIN).into()))),
     };
     let (workbench, cx_, _) = open(cx, launch);
     let fake = Fake::default().add(&workbench, cx_);

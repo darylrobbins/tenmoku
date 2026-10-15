@@ -28,7 +28,7 @@ fn setup(
     fs::write(&file, "fn a() {}\n").unwrap();
     let launch = Launch {
         root: Some(dir.path().to_owned()),
-        file: Some((file, Some(Buffer::new("fn a() {}\n")))),
+        file: Some((file, Some(Buffer::new("fn a() {}\n").into()))),
     };
     let (workbench, cx, _) = open(cx, launch);
     let seen = Rc::new(RefCell::new(Vec::new()));

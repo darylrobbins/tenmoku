@@ -589,7 +589,7 @@ fn an_older_read_landing_doesnt_cancel_a_pick(cx: &mut TestAppContext) {
     dispatch(super::SHOW, cx_);
     confirm(&workbench, 0, cx_);
     cx_.update(|window, cx| {
-        let read = Ok(Some(fe_buffer::Buffer::new("other\n")));
+        let read = Ok(fe_buffer::Buffer::new("other\n").into());
         pane.update(cx, |pane, cx| {
             pane.file_read(other.clone(), read, window, cx)
         });

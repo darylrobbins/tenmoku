@@ -47,7 +47,7 @@ fn keys_drive_the_row(cx: &mut TestAppContext) {
     fs::write(&path, "fn a() {}\n").unwrap();
     let launch = Launch {
         root: Some(dir.path().to_owned()),
-        file: Some((path, Some(Buffer::new("fn a() {}\n")))),
+        file: Some((path, Some(Buffer::new("fn a() {}\n").into()))),
     };
     let (workbench, cx, _) = open(cx, launch);
     let panel = terminal(&workbench, cx);

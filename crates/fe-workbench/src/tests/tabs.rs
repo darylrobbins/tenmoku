@@ -179,10 +179,10 @@ fn keys_work_while_a_file_loads_or_failed(cx: &mut TestAppContext) {
 fn the_latest_read_is_shown_whichever_lands_first(cx: &mut TestAppContext) {
     let (dir, paths) = project();
     let (a, b) = (&paths[0], &paths[1]);
-    let buffer = |text: &str| Ok(Some(Buffer::new(text)));
+    let buffer = |text: &str| Ok(Buffer::new(text).into());
     // (first to land, its result, second to land, its result), with a
     // opened before b; then the tabs and the active one's text.
-    type Read = (usize, std::io::Result<Option<Buffer>>);
+    type Read = (usize, std::io::Result<crate::loader::Opened>);
     let cases: [([Read; 2], Vec<&PathBuf>, Option<&str>); 3] = [
         ([(0, buffer("a")), (1, buffer("b"))], vec![a, b], Some("b")),
         ([(1, buffer("b")), (0, buffer("a"))], vec![b, a], Some("b")),
@@ -231,9 +231,9 @@ fn an_older_read_landing_in_an_empty_pane_is_focused(cx: &mut TestAppContext) {
         pane.update(cx, |pane, cx| {
             pane.open(a.clone(), window, cx);
             pane.open(b.clone(), window, cx);
-            pane.file_read(b.clone(), Ok(Some(Buffer::new("b"))), window, cx);
+            pane.file_read(b.clone(), Ok(Buffer::new("b").into()), window, cx);
             pane.close_active(window, cx);
-            pane.file_read(a.clone(), Ok(Some(Buffer::new("a"))), window, cx);
+            pane.file_read(a.clone(), Ok(Buffer::new("a").into()), window, cx);
         })
     });
     cx.run_until_parked();

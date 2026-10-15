@@ -39,7 +39,7 @@ fn opened<'a>(
     });
     let launch = Launch {
         root: Some(dir.path().to_owned()),
-        file: Some((path, Some(Buffer::from_file_contents(text)))),
+        file: Some((path, Some(Buffer::from_file_contents(text).into()))),
     };
     let (workbench, cx) = cx.add_window_view(move |window, cx| {
         let theme = EditorTheme::default_dark(cx);
@@ -53,7 +53,7 @@ fn opened<'a>(
 fn editor(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Entity<EditorView> {
     workbench.read_with(cx, |workbench, cx| {
         let pane = workbench.pane_group().panes()[0].read(cx);
-        pane.tabs()[0].editor.clone()
+        pane.tabs()[0].editor().unwrap().clone()
     })
 }
 
@@ -126,7 +126,7 @@ fn tab_sizes(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Vec<u
     workbench.read_with(cx, |workbench, cx| {
         (workbench.pane_group().panes().iter())
             .flat_map(|pane| pane.read(cx).tabs().to_vec())
-            .map(|tab| tab.editor.read(cx).model().tab_size())
+            .map(|tab| tab.editor().unwrap().read(cx).model().tab_size())
             .collect()
     })
 }

@@ -51,7 +51,7 @@ fn editors(
                 pane.read(cx)
                     .tabs()
                     .iter()
-                    .map(|tab| tab.editor.clone())
+                    .map(|tab| tab.editor().unwrap().clone())
                     .collect()
             })
             .collect()
@@ -82,7 +82,10 @@ fn two_split_views_of_a_file_round_trip(cx: &mut TestAppContext) {
 
     let launch = Launch {
         root: Some(root.clone()),
-        file: Some((root.join("a.txt"), Some(Buffer::new("alpha\nbeta\n")))),
+        file: Some((
+            root.join("a.txt"),
+            Some(Buffer::new("alpha\nbeta\n").into()),
+        )),
     };
     let mut app = cx.clone();
     let (first, cx) = open(&mut app, launch);

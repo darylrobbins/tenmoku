@@ -302,7 +302,7 @@ fn tab_panes(
 fn dropping_on_a_tab_bar(cx: &mut TestAppContext) {
     let (workbench, cx, _dir) = tab_panes(cx);
     let [left, right] = <[_; 2]>::try_from(panes(&workbench, cx)).expect("two panes");
-    let editor = left.read_with(cx, |pane, _| pane.tabs()[1].editor.clone());
+    let editor = left.read_with(cx, |pane, _| pane.tabs()[1].editor().unwrap().clone());
 
     // Over the left half of the right pane's second tab: the marker shows
     // at its left edge.
@@ -327,7 +327,7 @@ fn dropping_on_a_tab_bar(cx: &mut TestAppContext) {
         (vec!["c.md".into(), "b.rs".into(), "d.json".into()], Some(1))
     );
     assert_eq!(tabs(&left, cx).0, ["a.txt"]);
-    let moved = right.read_with(cx, |pane, _| pane.tabs()[1].editor.clone());
+    let moved = right.read_with(cx, |pane, _| pane.tabs()[1].editor().unwrap().clone());
     assert_eq!(moved, editor);
     assert_eq!(active(&workbench, cx), right);
     assert!(cx.update(|window, cx| editor.focus_handle(cx).is_focused(window)));
@@ -502,7 +502,7 @@ fn drags_and_keys_share_move_tab(cx: &mut TestAppContext) {
             Some(0)
         )
     );
-    let editor = right.read_with(cx, |pane, _| pane.tabs()[0].editor.clone());
+    let editor = right.read_with(cx, |pane, _| pane.tabs()[0].editor().unwrap().clone());
     let dirty =
         |cx: &mut VisualTestContext| editor.read_with(cx, |view, _| view.model().is_dirty());
     assert!(dirty(cx));

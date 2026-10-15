@@ -277,7 +277,7 @@ impl ConfigProblemsPicker {
         let path = problem.file.clone();
         pane.update(cx, |pane, cx| {
             pane.opening(path.clone(), cx);
-            pane.file_read(path.clone(), Ok(Some(buffer)), window, cx);
+            pane.file_read(path.clone(), Ok(buffer.into()), window, cx);
         });
         let editor = pane.read(cx).active_editor().cloned();
         let editor = editor.filter(|editor| editor.read(cx).model().path() == Some(&path));

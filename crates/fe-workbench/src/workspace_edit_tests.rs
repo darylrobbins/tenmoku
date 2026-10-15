@@ -494,7 +494,7 @@ fn the_launch_read(cx: &mut TestAppContext) {
     };
     let (launched, mut cx) = crate::tests::lsp::window(&mut s.cx, launch);
     // The host has read it, and hasn't handed it over yet.
-    let read = crate::loader::read(path.clone());
+    let read = crate::loader::open(path.clone());
     let pane = launched.read_with(&cx, |w, _| w.pane().clone());
     let lib = s.path("src/lib.rs");
     cx.update(|window, cx| pane.update(cx, |pane, cx| pane.open(lib, window, cx)));

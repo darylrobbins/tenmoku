@@ -35,6 +35,7 @@ use crate::{
     git_panel,
     go_to_line::GoToLine,
     language_picker::LanguagePicker,
+    loader::{self, Opened},
     lsp::{self, Lsp},
     nav::{self, Nav},
     open::{self, OpenOp},
@@ -76,10 +77,11 @@ Tabs: cmd-shift-[ and cmd-shift-] to switch, cmd-w to close.
 pub struct Launch {
     /// The project panel's folder.
     pub root: Option<PathBuf>,
-    /// A file to open in a tab: its path, and its buffer if it's read by
-    /// now. Without the buffer, the tab shows it loading until the host
-    /// hands the read to [`Workbench::file_read`].
-    pub file: Option<(PathBuf, Option<Buffer>)>,
+    /// A file to open in a tab: its path, and what [`loader::open`] made of
+    /// it if it's done by now, a buffer or a large file's view. Without it,
+    /// the tab shows the file loading until the host hands the read to
+    /// [`Workbench::file_read`].
+    pub file: Option<(PathBuf, Option<Opened>)>,
 }
 
 /// The launch for the command-line argument `arg`, made absolute: a
@@ -351,7 +353,11 @@ impl Workbench {
             match launch.file {
                 None if welcome => pane.add(EditorModel::new(Buffer::new(WELCOME), None), cx),
                 None => {}
-                Some((path, Some(buffer))) => pane.add(EditorModel::new(buffer, Some(path)), cx),
+                Some((path, Some(Opened::Text(buffer)))) => pane.add(
+                    EditorModel::new(loader::buffer_or_new(buffer), Some(path)),
+                    cx,
+                ),
+                Some((_, Some(Opened::Large { view, index }))) => pane.add_viewer(view, index, cx),
                 Some((path, None)) => pane.opening(path, cx),
             }
             pane
@@ -1200,7 +1206,7 @@ impl Workbench {
         let Some(ix) = pane.active() else {
             return;
         };
-        if pane.active_editor().is_none() {
+        if pane.active_item().is_none() {
             // A file being read, or a read error, shows in the tab's place.
             return;
         }
@@ -1365,7 +1371,11 @@ impl Workbench {
         self.panes
             .panes()
             .into_iter()
-            .flat_map(|pane| pane.read(cx).tabs().iter().map(|tab| tab.editor.clone()))
+            .flat_map(|pane| {
+                (pane.read(cx).tabs().iter())
+                    .filter_map(|tab| tab.editor().cloned())
+                    .collect::<Vec<_>>()
+            })
             .collect()
     }
 
@@ -1939,7 +1949,10 @@ impl Workbench {
         let id = editor.as_ref().map(Entity::entity_id);
         self.follow_vim_keys(editor.as_ref(), window, cx);
         // The pane's active item, or a diff view's side.
-        let item = (editor.clone()).map(|editor| Box::new(editor) as Box<dyn ItemHandle>);
+        let item = match editor.clone() {
+            Some(editor) => Some(Box::new(editor) as Box<dyn ItemHandle>),
+            None => (self.active.read(cx).active_item()).map(ItemHandle::boxed_clone),
+        };
         let followed = self.status_bar.update(cx, |bar, cx| {
             let followed = bar.item_id() != item.as_ref().map(|item| item.id());
             bar.set_active_item(item.as_deref(), window, cx);
@@ -2006,15 +2019,15 @@ impl Workbench {
         self.launch_read.as_ref().map(|(path, _)| path.as_path())
     }
 
-    /// Opens the host's read of the launch file, `Ok(None)` being a new
-    /// file, in the pane it was launched in, whatever that pane has shown
+    /// Opens the host's read of the launch file, `Ok(Opened::Text(None))`
+    /// being a new file, in the pane it was launched in, whatever that pane has shown
     /// since; see [`Launch::file`]. If that pane has closed, the read is
     /// dropped. Any other read opens in the pane showing it being read, else
     /// the active pane.
     pub fn file_read(
         &mut self,
         path: PathBuf,
-        result: std::io::Result<Option<Buffer>>,
+        result: std::io::Result<Opened>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {

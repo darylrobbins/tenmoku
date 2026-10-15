@@ -1,8 +1,9 @@
 //! The editor pane: a tab per open file, the active one's editor below.
 //! Its tabs, their strip and their drag and drop are kiln-shell's
-//! ([`PaneState`], whose items are the editors); opening files, revealing
-//! a place in them, and what shows while a file is read or failed to be,
-//! are fastedit's. [`Pane::tabs`] keeps a [`Tab`] per item in step.
+//! ([`PaneState`], whose items are the editors, and the viewers of files
+//! too large to edit); opening files, revealing a place in them, and what
+//! shows while a file is read or failed to be, are fastedit's.
+//! [`Pane::tabs`] keeps a [`Tab`] per item in step.
 
 use std::{
     collections::HashMap,
@@ -10,13 +11,17 @@ use std::{
     ops::Range,
     path::{Path, PathBuf},
     rc::Rc,
+    sync::Arc,
 };
 
-use fe_buffer::{Bias, Buffer, ResolvedSelection};
+use fe_buffer::{Bias, ResolvedSelection};
 use fe_command::Source;
 use fe_config::{EditorConfig, EndOfLine, IndentKind, IndentSize};
 use fe_editor::{EditorModel, IndentStyle};
-use fe_gpui::{EditorSettings, EditorTheme, EditorView, SettingsEvent, commands::RunCommand};
+use fe_fileview::{FileView, LineIndex};
+use fe_gpui::{
+    EditorSettings, EditorTheme, EditorView, FileViewer, SettingsEvent, commands::RunCommand,
+};
 use fe_ui::{
     Breadcrumbs, Crumb, CrumbKind, Icon, IconButton, TAB_HEIGHT, TOOLBAR_HEIGHT, TabBar, Tooltip,
     UiTheme, file_icon,
@@ -31,43 +36,53 @@ use kiln_shell::{ItemHandle, ItemId, PaneState, PaneView};
 
 use crate::{
     find_bar::{self, FindBar, FindOp},
-    loader,
+    loader::{self, Opened},
     nav::Place,
     pane_drag::{DraggedTab, TabDropped},
     pane_toolbar::{self, NavButtons, Toolbar, ToolbarRequest},
 };
 
 /// A tab's ID, which stays with it as tabs open, close and move: its
-/// item's, the editor's.
+/// item's.
 pub(crate) type TabId = ItemId;
 
-/// An open file: the pane's item, its editor, as fastedit reads it. The
-/// editor is the tab's [`PaneItem`](kiln_shell::PaneItem) ([`Tab::item`]),
-/// which the tab strip and the window's title read.
+/// An open file: the pane's item, as fastedit reads it: an editor, or a
+/// [`FileViewer`] of a file too large to edit. The item is the tab's
+/// [`PaneItem`](kiln_shell::PaneItem) ([`Tab::item`]), which the tab strip
+/// and the window's title read.
 #[derive(Clone)]
 pub struct Tab {
     /// `None` for a buffer that was never saved, such as the welcome text.
     pub path: Option<PathBuf>,
-    pub editor: Entity<EditorView>,
+    item: Box<dyn ItemHandle>,
 }
 
 impl Tab {
-    /// The tab for `item`, an editor, its path as it is now.
+    /// The tab for `item`, its path as it is now.
     fn of(item: &dyn ItemHandle, cx: &App) -> Self {
-        let editor = item
-            .downcast::<EditorView>()
-            .expect("fastedit's pane items are editors");
-        let path = editor.read(cx).model().path().map(Path::to_owned);
-        Self { path, editor }
+        Self {
+            path: item.path(cx),
+            item: item.boxed_clone(),
+        }
     }
 
     pub(crate) fn id(&self) -> TabId {
         self.item().id()
     }
 
-    /// The tab's item: its editor, as kiln-shell holds items.
+    /// The tab's item, as kiln-shell holds items.
     pub fn item(&self) -> &dyn ItemHandle {
-        &self.editor
+        &*self.item
+    }
+
+    /// The tab's editor; `None` for a viewer.
+    pub fn editor(&self) -> Option<&Entity<EditorView>> {
+        self.item.downcast_ref()
+    }
+
+    /// The tab's viewer, if it shows a file too large to edit.
+    pub fn viewer(&self) -> Option<&Entity<FileViewer>> {
+        self.item.downcast_ref()
     }
 }
 
@@ -256,17 +271,21 @@ impl Pane {
         self.state.active_item()?.downcast_ref::<EditorView>()
     }
 
-    /// The active tab's item, its editor, unless a file being opened or a
-    /// read error shows in its place: what the status bar follows.
+    /// The active tab's item, its editor or viewer, unless a file being
+    /// opened or a read error shows in its place: what the status bar
+    /// follows.
     pub fn active_item(&self) -> Option<&dyn ItemHandle> {
-        self.active_editor().map(|editor| editor as &dyn ItemHandle)
+        if self.opening.is_some() || self.error.is_some() {
+            return None;
+        }
+        self.state.active_item()
     }
 
-    /// What gets focus when focus leaves a hidden panel: the active editor,
-    /// or else the pane.
+    /// What gets focus when focus leaves a hidden panel: the active editor
+    /// or viewer, or else the pane.
     pub(crate) fn focus_target(&self, cx: &App) -> FocusHandle {
-        match self.active_editor() {
-            Some(editor) => editor.focus_handle(cx),
+        match self.active_item() {
+            Some(item) => item.item_focus_handle(cx),
             None => self.state.focus().clone(),
         }
     }
@@ -289,8 +308,20 @@ impl Pane {
         self.add_item(Box::new(editor), cx);
     }
 
-    /// Opens `item`, an editor, in a new tab and shows it, without
-    /// focusing it.
+    /// Opens a viewer of `view`, a file too large to edit, in a new tab and
+    /// shows it, without focusing it.
+    pub(crate) fn add_viewer(
+        &mut self,
+        view: Arc<FileView>,
+        index: Arc<LineIndex>,
+        cx: &mut Context<Self>,
+    ) {
+        let viewer = self.new_viewer(view, index, cx);
+        self.add_item(Box::new(viewer), cx);
+    }
+
+    /// Opens `item`, an editor or a viewer, in a new tab and shows it,
+    /// without focusing it.
     pub(crate) fn add_item(&mut self, item: Box<dyn ItemHandle>, cx: &mut Context<Self>) {
         let ix = self.state.push(item, cx);
         self.state.set_active(ix);
@@ -312,8 +343,8 @@ impl Pane {
                     .unwrap_or_else(|| Tab::of(&**item, cx))
             })
             .collect();
-        for tab in &self.tabs {
-            configs::read(&tab.editor, cx);
+        for editor in self.tabs.iter().filter_map(Tab::editor) {
+            configs::read(editor, cx);
         }
     }
 
@@ -324,8 +355,10 @@ impl Pane {
         self.open_at(path, None, window, cx);
     }
 
-    /// [`Pane::open`], then selects `reveal` in the file's editor: at once if
-    /// it's open, else once it's read, if it's still the file opened last.
+    /// [`Pane::open`], then selects `reveal` in the file's editor, or puts a
+    /// viewer's caret at its start: at once if it's open, else once it's
+    /// read, if it's still the file opened last. A file of
+    /// [`loader::LARGE_FILE_BYTES`] or more opens in a [`FileViewer`].
     pub(crate) fn open_at(
         &mut self,
         path: PathBuf,
@@ -338,7 +371,7 @@ impl Pane {
         if let Some(ix) = self.position(&path) {
             self.activate(ix, window, cx);
             if let Some(reveal) = reveal {
-                self.apply(&reveal, ix, cx);
+                self.apply(&reveal, ix, window, cx);
             }
             return;
         }
@@ -347,7 +380,7 @@ impl Pane {
             let ix = self.tabs.len() - 1;
             self.activate(ix, window, cx);
             if let Some(reveal) = reveal {
-                self.apply(&reveal, ix, cx);
+                self.apply(&reveal, ix, window, cx);
             }
             return;
         }
@@ -362,7 +395,7 @@ impl Pane {
         }
         let read = cx.background_spawn({
             let path = path.clone();
-            async move { loader::read(path) }
+            async move { loader::open(path) }
         });
         let task = cx.spawn_in(window, {
             let path = path.clone();
@@ -385,9 +418,11 @@ impl Pane {
         cx.notify();
     }
 
-    /// Opens a finished read of `path` (`Ok(None)` is a new file) in a new
-    /// tab, unless it's open already; if another pane has it open by now,
-    /// the tab shares that pane's buffer instead. The tab is shown and focused if it's
+    /// Opens a finished read of `path` (`Ok(Opened::Text(None))` is a new
+    /// file) in a new tab, unless it's open already: an editor, or for a
+    /// large file a [`FileViewer`] under a read-only banner. If another
+    /// pane has the file in an editor by now, the tab shares that pane's
+    /// buffer instead. The tab is shown and focused if it's
     /// the file opened last, or if the pane shows nothing else (no tab,
     /// read or error); an error is shown in the tab's place, with the pane
     /// focused, only for the file opened last. So an older read never hides
@@ -395,7 +430,7 @@ impl Pane {
     pub fn file_read(
         &mut self,
         path: PathBuf,
-        result: io::Result<Option<Buffer>>,
+        result: io::Result<Opened>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -407,7 +442,7 @@ impl Pane {
     fn file_landed(
         &mut self,
         path: PathBuf,
-        result: io::Result<Option<Buffer>>,
+        result: io::Result<Opened>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -419,14 +454,19 @@ impl Pane {
         let empty = self.active().is_none() && self.opening.is_none() && self.error.is_none();
         let reveal = self.reveal.take_if(|(at, _)| last && *at == path);
         match result {
-            Ok(buffer) => {
+            Ok(opened) => {
                 let open = self.position(&path);
                 let ix = open.unwrap_or_else(|| {
-                    let model = self.peer_model(&path, cx).unwrap_or_else(|| {
-                        EditorModel::new(loader::buffer_or_new(buffer), Some(path))
-                    });
-                    let editor = self.new_editor(model, cx);
-                    let ix = self.state.push(Box::new(editor), cx);
+                    let item: Box<dyn ItemHandle> = match opened {
+                        Opened::Text(buffer) => {
+                            let model = self.peer_model(&path, cx).unwrap_or_else(|| {
+                                EditorModel::new(loader::buffer_or_new(buffer), Some(path))
+                            });
+                            Box::new(self.new_editor(model, cx))
+                        }
+                        Opened::Large { view, index } => Box::new(self.new_viewer(view, index, cx)),
+                    };
+                    let ix = self.state.push(item, cx);
                     self.sync_tabs(cx);
                     ix
                 });
@@ -435,7 +475,7 @@ impl Pane {
                     cx.emit(PaneEvent::Activated);
                 }
                 if let Some((_, reveal)) = reveal {
-                    self.apply(&reveal, ix, cx);
+                    self.apply(&reveal, ix, window, cx);
                 }
             }
             Err(error) => {
@@ -452,9 +492,19 @@ impl Pane {
         cx.notify();
     }
 
-    /// Selects `reveal` in tab `ix`'s editor, for the open last made.
-    fn apply(&mut self, reveal: &Reveal, ix: usize, cx: &mut App) {
-        let editor = &self.tabs[ix].editor;
+    /// Selects `reveal` in tab `ix`'s editor, for the open last made; in a
+    /// viewer, puts the caret at its start.
+    fn apply(&mut self, reveal: &Reveal, ix: usize, window: &mut Window, cx: &mut App) {
+        let tab = &self.tabs[ix];
+        if let Some(viewer) = tab.viewer() {
+            let head = reveal.start_in(viewer.read(cx).model().text());
+            let state = fe_command::Value::from_iter([("head", fe_command::Value::from(head))]);
+            tab.item().apply_state(&state, window, cx);
+            return;
+        }
+        let Some(editor) = tab.editor() else {
+            return;
+        };
         reveal.select(editor, cx);
         self.revealed = Some(Revealed {
             serial: self.open_serial,
@@ -539,12 +589,12 @@ impl Pane {
         cx.notify();
     }
 
-    /// A model over the buffer of another pane's tab for `path`, if one has
-    /// it open.
+    /// A model over the buffer of another pane's editor for `path`, if one
+    /// has it open. A viewer has no buffer to share.
     fn peer_model(&self, path: &Path, cx: &App) -> Option<EditorModel> {
-        let item = self
-            .state
-            .peer_item(cx, |item| item.path(cx).as_deref() == Some(path))?;
+        let item = self.state.peer_item(cx, |item| {
+            item.downcast_ref::<EditorView>().is_some() && item.path(cx).as_deref() == Some(path)
+        })?;
         let editor = item.downcast::<EditorView>()?;
         Some(editor.read(cx).model().split())
     }
@@ -554,17 +604,15 @@ impl Pane {
     pub fn reload_settings(&mut self, event: &SettingsEvent, cx: &mut Context<Self>) {
         self.settings = event.settings.editor.clone();
         self.theme.set_metrics(&self.settings, cx);
-        for tab in &self.tabs {
-            tab.editor.update(cx, |editor, cx| {
+        for editor in self.tabs.iter().filter_map(Tab::editor) {
+            editor.update(cx, |editor, cx| {
                 editor.reload_settings(event, cx);
                 editor
                     .model_mut()
                     .set_auto_close(self.settings.auto_close_pairs);
             });
-            if let Some(width) = configs::get(tab.editor.entity_id(), cx).and_then(|c| c.tab_width)
-            {
-                tab.editor
-                    .update(cx, |editor, _| editor.model_mut().set_tab_size(width));
+            if let Some(width) = configs::get(editor.entity_id(), cx).and_then(|c| c.tab_width) {
+                editor.update(cx, |editor, _| editor.model_mut().set_tab_size(width));
             }
         }
         cx.notify();
@@ -586,6 +634,23 @@ impl Pane {
         model.set_auto_close(self.settings.auto_close_pairs);
         let theme = self.theme.clone();
         cx.new(|cx| EditorView::new(model, theme, cx))
+    }
+
+    /// A viewer of `view`, a file too large to edit, whose rows `index`
+    /// finds, under a banner saying so.
+    fn new_viewer(
+        &mut self,
+        view: Arc<FileView>,
+        index: Arc<LineIndex>,
+        cx: &mut Context<Self>,
+    ) -> Entity<FileViewer> {
+        let banner = format!(
+            "Read-only: {} is over {}.",
+            size_text(view.len()),
+            size_text(loader::LARGE_FILE_BYTES)
+        );
+        let theme = self.theme.clone();
+        cx.new(|cx| FileViewer::new(view, index, banner.into(), theme, cx))
     }
 
     fn message(&self, text: String) -> gpui::AnyElement {
@@ -733,6 +798,18 @@ impl Reveal {
         }
     }
 
+    /// Where the range starts in `text`, clamped to it: a viewer's caret.
+    fn start_in(&self, text: &dyn fe_text::TextSource) -> usize {
+        let row = self.row.min(text.row_count() - 1);
+        let start = text.row_start(row);
+        let limit = if self.within_row {
+            text.row_len(row) as usize
+        } else {
+            text.len() - start
+        };
+        text.clip_offset(start + self.columns.start.min(limit), Bias::Left)
+    }
+
     /// Selects the range, widened to char boundaries (a byte match can
     /// split a char), against the editor's text as it is now, and scrolls
     /// to it; `select_and_reveal` clamps a stale one.
@@ -750,6 +827,19 @@ impl Reveal {
                 ..text.clip_offset(column(self.columns.end), Bias::Right);
             editor.select_and_reveal(range, cx);
         });
+    }
+}
+
+/// `bytes` for a banner: `1.5 GiB`, `512 MiB`, `12 KiB`.
+fn size_text(bytes: u64) -> String {
+    const KIB: u64 = 1024;
+    const MIB: u64 = KIB * 1024;
+    const GIB: u64 = MIB * 1024;
+    match bytes {
+        GIB.. => format!("{:.1} GiB", bytes as f64 / GIB as f64),
+        MIB.. => format!("{} MiB", bytes / MIB),
+        KIB.. => format!("{} KiB", bytes / KIB),
+        _ => format!("{bytes} bytes"),
     }
 }
 
@@ -869,7 +959,7 @@ impl Render for Pane {
         } else if let Some((_, error)) = &self.error {
             self.message(error.clone())
         } else if let Some(tab) = self.tabs.get(self.state.active().unwrap_or(usize::MAX)) {
-            tab.editor.clone().into_any_element()
+            tab.item().to_any_view().into_any_element()
         } else {
             self.message("No open files".into())
         };
@@ -1200,6 +1290,10 @@ impl Pane {
 #[path = "editorconfig_tests.rs"]
 mod editorconfig_tests;
 
+#[cfg(test)]
+#[path = "large_file_tests.rs"]
+mod large_file_tests;
+
 /// `editor.auto_close_pairs` reaches the open editors' models on a reload,
 /// and those opened after it.
 #[cfg(test)]
@@ -1232,7 +1326,7 @@ mod auto_close_tests {
         workbench.read_with(cx, |workbench, cx| {
             (workbench.pane_group().panes().iter())
                 .flat_map(|pane| pane.read(cx).tabs().to_vec())
-                .map(|tab| tab.editor.read(cx).model().auto_close())
+                .filter_map(|tab| Some(tab.editor()?.read(cx).model().auto_close()))
                 .collect()
         })
     }
@@ -1245,7 +1339,7 @@ mod auto_close_tests {
         std::fs::write(dir.path().join("b.rs"), "g\n").unwrap();
         let launch = Launch {
             root: Some(dir.path().to_owned()),
-            file: Some((path, Some(Buffer::from_file_contents("f\n")))),
+            file: Some((path, Some(Buffer::from_file_contents("f\n").into()))),
         };
         let (workbench, cx, _) = crate::tests::open(cx, launch);
         assert_eq!(auto_close(&workbench, cx), [true]);

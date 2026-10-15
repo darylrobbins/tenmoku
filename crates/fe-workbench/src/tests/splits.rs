@@ -96,13 +96,24 @@ fn type_text(text: &str, cx: &mut VisualTestContext) {
 
 fn text(pane: &Entity<Pane>, ix: usize, cx: &mut VisualTestContext) -> String {
     pane.read_with(cx, |pane, cx| {
-        pane.tabs()[ix].editor.read(cx).model().text().to_string()
+        pane.tabs()[ix]
+            .editor()
+            .unwrap()
+            .read(cx)
+            .model()
+            .text()
+            .to_string()
     })
 }
 
 fn dirty(pane: &Entity<Pane>, ix: usize, cx: &mut VisualTestContext) -> bool {
     pane.read_with(cx, |pane, cx| {
-        pane.tabs()[ix].editor.read(cx).model().is_dirty()
+        pane.tabs()[ix]
+            .editor()
+            .unwrap()
+            .read(cx)
+            .model()
+            .is_dirty()
     })
 }
 
@@ -131,14 +142,15 @@ fn split_right_shares_the_buffer(cx: &mut TestAppContext) {
     assert!(editor_focused(&right, cx));
     assert_eq!(tabs(&right, cx), (vec!["a.txt".into()], Some(0)));
     let shared = workbench.read_with(cx, |_, cx| {
-        let model = |pane: &Entity<Pane>| pane.read(cx).tabs()[0].editor.read(cx).model();
+        let model =
+            |pane: &Entity<Pane>| pane.read(cx).tabs()[0].editor().unwrap().read(cx).model();
         model(&left).shares_buffer_with(model(&right))
     });
     assert!(shared);
 
     // The left editor is told of the right one's edit, and shows it after a
     // frame; both tabs are dirty.
-    let left_editor = left.read_with(cx, |pane, _| pane.tabs()[0].editor.clone());
+    let left_editor = left.read_with(cx, |pane, _| pane.tabs()[0].editor().unwrap().clone());
     let notified = std::rc::Rc::new(std::cell::Cell::new(0));
     let _observe = cx.update(|_, cx| {
         let notified = notified.clone();
@@ -158,7 +170,7 @@ fn split_right_shares_the_buffer(cx: &mut TestAppContext) {
     assert_eq!(text(&right, 0, cx), "xalpha\ny");
     let carets = workbench.read_with(cx, |_, cx| {
         [&left, &right].map(|pane| {
-            let model = pane.read(cx).tabs()[0].editor.read(cx).model();
+            let model = pane.read(cx).tabs()[0].editor().unwrap().read(cx).model();
             model.selections()[0].range.end
         })
     });
@@ -249,7 +261,7 @@ fn focus_follows_clicks_and_keys(cx: &mut TestAppContext) {
     assert_eq!(active(&workbench, cx), right);
     let caret = |cx: &mut VisualTestContext| {
         right.read_with(cx, |pane, cx| {
-            let model = pane.tabs()[0].editor.read(cx).model();
+            let model = pane.tabs()[0].editor().unwrap().read(cx).model();
             model.selections()[0].range.end
         })
     };
@@ -425,7 +437,7 @@ fn reads_land_in_the_pane_that_asked(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("cmd-\\");
     let [left, right] = <[_; 2]>::try_from(panes(&workbench, cx)).expect("two panes");
     assert_eq!((left.clone(), tabs(&right, cx).0), (first, vec![]));
-    let read = Ok(Some(fe_buffer::Buffer::new("alpha\n")));
+    let read = Ok(fe_buffer::Buffer::new("alpha\n").into());
     cx.update(|window, cx| {
         workbench.update(cx, |workbench, cx| {
             workbench.file_read(paths[0].clone(), read, window, cx)
@@ -445,7 +457,7 @@ fn reads_land_in_the_pane_that_asked(cx: &mut TestAppContext) {
     });
     cx.simulate_keystrokes("cmd-k cmd-right");
     assert_eq!(active(&workbench, cx), right);
-    let read = Ok(Some(fe_buffer::Buffer::new("# c\n")));
+    let read = Ok(fe_buffer::Buffer::new("# c\n").into());
     cx.update(|window, cx| {
         left.update(cx, |pane, cx| {
             pane.file_read(paths[2].clone(), read, window, cx)

@@ -2181,6 +2181,7 @@ dependencies = [
  "fe-project",
  "fe-syntax",
  "fe-terminal-view",
+ "fe-text",
  "fe-vim",
  "futures",
  "gpui-pre",

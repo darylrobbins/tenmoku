@@ -28,7 +28,7 @@ fn a_reload_restyles_the_running_session_with_the_fallbacks(cx: &mut TestAppCont
     fs::write(&path, "fn a() {}\n").unwrap();
     let launch = Launch {
         root: Some(dir.path().to_owned()),
-        file: Some((path, Some(Buffer::new("fn a() {}\n")))),
+        file: Some((path, Some(Buffer::new("fn a() {}\n").into()))),
     };
     let (workbench, cx, _) = open(cx, launch);
     let first = TerminalSettings {

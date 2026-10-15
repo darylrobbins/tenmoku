@@ -31,7 +31,7 @@ fn workbench_at<'a>(
 ) -> (Entity<Workbench>, &'a mut VisualTestContext) {
     let launch = Launch {
         root: Some(root.to_owned()),
-        file: Some((root.join("a.txt"), Some(Buffer::new("a")))),
+        file: Some((root.join("a.txt"), Some(Buffer::new("a").into()))),
     };
     let (workbench, cx, _) = open(cx, launch);
     cx.update(|window, cx| {

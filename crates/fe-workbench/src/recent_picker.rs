@@ -498,7 +498,7 @@ impl PickerDelegate for RecentPicker {
             pane.update(cx, |pane, cx| pane.open(path, window, cx));
             // A new tab starts in normal mode; one already open keeps the
             // mode it was left in.
-            let editor = open.and_then(|ix| pane.read(cx).tabs().get(ix).map(|t| t.editor.clone()));
+            let editor = open.and_then(|ix| pane.read(cx).tabs().get(ix)?.editor().cloned());
             if let Some(editor) = editor {
                 normal_mode(editor, window, cx);
             }

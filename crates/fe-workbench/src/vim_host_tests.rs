@@ -536,7 +536,7 @@ fn write_all_reports_the_first_failure(cx: &mut TestAppContext) {
         let mut dirty = std::collections::BTreeSet::new();
         for pane in workbench.pane_group().panes() {
             for tab in pane.read(cx).tabs() {
-                if tab.editor.read(cx).model().is_dirty() {
+                if tab.editor().unwrap().read(cx).model().is_dirty() {
                     dirty.insert(tab.path.clone());
                 }
             }

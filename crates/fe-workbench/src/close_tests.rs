@@ -23,7 +23,7 @@ fn opened(
     });
     let launch = Launch {
         root: Some(dir.path().to_owned()),
-        file: Some((path, Some(Buffer::new("alpha\n")))),
+        file: Some((path, Some(Buffer::new("alpha\n").into()))),
     };
     let (workbench, cx) = cx.add_window_view(move |window, cx| {
         let theme = EditorTheme::default_dark(cx);

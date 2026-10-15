@@ -127,7 +127,7 @@ fn opened<'a>(
         // No root, so no project watcher on a thread of its own, which the
         // test scheduler would find running beside it.
         root: None,
-        file: Some((path, Some(Buffer::new(text)))),
+        file: Some((path, Some(Buffer::new(text).into()))),
     };
     let (workbench, cx) = cx.add_window_view(move |window, cx| {
         let theme = EditorTheme::default_dark(cx);

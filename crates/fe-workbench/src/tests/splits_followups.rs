@@ -38,7 +38,7 @@ fn tabs(pane: &Entity<Pane>, cx: &mut VisualTestContext) -> Vec<String> {
 }
 
 fn editor(pane: &Entity<Pane>, cx: &mut VisualTestContext) -> Entity<EditorView> {
-    pane.read_with(cx, |pane, _| pane.tabs()[0].editor.clone())
+    pane.read_with(cx, |pane, _| pane.tabs()[0].editor().unwrap().clone())
 }
 
 /// Whether the editor's syntax has caught up with its model, which its
@@ -69,7 +69,7 @@ fn launch<'a>(
 fn read_launch(workbench: &Entity<Workbench>, path: PathBuf, cx: &mut VisualTestContext) {
     let buffer = Buffer::new("launched\n");
     workbench.update_in(cx, |workbench, window, cx| {
-        workbench.file_read(path, Ok(Some(buffer)), window, cx)
+        workbench.file_read(path, Ok(buffer.into()), window, cx)
     });
     cx.run_until_parked();
 }

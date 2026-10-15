@@ -17,7 +17,10 @@ use perf::Startup;
 use fe_buffer::Buffer;
 use fe_config::{Diagnostic, Settings, SettingsEvent, SettingsStore, settings::VimClipboard};
 use fe_gpui::{EditorTheme, fe_keymap};
-use fe_workbench::{Launch, RootChanged, Workbench, loader};
+use fe_workbench::{
+    Launch, RootChanged, Workbench,
+    loader::{self, Opened},
+};
 use gpui::{
     App, AppContext as _, Entity, Focusable as _, Global, Window, WindowBounds, WindowHandle,
     WindowId, point, px,
@@ -31,18 +34,31 @@ use kiln::{
 };
 use kiln_platform::{Capabilities, WindowSpec, window_options};
 
-/// The buffer a finished read produced: a missing file is a new one, which
-/// saving creates. The workbench shows an error in the tab's place.
-fn loaded(read: loader::Read, started: Instant) -> io::Result<Buffer> {
+/// What a finished read produced: a buffer, a missing file being a new
+/// one, which saving creates; or a large file's read-only view. The
+/// workbench shows an error in the tab's place.
+fn loaded(read: loader::Read, started: Instant) -> io::Result<Opened> {
     perf::file_loaded(read.at);
-    let buffer = read.result?.unwrap_or_else(|| Buffer::new(""));
-    log::info!(
-        "loaded {} bytes, {} rows in {:.1?}",
-        buffer.len(),
-        buffer.text().row_count(),
-        started.elapsed()
-    );
-    Ok(buffer)
+    match read.result? {
+        Opened::Text(buffer) => {
+            let buffer = buffer.unwrap_or_else(|| Buffer::new(""));
+            log::info!(
+                "loaded {} bytes, {} rows in {:.1?}",
+                buffer.len(),
+                buffer.text().row_count(),
+                started.elapsed()
+            );
+            Ok(buffer.into())
+        }
+        Opened::Large { view, index } => {
+            log::info!(
+                "viewing {} bytes read-only, opened in {:.1?}",
+                view.len(),
+                started.elapsed()
+            );
+            Ok(Opened::Large { view, index })
+        }
+    }
 }
 
 /// Waits for `reading` off the main thread, then shows the file in the
@@ -56,7 +72,7 @@ fn open_in_background(
     let path = reading.path().to_owned();
     let read = cx.background_spawn(async move { reading.finish() });
     cx.spawn(async move |cx| {
-        let result = loaded(read.await, started).map(Some);
+        let result = loaded(read.await, started);
         window
             .update(cx, |workbench, window, cx| {
                 workbench.file_read(path, result, window, cx)
@@ -458,6 +474,8 @@ fn main() {
         let root = launch.root.clone();
         let launch_root = launch.root.clone();
         let mut failed = None;
+        // The launch file's read hadn't finished as the window opened.
+        let mut loading = false;
         let mut options = window_options(&WindowSpec::main("fastedit"), &capabilities, cx);
         if let Some(bounds) = entry.as_ref().and_then(saved_bounds) {
             options.window_bounds = Some(bounds);
@@ -469,28 +487,30 @@ fn main() {
                 // A read that failed shows its error once the window is
                 // up.
                 launch.file = reading.as_ref().map(|reading| {
-                    let buffer = match reading.try_finish().map(|read| loaded(read, started)) {
-                        Some(Ok(buffer)) => Some(buffer),
+                    let opened = match reading.try_finish().map(|read| loaded(read, started)) {
+                        Some(Ok(opened)) => Some(opened),
                         Some(Err(error)) => {
                             failed = Some(error);
                             None
                         }
-                        None => None,
+                        None => {
+                            loading = true;
+                            None
+                        }
                     };
-                    (reading.path().to_owned(), buffer)
+                    (reading.path().to_owned(), opened)
                 });
                 new_workbench(launch, &settings, theme.clone(), layout, entry, window, cx)
             })
             .expect("failed to open the main window");
         startup.window = Some(Instant::now());
-        let loading = window
-            .update(cx, |workbench, window, cx| {
-                if perf {
-                    perf::start(cx.entity(), startup, window);
-                }
-                workbench.active_editor(cx).is_none()
-            })
-            .unwrap_or(false);
+        if perf {
+            window
+                .update(cx, |_, window, cx| {
+                    perf::start(cx.entity(), startup, window)
+                })
+                .ok();
+        }
         if let Some(reading) = reading {
             match failed {
                 Some(error) => {

@@ -6,17 +6,138 @@
 //!
 //! Only the [`Buffer`] crosses threads: `EditorModel` isn't `Send` (it holds
 //! its char widths as a `Box<dyn CharWidth>`), so the main thread builds it.
+//!
+//! A file of [`LARGE_FILE_BYTES`] or more isn't read: [`open`] opens it as a
+//! read-only [`FileView`] and starts its [`LineIndex`] on a thread of its
+//! own (docs/decisions/mmap-read-only.md).
 
 use std::{
     fs::File,
     io,
     path::{Path, PathBuf},
-    sync::mpsc,
+    sync::{Arc, mpsc},
     thread,
     time::Instant,
 };
 
 use fe_buffer::Buffer;
+use fe_fileview::{FileView, LineIndex};
+
+/// Files this large or larger open read-only in a viewer, unread.
+pub const LARGE_FILE_BYTES: u64 = 512 * 1024 * 1024;
+
+/// A file [`open`] opened: read into a buffer, or too large for one.
+#[allow(clippy::large_enum_variant)] // Made once per open, and moved on.
+pub enum Opened {
+    /// What [`read`] read: `None` for a missing file.
+    Text(Option<Buffer>),
+    /// A file of [`LARGE_FILE_BYTES`] or more, and its index, which is
+    /// still building on a thread of its own.
+    Large {
+        view: Arc<FileView>,
+        index: Arc<LineIndex>,
+    },
+}
+
+impl std::fmt::Debug for Opened {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Opened::Text(buffer) => write!(f, "Text({:?} bytes)", buffer.as_ref().map(Buffer::len)),
+            Opened::Large { view, .. } => write!(f, "Large({})", view.path().display()),
+        }
+    }
+}
+
+impl From<Buffer> for Opened {
+    fn from(buffer: Buffer) -> Self {
+        Opened::Text(Some(buffer))
+    }
+}
+
+/// Opens `path`: a file of [`LARGE_FILE_BYTES`] or more as a view whose
+/// index starts building, anything else as [`read`] does.
+pub fn open(path: PathBuf) -> io::Result<Opened> {
+    let large =
+        std::fs::metadata(&path).is_ok_and(|meta| meta.is_file() && meta.len() >= threshold(&path));
+    if !large {
+        return read(path).map(Opened::Text);
+    }
+    let view = Arc::new(FileView::open(&path)?);
+    let index = Arc::new(build_index(view.clone()));
+    Ok(Opened::Large { view, index })
+}
+
+#[cfg(not(test))]
+fn threshold(_: &Path) -> u64 {
+    LARGE_FILE_BYTES
+}
+
+#[cfg(not(test))]
+fn build_index(view: Arc<FileView>) -> LineIndex {
+    LineIndex::build(view)
+}
+
+/// Lowers the threshold for the files a test makes, and holds their
+/// indexes back.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::{
+        path::{Path, PathBuf},
+        sync::{Arc, Mutex},
+    };
+
+    use fe_fileview::{FileView, LineIndex, Step};
+
+    /// The directories with a lowered threshold: the threshold, and
+    /// whether their files' indexes wait to be stepped.
+    static LOWERED: Mutex<Vec<(PathBuf, u64, bool)>> = Mutex::new(Vec::new());
+    /// The held indexes' steppers, by path.
+    static STEPS: Mutex<Vec<(PathBuf, Step)>> = Mutex::new(Vec::new());
+
+    /// Opens files of `bytes` or more under `dir` as large ones; with
+    /// `held`, their indexes scan only as [`take_steps`]'s steppers allow.
+    /// Other tests' files keep the real threshold.
+    pub(crate) fn lower_threshold(dir: &Path, bytes: u64, held: bool) {
+        let mut lowered = LOWERED.lock().unwrap();
+        lowered.retain(|(at, ..)| at != dir);
+        lowered.push((dir.to_owned(), bytes, held));
+    }
+
+    /// The steppers of the held indexes of `path` built so far. Dropping
+    /// one lets its index finish.
+    pub(crate) fn take_steps(path: &Path) -> Vec<Step> {
+        let mut steps = STEPS.lock().unwrap();
+        let (taken, kept) = std::mem::take(&mut *steps)
+            .into_iter()
+            .partition(|(at, _)| at == path);
+        *steps = kept;
+        taken.into_iter().map(|(_, step)| step).collect()
+    }
+
+    fn lowered(path: &Path) -> Option<(u64, bool)> {
+        let lowered = LOWERED.lock().unwrap();
+        (lowered.iter())
+            .find(|(dir, ..)| path.starts_with(dir))
+            .map(|(_, bytes, held)| (*bytes, *held))
+    }
+
+    pub(super) fn threshold(path: &Path) -> u64 {
+        lowered(path).map_or(super::LARGE_FILE_BYTES, |(bytes, _)| bytes)
+    }
+
+    pub(super) fn build_index(view: Arc<FileView>) -> LineIndex {
+        if !lowered(view.path()).is_some_and(|(_, held)| held) {
+            return LineIndex::build(view);
+        }
+        let path = view.path().to_owned();
+        let (index, step) = LineIndex::build_stepped(view);
+        STEPS.lock().unwrap().push((path, step));
+        index
+    }
+}
+
+#[cfg(test)]
+use test_support::{build_index, threshold};
 
 /// Reads `path` into a buffer, detecting its encoding (`EditorModel::open`
 /// doesn't), so saving writes it back the same way, with the file's stamp
@@ -48,20 +169,20 @@ pub struct Reading {
     done: mpsc::Receiver<Read>,
 }
 
-/// A finished read: what [`read`] returned, and when.
+/// A finished read: what [`open`] returned, and when.
 pub struct Read {
-    pub result: io::Result<Option<Buffer>>,
+    pub result: io::Result<Opened>,
     pub at: Instant,
 }
 
-/// Starts reading `path` on a new thread.
+/// Starts opening `path`, as [`open`] does, on a new thread.
 pub fn start(path: PathBuf) -> Reading {
     let (sender, done) = mpsc::sync_channel(1);
     let reader_path = path.clone();
     thread::Builder::new()
         .name("read file".into())
         .spawn(move || {
-            let result = read(reader_path);
+            let result = open(reader_path);
             sender
                 .send(Read {
                     result,
@@ -123,7 +244,10 @@ mod tests {
         let reading = start(path.clone());
         assert_eq!(reading.path(), path);
         let read = reading.finish();
-        assert_eq!(read.result.unwrap().unwrap().text().to_string(), "text");
+        let Ok(Opened::Text(Some(buffer))) = read.result else {
+            panic!("a small file is read into a buffer");
+        };
+        assert_eq!(buffer.text().to_string(), "text");
     }
 
     #[test]

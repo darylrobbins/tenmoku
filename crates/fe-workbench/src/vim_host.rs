@@ -126,7 +126,7 @@ impl Workbench {
     /// The pane showing `editor` and its tab's index there.
     fn tab_of(&self, editor: &Entity<EditorView>, cx: &App) -> Option<(Entity<Pane>, usize)> {
         self.panes.panes().into_iter().find_map(|pane| {
-            let ix = (pane.read(cx).tabs().iter()).position(|tab| tab.editor == *editor)?;
+            let ix = (pane.read(cx).tabs().iter()).position(|tab| tab.editor() == Some(editor))?;
             Some((pane.clone(), ix))
         })
     }

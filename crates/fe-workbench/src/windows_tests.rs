@@ -109,7 +109,7 @@ fn launch_file(root: &Path, name: &str) -> Launch {
     let text = std::fs::read_to_string(root.join(name)).unwrap();
     Launch {
         root: Some(root.to_owned()),
-        file: Some((root.join(name), Some(Buffer::new(&text)))),
+        file: Some((root.join(name), Some(Buffer::new(&text).into()))),
     }
 }
 

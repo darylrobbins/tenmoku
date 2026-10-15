@@ -224,7 +224,7 @@ fn when_not_to_prompt(cx: &mut TestAppContext) {
     let mut opened = Opened::new(
         Launch {
             root: Some(undecided.clone()),
-            file: Some((path, Some(Buffer::new("fn main() {}\n")))),
+            file: Some((path, Some(Buffer::new("fn main() {}\n").into()))),
         },
         cx,
     );
@@ -366,7 +366,7 @@ fn commands_change_trust(cx: &mut TestAppContext) {
     let mut opened = Opened::new(
         Launch {
             root: Some(other.clone()),
-            file: Some((other.join("a.txt"), Some(Buffer::new("a\n")))),
+            file: Some((other.join("a.txt"), Some(Buffer::new("a\n").into()))),
         },
         cx,
     );
@@ -394,7 +394,7 @@ fn an_ancestors_decision_leaves_a_prompt_open(cx: &mut TestAppContext) {
     let mut other = Opened::new(
         Launch {
             root: Some(parent.clone()),
-            file: Some((parent.join("a.txt"), Some(Buffer::new("a\n")))),
+            file: Some((parent.join("a.txt"), Some(Buffer::new("a\n").into()))),
         },
         cx,
     );

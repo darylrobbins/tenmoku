@@ -19,7 +19,7 @@ fn opened(
     });
     let launch = Launch {
         root: Some(dir.path().to_owned()),
-        file: Some((path, Some(Buffer::new("alpha\n")))),
+        file: Some((path, Some(Buffer::new("alpha\n").into()))),
     };
     let (workbench, cx) = cx.add_window_view(move |window, cx| {
         let theme = EditorTheme::default_dark(cx);
@@ -47,7 +47,7 @@ fn active(workbench: &Entity<Workbench>, cx: &mut VisualTestContext) -> Option<u
         let editor = workbench.active_editor(cx)?;
         (workbench.pane_group().panes().iter()).position(|pane| {
             let pane = pane.read(cx);
-            (pane.active()).is_some_and(|ix| pane.tabs()[ix].editor == *editor)
+            (pane.active()).is_some_and(|ix| pane.tabs()[ix].editor() == Some(editor))
         })
     })
 }

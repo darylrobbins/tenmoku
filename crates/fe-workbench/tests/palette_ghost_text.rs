@@ -37,7 +37,7 @@ fn opened(
     let launch = Launch {
         // No root, so no project watcher on a thread of its own.
         root: None,
-        file: Some((path, Some(Buffer::new(TEXT)))),
+        file: Some((path, Some(Buffer::new(TEXT).into()))),
     };
     let (workbench, cx) = cx.add_window_view(move |window, cx| {
         let theme = EditorTheme::default_dark(cx);

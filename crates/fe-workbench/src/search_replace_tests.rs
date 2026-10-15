@@ -858,7 +858,7 @@ fn an_opening_slower_than_five_seconds_is_waited_for(cx: &mut TestAppContext) {
 
     cx.update(|window, cx| {
         pane.update(cx, |pane, cx| {
-            pane.file_read(path, Ok(Some(before)), window, cx)
+            pane.file_read(path, Ok(before.into()), window, cx)
         })
     });
     cx.executor().advance_clock(Duration::from_millis(100));

@@ -184,7 +184,7 @@ fn every_list_row_is_24px(cx: &mut TestAppContext) {
         root: Some(dir.path().to_owned()),
         file: Some((
             dir.path().join("src/main.rs"),
-            Some(Buffer::new("fn main() {}\n")),
+            Some(Buffer::new("fn main() {}\n").into()),
         )),
     };
     let (workbench, cx, _) = open(cx, launch);

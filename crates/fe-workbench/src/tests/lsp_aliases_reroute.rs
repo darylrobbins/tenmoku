@@ -371,7 +371,7 @@ fn close_converged(cx: &mut TestAppContext, close_owner: bool) {
             .read(cx)
             .tabs()
             .iter()
-            .position(|t| t.editor == closing);
+            .position(|t| t.editor() == Some(&closing));
         pane.update(cx, |pane, cx| pane.activate(ix.expect("a tab"), window, cx));
     });
     s.draw();

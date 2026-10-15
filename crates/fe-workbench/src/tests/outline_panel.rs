@@ -348,7 +348,7 @@ fn empty_and_too_large_states(cx: &mut TestAppContext) {
     cx.update(|window, cx| {
         pane.update(cx, |pane, cx| {
             pane.opening(path.clone(), cx);
-            pane.file_read(path, Ok(Some(Buffer::new(&big))), window, cx)
+            pane.file_read(path, Ok(Buffer::new(&big).into()), window, cx)
         })
     });
     cx.run_until_parked();

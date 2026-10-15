@@ -134,7 +134,7 @@ impl Landings {
         };
         let tabs = pane.read(cx).tabs().iter();
         let Some(editor) = tabs
-            .map(|tab| tab.editor.clone())
+            .filter_map(|tab| tab.editor().cloned())
             .find(|tab| tab.entity_id() == editor)
         else {
             destination.state = State::Moved;

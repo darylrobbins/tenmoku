@@ -13,6 +13,8 @@ fe-buffer.workspace = true
 fe-command.workspace = true
 fe-config.workspace = true
 fe-editor.workspace = true
+# Files too large to read open in a read-only view.
+fe-fileview.workspace = true
 fe-git.workspace = true
 fe-vim.workspace = true
 fe-gpui.workspace = true
@@ -21,6 +23,8 @@ fe-lsp.workspace = true
 fe-nav.workspace = true
 fe-project.workspace = true
 fe-syntax.workspace = true
+# A viewer's text, to put its caret on a revealed row.
+fe-text.workspace = true
 # The bottom dock's terminal.
 fe-terminal-view.workspace = true
 fe-ui.workspace = true
@@ -32,8 +36,6 @@ libc.workspace = true
 log.workspace = true
 
 [dev-dependencies]
-# The status bar test builds a file viewer over a generated file.
-fe-fileview.workspace = true
 futures.workspace = true
 # Card 1's fake server and its launcher, and the LSP types it speaks.
 fe-lsp = { workspace = true, features = ["test-support"] }

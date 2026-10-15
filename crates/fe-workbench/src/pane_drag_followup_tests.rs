@@ -187,7 +187,7 @@ fn sole_tab_self_drops_keep_pending_state(cx: &mut TestAppContext) {
         }
         if !error {
             pane.update_in(cx, |pane, window, cx| {
-                pane.file_read(b.clone(), Ok(None), window, cx)
+                pane.file_read(b.clone(), Ok(crate::loader::Opened::Text(None)), window, cx)
             });
             draw(cx);
             let (tabs, editor) = pane.read_with(cx, |pane, _| {

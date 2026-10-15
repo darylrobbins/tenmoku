@@ -563,7 +563,7 @@ fn opening_a_file_starts_its_server(cx: &mut TestAppContext) {
         root: None,
         file: Some((
             s.path("src/lib.rs"),
-            Some(fe_buffer::Buffer::new("pub fn f() {}\n")),
+            Some(fe_buffer::Buffer::new("pub fn f() {}\n").into()),
         )),
     };
     let (workbench, mut cx) = window(&mut s.cx, launch);
@@ -592,7 +592,7 @@ fn paths_through_parent_folders_start_servers(cx: &mut TestAppContext) {
     let buffer = fe_buffer::Buffer::new("pub fn f() {}\n");
     let _file = s.another_at(Launch {
         root: file.parent().map(Path::to_owned),
-        file: Some((file, Some(buffer))),
+        file: Some((file, Some(buffer.into()))),
     });
     s.fake
         .wait_for_document(&s.uri("src/lib.rs"), "lib.rs", |r| r.is_some());

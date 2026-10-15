@@ -355,7 +355,7 @@ fn close_tabs_and_panes(cx: &mut TestAppContext) {
     assert_eq!(selection(&b, cx), 0..3);
 
     // Another tab: its caret stays, and it gets the find.
-    let a = pane.read_with(cx, |pane, _| pane.tabs()[0].editor.clone());
+    let a = pane.read_with(cx, |pane, _| pane.tabs()[0].editor().unwrap().clone());
     select(&a, 1..1, cx);
     cycle(pane, true, cx);
     assert_eq!(editor(pane, cx), a);

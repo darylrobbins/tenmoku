@@ -135,7 +135,7 @@ fn tabs(
             .tabs()
             .iter()
             .map(|tab| {
-                let model = tab.editor.read(cx).model();
+                let model = tab.editor().unwrap().read(cx).model();
                 (model.path().unwrap().to_owned(), model.is_dirty())
             })
             .collect();

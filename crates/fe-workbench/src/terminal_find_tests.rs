@@ -40,7 +40,7 @@ fn opened(
     fs::write(&path, "fn a() {}\n").unwrap();
     let launch = Launch {
         root: Some(dir.path().to_owned()),
-        file: Some((path, Some(Buffer::new("fn a() {}\n")))),
+        file: Some((path, Some(Buffer::new("fn a() {}\n").into()))),
     };
     let (workbench, cx, _) = open(cx, launch);
     terminal(&workbench, cx).update(cx, |terminal, _| {
