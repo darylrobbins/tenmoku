@@ -244,6 +244,19 @@ pub fn restore_panes<V: PaneView>(
     window: &mut Window,
     cx: &mut App,
 ) -> Option<RestoredPanes<V>> {
+    restore_panes_with(saved, new_pane, &mut |_, _| {}, window, cx)
+}
+
+/// [`restore_panes`], calling `before_items` once the tree is rebuilt and
+/// before any item is restored: not at all if `saved` holds no tree. A host
+/// puts back state of its own there that its items need.
+pub fn restore_panes_with<V: PaneView>(
+    saved: &Value,
+    new_pane: &mut dyn FnMut(&mut Window, &mut App) -> Entity<V>,
+    before_items: &mut dyn FnMut(&mut Window, &mut App),
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<RestoredPanes<V>> {
     let mut panes = Vec::new();
     let mut slots = Vec::new();
     let mut actives = Vec::new();
@@ -281,6 +294,7 @@ pub fn restore_panes<V: PaneView>(
         .filter_map(|ix| Some(ix.as_u64()? as usize))
         .collect();
     let active = pane_at(&root, &path).unwrap_or_else(|| panes[0].clone());
+    before_items(window, cx);
 
     // Each document's first item, restored through its kind.
     let mut firsts: Vec<(u64, Option<Restoring>)> = Vec::new();
