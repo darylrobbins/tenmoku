@@ -1,21 +1,23 @@
 // SPDX-License-Identifier: LicenseRef-Proprietary
 
 //! Test support for an app on kiln, behind the `test-support` feature: a
-//! [`TestApp`] opens a [`kiln::app`](crate::app()) headless, in temporary
-//! directories so that no user file is read, and drives it by keys,
-//! commands and menus; [`assert_clean_config`] checks an app's keymap and
-//! menus as on every platform.
+//! [`TestApp`] opens a [`kiln::app`](crate::app()) headless, as on Linux,
+//! in temporary directories so that no user file is read, and drives it by
+//! keys, commands and menus; [`assert_clean_config`] checks an app's keymap
+//! and menus as on every platform.
 
 use std::ffi::OsString;
 
-use gpui::{App, AppContext as _, Entity, TestAppContext, VisualTestContext};
+use gpui::{App, Entity, TestAppContext, VisualTestContext};
 use kiln_command::Invocation;
 use kiln_core::{AppId, AppPaths, Os, PathStyle};
 use kiln_platform::{Capabilities, config::batch_channel, menus};
-use kiln_shell::{ItemPane, MenuBarView, PaneItem, Workspace};
+use kiln_shell::{ItemPane, PaneItem, Workspace};
 use tempfile::TempDir;
 
-use crate::{AppBuilder, AppWindow, Config, Started, contributions::shipped_catalog, prelude::*};
+use crate::{
+    AppBuilder, AppWindow, Config, Started, WindowSpec, contributions::shipped_catalog, prelude::*,
+};
 
 /// An app opened headless: see [`TestApp::open`].
 pub struct TestApp {
@@ -26,17 +28,17 @@ pub struct TestApp {
 }
 
 impl TestApp {
-    /// Starts the app `builder` describes headless: its directories are
-    /// temporary ones, empty, so that no user file is read or watched; the
+    /// Starts the app `builder` describes headless, as on Linux whatever
+    /// the host ([`Config::capabilities`]): its keymap and menus, its
+    /// windows' options, and the chrome of a workspace or a
+    /// [`Root`](crate::Root), from the start. Its directories are temporary
+    /// ones, empty, and its user files, settings too, are read from there
+    /// whatever path a `.config(..)` hook gave them
+    /// ([`Config::user_files_in`]), so that no user file is read or
+    /// watched; a settings store the app loaded itself
+    /// ([`Config::settings_store`]) is the app's to point elsewhere. The
     /// test platform answers prompts; `init` must report no diagnostics;
     /// and the window is drawn.
-    ///
-    /// Two limits, deferred to T718 (they need kiln-platform and
-    /// kiln-shell): settings that a `.config(..)` hook loads from paths of
-    /// its own are still read, as only the user keymap and theme are
-    /// remapped; and the Linux chrome is applied to a workspace window
-    /// after it opens, so its window options and a [`Root`](crate::Root)
-    /// window stay the host's.
     ///
     /// # Panics
     ///
@@ -55,16 +57,15 @@ impl TestApp {
             },
         );
         let (_, closed) = batch_channel();
-        // Last, so that no `.config(..)` of the app's names a user file: the
-        // keymap and theme are looked up in the temporary directory, where
-        // there are none. (A settings store the app loaded itself from a
-        // path of its own is the app's to point elsewhere.)
+        // Last, so that it holds whatever the app's `.config(..)` hooks
+        // set: the user's files are looked up in the temporary directory,
+        // where there are none, when `init` loads them.
         let config_dir = dirs.path().join("config");
         let builder = builder.paths(paths).config(move |config| {
             config
-                .user_keymap(config_dir.join("keymap.toml"))
-                .user_theme(config_dir.join("theme.toml"))
+                .user_files_in(config_dir)
                 .watch_with(closed)
+                .capabilities(Capabilities::for_os(Os::Linux))
         });
         let started = cx.update(|cx| {
             let started = builder.start(cx);
@@ -73,11 +74,6 @@ impl TestApp {
             // not the in-window prompt `init` sets up where there are no
             // native ones.
             cx.reset_prompt_builder();
-            for window in &started.windows {
-                if let Some(workspace) = window.root::<Workspace<ItemPane>>(cx) {
-                    linux_chrome(&workspace, cx);
-                }
-            }
             started
         });
         let cx = VisualTestContext::from_window(started.window.0, cx);
@@ -102,14 +98,11 @@ impl TestApp {
     }
 
     /// Presses `keys`, space-separated, as GPUI writes them, with
-    /// `secondary` this platform's: `press("secondary-shift-p")`. Then
-    /// runs until parked and draws.
+    /// `secondary` the app's platform's, Linux's `ctrl`:
+    /// `press("secondary-shift-p")`. Then runs until parked and draws.
     pub fn press(&mut self, keys: &str) {
-        let secondary = if Os::current() == Os::MacOs {
-            "cmd"
-        } else {
-            "ctrl"
-        };
+        let os = self.cx.read(Capabilities::of).os;
+        let secondary = if os == Os::MacOs { "cmd" } else { "ctrl" };
         self.cx
             .simulate_keystrokes(&keys.replace("secondary", secondary));
         self.draw();
@@ -181,23 +174,16 @@ impl TestApp {
         self.started.window
     }
 
+    /// What the app's windows were opened from: their options are
+    /// [`window_options`](crate::window_options) of it.
+    pub fn spec(&self) -> &WindowSpec {
+        &self.started.spec
+    }
+
     /// The window's test context, for what `TestApp` has no call for.
     pub fn cx(&mut self) -> &mut VisualTestContext {
         &mut self.cx
     }
-}
-
-/// Draws the workspace's chrome as on Linux whatever the host: the menus
-/// in the window, the window manager's title bar, and the frame.
-fn linux_chrome(workspace: &Entity<Workspace<ItemPane>>, cx: &mut App) {
-    let capabilities = Capabilities::for_os(Os::Linux);
-    let shell = workspace.read(cx).shell().clone();
-    shell.update(cx, |shell, cx| {
-        shell.set_title_bar(capabilities.unified_title_bar, cx);
-        let bar = (!capabilities.native_menus).then(|| cx.new(MenuBarView::new));
-        shell.set_menu_bar(bar, cx);
-        shell.set_window_frame(!capabilities.unified_title_bar, cx);
-    });
 }
 
 /// Checks `config`'s keymap and menus as on macOS, Linux and Windows

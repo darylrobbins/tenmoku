@@ -77,7 +77,7 @@ pub use kiln_ui::{Icon, StatusFill, StatusTone};
 /// `window.close` ask the windows' items first ([`close`]).
 pub fn init(cx: &mut App) {
     close::init(cx);
-    if !Capabilities::current().native_prompts {
+    if !Capabilities::of(cx).native_prompts {
         cx.set_prompt_builder(kiln_ui::prompt_renderer);
     }
 }

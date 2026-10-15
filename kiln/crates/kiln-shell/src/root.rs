@@ -59,7 +59,7 @@ impl Root {
             content: content.into(),
             title: SharedString::default(),
             context: None,
-            capabilities: Capabilities::current(),
+            capabilities: Capabilities::of(cx),
             menu_bar: cx.new(MenuBarView::new),
         }
     }
@@ -87,8 +87,8 @@ impl Root {
     }
 
     /// Draws the chrome as on a platform with `capabilities`, rather than
-    /// this one's: for tests, and for showing one platform's chrome on
-    /// another.
+    /// the app's ([`Capabilities::of`]): for tests, and for showing one
+    /// platform's chrome on another.
     pub fn capabilities(mut self, capabilities: Capabilities) -> Self {
         self.capabilities = capabilities;
         self

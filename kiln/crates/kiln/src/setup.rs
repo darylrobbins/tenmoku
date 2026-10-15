@@ -39,7 +39,12 @@
 //! on, and each change applies to every window: see
 //! [`kiln_platform::config`].
 
-use std::{any::TypeId, borrow::Cow, path::PathBuf, rc::Rc};
+use std::{
+    any::TypeId,
+    borrow::Cow,
+    path::{Path, PathBuf},
+    rc::Rc,
+};
 
 use gpui::{App, Global, SharedString, Task, WindowOptions};
 use kiln_command::{CommandId, Value};
@@ -84,8 +89,11 @@ type Register = Box<dyn FnOnce(&mut App)>;
 /// Called with the app after something changed.
 type Hook = Box<dyn FnMut(&mut App)>;
 
-/// Adds a settings store to the service, returning its diagnostics.
-type AddSettings = Box<dyn FnOnce(ConfigService) -> (ConfigService, Vec<Diagnostic>)>;
+/// Adds a settings store to the service, returning its diagnostics: one
+/// [`Config::settings`] loads then, its user file in the directory given,
+/// if any ([`Config::user_files_in`]).
+type AddSettings =
+    Box<dyn FnOnce(ConfigService, Option<&Path>) -> (ConfigService, Vec<Diagnostic>)>;
 
 /// Each catalog in turn, until one knows the command.
 pub(crate) struct Catalogs(pub(crate) Vec<Rc<dyn CommandCatalog>>);
@@ -125,6 +133,9 @@ pub struct Config {
     default_keys: bool,
     default_menus: bool,
     fail_fast: bool,
+    capabilities: Option<Capabilities>,
+    /// Where the user's files are read from instead, each by its name.
+    user_dir: Option<PathBuf>,
 }
 
 impl Config {
@@ -153,6 +164,8 @@ impl Config {
             default_keys: false,
             default_menus: false,
             fail_fast: false,
+            capabilities: None,
+            user_dir: None,
         }
     }
 
@@ -211,25 +224,36 @@ impl Config {
     /// ([`crate::prelude::AppExt::settings`]) and follow changes with
     /// `cx.observe_global::<GlobalSettings<S>>(..)`. A file with errors
     /// keeps its last good version. Each type is its own store, and a
-    /// later call for the same type replaces the earlier one.
+    /// later call for the same type replaces the earlier one. The files
+    /// are read when [`init`] runs, not before.
     pub fn settings<S: SettingsType>(
         self,
         user: Option<PathBuf>,
         project: Option<PathBuf>,
     ) -> Self {
-        self.settings_store(SettingsStore::<S>::load(user, project))
+        self.add_settings::<S>(Box::new(move |service, user_dir| {
+            let user = user.map(|user| moved_into(user, user_dir));
+            let store = SettingsStore::<S>::load(user, project);
+            let diagnostics = store.diagnostics().to_vec();
+            (service.settings(store), diagnostics)
+        }))
     }
 
     /// The app's settings, of its own type `S`, as [`Config::settings`]
     /// has them, from a store the app has loaded: one with a schema or a
     /// project filter ([`kiln_core::SettingsStore::load_with`]), or whose
     /// settings it read before `init`. It replaces an earlier store of the
-    /// same type.
-    pub fn settings_store<S: SettingsType>(mut self, store: SettingsStore<S>) -> Self {
-        let add: AddSettings = Box::new(move |service| {
+    /// same type. Its files are the app's: [`Config::user_files_in`]
+    /// leaves them be.
+    pub fn settings_store<S: SettingsType>(self, store: SettingsStore<S>) -> Self {
+        self.add_settings::<S>(Box::new(move |service, _| {
             let diagnostics = store.diagnostics().to_vec();
             (service.settings(store), diagnostics)
-        });
+        }))
+    }
+
+    /// Adds the store `add` makes for `S`, in place of an earlier one.
+    fn add_settings<S: SettingsType>(mut self, add: AddSettings) -> Self {
         let ty = TypeId::of::<S>();
         match self.settings.iter_mut().find(|(added, _)| *added == ty) {
             Some((_, earlier)) => *earlier = add,
@@ -273,6 +297,28 @@ impl Config {
     /// ([`kiln_platform::config::batch_channel`]).
     pub fn watch_with(mut self, batches: Batches) -> Self {
         self.batches = Some(batches);
+        self
+    }
+
+    /// Reads the user's files from `dir` instead, each by its file name,
+    /// however they were named: the settings from [`Config::settings`],
+    /// the keymap and the theme. For tests, so that none of the user's
+    /// own files is read: [`crate::testing::TestApp`] reads them from an
+    /// empty temporary directory. A store loaded before `init`
+    /// ([`Config::settings_store`]) keeps the files it read.
+    pub fn user_files_in(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.user_dir = Some(dir.into());
+        self
+    }
+
+    /// Sets the app up as on a platform with `capabilities`, rather than
+    /// this one: the keymap and menus as on its OS, the editing keys, the
+    /// prompts, and every window's options and chrome
+    /// ([`Capabilities::install`]). For tests, and for showing one
+    /// platform's app on another; unset, the app is this platform's
+    /// ([`Capabilities::current`]).
+    pub fn capabilities(mut self, capabilities: Capabilities) -> Self {
+        self.capabilities = Some(capabilities);
         self
     }
 
@@ -391,7 +437,8 @@ struct Watching(#[allow(dead_code, reason = "held, not read")] Task<()>);
 
 impl Global for Watching {}
 
-/// Sets kiln up for the app, on this platform, in this order:
+/// Sets kiln up for the app, on this platform or the one
+/// [`Config::capabilities`] names, in this order:
 ///
 /// 1. kiln's command dispatch, with the app commands (`app.quit`,
 ///    `window.close` and the rest) as typed actions too: [`crate::app`](mod@crate::app),
@@ -423,6 +470,13 @@ impl Global for Watching {}
 /// default keys in the same context; and when a command contributed later
 /// brings one.
 pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
+    if let Some(capabilities) = config.capabilities {
+        capabilities.install(cx);
+    }
+    if let Some(dir) = config.user_dir.clone() {
+        config.user_keymap = (config.user_keymap.take()).map(|path| moved_into(path, Some(&dir)));
+        config.user_theme = (config.user_theme.take()).map(|path| moved_into(path, Some(&dir)));
+    }
     commands::init(cx, config.app_name.clone());
     crate::app_commands::init(cx);
     kiln_shell::register(cx);
@@ -435,7 +489,7 @@ pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
         name: config.app_name.clone(),
     });
 
-    let os = Os::current();
+    let os = Capabilities::of(cx).os;
     let catalog = contributions::shipped_catalog(&config, cx);
     let shipped = contributions::shipped(&config, os, &*catalog, cx);
     config.check_fail_fast(&shipped.diagnostics());
@@ -464,7 +518,7 @@ pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
     }
     for (_, add) in std::mem::take(&mut config.settings) {
         let found;
-        (service, found) = add(service);
+        (service, found) = add(service, config.user_dir.as_deref());
         diagnostics.extend(found);
     }
     if let Some(path) = config.user_theme.take() {
@@ -509,12 +563,21 @@ pub fn catalog(cx: &App) -> Rc<dyn CommandCatalog> {
     ]))
 }
 
-/// GPUI's options for a window as `spec` describes it, on this platform,
-/// with the app ID [`init`] recorded if `spec` names none.
+/// GPUI's options for a window as `spec` describes it, on the app's
+/// platform ([`Capabilities::of`]: this one unless [`Config::capabilities`]
+/// said otherwise), with the app ID [`init`] recorded if `spec` names none.
 pub fn window_options(spec: &WindowSpec, cx: &App) -> WindowOptions {
     let mut spec = spec.clone();
     if spec.app_id.is_none() {
         spec.app_id = cx.try_global::<AppInfo>().map(|info| info.id.clone());
     }
-    kiln_platform::window_options(&spec, &Capabilities::current(), cx)
+    kiln_platform::window_options(&spec, &Capabilities::of(cx), cx)
+}
+
+/// `path` in `dir` by its file name, if there's a `dir`.
+fn moved_into(path: PathBuf, dir: Option<&Path>) -> PathBuf {
+    match (dir, path.file_name()) {
+        (Some(dir), Some(name)) => dir.join(name),
+        _ => path,
+    }
 }

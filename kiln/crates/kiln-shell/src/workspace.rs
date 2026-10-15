@@ -125,8 +125,9 @@ pub struct Workspace<P: PaneView = ItemPane> {
 
 impl<P: PaneView> Workspace<P> {
     /// A workspace of one pane, `first`, its shell under the app's root key
-    /// `context` with this platform's chrome. `new_pane` makes the empty
-    /// panes a restored layout needs ([`Workspace::new_pane`]).
+    /// `context` with the app's chrome ([`Capabilities::of`]). `new_pane`
+    /// makes the empty panes a restored layout needs
+    /// ([`Workspace::new_pane`]).
     pub fn new(
         context: impl Into<SharedString>,
         first: Entity<P>,
@@ -142,7 +143,7 @@ impl<P: PaneView> Workspace<P> {
         });
         let shell = cx.new(|cx| {
             let mut shell = Shell::new(context.clone(), ui_theme(cx), window, cx)
-                .platform_chrome(Capabilities::current(), cx);
+                .platform_chrome(Capabilities::of(cx), cx);
             shell.set_center(centre, cx);
             shell
         });
@@ -189,8 +190,8 @@ impl<P: PaneView> Workspace<P> {
     }
 
     /// Draws the chrome as on a platform with `capabilities`, rather than
-    /// this one's: for tests, and for showing one platform's chrome on
-    /// another.
+    /// the app's ([`Capabilities::of`]): for tests, and for showing one
+    /// platform's chrome on another.
     pub fn capabilities(self, capabilities: Capabilities, cx: &mut Context<Self>) -> Self {
         self.shell.update(cx, |shell, cx| {
             shell.set_title_bar(capabilities.unified_title_bar, cx);
