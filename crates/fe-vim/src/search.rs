@@ -30,6 +30,17 @@ pub const DEFAULT_TIME_LIMIT: Duration = Duration::from_secs(2);
 /// The limit, in nanoseconds, for [`set_time_limit`] and [`time_limit`].
 static TIME_LIMIT: AtomicU64 = AtomicU64::new(DEFAULT_TIME_LIMIT.as_nanos() as u64);
 
+/// How many regex calls [`RowMatches`] has made, process-wide.
+static REGEX_CALLS: AtomicU64 = AtomicU64::new(0);
+
+/// How many regex calls searches have made so far in this process, each
+/// finding one match or finding none more on a row. For tests to count the
+/// work a search does instead of timing it: they take it before and after.
+#[doc(hidden)]
+pub fn regex_calls() -> u64 {
+    REGEX_CALLS.load(Ordering::Relaxed)
+}
+
 /// Sets how long a `:s` or a search may spend matching before it stops with
 /// `Interrupted`, process-wide: [`DEFAULT_TIME_LIMIT`] until a host or a test
 /// changes it. Each command reads it once, when it starts, so a change
@@ -47,7 +58,11 @@ pub fn set_time_limit(limit: Duration) {
 
 /// The limit [`set_time_limit`] set.
 pub fn time_limit() -> Duration {
-    Duration::from_nanos(TIME_LIMIT.load(Ordering::Relaxed))
+    match TIME_LIMIT.load(Ordering::Relaxed) {
+        // What a limit too long to count in nanoseconds is stored as.
+        u64::MAX => Duration::MAX,
+        nanos => Duration::from_nanos(nanos),
+    }
 }
 
 /// A command that passed [`time_limit`] before it finished matching.
@@ -66,7 +81,8 @@ impl std::error::Error for Interrupted {}
 /// whether it had to. Wall-clock time: reading rows and building edits count
 /// as well as the regex calls.
 pub struct Deadline {
-    end: Instant,
+    /// `None` for one that never passes.
+    end: Option<Instant>,
     ran_out: std::cell::Cell<bool>,
 }
 
@@ -90,22 +106,23 @@ impl Deadline {
     /// A deadline that never passes.
     pub fn never() -> Self {
         Self {
-            end: Instant::now() + Duration::from_secs(60 * 60 * 24 * 365 * 100),
+            end: None,
             ran_out: std::cell::Cell::new(false),
         }
     }
 
+    /// A deadline `limit` from now: one that's past [`Instant`]'s range
+    /// (`Duration::MAX`) never passes.
     pub(crate) fn within(limit: Duration) -> Self {
-        let now = Instant::now();
         Self {
-            end: now.checked_add(limit).unwrap_or(now),
+            end: Instant::now().checked_add(limit),
             ran_out: std::cell::Cell::new(false),
         }
     }
 
     /// Whether it is past, which it records.
     fn passed(&self) -> bool {
-        if !self.ran_out.get() && Instant::now() >= self.end {
+        if !self.ran_out.get() && self.end.is_some_and(|end| Instant::now() >= end) {
             self.ran_out.set(true);
         }
         self.ran_out.get()
@@ -1090,6 +1107,7 @@ impl Iterator for RowMatches<'_> {
             if self.deadline.passed() {
                 return None;
             }
+            REGEX_CALLS.fetch_add(1, Ordering::Relaxed);
             let found = match (self.engine, &mut self.found) {
                 (Engine::Regex { regex, slots }, Found::Regex(locs)) => {
                     regex.captures_read_at(locs, self.hay, at)?;
@@ -2628,6 +2646,17 @@ mod tests {
         let deadline = Deadline::within(Duration::from_millis(20));
         assert_eq!(pattern.matches(&hay, &deadline).next(), None);
         assert!(deadline.ran_out());
+    }
+
+    /// A limit past `Instant`'s range never runs out, instead of at once.
+    #[test]
+    fn a_limit_too_long_to_count_never_runs_out() {
+        let pattern = Pattern::parse("a").unwrap();
+        for deadline in [Deadline::within(Duration::MAX), Deadline::never()] {
+            assert!(!deadline.expired());
+            assert_eq!(pattern.matches("aa", &deadline).count(), 2);
+            assert!(!deadline.ran_out());
+        }
     }
 
     /// A counted repeat of nothing, or of many distinct composing leaves,

@@ -19,7 +19,9 @@ use fe_gpui::{
     EditorSettings, EditorTheme, EditorView, commands::RunCommand, set_vim_enabled,
     set_vim_time_limit,
 };
-use fe_vim::search::{DEFAULT_TIME_LIMIT, Deadline, FindQuery, Pattern, matches_reaching_until};
+use fe_vim::search::{
+    DEFAULT_TIME_LIMIT, Deadline, FindQuery, Pattern, matches_reaching_until, regex_calls,
+};
 use fe_workbench::{Launch, Pane, Workbench};
 use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 
@@ -212,6 +214,10 @@ fn replace_all_past_the_time_limit_changes_nothing(cx: &mut TestAppContext) {
 const SLOW_ROW: usize = 20_000;
 const SLOW_LIMIT: Duration = Duration::from_millis(400);
 
+/// The limit the tests on the long rows below set the bar up under: so
+/// short that the searches the typed query starts give up at once.
+const SETUP_LIMIT: Duration = Duration::from_millis(1);
+
 /// The regex that's slow on [`slow_text`]'s rows of `a`s: each match, one
 /// `a`, is found only once `a.*z` from it has looked to the row's end for a
 /// `z`, so stepping through a row's matches takes its length squared.
@@ -222,23 +228,41 @@ fn slow_text() -> String {
     format!("b\n{}\na\n", "a".repeat(SLOW_ROW))
 }
 
+/// A limit that never passes, for the steps whose work is counted instead.
+const NO_LIMIT: Duration = Duration::MAX;
+
+/// The most regex calls a step to the next match may make on a row of
+/// [`SLOW_ROW`] `a`s: a quarter of the one for each match that stepping
+/// through the row makes, many times the few hundred the editor's own look
+/// at the matches around it takes.
+const FEW_CALLS: u64 = SLOW_ROW as u64 / 4;
+
+/// The most regex calls the search for the long row's first match may make:
+/// the call that finds it and one more, against the one for each of
+/// [`MANY_A`] matches that a search going on past it makes.
+const WANTED_CALLS: u64 = 5;
+
 #[gpui::test]
 fn replace_on_an_expensive_row_steps_only_as_far_as_it_needs(cx: &mut TestAppContext) {
-    let _serial = serially(SLOW_LIMIT);
+    let _serial = serially(SETUP_LIMIT);
     let (_dir, pane, editor, cx) = opened(&slow_text(), cx);
     select(&editor, 2..3, cx);
     replace_row(&pane, SLOW_QUERY, true, "c", cx);
     assert_eq!(selection(&editor, cx), 2..3);
 
-    let start = Instant::now();
+    let limit = limited(NO_LIMIT, SETUP_LIMIT);
+    let before = regex_calls();
     dispatch("find.replace_next", cx);
-    let took = start.elapsed();
+    let calls = regex_calls() - before;
+    drop(limit);
     draw(cx);
     assert!(text(&editor, cx).starts_with("b\nca"));
     assert_eq!(selection(&editor, cx), 3..4, "the next a");
     assert_ne!(label(&pane, cx), too_long());
-    // Not the row's every match, which would run to the limit.
-    assert!(took < SLOW_LIMIT / 2, "{took:?}");
+    assert!(
+        calls <= FEW_CALLS,
+        "{calls} regex calls, of the row's {SLOW_ROW}"
+    );
 }
 
 #[gpui::test]
@@ -293,14 +317,23 @@ fn a_search_over_several_rows(cx: &mut TestAppContext) {
 /// row's end from each start before taking an `a`, or finding none.
 const COSTLY_QUERY: &str = r"(?:\w+\W*){50}z|a";
 
-/// How many `b`s follow [`long_text`]'s three `a`s on its long row.
+/// How many `b`s follow [`long_text`]'s `a`s on its long row.
 const LONG_ROW: usize = 4_000;
+
+/// How many `a`s [`many_text`]'s long row has, each a match that takes a
+/// costly call to find: finding them all takes more calls than a step to the first should.
+const MANY_A: usize = 40;
 
 /// `b`; a long row, `aaa` and [`LONG_ROW`] `b`s, whose three matches each
 /// take a costly call to find (and a fourth call finds there's no other);
 /// and `a`.
 fn long_text() -> String {
     format!("b\naaa{}\na\n", "b".repeat(LONG_ROW))
+}
+
+/// `b`, a long row of [`MANY_A`] `a`s and [`LONG_ROW`] `b`s, and `a`.
+fn many_text() -> String {
+    format!("b\n{}{}\na\n", "a".repeat(MANY_A), "b".repeat(LONG_ROW))
 }
 
 /// How long one regex call takes to find [`COSTLY_QUERY`]'s first match on
@@ -331,23 +364,29 @@ fn one_call() -> Duration {
 #[gpui::test]
 fn the_wanted_match_ends_the_search(cx: &mut TestAppContext) {
     let _serial = serially(DEFAULT_TIME_LIMIT);
-    let call = one_call();
-    // Long enough for a call, short enough that each count of the long
-    // row's matches, which takes their number of calls, is soon cut short.
-    let _setup = limited(call * 4, DEFAULT_TIME_LIMIT);
-    let (_dir, pane, editor, cx) = opened(&long_text(), cx);
+    // Short enough that each count of the long row's matches, which takes
+    // their number of calls, is soon cut short.
+    let _setup = limited(SETUP_LIMIT, DEFAULT_TIME_LIMIT);
+    let (_dir, pane, editor, cx) = opened(&many_text(), cx);
     select(&editor, 0..0, cx);
     replace_row(&pane, COSTLY_QUERY, true, "c", cx);
     select(&editor, 0..0, cx);
 
     // From the first row, which has none, to the long row's first match:
-    // one call finds it, and the search stops there, within a limit
-    // too short for the matches after it too.
-    let limit = limited(call * 2, call * 4);
-    run("find.replace_next", cx);
+    // a call finds it, and the search stops there. One that went on to the
+    // matches after it would make a call for each.
+    let limit = limited(NO_LIMIT, SETUP_LIMIT);
+    let before = regex_calls();
+    dispatch("find.replace_next", cx);
+    let calls = regex_calls() - before;
     drop(limit);
-    assert_ne!(label(&pane, cx), too_long(), "one call took {call:?}");
+    draw(cx);
+    assert_ne!(label(&pane, cx), too_long());
     assert_eq!(selection(&editor, cx), 2..3);
+    assert!(
+        calls <= WANTED_CALLS,
+        "{calls} regex calls, of the row's {MANY_A}"
+    );
 }
 
 #[gpui::test]
