@@ -184,8 +184,9 @@ impl Switch {
 enum Outcome {
     Done,
     NoRepo,
-    /// Local changes to these paths, from the working tree, are in the way.
-    Overwrite(Vec<String>),
+    /// Local changes to these paths, from the working tree, are in the way
+    /// of switching to this branch, as resolved once for a typed name.
+    Overwrite(Vec<String>, Option<BranchRef>),
     Failed(SwitchError),
 }
 
@@ -414,9 +415,10 @@ impl Workbench {
                 return self.check_open_files(window, cx);
             }
             Outcome::NoRepo => return self.answer_branch(op.as_ref(), NO_REPO.to_owned(), cx),
-            Outcome::Overwrite(paths) => match switch.target() {
+            Outcome::Overwrite(paths, resolved) => match switch.target() {
                 Some(target) => {
-                    let target = target.clone();
+                    // Retries go to the ref the first attempt meant.
+                    let target = resolved.map_or_else(|| target.clone(), Target::Ref);
                     return self.ask_overwrite(origin, target, paths, op, window, cx);
                 }
                 // Creating a branch at HEAD carries every change.
@@ -507,14 +509,23 @@ fn run_switch(root: &Path, switch: &Switch) -> Outcome {
         Ok(None) => return Outcome::NoRepo,
         Err(error) => return Outcome::Failed(error.into()),
     };
+    let resolve = |target: &Target| match target {
+        Target::Name(name) => repo.resolve_branch(name),
+        Target::Ref(target) => Ok(target.clone()),
+    };
+    let mut resolved = None;
     let ran = match switch {
-        Switch::To(Target::Name(name)) => repo.switch(name, false),
-        Switch::To(Target::Ref(target)) => repo.switch_to(target, false),
         Switch::Create(name) => repo.create_branch(name),
-        Switch::Force(Target::Name(name)) => repo.switch(name, true),
-        Switch::Force(Target::Ref(target)) => repo.switch_to(target, true),
-        Switch::Stash(Target::Name(name)) => repo.stash_and_switch(name),
-        Switch::Stash(Target::Ref(target)) => repo.stash_and_switch_to(target),
+        Switch::To(target) | Switch::Force(target) | Switch::Stash(target) => resolve(target)
+            .and_then(|branch| {
+                let ran = match switch {
+                    Switch::Force(_) => repo.switch_to(&branch, true),
+                    Switch::Stash(_) => repo.stash_and_switch_to(&branch),
+                    _ => repo.switch_to(&branch, false),
+                };
+                resolved = Some(branch);
+                ran
+            }),
     };
     match ran {
         Ok(()) => Outcome::Done,
@@ -523,7 +534,7 @@ fn run_switch(root: &Path, switch: &Switch) -> Outcome {
                 let relative = path.strip_prefix(repo.workdir()).unwrap_or(path);
                 relative.display().to_string()
             });
-            Outcome::Overwrite(paths.collect())
+            Outcome::Overwrite(paths.collect(), resolved)
         }
         Err(error) => Outcome::Failed(error),
     }
@@ -842,3 +853,6 @@ impl PickerDelegate for NamePicker {
 #[cfg(test)]
 #[path = "git_branch_tests.rs"]
 mod git_branch_tests;
+#[cfg(test)]
+#[path = "git_branch_typed_tests.rs"]
+mod git_branch_typed_tests;

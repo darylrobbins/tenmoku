@@ -92,24 +92,38 @@ impl Repo {
         Ok(is_local.then(|| local.clone()))
     }
 
+    /// The branch a typed short name means: the local branch of that name
+    /// first, else the remote-tracking one, split at its longest configured
+    /// remote name (`team/origin/feat` is `feat` on `team/origin`).
+    pub fn resolve_branch(&self, name: &str) -> Result<BranchRef, SwitchError> {
+        if self.ref_exists(&format!("refs/heads/{name}"))? {
+            return Ok(BranchRef::Local(name.to_owned()));
+        }
+        if !self.ref_exists(&format!("refs/remotes/{name}"))? {
+            return Err(SwitchError::NotFound);
+        }
+        let remotes: Vec<String> = self
+            .repo
+            .to_thread_local()
+            .remote_names()
+            .iter()
+            .map(|remote| remote.to_string())
+            .collect();
+        let (remote, branch) =
+            crate::refs::split_remote(&remotes, name).ok_or(SwitchError::NotFound)?;
+        Ok(BranchRef::Remote {
+            remote: remote.to_owned(),
+            branch: branch.to_owned(),
+        })
+    }
+
     /// Switches to the local branch `name`, or to a remote-tracking one
     /// (`origin/feature`): its local branch if one of that name exists, else a
     /// new one tracking it. Local changes that don't clash come along; with
     /// `force`, those that do are discarded. Blocks until git exits.
     pub fn switch(&self, name: &str, force: bool) -> Result<(), SwitchError> {
-        let mut args: Vec<OsString> = ["switch", "-q"].map(OsString::from).into();
-        if force {
-            args.push("--discard-changes".into());
-        }
-        match self.resolve_target(name)? {
-            Target::Local => args.push(name.into()),
-            Target::Remote { local: Some(local) } => args.push(local.into()),
-            Target::Remote { local: None } => {
-                args.push("--track".into());
-                args.push(name.into());
-            }
-        }
-        self.run_switch(&args)
+        let target = self.resolve_branch(name)?;
+        self.switch_to(&target, force)
     }
 
     /// Makes branch `name` at HEAD and switches to it, carrying local changes.
@@ -127,9 +141,8 @@ impl Repo {
     /// Stashes local changes, untracked files included, then switches to
     /// `name`. The stash is left for the user to pop.
     pub fn stash_and_switch(&self, name: &str) -> Result<(), SwitchError> {
-        self.resolve_target(name)?;
-        self.stash(name)?;
-        self.switch(name, false)
+        let target = self.resolve_branch(name)?;
+        self.stash_and_switch_to(&target)
     }
 
     /// Stashes local changes, untracked files included, before switching
@@ -146,21 +159,6 @@ impl Repo {
             return Err(failed(&output));
         }
         Ok(())
-    }
-
-    fn resolve_target(&self, name: &str) -> Result<Target, SwitchError> {
-        if self.ref_exists(&format!("refs/heads/{name}"))? {
-            return Ok(Target::Local);
-        }
-        if !self.ref_exists(&format!("refs/remotes/{name}"))? {
-            return Err(SwitchError::NotFound);
-        }
-        let local = name.split_once('/').map(|(_, branch)| branch.to_owned());
-        let local = match local {
-            Some(branch) if self.ref_exists(&format!("refs/heads/{branch}"))? => Some(branch),
-            _ => None,
-        };
-        Ok(Target::Remote { local })
     }
 
     fn ref_exists(&self, full_name: &str) -> Result<bool, SwitchError> {
@@ -185,14 +183,6 @@ impl Repo {
     }
 }
 
-enum Target {
-    Local,
-    /// A remote-tracking branch, and the local branch of the same name if any.
-    Remote {
-        local: Option<String>,
-    },
-}
-
 fn failed(output: &std::process::Output) -> SwitchError {
     let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
     text.push_str(&String::from_utf8_lossy(&output.stderr));
@@ -213,4 +203,71 @@ fn overwritten_paths(stderr: &str) -> Vec<&str> {
         .lines()
         .filter_map(|line| line.strip_prefix('\t'))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::process::Command;
+
+    use super::*;
+
+    fn git(dir: &std::path::Path, args: &[&str]) {
+        let output = Command::new("git")
+            .args(["-c", "init.defaultBranch=main"])
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .output()
+            .expect("run git");
+        assert!(output.status.success(), "git {args:?} failed");
+    }
+
+    #[test]
+    fn resolve_branch_by_the_full_remote_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        git(root, &["init", "-q"]);
+        git(
+            root,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "m",
+            ],
+        );
+        git(root, &["remote", "add", "team/origin", "/nonexistent"]);
+        git(
+            root,
+            &["update-ref", "refs/remotes/team/origin/feat", "HEAD"],
+        );
+        git(root, &["branch", "-q", "origin/feat"]);
+        let repo = Repo::discover(root).unwrap().expect("a repository");
+        assert_eq!(
+            repo.resolve_branch("team/origin/feat").unwrap(),
+            BranchRef::Remote {
+                remote: "team/origin".into(),
+                branch: "feat".into()
+            }
+        );
+        // A local name wins over a remote one of the same short name.
+        git(root, &["remote", "add", "origin", "/nonexistent"]);
+        git(root, &["update-ref", "refs/remotes/origin/feat", "HEAD"]);
+        assert_eq!(
+            repo.resolve_branch("origin/feat").unwrap(),
+            BranchRef::Local("origin/feat".into())
+        );
+        assert!(matches!(
+            repo.resolve_branch("nope"),
+            Err(SwitchError::NotFound)
+        ));
+    }
 }

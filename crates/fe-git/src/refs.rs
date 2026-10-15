@@ -23,7 +23,7 @@ pub enum Head {
 /// Splits a remote-tracking short name into its remote and branch: the longest
 /// configured remote name followed by `/` and a non-empty rest, else (a remote
 /// since removed) the split at the first `/`.
-fn split_remote<'a>(remotes: &[String], short: &'a str) -> Option<(&'a str, &'a str)> {
+pub(crate) fn split_remote<'a>(remotes: &[String], short: &'a str) -> Option<(&'a str, &'a str)> {
     remotes
         .iter()
         .filter_map(|remote| {

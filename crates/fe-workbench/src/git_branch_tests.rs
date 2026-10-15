@@ -29,12 +29,12 @@ fn focused(editor: &Entity<EditorView>, cx: &mut VisualTestContext) -> bool {
 }
 
 /// The base text of `a.txt` on main, and on feat.
-const MAIN_TEXT: &str = "one\n";
-const FEAT_TEXT: &str = "feat\n";
+pub(super) const MAIN_TEXT: &str = "one\n";
+pub(super) const FEAT_TEXT: &str = "feat\n";
 
 /// Runs `git` in `dir`, with the developer's own config shut out, and
 /// returns what it printed, trimmed.
-fn git(dir: &Path, args: &[&str]) -> String {
+pub(super) fn git(dir: &Path, args: &[&str]) -> String {
     git_at(dir, args, "2026-01-01T00:00:00Z")
 }
 
@@ -71,7 +71,7 @@ fn git_at(dir: &Path, args: &[&str], date: &str) -> String {
 /// branch feat a day newer that changes it; and `origin.git`, a bare
 /// repository it pushed feat to, so `origin/feat` is its one
 /// remote-tracking branch.
-fn fixture() -> tempfile::TempDir {
+pub(super) fn fixture() -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     let base = dir.path();
     git(base, &["init", "-q", "--bare", "origin.git"]);
@@ -102,7 +102,7 @@ fn fixture() -> tempfile::TempDir {
     dir
 }
 
-fn init(cx: &mut TestAppContext) {
+pub(super) fn init(cx: &mut TestAppContext) {
     cx.update(|cx| {
         fe_gpui::init(cx);
         crate::init(cx);
@@ -111,7 +111,10 @@ fn init(cx: &mut TestAppContext) {
 
 /// A window of a workbench rooted at `root`, focused, with vim on, and its
 /// `a.txt` open if it has one.
-fn window(cx: &mut TestAppContext, root: &Path) -> (Entity<Workbench>, VisualTestContext) {
+pub(super) fn window(
+    cx: &mut TestAppContext,
+    root: &Path,
+) -> (Entity<Workbench>, VisualTestContext) {
     let launch = Launch {
         root: Some(root.to_owned()),
         file: None,
@@ -138,7 +141,7 @@ fn window(cx: &mut TestAppContext, root: &Path) -> (Entity<Workbench>, VisualTes
 }
 
 /// Lets background work land, then draws a frame.
-fn draw(cx: &mut VisualTestContext) {
+pub(super) fn draw(cx: &mut VisualTestContext) {
     cx.run_until_parked();
     cx.update(|window, cx| window.draw(cx).clear(cx));
     cx.run_until_parked();
@@ -196,7 +199,7 @@ fn run(workbench: &Entity<Workbench>, command: GitCommand, cx: &mut VisualTestCo
 }
 
 /// Types `:{line}` and Enter.
-fn ex(line: &str, cx: &mut VisualTestContext) {
+pub(super) fn ex(line: &str, cx: &mut VisualTestContext) {
     cx.simulate_keystrokes(":");
     cx.simulate_input(line);
     cx.simulate_keystrokes("enter");
@@ -224,7 +227,7 @@ fn head(work: &Path) -> String {
     git(work, &["rev-parse", "--abbrev-ref", "HEAD"])
 }
 
-fn stashes(work: &Path) -> usize {
+pub(super) fn stashes(work: &Path) -> usize {
     git(work, &["stash", "list"]).lines().count()
 }
 
