@@ -11,6 +11,8 @@ mod config;
 mod contributions;
 mod ext;
 mod setup;
+#[cfg(feature = "test-support")]
+pub mod testing;
 
 pub use gpui;
 pub use kiln_command as command;

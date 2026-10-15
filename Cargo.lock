@@ -4617,12 +4617,14 @@ version = "0.1.0"
 dependencies = [
  "gpui-pre",
  "gpui-pre-platform",
+ "kiln",
  "kiln-command",
  "kiln-core",
  "kiln-platform",
  "kiln-shell",
  "kiln-ui",
  "log",
+ "tempfile",
 ]
 
 [[package]]
