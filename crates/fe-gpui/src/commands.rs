@@ -161,13 +161,14 @@ fn app_registry() -> Registry<AppCommands> {
     app
 }
 
-/// The editor's, vim's and the app's commands, to check keymap bindings
-/// against: pass it to [`fe_keymap::KeymapStore::load`].
+/// The editor's, vim's, the diff view's and the app's commands, to check
+/// keymap bindings against: pass it to [`fe_keymap::KeymapStore::load`].
 pub fn command_catalog() -> Box<dyn CommandCatalog> {
     Box::new(Catalog {
         editor: EDITOR_COMMANDS.with(Rc::clone),
         vim: vim::registry(),
         proposal: crate::view::proposal_registry(),
+        diff: crate::diff_view::registry(),
         app: app_registry(),
     })
 }
@@ -176,33 +177,35 @@ struct Catalog {
     editor: Rc<Registry<Editor>>,
     vim: Rc<Registry<fe_vim::VimCommands>>,
     proposal: Registry<crate::view::ProposalCommands>,
+    diff: Registry<crate::diff_view::DiffCommands>,
     app: Registry<AppCommands>,
 }
 
 /// A command the editor doesn't know is checked against vim's, then the
-/// proposal commands', then the app's.
+/// proposal commands', then the diff view's, then the app's.
 impl CommandCatalog for Catalog {
     fn check(&self, command: &CommandId, args: &Value) -> Result<(), CatalogError> {
-        match self.editor.check(command, args) {
-            Err(CatalogError::UnknownCommand) => match self.vim.check(command, args) {
-                Err(CatalogError::UnknownCommand) => match self.proposal.check(command, args) {
-                    Err(CatalogError::UnknownCommand) => self.app.check(command, args),
-                    result => result,
-                },
-                result => result,
-            },
-            result => result,
+        let checks: [&dyn CommandCatalog; 4] =
+            [&*self.editor, &*self.vim, &self.proposal, &self.diff];
+        for catalog in checks {
+            match catalog.check(command, args) {
+                Err(CatalogError::UnknownCommand) => {}
+                result => return result,
+            }
         }
+        self.app.check(command, args)
     }
 }
 
-/// The editor's and vim's commands, for the command palette to list: it
-/// lists each where its context holds.
+/// The editor's, vim's and the diff view's commands, for the command
+/// palette to list: it lists each where its context holds.
 pub fn command_list() -> Vec<CommandMeta> {
     let editor = EDITOR_COMMANDS.with(Rc::clone);
     let vim = vim::registry();
+    let diff = crate::diff_view::registry();
     (editor.commands().cloned())
         .chain(vim.commands().cloned())
+        .chain(diff.commands().cloned())
         .collect()
 }
 

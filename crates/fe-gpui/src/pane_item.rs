@@ -32,7 +32,7 @@ use gpui::{
 };
 use kiln_shell::{CloseAnswer, PaneItem, StatusItem, StatusSide};
 
-use crate::{EditorSettings, EditorTheme, EditorView, commands::RunCommand};
+use crate::{DiffView, EditorSettings, EditorTheme, EditorView, commands::RunCommand};
 
 /// An editor's status bar items, while it's the active item: the vim mode
 /// with vim on, and vim's last message, on the left; the cursor,
@@ -761,8 +761,15 @@ impl PaneItem for EditorView {
         self.model.is_dirty()
     }
 
-    /// Another editor over its buffer ([`EditorModel::split`](fe_editor::EditorModel::split)).
+    /// Another editor over its buffer ([`EditorModel::split`](fe_editor::EditorModel::split)),
+    /// or a diff view whose right side is.
     fn shares_document(&self, other: &AnyView, cx: &App) -> bool {
+        if let Ok(diff) = other.clone().downcast::<DiffView>() {
+            return diff
+                .read(cx)
+                .right_model(cx)
+                .shares_buffer_with(&self.model);
+        }
         other
             .clone()
             .downcast::<EditorView>()

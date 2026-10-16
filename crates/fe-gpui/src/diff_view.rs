@@ -13,6 +13,11 @@
 //! The diff is redone when either side's buffer moves on, at most once a
 //! frame (on render), off the main thread when a side is over
 //! [`ASYNC_BYTES`]; the previous fillers and tints stay until it lands.
+//! Each side's model gets row changes of its own
+//! ([`EditorModel::own_row_changes`]), against the other side's text,
+//! supplied from that diff: its change bars and vim's `]c` / `[c` follow
+//! the diff, the file's other editors keep comparing against git, and no
+//! paint diffs on the main thread.
 
 use std::{
     cell::RefCell,
@@ -23,10 +28,11 @@ use std::{
 };
 
 use fe_buffer::{BufferSnapshot, Text, Version};
-use fe_command::Value;
+use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry, Value};
 use fe_editor::{
     EditorModel,
     decorations::{Decoration, DecorationKind, DecorationProvider, Tint, overlaps},
+    row_changes::{RowChange, RowChangeKind},
     text_diff::{HunkKind, Side, TextDiff},
 };
 
@@ -83,6 +89,36 @@ const POLL: std::time::Duration = std::time::Duration::from_millis(250);
 /// The answer to [`DISCARD_BUTTONS`] that closes.
 const DISCARD: usize = 1;
 
+/// The [`CommandTarget`] of the diff view's commands, which its
+/// [`RunCommand`] handler runs: registered so keymaps and the palette know
+/// them.
+pub(crate) struct DiffCommands;
+
+impl CommandTarget for DiffCommands {
+    type Tx = ();
+    type Target<'a> = ();
+}
+
+/// [`NEXT_CHANGE`], [`PREVIOUS_CHANGE`] and [`TOGGLE_INLINE`], in the
+/// [`KEY_CONTEXT`] context. Their handlers do nothing: the view runs them.
+pub(crate) fn registry() -> Registry<DiffCommands> {
+    let commands = [
+        (NEXT_CHANGE, "Go to Next Difference"),
+        (PREVIOUS_CHANGE, "Go to Previous Difference"),
+        (TOGGLE_INLINE, "Toggle Inline Diff"),
+    ];
+    let mut registry = Registry::new();
+    for (id, title) in commands {
+        registry
+            .register(id, title, |_: &mut (), _: &Actor| {
+                Ok(Dispatched::new(Effect::Nothing))
+            })
+            .expect("diff command IDs are valid and distinct")
+            .context(ContextPredicate::identifier(KEY_CONTEXT));
+    }
+    registry
+}
+
 /// One side of a [`DiffView`]: its header's title (`HEAD`, `Index`,
 /// `Working Tree`, a path) and the model it shows.
 pub struct DiffSide {
@@ -117,9 +153,6 @@ pub struct DiffView {
     views: [Entity<EditorView>; 2],
     /// Each side's tints, registered on its model.
     tints: [Rc<RefCell<DiffTints>>; 2],
-    /// Whether each side takes the other's text as its diff base: a
-    /// read-only side's model is the host's own, over a fixed text.
-    sets_base: [bool; 2],
     /// The diff the fillers and tints show.
     diff: TextDiff,
     /// The buffer versions last diffed, or being diffed.
@@ -134,8 +167,9 @@ pub struct DiffView {
     /// The hunk navigation last went to, and where it put each side's
     /// caret: while the focused side's caret is still there, the next move
     /// counts from that hunk, so one at the end of a side, whose start is
-    /// past the last row, isn't taken for the row the caret's on.
-    visited: Option<(usize, [usize; 2])>,
+    /// past the last row, isn't taken for the row the caret's on. `None`
+    /// for a side it didn't move: the left, inline.
+    visited: Option<(usize, [Option<usize>; 2])>,
     /// Whether only the right side shows, the removed rows inline.
     inline: bool,
     /// Whether the mode was chosen, by the user or the host, so the window's
@@ -155,7 +189,10 @@ pub struct DiffView {
 
 impl DiffView {
     /// Compares `left` with `right`, in the theme and settings of
-    /// [`crate::set_restore_style`]. The left side is made read-only.
+    /// [`crate::set_restore_style`]. The left side is made read-only. Each
+    /// side's model gets row changes of its own, against the other side
+    /// (see the [module docs](self)); `right.model` may be a split of the
+    /// file's editor, whose row changes stay as they are.
     pub fn new(
         file_name: impl Into<SharedString>,
         left: DiffSide,
@@ -167,9 +204,9 @@ impl DiffView {
             Rc::new(RefCell::new(DiffTints::default())),
             Rc::new(RefCell::new(DiffTints::default())),
         ];
-        let sets_base = [true, right.read_only];
         let titles = [left.title, right.title];
         let mut view = |mut model: EditorModel, read_only: bool, tints: &Rc<RefCell<DiffTints>>| {
+            model.own_row_changes();
             model.add_decoration_provider(tints.clone());
             let theme = theme.clone();
             let settings = settings.clone();
@@ -211,7 +248,6 @@ impl DiffView {
             titles,
             views,
             tints,
-            sets_base,
             diff: TextDiff::default(),
             diffed: None,
             diffing: None,
@@ -237,6 +273,11 @@ impl DiffView {
 
     pub fn right(&self) -> &Entity<EditorView> {
         &self.views[1]
+    }
+
+    /// The right side's model: usually a split of the file's editor.
+    pub(crate) fn right_model<'a>(&self, cx: &'a App) -> &'a EditorModel {
+        self.views[1].read(cx).model()
     }
 
     /// The diff the fillers and tints show now.
@@ -289,11 +330,11 @@ impl DiffView {
             (self.views.each_ref()).map(|view| view.read(cx).model().buffer().text().clone());
         if !Diffed::is_large(&left, &right) {
             self.diffing = None;
-            let diffed = Diffed::new(&left, &right);
+            let diffed = Diffed::new(&left, &right, versions);
             self.land(diffed, cx);
             return;
         }
-        let diffing = cx.background_spawn(async move { Diffed::new(&left, &right) });
+        let diffing = cx.background_spawn(async move { Diffed::new(&left, &right, versions) });
         self.diffing = Some(cx.spawn(async move |this, cx| {
             let diffed = diffing.await;
             this.update(cx, |this, cx| {
@@ -304,23 +345,23 @@ impl DiffView {
         }));
     }
 
-    /// Shows `diffed`: each side's fillers and tints, and the other side's
-    /// text as the diff base of a side that takes it. Not over
-    /// [`ASYNC_BYTES`]: the model would diff against it on the main thread,
-    /// as a frame asks for its change bars.
+    /// Shows `diffed`: each side's fillers and tints, and its row changes
+    /// against the other side's text, for the version of its text diffed.
     fn land(&mut self, diffed: Diffed, cx: &mut Context<Self>) {
-        let Diffed { diff, texts } = diffed;
-        let large = texts.iter().any(|text| text.len() > ASYNC_BYTES);
+        let Diffed {
+            diff,
+            texts,
+            versions,
+        } = diffed;
         self.diff = diff;
         self.texts = texts;
         for (ix, side) in [(0, Side::Left), (1, Side::Right)] {
             self.tints[ix].borrow_mut().rows = tinted_rows(&self.diff, side);
-            let base = (!large).then(|| self.texts[1 - ix].clone());
-            let sets_base = self.sets_base[ix];
+            let base = self.texts[1 - ix].clone();
+            let changes = row_changes(&self.diff, side);
             self.views[ix].update(cx, |view, cx| {
-                if sets_base {
-                    view.model_mut().set_diff_base(base);
-                }
+                view.model_mut()
+                    .supply_row_changes(base, versions[ix], changes);
                 // The tints changed.
                 cx.notify();
             });
@@ -391,10 +432,10 @@ impl DiffView {
             return;
         }
         let found = match (self.visited, forward) {
-            (Some((index, carets)), true) if carets[focused] == head => {
+            (Some((index, carets)), true) if carets[focused] == Some(head) => {
                 Some(index + 1).filter(|&next| next < count)
             }
-            (Some((index, carets)), false) if carets[focused] == head => index.checked_sub(1),
+            (Some((index, carets)), false) if carets[focused] == Some(head) => index.checked_sub(1),
             (_, true) => self.diff.next_hunk(side, row),
             (_, false) => self.diff.prev_hunk(side, row),
         };
@@ -407,12 +448,12 @@ impl DiffView {
         self.message = wrapped.map(SharedString::from);
         let other = 1 - focused;
         let other_row = hunk.range([Side::Left, Side::Right][other]).start;
-        let mut carets = [0; 2];
+        let mut carets = [None; 2];
         // Inline, the left side isn't shown.
         carets[other] = if self.inline {
-            0
+            None
         } else {
-            self.views[other].update(cx, |view, cx| {
+            Some(self.views[other].update(cx, |view, cx| {
                 let at = row_offset(view.model().text(), other_row);
                 // Out of a visual mode or a pending command, which would put
                 // its own selection back.
@@ -424,13 +465,13 @@ impl DiffView {
                 view.autoscroll = false;
                 cx.notify();
                 view.model().primary_selection().head()
-            })
+            }))
         };
-        carets[focused] = self.views[focused].update(cx, |view, cx| {
+        carets[focused] = Some(self.views[focused].update(cx, |view, cx| {
             let at = row_offset(view.model().text(), hunk.range(side).start);
             view.select_and_reveal(at..at, cx);
             view.model().primary_selection().head()
-        });
+        }));
         self.visited = Some((index, carets));
         cx.notify();
     }
@@ -467,10 +508,12 @@ impl DiffView {
     }
 }
 
-/// A diff and the texts it was made from, as diff bases.
+/// A diff and the texts it was made from, as diff bases, with the buffer
+/// versions they were read at.
 struct Diffed {
     diff: TextDiff,
     texts: [Arc<str>; 2],
+    versions: [Version; 2],
 }
 
 impl Diffed {
@@ -479,13 +522,36 @@ impl Diffed {
         left.len().max(right.len()) > ASYNC_BYTES
     }
 
-    fn new(left: &Text, right: &Text) -> Self {
+    fn new(left: &Text, right: &Text, versions: [Version; 2]) -> Self {
         let texts: [Arc<str>; 2] = [left.to_string().into(), right.to_string().into()];
         Self {
             diff: TextDiff::new(&texts[0], &texts[1]),
             texts,
+            versions,
         }
     }
+}
+
+/// `side`'s rows that differ from the other side's, as its model's row
+/// changes: rows only this side has added, rows on both modified, and rows
+/// only the other has deleted at this side's start row. None when the
+/// texts were too large to compare.
+fn row_changes(diff: &TextDiff, side: Side) -> Arc<[RowChange]> {
+    let other = match side {
+        Side::Left => Side::Right,
+        Side::Right => Side::Left,
+    };
+    (diff.hunks().iter())
+        .map(|hunk| {
+            let (rows, others) = (hunk.range(side).clone(), hunk.range(other));
+            let kind = match (rows.is_empty(), others.is_empty()) {
+                (false, true) => RowChangeKind::Added,
+                (true, _) => RowChangeKind::Deleted,
+                (false, false) => RowChangeKind::Modified,
+            };
+            RowChange { rows, kind }
+        })
+        .collect()
 }
 
 /// The caret's buffer row.
@@ -656,12 +722,12 @@ impl PaneItem for DiffView {
 
     /// An editor, or another diff view, over the right side's buffer.
     fn shares_document(&self, other: &AnyView, cx: &App) -> bool {
-        let right = self.views[1].read(cx).model();
+        let right = self.right_model(cx);
         if let Ok(editor) = other.clone().downcast::<EditorView>() {
             return editor.read(cx).model().shares_buffer_with(right);
         }
         other.clone().downcast::<DiffView>().is_ok_and(|diff| {
-            let other = diff.read(cx).views[1].read(cx).model();
+            let other = diff.read(cx).right_model(cx);
             other.shares_buffer_with(right)
         })
     }
@@ -717,3 +783,7 @@ mod tests;
 #[cfg(test)]
 #[path = "diff_view_inline_tests.rs"]
 mod diff_view_inline_tests;
+
+#[cfg(test)]
+#[path = "diff_view_compare_tests.rs"]
+mod diff_view_compare_tests;

@@ -144,8 +144,8 @@ pub struct EditorModel {
     /// [`DiagnosticSet`] keyed by the host's types, once it has applied
     /// one.
     diagnostics: Option<Box<dyn AnyDiagnosticSet>>,
-    /// The text [`EditorModel::row_changes`] compares against.
-    /// The diff base and its per-version changes; shared with splits.
+    /// The diff base and its per-version changes; shared with splits
+    /// (see [`EditorModel::own_row_changes`]).
     row_changes: Rc<RowChangeState>,
     /// Decoration providers, in registration order; shared with splits.
     decorations: Vec<(ProviderId, Rc<RefCell<dyn DecorationProvider>>)>,
@@ -217,7 +217,8 @@ impl EditorModel {
     /// A second model over the same buffer, for a split: same path, tab size,
     /// indent style, wrap, auto-closing, selections, diagnostics and decoration providers (the same
     /// ones; providers added to either later aren't added to the other),
-    /// but its own display rows with nothing folded.
+    /// but its own display rows with nothing folded. It shares this one's
+    /// row changes, diff base and all, until [`EditorModel::own_row_changes`].
     /// Its char widths are [`Monospace`] until set.
     pub fn split(&self) -> EditorModel {
         let (events, snapshot) = {
@@ -257,6 +258,16 @@ impl EditorModel {
         model.row_changes.track(&model.caught_up);
         model.apply_wrap();
         model
+    }
+
+    /// Gives this model row changes of its own, with no diff base: models
+    /// split from it before keep the state they shared with it, base and
+    /// change bars, and models split from it after share the new one. For
+    /// a split that compares against something else, such as a diff view's
+    /// other side, while the file's editors compare against git.
+    pub fn own_row_changes(&mut self) {
+        self.row_changes = RowChangeState::new();
+        self.row_changes.track(&self.caught_up);
     }
 
     /// Whether `other` edits the same buffer, made from this one (or it from
@@ -419,8 +430,25 @@ impl EditorModel {
     /// Sets the text [`EditorModel::row_changes`] compares against (the
     /// file's text in git, say); `None` turns row changes off. Setting the
     /// same text again changes nothing.
+    /// Diffing resumes after [`EditorModel::supply_row_changes`].
     pub fn set_diff_base(&mut self, base: Option<Arc<str>>) {
         self.row_changes.set_base(base);
+    }
+
+    /// Takes `changes` as buffer version `version`'s row changes against
+    /// `base`, diffed by the host (off the main thread, say), and from now
+    /// on never diffs: [`EditorModel::row_changes`] gives the changes
+    /// supplied for the snapshot's version, or until those arrive the last
+    /// ones supplied. `base` is what [`EditorModel::revert_changes`]
+    /// reverts to. [`EditorModel::set_diff_base`] diffs again. Shared with
+    /// splits, as the base is.
+    pub fn supply_row_changes(
+        &mut self,
+        base: Arc<str>,
+        version: Version,
+        changes: Arc<[RowChange]>,
+    ) {
+        self.row_changes.supply(base, version, changes);
     }
 
     /// Puts the diff base's rows back over every change meeting `rows` (rows
@@ -470,7 +498,8 @@ impl EditorModel {
     /// The text as of the last catch-up against the diff base, as changed
     /// rows sorted by row; empty without a base, when the text equals it, or
     /// when the base or the text is over 5 MiB. Diffed lazily, once per
-    /// buffer version.
+    /// buffer version, unless the host supplies them
+    /// ([`EditorModel::supply_row_changes`]).
     pub fn row_changes(&self) -> Arc<[RowChange]> {
         self.row_changes.changes(&self.snapshot)
     }

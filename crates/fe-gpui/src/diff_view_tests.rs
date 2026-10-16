@@ -425,10 +425,22 @@ fn large_sides_diff_off_the_main_thread(cx: &mut TestAppContext) {
     let (diff, cx) = diff_view(&left_text, &right_text, cx);
     let left = side(&diff, 0, cx);
     assert_eq!(blocks(&left, cx), [filler(20, 3, 0)]);
-    // No diff base, which the model would diff against on the main
-    // thread.
+    // Row changes from the diff that landed, not diffed by the model on
+    // the main thread.
     let changes = left.read_with(cx, |view, _| view.model().row_changes());
-    assert!(changes.is_empty());
+    assert_eq!(
+        *changes,
+        [
+            RowChange {
+                rows: 5..6,
+                kind: RowChangeKind::Modified
+            },
+            RowChange {
+                rows: 20..20,
+                kind: RowChangeKind::Deleted
+            }
+        ]
+    );
 
     // An edit keeps the last diff's fillers until the new one lands.
     let right = side(&diff, 1, cx);

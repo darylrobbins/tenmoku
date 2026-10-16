@@ -57,7 +57,11 @@ pub(crate) struct RowChangeState {
 #[derive(Default)]
 struct Inner {
     base: Option<Arc<str>>,
+    /// Per version: diffed against the base, or as supplied.
     cached: Vec<(Version, Arc<[RowChange]>)>,
+    /// The changes last supplied, while the host supplies them (see
+    /// [`RowChangeState::supply`]): what a version not yet supplied shows.
+    supplied: Option<Arc<[RowChange]>>,
 }
 
 impl RowChangeState {
@@ -84,19 +88,39 @@ impl RowChangeState {
         self.inner.borrow().base.is_some()
     }
 
-    /// Returns whether the base changed.
+    /// The base, diffed against or supplied.
     pub(crate) fn base(&self) -> Option<Arc<str>> {
         self.inner.borrow().base.clone()
     }
 
+    /// Sets the base and diffs against it from now on, leaving supplied
+    /// mode. Returns whether anything changed.
     pub(crate) fn set_base(&self, base: Option<Arc<str>>) -> bool {
         let mut inner = self.inner.borrow_mut();
-        if inner.base == base {
+        if inner.base == base && inner.supplied.is_none() {
             return false;
         }
         inner.base = base;
+        inner.supplied = None;
         inner.cached.clear();
         true
+    }
+
+    /// Takes `changes` as version `version`'s against `base`, and stops
+    /// diffing: from now on a version shows the changes supplied for it,
+    /// or until those arrive the last ones supplied, until
+    /// [`RowChangeState::set_base`].
+    pub(crate) fn supply(&self, base: Arc<str>, version: Version, changes: Arc<[RowChange]>) {
+        let mut inner = self.inner.borrow_mut();
+        // Changes for other versions were against another base, or diffed.
+        if inner.base.as_ref() != Some(&base) || inner.supplied.is_none() {
+            inner.cached.clear();
+        }
+        inner.base = Some(base);
+        inner.cached.retain(|(cached, _)| *cached != version);
+        inner.cached.push((version, changes.clone()));
+        inner.supplied = Some(changes);
+        self.forget_dead(&mut inner, version);
     }
 
     /// The changes in `snapshot`'s text against the base; empty without one.
@@ -109,6 +133,9 @@ impl RowChangeState {
         if let Some((_, changes)) = inner.cached.iter().find(|(cached, _)| *cached == version) {
             return changes.clone();
         }
+        if let Some(supplied) = &inner.supplied {
+            return supplied.clone();
+        }
         let text = snapshot.text();
         let changes = if text.len() > MAX_DIFF_BYTES {
             Arc::new([])
@@ -116,6 +143,13 @@ impl RowChangeState {
             diff_rows(&base, &text.to_string())
         };
         inner.cached.push((version, changes.clone()));
+        self.forget_dead(&mut inner, version);
+        changes
+    }
+
+    /// Drops the changes of versions no model sharing this state is at,
+    /// but `version`'s.
+    fn forget_dead(&self, inner: &mut Inner, version: Version) {
         let mut live = Vec::new();
         self.live.borrow_mut().retain(|token| {
             token.upgrade().is_some_and(|token| {
@@ -126,7 +160,6 @@ impl RowChangeState {
         inner
             .cached
             .retain(|(cached, _)| *cached == version || live.contains(cached));
-        changes
     }
 }
 
@@ -211,3 +244,7 @@ pub(crate) fn diff_rows(base: &str, text: &str) -> Arc<[RowChange]> {
 #[cfg(test)]
 #[path = "row_changes_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "row_changes_supplied_tests.rs"]
+mod row_changes_supplied_tests;
