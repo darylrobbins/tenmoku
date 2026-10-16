@@ -55,7 +55,7 @@ an app's AI backend can load the same commands, config and keymaps.
   kiln::window_options(&spec, cx), |window, cx| …)`, whose view is
   `cx.new(|cx| Root::new(content, window, cx))`. This manual path stays as
   documented. On top of it kiln offers `kiln::app(id, name)` and attribute
-  macros, under one rule: *default the composition; wrap nothing on the paint
+  macros (§5), under one rule: *default the composition; wrap nothing on the paint
   path; every convention has a one-line override, and every sugar has a
   GPUI-shaped escape hatch.* The framework's owner approved this on
   2026-10-13, replacing the earlier "no kiln `App` type". `&mut App` and
@@ -176,3 +176,143 @@ repository's boundary check, so kiln can leave it as it is:
 - **Builds alone.** kiln, copied out into a workspace of its own with only
   the workspace entries its crates reference, builds and passes its tests
   offline against the host's lock file.
+
+## 5. The app layer
+
+`kiln::app(id, name)` and the attribute macros compose what an app would
+otherwise write by hand over `init`, `Config` and `Workspace`. They follow
+the rule of §3: *default the composition; wrap nothing on the paint path;
+every convention has a one-line override, and every sugar has a GPUI-shaped
+escape hatch.* `crates/kiln/examples/notes` is the smallest app on them, and
+`README.md` shows it first.
+
+### Conventions and their overrides
+
+`app(id, name)` returns an `AppBuilder`. Until `run()` (or `start(cx)`, which
+returns the windows it opened) it does nothing.
+
+| Convention | Override |
+|---|---|
+| The short name is the name lowercased, each run of other characters than letters and digits a `-`, none at either end: `Kiln Chat` is `kiln-chat` | `.short_name(..)` |
+| The app's directories are `AppPaths::new(&AppId::new(id, short, name), PathStyle::Native)`, so `<SHORT>_CONFIG_DIR` and `<SHORT>_STATE_DIR` move them | `.paths(..)` |
+| The user's `keymap.toml` and `theme.toml` in the config directory, watched | `.config(\|c\| c.user_keymap(..).user_theme(..))` |
+| `.settings::<S>()` reads `settings.toml` in the config directory, and no project file | `.config(..)` with `Config::settings`, which replaces the store |
+| Each `#[kiln::settings]` section reads its table of that `settings.toml` | `.config(..)` with `Config::settings_file` |
+| Closing the last window quits, except on macOS | `.quit_on_last_window(bool)` |
+| Windows come from `WindowSpec::main` with the app's name and ID | `.window(\|spec\| ..)` |
+| Each window is a `Workspace` of `ItemPane`s under the key context `workspace`, titled with the app's name, with the items, panels and status sources the app adds, then those contributed | `.key_context(..)`; `.root(..)` for a view of the app's own in a `Root` |
+| The workspaces' layout is saved in the state directory's `layouts` (the state directory standing for the root folder); on start every saved window no live one holds opens again, else one fresh window | `.restore_layout(false)` |
+| kiln's own keys go under the app's keymap, and its menus if the app has no table | `.config(..)` with `Config::default_keys` or `Config::default_menus` |
+| In a debug build, a mistake in the keymap or menus the app ships panics at start | `.config(..)` with `Config::fail_fast` |
+| A command's keys and menu item come from its attribute (`key`, `menu`, `order`) | `.keys(keymap!{..})` and `.menu_bar(menus!{..})`: typed tables, a typo a compile error; or `.keymap(..)` and `.menus(..)` files |
+
+`.commands(..)`, `.keymap(..)`, `.menus(..)`, `.theme_mode(..)` and
+`.theme_extensions(..)` are `Config`'s own, and `.config(..)` changes anything
+else on it. A workspace window needs an item kind (`.item::<T>()`), a panel
+(`.panel(..)`) or setup (`.workspace(..)`), or a contributed one; without any
+of them, and without `.root(..)`, `start` panics saying so.
+
+### The macros
+
+Each macro leaves the item as written, adds what is listed, and records
+itself with `inventory`; `app()` adds the records compiled into the app's own
+binary. Each has a compile-fail test for the mistakes it can name.
+
+| Macro | Expands to | By hand |
+|---|---|---|
+| `#[kiln::command(key, menu, order, id, context)]` on a fn | the fn; a unit-struct GPUI action named for it (`new_note` is `NewNote`, ID `<crate>.new_note`, titled by the fn's first doc line); a `CommandRecord` | `kiln::commands!`, then `Contributions::add_command(cx, CommandSpec::new::<A>(title).keys(..).menu(..))` and `cx.on_action(kiln::workspace_handler::<A>(f))` in a `Module` |
+| `#[kiln::command(context = "..")]` on a view's `impl`, its methods marked `#[command(..)]` | the impl without the marks; `ViewCommands`, whose `attach(div(), cx)` sets the key context and a handler of each command; and, for each marked method, what a fn gets: a unit-struct action (`rename` is `Rename`, ID `<crate>.rename`, titled by the method's first doc line) and a `CommandRecord` carrying its context, `key`, `menu` and `order` | `kiln::commands!` for the actions, `Contributions::add_command(cx, CommandSpec::new::<A>(title).keys(..).menu(name, order).context(..))` for each in a `Module`, and on the view's root element `.key_context(..)` with an `.on_action(cx.listener(..))` for each |
+| `#[kiln::model]` / `#[kiln::model(persist, file = "..")]` on a type | the type; a `ModelRecord` that makes it from `Default` at start, and with `persist` keeps it in `<state>/<name>.json` | `Contributions::add_model(cx, model::register::<M>)` or `persist::<M>(cx, name)` |
+| `#[kiln::settings(section = "..")]` on a struct of named fields | the struct without its `#[setting]`s, with serde, `PartialEq`, `JsonSchema`, a `Default` of each field's `default = ..`, and `SettingsSection` | those impls by hand, then `Contributions::add_settings` and `Config::section` |
+| `#[kiln::status(side, order, id)]` on `fn(&App) -> T` | the fn; a `StatusRecord` that calls it each time the bar draws | `Workspace::add_status_source(source, cx)` in each window |
+| `#[kiln::panel(title, icon, dock, toggle_key, order, id, new)]` on a struct that implements `kiln::View` | the struct with a hidden `__kiln` field holding its focus handle; `Render` around `View::render`; `Focusable`; `DockItem`, with a toggle command, key and View-menu item; a `PanelRecord` | `Render`, `Focusable` and `DockItem` written out, then `Workspace::add_panel(position, panel, window, cx)` in each window |
+| `#[kiln::item(kind = "..")]` on a struct that implements `kiln::Item` and `kiln::View` | the struct; `Render` and `Focusable`; `PaneItem` and `ItemState`, saving `Item::state` and restoring through `Item::new`, under the kind `<crate>.<name>`; an `ItemRecord` | `PaneItem` and `ItemState` by hand, then `layout::register_item::<T>` |
+
+`WorkspaceExt::open::<T>(state, window, cx)` shows the item of a state in the
+active pane (its tab if one has an equal state, else a new one), and
+`active_state::<T>(cx)` reads it. Every macro's doc comment in `kiln` shows
+its expansion and the same code written by hand, compiled as a doctest, so
+the two cannot drift.
+
+### The Module rule
+
+`inventory` registration finds only what is linked into the app's own binary,
+example or integration test. A library crate's `#[kiln::command]` (and its
+models, panels, items, settings and status sources) is silently missing when
+nothing references the crate, so nothing registers across crates by itself.
+Instead a library crate declares `kiln::module!(pub fn module);`, which adds
+what its macros recorded, and the app passes it on:
+
+```rust
+kiln::app("com.example.Notes", "Notes").module(outline::module).run();
+```
+
+A `Module` is any `FnOnce(&mut App)`, so a library crate may also write one
+by hand with `Contributions::add_*`. `start` runs modules first, before
+`init`, so what they add is set up with the app's own. In a debug build a
+module that adds nothing logs a warning naming it, and so does a library
+crate whose records are linked in but that no module claimed.
+
+### `Cx` and `cx.watch`
+
+`Cx<V>` is a view's `Window` and `Context<V>` together. Both are public
+fields (`cx.window`, `cx.cx`) and it derefs to `Context<V>`, so every GPUI
+call on a context works on it. `View::render(&mut self, cx: &mut Cx<Self>)`
+takes one, and so do command handlers and `cx.handler(|view, cx| ..)`, a
+listener for `on_click` and the like.
+
+`cx.watch::<M>()` reads the model `M` and has the view redraw each time `M`
+changes until the view is released. It observes `M` once per view however
+often it is called, so no `Subscription` is stored or relayed with
+`cx.notify()`. `cx.setting::<S>()` does the same for the app's settings, so
+a reload redraws the view. `cx.model::<M>()` reads without watching,
+`cx.update_model(..)` changes a model and notifies its observers,
+`cx.workspace()` is the window's workspace, and `cx.service::<T>()` reads
+what `kiln::provide(cx, value)` stored.
+
+A handwritten `Render::render` gets a `Cx` from `kiln::with_cx(window, cx,
+|cx| ..)`. A model is an entity under the hood (`model::entity::<M>(cx)`),
+so `cx.subscribe`, `cx.observe` and explicit `Subscription`s still work
+where an app wants them.
+
+### Dropping to GPUI
+
+Nothing the layer builds is out of reach, and no layer-owned type sits
+between an app and the paint path.
+
+- **`Cx` is two fields.** `cx.window` is GPUI's `Window` and `cx.cx` its
+  `Context<V>` (an `App` by deref), for any call the layer has no name for.
+- **A view is any `Render + Focusable`.** `.panel(..)` takes any `DockItem`,
+  `.item::<T>()` any `PaneItem`, and `Workspace::add_panel` any
+  `Entity<impl DockItem>`; `View`, `#[kiln::panel]` and `#[kiln::item]` only
+  write those impls. A view written as plain GPUI keeps its own `Render`,
+  and `Self::attach(div(), cx)` gives it the commands of its impl.
+- **The workspace is open.** `Workspace::shell()` is the `Entity<Shell>`,
+  `group()` and `group_mut()` the `PaneGroup`, and `dock(position)` the
+  `Entity<Dock>`: everything the app layer called is a public call, and
+  `.workspace(|workspace, window, cx| ..)` runs on each window's workspace
+  before its layout is restored.
+- **The window is yours.** `.root(|window, cx| view)` opens a `Root` around
+  any `AnyView`, and the workspace's calls go unused. `Started::window` and
+  `Started::windows` are `AppWindow`s: `window.root::<Workspace<ItemPane>>(cx)`
+  gets the root view back, and `update(cx, ..)` is GPUI's `update_window`.
+- **The whole layer is optional.** `kiln::init` with `Config` and `Root`
+  (README, "Underneath") is the same setup written out, and `AppBuilder`'s
+  docs print the one as the other. Macros and manual registration mix:
+  `.contributions(|cx| Contributions::add_panel(cx, ..))` adds one by hand.
+
+### What kiln deliberately does not do
+
+- **No element macro.** A view's `render` returns GPUI's elements, built with
+  GPUI's `div()` and its styling methods. There is no `rsx!` or `view!`.
+- **No signals.** State is GPUI entities; `cx.watch` is an observation of
+  one, not a new reactive primitive with its own arena or dependency graph.
+- **No DSL and no code generation outside the macros above.** Keymaps and
+  menus are TOML files or typed tables; nothing is compiled from a separate
+  language.
+- **Nothing on the paint path.** Kiln wraps no element, layout or paint
+  call. `Cx` is built around a `render` call and costs two references;
+  `#[kiln::status]` functions run on every draw of the bar, so they must be
+  O(1) reads.
+- **No hidden global app type.** `&mut App` and `Window` stay reachable
+  everywhere, and every convention above is a default, not a requirement.

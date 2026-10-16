@@ -52,12 +52,68 @@ command model in [`docs/command-model.md`](docs/command-model.md).
 
 The rule: *default the composition; wrap nothing on the paint path. Every
 convention has a one-line override, and every sugar has a GPUI-shaped escape
-hatch.* Kiln is gaining a `kiln::app(id, name)` builder and attribute macros
-on that rule (approved 2026-10-13). Library crates register through an
-explicit `kiln::Module` passed to `.module(..)`; `inventory` auto-registration
-covers only the app crate's own items.
+hatch.* `kiln::app(id, name)` and a few attribute macros follow it, and
+[`examples/notes`](crates/kiln/examples/notes) is the smallest app on them: a
+sidebar of notes, a menu command with a key, a status item, a setting and
+persistence, in about a hundred lines and no TOML. Its `main` is:
 
-### The manual path
+```rust
+fn main() {
+    kiln::app("dev.kiln.Notes", "Notes").run();
+}
+```
+
+That's a whole app because the rest is declared where it belongs, and
+collected at start:
+
+```rust
+/// Every note, kept in the state directory.
+#[kiln::model(persist)]
+#[derive(Default, Serialize, Deserialize)]
+#[serde(crate = "kiln::serde")]
+struct Notes { list: Vec<Note>, next_id: u64 }
+
+/// `[notes]` in settings.toml.
+#[kiln::settings(section = "notes")]
+struct NotesSettings {
+    /// The note's font size, in points.
+    #[setting(default = 14.0)]
+    font_size: f32,
+}
+
+/// New Note
+#[kiln::command(key = "secondary-n", menu = "File")]
+fn new_note(workspace: &mut Workspace, cx: &mut Cx<Workspace>) {
+    let id = cx.update_model(|notes: &mut Notes, _| notes.add());
+    workspace.open::<NoteView>(id, cx.window, cx.cx);
+}
+
+#[kiln::status(side = Left)]
+fn note_count(cx: &App) -> String { /* "3 notes" */ }
+
+#[kiln::panel(title = "Notes", icon = FileText, dock = Left, toggle_key = "secondary-b")]
+#[derive(Default)]
+struct Sidebar;
+
+impl View for Sidebar {
+    fn render(&mut self, cx: &mut Cx<Self>) -> impl IntoElement {
+        // Redraws whenever `Notes` changes: no Subscription to keep.
+        let ids: Vec<_> = cx.watch::<Notes>().list.iter().map(|n| n.0).collect();
+        div().p_2().children(ids.into_iter().map(|id| /* a clickable row */))
+    }
+}
+```
+
+`#[kiln::item]` does the same for a tab (`NoteView`, whose saved layout
+restores it). The result has native menus, the keymap and theme files the
+user may edit, a workspace window with panes and a dock, and its layout
+saved and restored. Each convention can be overridden and each macro written
+out by hand: [`docs/framework.md`](docs/framework.md#5-the-app-layer) lists
+them, and how to drop to GPUI where the layer is in the way. Library crates
+register through an explicit `kiln::Module` passed to `.module(..)`;
+`inventory` auto-registration covers only the app crate's own items.
+
+### Underneath: the manual path
 
 Underneath, setup is plain GPUI plus `kiln::init`, the extension traits in
 `kiln::prelude`, and typed commands that are real GPUI actions. This stays
