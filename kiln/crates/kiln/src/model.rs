@@ -65,8 +65,9 @@ pub fn entity<M: Default + 'static>(cx: &mut App) -> Entity<M> {
     model
 }
 
-/// The model `M`, if it's made.
-pub(crate) fn entity_if<M: 'static>(cx: &App) -> Option<Entity<M>> {
+/// The model `M`, if it's made: for a read through a shared `&App`, as a
+/// status fn does (`model::entity_if::<M>(cx)?.read(cx)`).
+pub fn entity_if<M: 'static>(cx: &App) -> Option<Entity<M>> {
     let models = cx.try_global::<Models>()?;
     Some(
         models

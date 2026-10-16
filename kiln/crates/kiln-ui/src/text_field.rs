@@ -94,6 +94,8 @@ const CARET_WIDTH: Pixels = px(1.5);
 pub struct TextField {
     edit: TextEdit,
     placeholder: SharedString,
+    /// The text's size.
+    font_size: Pixels,
     focus: FocusHandle,
     /// How far the text is scrolled left, to keep the caret in view.
     scroll_x: Pixels,
@@ -129,6 +131,7 @@ impl TextField {
         Self {
             edit: TextEdit::new(),
             placeholder: SharedString::default(),
+            font_size: px(13.),
             focus,
             scroll_x: px(0.),
             last_line: None,
@@ -197,6 +200,19 @@ impl TextField {
             bindings.push(KeyBinding::new("ctrl-y", Redo, cx));
         }
         bindings
+    }
+
+    /// The text's size, 13 pixels unless set.
+    pub fn font_size(&self) -> Pixels {
+        self.font_size
+    }
+
+    /// Sets the text's size.
+    pub fn set_font_size(&mut self, size: Pixels, cx: &mut Context<Self>) {
+        if self.font_size != size {
+            self.font_size = size;
+            cx.notify();
+        }
     }
 
     pub fn value(&self) -> &str {
@@ -571,7 +587,7 @@ impl Render for TextField {
                 colors.border.default
             })
             .bg(colors.surface.background)
-            .text_size(px(13.))
+            .text_size(self.font_size)
             .line_height(px(18.))
             .text_color(colors.tab.active_text)
             .overflow_hidden()
