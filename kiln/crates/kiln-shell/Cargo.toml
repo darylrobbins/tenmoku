@@ -27,8 +27,5 @@ gpui = { workspace = true, features = ["test-support"] }
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 gpui_platform = { workspace = true, features = ["wayland", "x11"] }
 
-[target.'cfg(not(target_os = "linux"))'.dev-dependencies]
-gpui_platform.workspace = true
-
 [lints]
 workspace = true
