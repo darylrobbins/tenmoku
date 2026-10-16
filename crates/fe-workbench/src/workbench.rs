@@ -853,6 +853,12 @@ impl Workbench {
         if op == OpenOp::NewWindow {
             return open::open_window(self.root.clone(), cx);
         }
+        if op == OpenOp::NewFile {
+            return self.new_file(window, cx);
+        }
+        if op == OpenOp::SaveAs {
+            return self.prompt_save_as(window, cx);
+        }
         if self.prompting {
             return;
         }
@@ -891,7 +897,11 @@ impl Workbench {
                         ));
                     }
                     match (op, path) {
-                        (_, None) | (OpenOp::Settings | OpenOp::NewWindow, Some(_)) => {}
+                        (_, None)
+                        | (
+                            OpenOp::Settings | OpenOp::NewWindow | OpenOp::NewFile | OpenOp::SaveAs,
+                            Some(_),
+                        ) => {}
                         (OpenOp::FolderInNewWindow, Some(path)) => {
                             open::open_window(Some(path), cx)
                         }
@@ -904,6 +914,192 @@ impl Workbench {
                 .ok();
         })
         .detach();
+    }
+
+    /// Opens an empty untitled tab in the active pane, focused.
+    fn new_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let model = EditorModel::new(Buffer::new(""), None);
+        self.active.update(cx, |pane, cx| {
+            pane.add(model, cx);
+            pane.activate(pane.tabs().len() - 1, window, cx);
+        });
+    }
+
+    /// Shows the save panel for the active editor, in its file's folder
+    /// (else the root, else home) with its file name (else `untitled`)
+    /// suggested, then saves the editor where it answers
+    /// ([`Workbench::save_editor_as`]). Cancelling changes nothing, and an
+    /// error from the panel is shown as the open panel's is. Asked again
+    /// while a panel shows, it does nothing.
+    fn prompt_save_as(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(editor) = self.active.read(cx).active_editor().cloned() else {
+            return;
+        };
+        if self.prompting {
+            return;
+        }
+        self.prompting = true;
+        let path = editor.read(cx).model().path().map(Path::to_owned);
+        let dir = (path.as_deref().and_then(Path::parent).map(Path::to_owned))
+            .or_else(|| self.root.clone())
+            .or_else(std::env::home_dir)
+            .unwrap_or_else(|| PathBuf::from("/"));
+        let name = fe_gpui::pane_item::file_name(path.as_deref());
+        let answer = cx.prompt_for_new_path(&dir, Some(&name));
+        cx.spawn_in(window, async move |workbench, cx| {
+            let mut failed = None;
+            let path = match answer.await {
+                Ok(Ok(path)) => path,
+                Ok(Err(error)) => {
+                    log::warn!("the save panel failed: {error}");
+                    failed = Some(error.to_string());
+                    None
+                }
+                Err(_) => {
+                    log::warn!("the save panel went without an answer");
+                    None
+                }
+            };
+            workbench
+                .update_in(cx, |workbench, window, cx| {
+                    workbench.prompting = false;
+                    // As the open panel's (see `prompt_open`).
+                    if let Some(error) = failed.filter(|_| !cfg!(target_os = "macos")) {
+                        let (message, detail) = open_panel_failed(&error);
+                        drop(window.prompt(
+                            PromptLevel::Critical,
+                            message,
+                            Some(&detail),
+                            &[PromptButton::ok("OK")],
+                            cx,
+                        ));
+                    }
+                    if let Some(path) = path {
+                        workbench.save_editor_as(&editor, path, window, cx);
+                    }
+                })
+                .ok();
+        })
+        .detach();
+    }
+
+    /// Saves `editor` to `path` ([`EditorView::save_as`]), the tabs and the
+    /// editors over its buffer following it there once it's written, or
+    /// shows why it couldn't be.
+    ///
+    /// A file another buffer might also save to is refused: one another
+    /// tab shows, a pane is reading, in this window or another, or another
+    /// Save As holds, by any path to it ([`open::file_identity`]). The destination is held from here
+    /// until the outcome is taken in ([`open::reserve`]), so nothing else
+    /// takes it meanwhile, even if the tab closes. The destination's
+    /// `.editorconfig` line ending, read now, goes with the save: it's
+    /// written with it, and the buffer takes it only if the save goes
+    /// through.
+    pub(crate) fn save_editor_as(
+        &mut self,
+        editor: &Entity<EditorView>,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let name = fe_gpui::pane_item::file_name(Some(&path));
+        let identity = open::file_identity(&path);
+        let same = |other: &Path| {
+            other == path || identity.is_some() && open::file_identity(other) == identity
+        };
+        let model = editor.read(cx).model();
+        let buffer = model.buffer().id();
+        // This window, which is being updated, then every other one.
+        let this_window = window.window_handle().window_id();
+        let others = (cx.windows().into_iter())
+            .filter(|other| other.window_id() != this_window)
+            .filter_map(|other| other.downcast::<Workbench>())
+            .filter_map(|other| other.read(cx).ok());
+        let in_use = self.uses_file(&same, model, cx)
+            || others
+                .into_iter()
+                .any(|other| other.uses_file(&same, model, cx));
+        let held =
+            open::reserved(&path, identity.as_deref()).is_some_and(|(holder, _)| holder != buffer);
+        if in_use || held {
+            drop(window.prompt(
+                PromptLevel::Critical,
+                &format!("“{name}” is open in another tab."),
+                Some("Close it first, or save under another name."),
+                &[PromptButton::ok("OK")],
+                cx,
+            ));
+            return;
+        }
+        let reservation = open::reserve(buffer, path.clone(), identity);
+        // Read here, so Save As requests keep their order.
+        let config = fe_config::editorconfig_for(&path);
+        let line_ending = crate::pane::config_line_ending(&config);
+        let workbench = cx.weak_entity();
+        let release = move |cx: &mut App| {
+            (workbench.update(cx, |w, cx| w.lsp_release(buffer, cx))).ok();
+        };
+        let saved = editor.update(cx, |editor, cx| {
+            editor.save_as_with(path, line_ending, release, window, cx)
+        });
+        let editor = editor.clone();
+        cx.spawn_in(window, async move |workbench, cx| {
+            let result = saved.await;
+            workbench
+                .update_in(cx, |workbench, window, cx| {
+                    if result.is_ok() {
+                        workbench.editor_moved(&editor, cx);
+                    }
+                    drop(reservation);
+                    let Err(error) = result else {
+                        return;
+                    };
+                    let detail = format!("{error:#}");
+                    drop(window.prompt(
+                        PromptLevel::Critical,
+                        &format!("“{name}” couldn’t be saved."),
+                        Some(&detail),
+                        &[PromptButton::ok("OK")],
+                        cx,
+                    ));
+                })
+                .ok();
+        })
+        .detach();
+    }
+
+    /// Whether a file `same` matches is in use here other than by `model`'s
+    /// buffer: shown in a tab (a read-only viewer's too), being read into
+    /// one, or the launch file the host is reading.
+    fn uses_file(&self, same: &dyn Fn(&Path) -> bool, model: &EditorModel, cx: &App) -> bool {
+        let panes = self.panes.panes();
+        let shown = (panes.iter())
+            .flat_map(|pane| pane.read(cx).tabs())
+            .any(|tab| {
+                let ours = (tab.editor())
+                    .is_some_and(|other| other.read(cx).model().shares_buffer_with(model));
+                !ours && tab.item().path(cx).is_some_and(|other| same(&other))
+            });
+        let reading = (panes.iter()).any(|pane| pane.read(cx).reading().any(same));
+        shown || reading || self.launch_reading().is_some_and(same)
+    }
+
+    /// After a Save As of `editor`'s buffer: the tabs take its path as it
+    /// is now, and its other editors detect their language from it.
+    fn editor_moved(&mut self, editor: &Entity<EditorView>, cx: &mut Context<Self>) {
+        for other in self.open_editors(cx) {
+            let shares = other != *editor
+                && (other.read(cx).model()).shares_buffer_with(editor.read(cx).model());
+            if shares {
+                other.update(cx, |other, cx| other.detect_language(cx));
+            }
+        }
+        for pane in self.panes.panes() {
+            pane.update(cx, |pane, cx| pane.sync_paths(cx));
+        }
+        self.track_editors(cx);
+        self.sync_lsp(cx);
+        cx.notify();
     }
 
     /// Opens the user's `settings.toml` in the active pane, creating it from
@@ -2016,8 +2212,15 @@ impl Workbench {
 
     /// The launch file the host is reading, until it lands: it opens in a
     /// tab then, whatever the pane has shown since.
+    /// Nothing once its pane has closed: [`Workbench::file_read`] drops it
+    /// then.
     pub(crate) fn launch_reading(&self) -> Option<&Path> {
-        self.launch_read.as_ref().map(|(path, _)| path.as_path())
+        let (path, pane) = self.launch_read.as_ref()?;
+        let pane = pane.upgrade()?;
+        self.panes
+            .panes()
+            .contains(&&pane)
+            .then_some(path.as_path())
     }
 
     /// Opens the host's read of the launch file, `Ok(Opened::Text(None))`

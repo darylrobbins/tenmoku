@@ -31,10 +31,10 @@ const SYNC_PARSE_BUDGET: Duration = Duration::from_millis(1);
 
 /// How much of the buffer's start is read for a shebang, when the path names
 /// no language.
+pub(crate) const DETECT_BYTES: usize = 512;
+
 /// The most text written to the primary selection, in bytes.
 const PRIMARY_SELECTION_MAX: usize = 1 << 20;
-
-const DETECT_BYTES: usize = 512;
 
 #[cfg(test)]
 pub(crate) type SyntaxHook = Box<dyn FnMut(&Syntax)>;
@@ -313,10 +313,7 @@ impl EditorView {
         crate::vim::register(&view.focus, cx);
         crate::hover::hide_on_escape(&mut view, cx);
         view.sync_vim(cx);
-        let text = view.model.text();
-        let start = text.slice_to_string(0..text.clip_offset(DETECT_BYTES, Bias::Left));
-        let language = fe_syntax::detect_language_name(view.model.path(), &start);
-        view.set_language(language, cx);
+        view.detect_language(cx);
         view
     }
 

@@ -468,6 +468,9 @@ pub(crate) struct Lsp {
     delivered: Vec<(u64, LspEvent, Option<bool>)>,
     /// Each shown buffer's file, resolved, or `None` if it can't be.
     resolved: HashMap<BufferId, Option<PathBuf>>,
+    /// The path each buffer's file was last resolved from, or is being:
+    /// a buffer saved under another name is resolved, and opened, anew.
+    resolved_from: HashMap<BufferId, PathBuf>,
     /// Every editor's hover and completion provider, following the
     /// manager.
     hover: Rc<LspHover>,
@@ -623,6 +626,7 @@ impl Lsp {
             #[cfg(test)]
             delivered: Vec::new(),
             resolved: HashMap::new(),
+            resolved_from: HashMap::new(),
             hover: Rc::default(),
             format_on_save: Rc::default(),
             save_hook: None,
@@ -743,6 +747,27 @@ impl Workbench {
         self.new_lsp_manager(cx);
     }
 
+    /// Closes `buffer`'s document on its server, if it has one, and forgets
+    /// its file: the next frame opens it afresh under the path it has then.
+    /// For a buffer about to be saved under another name, so the document
+    /// under the old one hears of no save.
+    pub(crate) fn lsp_release(&mut self, buffer: BufferId, cx: &mut Context<Self>) {
+        let lsp = &mut self.lsp;
+        lsp.resolved.remove(&buffer);
+        lsp.resolved_from.remove(&buffer);
+        lsp.resolving.remove(&buffer);
+        if let Some(document) = lsp.documents.remove(&buffer) {
+            let route = (document.server_name, document.path);
+            if lsp.owners.get(&route) == Some(&buffer) {
+                lsp.owners.remove(&route);
+            }
+        }
+        if let Some(manager) = lsp.manager.clone() {
+            lock(&manager).close(buffer);
+        }
+        cx.notify();
+    }
+
     /// Replaces the manager with one for the current root, or none: the old
     /// one's servers shut down, and the open buffers go to the new one at
     /// the next frame.
@@ -763,6 +788,7 @@ impl Workbench {
         lsp.servers.clear();
         lsp.messages.clear();
         lsp.resolved.clear();
+        lsp.resolved_from.clear();
         lsp.resolving.clear();
         lsp.retry.clear();
         lsp.root_failed = None;
@@ -1198,13 +1224,25 @@ impl Workbench {
             if !shown.insert(buffer) {
                 continue;
             }
+            // Saved under another name: closed, then opened under the new
+            // path once that's resolved, as a language change is.
+            let moved = lsp
+                .resolved_from
+                .get(&buffer)
+                .is_some_and(|from| from != path);
+            if moved {
+                lsp.resolved.remove(&buffer);
+                lsp.resolving.remove(&buffer);
+            }
             // Resolved while its language loads, if it does.
             if !lsp.resolved.contains_key(&buffer) && lsp.resolving.insert(buffer) {
+                lsp.resolved_from.insert(buffer, path.to_owned());
                 to_resolve.push((buffer, path.to_owned()));
                 to_follow.push(editor.clone());
             }
             let language = view.syntax().map(|syntax| syntax.language().name());
             match (documents.get(&buffer), language) {
+                _ if moved => {}
                 (Some(document), Some(language)) if document.language == language => continue,
                 (Some(_), _) if view.is_loading_language() => continue,
                 (None, None) => continue,
@@ -1311,6 +1349,7 @@ impl Workbench {
                 })
         });
         lsp.resolved.retain(|buffer, _| shown.contains(buffer));
+        lsp.resolved_from.retain(|buffer, _| shown.contains(buffer));
         lsp.retry.retain(|buffer, _| shown.contains(buffer));
         // Subscribed before the resolution starts, so a save while it runs
         // retries it.
@@ -1321,13 +1360,20 @@ impl Workbench {
         }
         let generation = lsp.generation;
         for (buffer, path) in to_resolve {
-            let resolved = cx.background_spawn(async move { resolve(&path) });
+            let resolved = cx.background_spawn({
+                let path = path.clone();
+                async move { resolve(&path) }
+            });
             cx.spawn(async move |workbench, cx| {
                 let resolved = resolved.await;
                 workbench
                     .update(cx, |workbench, cx| {
                         let lsp = &mut workbench.lsp;
-                        if lsp.generation != generation {
+                        // A buffer saved under another name since is being
+                        // resolved anew.
+                        if lsp.generation != generation
+                            || lsp.resolved_from.get(&buffer) != Some(&path)
+                        {
                             return;
                         }
                         lsp.resolving.remove(&buffer);

@@ -10,13 +10,14 @@
 //!   as accepting a completion is, so the editor's undo takes it back in one
 //!   step (it undoes only its own origin, which `Origin::Format` isn't);
 //!   selections stay anchored. If the buffer has changed since the request
-//!   (the user typed meanwhile) they're dropped, and nothing is shown.
+//!   (the user typed meanwhile, or saved it under another name) they're
+//!   dropped, and nothing is shown.
 //! - **No result.** A server with no formatter shows "No formatter for
 //!   <language>"; a timeout or an error shows itself. Both as info toasts.
 //! - **[`Workbench::format_buffer`]** is the same for the document, for
 //!   format on save, which reports what happened instead of showing it.
 
-use std::{cell::Cell, ops::Range, rc::Rc};
+use std::{cell::Cell, ops::Range, path::Path, rc::Rc};
 
 use fe_buffer::{Origin, ProposedChange};
 use fe_editor::IndentStyle;
@@ -88,7 +89,7 @@ impl Workbench {
         let Some(manager) = self.lsp.manager() else {
             return Task::ready(Ok(FormatOutcome::NoFormatter));
         };
-        let (buffer, version, range, options) = editor.update(cx, |view, _| {
+        let (buffer, version, path, range, options) = editor.update(cx, |view, _| {
             // Caught up first, so the rows, the selection and the version
             // describe the same text.
             let model = view.model_mut();
@@ -100,7 +101,8 @@ impl Workbench {
                 tab_size: model.tab_size() as u32,
                 insert_spaces,
             };
-            (buffer.id(), buffer.version(), range, options)
+            let path = model.path().map(Path::to_owned);
+            (buffer.id(), buffer.version(), path, range, options)
         });
         let reply = manager
             .lock()
@@ -117,6 +119,11 @@ impl Workbench {
             let outcome = editor.update(cx, |view, cx| {
                 let model = view.model_mut();
                 model.sync_display();
+                // Saved under another name since: the edits were for the
+                // document under the old one.
+                if model.path() != path.as_deref() {
+                    return FormatOutcome::Unchanged;
+                }
                 let mut buffer = model.buffer_mut();
                 if buffer.version() != version {
                     return FormatOutcome::Unchanged;

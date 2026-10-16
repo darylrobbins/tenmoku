@@ -27,7 +27,7 @@ use gpui::{
 };
 use kiln_shell::{CloseAnswer, PaneItem, StatusItem, StatusSide};
 
-use crate::{EditorSettings, EditorTheme, EditorView};
+use crate::{EditorSettings, EditorTheme, EditorView, commands::RunCommand};
 
 /// An editor's status bar items, while it's the active item: the vim mode
 /// with vim on, and vim's last message, on the left; the cursor,
@@ -186,6 +186,11 @@ impl EditorView {
     }
 }
 
+/// The host's command that asks where to save the active editor and saves
+/// it there ([`EditorView::save_as`]): what `editor.save` runs on an
+/// untitled buffer.
+pub const SAVE_AS: &str = "workbench.save_as";
+
 /// The buttons of the prompt before a save overwrites a file that changed
 /// on disk.
 const OVERWRITE_BUTTONS: [&str; 2] = ["Overwrite", "Cancel"];
@@ -282,6 +287,129 @@ impl EditorView {
     /// error. The save goes on if the task is dropped. Its prompts show in
     /// `window`.
     pub fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<gpui::Result<()>> {
+        let (previous, guard) = self.queue_save();
+        // With none running, the text as it is now, or as the hook leaves
+        // it; typing from here on is unsaved.
+        let hook = self.save_hook.clone();
+        let job = (previous.is_none() && hook.is_none()).then(|| self.model.prepare_save(false));
+        let editor = cx.entity();
+        let window = window.window_handle();
+        Self::spawn_save(cx, async move |this, cx| {
+            if let Some(previous) = previous {
+                previous.over.await.ok();
+            }
+            if let Some(hook) = hook {
+                let task = cx.update(|cx| hook.before_save(&editor, cx));
+                let limit = cx.background_executor().timer(SAVE_HOOK_LIMIT);
+                if let futures::future::Either::Right(_) =
+                    futures::future::select(task, limit).await
+                {
+                    log::debug!("the save hook took over {SAVE_HOOK_LIMIT:?}; saving anyway");
+                }
+            }
+            let saved = save_asking(this, job, window, cx).await;
+            drop(guard);
+            saved
+        })
+    }
+
+    /// Saves the buffer to `path`, as [`EditorView::save`] does, over the
+    /// file there if there is one (the save panel asked about replacing
+    /// it), then has it save there from now on: the tab, title and
+    /// breadcrumbs follow, in every editor over the buffer, and the language
+    /// is detected again from the new name. The old file is left as it
+    /// was. A failed save changes nothing, nor one whose file another
+    /// writer replaced before it was recorded ([`Saved::is_current`]).
+    pub fn save_as(
+        &mut self,
+        path: PathBuf,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<gpui::Result<()>> {
+        self.save_as_with(path, None, |_| {}, window, cx)
+    }
+
+    /// [`EditorView::save_as`], written with `line_ending` if given (the
+    /// new file's setting), which the buffer takes only once the save
+    /// commits ([`EditorModel::prepare_save_as`]). `before_commit` is called
+    /// once the file is written, just before the buffer takes `path` and is
+    /// marked saved, in the same turn: for the host to let go of what it
+    /// keeps of the buffer under its old path, such as a language server's
+    /// document, which would otherwise hear of the save. Saves of the buffer
+    /// asked for earlier are over by then, so the path changes in the order
+    /// asked.
+    pub fn save_as_with(
+        &mut self,
+        path: PathBuf,
+        line_ending: Option<fe_buffer::LineEnding>,
+        before_commit: impl FnOnce(&mut App) + 'static,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Task<gpui::Result<()>> {
+        let (previous, guard) = self.queue_save();
+        // With none running, the text as it is now; typing from here on is
+        // unsaved.
+        let job = previous
+            .is_none()
+            .then(|| self.model.prepare_save_as(path.clone(), line_ending));
+        Self::spawn_save(cx, async move |this, cx| {
+            if let Some(previous) = previous {
+                previous.over.await.ok();
+            }
+            let saved = async {
+                let job = match job {
+                    Some(job) => job,
+                    None => this.update(cx, |view, _| {
+                        view.model.prepare_save_as(path.clone(), line_ending)
+                    })?,
+                };
+                let saved = run(job, cx).await.map_err(io::Error::from)?;
+                // Written, then replaced by another writer: the buffer isn't
+                // what's there, so it stays where it was.
+                let replaced = || {
+                    let name = file_name(Some(&path));
+                    io::Error::other(format!("{name} was replaced while it was being saved"))
+                };
+                if !saved.is_current() {
+                    return Err(replaced().into());
+                }
+                cx.update(before_commit);
+                this.update(cx, |view, cx| {
+                    if !view.model.finish_save_as(saved) {
+                        return Err(replaced());
+                    }
+                    view.detect_language(cx);
+                    Ok(())
+                })??;
+                Ok(())
+            }
+            .await;
+            drop(guard);
+            saved
+        })
+    }
+
+    /// Highlights the buffer in the language its path and first lines say,
+    /// unless it already is.
+    pub fn detect_language(&mut self, cx: &mut Context<Self>) {
+        let text = self.model.text();
+        let start =
+            text.slice_to_string(0..text.clip_offset(crate::view::DETECT_BYTES, Bias::Left));
+        let language = fe_syntax::detect_language_name(self.model.path(), &start);
+        let current = match self.syntax() {
+            Some(syntax) => Some(syntax.language().name()),
+            None if self.is_loading_language() => None,
+            None => Some(""),
+        };
+        if current.is_none() || current != Some(language.unwrap_or("")) {
+            self.set_language(language, cx);
+        }
+        cx.notify();
+    }
+
+    /// Queues a save of the buffer: the save running or waiting before it,
+    /// if any, which it waits for, and what ends it in [`SAVES`].
+    fn queue_save(&self) -> (Option<RunningSave>, SaveGuard) {
         let buffer = self.model.buffer().id();
         let generation = NEXT_SAVE.replace(NEXT_SAVE.get() + 1);
         let (over, done) = oneshot::channel();
@@ -295,28 +423,18 @@ impl EditorView {
             generation,
             _over: over,
         };
-        // With none running, the text as it is now, or as the hook leaves
-        // it; typing from here on is unsaved.
-        let hook = self.save_hook.clone();
-        let job = (previous.is_none() && hook.is_none()).then(|| self.model.prepare_save(false));
-        let editor = cx.entity();
-        let window = window.window_handle();
+        (previous, guard)
+    }
+
+    /// Runs `save`, then redraws the view, which shows it saved; the task
+    /// resolves to its outcome. The save goes on if the task is dropped.
+    fn spawn_save(
+        cx: &mut Context<Self>,
+        save: impl AsyncFnOnce(&WeakEntity<Self>, &mut AsyncApp) -> gpui::Result<()> + 'static,
+    ) -> Task<gpui::Result<()>> {
         let (send, result) = oneshot::channel();
         cx.spawn(async move |this, cx| {
-            if let Some(previous) = previous {
-                previous.over.await.ok();
-            }
-            if let Some(hook) = hook {
-                let task = cx.update(|cx| hook.before_save(&editor, cx));
-                let limit = cx.background_executor().timer(SAVE_HOOK_LIMIT);
-                if let futures::future::Either::Right(_) =
-                    futures::future::select(task, limit).await
-                {
-                    log::debug!("the save hook took over {SAVE_HOOK_LIMIT:?}; saving anyway");
-                }
-            }
-            let saved = save_asking(&this, job, window, cx).await;
-            drop(guard);
+            let saved = save(&this, cx).await;
             this.update(cx, |_, cx| cx.notify()).ok();
             send.send(saved).ok();
         })
@@ -336,8 +454,18 @@ impl EditorView {
     }
 
     /// `editor.save` from a key or menu: [`EditorView::save`], showing why
-    /// it failed, unless the user cancelled it.
+    /// it failed, unless the user cancelled it. An untitled buffer runs
+    /// [`SAVE_AS`] instead, in the window's context, for the host to ask
+    /// where.
     pub(crate) fn save_from_command(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.model.path().is_none() {
+            let stack = crate::keymap::context_stack(&window.context_stack());
+            let invocation = Invocation::of(SAVE_AS)
+                .expect("a valid command ID")
+                .context(stack);
+            // Deferred: the view, which handles it first, is out until then.
+            return window.dispatch_action(Box::new(RunCommand(invocation)), cx);
+        }
         let saved = self.save(window, cx);
         let name = file_name(self.model.path());
         let window = window.window_handle();

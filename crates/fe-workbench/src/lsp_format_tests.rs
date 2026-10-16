@@ -233,6 +233,28 @@ fn stale_missing_and_slow(cx: &mut TestAppContext) {
     });
 }
 
+/// A format answered after the buffer was saved under another name is
+/// dropped: its edits were for the old file's document.
+#[gpui::test]
+fn a_format_across_a_save_as(cx: &mut TestAppContext) {
+    let (mut s, editor) = setup(cx, formatter());
+    s.fake.set_reply(
+        FORMATTING,
+        Scripted {
+            reply: Reply::Result(json!([edit(1, 1, 2, "ff")])),
+            delay: Duration::from_millis(300),
+        },
+    );
+    let task = (s.workbench).update(&mut s.cx, |w, cx| w.format_buffer(&editor, cx));
+    s.until("the request", |s| !requests(s, FORMATTING).is_empty());
+    let moved = s.path("src/moved.rs");
+    s.cx.update(|window, cx| {
+        (s.workbench.clone()).update(cx, |w, cx| w.save_editor_as(&editor, moved, window, cx))
+    });
+    assert_eq!(block(&mut s, task), Ok(FormatOutcome::Unchanged));
+    assert_eq!(text(&s, &editor), TABS);
+}
+
 /// `task`'s answer, drawing until it has one.
 fn block<T: 'static>(s: &mut Lsp, task: gpui::Task<T>) -> T {
     let answer = std::rc::Rc::new(std::cell::RefCell::new(None));

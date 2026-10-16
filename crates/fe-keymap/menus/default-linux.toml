@@ -7,6 +7,13 @@
 name = "File"
 
 [[menus.items]]
+title = "New File"
+command = "workbench.new_file"
+
+[[menus.items]]
+separator = true
+
+[[menus.items]]
 title = "Open Folder…"
 command = "workbench.open_folder"
 
@@ -28,6 +35,10 @@ separator = true
 [[menus.items]]
 title = "Save"
 command = "editor.save"
+
+[[menus.items]]
+title = "Save As…"
+command = "workbench.save_as"
 
 [[menus.items]]
 separator = true

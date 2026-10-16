@@ -328,6 +328,16 @@ command = "editor.save"
 context = "editor"
 
 [[bindings]]
+keys = "ctrl-n"
+command = "workbench.new_file"
+context = "workbench"
+
+[[bindings]]
+keys = "ctrl-shift-s"
+command = "workbench.save_as"
+context = "workbench"
+
+[[bindings]]
 keys = "ctrl-q"
 command = "app.quit"
 

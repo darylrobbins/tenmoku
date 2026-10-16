@@ -42,7 +42,7 @@ mod typing;
 mod viewer;
 
 pub use comment::CommentTokens;
-pub use disk::{SaveError, SaveJob, Saved};
+pub use disk::{SaveError, SaveJob, Saved, save_target};
 pub use indent_style::{IndentStyle, detect_indent_style};
 pub use multi_cursor::MAX_OCCURRENCES;
 pub use text_diff::{Hunk, HunkKind, Side, TextDiff};
@@ -123,7 +123,9 @@ pub struct EditorModel {
     tab_size: usize,
     /// What tab, indent and outdent use; `None` for `tab_size` spaces.
     indent_style: Option<IndentStyle>,
-    path: Option<PathBuf>,
+    /// The file it saves to, as last set through this model; the paths
+    /// set through its splits since follow on (see [`disk::PathLink`]).
+    path: Rc<disk::PathLink>,
     events: Subscription,
     /// Display rows: soft wrap and folds. Synced after each edit.
     display: DisplayMap,
@@ -168,6 +170,7 @@ impl EditorModel {
         let display = DisplayMap::new(&snapshot, 4);
         let indent_style = detect_indent_style(snapshot.text());
         let mut history = History::new(buffer.subscribe(), &snapshot);
+        history.stamped = path.clone();
         let caught_up = history.join(snapshot.version());
         let model = Self {
             buffer: Rc::new(RefCell::new(buffer)),
@@ -178,7 +181,7 @@ impl EditorModel {
             goals: Vec::new(),
             tab_size: 4,
             indent_style,
-            path,
+            path: disk::PathLink::new(path),
             events,
             display,
             widths: Box::new(Monospace),
@@ -234,7 +237,7 @@ impl EditorModel {
             goals: Vec::new(),
             tab_size: self.tab_size,
             indent_style: self.indent_style,
-            path: self.path.clone(),
+            path: Rc::clone(self.path.latest()),
             events,
             widths: Box::new(Monospace),
             soft_wrap: self.soft_wrap,
@@ -260,8 +263,10 @@ impl EditorModel {
         Rc::ptr_eq(&self.buffer, &other.buffer)
     }
 
+    /// The file it saves to: the path last set through this model or any
+    /// split of its buffer ([`EditorModel::set_path`]).
     pub fn path(&self) -> Option<&Path> {
-        self.path.as_deref()
+        self.path.latest().path()
     }
 
     /// The shared buffer, as it is now. Don't hold the borrow across calls
@@ -352,6 +357,8 @@ impl EditorModel {
         self.events.drain();
         self.poll_typing();
         self.forget_auto_closed();
+        // Lets go of the paths a split set since.
+        self.path = Rc::clone(self.path.latest());
     }
 
     /// The buffer's diagnostics in the text as of the last catch-up (see
@@ -1598,6 +1605,11 @@ struct History {
     /// How many saves have been prepared: a run of typing in any model
     /// ends at one, so its snapshot is an undo step's edge.
     save_marks: u64,
+    /// The file the buffer's [`DiskStamp`] is of: the one it was read
+    /// from, or last saved to or reloaded from. A save to the buffer's path
+    /// checks the stamp only while it's this file (see
+    /// [`EditorModel::prepare_save_to`]).
+    stamped: Option<PathBuf>,
 }
 
 struct Recorded {
@@ -1618,6 +1630,7 @@ impl History {
             models: Vec::new(),
             caret_picks: HashMap::new(),
             save_marks: 0,
+            stamped: None,
         }
     }
 

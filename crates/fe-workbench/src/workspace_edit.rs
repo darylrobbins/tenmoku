@@ -3,11 +3,13 @@
 //! [`FileEdits`], all or nothing as far as it can be.
 //!
 //! - **Checked first.** An open target's buffer must still be at the
-//!   version the edits are for, and shown in an editor. A closed target's
+//!   version the edits are for, shown in an editor, and at the file they're
+//!   for, not saved under another name since. A closed target's
 //!   file is resolved (symlinks and `..` followed, as the workbench resolves
 //!   the files it opens on servers), and must not be named twice, nor have
-//!   been opened since by any path to it: shown in an editor, or being read
-//!   into one (a host's read of the launch file included). It must read
+//!   been opened since by any path to it: shown in an editor, being read
+//!   into one (a host's read of the launch file included), or a pending
+//!   Save As's destination, which that save would overwrite. It must read
 //!   cleanly: it's read as the editor loads files
 //!   ([`loader::read`], detecting its encoding), refused if any of it isn't
 //!   valid in that encoding, its edits decoded ([`decode_closed`]) and
@@ -148,8 +150,13 @@ impl Workbench {
             } => {
                 let editor = (self.editors_of(buffer, cx).into_iter().next())
                     .ok_or_else(|| format!("{display} is no longer open"))?;
-                if editor.read(cx).model().buffer().version() != version {
+                let model = editor.read(cx).model();
+                if model.buffer().version() != version {
                     return Err(format!("{display} has changed since"));
+                }
+                let now = model.path().and_then(lsp::resolve);
+                if now.is_none() || now != lsp::resolve(&file.path) {
+                    return Err(format!("{display} has been saved under another name since"));
                 }
                 Ok(Checked::Open {
                     editor,
@@ -194,8 +201,9 @@ impl Workbench {
         }
     }
 
-    /// Every file an editor shows or a pane is reading into one, resolved,
-    /// with the paths they go by.
+    /// Every file an editor shows, a pane is reading into one, or a Save As
+    /// is to write ([`crate::open::reserve`]), resolved, with the paths they
+    /// go by.
     fn opened_files(&self, cx: &App) -> HashSet<PathBuf> {
         let shown = (self.open_editors(cx).iter())
             .filter_map(|editor| editor.read(cx).model().path().map(Path::to_owned))
@@ -209,7 +217,8 @@ impl Workbench {
             })
             .collect::<Vec<_>>();
         let launch = self.launch_reading().map(Path::to_owned);
-        (shown.into_iter().chain(reading).chain(launch))
+        let saving = crate::open::reserved_paths();
+        (shown.into_iter().chain(reading).chain(launch).chain(saving))
             .flat_map(|path| [lsp::resolve(&path), Some(path)])
             .flatten()
             .collect()

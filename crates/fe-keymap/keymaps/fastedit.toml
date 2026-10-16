@@ -380,6 +380,18 @@ keys = "secondary-s"
 command = "editor.save"
 context = "editor"
 
+# An untitled tab, and saving under another name: on an untitled tab,
+# `editor.save` asks where too.
+[[bindings]]
+keys = "secondary-n"
+command = "workbench.new_file"
+context = "workbench"
+
+[[bindings]]
+keys = "secondary-shift-s"
+command = "workbench.save_as"
+context = "workbench"
+
 [[bindings]]
 keys = "secondary-q"
 command = "app.quit"

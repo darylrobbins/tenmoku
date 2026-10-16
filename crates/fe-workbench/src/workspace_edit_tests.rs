@@ -527,6 +527,100 @@ fn the_launch_read(cx: &mut TestAppContext) {
     assert_eq!(texts, [UTF8]);
 }
 
+/// An edit for a buffer saved under another name since is refused: it
+/// was for the old file's document.
+#[gpui::test]
+fn an_edit_across_a_save_as(cx: &mut TestAppContext) {
+    let (mut s, server) = setup(cx);
+    let main = s.editor();
+    let edits = s.decode(
+        server,
+        vec![("src/main.rs", vec![edit((1, 4), (1, 5), "renamed")])],
+    );
+    let moved = s.path("src/moved.rs");
+    s.cx.update(|window, cx| {
+        (s.workbench.clone()).update(cx, |w, cx| w.save_editor_as(&main, moved, window, cx))
+    });
+    s.draw();
+    let error = s.apply(edits).unwrap_err();
+    assert!(
+        error.contains("main.rs") && error.contains("another name"),
+        "{error}"
+    );
+    assert_eq!(s.text(&main), MAIN);
+    assert_eq!(s.bytes("src/moved.rs"), MAIN.as_bytes());
+}
+
+/// A closed file a pending Save As is to write counts as opened: an edit
+/// to it is refused, so the save doesn't write over it unseen.
+#[gpui::test]
+fn an_edit_to_a_pending_save_as(cx: &mut TestAppContext) {
+    let (mut s, server) = setup(cx);
+    let main = s.editor();
+    let edits = s.decode(
+        server,
+        vec![("src/utf8.rs", vec![edit((1, 7), (1, 8), "renamed")])],
+    );
+    let utf8 = s.path("src/utf8.rs");
+    let workbench = s.workbench.clone();
+    // Held: the save doesn't run until the executor does.
+    s.cx.update(|window, cx| {
+        workbench.update(cx, |w, cx| w.save_editor_as(&main, utf8, window, cx))
+    });
+    let applied = workbench.update(&mut s.cx, |w, cx| w.apply_file_edits(edits, cx));
+    let error = applied.unwrap_err();
+    assert!(
+        error.contains("utf8.rs") && error.contains("opened"),
+        "{error}"
+    );
+    assert_eq!(s.bytes("src/utf8.rs"), UTF8.as_bytes());
+    s.draw();
+    assert_eq!(s.bytes("src/utf8.rs"), MAIN.as_bytes());
+}
+
+/// Once the launch pane has closed, its read will be dropped, so the file
+/// no longer counts as opened: an edit to it applies on disk.
+#[gpui::test]
+fn the_launch_read_after_its_pane_closed(cx: &mut TestAppContext) {
+    let (mut s, server) = setup(cx);
+    let path = s.path("src/utf8.rs");
+    let launch = crate::Launch {
+        root: Some(s.root.clone()),
+        file: Some((path.clone(), None)),
+    };
+    let (launched, mut cx) = crate::tests::lsp::window(&mut s.cx, launch);
+    let read = crate::loader::open(path.clone());
+    // Another pane opens a file, and the launch pane closes while reading.
+    cx.simulate_keystrokes("cmd-\\");
+    let right = launched.read_with(&cx, |w, _| w.pane().clone());
+    let lib = s.path("src/lib.rs");
+    cx.update(|window, cx| right.update(cx, |pane, cx| pane.open(lib, window, cx)));
+    cx.run_until_parked();
+    cx.simulate_keystrokes("cmd-k cmd-left cmd-k cmd-w");
+    cx.run_until_parked();
+    let panes = launched.read_with(&cx, |w, _| w.pane_group().panes().len());
+    assert_eq!(panes, 1);
+
+    let edits = s.decode(
+        server,
+        vec![("src/utf8.rs", vec![edit((1, 7), (1, 8), "renamed")])],
+    );
+    let applied = launched.update(&mut cx, |w, cx| w.apply_file_edits(edits, cx));
+    applied.unwrap();
+    assert_ne!(s.bytes("src/utf8.rs"), UTF8.as_bytes());
+
+    // The read lands, and is dropped.
+    cx.update(|window, cx| {
+        launched.update(cx, |w, cx| w.file_read(path.clone(), read, window, cx))
+    });
+    cx.run_until_parked();
+    let shown = cx.update(|_, cx| {
+        let editors = launched.read(cx).open_editors(cx);
+        (editors.iter()).any(|editor| editor.read(cx).model().path() == Some(path.as_path()))
+    });
+    assert!(!shown);
+}
+
 #[gpui::test]
 fn a_file_that_doesnt_read_cleanly(cx: &mut TestAppContext) {
     let (mut s, server) = setup(cx);

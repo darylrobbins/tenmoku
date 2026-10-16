@@ -561,6 +561,12 @@ impl Pane {
     ) {
         self.reveal = None;
         self.open_serial += 1;
+        if crate::open::any_reserved() {
+            let identity = crate::open::file_identity(&path);
+            if let Some((_, over)) = crate::open::reserved(&path, identity.as_deref()) {
+                return self.open_once_saved(path, reveal, over, window, cx);
+            }
+        }
         if let Some(ix) = self.position(&path) {
             self.activate(ix, window, cx);
             if let Some(reveal) = reveal {
@@ -596,6 +602,39 @@ impl Pane {
                 let result = read.await;
                 pane.update_in(cx, |pane, window, cx| {
                     pane.file_read(path, result, window, cx)
+                })
+                .ok();
+            }
+        });
+        self.reads.insert(path, task);
+    }
+
+    /// Shows `path` being opened until the Save As holding it is over
+    /// (`over` closes), then opens it, if it's still the file opened last:
+    /// in the tab saved there, if the save went through.
+    fn open_once_saved(
+        &mut self,
+        path: PathBuf,
+        reveal: Option<Reveal>,
+        over: async_channel::Receiver<()>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.opening = Some(path.clone());
+        self.error = None;
+        self.note_shown(cx);
+        window.focus(self.state.focus(), cx);
+        cx.notify();
+        let task = cx.spawn_in(window, {
+            let path = path.clone();
+            async move |pane, cx| {
+                over.recv().await.ok();
+                pane.update_in(cx, |pane, window, cx| {
+                    pane.reads.remove(&path);
+                    if pane.opening.as_ref() == Some(&path) {
+                        pane.opening = None;
+                        pane.open_at(path, reveal, window, cx);
+                    }
                 })
                 .ok();
             }
@@ -816,6 +855,33 @@ impl Pane {
         cx.notify();
     }
 
+    /// Has each tab take its item's path as it is now: after a save under
+    /// another name. An editor whose path changed drops the old file's
+    /// `.editorconfig` properties for the settings' tab size and the
+    /// indentation its text shows, then reads the new file's.
+    pub(crate) fn sync_paths(&mut self, cx: &mut Context<Self>) {
+        for tab in &mut self.tabs {
+            let path = tab.item.path(cx);
+            if tab.path == path {
+                continue;
+            }
+            tab.path = path;
+            let Some(editor) = tab.editor() else {
+                continue;
+            };
+            let tab_size = self.settings.tab_size;
+            editor.update(cx, |editor, cx| {
+                let model = editor.model_mut();
+                model.set_tab_size(tab_size);
+                let detected = fe_editor::detect_indent_style(model.text());
+                model.set_indent_style(detected);
+                cx.notify();
+            });
+            configs::read(editor, cx);
+        }
+        cx.notify();
+    }
+
     pub(crate) fn position(&self, path: &Path) -> Option<usize> {
         self.tabs
             .iter()
@@ -865,7 +931,10 @@ impl Pane {
 /// The `.editorconfig` properties of the editors open, read once per
 /// editor whichever pane it's in, so they follow it as its tab moves.
 mod configs {
-    use std::collections::HashMap;
+    use std::{
+        collections::HashMap,
+        path::{Path, PathBuf},
+    };
 
     use fe_config::{EditorConfig, editorconfig_for};
     use fe_gpui::EditorView;
@@ -876,20 +945,24 @@ mod configs {
     /// Kept for the settings reloads and the save card.
     #[derive(Default)]
     struct Configs {
-        /// `None` while the read runs.
-        editors: HashMap<EntityId, (WeakEntity<EditorView>, Option<EditorConfig>)>,
+        /// Each editor's, of the file it was read for; `None` while the
+        /// read runs.
+        editors: HashMap<EntityId, (WeakEntity<EditorView>, PathBuf, Option<EditorConfig>)>,
     }
 
     impl Global for Configs {}
 
+    /// `editor`'s, if read for the file it has now.
     pub(super) fn get(editor: EntityId, cx: &App) -> Option<EditorConfig> {
         let configs = cx.try_global::<Configs>()?;
-        configs.editors.get(&editor)?.1
+        let (weak, path, config) = configs.editors.get(&editor)?;
+        let now = weak.upgrade()?.read(cx).model().path().map(Path::to_owned);
+        (now.as_ref() == Some(path)).then_some(*config)?
     }
 
     /// Starts reading `editor`'s file's properties in the background, unless
-    /// they're read or being read, and applies them once read, if the
-    /// editor is still open.
+    /// they're read or being read for that file, and applies them once read,
+    /// if the editor is still open, at that file.
     pub(super) fn read(editor: &Entity<EditorView>, cx: &mut App) {
         let Some(path) = editor.read(cx).model().path().map(ToOwned::to_owned) else {
             return;
@@ -898,12 +971,21 @@ mod configs {
         let configs = cx.default_global::<Configs>();
         configs
             .editors
-            .retain(|_, (editor, _)| editor.upgrade().is_some());
-        if configs.editors.contains_key(&id) {
+            .retain(|_, (editor, _, _)| editor.upgrade().is_some());
+        if configs
+            .editors
+            .get(&id)
+            .is_some_and(|(_, read, _)| *read == path)
+        {
             return;
         }
-        configs.editors.insert(id, (editor.downgrade(), None));
-        let read = cx.background_spawn(async move { editorconfig_for(&path) });
+        configs
+            .editors
+            .insert(id, (editor.downgrade(), path.clone(), None));
+        let read = cx.background_spawn({
+            let path = path.clone();
+            async move { editorconfig_for(&path) }
+        });
         let weak = editor.downgrade();
         cx.spawn(async move |cx| {
             let config = read.await;
@@ -911,9 +993,13 @@ mod configs {
                 let Some(editor) = weak.upgrade() else {
                     return;
                 };
+                // Read for a file the editor has left since.
+                if editor.read(cx).model().path() != Some(path.as_path()) {
+                    return;
+                }
                 cx.default_global::<Configs>()
                     .editors
-                    .insert(id, (weak, Some(config)));
+                    .insert(id, (weak, path, Some(config)));
                 editor.update(cx, |editor, cx| {
                     apply_config(editor.model_mut(), &config);
                     cx.notify();
@@ -921,6 +1007,16 @@ mod configs {
             });
         })
         .detach();
+    }
+}
+
+/// The line ending `config` has its file written with, if it sets one
+/// fastedit writes.
+pub(crate) fn config_line_ending(config: &EditorConfig) -> Option<fe_buffer::LineEnding> {
+    match config.end_of_line {
+        Some(EndOfLine::Lf) => Some(fe_buffer::LineEnding::Lf),
+        Some(EndOfLine::Crlf) => Some(fe_buffer::LineEnding::CrLf),
+        Some(EndOfLine::Cr) | None => None,
     }
 }
 
@@ -944,12 +1040,7 @@ fn apply_config(model: &mut EditorModel, config: &EditorConfig) {
     if let Some(width) = config.tab_width {
         model.set_tab_size(width);
     }
-    let ending = match config.end_of_line {
-        Some(EndOfLine::Lf) => Some(fe_buffer::LineEnding::Lf),
-        Some(EndOfLine::Crlf) => Some(fe_buffer::LineEnding::CrLf),
-        Some(EndOfLine::Cr) | None => None,
-    };
-    if let Some(ending) = ending
+    if let Some(ending) = config_line_ending(config)
         && model.buffer().line_ending() != ending
     {
         model.buffer_mut().set_line_ending(ending);

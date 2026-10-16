@@ -1,15 +1,19 @@
-//! Opening a folder or a file from the system's open panel.
+//! Opening a folder or a file from the system's open panel, and a new
+//! untitled file, saved where the save panel says.
 //!
 //! Its commands are those of [`init`]'s registry, in the workbench's
 //! [`crate::KEY_CONTEXT`]. Their handlers only name an op: the workbench
 //! then shows the panel, and does what its answer asks with the window at
 //! hand: a folder re-roots the workbench in place
 //! ([`crate::Workbench::set_root`]), and a file opens in the active pane.
+//! New File opens an untitled tab in the active pane; Save As… asks where
+//! to save the active editor, which then saves there.
 //! `window.new` opens a window on the same folder, and Open Folder in New
 //! Window one on the folder picked, through the host's opener
 //! ([`set_window_opener`]).
 
 use std::{
+    cell::{Cell, RefCell},
     fs,
     io::{self, Write as _},
     path::{Path, PathBuf},
@@ -20,6 +24,7 @@ use std::{
     },
 };
 
+use fe_buffer::BufferId;
 use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry};
 use fe_gpui::commands::RunCommand;
 use gpui::{App, Global, PathPromptOptions};
@@ -37,14 +42,22 @@ pub(crate) enum OpenOp {
     NewWindow,
     /// Pick a folder to open in a new window.
     FolderInNewWindow,
+    /// Open an untitled tab in the active pane (`workbench.new_file`).
+    NewFile,
+    /// Pick where to save the active editor, and save it there
+    /// (`workbench.save_as`): the save panel, not the open panel.
+    SaveAs,
 }
 
 impl OpenOp {
     /// How the open panel is shown for it: one folder, or one file.
     pub(crate) fn prompt(self) -> PathPromptOptions {
         debug_assert!(
-            !matches!(self, OpenOp::Settings | OpenOp::NewWindow),
-            "settings and a new window need no open panel"
+            matches!(
+                self,
+                OpenOp::Folder | OpenOp::File | OpenOp::FolderInNewWindow
+            ),
+            "only folders and files are picked in the open panel"
         );
         let folder = matches!(self, OpenOp::Folder | OpenOp::FolderInNewWindow);
         PathPromptOptions {
@@ -109,6 +122,8 @@ pub(crate) fn registry() -> Registry<OpenCommands> {
             "Open Folder in New Window…",
             OpenOp::FolderInNewWindow,
         ),
+        ("workbench.new_file", "New File", OpenOp::NewFile),
+        (fe_gpui::pane_item::SAVE_AS, "Save As…", OpenOp::SaveAs),
     ];
     let mut registry = Registry::new();
     for (id, title, op) in commands {
@@ -132,6 +147,102 @@ pub(crate) fn op(run: &RunCommand, cx: &App) -> Option<OpenOp> {
         log::warn!("{error}");
     }
     op
+}
+
+#[cfg(test)]
+#[path = "save_as_tests.rs"]
+mod save_as_tests;
+
+/// Which file a save to `path` writes, to tell two paths to one file apart
+/// from two files: the target a save follows symlinks to
+/// ([`fe_editor::save_target`]), dangling ones too, resolved through `..`
+/// and its folder's symlinks. `None` if that can't be found.
+pub(crate) fn file_identity(path: &Path) -> Option<PathBuf> {
+    crate::lsp::resolve(&fe_editor::save_target(path).ok()?)
+}
+
+/// A Save As destination, held from the moment it's chosen until the
+/// workbench has taken in how its save went (the buffer at the new path,
+/// the tabs following it), whatever happens to the tab meanwhile: no other
+/// buffer saves there, and an open of it waits ([`reserved`]). Dropping it
+/// lets go.
+pub(crate) struct Reservation {
+    id: u64,
+    _over: async_channel::Sender<()>,
+}
+
+struct Held {
+    id: u64,
+    buffer: BufferId,
+    path: PathBuf,
+    identity: Option<PathBuf>,
+    /// Closes once let go.
+    over: async_channel::Receiver<()>,
+}
+
+thread_local! {
+    /// The destinations held. GPUI runs on one thread.
+    static RESERVED: RefCell<Vec<Held>> = const { RefCell::new(Vec::new()) };
+    static NEXT_RESERVATION: Cell<u64> = const { Cell::new(0) };
+}
+
+/// Holds `path`, which is `identity` ([`file_identity`]), for a Save As of
+/// `buffer`.
+pub(crate) fn reserve(buffer: BufferId, path: PathBuf, identity: Option<PathBuf>) -> Reservation {
+    let id = NEXT_RESERVATION.replace(NEXT_RESERVATION.get() + 1);
+    let (over, done) = async_channel::bounded(1);
+    RESERVED.with_borrow_mut(|held| {
+        held.push(Held {
+            id,
+            buffer,
+            path,
+            identity,
+            over: done,
+        })
+    });
+    Reservation { id, _over: over }
+}
+
+impl Drop for Reservation {
+    fn drop(&mut self) {
+        let id = self.id;
+        RESERVED
+            .try_with(|held| held.borrow_mut().retain(|held| held.id != id))
+            .ok();
+    }
+}
+
+/// The buffer holding a Save As destination that's `path` or `identity`,
+/// and a channel that closes once it's let go; `None` if none is held
+/// there.
+pub(crate) fn reserved(
+    path: &Path,
+    identity: Option<&Path>,
+) -> Option<(BufferId, async_channel::Receiver<()>)> {
+    RESERVED.with_borrow(|held| {
+        held.iter()
+            .find(|held| {
+                held.path == path || identity.is_some() && held.identity.as_deref() == identity
+            })
+            .map(|held| (held.buffer, held.over.clone()))
+    })
+}
+
+/// Every Save As destination held, by the path it was chosen as and the
+/// file that is ([`file_identity`]).
+pub(crate) fn reserved_paths() -> Vec<PathBuf> {
+    RESERVED.with_borrow(|held| {
+        (held.iter())
+            .flat_map(|held| [Some(held.path.clone()), held.identity.clone()])
+            .flatten()
+            .collect()
+    })
+}
+
+/// Whether any Save As destination is held: until one is, an open needn't
+/// resolve its path to look.
+pub(crate) fn any_reserved() -> bool {
+    RESERVED.with_borrow(|held| !held.is_empty())
 }
 
 /// Where the tests say the user's config directory is, instead of the

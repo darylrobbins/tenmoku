@@ -568,22 +568,26 @@ fn workbenches(cx: &App) -> impl Iterator<Item = &Workbench> {
 }
 
 /// Whether a pane of any window is reading the file at `path`, resolved,
-/// into an editor, the host's launch read included.
+/// into an editor, the host's launch read included, or a pending Save As
+/// is to write it ([`crate::open::reserve`]): it lands in an editor then.
 fn being_read(path: &Path, cx: &App) -> bool {
-    workbenches(cx).any(|workbench| {
-        let panes = workbench.pane_group().panes();
-        let reading = (panes.iter())
-            .flat_map(|pane| {
-                pane.read(cx)
-                    .reading()
-                    .map(Path::to_owned)
-                    .collect::<Vec<_>>()
-            })
-            .chain(workbench.launch_reading().map(Path::to_owned));
-        reading
-            .map(|reading| lsp::resolve(&reading).unwrap_or(reading))
-            .any(|reading| reading == path)
-    })
+    let saving = (crate::open::reserved_paths().into_iter())
+        .any(|saving| lsp::resolve(&saving).unwrap_or(saving) == path);
+    saving
+        || workbenches(cx).any(|workbench| {
+            let panes = workbench.pane_group().panes();
+            let reading = (panes.iter())
+                .flat_map(|pane| {
+                    pane.read(cx)
+                        .reading()
+                        .map(Path::to_owned)
+                        .collect::<Vec<_>>()
+                })
+                .chain(workbench.launch_reading().map(Path::to_owned));
+            reading
+                .map(|reading| lsp::resolve(&reading).unwrap_or(reading))
+                .any(|reading| reading == path)
+        })
 }
 
 /// Until no pane is reading the file at `path`, resolved, however long

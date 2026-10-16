@@ -3,11 +3,13 @@
 //! read.
 
 use std::{
+    cell::OnceCell,
     fmt, io,
     path::{Path, PathBuf},
+    rc::Rc,
 };
 
-use fe_buffer::{DecodedFile, DiskStamp, Origin, SaveSnapshot, TransactionId};
+use fe_buffer::{DecodedFile, DiskStamp, LineEnding, Origin, SaveSnapshot, TransactionId};
 
 use crate::EditorModel;
 
@@ -83,6 +85,12 @@ impl Saved {
     /// The new file's stamp.
     pub fn stamp(&self) -> Option<DiskStamp> {
         self.stamp
+    }
+
+    /// Whether the file is still the one this save wrote: no other save or
+    /// writer has replaced it since.
+    pub fn is_current(&self) -> bool {
+        DiskStamp::of(&self.path).ok().flatten() == self.stamp
     }
 }
 
@@ -212,6 +220,14 @@ fn ensure_regular(path: &Path) -> io::Result<()> {
     }
 }
 
+/// The file a save to `path` writes, as [`SaveJob::run`] finds it: `path`
+/// canonical if it exists, else with its symlinks followed, even when the
+/// last one's target is missing. Two paths that give the same target save
+/// to one file.
+pub fn save_target(path: &Path) -> io::Result<PathBuf> {
+    resolve(path)
+}
+
 /// The file a save to `path` writes: `path` with its symlinks resolved,
 /// even when the last one's target is missing, so a save recreates the
 /// target rather than replacing the link.
@@ -240,25 +256,120 @@ fn resolve(path: &Path) -> io::Result<PathBuf> {
     Err(io::Error::other("too many levels of symbolic links"))
 }
 
+/// A buffer's path as the models of it share it: one set through any
+/// model is linked from the one before, so every model, from the link it
+/// holds, reads the latest by following the links, through `&self`.
+pub(crate) struct PathLink {
+    path: Option<PathBuf>,
+    next: OnceCell<Rc<PathLink>>,
+}
+
+impl PathLink {
+    pub(crate) fn new(path: Option<PathBuf>) -> Rc<Self> {
+        Rc::new(PathLink {
+            path,
+            next: OnceCell::new(),
+        })
+    }
+
+    pub(crate) fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
+    /// The last link from this one: the path set last.
+    pub(crate) fn latest(self: &Rc<Self>) -> &Rc<Self> {
+        let mut link = self;
+        while let Some(next) = link.next.get() {
+            link = next;
+        }
+        link
+    }
+}
+
 impl EditorModel {
+    /// Has the buffer save to `path` from now on, `None` making it
+    /// untitled, in this model and every split of it. The file isn't
+    /// touched: see [`EditorModel::prepare_save_to`] to write it there. The
+    /// buffer's stamp stays that of the file it was read from or saved to,
+    /// so a save to `path` before one records it there doesn't check it.
+    pub fn set_path(&mut self, path: Option<PathBuf>) {
+        let link = PathLink::new(path);
+        self.path
+            .latest()
+            .next
+            .set(Rc::clone(&link))
+            .unwrap_or_else(|_| unreachable!("the latest link has no next"));
+        self.path = link;
+    }
+
     /// A save of the buffer as it is now, to [run](SaveJob::run) on any
     /// thread and then [finish](EditorModel::finish_save). Unless
     /// `overwrite`, it refuses a file changed since it was read. Fails with
     /// [`io::ErrorKind::NotFound`] for a buffer with no path.
     pub fn prepare_save(&self, overwrite: bool) -> io::Result<SaveJob> {
         let path = self
-            .path
-            .clone()
+            .path()
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "buffer has no path"))?;
+        Ok(self.prepare_save_to(path.to_owned(), overwrite))
+    }
+
+    /// [`EditorModel::prepare_save`], to `path` rather than the buffer's
+    /// own file; it doesn't [set the path](EditorModel::set_path). Unless
+    /// `overwrite`, it refuses the file the buffer's stamp is of if it
+    /// changed since, and any other file that exists, except the buffer's
+    /// own path: one it was given since its stamp, which isn't checked.
+    pub fn prepare_save_to(&self, path: PathBuf, overwrite: bool) -> SaveJob {
+        let mut history = self.history.borrow_mut();
         // Typing after this point is a step of its own, in any split.
-        self.history.borrow_mut().save_marks += 1;
+        history.save_marks += 1;
         let buffer = self.buffer.borrow();
-        Ok(SaveJob {
+        let expected = if history.stamped.as_ref() == Some(&path) {
+            buffer.disk_stamp_known().then(|| buffer.disk_stamp())
+        } else if self.path() == Some(path.as_path()) {
+            None
+        } else {
+            Some(None)
+        };
+        SaveJob {
             path,
             snapshot: buffer.save_snapshot(),
-            expected: buffer.disk_stamp_known().then(|| buffer.disk_stamp()),
+            expected,
             overwrite,
-        })
+        }
+    }
+
+    /// A save of the buffer as it is now to `path`, over any file there,
+    /// for a Save As: written with `line_ending` if given (the new file's
+    /// setting), the buffer's own left as it is. Once it's written,
+    /// [`EditorModel::finish_save_as`] records it.
+    pub fn prepare_save_as(&self, path: PathBuf, line_ending: Option<LineEnding>) -> SaveJob {
+        let Some(ending) = line_ending else {
+            return self.prepare_save_to(path, true);
+        };
+        let own = self.buffer.borrow().line_ending();
+        self.buffer.borrow_mut().set_line_ending(ending);
+        let job = self.prepare_save_to(path, true);
+        self.buffer.borrow_mut().set_line_ending(own);
+        job
+    }
+
+    /// Records a finished Save As: the buffer saves to its file from now
+    /// on ([`EditorModel::set_path`]), with the line ending it was written
+    /// with, and is clean unless edited since, as [`EditorModel::finish_save`]
+    /// has it. Returns whether it was recorded. It isn't, and nothing
+    /// changes, when the file is no longer the one the save wrote
+    /// ([`Saved::is_current`]): the buffer isn't what's there.
+    pub fn finish_save_as(&mut self, saved: Saved) -> bool {
+        if !saved.is_current() {
+            return false;
+        }
+        self.set_path(Some(saved.path.clone()));
+        let mut buffer = self.buffer.borrow_mut();
+        buffer.set_line_ending(saved.snapshot.line_ending());
+        buffer.did_save_snapshot(&saved.snapshot, saved.stamp);
+        drop(buffer);
+        self.history.borrow_mut().stamped = Some(saved.path);
+        true
     }
 
     /// Records a finished save: the buffer is clean unless edited since the
@@ -273,6 +384,7 @@ impl EditorModel {
             return false;
         }
         buffer.did_save_snapshot(&saved.snapshot, saved.stamp);
+        self.history.borrow_mut().stamped = Some(saved.path);
         true
     }
 
@@ -303,6 +415,7 @@ impl EditorModel {
         self.sync_display();
         self.end_typing();
         let id = self.buffer.borrow_mut().reload(file, stamp, Origin::User);
+        self.history.borrow_mut().stamped = self.path().map(Path::to_owned);
         self.sync_display();
         id
     }
@@ -355,6 +468,91 @@ mod tests {
         job.run_with(|| std::fs::write(&path, "again").unwrap())
             .unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "mine");
+    }
+
+    #[test]
+    fn a_path_set_through_one_split_is_every_splits() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a.txt"), dir.path().join("b.txt"));
+        std::fs::write(&a, "a").unwrap();
+        let mut model = EditorModel::open(&a).unwrap();
+        let mut split = model.split();
+        model.insert("new ");
+        let saved = model.prepare_save_to(b.clone(), true).run().unwrap();
+        model.finish_save(saved);
+        model.set_path(Some(b.clone()));
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "a", "left as it was");
+        assert_eq!(std::fs::read_to_string(&b).unwrap(), "new a");
+        for view in [&model, &split] {
+            assert_eq!(view.path(), Some(b.as_path()));
+            assert!(!view.is_dirty());
+        }
+
+        split.set_path(None);
+        split.sync_display();
+        assert_eq!(model.path(), None);
+        assert_eq!(model.split().path(), None);
+        model.set_path(Some(a.clone()));
+        assert_eq!(split.path(), Some(a.as_path()));
+
+        // Not overwriting, another file that exists is refused.
+        let c = dir.path().join("c.txt");
+        std::fs::write(&c, "c").unwrap();
+        let result = model.prepare_save_to(c, false).run();
+        assert!(matches!(result, Err(SaveError::ChangedOnDisk)));
+
+        // Its own path, given since its stamp (b's), isn't checked.
+        std::fs::write(&a, "theirs").unwrap();
+        model.save().unwrap();
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "new a");
+        // Saved there, it's checked from then on.
+        std::fs::write(&a, "theirs again").unwrap();
+        let error = model.save().unwrap_err();
+        assert!(matches!(
+            error.get_ref().and_then(|e| e.downcast_ref()),
+            Some(SaveError::ChangedOnDisk)
+        ));
+    }
+
+    #[test]
+    fn a_save_as_replaced_before_its_recorded() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a.txt"), dir.path().join("b.txt"));
+        std::fs::write(&a, "x\n").unwrap();
+        let mut model = EditorModel::open(&a).unwrap();
+        model.insert("new ");
+        let saved = (model.prepare_save_as(b.clone(), Some(LineEnding::CrLf)))
+            .run()
+            .unwrap();
+        std::fs::write(&b, "theirs").unwrap();
+        assert!(!saved.is_current());
+        assert!(!model.finish_save_as(saved));
+        // Nothing moved: a.txt's buffer, its line ending, unsaved.
+        assert_eq!(model.path(), Some(a.as_path()));
+        assert_eq!(model.buffer().line_ending(), LineEnding::Lf);
+        assert!(model.is_dirty());
+        assert_eq!(std::fs::read_to_string(&b).unwrap(), "theirs");
+        // And a.txt's stamp still guards it.
+        std::fs::write(&a, "changed").unwrap();
+        assert!(model.save().is_err());
+    }
+
+    #[test]
+    fn a_save_as_with_another_line_ending() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a.txt"), dir.path().join("b.txt"));
+        std::fs::write(&a, "x\ny\n").unwrap();
+        let mut model = EditorModel::open(&a).unwrap();
+        let job = model.prepare_save_as(b.clone(), Some(LineEnding::CrLf));
+        // Not until it's recorded.
+        assert_eq!(model.buffer().line_ending(), LineEnding::Lf);
+        assert!(!model.is_dirty());
+        let saved = job.run().unwrap();
+        assert_eq!(std::fs::read(&b).unwrap(), b"x\r\ny\r\n");
+        assert!(model.finish_save_as(saved));
+        assert_eq!(model.path(), Some(b.as_path()));
+        assert_eq!(model.buffer().line_ending(), LineEnding::CrLf);
+        assert!(!model.is_dirty());
     }
 
     #[cfg(unix)]
