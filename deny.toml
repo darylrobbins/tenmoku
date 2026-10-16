@@ -44,6 +44,15 @@ ignore = true
 multiple-versions = "allow"
 wildcards = "deny"
 allow-wildcard-paths = true
+# The plan's "Do not use" list; each reason names the replacement.
+deny = [
+    { crate = "tree-sitter-language-pack", reason = "bundles GPL/WTFPL grammars; add grammars one crate each through fe-syntax features" },
+    { crate = "stack-graphs", reason = "archived; navigation is fe-nav's tags index, then the LSP, then SCIP" },
+    { crate = "nucleo", reason = "MPL-2.0; fuzzy matching is frizbee" },
+    { crate = "nucleo-matcher", reason = "MPL-2.0; fuzzy matching is frizbee" },
+    { crate = "tree-house", reason = "MPL-2.0 and needs ropey 1.x; highlighting is fe-syntax's own" },
+    { crate = "tree-house-bindings", reason = "MPL-2.0 and needs ropey 1.x; highlighting is fe-syntax's own" },
+]
 
 [advisories]
 # Vulnerabilities fail everywhere. "Unmaintained" fails only for our direct
