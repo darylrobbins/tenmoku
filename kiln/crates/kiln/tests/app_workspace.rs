@@ -509,7 +509,14 @@ fn root_opens_a_root_window_that_saves_no_layout(cx: &mut TestAppContext) {
 #[gpui::test]
 fn with_neither_a_root_nor_an_item_start_panics_naming_both(cx: &mut TestAppContext) {
     let dir = TempDir::new();
-    let app = kiln::app(ID, NAME).paths(dir.paths()).status(count);
+    // `start` runs `init`, and so the config service, before it checks for a
+    // window; take changes from our own channel so the real watcher thread
+    // never wakes the test scheduler.
+    let (_, closed) = batch_channel();
+    let app = kiln::app(ID, NAME)
+        .paths(dir.paths())
+        .status(count)
+        .config(move |config| config.watch_with(closed));
     let message = start_panic(app, cx).expect("start panics");
     assert!(message.contains(".root(..)"), "{message}");
     assert!(message.contains(".item::<T>()"), "{message}");
