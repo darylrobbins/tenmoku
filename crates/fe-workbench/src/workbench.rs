@@ -10,7 +10,7 @@ use std::{
 
 use fe_buffer::Buffer;
 use fe_config::TerminalSettings;
-use fe_editor::EditorModel;
+use fe_editor::{EditorModel, save_target};
 use fe_git::ChangeKind;
 use fe_gpui::{
     DiffView, EditorSettings, EditorTheme, EditorView, SettingsEvent, commands::RunCommand,
@@ -18,8 +18,9 @@ use fe_gpui::{
 use fe_ui::{ROW_HEIGHT, UiTheme};
 use gpui::{
     AnyView, App, AppContext as _, Context, Entity, EntityId, EventEmitter, ExternalPaths,
-    FocusHandle, Focusable, InteractiveElement as _, IntoElement, ParentElement as _, PromptButton,
-    PromptLevel, Render, Styled as _, Subscription, WeakEntity, Window, WindowBounds, div, px,
+    FocusHandle, Focusable, Global, InteractiveElement as _, IntoElement, ParentElement as _,
+    PromptButton, PromptLevel, Render, Styled as _, Subscription, WeakEntity, Window, WindowBounds,
+    div, px,
 };
 
 use self::recent_picker::{RecentOp, RecentPicker};
@@ -192,9 +193,17 @@ pub struct Workbench {
     /// Per pane: its notifications, its events, tabs dropped on it and its
     /// toolbar's requests.
     pane_subscriptions: HashMap<EntityId, [Subscription; 4]>,
-    /// Per open editor: its notifications, passed on to the editors that
-    /// share its buffer.
-    editors: HashMap<EntityId, Subscription>,
+    /// Per open editor: the editor, held until its tab's close is seen
+    /// here, and its notifications, passed on to the editors that share its
+    /// buffer.
+    editors: HashMap<EntityId, (Entity<EditorView>, Subscription)>,
+    /// Per pane, the file the project panel last opened there, until its
+    /// editor shows (an open can wait behind a Save As): for vim's normal
+    /// mode then ([`Workbench::open_from_tree`]).
+    tree_opens: HashMap<EntityId, (PathBuf, Subscription)>,
+    /// Hands the editors still saving to [`DetachedSaves`] as the
+    /// workbench goes, with its window.
+    _release: Subscription,
     /// Editors notified because an editor sharing their buffer was, so their
     /// own notification isn't passed back.
     echoes: HashSet<EntityId>,
@@ -486,6 +495,11 @@ impl Workbench {
             peers: Peers::default(),
             pane_subscriptions: HashMap::new(),
             editors: HashMap::new(),
+            tree_opens: HashMap::new(),
+            _release: cx.on_release(|workbench, cx| {
+                let editors = workbench.editors.drain().map(|(_, (editor, _))| editor);
+                DetachedSaves::keep(editors, cx);
+            }),
             echoes: HashSet::new(),
             quick_open,
             language_picker,
@@ -593,9 +607,7 @@ impl Workbench {
             panel,
             window,
             |workbench, _, event, window, cx| match event {
-                PanelEvent::OpenFile(path) => workbench
-                    .active
-                    .update(cx, |pane, cx| pane.open(path.clone(), window, cx)),
+                PanelEvent::OpenFile(path) => workbench.open_from_tree(path.clone(), window, cx),
                 PanelEvent::FsChanged(changes) => {
                     workbench
                         .quick_open
@@ -607,6 +619,7 @@ impl Workbench {
                     workbench.disk_fs_changed(changes, window, cx);
                 }
                 PanelEvent::Opened => workbench.git.update(cx, GitState::refresh_once),
+                PanelEvent::Renamed { moves, .. } => workbench.panel_renamed(moves, window, cx),
             },
         )
     }
@@ -1102,6 +1115,213 @@ impl Workbench {
         cx.notify();
     }
 
+    /// Opens `path` from the project panel in the active pane. With vim on,
+    /// its editor is in normal mode once it shows, whatever mode an editor
+    /// of it already open was left in (a new one starts there): at once, or
+    /// once an open waiting (behind a Save As of that file, say) lands, in
+    /// each pane. A later open from the panel in the same pane replaces the
+    /// one waiting there.
+    fn open_from_tree(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        let pane = self.active.clone();
+        pane.update(cx, |pane, cx| pane.open(path.clone(), window, cx));
+        self.tree_opens.remove(&pane.entity_id());
+        if self.tree_opened(&pane, &path, window, cx) {
+            return;
+        }
+        let waiting = cx.observe_in(&pane, window, {
+            let path = path.clone();
+            move |workbench, pane, window, cx| {
+                let current = (workbench.tree_opens.get(&pane.entity_id()))
+                    .is_some_and(|(waiting, _)| *waiting == path);
+                if current && workbench.tree_opened(&pane, &path, window, cx) {
+                    workbench.tree_opens.remove(&pane.entity_id());
+                }
+            }
+        });
+        self.tree_opens.insert(pane.entity_id(), (path, waiting));
+    }
+
+    /// Whether the open of `path` from the tree is over in `pane`: its
+    /// editor shows, which is put in vim's normal mode, or `path` is no
+    /// longer being read (it failed, or another file was opened instead).
+    fn tree_opened(
+        &mut self,
+        pane: &Entity<Pane>,
+        path: &Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let pane = pane.read(cx);
+        let editor = (pane.active_editor().cloned())
+            .filter(|editor| editor.read(cx).model().path() == Some(path));
+        let Some(editor) = editor else {
+            return !pane.reading().any(|reading| reading == path);
+        };
+        let normal = |editor: &Entity<EditorView>, cx: &App| {
+            (editor.read(cx).vim_mode()).is_none_or(|mode| mode == "normal")
+        };
+        if normal(&editor, cx) {
+            return true;
+        }
+        // Outside this update: the key runs the editor's own.
+        window.defer(cx, move |window, cx| {
+            window.focus(&editor.focus_handle(cx), cx);
+            // One escape leaves insert, a visual mode or a pending command;
+            // a second, should the first only drop a count.
+            for _ in 0..2 {
+                if normal(&editor, cx) {
+                    break;
+                }
+                window.dispatch_keystroke(gpui::Keystroke::parse("escape").unwrap(), cx);
+            }
+        });
+        true
+    }
+
+    /// Why a rename of the file or folder at `path` must wait, if it must:
+    /// an editor saving to it or under it, by its path or the file a save
+    /// writes through a symlink ([`fe_editor::save_target`]), whether its
+    /// tab and window are open or closed since ([`DetachedSaves`]); a Save
+    /// As holding it as its destination; a pane reading it, in `window`'s
+    /// workbench or any other window's; or the project panel creating,
+    /// duplicating or trashing where it overlaps, from any window, open or
+    /// closed since ([`project_panel::running`]). Paths are matched by the
+    /// folders they're in, resolved ([`under`]), so another spelling of the
+    /// root matches too.
+    pub(crate) fn busy_under(path: &Path, window: &Window, cx: &App) -> Option<Busy> {
+        let from = resolved(path);
+        let under = |other: &Path| under(other, path, &from);
+        if open::reserved_paths().iter().any(|held| under(held)) {
+            return Some(Busy::Saving);
+        }
+        let saving_under = |editor: &Entity<EditorView>| {
+            let editor = editor.read(cx);
+            editor.is_saving()
+                && editor.model().path().is_some_and(|saved| {
+                    under(saved) || save_target(saved).is_ok_and(|target| under(&target))
+                })
+        };
+        let detached = cx.try_global::<DetachedSaves>();
+        if detached.is_some_and(|saves| saves.0.iter().any(saving_under)) {
+            return Some(Busy::Saving);
+        }
+        let this_window = window.window_handle().window_id();
+        let this = window.root::<Workbench>().flatten();
+        let others = (cx.windows().into_iter())
+            .filter(|other| other.window_id() != this_window)
+            .filter_map(|other| other.downcast::<Workbench>())
+            .filter_map(|other| other.entity(cx).ok());
+        for workbench in this.into_iter().chain(others) {
+            let workbench = workbench.read(cx);
+            if workbench.open_editors(cx).iter().any(saving_under) {
+                return Some(Busy::Saving);
+            }
+            let panes = workbench.panes.panes();
+            let reading = (panes.iter()).any(|pane| pane.read(cx).reading().any(under));
+            if reading || workbench.launch_reading().is_some_and(under) {
+                return Some(Busy::Opening);
+            }
+        }
+        if project_panel::running()
+            .iter()
+            .any(|running| overlap(running, path))
+        {
+            return Some(Busy::Working);
+        }
+        None
+    }
+
+    /// Where every editor of `from`, or of a file under it, in `window`'s
+    /// workbench and every other window's, will be once `from` is renamed
+    /// `to` ([`moved_to`]). Taken before the rename, while every spelling
+    /// of `from` still resolves: a symlink into a renamed folder dangles
+    /// after it.
+    pub(crate) fn plan_rename(from: &Path, to: &Path, window: &Window, cx: &App) -> Moves {
+        let this_window = window.window_handle().window_id();
+        let this = window.root::<Workbench>().flatten();
+        let others = (cx.windows().into_iter())
+            .filter(|other| other.window_id() != this_window)
+            .filter_map(|other| other.downcast::<Workbench>())
+            .filter_map(|other| other.entity(cx).ok());
+        (this.into_iter().chain(others))
+            .flat_map(|workbench| workbench.read(cx).moves(from, to, cx))
+            .collect()
+    }
+
+    /// [`Workbench::plan_rename`]'s moves of this workbench's editors.
+    fn moves(&self, from: &Path, to: &Path, cx: &App) -> Moves {
+        let (from_resolved, to_resolved) = (resolved(from), resolved(to));
+        (self.open_editors(cx).into_iter())
+            .filter_map(|editor| {
+                let path = editor.read(cx).model().path()?;
+                let path = moved_to(path, from, to, &from_resolved, &to_resolved)?;
+                Some((editor, path))
+            })
+            .collect()
+    }
+
+    /// After the project panel renamed a file or folder: the editors of it,
+    /// or of the files in it, take the paths `moves` planned for them
+    /// ([`Workbench::plan_rename`]), in this window and every other
+    /// ([`Workbench::follow_moves`]).
+    fn panel_renamed(&mut self, moves: &Moves, window: &Window, cx: &mut Context<Self>) {
+        self.follow_moves(moves, cx);
+        // This window, which is being updated, then every other one.
+        let this_window = window.window_handle().window_id();
+        let others = (cx.windows().into_iter())
+            .filter(|other| other.window_id() != this_window)
+            .filter_map(|other| other.downcast::<Workbench>());
+        for other in others {
+            (other.update(cx, |other, _, cx| other.follow_moves(moves, cx))).ok();
+        }
+    }
+
+    /// Has the editors of `from`, or of files under it, follow its rename to
+    /// `to`, as [`Workbench::follow_moves`] does, their paths resolved now:
+    /// for tests that rename behind the panel's back.
+    #[cfg(test)]
+    pub(crate) fn follow_rename(&mut self, from: &Path, to: &Path, cx: &mut Context<Self>) {
+        let moves = self.moves(from, to, cx);
+        self.follow_moves(&moves, cx);
+    }
+
+    /// Has each of this workbench's editors in `moves` save to its new path
+    /// from now on ([`EditorModel::move_path`]: the stamp it knows moves
+    /// too, so a save still refuses the file if it changed), once per
+    /// buffer, as the path set through one editor is every split's: its
+    /// tabs, title and breadcrumbs follow, it detects its language again,
+    /// and its language server document is closed and opened again under
+    /// the new path. Its text, vim mode and selections stay as they are.
+    pub(crate) fn follow_moves(&mut self, moves: &Moves, cx: &mut Context<Self>) {
+        let open: HashSet<EntityId> = (self.open_editors(cx).iter())
+            .map(Entity::entity_id)
+            .collect();
+        let moved: Vec<_> = (moves.iter())
+            .filter(|(editor, _)| open.contains(&editor.entity_id()))
+            .collect();
+        if moved.is_empty() {
+            return;
+        }
+        let mut buffers = HashSet::new();
+        for (editor, path) in &moved {
+            let buffer = editor.read(cx).model().buffer().id();
+            if buffers.insert(buffer) {
+                self.lsp_release(buffer, cx);
+                let path = path.clone();
+                editor.update(cx, |editor, _| editor.model_mut().move_path(path));
+            }
+        }
+        for (editor, _) in &moved {
+            editor.update(cx, |editor, cx| editor.detect_language(cx));
+        }
+        for pane in self.panes.panes() {
+            pane.update(cx, |pane, cx| pane.sync_paths(cx));
+        }
+        self.track_editors(cx);
+        self.sync_lsp(cx);
+        cx.notify();
+    }
+
     /// Opens the user's `settings.toml` in the active pane, creating it from
     /// the template first, in the background, if it's missing.
     fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1519,14 +1739,18 @@ impl Workbench {
     fn track_editors(&mut self, cx: &mut Context<Self>) {
         let editors = self.open_editors(cx);
         let open: HashSet<EntityId> = editors.iter().map(Entity::entity_id).collect();
-        self.editors.retain(|id, _| open.contains(id));
+        let closed: Vec<_> = (self.editors)
+            .extract_if(|id, _| !open.contains(id))
+            .map(|(_, (editor, _))| editor)
+            .collect();
+        DetachedSaves::keep(closed.into_iter(), cx);
         self.echoes.retain(|id| open.contains(id));
         for editor in &editors {
             if self.editors.contains_key(&editor.entity_id()) {
                 continue;
             }
             let observed = cx.observe(editor, Self::editor_changed);
-            self.editors.insert(editor.entity_id(), observed);
+            (self.editors).insert(editor.entity_id(), (editor.clone(), observed));
             if let Some(path) = editor.read(cx).model().path().map(Path::to_owned) {
                 recent_picker::record(path, false, cx);
             }
@@ -2371,12 +2595,12 @@ impl Workbench {
 }
 
 impl Focusable for Workbench {
-    /// The active editor's, or else the pane's, so the workbench's commands
-    /// apply.
+    /// The active editor's (a diff view's focused side), or else the active
+    /// viewer's, or else the pane's, so the workbench's commands apply.
     fn focus_handle(&self, cx: &App) -> FocusHandle {
         match self.active_editor(cx) {
             Some(editor) => editor.focus_handle(cx),
-            None => self.active.focus_handle(cx),
+            None => self.active.read(cx).focus_target(cx),
         }
     }
 }
@@ -2592,12 +2816,86 @@ mod dock_resize_tests;
 #[path = "dock_position_tests.rs"]
 mod dock_position_tests;
 
+/// Editors and the paths they're to take: [`Workbench::plan_rename`]'s.
+pub(crate) type Moves = Vec<(Entity<EditorView>, PathBuf)>;
+
+/// Editors still saving after their tab or window closed, until the save is
+/// over, held so [`Workbench::busy_under`] sees the write coming.
+#[derive(Default)]
+struct DetachedSaves(Vec<Entity<EditorView>>);
+
+impl Global for DetachedSaves {}
+
+impl DetachedSaves {
+    /// Keeps those of `editors` saving, and lets go of the saves over.
+    fn keep(editors: impl Iterator<Item = Entity<EditorView>>, cx: &mut App) {
+        let mut kept = (cx.try_global::<DetachedSaves>())
+            .map(|saves| saves.0.clone())
+            .unwrap_or_default();
+        kept.extend(editors);
+        kept.retain(|editor| editor.read(cx).is_saving());
+        cx.set_global(DetachedSaves(kept));
+    }
+}
+
+/// Whether `a` and `b` overlap: one is the other, or under it, as [`under`]
+/// matches.
+pub(crate) fn overlap(a: &Path, b: &Path) -> bool {
+    under(a, b, &resolved(b)) || under(b, a, &resolved(a))
+}
+
+/// Why a rename waits ([`Workbench::busy_under`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Busy {
+    /// A save or a Save As would write there.
+    Saving,
+    /// A file there is being read into a tab.
+    Opening,
+    /// The project panel is creating, duplicating or trashing there.
+    Working,
+}
+
+/// Whether `path` is `from`, or under it, spelled as it is or as another
+/// spelling of the same folders: `from_resolved` is `from`'s
+/// [`resolved`].
+pub(crate) fn under(path: &Path, from: &Path, from_resolved: &Path) -> bool {
+    path.starts_with(from) || resolved(path).starts_with(from_resolved)
+}
+
+/// Where the file at `path` is once `from` is renamed `to`, if it's `from`
+/// or under it: under `to` as `path` spells it, or, for a path spelled
+/// through other folders (the root opened through a symlink, say), under
+/// `to`'s resolved spelling. `from_resolved` and `to_resolved` are their
+/// [`resolved`]s, taken after the rename. The entry itself is never
+/// dereferenced, so a symlinked file keeps its link.
+fn moved_to(
+    path: &Path,
+    from: &Path,
+    to: &Path,
+    from_resolved: &Path,
+    to_resolved: &Path,
+) -> Option<PathBuf> {
+    let join = |base: &Path, rest: &Path| {
+        if rest.as_os_str().is_empty() {
+            base.to_owned()
+        } else {
+            base.join(rest)
+        }
+    };
+    if let Ok(rest) = path.strip_prefix(from) {
+        return Some(join(to, rest));
+    }
+    let resolved = resolved(path);
+    let rest = resolved.strip_prefix(from_resolved).ok()?;
+    Some(join(to_resolved, rest))
+}
+
 /// One identity for the spellings of `path`: its folder with the longest
 /// existing ancestor resolved through symlinks and `..` (the rest, which
 /// may be deleted, kept), then its own name as is. The entry itself is
 /// never dereferenced, so a symlink keeps its own identity apart from its
 /// target's.
-fn resolved(path: &Path) -> PathBuf {
+pub(crate) fn resolved(path: &Path) -> PathBuf {
     let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
         return path.to_owned();
     };
@@ -2628,3 +2926,71 @@ mod tab_git_status_tests;
 #[cfg(test)]
 #[path = "windows_tests.rs"]
 mod windows_tests;
+
+#[cfg(test)]
+mod focus_tests {
+    use std::{sync::Arc, time::Duration};
+
+    use fe_fileview::{FileView, IndexState, LineIndex};
+    use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
+
+    use crate::{Launch, Workbench, loader::Opened};
+
+    fn draw(cx: &mut VisualTestContext) {
+        cx.run_until_parked();
+        cx.update(|window, cx| window.draw(cx).clear(cx));
+        cx.run_until_parked();
+    }
+
+    fn focused(handle: &impl gpui::Focusable, cx: &mut VisualTestContext) -> bool {
+        cx.update(|window, cx| handle.focus_handle(cx).is_focused(window))
+    }
+
+    /// A launch file the host opened as Large shows in a viewer that the
+    /// workbench's focus handle focuses, as the app does at launch, and
+    /// again once a hidden dock gives focus back: its movement keys reach
+    /// it.
+    #[gpui::test]
+    fn a_large_launch_file_takes_the_keys(cx: &mut TestAppContext) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        let big = root.join("big.log");
+        let text: String = (0..100).map(|row| format!("line {row:02}\n")).collect();
+        std::fs::write(&big, text).unwrap();
+        let view = Arc::new(FileView::open(&big).unwrap());
+        let index = Arc::new(LineIndex::build(view.clone()));
+        while index.progress().state == IndexState::Building {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let launch = Launch {
+            root: Some(root),
+            file: Some((big, Some(Opened::Large { view, index }))),
+        };
+        let (workbench, cx, _) = crate::tests::open(cx, launch);
+        draw(cx);
+        cx.update(|window, cx| window.focus(&workbench.focus_handle(cx), cx));
+        draw(cx);
+        let viewer = workbench.read_with(cx, |workbench, cx| {
+            let pane = workbench.pane().read(cx);
+            pane.tabs()[pane.active().unwrap()].viewer().cloned()
+        });
+        let viewer = viewer.expect("the launch file shows in a viewer");
+        assert!(focused(&viewer, cx));
+        let head = |cx: &mut VisualTestContext| viewer.read_with(cx, |v, _| v.model().head());
+        assert_eq!(head(cx), 0);
+        cx.simulate_keystrokes("down");
+        assert_eq!(head(cx), "line 00\n".len());
+
+        // The project panel takes focus, then its dock hides: focus goes
+        // back to the viewer.
+        cx.simulate_keystrokes("cmd-shift-e");
+        let panel: Entity<crate::ProjectPanel> =
+            workbench.read_with(cx, |workbench: &Workbench, _| workbench.panel().clone());
+        assert!(focused(&panel, cx));
+        cx.simulate_keystrokes("cmd-b");
+        draw(cx);
+        assert!(focused(&viewer, cx));
+        cx.simulate_keystrokes("down");
+        assert_eq!(head(cx), 2 * "line 00\n".len());
+    }
+}

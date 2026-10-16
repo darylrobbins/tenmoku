@@ -11,8 +11,12 @@
 //! status letter's colour with the letter at the row's end, and a folder
 //! holding changes, expanded or collapsed, in the colour of the
 //! highest-precedence status beneath it with a dot.
+//!
+//! The file operations on the selected row (new file and folder, rename,
+//! move to the Trash, duplicate, copy path) are in [`ops`].
 
 use std::{
+    cell::Cell,
     collections::{HashMap, HashSet},
     io,
     ops::Range,
@@ -24,7 +28,7 @@ use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Reg
 use fe_git::ChangeKind;
 use fe_gpui::commands::RunCommand;
 use fe_project::{EntryKind, FileTree, FsChange, Listed, NodeId, ProjectWatcher, TreeOptions};
-use fe_ui::{Icon, TreeRow, UiTheme, file_icon, folder_icon};
+use fe_ui::{Icon, ROW_HEIGHT, TreeRow, UiTheme, file_icon, folder_icon};
 use gpui::{
     App, AppContext as _, Context, EventEmitter, FocusHandle, Focusable, Global,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, ScrollStrategy, Styled as _,
@@ -32,9 +36,14 @@ use gpui::{
 };
 
 use crate::git_panel;
+use ops::EditKind;
 
 /// The key context the panel's element sets.
 pub(crate) const KEY_CONTEXT: &str = "project_panel";
+
+/// [`KEY_CONTEXT`] with vim on, for its netrw and nvim-tree keys, unless
+/// the name field is open.
+const VIM_KEY_CONTEXT: &str = "project_panel vim";
 
 /// The sidebar's width as built. Its panels fill its column, however
 /// wide it's dragged.
@@ -49,6 +58,14 @@ pub enum PanelEvent {
     FsChanged(Vec<FsChange>),
     /// The root opened: its tree shows.
     Opened,
+    /// The panel renamed `from`, a file or a folder, to `to`: the editors
+    /// of it, or of a file in it, are to take the paths `moves` planned for
+    /// them before the rename ([`crate::Workbench::plan_rename`]).
+    Renamed {
+        from: PathBuf,
+        to: PathBuf,
+        moves: Vec<(gpui::Entity<fe_gpui::EditorView>, PathBuf)>,
+    },
 }
 
 enum State {
@@ -98,6 +115,14 @@ pub struct ProjectPanel {
     /// itself not included), and the status it shows: the one of highest
     /// precedence beneath it.
     git_dirs: HashMap<PathBuf, ChangeKind>,
+    /// The name field, while a new entry or a rename is being named.
+    edit: Option<ops::NameEdit>,
+    /// Counts the name fields opened, so an operation's outcome finds the
+    /// field it came from.
+    edits: u64,
+    /// Where a new entry's folder was last seen in the rows, checked
+    /// before searching them for it.
+    field_hint: Cell<usize>,
     /// The row ranges the last frame built: the list builds the visible
     /// rows and measures its first row twice.
     #[cfg(test)]
@@ -177,6 +202,9 @@ impl ProjectPanel {
             theme,
             git_files: HashMap::new(),
             git_dirs: HashMap::new(),
+            edit: None,
+            edits: 0,
+            field_hint: Cell::new(0),
             #[cfg(test)]
             built: Vec::new(),
             #[cfg(test)]
@@ -272,9 +300,14 @@ impl ProjectPanel {
         let State::Open(tree) = &self.state else {
             return;
         };
-        let live = |id: &NodeId| tree.row(*id).is_some();
+        let live = |id: &NodeId| tree.row(*id).is_some() || *id == tree.root();
         self.expanded.retain(live);
         self.expanding.retain(live);
+        if self.edit.as_ref().is_some_and(|edit| !live(&edit.node)) {
+            // What it named went: so does the field.
+            self.edit = None;
+            cx.notify();
+        }
         if !self.selected.is_some_and(|id| !live(&id)) {
             return;
         }
@@ -310,8 +343,21 @@ impl ProjectPanel {
         };
         self.selected = Some(row.id);
         self.selected_hint = ix;
-        self.scroll.scroll_to_item(ix, ScrollStrategy::Nearest);
+        self.scroll
+            .scroll_to_item(self.list_ix(ix), ScrollStrategy::Nearest);
         cx.notify();
+    }
+
+    /// Selects the first row, or the last, for vim's `gg` and `G`.
+    fn select_end(&mut self, last: bool, cx: &mut Context<Self>) {
+        let Some(count) = self
+            .tree()
+            .map(FileTree::row_count)
+            .filter(|&count| count > 0)
+        else {
+            return;
+        };
+        self.select_row(if last { count - 1 } else { 0 }, cx);
     }
 
     /// Up and Down: moves the selection by `delta` rows, clamped, or
@@ -496,14 +542,22 @@ impl ProjectPanel {
             cx.notify();
             return;
         }
-        let path = tree.path(id).and_then(|path| {
-            let rel = path.strip_prefix(tree.root_path()).ok()?;
-            Some(self.root.as_ref()?.join(rel))
-        });
-        if let Some(path) = path {
+        if let Some(path) = self.shown_path(id) {
             cx.emit(PanelEvent::OpenFile(path));
         }
         cx.notify();
+    }
+
+    /// Node `id`'s path as the panel hands paths out: under the root as the
+    /// workbench gave it. `None` for the root itself.
+    fn shown_path(&self, id: NodeId) -> Option<PathBuf> {
+        let tree = self.tree()?;
+        let path = tree.path(id)?;
+        let rel = path.strip_prefix(tree.root_path()).ok()?;
+        if rel.as_os_str().is_empty() {
+            return None;
+        }
+        Some(self.root.as_ref()?.join(rel))
     }
 
     /// Lists in the background each directory shown, waiting to expand or
@@ -569,8 +623,12 @@ impl ProjectPanel {
         self.advance_reveal(cx);
     }
 
-    /// Runs a panel command; others go on to the workbench.
-    fn on_run_command(&mut self, run: &RunCommand, _: &mut Window, cx: &mut Context<Self>) {
+    /// Runs a panel command; others go on to the workbench. While the name
+    /// field has focus, the field takes the keys ([`Self::run_in_field`]).
+    fn on_run_command(&mut self, run: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
+        if self.field_focused(window, cx) {
+            return self.run_in_field(run, window, cx);
+        }
         let op = op(run, cx);
         if op.is_some_and(|op| op != PanelOp::RevealActive) {
             // The user moved on.
@@ -582,16 +640,28 @@ impl ProjectPanel {
             Some(PanelOp::CollapseOrParent) => self.collapse_or_parent(cx),
             Some(PanelOp::ExpandOrFirstChild) => self.expand_or_first_child(cx),
             Some(PanelOp::Open) => self.open_selected(cx),
+            Some(PanelOp::SelectFirst) => self.select_end(false, cx),
+            Some(PanelOp::SelectLast) => self.select_end(true, cx),
+            Some(PanelOp::NewFile) => self.start_edit(EditKind::NewFile, window, cx),
+            Some(PanelOp::NewFolder) => self.start_edit(EditKind::NewFolder, window, cx),
+            Some(PanelOp::Rename) => self.start_edit(EditKind::Rename, window, cx),
+            Some(PanelOp::Delete) => self.delete_selected(window, cx),
+            Some(PanelOp::Duplicate) => self.duplicate_selected(window, cx),
+            Some(PanelOp::CopyPath) => self.copy_path(false, cx),
+            Some(PanelOp::CopyRelativePath) => self.copy_path(true, cx),
             Some(PanelOp::RevealActive) | None => cx.propagate(),
         }
     }
 
+    /// The list's rows in `range`: the tree's, with the name field in
+    /// place of the row being renamed or as a row of its own for a new
+    /// entry ([`Self::field_row`]).
     fn render_rows(
         &mut self,
         range: Range<usize>,
         window: &Window,
         cx: &mut Context<Self>,
-    ) -> Vec<TreeRow> {
+    ) -> Vec<gpui::AnyElement> {
         let State::Open(tree) = &self.state else {
             return Vec::new();
         };
@@ -599,12 +669,23 @@ impl ProjectPanel {
         #[cfg(test)]
         self.built.push(range.clone());
         let git = !self.git_files.is_empty() || !self.git_dirs.is_empty();
+        let field = self.field_row();
+        let renaming = (self.edit.as_ref())
+            .filter(|edit| edit.kind == EditKind::Rename)
+            .map(|edit| edit.node);
+        // The tree's rows the list's range shows: those after a new entry's
+        // field are one further down the list.
+        let tree_ix = |ix: usize| match field {
+            Some((at, _)) if ix > at => ix - 1,
+            _ => ix,
+        };
+        let shown = tree_ix(range.start)..tree_ix(range.end);
         #[cfg(test)]
         let mut drawn = Vec::new();
         let mut seen = None;
-        let rows = tree
-            .rows(range.clone())
-            .zip(range)
+        let mut rows: Vec<gpui::AnyElement> = tree
+            .rows(shown.clone())
+            .zip(shown)
             .map(|(row, ix)| {
                 let id = row.id;
                 let selected = self.selected == Some(id);
@@ -617,6 +698,9 @@ impl ProjectPanel {
                     EntryKind::Symlink => Icon::FileSymlink,
                     EntryKind::File => file_icon(&name),
                 };
+                if renaming == Some(id) {
+                    return self.render_field(row.depth, icon, cx);
+                }
                 let mut element = TreeRow::new(("row", ix), name.into_owned(), &self.theme)
                     .depth(row.depth)
                     .icon(icon)
@@ -641,9 +725,16 @@ impl ProjectPanel {
                     let (label, badge) = element.status();
                     (label, badge.map(|(text, color)| (text.to_string(), color)))
                 }));
-                element
+                element.into_any_element()
             })
             .collect();
+        if let Some((at, depth)) = field.filter(|(at, _)| range.contains(at)) {
+            let icon = match self.edit.as_ref().map(|edit| edit.kind) {
+                Some(EditKind::NewFolder) => folder_icon(false),
+                _ => Icon::File,
+            };
+            rows.insert(at - range.start, self.render_field(depth, icon, cx));
+        }
         #[cfg(test)]
         self.drawn_status.extend(drawn);
         if let Some(ix) = seen {
@@ -707,16 +798,22 @@ impl Render for ProjectPanel {
             State::Failed(message) => self.message(message.clone()),
             State::Open(tree) => uniform_list(
                 "project-rows",
-                tree.row_count(),
+                tree.row_count() + usize::from(self.field_row().is_some()),
                 cx.processor(|panel, range, window, cx| panel.render_rows(range, window, cx)),
             )
             .track_scroll(&self.scroll)
             .flex_1()
             .into_any_element(),
         };
+        // Vim's tree keys are off while the name field takes typing.
+        let context = if fe_gpui::vim_enabled(cx) && self.edit.is_none() {
+            VIM_KEY_CONTEXT
+        } else {
+            KEY_CONTEXT
+        };
         div()
             .track_focus(&self.focus)
-            .key_context(KEY_CONTEXT)
+            .key_context(context)
             .on_action(cx.listener(Self::on_run_command))
             .debug_selector(|| "sidebar-panel".into())
             .flex_1()
@@ -769,6 +866,15 @@ pub(crate) enum PanelOp {
     CollapseOrParent,
     ExpandOrFirstChild,
     Open,
+    SelectFirst,
+    SelectLast,
+    NewFile,
+    NewFolder,
+    Rename,
+    Delete,
+    Duplicate,
+    CopyPath,
+    CopyRelativePath,
     /// Done by the workbench, which knows the active file.
     RevealActive,
 }
@@ -785,9 +891,12 @@ struct Commands(Rc<Registry<PanelCommands>>);
 
 impl Global for Commands {}
 
-/// Registers the panel's commands.
+/// Registers the panel's commands, and the keys of its name field
+/// ([`fe_ui::TextField`]) in that field's own key context.
 pub(crate) fn init(cx: &mut App) {
     cx.set_global(Commands(Rc::new(registry())));
+    // The name field's caret, selection and clipboard keys.
+    cx.bind_keys(fe_ui::TextField::key_bindings(cfg!(target_os = "macos")));
 }
 
 pub(crate) fn registry() -> Registry<PanelCommands> {
@@ -818,6 +927,45 @@ pub(crate) fn registry() -> Registry<PanelCommands> {
             ExpandOrFirstChild,
         ),
         ("project_panel.open", "Open", KEY_CONTEXT, Open),
+        (
+            "project_panel.select_first",
+            "Select First",
+            KEY_CONTEXT,
+            SelectFirst,
+        ),
+        (
+            "project_panel.select_last",
+            "Select Last",
+            KEY_CONTEXT,
+            SelectLast,
+        ),
+        ("project_panel.new_file", "New File…", KEY_CONTEXT, NewFile),
+        (
+            "project_panel.new_folder",
+            "New Folder…",
+            KEY_CONTEXT,
+            NewFolder,
+        ),
+        ("project_panel.rename", "Rename…", KEY_CONTEXT, Rename),
+        ("project_panel.delete", "Move to Trash", KEY_CONTEXT, Delete),
+        (
+            "project_panel.duplicate",
+            "Duplicate",
+            KEY_CONTEXT,
+            Duplicate,
+        ),
+        (
+            "project_panel.copy_path",
+            "Copy Path",
+            KEY_CONTEXT,
+            CopyPath,
+        ),
+        (
+            "project_panel.copy_relative_path",
+            "Copy Relative Path",
+            KEY_CONTEXT,
+            CopyRelativePath,
+        ),
         (
             "project_panel.reveal_active",
             "Reveal Active File in Project",
@@ -879,7 +1027,8 @@ impl ProjectPanel {
     /// Where row `ix` was laid out in the last frame, from the list's bounds,
     /// scroll offset and measured row height.
     pub(crate) fn row_bounds(&self, ix: usize) -> Option<gpui::Bounds<gpui::Pixels>> {
-        let count = self.tree()?.row_count();
+        let count = self.tree()?.row_count() + usize::from(self.field_row().is_some());
+        let ix = self.list_ix(ix);
         let state = self.scroll.0.borrow();
         let list = state.base_handle.bounds();
         let height = state.last_item_size?.contents.height / count as f32;
@@ -903,6 +1052,11 @@ impl ProjectPanel {
         self.drawn_status.clone()
     }
 }
+
+#[path = "project_panel_ops.rs"]
+mod ops;
+
+pub(crate) use ops::running;
 
 #[cfg(test)]
 #[path = "project_panel_hover_tests.rs"]

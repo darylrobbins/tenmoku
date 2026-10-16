@@ -15,6 +15,7 @@ use std::{
     fs::File,
     io,
     path::{Path, PathBuf},
+    rc::Rc,
     time::Duration,
 };
 
@@ -87,11 +88,15 @@ impl DiskSync {
     }
 }
 
-/// A check of `buffer`, begun when its stamp was `expected`.
-#[derive(Clone, Copy)]
+/// A check of `buffer`, begun when its stamp was `expected` and its file
+/// `path`.
+#[derive(Clone)]
 struct Check {
     buffer: BufferId,
     expected: Option<DiskStamp>,
+    /// What it checks: a step landing after the buffer was given another
+    /// path (its file renamed) is about a file no longer its own.
+    path: Rc<Path>,
 }
 
 /// A dirty buffer's changed file, to ask about.
@@ -205,6 +210,7 @@ impl Workbench {
         let check = Check {
             buffer: model.buffer().id(),
             expected: model.buffer().disk_stamp(),
+            path: Rc::from(path.as_path()),
         };
         if let Some(again) = self.disk_sync.checks.get_mut(&check.buffer) {
             *again = true;
@@ -234,7 +240,7 @@ impl Workbench {
         cx.spawn_in(window, async move |workbench, cx| {
             let stat = stat.await;
             let next = workbench.update_in(cx, |workbench, window, cx| {
-                workbench.stat_landed(check, path, stat, window, cx)
+                workbench.stat_landed(check.clone(), path, stat, window, cx)
             });
             let Ok(Next::Read(path)) = next else {
                 return;
@@ -318,11 +324,12 @@ impl Workbench {
 
     /// The editor of `check`'s buffer to act on, as a step of the check
     /// lands. None if it's closed, if a save of it runs (the check then
-    /// waits for the save), or if its stamp isn't the one the check began
-    /// with (a save or reload landed meanwhile: the check starts over).
+    /// waits for the save), or if its stamp or path isn't the one the check
+    /// began with (a save or reload landed meanwhile, or its file was
+    /// renamed: the check starts over, on the path it has now).
     fn checked_editor(
         &mut self,
-        check: Check,
+        check: &Check,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Entity<EditorView>> {
@@ -331,7 +338,8 @@ impl Workbench {
             return None;
         };
         let view = editor.read(cx);
-        let stale = view.model().buffer().disk_stamp() != check.expected;
+        let stale = view.model().buffer().disk_stamp() != check.expected
+            || view.model().path() != Some(&*check.path);
         if view.is_saving() {
             self.disk_sync.checks.remove(&check.buffer);
             self.check_after_save(check.buffer, window, cx);
@@ -356,7 +364,7 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Next {
-        let Some(editor) = self.checked_editor(check, window, cx) else {
+        let Some(editor) = self.checked_editor(&check, window, cx) else {
             return Next::Done;
         };
         let next = match stat {
@@ -386,7 +394,7 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(editor) = self.checked_editor(check, window, cx) else {
+        let Some(editor) = self.checked_editor(&check, window, cx) else {
             return;
         };
         let Ok((file, stamp)) = read else {
@@ -416,7 +424,7 @@ impl Workbench {
             let Some(ask) = self.disk_sync.asks.pop_front() else {
                 return;
             };
-            let Some(editor) = self.checked_editor(ask.check, window, cx) else {
+            let Some(editor) = self.checked_editor(&ask.check, window, cx) else {
                 continue;
             };
             let (dirty, name) = {
@@ -461,7 +469,7 @@ impl Workbench {
         cx: &mut Context<Self>,
     ) {
         self.disk_sync.asking = false;
-        if let Some(editor) = self.checked_editor(ask.check, window, cx) {
+        if let Some(editor) = self.checked_editor(&ask.check, window, cx) {
             match answer {
                 Some(RELOAD) => reload(&editor, ask.file, ask.stamp, cx),
                 Some(KEEP_MINE) => set_stamp(&editor, ask.stamp, cx),
@@ -632,3 +640,7 @@ impl TestCounts {
 #[cfg(test)]
 #[path = "disk_sync_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "disk_sync_rename_tests.rs"]
+mod disk_sync_rename_tests;

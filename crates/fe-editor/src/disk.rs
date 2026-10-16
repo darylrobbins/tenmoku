@@ -302,6 +302,22 @@ impl EditorModel {
         self.path = link;
     }
 
+    /// Has the buffer save to `path` from now on, in this model and every
+    /// split of it, after its file was moved there (renamed, or its folder
+    /// renamed): [`EditorModel::set_path`], with the stamp the buffer knows
+    /// moving with it, so a save still refuses the file if it changed since
+    /// it was read or saved. Nothing is read or reloaded. A stamp recorded
+    /// for another path than the buffer's (it was given a path since)
+    /// stays where it is.
+    pub fn move_path(&mut self, path: PathBuf) {
+        let old = self.path().map(Path::to_owned);
+        self.set_path(Some(path.clone()));
+        let mut history = self.history.borrow_mut();
+        if old.is_some() && history.stamped == old {
+            history.stamped = Some(path);
+        }
+    }
+
     /// A save of the buffer as it is now, to [run](SaveJob::run) on any
     /// thread and then [finish](EditorModel::finish_save). Unless
     /// `overwrite`, it refuses a file changed since it was read. Fails with
@@ -640,3 +656,7 @@ mod tests {
         assert!(!model.is_dirty());
     }
 }
+
+#[cfg(test)]
+#[path = "move_path_tests.rs"]
+mod move_path_tests;
