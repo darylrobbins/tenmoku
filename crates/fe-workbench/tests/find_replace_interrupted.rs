@@ -10,18 +10,16 @@ use std::{
     ops::Range,
     path::PathBuf,
     sync::{Mutex, MutexGuard},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
-use fe_buffer::{Buffer, Text};
+use fe_buffer::Buffer;
 use fe_command::{ContextFrame, ContextStack, Invocation};
 use fe_gpui::{
     EditorSettings, EditorTheme, EditorView, commands::RunCommand, set_vim_enabled,
     set_vim_time_limit,
 };
-use fe_vim::search::{
-    DEFAULT_TIME_LIMIT, Deadline, FindQuery, Pattern, matches_reaching_until, regex_calls,
-};
+use fe_vim::search::{DEFAULT_TIME_LIMIT, regex_calls, set_call_limit};
 use fe_workbench::{Launch, Pane, Workbench};
 use gpui::{Entity, Focusable as _, TestAppContext, VisualTestContext};
 
@@ -33,6 +31,7 @@ struct Serial(#[allow(dead_code)] MutexGuard<'static, ()>);
 impl Drop for Serial {
     fn drop(&mut self) {
         set_vim_time_limit(DEFAULT_TIME_LIMIT);
+        set_call_limit(None);
     }
 }
 
@@ -55,6 +54,19 @@ fn serially(limit: Duration) -> Serial {
     }
     set_vim_time_limit(limit);
     Serial(guard)
+}
+
+/// Gives each search from now until the guard drops a budget of `calls`
+/// regex calls, after which it is interrupted whatever the time.
+fn call_limited(calls: u64) -> impl Drop {
+    struct Restore;
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            set_call_limit(None);
+        }
+    }
+    set_call_limit(Some(calls));
+    Restore
 }
 
 /// Sets the limit to `limit` while [`serially`]'s guard is held, putting
@@ -181,7 +193,7 @@ fn replace_row(
 
 #[gpui::test]
 fn replace_all_past_the_time_limit_changes_nothing(cx: &mut TestAppContext) {
-    let _serial = serially(DEFAULT_TIME_LIMIT);
+    let _serial = serially(NO_LIMIT);
     let (_dir, pane, editor, cx) = opened("foo foo\n", cx);
     cx.update(|_, cx| set_vim_enabled(cx, true));
     draw(cx);
@@ -194,7 +206,7 @@ fn replace_all_past_the_time_limit_changes_nothing(cx: &mut TestAppContext) {
     assert_eq!(mode(cx), Some("insert"));
 
     let caret = selection(&editor, cx);
-    let limit = limited(Duration::ZERO, DEFAULT_TIME_LIMIT);
+    let limit = limited(Duration::ZERO, NO_LIMIT);
     run("find.replace_all", cx);
     drop(limit);
     assert_eq!(text(&editor, cx), "zfoo foo\n");
@@ -209,14 +221,16 @@ fn replace_all_past_the_time_limit_changes_nothing(cx: &mut TestAppContext) {
 }
 
 /// The length of the row of `a`s [`slow_text`] makes, which takes seconds
-/// to step through to its end, and the limit the tests on it run under:
-/// well under that, well over the few matches a step from its start needs.
+/// to step through to its end, and the regex calls the test that cuts a step
+/// short allows it: well under the row's, well over the few a step from its
+/// start needs.
 const SLOW_ROW: usize = 20_000;
-const SLOW_LIMIT: Duration = Duration::from_millis(400);
+const SLOW_CALLS: u64 = 100;
 
 /// The limit the tests on the long rows below set the bar up under: so
-/// short that the searches the typed query starts give up at once.
-const SETUP_LIMIT: Duration = Duration::from_millis(1);
+/// short that the searches the typed query starts give up at once: none, so
+/// that never depends on how fast the machine is.
+const SETUP_LIMIT: Duration = Duration::ZERO;
 
 /// The regex that's slow on [`slow_text`]'s rows of `a`s: each match, one
 /// `a`, is found only once `a.*z` from it has looked to the row's end for a
@@ -267,7 +281,7 @@ fn replace_on_an_expensive_row_steps_only_as_far_as_it_needs(cx: &mut TestAppCon
 
 #[gpui::test]
 fn a_row_cut_short_by_the_limit_is_an_interruption(cx: &mut TestAppContext) {
-    let _serial = serially(SLOW_LIMIT);
+    let _serial = serially(SETUP_LIMIT);
     let original = slow_text();
     let (_dir, pane, editor, cx) = opened(&original, cx);
     replace_row(&pane, SLOW_QUERY, true, "c", cx);
@@ -277,7 +291,11 @@ fn a_row_cut_short_by_the_limit_is_an_interruption(cx: &mut TestAppContext) {
     // isn't it.
     let near_end = 2 + SLOW_ROW - 2;
     select(&editor, near_end..near_end, cx);
+    // Stepping through the row takes a call for each of its matches, far
+    // more than the budget.
+    let limit = (limited(NO_LIMIT, SETUP_LIMIT), call_limited(SLOW_CALLS));
     run("find.replace_next", cx);
+    drop(limit);
     assert_eq!(label(&pane, cx), too_long());
     assert_eq!(selection(&editor, cx), near_end..near_end);
     assert!(text(&editor, cx) == original);
@@ -285,11 +303,15 @@ fn a_row_cut_short_by_the_limit_is_an_interruption(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn a_search_over_several_rows(cx: &mut TestAppContext) {
-    let _serial = serially(SLOW_LIMIT);
+    let _serial = serially(SETUP_LIMIT);
     let original = slow_text();
     let (_dir, pane, editor, cx) = opened(&original, cx);
     replace_row(&pane, SLOW_QUERY, true, "c", cx);
 
+    // No time limit, the work counted instead: each step makes few regex
+    // calls, not the row's one for each match.
+    let limit = limited(NO_LIMIT, SETUP_LIMIT);
+    let before = regex_calls();
     // From the first row, which has none, to the first match of the next.
     select(&editor, 0..0, cx);
     run("find.replace_next", cx);
@@ -300,11 +322,17 @@ fn a_search_over_several_rows(cx: &mut TestAppContext) {
     select(&editor, end..end, cx);
     run("find.replace_next", cx);
     assert_eq!(selection(&editor, cx), 2..3);
+    let calls = regex_calls() - before;
+    drop(limit);
     assert!(text(&editor, cx) == original);
+    assert!(
+        calls <= FEW_CALLS,
+        "{calls} regex calls, of the row's {SLOW_ROW}"
+    );
 
     // Out of time from the start, it changes nothing, and says so.
     select(&editor, 0..0, cx);
-    let limit = limited(Duration::ZERO, SLOW_LIMIT);
+    let limit = limited(Duration::ZERO, SETUP_LIMIT);
     run("find.replace_next", cx);
     drop(limit);
     assert_eq!(label(&pane, cx), too_long());
@@ -336,37 +364,11 @@ fn many_text() -> String {
     format!("b\n{}{}\na\n", "a".repeat(MANY_A), "b".repeat(LONG_ROW))
 }
 
-/// How long one regex call takes to find [`COSTLY_QUERY`]'s first match on
-/// the long row, the longest of a few tries: a step that makes one must
-/// have that long.
-fn one_call() -> Duration {
-    let pattern = Pattern::from_query(&FindQuery {
-        text: COSTLY_QUERY.into(),
-        regex: true,
-        match_case: false,
-        whole_word: false,
-    })
-    .unwrap();
-    let text = Text::new(&long_text());
-    let row = 2..2 + 3 + LONG_ROW;
-    (0..3)
-        .map(|_| {
-            let start = Instant::now();
-            let mut deadline = Deadline::never();
-            let found = matches_reaching_until(&text, 1, row.clone(), &pattern, 1, &mut deadline);
-            assert_eq!(found.first(), Some(&(2..3)));
-            start.elapsed()
-        })
-        .max()
-        .unwrap()
-}
-
 #[gpui::test]
 fn the_wanted_match_ends_the_search(cx: &mut TestAppContext) {
-    let _serial = serially(DEFAULT_TIME_LIMIT);
     // Short enough that each count of the long row's matches, which takes
     // their number of calls, is soon cut short.
-    let _setup = limited(SETUP_LIMIT, DEFAULT_TIME_LIMIT);
+    let _serial = serially(SETUP_LIMIT);
     let (_dir, pane, editor, cx) = opened(&many_text(), cx);
     select(&editor, 0..0, cx);
     replace_row(&pane, COSTLY_QUERY, true, "c", cx);
@@ -391,19 +393,31 @@ fn the_wanted_match_ends_the_search(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn a_match_found_past_the_limit_is_an_interruption(cx: &mut TestAppContext) {
-    let _serial = serially(DEFAULT_TIME_LIMIT);
-    let call = one_call();
-    let _setup = limited(call * 4, DEFAULT_TIME_LIMIT);
+    let _serial = serially(SETUP_LIMIT);
     let original = long_text();
     let (_dir, pane, editor, cx) = opened(&original, cx);
     replace_row(&pane, COSTLY_QUERY, true, "c", cx);
-    select(&editor, 0..0, cx);
 
-    // The one call that finds the long row's first match passes the limit
-    // before it returns: the match isn't taken.
-    let limit = limited(call / 4, call * 4);
+    // The step to the long row's first match, counted: the calls it makes,
+    // the last of which finds the match.
+    let time = limited(NO_LIMIT, SETUP_LIMIT);
+    select(&editor, 0..0, cx);
+    let before = regex_calls();
     run("find.replace_next", cx);
+    let calls = regex_calls() - before;
+    assert_eq!(selection(&editor, cx), 2..3, "the match is found");
+    assert!(calls >= 1);
+
+    // With a budget of exactly those calls, the one that finds the match
+    // uses the last of it: the match isn't taken.
+    select(&editor, 0..0, cx);
+    let limit = call_limited(calls);
+    let before = regex_calls();
+    run("find.replace_next", cx);
+    let used = regex_calls() - before;
     drop(limit);
+    drop(time);
+    assert_eq!(used, calls, "the match was found before the interruption");
     assert_eq!(label(&pane, cx), too_long());
     assert_eq!(selection(&editor, cx), 0..0);
     assert!(text(&editor, cx) == original);
@@ -411,7 +425,7 @@ fn a_match_found_past_the_limit_is_an_interruption(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn an_interrupted_replace_all_keeps_a_visual_selection(cx: &mut TestAppContext) {
-    let _serial = serially(DEFAULT_TIME_LIMIT);
+    let _serial = serially(NO_LIMIT);
     let (_dir, pane, editor, cx) = opened("one\ntwo\n", cx);
     cx.update(|_, cx| set_vim_enabled(cx, true));
     draw(cx);
@@ -423,7 +437,7 @@ fn an_interrupted_replace_all_keeps_a_visual_selection(cx: &mut TestAppContext) 
     assert_eq!(mode(cx), Some("visual"));
     assert_eq!(selection(&editor, cx), visual);
 
-    let limit = limited(Duration::ZERO, DEFAULT_TIME_LIMIT);
+    let limit = limited(Duration::ZERO, NO_LIMIT);
     run("find.replace_all", cx);
     drop(limit);
     assert_eq!(label(&pane, cx), too_long());

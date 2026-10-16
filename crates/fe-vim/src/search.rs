@@ -41,6 +41,19 @@ pub fn regex_calls() -> u64 {
     REGEX_CALLS.load(Ordering::Relaxed)
 }
 
+/// The regex-call budget for [`set_call_limit`]; `u64::MAX` for none.
+static CALL_LIMIT: AtomicU64 = AtomicU64::new(u64::MAX);
+
+/// Gives each [`Deadline`] made from now on a budget of `limit` regex calls,
+/// process-wide, or none with `None` (the default): it passes once that many
+/// calls have been made since it started, as if its time had run out. For
+/// tests that need an interruption at a counted point of the work instead of
+/// a measured time; nothing else sets it.
+#[doc(hidden)]
+pub fn set_call_limit(limit: Option<u64>) {
+    CALL_LIMIT.store(limit.unwrap_or(u64::MAX), Ordering::Relaxed);
+}
+
 /// Sets how long a `:s` or a search may spend matching before it stops with
 /// `Interrupted`, process-wide: [`DEFAULT_TIME_LIMIT`] until a host or a test
 /// changes it. Each command reads it once, when it starts, so a change
@@ -83,6 +96,8 @@ impl std::error::Error for Interrupted {}
 pub struct Deadline {
     /// `None` for one that never passes.
     end: Option<Instant>,
+    /// The [`regex_calls`] count it passes at, from [`set_call_limit`].
+    calls_end: Option<u64>,
     ran_out: std::cell::Cell<bool>,
 }
 
@@ -107,6 +122,7 @@ impl Deadline {
     pub fn never() -> Self {
         Self {
             end: None,
+            calls_end: None,
             ran_out: std::cell::Cell::new(false),
         }
     }
@@ -114,15 +130,23 @@ impl Deadline {
     /// A deadline `limit` from now: one that's past [`Instant`]'s range
     /// (`Duration::MAX`) never passes.
     pub(crate) fn within(limit: Duration) -> Self {
+        let calls_end = match CALL_LIMIT.load(Ordering::Relaxed) {
+            u64::MAX => None,
+            calls => regex_calls().checked_add(calls),
+        };
         Self {
             end: Instant::now().checked_add(limit),
+            calls_end,
             ran_out: std::cell::Cell::new(false),
         }
     }
 
     /// Whether it is past, which it records.
     fn passed(&self) -> bool {
-        if !self.ran_out.get() && self.end.is_some_and(|end| Instant::now() >= end) {
+        if !self.ran_out.get()
+            && (self.end.is_some_and(|end| Instant::now() >= end)
+                || self.calls_end.is_some_and(|end| regex_calls() >= end))
+        {
             self.ran_out.set(true);
         }
         self.ran_out.get()
