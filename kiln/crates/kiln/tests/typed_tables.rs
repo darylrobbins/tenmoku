@@ -23,7 +23,7 @@ use kiln::{
     CommandSpec, Config, Contributions, Cx,
     command::{CommandId, ContextFrame, ContextStack},
     core::{Diagnostic, KeySequence, Keystroke, Severity},
-    platform::{config::batch_channel, keys, menus},
+    platform::{Capabilities, Os, config::batch_channel, keys, menus},
     shell::Workspace,
     testing::TestApp,
 };
@@ -81,8 +81,17 @@ fn bound(keys: &str, frames: &[&str], app: &mut TestApp) -> Option<String> {
     })
 }
 
-fn shown(keys: &str) -> String {
-    KeySequence::parse(keys).unwrap().to_string()
+/// `keys` as the keymap shows them on `os`: `secondary` is cmd on macOS,
+/// ctrl elsewhere.
+fn shown(keys: &str, os: Os) -> String {
+    let secondary = if os == Os::MacOs { "cmd" } else { "ctrl" };
+    let keys = keys.replace("secondary", secondary);
+    KeySequence::parse(&keys).unwrap().to_string()
+}
+
+/// The platform the app resolves its tables against.
+fn app_os(app: &mut TestApp) -> Os {
+    app.cx().read(Capabilities::of).os
 }
 
 /// A menu's items: each command's title, `-` for a separator.
@@ -116,31 +125,78 @@ fn keys_bind_by_platform_and_in_a_context_in_place_of_the_attribute_keys(cx: &mu
     assert_eq!(table.bindings().len(), 3);
     let mut app = TestApp::open(builder().keys(table), cx);
 
-    // The table's keys, on this (Linux) platform and in the context.
+    // The table's keys, on the app's platform and in the context.
+    let os = app_os(&mut app);
+    let rename = if os == Os::MacOs { "cmd-r" } else { "f2" };
     assert_eq!(
         bindings("typed_tables.new_note", &mut app),
-        [(shown("secondary-shift-n"), None)]
+        [(shown("secondary-shift-n", os), None)]
     );
     assert_eq!(
         bindings("typed_tables.rename_note", &mut app),
-        [("f2".to_owned(), Some("note".to_owned()))]
+        [(rename.to_owned(), Some("note".to_owned()))]
     );
     assert_eq!(
-        bound("f2", &["note"], &mut app).as_deref(),
+        bound(rename, &["note"], &mut app).as_deref(),
         Some("typed_tables.rename_note")
     );
-    assert_eq!(bound("f2", &[], &mut app), None);
+    assert_eq!(bound(rename, &[], &mut app), None);
 
     // The attribute keys are gone, even those of a command the table
     // doesn't name.
-    assert_eq!(bound("secondary-n", &[], &mut app), None);
+    assert_eq!(bound(&shown("secondary-n", os), &[], &mut app), None);
     assert_eq!(bound("f6", &[], &mut app), None);
     assert_eq!(bindings("typed_tables.archive", &mut app), []);
     // `secondary-e` is Quit's now.
     assert_eq!(
-        bound("secondary-e", &[], &mut app).as_deref(),
+        bound(&shown("secondary-e", os), &[], &mut app).as_deref(),
         Some("app.quit")
     );
+}
+
+/// The same table resolved for macOS and for Linux, from any host:
+/// `secondary` is cmd on one and ctrl on the other, and the `macos` or
+/// `linux` entry wins.
+#[gpui::test]
+fn a_table_resolves_against_the_platform_it_is_given(cx: &mut TestAppContext) {
+    let table = kiln::keymap! {
+        "secondary-shift-n" => NewNote,
+        { macos = "cmd-r", linux = "f2", default = "ctrl-r" } => RenameNote in "note",
+    };
+    let mut app = TestApp::open(builder(), cx);
+    let catalog = app.cx().read(kiln::catalog);
+    let keys = |os: Os| -> Vec<(String, String)> {
+        let (layer, diagnostics) = table.resolve(os, &*catalog);
+        assert_eq!(diagnostics, []);
+        (layer.entries.iter())
+            .map(|entry| {
+                (
+                    entry.keys.to_string(),
+                    entry.command.as_ref().unwrap().to_string(),
+                )
+            })
+            .collect()
+    };
+    let pair = |keys: &str, command: &str| (shown(keys, Os::Linux), command.to_owned());
+    assert_eq!(
+        keys(Os::MacOs),
+        [
+            (
+                shown("secondary-shift-n", Os::MacOs),
+                "typed_tables.new_note".to_owned()
+            ),
+            ("cmd-r".to_owned(), "typed_tables.rename_note".to_owned()),
+        ]
+    );
+    assert_eq!(
+        keys(Os::Linux),
+        [
+            pair("secondary-shift-n", "typed_tables.new_note"),
+            pair("f2", "typed_tables.rename_note"),
+        ]
+    );
+    assert_eq!(keys(Os::MacOs)[0].0, "cmd-shift-n");
+    assert_eq!(keys(Os::Linux)[0].0, "ctrl-shift-n");
 }
 
 #[gpui::test]
@@ -148,11 +204,12 @@ fn the_apps_keymap_goes_over_the_table(cx: &mut TestAppContext) {
     let table = kiln::keymap! { "secondary-shift-n" => NewNote };
     let keymap = "[[bindings]]\nkeys = \"secondary-shift-n\"\ncommand = \"typed_tables.archive\"\n";
     let mut app = TestApp::open(builder().keys(table).keymap("keymap.toml", keymap), cx);
+    let os = app_os(&mut app);
     assert_eq!(
-        bound("secondary-shift-n", &[], &mut app).as_deref(),
+        bound(&shown("secondary-shift-n", os), &[], &mut app).as_deref(),
         Some("typed_tables.archive")
     );
-    assert_eq!(bound("secondary-n", &[], &mut app), None);
+    assert_eq!(bound(&shown("secondary-n", os), &[], &mut app), None);
 }
 
 mod notes {
@@ -290,7 +347,8 @@ fn menu_items_show_the_shortcuts_the_keys_table_gives(cx: &mut TestAppContext) {
             .clone();
         item.shortcut(&keymap).map(|keys| keys.to_string())
     });
-    assert_eq!(shortcut, Some(shown("secondary-shift-n")));
+    let os = app_os(&mut app);
+    assert_eq!(shortcut, Some(shown("secondary-shift-n", os)));
 }
 
 mod drafts {

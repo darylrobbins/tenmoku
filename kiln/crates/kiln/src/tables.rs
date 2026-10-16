@@ -46,8 +46,9 @@
 //! ```
 
 use kiln_command::CommandId;
+use kiln_core::{CommandCatalog, Diagnostic, KeymapLayer, Os};
 
-use crate::{Command, Keys};
+use crate::{Command, Keys, contributions::keymap_layer};
 
 /// One key binding of a [`KeyTable`].
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -82,6 +83,15 @@ impl KeyTable {
 
     pub fn bindings(&self) -> &[KeyBinding] {
         &self.bindings
+    }
+
+    /// The table as a keymap layer on `os`, and its diagnostics, as the app
+    /// ships it: `secondary` is cmd on macOS and ctrl elsewhere, and a
+    /// `{ macos = .., linux = .. }` entry is the one for `os`, else
+    /// `default`. At runtime `os` is the platform the app runs on; naming
+    /// it lets a test check another's, from any host.
+    pub fn resolve(&self, os: Os, catalog: &dyn CommandCatalog) -> (KeymapLayer, Vec<Diagnostic>) {
+        keymap_layer(&self.bindings, os, catalog)
     }
 }
 

@@ -1488,7 +1488,7 @@ fn resolve(cx: &mut App) {
 /// command and its args against `catalog`), and its diagnostics name the
 /// command. So are the same keys in the same context for two commands,
 /// the later one winning.
-fn keymap_layer(
+pub(crate) fn keymap_layer(
     commands: &[KeyBinding],
     os: Os,
     catalog: &dyn CommandCatalog,
