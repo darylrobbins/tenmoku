@@ -3,13 +3,15 @@
 //! Kiln's attribute macros. Use them through the kiln crate, which
 //! documents each: `#[kiln::command]`, on a fn or a view's impl, is
 //! [`command`] here, `#[kiln::panel]` [`panel`], `#[kiln::status]`
-//! [`status`] and `#[kiln::item]` [`item`]. Each expands to
+//! [`status`], `#[kiln::item]` [`item`] and `#[kiln::settings]`
+//! [`settings`]. Each expands to
 //! plain data and fn pointers that name kiln's items only, through
 //! `::kiln`, so an app needs no other dependency for them.
 
 mod command;
 mod item;
 mod panel;
+mod settings;
 mod status;
 mod view_commands;
 
@@ -43,4 +45,11 @@ pub fn status(args: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn item(args: TokenStream, item: TokenStream) -> TokenStream {
     item::expand(args.into(), item.into()).into()
+}
+
+/// Makes a struct of named fields a section of the app's settings file:
+/// see `kiln::settings`, which documents it.
+#[proc_macro_attribute]
+pub fn settings(args: TokenStream, item: TokenStream) -> TokenStream {
+    settings::expand(args.into(), item.into()).into()
 }

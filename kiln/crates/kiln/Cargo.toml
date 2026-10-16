@@ -22,6 +22,8 @@ kiln-platform.workspace = true
 kiln-shell.workspace = true
 kiln-ui.workspace = true
 log.workspace = true
+# `#[kiln::settings]`'s schema, re-exported as kiln::schemars.
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 # kiln::testing: the app's temporary directories.

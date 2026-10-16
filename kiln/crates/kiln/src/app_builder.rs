@@ -55,6 +55,7 @@ struct Contribute {
 /// | The app's directories are `AppPaths::new(&AppId::new(id, short, name), PathStyle::Native)`, so `<SHORT>_CONFIG_DIR` and `<SHORT>_STATE_DIR` move them | [`AppBuilder::paths`] |
 /// | The user's `keymap.toml` and `theme.toml` in the config directory, watched | [`AppBuilder::config`] |
 /// | [`AppBuilder::settings`] reads `settings.toml` in the config directory, and no project file | [`AppBuilder::config`] with [`Config::settings`], which replaces the store |
+/// | Each `#[kiln::settings]` section reads its table of that `settings.toml` | [`AppBuilder::config`] with [`Config::settings_file`] |
 /// | Closing the last window quits, except on macOS | [`AppBuilder::quit_on_last_window`] |
 /// | Its windows from [`WindowSpec::main`] with the app's name and ID | [`AppBuilder::window`] |
 /// | Each window a [`Workspace`] of [`ItemPane`](kiln_shell::ItemPane)s under the key context `workspace`, titled with the app's name, with the items, panels and status sources the builder adds, then those contributed ([`Contributions`]) | [`AppBuilder::key_context`], [`AppBuilder::root`] for a view of the app's own in a [`Root`] |
@@ -508,6 +509,9 @@ impl AppBuilder {
         }
         let mut config = self.config;
         let user_settings = self.paths.settings_file();
+        if let Some(file) = &user_settings {
+            config = config.settings_file(file);
+        }
         for add in self.settings {
             config = add(config, user_settings.clone());
         }

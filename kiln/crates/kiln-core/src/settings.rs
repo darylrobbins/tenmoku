@@ -3,16 +3,21 @@
 //! An app's settings, typed: its own struct, layered from its defaults, the
 //! user's settings file and a project's, kept at its last good version
 //! while a file has errors. A project's file may be narrowed to what the
-//! app lets a project set ([`ProjectFilter`]).
+//! app lets a project set ([`ProjectFilter`]). Several types may share one
+//! file, each its own table of it ([`SettingsOptions::section`]).
 
 use std::{
     fmt,
+    marker::PhantomData,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
-use serde::{Serialize, de::DeserializeOwned};
-use serde_json::Value as Json;
+use serde::{
+    Deserializer, Serialize,
+    de::{DeserializeOwned, DeserializeSeed, IgnoredAny, MapAccess, Visitor},
+};
+use serde_json::{Map, Value as Json, json};
 use toml::Table;
 
 use crate::{
@@ -106,12 +111,63 @@ impl fmt::Debug for ProjectFilter {
 type SchemaFor = Arc<dyn Fn(&Table) -> Arc<Json> + Send + Sync>;
 
 /// How a [`SettingsStore`] checks its files, beyond serde: a JSON schema,
-/// and what a project's file may set. [`SettingsStore::load_with`] takes
-/// them.
+/// what a project's file may set, and the one table of them it reads, if
+/// it reads only one. [`SettingsStore::load_with`] takes them.
 #[derive(Clone, Default)]
 pub struct SettingsOptions {
     schema: Option<SchemaFor>,
     project_filters: Vec<ProjectFilter>,
+    section: Option<Section>,
+}
+
+/// The table of a shared file a store reads.
+#[derive(Clone, Debug)]
+struct Section {
+    name: String,
+    /// Every section of the file, this one among them, the first
+    /// reporting what is no section's.
+    all: Arc<[String]>,
+}
+
+impl Section {
+    /// Whether this section's store reports what's wrong with the file
+    /// outside every section: a syntax error, or a key no section has.
+    fn reports_file(&self) -> bool {
+        self.all.first().is_none_or(|first| *first == self.name)
+    }
+
+    /// Whether `key`, dotted, is this section's table or in it.
+    fn holds(&self, key: &str) -> bool {
+        key.strip_prefix(self.name.as_str())
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
+    }
+
+    /// The section's table of `file`: empty if it has none.
+    fn table_of(&self, file: &Table) -> Table {
+        match file.get(&self.name) {
+            Some(toml::Value::Table(table)) => table.clone(),
+            _ => Table::new(),
+        }
+    }
+
+    /// `schema`, of the section's table, as one of the file: each other
+    /// section a key it may have, checked by that section's store.
+    fn file_schema(&self, schema: &Json) -> Json {
+        let mut schema = schema.clone();
+        let defs = schema
+            .as_object_mut()
+            .and_then(|schema| schema.remove("$defs"));
+        let mut properties = Map::new();
+        for name in self.all.iter() {
+            properties.insert(name.clone(), json!({}));
+        }
+        properties.insert(self.name.clone(), schema);
+        let mut file = json!({ "type": "object", "properties": properties });
+        if let Some(defs) = defs {
+            file["$defs"] = defs;
+        }
+        file
+    }
 }
 
 impl SettingsOptions {
@@ -139,9 +195,36 @@ impl SettingsOptions {
     }
 
     /// Narrows what a project's file may set: see [`ProjectFilter`]. Each
-    /// call adds one, run in order.
+    /// call adds one, run in order. Its key is the file's, a section's
+    /// name first (`notes.lsp`).
     pub fn project_filter(mut self, filter: ProjectFilter) -> Self {
         self.project_filters.push(filter);
+        self
+    }
+
+    /// Reads only the table `name` of each file (`[notes]`), a file that
+    /// the other sections in `all` share, one store each: `S` is that
+    /// table, its defaults where the file has none. The schema is the
+    /// table's, and the other sections' tables are keys it knows, so
+    /// that only a key in no section, or one the section doesn't have,
+    /// is unknown. Each store reports what's in its own table, and the
+    /// first of `all` what's outside every section too: a syntax error,
+    /// or a key no section has. An error anywhere in a file still keeps
+    /// every section at its last good table.
+    pub fn section<T: Into<String>>(
+        mut self,
+        name: impl Into<String>,
+        all: impl IntoIterator<Item = T>,
+    ) -> Self {
+        let name = name.into();
+        let mut all: Vec<String> = all.into_iter().map(Into::into).collect();
+        if !all.contains(&name) {
+            all.push(name.clone());
+        }
+        self.section = Some(Section {
+            name,
+            all: all.into(),
+        });
         self
     }
 
@@ -155,6 +238,7 @@ impl fmt::Debug for SettingsOptions {
         f.debug_struct("SettingsOptions")
             .field("schema", &self.schema.is_some())
             .field("project_filters", &self.project_filters)
+            .field("section", &self.section)
             .finish()
     }
 }
@@ -301,7 +385,10 @@ fn validate<S: SettingsType>(
     filters: &[ProjectFilter],
     options: &SettingsOptions,
 ) -> (Option<Table>, Vec<Diagnostic>) {
+    let section = options.section.as_ref();
     let mut layer = load_layer(path);
+    // What loading found is the file's: a syntax error, or no reading it.
+    let loaded = layer.diagnostics.len();
     if !layer.has_errors() {
         for filter in filters {
             (filter.narrow)(&mut layer);
@@ -309,29 +396,106 @@ fn validate<S: SettingsType>(
         // Checked on the source, for the error's location, unless the
         // error is in a key a filter governs: then the narrowed table
         // decides.
-        if let Err(error) = toml::from_str::<S>(&layer.source) {
+        if let Err(error) = from_source::<S>(&layer.source, section) {
             let diagnostic = layer.diagnostic_for(Severity::Error, &error);
             let narrowed = diagnostic
                 .key
                 .as_deref()
                 .is_some_and(|key| filters.iter().any(|filter| filter.governs(key)));
+            let table = match section {
+                Some(section) => section.table_of(&layer.table),
+                None => layer.table.clone(),
+            };
             if !narrowed {
                 layer.diagnostics.push(diagnostic);
-            } else if let Err(error) = toml::Value::Table(layer.table.clone()).try_into::<S>() {
+            } else if let Err(error) = toml::Value::Table(table).try_into::<S>() {
                 let message = error.message().trim_end().to_owned();
                 let diagnostic = layer.diagnostic_at(Severity::Error, None, 0, message);
                 layer.diagnostics.push(diagnostic);
             }
         }
-        if !layer.has_errors()
-            && let Some(schema) = options.schema_of(&layer.table)
-        {
-            let more = layer.check_schema(&schema);
-            layer.diagnostics.extend(more);
+        if !layer.has_errors() {
+            let more = match section {
+                Some(section) => options
+                    .schema_of(&section.table_of(&layer.table))
+                    .map(|schema| layer.check_schema(&section.file_schema(&schema))),
+                None => options
+                    .schema_of(&layer.table)
+                    .map(|schema| layer.check_schema(&schema)),
+            };
+            layer.diagnostics.extend(more.unwrap_or_default());
         }
     }
-    let table = (!layer.has_errors()).then_some(layer.table);
-    (table, layer.diagnostics)
+    let rejected = layer.has_errors();
+    let mut diagnostics = layer.diagnostics;
+    if let Some(section) = section
+        && !section.reports_file()
+    {
+        // Another section's store reports them.
+        let mut ix = 0;
+        diagnostics.retain(|diagnostic| {
+            ix += 1;
+            ix > loaded
+                && diagnostic
+                    .key
+                    .as_deref()
+                    .is_none_or(|key| section.holds(key))
+        });
+    }
+    let table = match section {
+        Some(section) => section.table_of(&layer.table),
+        None => layer.table,
+    };
+    ((!rejected).then_some(table), diagnostics)
+}
+
+/// Deserializes `S` from the TOML `source`, or from its table `section`,
+/// for an error's location in it.
+fn from_source<S: DeserializeOwned>(
+    source: &str,
+    section: Option<&Section>,
+) -> Result<(), toml::de::Error> {
+    let Some(section) = section else {
+        return toml::from_str::<S>(source).map(drop);
+    };
+    let seed = SectionSeed::<S> {
+        name: &section.name,
+        settings: PhantomData,
+    };
+    seed.deserialize(toml::de::Deserializer::parse(source)?)
+}
+
+/// Deserializes the table `name` of a file as an `S`, skipping the rest.
+struct SectionSeed<'a, S> {
+    name: &'a str,
+    settings: PhantomData<S>,
+}
+
+impl<'de, S: DeserializeOwned> DeserializeSeed<'de> for SectionSeed<'_, S> {
+    type Value = ();
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<(), D::Error> {
+        deserializer.deserialize_map(self)
+    }
+}
+
+impl<'de, S: DeserializeOwned> Visitor<'de> for SectionSeed<'_, S> {
+    type Value = ();
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "a settings file with a table `{}`", self.name)
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<(), A::Error> {
+        while let Some(key) = map.next_key::<String>()? {
+            if key == self.name {
+                map.next_value::<S>()?;
+            } else {
+                map.next_value::<IgnoredAny>()?;
+            }
+        }
+        Ok(())
+    }
 }
 
 /// The layers' good tables merged over the defaults, and their diagnostics.

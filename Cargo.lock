@@ -4626,6 +4626,7 @@ dependencies = [
  "kiln-shell",
  "kiln-ui",
  "log",
+ "schemars",
  "serde",
  "serde_json",
  "tempfile",

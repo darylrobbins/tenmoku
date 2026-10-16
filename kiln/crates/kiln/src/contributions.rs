@@ -45,8 +45,9 @@
 //!
 //! `#[kiln::command]` records its command as a [`CommandRecord`],
 //! `#[kiln::panel]` its panel as a [`PanelRecord`], `#[kiln::status]`
-//! its source as a [`StatusRecord`] and `#[kiln::item]` its kind as an
-//! [`ItemRecord`], which [`Contributions::add_recorded`]
+//! its source as a [`StatusRecord`], `#[kiln::item]` its kind as an
+//! [`ItemRecord`] and `#[kiln::settings]` its section as a
+//! [`SettingsRecord`], which [`Contributions::add_recorded`]
 //! adds when the record was compiled into the app's own target (a binary,
 //! an example or an integration test), and the crate's `kiln::module!`
 //! when it was compiled into a library.
@@ -77,7 +78,7 @@ use kiln_shell::{
 use kiln_ui::Icon;
 
 use crate::{
-    Cx,
+    Cx, SettingsSection,
     setup::{Catalogs, Config, toml_escape},
     tables::{KeyBinding, KeyTable, MenuTable, TableItem},
 };
@@ -415,6 +416,29 @@ pub struct ItemRecord {
 
 inventory::collect!(ItemRecord);
 
+/// A settings section `#[kiln::settings]` declared, as it records it with
+/// `inventory`: its table's name, what [`Contributions::add_settings`]
+/// takes, and where it was declared.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug)]
+pub struct SettingsRecord {
+    pub section: &'static str,
+    pub add: fn(Config) -> Config,
+    pub file: &'static str,
+    pub line: u32,
+    pub krate: &'static str,
+    pub bin: Option<&'static str>,
+    pub test_dir: Option<&'static str>,
+}
+
+inventory::collect!(SettingsRecord);
+
+/// `config` with the section `S`: what a [`SettingsRecord`] adds.
+#[doc(hidden)]
+pub fn add_section<S: SettingsSection>(config: Config) -> Config {
+    config.section::<S>()
+}
+
 /// A record one of kiln's macros submitted: what it's called, where it
 /// was declared, and which crate and target it was compiled into.
 trait Recorded {
@@ -463,6 +487,7 @@ recorded!(CommandRecord, "#[kiln::command]s");
 recorded!(PanelRecord, "#[kiln::panel]s");
 recorded!(StatusRecord, "#[kiln::status]es");
 recorded!(ItemRecord, "#[kiln::item]s", kind);
+recorded!(SettingsRecord, "#[kiln::settings]", section);
 
 /// Every record of a kind linked in.
 fn linked<R: inventory::Collect>() -> Vec<&'static R> {
@@ -615,6 +640,14 @@ pub fn add_crate_commands(cx: &mut App, krate: &'static str) {
         crate_records(linked(), krate),
     );
     add_items(cx, crate_records(linked(), krate));
+    add_sections(cx, crate_records(linked(), krate));
+}
+
+/// Adds the settings sections of `sections`.
+fn add_sections(cx: &mut App, sections: Vec<&SettingsRecord>) {
+    for section in sections {
+        Contributions::add_settings(cx, section.add);
+    }
 }
 
 /// Adds the item kinds of `items`, so their saved items restore.
@@ -765,8 +798,9 @@ impl Contributions {
     /// [`Contributions::add_commands`] does, then its `#[kiln::panel]`s and
     /// `#[kiln::status]`es the same way ([`Contributions::add_panel`],
     /// [`Contributions::add_status`]), so that those tying on `order` go by
-    /// file and line, and its `#[kiln::item]`s' kinds
-    /// ([`Contributions::add_item_kind`]): [`crate::app()`] calls it first
+    /// file and line, its `#[kiln::item]`s' kinds
+    /// ([`Contributions::add_item_kind`]) and its `#[kiln::settings]`
+    /// sections ([`Contributions::add_settings`]): [`crate::app()`] calls it first
     /// when it starts. A library crate's are left to its `kiln::module!`.
     pub fn add_recorded(cx: &mut App) {
         let specs: Vec<CommandSpec> = (app_records(linked()).into_iter())
@@ -775,10 +809,12 @@ impl Contributions {
         Self::add_commands(cx, specs);
         add_panels_and_statuses(cx, app_records(linked()), app_records(linked()));
         add_items(cx, app_records(linked()));
+        add_sections(cx, app_records(linked()));
     }
 
     /// Warns of each library crate whose `#[kiln::command]`s,
-    /// `#[kiln::panel]`s, `#[kiln::status]`es or `#[kiln::item]`s are
+    /// `#[kiln::panel]`s, `#[kiln::status]`es, `#[kiln::item]`s or
+    /// `#[kiln::settings]` are
     /// linked in but no `kiln::module!` added, naming it: in a debug
     /// build, [`crate::app()`] calls it once its modules have run.
     pub fn warn_unclaimed(cx: &App) {
@@ -791,6 +827,7 @@ impl Contributions {
         LeftOut::add(&mut crates, linked::<PanelRecord>(), &claimed);
         LeftOut::add(&mut crates, linked::<StatusRecord>(), &claimed);
         LeftOut::add(&mut crates, linked::<ItemRecord>(), &claimed);
+        LeftOut::add(&mut crates, linked::<SettingsRecord>(), &claimed);
         for warning in warnings(crates) {
             log::warn!("{warning}");
         }
@@ -1052,20 +1089,30 @@ impl Contributions {
     /// them after its own; by hand, [`Contributions::configure`] does.
     /// After `init` it's too late: it's left out, with a warning.
     ///
-    /// What `#[kiln::settings]` writes, by hand:
+    /// What `#[kiln::settings]` writes, by hand (see [`crate::settings`]):
     ///
     /// ```
-    /// use kiln::{Config, Contributions, gpui::App, serde::{Deserialize, Serialize}};
+    /// use kiln::{
+    ///     Config, Contributions, SettingsSection,
+    ///     gpui::App,
+    ///     schemars::JsonSchema,
+    ///     serde::{Deserialize, Serialize},
+    /// };
     ///
-    /// #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize)]
+    /// #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize, JsonSchema)]
     /// #[serde(crate = "kiln::serde", default)]
+    /// #[schemars(crate = "kiln::schemars")]
     /// struct OutlineSettings {
     ///     depth: u32,
     /// }
     ///
+    /// impl SettingsSection for OutlineSettings {
+    ///     const SECTION: &'static str = "outline";
+    /// }
+    ///
     /// fn module(cx: &mut App) {
     ///     Contributions::add_settings(cx, |config: Config| {
-    ///         config.settings::<OutlineSettings>(None, None)
+    ///         config.section::<OutlineSettings>()
     ///     });
     /// }
     /// # let _: kiln::Module = module;

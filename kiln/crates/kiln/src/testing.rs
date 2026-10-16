@@ -6,12 +6,16 @@
 //! keys, commands and menus; [`assert_clean_config`] checks an app's keymap
 //! and menus as on every platform.
 
-use std::ffi::OsString;
+use std::{ffi::OsString, fs, path::PathBuf};
 
 use gpui::{App, Entity, TestAppContext, VisualTestContext};
 use kiln_command::Invocation;
 use kiln_core::{AppId, AppPaths, Os, PathStyle};
-use kiln_platform::{Capabilities, config::batch_channel, menus};
+use kiln_platform::{
+    Capabilities,
+    config::{BatchSender, batch_channel},
+    menus,
+};
 use kiln_shell::{ItemPane, PaneItem, Workspace};
 use tempfile::TempDir;
 
@@ -23,6 +27,11 @@ use crate::{
 pub struct TestApp {
     started: Started,
     cx: VisualTestContext,
+    /// Where the user's files are read from.
+    config_dir: PathBuf,
+    /// Sends the config service the files that changed, as the watcher
+    /// would.
+    batches: BatchSender,
     /// The directories the app keeps its files in, removed on drop.
     _dirs: TempDir,
 }
@@ -36,8 +45,9 @@ impl TestApp {
     /// whatever path a `.config(..)` hook gave them
     /// ([`Config::user_files_in`]), so that no user file is read or
     /// watched; a settings store the app loaded itself
-    /// ([`Config::settings_store`]) is the app's to point elsewhere. The
-    /// test platform answers prompts; `init` must report no diagnostics;
+    /// ([`Config::settings_store`]) is the app's to point elsewhere; and
+    /// [`TestApp::write_user_file`] changes one. The test platform answers
+    /// prompts; `init` must report no diagnostics;
     /// and the window is drawn.
     ///
     /// # Panics
@@ -56,15 +66,16 @@ impl TestApp {
                 _ => None,
             },
         );
-        let (_, closed) = batch_channel();
+        let (sender, batches) = batch_channel();
         // Last, so that it holds whatever the app's `.config(..)` hooks
         // set: the user's files are looked up in the temporary directory,
         // where there are none, when `init` loads them.
         let config_dir = dirs.path().join("config");
+        let user_dir = config_dir.clone();
         let builder = builder.paths(paths).config(move |config| {
             config
-                .user_files_in(config_dir)
-                .watch_with(closed)
+                .user_files_in(user_dir)
+                .watch_with(batches)
                 .capabilities(Capabilities::for_os(Os::Linux))
         });
         let started = cx.update(|cx| {
@@ -80,6 +91,8 @@ impl TestApp {
         let mut app = TestApp {
             started,
             cx,
+            config_dir,
+            batches: sender,
             _dirs: dirs,
         };
         app.draw();
@@ -95,6 +108,21 @@ impl TestApp {
         if drawn.is_ok() {
             self.cx.run_until_parked();
         }
+    }
+
+    /// Writes the user's file `name` (`settings.toml`, `keymap.toml` or
+    /// `theme.toml`) as `text`, and has the app reload it as it would
+    /// when the watcher saw it change, then draws.
+    ///
+    /// # Panics
+    ///
+    /// If the file can't be written.
+    pub fn write_user_file(&mut self, name: &str, text: &str) {
+        let path = self.config_dir.join(name);
+        fs::create_dir_all(&self.config_dir).expect("the config directory");
+        fs::write(&path, text).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        self.batches.send(vec![path]);
+        self.draw();
     }
 
     /// Presses `keys`, space-separated, as GPUI writes them, with

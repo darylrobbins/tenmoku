@@ -13,6 +13,7 @@ mod cx;
 mod ext;
 mod item;
 pub mod model;
+mod settings;
 mod setup;
 mod tables;
 #[cfg(feature = "test-support")]
@@ -631,6 +632,137 @@ pub use kiln_macros::item;
 /// }
 /// ```
 pub use kiln_macros::panel;
+/// Makes a struct of named fields a section of the app's settings: its
+/// own table of the one `settings.toml`, `section` naming it, each field
+/// a key, `#[setting(default = ..)]` its default.
+///
+/// ```
+/// use kiln::Cx;
+///
+/// /// `[notes]` in settings.toml.
+/// #[kiln::settings(section = "notes")]
+/// #[derive(Clone, Debug)]
+/// pub struct NotesSettings {
+///     /// The editor's font size, in points.
+///     #[setting(default = 14.0)]
+///     pub font_size: f32,
+///     /// The font, by family name.
+///     #[setting(default = "Menlo")]
+///     pub font: String,
+///     /// Whether lines wrap.
+///     pub wrap: bool,
+/// }
+///
+/// assert_eq!(NotesSettings::default().font_size, 14.0);
+///
+/// // In a view, which redraws after a reload changes them:
+/// fn font_size<V: 'static>(cx: &mut Cx<V>) -> f32 {
+///     cx.setting::<NotesSettings>().font_size
+/// }
+/// # let _ = font_size::<()>;
+/// ```
+///
+/// - The struct stays as written, without its `#[setting]`s, and gets
+///   serde's `Serialize` and `Deserialize` with `#[serde(crate =
+///   "kiln::serde", default)]`, so a file sets only the keys it wants;
+///   `PartialEq`; schemars' `JsonSchema` ([`schemars`]), each field's doc
+///   line its key's description ([`settings_schema`]); a `Default`, each
+///   field `default = ..`'s value (a string literal `Into`'d, for a
+///   `String`), or its type's `Default` without one; and
+///   [`SettingsSection`]. Each field's type needs those too: a nested
+///   table is a struct deriving them, with `#[serde(default)]`.
+/// - [`app()`] reads the section from `[notes]` of the user's
+///   `settings.toml` in the config directory ([`Config::settings_file`]),
+///   watched: `cx.setting::<S>()` in a view ([`Cx::setting`]) reads it
+///   and redraws the view after a reload changes it, and every window
+///   redraws after one does (`cx.refresh_windows()`).
+/// - Every section shares the file. A key is checked against the
+///   sections' tables and each one's schema: a table of another section
+///   isn't unknown, while a key in no section's table, or one the
+///   section doesn't have, is a warning, and a value its type can't take
+///   an error, which keeps the section's last good table.
+///
+/// The macro records the section with `inventory`, as `#[kiln::command]`
+/// records a command: [`app()`] adds the app's own target's, a library
+/// crate's [`module!`] its own ([`Contributions::add_settings`]).
+///
+/// It expands to the struct, its `#[setting]`s removed, then:
+///
+/// ```ignore
+/// #[derive(Serialize, Deserialize, JsonSchema, PartialEq)]
+/// #[serde(crate = "::kiln::serde", default)]
+/// #[schemars(crate = "::kiln::schemars")]
+/// pub struct NotesSettings { .. }
+///
+/// impl Default for NotesSettings {
+///     fn default() -> Self {
+///         Self { font_size: 14.0, font: Into::into("Menlo"), wrap: Default::default() }
+///     }
+/// }
+/// impl SettingsSection for NotesSettings {
+///     const SECTION: &'static str = "notes";
+/// }
+/// inventory::submit!(SettingsRecord {
+///     section: "notes", add: add_section::<NotesSettings>, file: file!(), line: line!(), ..
+/// });
+/// ```
+///
+/// which is, by hand, [`Config::section`] through
+/// [`Contributions::add_settings`]:
+///
+/// ```
+/// use kiln::{
+///     Config, Contributions, SettingsSection,
+///     gpui::App,
+///     schemars::JsonSchema,
+///     serde::{Deserialize, Serialize},
+/// };
+///
+/// /// `[notes]` in settings.toml.
+/// #[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
+/// #[serde(crate = "kiln::serde", default)]
+/// #[schemars(crate = "kiln::schemars")]
+/// pub struct NotesSettings {
+///     /// The editor's font size, in points.
+///     pub font_size: f32,
+/// }
+///
+/// impl Default for NotesSettings {
+///     fn default() -> Self {
+///         Self { font_size: 14.0 }
+///     }
+/// }
+///
+/// impl SettingsSection for NotesSettings {
+///     const SECTION: &'static str = "notes";
+/// }
+///
+/// fn module(cx: &mut App) {
+///     Contributions::add_settings(cx, |config: Config| config.section::<NotesSettings>());
+/// }
+/// # let _: kiln::Module = module;
+/// ```
+///
+/// A section that isn't a table's bare name doesn't compile, the error on
+/// it:
+///
+/// ```compile_fail
+/// #[kiln::settings(section = "notes.editor")]
+/// struct NotesSettings {
+///     font_size: f32,
+/// }
+/// ```
+///
+/// nor does an argument `#[setting]` doesn't know:
+///
+/// ```compile_fail
+/// #[kiln::settings(section = "notes")]
+/// struct NotesSettings {
+///     #[setting(fallback = 14.0)]
+///     font_size: f32,
+/// }
+/// ```
+pub use kiln_macros::settings;
 /// Makes a fn a status bar source, in each workspace window [`app()`]
 /// opens: `fn(cx: &App) -> T`, `T` a `String`, an `Option<String>` (`None`
 /// showing nothing) or a [`shell::StatusItem`]; `side`, `order` and `id`
@@ -719,6 +851,10 @@ pub use kiln_platform::config::{ConfigDiagnostics, GlobalSettings};
 /// and the per-window setup. See [`kiln_shell::Root`].
 pub use kiln_shell::Root;
 pub use model::provide;
+/// schemars, for a settings section's schema without a dependency of its
+/// own: `#[derive(JsonSchema)]` with `#[schemars(crate = "kiln::schemars")]`.
+pub use schemars;
+pub use settings::{SettingsSection, schema as settings_schema};
 pub use setup::{AppInfo, Config, application, catalog, init, window_options};
 pub use tables::{KeyBinding, KeyTable, MenuTable, TableItem, TableMenu};
 pub use view::{View, ViewCommands};
@@ -842,7 +978,9 @@ pub mod __private {
     pub use crate::contributions::{
         CommandRecord, RunRecorded, add_crate_commands, register_recorded as register_command,
     };
-    pub use crate::contributions::{ItemRecord, PanelRecord, StatusRecord};
+    pub use crate::contributions::{
+        ItemRecord, PanelRecord, SettingsRecord, StatusRecord, add_section,
+    };
     pub use crate::item::restore_item;
     pub use crate::view::{
         Attach, AttachNothing, AttachViewCommands, IntoStatus, ViewState, make_panel, run_in_view,

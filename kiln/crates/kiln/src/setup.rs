@@ -65,6 +65,7 @@ use kiln_ui::{Assets, TextField, Theme, ThemeMode, set_themes};
 use crate::{
     config::UserTheme,
     contributions::{self, Shipped},
+    settings::{SettingsSection, section_store},
 };
 
 mod defaults;
@@ -94,6 +95,18 @@ type Hook = Box<dyn FnMut(&mut App)>;
 /// if any ([`Config::user_files_in`]).
 type AddSettings =
     Box<dyn FnOnce(ConfigService, Option<&Path>) -> (ConfigService, Vec<Diagnostic>)>;
+
+/// A settings section ([`Config::section`]): its type, its table's name,
+/// and what adds its store to the service, given the settings file and
+/// every section's name.
+struct Section {
+    ty: TypeId,
+    name: &'static str,
+    add: AddSection,
+}
+
+type AddSection =
+    fn(ConfigService, Option<PathBuf>, &[&'static str]) -> (ConfigService, Vec<Diagnostic>);
 
 /// Each catalog in turn, until one knows the command.
 pub(crate) struct Catalogs(pub(crate) Vec<Rc<dyn CommandCatalog>>);
@@ -126,6 +139,10 @@ pub struct Config {
     theme_mode: ThemeMode,
     /// One store for each settings type, in the order first given.
     settings: Vec<(TypeId, AddSettings)>,
+    /// The file the sections share, and the sections, in the order first
+    /// given.
+    settings_file: Option<PathBuf>,
+    sections: Vec<Section>,
     user_theme: Option<PathBuf>,
     theme_extensions: &'static [&'static str],
     batches: Option<Batches>,
@@ -157,6 +174,8 @@ impl Config {
             menu_shortcut_context: Vec::new(),
             theme_mode: ThemeMode::System,
             settings: Vec::new(),
+            settings_file: None,
+            sections: Vec::new(),
             user_theme: None,
             theme_extensions: &[],
             batches: None,
@@ -252,9 +271,47 @@ impl Config {
         }))
     }
 
+    /// The settings file the sections share ([`Config::section`]): the
+    /// user's `settings.toml`, which [`crate::app()`] gives. Without one,
+    /// each section is its defaults.
+    pub fn settings_file(mut self, path: impl Into<PathBuf>) -> Self {
+        self.settings_file = Some(path.into());
+        self
+    }
+
+    /// The app's settings section `S`, as `#[kiln::settings]` declares one
+    /// ([`SettingsSection`]): its table of the settings file
+    /// ([`Config::settings_file`]), over `S::default()`, checked against
+    /// `S`'s schema and reloaded when the file changes. Read it with
+    /// `cx.setting::<S>()` in a view ([`crate::Cx::setting`]), which
+    /// redraws after a reload changes it, or `cx.settings::<S>()`; every
+    /// window redraws after one does. A key of another section's table
+    /// isn't unknown to it, but one in no section's, or in its own that
+    /// `S` doesn't have, is a warning. It replaces an earlier store of
+    /// the same type, as [`Config::settings`] does.
+    ///
+    /// # Panics
+    ///
+    /// In [`init`], if two types are sections of the same name.
+    pub fn section<S: SettingsSection>(mut self) -> Self {
+        let ty = TypeId::of::<S>();
+        self.settings.retain(|(added, _)| *added != ty);
+        let section = Section {
+            ty,
+            name: S::SECTION,
+            add: section_store::<S>,
+        };
+        match self.sections.iter_mut().find(|added| added.ty == ty) {
+            Some(earlier) => *earlier = section,
+            None => self.sections.push(section),
+        }
+        self
+    }
+
     /// Adds the store `add` makes for `S`, in place of an earlier one.
     fn add_settings<S: SettingsType>(mut self, add: AddSettings) -> Self {
         let ty = TypeId::of::<S>();
+        self.sections.retain(|section| section.ty != ty);
         match self.settings.iter_mut().find(|(added, _)| *added == ty) {
             Some((_, earlier)) => *earlier = add,
             None => self.settings.push((ty, add)),
@@ -302,7 +359,8 @@ impl Config {
 
     /// Reads the user's files from `dir` instead, each by its file name,
     /// however they were named: the settings from [`Config::settings`],
-    /// the keymap and the theme. For tests, so that none of the user's
+    /// the sections' file ([`Config::settings_file`]), the keymap and the
+    /// theme. For tests, so that none of the user's
     /// own files is read: [`crate::testing::TestApp`] reads them from an
     /// empty temporary directory. A store loaded before `init`
     /// ([`Config::settings_store`]) keeps the files it read.
@@ -519,6 +577,21 @@ pub fn init(cx: &mut App, mut config: Config) -> Vec<Diagnostic> {
     for (_, add) in std::mem::take(&mut config.settings) {
         let found;
         (service, found) = add(service, config.user_dir.as_deref());
+        diagnostics.extend(found);
+    }
+    let sections = std::mem::take(&mut config.sections);
+    let names: Vec<&'static str> = sections.iter().map(|section| section.name).collect();
+    for (ix, name) in names.iter().enumerate() {
+        assert!(
+            !names[..ix].contains(name),
+            "two settings types are the section [{name}] of settings.toml: rename one's `section`"
+        );
+    }
+    let settings_file =
+        (config.settings_file.take()).map(|path| moved_into(path, config.user_dir.as_deref()));
+    for section in sections {
+        let found;
+        (service, found) = (section.add)(service, settings_file.clone(), &names);
         diagnostics.extend(found);
     }
     if let Some(path) = config.user_theme.take() {
