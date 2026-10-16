@@ -439,6 +439,23 @@ pub fn add_section<S: SettingsSection>(config: Config) -> Config {
     config.section::<S>()
 }
 
+/// A model `#[kiln::model]` declared, as it records it with `inventory`:
+/// its type's name, what [`Contributions::add_model`] takes (the model
+/// registered, or persisted), and where it was declared.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug)]
+pub struct ModelRecord {
+    pub name: &'static str,
+    pub add: fn(&mut App),
+    pub file: &'static str,
+    pub line: u32,
+    pub krate: &'static str,
+    pub bin: Option<&'static str>,
+    pub test_dir: Option<&'static str>,
+}
+
+inventory::collect!(ModelRecord);
+
 /// A record one of kiln's macros submitted: what it's called, where it
 /// was declared, and which crate and target it was compiled into.
 trait Recorded {
@@ -488,6 +505,7 @@ recorded!(PanelRecord, "#[kiln::panel]s");
 recorded!(StatusRecord, "#[kiln::status]es");
 recorded!(ItemRecord, "#[kiln::item]s", kind);
 recorded!(SettingsRecord, "#[kiln::settings]", section);
+recorded!(ModelRecord, "#[kiln::model]s", name);
 
 /// Every record of a kind linked in.
 fn linked<R: inventory::Collect>() -> Vec<&'static R> {
@@ -641,6 +659,14 @@ pub fn add_crate_commands(cx: &mut App, krate: &'static str) {
     );
     add_items(cx, crate_records(linked(), krate));
     add_sections(cx, crate_records(linked(), krate));
+    add_models(cx, crate_records(linked(), krate));
+}
+
+/// Adds the models of `models`.
+fn add_models(cx: &mut App, models: Vec<&ModelRecord>) {
+    for model in models {
+        Contributions::add_model(cx, model.add);
+    }
 }
 
 /// Adds the settings sections of `sections`.
@@ -800,7 +826,8 @@ impl Contributions {
     /// [`Contributions::add_status`]), so that those tying on `order` go by
     /// file and line, its `#[kiln::item]`s' kinds
     /// ([`Contributions::add_item_kind`]) and its `#[kiln::settings]`
-    /// sections ([`Contributions::add_settings`]): [`crate::app()`] calls it first
+    /// sections ([`Contributions::add_settings`]) and its `#[kiln::model]`s
+    /// ([`Contributions::add_model`]): [`crate::app()`] calls it first
     /// when it starts. A library crate's are left to its `kiln::module!`.
     pub fn add_recorded(cx: &mut App) {
         let specs: Vec<CommandSpec> = (app_records(linked()).into_iter())
@@ -810,6 +837,7 @@ impl Contributions {
         add_panels_and_statuses(cx, app_records(linked()), app_records(linked()));
         add_items(cx, app_records(linked()));
         add_sections(cx, app_records(linked()));
+        add_models(cx, app_records(linked()));
     }
 
     /// Warns of each library crate whose `#[kiln::command]`s,
@@ -828,6 +856,7 @@ impl Contributions {
         LeftOut::add(&mut crates, linked::<StatusRecord>(), &claimed);
         LeftOut::add(&mut crates, linked::<ItemRecord>(), &claimed);
         LeftOut::add(&mut crates, linked::<SettingsRecord>(), &claimed);
+        LeftOut::add(&mut crates, linked::<ModelRecord>(), &claimed);
         for warning in warnings(crates) {
             log::warn!("{warning}");
         }

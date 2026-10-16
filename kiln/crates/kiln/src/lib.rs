@@ -477,6 +477,87 @@ pub use kiln_macros::command;
 /// # }
 /// ```
 pub use kiln_macros::item;
+/// Makes a struct or enum an app model: made from its `Default` when
+/// [`app()`] starts, so that `cx.model::<M>()`, `cx.watch::<M>()` and
+/// `cx.update_model(..)` find it with no register call. With `persist` it's
+/// kept in the state directory, in `<state>/<name>.json`, `name` the type's
+/// name in snake case, or `file = ".."`, without the `.json`; the type must
+/// then be `Serialize`, `Deserialize` and `Default`, and one that isn't is
+/// reported at its name.
+///
+/// ```
+/// use kiln::serde::{Deserialize, Serialize};
+///
+/// /// Kept in `<state>/recent.json`.
+/// #[kiln::model(persist, file = "recent")]
+/// #[derive(Default, Serialize, Deserialize)]
+/// #[serde(crate = "kiln::serde")]
+/// struct RecentFiles {
+///     paths: Vec<String>,
+/// }
+///
+/// /// Made at start, kept in memory.
+/// #[kiln::model]
+/// #[derive(Default)]
+/// struct Selection(Option<usize>);
+/// ```
+///
+/// It expands to the type, then an `inventory` record, which [`app()`], or
+/// the crate's [`module!`], contributes ([`Contributions::add_model`]):
+///
+/// ```ignore
+/// inventory::submit!(ModelRecord {
+///     name: "RecentFiles",
+///     add: { fn add(cx: &mut App) { persist::<RecentFiles>(cx, "recent") } add },
+///     file: file!(), line: line!(), ..
+/// });
+/// inventory::submit!(ModelRecord {
+///     name: "Selection", add: model::register::<Selection>, file: file!(), line: line!(), ..
+/// });
+/// ```
+///
+/// which is, by hand:
+///
+/// ```
+/// use kiln::{
+///     Contributions,
+///     gpui::App,
+///     model::{self, persist::persist},
+///     serde::{Deserialize, Serialize},
+/// };
+///
+/// #[derive(Default, Serialize, Deserialize)]
+/// #[serde(crate = "kiln::serde")]
+/// struct RecentFiles {
+///     paths: Vec<String>,
+/// }
+///
+/// #[derive(Default)]
+/// struct Selection(Option<usize>);
+///
+/// fn module(cx: &mut App) {
+///     Contributions::add_model(cx, |cx| persist::<RecentFiles>(cx, "recent"));
+///     Contributions::add_model(cx, model::register::<Selection>);
+/// }
+/// # let _: kiln::Module = module;
+/// ```
+///
+/// An argument it doesn't know doesn't compile, the error on it:
+///
+/// ```compile_fail
+/// #[kiln::model(persistent)]
+/// #[derive(Default)]
+/// struct Recent(Vec<String>);
+/// ```
+///
+/// nor does `persist` on a type that isn't `Serialize`:
+///
+/// ```compile_fail
+/// #[kiln::model(persist)]
+/// #[derive(Default)]
+/// struct Recent(Vec<String>);
+/// ```
+pub use kiln_macros::model;
 /// Makes a struct that implements [`View`] a dock panel, in each
 /// workspace window [`app()`] opens, with its toggle command, key, View
 /// menu item and rail button; `title`, `icon`, `dock`, `toggle_key`,
@@ -979,7 +1060,7 @@ pub mod __private {
         CommandRecord, RunRecorded, add_crate_commands, register_recorded as register_command,
     };
     pub use crate::contributions::{
-        ItemRecord, PanelRecord, SettingsRecord, StatusRecord, add_section,
+        ItemRecord, ModelRecord, PanelRecord, SettingsRecord, StatusRecord, add_section,
     };
     pub use crate::item::restore_item;
     pub use crate::view::{

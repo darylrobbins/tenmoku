@@ -3,13 +3,14 @@
 //! Kiln's attribute macros. Use them through the kiln crate, which
 //! documents each: `#[kiln::command]`, on a fn or a view's impl, is
 //! [`command`] here, `#[kiln::panel]` [`panel`], `#[kiln::status]`
-//! [`status`], `#[kiln::item]` [`item`] and `#[kiln::settings]`
-//! [`settings`]. Each expands to
+//! [`status`], `#[kiln::item]` [`item`], `#[kiln::settings]`
+//! [`settings`] and `#[kiln::model]` [`model`]. Each expands to
 //! plain data and fn pointers that name kiln's items only, through
 //! `::kiln`, so an app needs no other dependency for them.
 
 mod command;
 mod item;
+mod model;
 mod panel;
 mod settings;
 mod status;
@@ -52,4 +53,12 @@ pub fn item(args: TokenStream, item: TokenStream) -> TokenStream {
 #[proc_macro_attribute]
 pub fn settings(args: TokenStream, item: TokenStream) -> TokenStream {
     settings::expand(args.into(), item.into()).into()
+}
+
+/// Makes a struct or enum an app model, made from its `Default` at start,
+/// kept in the state directory with `persist`: see `kiln::model`, which
+/// documents it.
+#[proc_macro_attribute]
+pub fn model(args: TokenStream, item: TokenStream) -> TokenStream {
+    model::expand(args.into(), item.into()).into()
 }
