@@ -125,6 +125,27 @@ fn pane_item(args: TokenStream, item: &ItemStruct) -> syn::Result<TokenStream> {
                     #as_item::status_items(self, cx)
                 }
 
+                fn may_close(
+                    &mut self,
+                    window: &mut ::kiln::gpui::Window,
+                    cx: &mut ::kiln::gpui::Context<Self>,
+                ) -> ::kiln::shell::CloseAnswer {
+                    #as_item::may_close(self, window, cx)
+                }
+
+                fn close_revision(&self, cx: &::kiln::gpui::App) -> u64 {
+                    #as_item::close_revision(self, cx)
+                }
+
+                fn split(
+                    &mut self,
+                    window: &mut ::kiln::gpui::Window,
+                    cx: &mut ::kiln::gpui::Context<Self>,
+                ) -> ::std::option::Option<::kiln::gpui::Entity<Self>> {
+                    let split = #as_item::split(self, window, cx)?;
+                    ::std::option::Option::Some(::kiln::gpui::AppContext::new(cx, |_| split))
+                }
+
                 fn serialize(
                     &self,
                     cx: &::kiln::gpui::App,

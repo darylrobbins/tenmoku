@@ -7,7 +7,8 @@
 //! restores from a saved layout through its typed state, its kind
 //! `<crate>.<snake name>` unless `kind = ".."`; `active_state` gives the
 //! active item's state if it's of the type asked; and its own commands
-//! are attached.
+//! are attached; and its `may_close`, `close_revision` and `split` reach
+//! the pane item, defaulting to the dirty state's, `None` for a split.
 
 use gpui::{
     App, Entity, FocusHandle, IntoElement, ParentElement as _, SharedString, TestAppContext,
@@ -18,7 +19,7 @@ use kiln::{
     command::Value,
     prelude::*,
     serde::{Deserialize, Serialize},
-    shell::{PaneItem, PaneView as _},
+    shell::{CloseAnswer, PaneItem, PaneView as _},
     testing::TestApp,
 };
 
@@ -301,4 +302,101 @@ fn active_state_is_the_active_items_if_its_a_t_and_its_commands_are_attached(
     open::<Note>(&mut app, note("a"));
     app.press("f6");
     assert_eq!(app.cx().read(|cx| conversation.read(cx).sent), 1);
+}
+
+/// A draft: dirty, yet it closes unasked; its revision is its length; and
+/// it splits into a copy.
+#[kiln::item]
+struct Draft {
+    text: String,
+    focus: FocusHandle,
+}
+
+impl Item for Draft {
+    type State = String;
+
+    fn new(text: String, _: &mut Window, cx: &mut App) -> Option<Self> {
+        Some(Self {
+            text,
+            focus: cx.focus_handle(),
+        })
+    }
+
+    fn state(&self) -> String {
+        self.text.clone()
+    }
+
+    fn title(&self, _: &App) -> SharedString {
+        "Draft".into()
+    }
+
+    fn focus(&self, _: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+
+    fn is_dirty(&self, _: &App) -> bool {
+        true
+    }
+
+    fn may_close(&mut self, _: &mut Window, _: &mut App) -> CloseAnswer {
+        CloseAnswer::Close
+    }
+
+    fn close_revision(&self, _: &App) -> u64 {
+        self.text.len() as u64
+    }
+
+    fn split(&mut self, _: &mut Window, cx: &mut App) -> Option<Self> {
+        Some(Self {
+            text: self.text.clone(),
+            focus: cx.focus_handle(),
+        })
+    }
+}
+
+impl View for Draft {
+    fn render(&mut self, _: &mut Cx<Self>) -> impl IntoElement {
+        div().child(self.text.clone())
+    }
+}
+
+#[gpui::test]
+fn the_close_and_split_hooks_reach_the_pane_item_and_default_to_the_old_behaviour(
+    cx: &mut TestAppContext,
+) {
+    let mut app = TestApp::open(builder(), cx);
+    let note = open::<Note>(&mut app, note("a")).expect("it opens");
+    let draft = open::<Draft>(&mut app, "abc".into()).expect("it opens");
+    let (answer, revision, split) = app.cx().update(|window, cx| {
+        note.update(cx, |note, cx| {
+            let answer = PaneItem::may_close(note, window, cx);
+            (
+                answer,
+                PaneItem::close_revision(note, cx),
+                PaneItem::split(note, window, cx),
+            )
+        })
+    });
+    assert!(matches!(answer, CloseAnswer::Close), "a clean item closes");
+    assert_eq!(revision, 0);
+    assert_eq!(split, None, "no split by default");
+
+    let (answer, revision, split) = app.cx().update(|window, cx| {
+        draft.update(cx, |draft, cx| {
+            let answer = PaneItem::may_close(draft, window, cx);
+            (
+                answer,
+                PaneItem::close_revision(draft, cx),
+                PaneItem::split(draft, window, cx),
+            )
+        })
+    });
+    assert!(matches!(answer, CloseAnswer::Close), "its own answer");
+    assert_eq!(revision, 3);
+    let split = split.expect("a copy");
+    assert_ne!(split, draft);
+    assert_eq!(
+        split.read_with(app.cx(), |split, _| split.text.clone()),
+        "abc"
+    );
 }

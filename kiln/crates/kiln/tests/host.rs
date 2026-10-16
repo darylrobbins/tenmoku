@@ -14,8 +14,6 @@
 mod app;
 #[path = "../examples/host/conversation.rs"]
 mod conversation;
-#[path = "../examples/host/setup.rs"]
-mod setup;
 #[path = "../examples/host/threads.rs"]
 mod threads;
 
@@ -36,21 +34,21 @@ use kiln::{
     ui::{Color, List, ThemeMode, hsla},
 };
 
-use conversation::Conversation;
+use conversation::{Conversation, ConversationState};
 use threads::{ConversationList, Rows, Threads};
 
 /// The chat, opened by `kiln::testing` as `main` opens it, but with no user
 /// file or saved layout and its window's chrome as on Linux: its first
 /// conversation shown and focused.
 fn chat(cx: &mut TestAppContext) -> TestApp {
-    TestApp::open(setup::app(), cx)
+    TestApp::open(app::chat(), cx)
 }
 
 /// The chat's config as `kiln::app` makes it: its own keymap and menus over
 /// kiln's keys.
 fn config() -> Config {
-    let config = Config::new(setup::APP_ID, setup::APP_NAME);
-    setup::config(config.default_keys(true).default_menus(true))
+    let config = Config::new(app::APP_ID, "Kiln Chat");
+    app::config(config.default_keys(true).default_menus(true))
 }
 
 fn active(app: &mut TestApp) -> Entity<Conversation> {
@@ -72,19 +70,22 @@ fn panes(app: &mut TestApp) -> Vec<Entity<ItemPane>> {
 
 fn title(conversation: &Entity<Conversation>, cx: &mut VisualTestContext) -> String {
     conversation.read_with(cx, |conversation, cx| {
-        conversation.thread.read(cx).title.to_string()
+        let thread = Threads::get(conversation.state.thread, cx);
+        thread.unwrap().title.to_string()
     })
 }
 
 fn messages(conversation: &Entity<Conversation>, cx: &mut VisualTestContext) -> Vec<String> {
     conversation.read_with(cx, |conversation, cx| {
-        let thread = conversation.thread.read(cx);
-        thread.messages.iter().map(ToString::to_string).collect()
+        Threads::get(conversation.state.thread, cx)
+            .unwrap()
+            .messages
+            .clone()
     })
 }
 
 fn draft(conversation: &Entity<Conversation>, cx: &mut VisualTestContext) -> String {
-    conversation.read_with(cx, |conversation, cx| conversation.draft(cx).to_owned())
+    conversation.read_with(cx, |conversation, _| conversation.state.draft.clone())
 }
 
 fn titles(pane: &Entity<ItemPane>, cx: &mut VisualTestContext) -> Vec<String> {
@@ -176,7 +177,7 @@ fn the_host_command_runs_by_key_from_the_palette_and_the_menus(cx: &mut TestAppC
     app.press("enter");
     assert_eq!(shell.read_with(app.cx(), |shell, cx| shell.modal(cx)), None);
     assert_eq!(title(&active(&mut app), app.cx()), "Conversation 4");
-    assert_eq!(app.cx().read(|cx| Threads::all(cx).len()), 4);
+    assert_eq!(app.cx().read(|cx| Threads::save(cx).0.len()), 4);
     assert_eq!(titles(&pane, app.cx()).len(), 3);
 
     // And from its menu.
@@ -244,6 +245,17 @@ fn a_split_shows_the_conversation_twice_and_the_panel_opens_another(cx: &mut Tes
     app.press("secondary-w");
     assert_eq!(self::panes(&mut app).len(), 1);
     assert_eq!(active(&mut app), general);
+
+    // Focus given to the panel goes on to its list: the arrow keys move the selection.
+    let workspace = app.workspace();
+    app.cx().update(|window, cx| {
+        let dock = workspace.read(cx).dock(DockPosition::Left).unwrap().clone();
+        let panel = dock.read(cx).panel::<ConversationList>().unwrap();
+        window.focus(&gpui::Focusable::focus_handle(&panel, cx), cx);
+    });
+    app.draw();
+    app.press("down");
+    assert_eq!(list.read_with(app.cx(), |list, _| list.selected()), Some(1));
 }
 
 #[gpui::test]
@@ -288,10 +300,12 @@ fn a_conversation_with_unsent_text_asks_before_it_closes(cx: &mut TestAppContext
     assert_eq!(titles(&pane, app.cx()), Vec::<String>::new());
 
     // With nothing unsent, it closes without asking.
-    let random = app.cx().read(|cx| Threads::all(cx)[1].clone());
     let workspace = app.workspace();
     app.cx().update(|window, cx| {
-        workspace.update(cx, |workspace, cx| app::open(workspace, random, window, cx))
+        let random = ConversationState::new(1);
+        workspace.update(cx, |workspace, cx| {
+            workspace.open::<Conversation>(random, window, cx)
+        })
     });
     app.press("secondary-w");
     assert!(!app.cx().has_pending_prompt());
@@ -340,13 +354,13 @@ fn the_layout_comes_back_in_a_new_window(cx: &mut TestAppContext) {
 
     // The first window's conversations are as they were: the app's list
     // still holds them, its panel lists them, and its entry keeps them.
-    let threads = cx.read(Threads::all);
+    let threads = cx.read(Threads::save).0;
     assert_eq!(threads.len(), 3);
     assert_eq!(messages(&later, cx), ["Later"]);
-    let shown = later.read_with(cx, |later, _| later.thread.clone());
-    assert_eq!(threads[2], shown);
+    assert_eq!(later.read_with(cx, |later, _| later.state.thread), 2);
     let rows = list(&mut app).read_with(app.cx(), |list, _| list.delegate().0.clone());
-    assert_eq!(rows, threads);
+    let titles: Vec<_> = threads.iter().map(|thread| thread.title.clone()).collect();
+    assert_eq!(rows, titles);
     let entry = first.read_with(app.cx(), |workspace, cx| workspace.entry(cx));
     assert_eq!(entry["threads"][2]["messages"], Value::from(vec!["Later"]));
     let state = &entry["panes"]["tree"]["members"][1]["pane"]["items"][1]["state"];
@@ -395,17 +409,16 @@ fn a_layout_saved_before_kiln_app_comes_back(cx: &mut TestAppContext) {
 
     // No real watcher: its thread would race the test scheduler.
     let (_sender, batches) = batch_channel();
-    let chat = (setup::app().paths(paths)).config(|config| config.watch_with(batches));
+    let chat = (app::chat().paths(paths)).config(|config| config.watch_with(batches));
     let started = cx.update(|cx| chat.start(cx));
     assert_eq!(started.diagnostics, []);
     cx.run_until_parked();
     let workspace = started.window.root::<Workspace>(cx).unwrap();
     let cx = &mut VisualTestContext::from_window(started.window.0, cx);
     cx.run_until_parked();
-    let threads = cx.read(Threads::all);
+    let threads = cx.read(Threads::save).0;
     assert_eq!(threads.len(), 2);
-    let general = threads[0].read_with(cx, |thread, _| thread.messages.clone());
-    assert_eq!(general, ["Welcome to Kiln Chat.", "Hi"]);
+    assert_eq!(threads[0].messages, ["Welcome to Kiln Chat.", "Hi"]);
 
     let panes: Vec<_> = workspace.read_with(cx, |workspace, _| {
         workspace.group().panes().into_iter().cloned().collect()
@@ -432,7 +445,7 @@ fn a_layout_saved_before_kiln_app_comes_back(cx: &mut TestAppContext) {
 /// The chat's directories, as `kiln::app` makes them, under `dir`.
 fn paths(dir: &tempfile::TempDir) -> AppPaths {
     let home = dir.path().as_os_str().to_owned();
-    let id = AppId::new(setup::APP_ID, "kiln-chat", setup::APP_NAME);
+    let id = AppId::new(app::APP_ID, "kiln-chat", "Kiln Chat");
     AppPaths::resolve(&id, PathStyle::Native, Os::current(), |name| {
         matches!(name, "HOME" | "APPDATA" | "LOCALAPPDATA").then(|| home.clone())
     })
@@ -458,7 +471,7 @@ fn the_bubble_colour_comes_from_the_users_theme_or_its_default(cx: &mut TestAppC
     };
     fs::write(&path, theme("#123456")).unwrap();
     let (sender, batches) = batch_channel();
-    let chat = (setup::app().paths(paths))
+    let chat = (app::chat().paths(paths))
         .theme_mode(ThemeMode::Dark)
         .config(|config| config.watch_with(batches));
     let started = cx.update(|cx| chat.start(cx));

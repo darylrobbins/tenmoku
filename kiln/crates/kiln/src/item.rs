@@ -8,7 +8,7 @@
 
 use gpui::{App, AppContext as _, Context, Entity, FocusHandle, SharedString, Task, Window};
 use kiln_core::serde::{Serialize, de::DeserializeOwned};
-use kiln_shell::{ItemHandle as _, PaneItem, PaneView, StatusItem, Workspace};
+use kiln_shell::{CloseAnswer, ItemHandle as _, PaneItem, PaneView, StatusItem, Workspace};
 use kiln_ui::Icon;
 
 /// A tab as a function of its state: [`Item::new`] makes it from a state,
@@ -110,6 +110,28 @@ pub trait Item: Sized + 'static {
     /// Its status bar items while it's the active item.
     fn status_items(&self, _cx: &App) -> Vec<StatusItem> {
         Vec::new()
+    }
+    /// Asked before anything closes the item: its tab, its pane, its
+    /// window, or quitting. The default keeps a dirty item open and
+    /// closes any other; answer [`CloseAnswer::Ask`] to ask the user.
+    fn may_close(&mut self, window: &mut Window, cx: &mut App) -> CloseAnswer {
+        let _ = window;
+        if self.is_dirty(cx) {
+            CloseAnswer::Keep
+        } else {
+            CloseAnswer::Close
+        }
+    }
+    /// A number that changes whenever anything [`Item::may_close`] answers
+    /// by does: a close the user agreed to asks again if it changed before
+    /// the close went ahead. The default follows [`Item::is_dirty`] only.
+    fn close_revision(&self, cx: &App) -> u64 {
+        u64::from(self.is_dirty(cx))
+    }
+    /// A second item for splitting the pane, shown beside this one. The
+    /// default is `None`: the new pane opens empty.
+    fn split(&mut self, _window: &mut Window, _cx: &mut App) -> Option<Self> {
+        None
     }
 }
 
