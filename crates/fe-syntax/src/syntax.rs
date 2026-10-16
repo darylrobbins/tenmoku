@@ -841,8 +841,10 @@ impl ParseJob {
         }
     }
 
-    /// `None` if `out_of_time` says so before the parse completes.
-    fn parse(self, out_of_time: impl FnMut() -> bool) -> Option<Parsed> {
+    /// One parse attempt, with no cap or retry from scratch: `None` if
+    /// `out_of_time` says so before it completes, as when the caller can
+    /// only wait so long.
+    pub fn parse(self, out_of_time: impl FnMut() -> bool) -> Option<Parsed> {
         let started = Instant::now();
         let tree = match self.attempt(self.old_tree.as_ref(), out_of_time) {
             Attempt::Tree(tree) => Some(tree),

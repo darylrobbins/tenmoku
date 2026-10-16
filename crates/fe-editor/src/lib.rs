@@ -20,6 +20,7 @@ use fe_buffer::{
 use fe_display::{CharWidth, DisplayMap, ExpandedRow, Monospace, WRAP_SLICE_BYTES};
 use unicode_segmentation::{GraphemeCursor, GraphemeIncomplete};
 
+mod auto_indent;
 pub mod auto_save;
 pub mod commands;
 mod comment;
@@ -41,6 +42,7 @@ pub mod text_diff;
 mod typing;
 mod viewer;
 
+pub use auto_indent::IndentSuggestion;
 pub use comment::CommentTokens;
 pub use disk::{SaveError, SaveJob, Saved, save_target};
 pub use indent_style::{IndentStyle, detect_indent_style};
@@ -1092,7 +1094,9 @@ impl EditorModel {
         }
     }
 
-    /// Inserts a line break, copying the current row's indentation.
+    /// Inserts a line break, copying the current row's indentation, as for
+    /// a host without syntax; `editor.newline` indents by the host's
+    /// language ([`EditorModel::newline_in`]).
     pub fn newline(&mut self) {
         self.sync_display();
         let edits = self
@@ -1400,25 +1404,42 @@ impl EditorModel {
         selections: Vec<ResolvedSelection>,
         typed: Option<Typed>,
     ) -> BufferSnapshot {
+        self.apply_through(selections, |model, buffer| {
+            model.edit_typed(buffer, edits, typed)
+        })
+        .0
+    }
+
+    /// [`EditorModel::apply_selecting`], editing through `edit`, which
+    /// returns the transaction its edits landed in, if any changed the text.
+    /// Returns that too.
+    pub(crate) fn apply_through(
+        &mut self,
+        selections: Vec<ResolvedSelection>,
+        edit: impl FnOnce(&mut Self, &mut Buffer) -> Option<TransactionId>,
+    ) -> (BufferSnapshot, Option<TransactionId>) {
         // Anchored before catching up, whose measuring may edit the buffer
         // through another model.
-        let (selections, snapshot) = {
+        let (selections, snapshot, id) = {
             let shared = Rc::clone(&self.buffer);
             let mut buffer = shared.borrow_mut();
-            let id = self.edit_typed(&mut buffer, edits, typed);
-            if let (Some(id), Some(transactions)) = (id, &mut self.transactions) {
+            let id = edit(self, &mut buffer);
+            // A command adding to its own transaction produced it once.
+            if let (Some(id), Some(transactions)) = (id, &mut self.transactions)
+                && transactions.last() != Some(&id)
+            {
                 transactions.push(id);
             }
             let snapshot = buffer.snapshot();
             let selections = SelectionSet::from_resolved(&snapshot, selections);
             self.typing_left(&selections);
-            (selections, snapshot)
+            (selections, snapshot, id)
         };
         self.sync_display();
         self.goals.clear();
         self.selections = selections;
         self.forget_auto_closed();
-        snapshot
+        (snapshot, id)
     }
 }
 

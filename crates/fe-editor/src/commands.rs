@@ -8,7 +8,7 @@
 
 use std::ops::{Range, RangeInclusive};
 
-use fe_buffer::{Origin, ResolvedSelection, Text, TransactionId, Version};
+use fe_buffer::{BufferSnapshot, Origin, ResolvedSelection, Text, TransactionId, Version};
 use fe_command::{
     Actor, CommandError, CommandTarget, ContextFrame, ContextPredicate, ContextStack, Dispatched,
     Effect, Registry,
@@ -17,7 +17,7 @@ use fe_display::Fold;
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
-use crate::{CommentTokens, EditorModel, Movement};
+use crate::{CommentTokens, EditorModel, IndentSuggestion, Movement};
 
 /// The context frame name an editor has focus in, and every editor
 /// command's context predicate.
@@ -54,6 +54,23 @@ pub trait EditorHost {
     /// language; none (the default) if it isn't known.
     fn auto_pairs(&self) -> &[(char, char)] {
         &[]
+    }
+    /// The indentation the buffer's language suggests for `row` of
+    /// `snapshot`, the text as an edit has just left it, such as a line
+    /// break before the row ([`EditorModel::newline_in`]); `None` (the
+    /// default) if it has none or isn't known, and the row's indentation
+    /// is copied.
+    fn suggest_indent(&self, snapshot: &BufferSnapshot, row: u32) -> Option<IndentSuggestion> {
+        let _ = (snapshot, row);
+        None
+    }
+    /// The earlier row that `row` of `snapshot` lines up with, as it starts
+    /// with a closer such as `}`: typing the closer re-indents its row to
+    /// match ([`EditorModel::insert_typed_in`]). `None` (the default) if it
+    /// doesn't or that isn't known.
+    fn closer_outdents(&self, snapshot: &BufferSnapshot, row: u32) -> Option<u32> {
+        let _ = (snapshot, row);
+        None
     }
     /// Changes what the view shows; the default does nothing.
     fn scroll(&mut self, request: ScrollRequest) {
@@ -391,8 +408,8 @@ pub fn registry() -> Registry<Editor> {
         "newline",
         "Insert Newline",
         true,
-        |model, _| {
-            model.newline();
+        |model, host| {
+            model.newline_in(host);
             Ok(Effect::Changed)
         },
     );
@@ -483,7 +500,7 @@ pub fn registry() -> Registry<Editor> {
                 run_as(target, actor, |model, host| {
                     let mut chars = args.text.chars();
                     match (chars.next(), chars.next()) {
-                        (Some(ch), None) => model.insert_typed(ch, host.auto_pairs()),
+                        (Some(ch), None) => model.insert_typed_in(ch, host),
                         _ => model.insert(&args.text),
                     }
                     Ok(Effect::Changed)
@@ -492,7 +509,7 @@ pub fn registry() -> Registry<Editor> {
         )
         .expect("editor command IDs are valid and distinct")
         .description(
-            "Replaces every selection with `text`, as typing does. A single char typed closes what it opens, in the host's language, unless auto-closing is off.",
+            "Replaces every selection with `text`, as typing does. A single char typed closes what it opens, in the host's language, unless auto-closing is off, and one typed as its row's first non-blank that closes a block re-indents the row to the block's.",
         )
         .context(ContextPredicate::identifier(CONTEXT))
         .mutates_buffer(true);

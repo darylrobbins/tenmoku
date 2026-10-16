@@ -4,14 +4,21 @@
 //! editor's registry and lets any other ID propagate to the app's registry,
 //! which kiln owns; [`init`] adds vim's commands to it.
 
-use std::{cell::Cell, ops::Range, ops::RangeInclusive, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    ops::Range,
+    ops::RangeInclusive,
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
+use fe_buffer::{BufferSnapshot, Version};
 use fe_command::{
     Actor, CommandError, CommandId, CommandMeta, ContextPredicate, DispatchError, Dispatched,
     Effect, Invocation, Registry, Source, Value,
 };
 use fe_editor::{
-    CommentTokens,
+    CommentTokens, IndentSuggestion,
     commands::{Editor, EditorHost, EditorTarget, ScrollRequest, Viewport},
 };
 use fe_keymap::{CatalogError, CommandCatalog};
@@ -229,16 +236,61 @@ pub(crate) struct ViewHost<'a> {
     pub(crate) syntax: Option<&'a Syntax>,
     /// The view's language, once loaded, whether or not its tree matches
     /// the text yet ([`loaded_language`]).
-    pub(crate) language: Option<&'static str>,
+    pub(crate) language: Option<LoadedLanguage<'a>>,
     /// Vim is on: typing inserts exactly what was typed, so no pairs.
     pub(crate) vim: bool,
 }
 
-/// The name of the language `syntax` parses, once it has loaded: known
-/// from the moment an edit lands, unlike the tree, which matches the text
-/// only from the next frame ([`synced_syntax`]).
-pub(crate) fn loaded_language(syntax: &Option<SyntaxDriver<Task<()>>>) -> Option<&'static str> {
-    Some(syntax.as_ref()?.syntax().language().name())
+/// The language `syntax` parses, once it has loaded: known from the moment
+/// an edit lands, unlike the tree, which matches the text only from the
+/// next frame ([`synced_syntax`]).
+pub(crate) fn loaded_language(
+    syntax: &Option<SyntaxDriver<Task<()>>>,
+) -> Option<LoadedLanguage<'_>> {
+    let syntax = syntax.as_ref()?.syntax();
+    Some(LoadedLanguage {
+        name: syntax.language().name(),
+        syntax,
+        reparsed: RefCell::new(None),
+        deadline: Cell::new(None),
+    })
+}
+
+/// A view's loaded language, for one dispatch: its name, and its syntax,
+/// whose tree may lag the text, which the indent hooks catch a copy of up
+/// with the text they're asked about ([`reparsed`]).
+pub(crate) struct LoadedLanguage<'a> {
+    name: &'static str,
+    syntax: &'a Syntax,
+    /// The copy caught up with the last version asked about, or `None` in
+    /// it if that ran out of time.
+    reparsed: RefCell<Option<(Version, Option<Syntax>)>>,
+    /// When the dispatch's parsing for indentation runs out of time: one
+    /// [`INDENT_PARSE_BUDGET`] from its first.
+    deadline: Cell<Option<Instant>>,
+}
+
+impl LoadedLanguage<'_> {
+    /// `f` of the syntax caught up with `snapshot`, made once per version
+    /// for the dispatch; `None` if it couldn't be in time.
+    fn caught_up<R>(
+        &self,
+        snapshot: &BufferSnapshot,
+        f: impl FnOnce(&Syntax) -> Option<R>,
+    ) -> Option<R> {
+        let mut reparsed = self.reparsed.borrow_mut();
+        if !reparsed
+            .as_ref()
+            .is_some_and(|(version, _)| *version == snapshot.version())
+        {
+            let deadline =
+                (self.deadline.get()).unwrap_or_else(|| Instant::now() + INDENT_PARSE_BUDGET);
+            self.deadline.set(Some(deadline));
+            let syntax = self::reparsed(self.syntax, snapshot, deadline);
+            *reparsed = Some((snapshot.version(), syntax));
+        }
+        f(reparsed.as_ref()?.1.as_ref()?)
+    }
 }
 
 impl EditorHost for ViewHost<'_> {
@@ -266,7 +318,7 @@ impl EditorHost for ViewHost<'_> {
     }
 
     fn comment_tokens(&self) -> Option<CommentTokens> {
-        let tokens = fe_syntax::comment_tokens(self.language?)?;
+        let tokens = fe_syntax::comment_tokens(self.language.as_ref()?.name)?;
         Some(CommentTokens {
             line: tokens.line,
             block: tokens.block,
@@ -277,7 +329,30 @@ impl EditorHost for ViewHost<'_> {
         if self.vim {
             return &[];
         }
-        self.language.map_or(&[], fe_syntax::auto_pairs)
+        (self.language.as_ref()).map_or(&[], |language| fe_syntax::auto_pairs(language.name))
+    }
+
+    fn suggest_indent(&self, snapshot: &BufferSnapshot, row: u32) -> Option<IndentSuggestion> {
+        let language = self.language.as_ref()?;
+        let suggestion = language.caught_up(snapshot, |syntax| {
+            fe_syntax::suggest_indent(syntax, snapshot.text(), row)
+        })?;
+        Some(match suggestion {
+            fe_syntax::IndentSuggestion::Relative { basis_row, delta } => {
+                IndentSuggestion::Relative { basis_row, delta }
+            }
+            fe_syntax::IndentSuggestion::Zero => IndentSuggestion::Zero,
+        })
+    }
+
+    fn closer_outdents(&self, snapshot: &BufferSnapshot, row: u32) -> Option<u32> {
+        // Vim types what's typed, as it doesn't pair.
+        if self.vim {
+            return None;
+        }
+        (self.language.as_ref()?).caught_up(snapshot, |syntax| {
+            fe_syntax::closer_outdents(syntax, snapshot.text(), row)
+        })
     }
 
     fn viewport(&self) -> Option<Viewport> {
@@ -294,6 +369,35 @@ impl EditorHost for ViewHost<'_> {
             ScrollRequest::TopRow(row) => SCROLLED.set(Some(row)),
         }
     }
+}
+
+/// How long one dispatch's [`reparsed`] calls may take altogether.
+const INDENT_PARSE_BUDGET: Duration = Duration::from_millis(20);
+
+/// A copy of `syntax`, whose tree may lag, with its tree caught up with
+/// `snapshot`, a later version of its buffer, as an edit asking how to
+/// indent has just left it; `None` once `deadline` passes, or for a file
+/// too big to parse or that parsing gave up on. The view's own tree is left
+/// as it was, to catch up on a frame.
+///
+/// A tree parsed at its own version seeds the copy: reparsing that reuses
+/// what it can of the tree, a few milliseconds for half a megabyte of
+/// well-formed code, though about a parse around errors, and it's edited
+/// forward to `snapshot`, to reparse only what changed. A tree waiting on
+/// a reparse could take as long as a parse to seed it, so then `snapshot`
+/// is parsed afresh. Every parse stops at `deadline`, so nothing runs on
+/// past it.
+fn reparsed(syntax: &Syntax, snapshot: &BufferSnapshot, deadline: Instant) -> Option<Syntax> {
+    let out_of_time = || Instant::now() >= deadline;
+    if syntax.failed() || out_of_time() {
+        return None;
+    }
+    let mut caught_up = Syntax::new(syntax.language(), snapshot);
+    if syntax.tree().is_some() && !syntax.needs_parse() {
+        caught_up.finish(syntax.parse_job().parse(out_of_time)?);
+    }
+    let parsed = caught_up.parse_until(INDENT_PARSE_BUDGET, out_of_time);
+    (parsed && caught_up.tree().is_some() && !caught_up.failed()).then_some(caught_up)
 }
 
 /// Whether a read-only view refuses `invocation`, one of the editor's: it
@@ -611,6 +715,9 @@ impl EditorView {
     }
 }
 
+#[cfg(test)]
+#[path = "auto_indent_host_tests.rs"]
+mod auto_indent_host_tests;
 #[cfg(test)]
 #[path = "comment_host_tests.rs"]
 mod comment_host_tests;
