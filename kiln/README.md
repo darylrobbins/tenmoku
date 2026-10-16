@@ -166,8 +166,9 @@ its config directory (`~/.config/kiln-gallery` on Linux, or
 ## The host example
 
 `crates/kiln/examples/host` is Kiln Chat, a small chat-like app that uses
-kiln-shell end to end, again with no code but kiln's. Its window is a
-`Shell` under the app's own root key context (`chat`): panes of
+`kiln::app` and kiln-shell end to end, again with no code but kiln's. Its
+window is kiln-shell's `Workspace` under the app's own root key context
+(`chat`): panes of
 conversations (a `PaneItem` with a message list and a `TextField`) that
 split and take tabs, a dock panel listing the conversations, a status bar
 with the app's item and the conversation's, the command palette, its own
@@ -195,7 +196,7 @@ appearance = "dark"
 bubble = "#7a3e9d"
 ```
 
-`tests/host.rs` drives it headless.
+`tests/host.rs` drives it headless through `kiln::testing`.
 
 ## Building and testing
 
