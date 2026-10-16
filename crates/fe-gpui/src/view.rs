@@ -113,6 +113,8 @@ pub struct EditorView {
     pub(crate) completion_provider: Option<std::rc::Rc<dyn crate::CompletionProvider>>,
     /// What runs before each save ([`crate::pane_item::SaveHook`]).
     pub(crate) save_hook: Option<std::rc::Rc<dyn crate::pane_item::SaveHook>>,
+    /// What saving fixes in the text ([`crate::pane_item::SaveFixes`]).
+    pub(crate) save_fixes: crate::pane_item::SaveFixes,
     /// Close the menu on `escape` and on losing focus.
     pub(crate) completion_subscriptions: Vec<Subscription>,
     /// Signature help, and where it comes from ([`crate::signature_help`]).
@@ -265,6 +267,7 @@ impl EditorView {
             completion: None,
             completion_provider: None,
             save_hook: None,
+            save_fixes: Default::default(),
             completion_subscriptions: Vec::new(),
             signature_help: Default::default(),
             ancestors: None,

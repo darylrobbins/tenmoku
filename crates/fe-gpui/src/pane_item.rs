@@ -273,6 +273,82 @@ impl EditorView {
     }
 }
 
+/// What saving fixes in an editor's text, as an `.editorconfig` asks
+/// ([`EditorView::set_save_fixes`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SaveFixes {
+    /// Remove the spaces and tabs at the end of every row.
+    pub trim_trailing_whitespace: bool,
+    /// End a non-empty text with a line ending.
+    pub insert_final_newline: bool,
+}
+
+impl EditorView {
+    /// Sets what each save fixes in the text, after the save hook runs.
+    pub fn set_save_fixes(&mut self, fixes: SaveFixes) {
+        self.save_fixes = fixes;
+    }
+
+    /// What each save fixes in the text.
+    pub fn save_fixes(&self) -> SaveFixes {
+        self.save_fixes
+    }
+
+    /// Applies the [`SaveFixes`] as one edit of the user, so one undo takes
+    /// them back; none if the text needs nothing.
+    fn apply_save_fixes(&mut self, cx: &mut Context<Self>) {
+        let SaveFixes {
+            trim_trailing_whitespace: trim,
+            insert_final_newline: newline,
+        } = self.save_fixes;
+        if !trim && !newline {
+            return;
+        }
+        let model = &mut self.model;
+        // Catch up with edits made through another view of the buffer.
+        model.sync_display();
+        let mut edits: Vec<(std::ops::Range<usize>, &str)> = Vec::new();
+        {
+            let text = model.text();
+            let rows = text.row_count();
+            let mut last_kept = 0;
+            for row in 0..rows {
+                let start = text.row_start(row);
+                let len = text.row_len(row) as usize;
+                let content = text.slice_to_string(start..start + len);
+                let kept = if trim {
+                    content.trim_end_matches([' ', '\t']).len()
+                } else {
+                    len
+                };
+                last_kept = kept;
+                if kept < len {
+                    edits.push((start + kept..start + len, ""));
+                }
+            }
+            if newline && last_kept > 0 {
+                let end = text.len();
+                match edits.last_mut() {
+                    Some((range, new)) if range.end == end => *new = "\n",
+                    _ => edits.push((end..end, "\n")),
+                }
+            }
+        }
+        if edits.is_empty() {
+            return;
+        }
+        // Not a continuation of the typing before it.
+        let selections = model.selections();
+        model.set_selections(selections);
+        // A transaction of its own, even over an open one of the user's
+        // (vim's insert session).
+        model.buffer_mut().with_transaction_aside(|buffer| {
+            buffer.edit(edits, fe_buffer::Origin::User);
+        });
+        cx.notify();
+    }
+}
+
 /// Saving off the main thread.
 impl EditorView {
     /// Saves the buffer: prepares the save here, writes the file on the
@@ -291,7 +367,10 @@ impl EditorView {
         // With none running, the text as it is now, or as the hook leaves
         // it; typing from here on is unsaved.
         let hook = self.save_hook.clone();
-        let job = (previous.is_none() && hook.is_none()).then(|| self.model.prepare_save(false));
+        let job = (previous.is_none() && hook.is_none()).then(|| {
+            self.apply_save_fixes(cx);
+            self.model.prepare_save(false)
+        });
         let editor = cx.entity();
         let window = window.window_handle();
         Self::spawn_save(cx, async move |this, cx| {
@@ -306,6 +385,9 @@ impl EditorView {
                 {
                     log::debug!("the save hook took over {SAVE_HOOK_LIMIT:?}; saving anyway");
                 }
+            }
+            if job.is_none() {
+                this.update(cx, |view, cx| view.apply_save_fixes(cx))?;
             }
             let saved = save_asking(this, job, window, cx).await;
             drop(guard);
@@ -804,6 +886,10 @@ mod tests;
 #[cfg(test)]
 #[path = "pane_item_save_tests.rs"]
 mod save_tests;
+
+#[cfg(test)]
+#[path = "save_fixes_tests.rs"]
+mod save_fixes_tests;
 
 #[cfg(test)]
 #[path = "save_hook_tests.rs"]

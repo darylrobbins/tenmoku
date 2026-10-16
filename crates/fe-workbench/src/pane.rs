@@ -1002,6 +1002,10 @@ mod configs {
                     .insert(id, (weak, path, Some(config)));
                 editor.update(cx, |editor, cx| {
                     apply_config(editor.model_mut(), &config);
+                    editor.set_save_fixes(fe_gpui::SaveFixes {
+                        trim_trailing_whitespace: config.trim_trailing_whitespace == Some(true),
+                        insert_final_newline: config.insert_final_newline == Some(true),
+                    });
                     cx.notify();
                 });
             });
@@ -1596,6 +1600,10 @@ impl Pane {
 #[cfg(test)]
 #[path = "editorconfig_tests.rs"]
 mod editorconfig_tests;
+
+#[cfg(test)]
+#[path = "editorconfig_save_tests.rs"]
+mod editorconfig_save_tests;
 
 #[cfg(test)]
 #[path = "large_file_tests.rs"]
