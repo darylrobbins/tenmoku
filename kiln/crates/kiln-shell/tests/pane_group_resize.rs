@@ -67,17 +67,13 @@ impl Opened<'_> {
 /// `nested`, the last two stack, as left | (top / bottom).
 fn open(cx: &mut TestAppContext, count: usize, nested: bool) -> Opened<'_> {
     let (host, cx) = cx.add_window_view(|_, cx| {
-        let pane = cx.new(|cx| ItemPane::new(UiTheme::default_dark(), cx));
+        let pane = cx.new(ItemPane::new);
         Host {
             group: PaneGroup::new(pane),
         }
     });
     let panes: Vec<_> = (0..count)
-        .map(|_| {
-            host.update(cx, |_, cx| {
-                cx.new(|cx| ItemPane::new(UiTheme::default_dark(), cx))
-            })
-        })
+        .map(|_| host.update(cx, |_, cx| cx.new(ItemPane::new)))
         .collect();
     let even = |n: usize| vec![1. / n as f32; n];
     let root = if nested {
@@ -130,14 +126,14 @@ fn resize_without_an_axis_or_a_frame_changes_nothing(cx: &mut TestAppContext) {
 
     // Before any frame, there are no sizes.
     let (host, cx) = cx.add_window_view(|_, cx| {
-        let pane = cx.new(|cx| ItemPane::new(UiTheme::default_dark(), cx));
+        let pane = cx.new(ItemPane::new);
         Host {
             group: PaneGroup::new(pane),
         }
     });
     let (a, b) = host.update(cx, |host, cx| {
         let a = host.group.panes()[0].clone();
-        let b = cx.new(|cx| ItemPane::new(UiTheme::default_dark(), cx));
+        let b = cx.new(ItemPane::new);
         host.group
             .split(&a, b.clone(), kiln_shell::Direction::Right);
         (a, b)

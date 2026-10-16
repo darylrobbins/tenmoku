@@ -133,14 +133,10 @@ fn drawn(ui: &UiTheme) -> [(&'static str, Hsla); 4] {
 
 #[gpui::test]
 fn the_shell_follows_a_theme_change(cx: &mut TestAppContext) {
-    let (shell, cx) =
-        cx.add_window_view(|window, cx| Shell::new("app", UiTheme::default_dark(), window, cx));
+    let (shell, cx) = cx.add_window_view(|window, cx| Shell::new("app", window, cx));
     let built_with = UiTheme::default_dark();
     // Two panes side by side, a note in each.
-    let (left, right) = (
-        cx.new(|cx| ItemPane::new(built_with, cx)),
-        cx.new(|cx| ItemPane::new(built_with, cx)),
-    );
+    let (left, right) = (cx.new(ItemPane::new), cx.new(ItemPane::new));
     for (pane, title) in [(&left, "a"), (&right, "b")] {
         let item: Box<dyn ItemHandle> = Box::new(note(title, cx));
         pane.update(cx, |pane, cx| pane.add_item(item, cx));
@@ -155,7 +151,7 @@ fn the_shell_follows_a_theme_change(cx: &mut TestAppContext) {
     });
     let panel = cx.new(|cx| Panel(cx.focus_handle()));
     let dock = cx.new(|cx| {
-        let mut dock = Dock::new(DockPosition::Right, built_with);
+        let mut dock = Dock::new(DockPosition::Right);
         dock.add_panel(panel, cx);
         dock
     });

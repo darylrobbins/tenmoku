@@ -14,7 +14,7 @@ use gpui::{
     StyleRefinement, Styled as _, Subscription, Tiling, Window, div, prelude::FluentBuilder as _,
 };
 use kiln_platform::{Capabilities, focus};
-use kiln_ui::{ROW_HEIGHT, UiTheme, ui_theme};
+use kiln_ui::{ROW_HEIGHT, ui_theme};
 
 use crate::{
     Closing, DockPosition, MenuBarView, ModalId, ModalLayer, ModalView, TitleBar, close,
@@ -33,7 +33,7 @@ type CenterFocus = Rc<dyn Fn(&App) -> FocusHandle>;
 /// cx.open_window(options, |window, cx| {
 ///     let notes = cx.new(|cx| Notes::new(window, cx));
 ///     cx.new(|cx| {
-///         let mut shell = Shell::new("notes", ui, window, cx)
+///         let mut shell = Shell::new("notes", window, cx)
 ///             .platform_chrome(Capabilities::current(), cx);
 ///         shell.set_center(notes, cx);
 ///         shell.set_title("Notes", cx);
@@ -76,11 +76,9 @@ impl Shell {
     /// the platform's close button ask the window's items first
     /// ([`close::close_window`], over the items the host gave
     /// [`close::set_window_items`]). It draws in the active theme's colours
-    /// ([`ui_theme`]), so it follows a theme change; `_ui` is unused, left
-    /// for callers until a later API cleanup.
+    /// ([`ui_theme`]), so it follows a theme change.
     pub fn new(
         context: impl Into<SharedString>,
-        _ui: UiTheme,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {

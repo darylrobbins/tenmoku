@@ -23,7 +23,6 @@ use kiln_shell::{
     PaneEvent, PaneItem, PaneState, PaneView, Workspace, WorkspaceEvent, close,
     pane::{DraggedTab, TabDropped},
 };
-use kiln_ui::ui_theme;
 use support::{APP, linux};
 
 /// A page: a pane item over a document that its splits share, whose
@@ -141,7 +140,7 @@ impl PaneView for Sheet {
 
     fn new_peer(&self, cx: &mut Context<Self>) -> Self {
         Self {
-            state: PaneState::new(ui_theme(cx), cx),
+            state: PaneState::new(cx),
             made: "peer",
         }
     }
@@ -679,7 +678,7 @@ fn a_pane_view_of_the_host_own_made_by_its_factory_and_new_peer(cx: &mut TestApp
         let new_pane = move |_: &mut Window, cx: &mut App| {
             count.set(count.get() + 1);
             cx.new(|cx| Sheet {
-                state: PaneState::new(ui_theme(cx), cx),
+                state: PaneState::new(cx),
                 made: "factory",
             })
         };

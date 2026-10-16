@@ -18,7 +18,7 @@ use std::rc::Rc;
 
 use fe_command::{Actor, CommandTarget, ContextPredicate, Dispatched, Effect, Registry};
 use fe_gpui::commands::RunCommand;
-use fe_ui::{Icon, TextInput, UiTheme};
+use fe_ui::{Icon, TextInput};
 use gpui::{App, Context, Entity, EventEmitter, Global, IntoElement, Render, SharedString, Window};
 use kiln_shell::{DockItem, DockPosition, DockState, DockView, PanelId};
 
@@ -187,7 +187,6 @@ pub struct Dock {
 
 impl Dock {
     /// Shows `project` first.
-    #[expect(clippy::too_many_arguments, reason = "one per panel, then the theme")]
     pub fn new(
         project: Entity<ProjectPanel>,
         search: Entity<SearchPanel>,
@@ -195,10 +194,9 @@ impl Dock {
         changes: Entity<GitPanel>,
         references: Entity<ReferencesPanel>,
         problems: Entity<ProblemsPanel>,
-        ui: UiTheme,
         cx: &App,
     ) -> Self {
-        let mut state = DockState::new(DockPosition::Right, ui)
+        let mut state = DockState::new(DockPosition::Right)
             .size(PANEL_WIDTH)
             .shortcut_contexts([crate::KEY_CONTEXT, fe_gpui::KEY_CONTEXT]);
         state.add_panel(project.clone(), cx);

@@ -14,7 +14,7 @@ use gpui::{
 use kiln_core::{Keymap, KeymapLayer};
 use kiln_platform::{commands, keys};
 use kiln_shell::{Dock, DockItem, DockPosition, DockState, DockView as _, PanelId, RailAction};
-use kiln_ui::{Icon, UiTheme};
+use kiln_ui::Icon;
 
 mod term {
     kiln_platform::commands!(
@@ -106,7 +106,7 @@ fn open(position: DockPosition, cx: &mut TestAppContext) -> (Entity<Dock>, &mut 
         let notes = panel("notes", Icon::Files, true, cx);
         let log = panel("log", Icon::ListTree, false, cx);
         let dock = cx.new(|cx| {
-            let state = DockState::new(position, UiTheme::default_dark())
+            let state = DockState::new(position)
                 .size(px(200.))
                 .shortcut_contexts(["host"]);
             let mut dock = Dock::with_state(state);

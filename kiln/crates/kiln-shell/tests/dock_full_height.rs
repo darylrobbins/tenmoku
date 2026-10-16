@@ -13,7 +13,7 @@ use gpui::{
     VisualTestContext, Window, canvas, div,
 };
 use kiln_shell::{Dock, DockItem, DockPosition, DockView as _, PanelId, Shell};
-use kiln_ui::{Icon, UiTheme};
+use kiln_ui::Icon;
 use support::{APP, Pad};
 
 /// Records where it was laid out.
@@ -69,7 +69,7 @@ fn side_docks_run_full_height_with_the_bottom_dock_between(cx: &mut TestAppConte
             focus: cx.focus_handle(),
             ran: Vec::new(),
         });
-        let mut shell = Shell::new(APP, UiTheme::default_dark(), window, cx);
+        let mut shell = Shell::new(APP, window, cx);
         shell.set_center(pad, cx);
         shell
     });
@@ -82,7 +82,7 @@ fn side_docks_run_full_height_with_the_bottom_dock_between(cx: &mut TestAppConte
     .map(|(at, id)| {
         let panel = probe(id, cx);
         let dock = cx.new(|cx| {
-            let mut dock = Dock::new(at, UiTheme::default_dark());
+            let mut dock = Dock::new(at);
             dock.add_panel(panel, cx);
             dock
         });

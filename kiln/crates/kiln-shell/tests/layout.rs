@@ -28,7 +28,7 @@ use kiln_shell::{
     PaneView, PanelId,
     layout::{self, WindowLayout},
 };
-use kiln_ui::{Icon, UiTheme};
+use kiln_ui::Icon;
 
 /// The documents on "disk", by name, shared by the views that show them.
 #[derive(Default)]
@@ -162,9 +162,8 @@ struct Host {
 
 impl Host {
     fn new(cx: &mut Context<Self>) -> Self {
-        let ui = UiTheme::default_dark();
-        let pane = cx.new(|cx| ItemPane::new(ui, cx));
-        let mut dock = DockState::new(DockPosition::Right, ui);
+        let pane = cx.new(ItemPane::new);
+        let mut dock = DockState::new(DockPosition::Right);
         for id in ["files", "log"] {
             let panel = cx.new(|cx| Panel(PanelId(id), cx.focus_handle()));
             dock.add_panel(panel, cx);
@@ -279,8 +278,7 @@ fn two_split_views_of_a_document_round_trip(cx: &mut TestAppContext) {
     let mut app = cx.cx.clone();
     let (restored, cx) = open(&mut app);
     let filled = cx.update(|window, cx| {
-        let ui = UiTheme::default_dark();
-        let mut new_pane = |_: &mut Window, cx: &mut App| cx.new(|cx| ItemPane::new(ui, cx));
+        let mut new_pane = |_: &mut Window, cx: &mut App| cx.new(ItemPane::new);
         let panes = layout::restore_panes(&entry["panes"], &mut new_pane, window, cx).unwrap();
         restored.update(cx, |host, cx| {
             host.group.set_root(panes.root);

@@ -149,7 +149,7 @@ fn open(cx: &mut TestAppContext) -> Opened<'_> {
     let first = Rc::new(RefCell::new(None));
     let made = first.clone();
     let (host, cx) = cx.add_window_view(move |_, cx| {
-        let pane = cx.new(|cx| ItemPane::new(UiTheme::default_dark(), cx));
+        let pane = cx.new(ItemPane::new);
         made.replace(Some(pane.clone()));
         let mut host = Host {
             group: PaneGroup::new(pane.clone()),

@@ -26,7 +26,6 @@ use kiln_shell::{
     close::{self, Items, LiveItems},
     pane::Peers,
 };
-use kiln_ui::UiTheme;
 
 /// A pane item that can refuse to close: while `busy` (as a chat streaming
 /// a reply is), or `dirty`, it asks with a prompt if `asks`, else stays.
@@ -112,10 +111,9 @@ struct Host {
 
 impl Host {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let ui = UiTheme::default_dark();
-        let pane = cx.new(|cx| ItemPane::new(ui, cx));
+        let pane = cx.new(ItemPane::new);
         let shell = cx.new(|cx| {
-            let mut shell = Shell::new("test_app", ui, window, cx);
+            let mut shell = Shell::new("test_app", window, cx);
             shell.set_center(pane.clone(), cx);
             shell
         });

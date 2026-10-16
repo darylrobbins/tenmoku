@@ -13,7 +13,7 @@ use gpui::{
     VisualTestContext, Window, div, hsla,
 };
 use kiln_shell::{ItemHandle, ItemPane, PaneItem, PaneView as _};
-use kiln_ui::{ActiveTheme as _, UiTheme};
+use kiln_ui::ActiveTheme as _;
 use support::note::{Note, note};
 
 struct Host(Entity<ItemPane>);
@@ -83,8 +83,7 @@ fn dots(pane: &Entity<ItemPane>, colour: Hsla, cx: &mut VisualTestContext) -> Ve
 // the colour the glyphs are painted in is checked below.
 #[gpui::test]
 fn a_tinted_title_is_drawn_in_its_tint_active_or_not(cx: &mut TestAppContext) {
-    let (host, cx) =
-        cx.add_window_view(|_, cx| Host(cx.new(|cx| ItemPane::new(UiTheme::default_dark(), cx))));
+    let (host, cx) = cx.add_window_view(|_, cx| Host(cx.new(ItemPane::new)));
     let pane = host.read_with(cx, |host, _| host.0.clone());
     let tint = hsla(0.3, 0.6, 0.5, 1.);
     let [a, b] = ["a", "b"].map(|title| note(title, cx));
@@ -144,7 +143,6 @@ mod real_glyphs {
     };
     use kiln_platform::screenshots::RgbaImage;
     use kiln_shell::{ItemHandle, ItemPane, PaneView as _};
-    use kiln_ui::UiTheme;
 
     #[cfg(not(target_os = "linux"))]
     use gpui::{NoopTextSystem, PlatformTextSystem};
@@ -306,7 +304,7 @@ mod real_glyphs {
         });
         let window = cx
             .open_window(size(px(480.), px(160.)), |_, cx| {
-                let pane = cx.new(|cx| ItemPane::new(UiTheme::default_dark(), cx));
+                let pane = cx.new(ItemPane::new);
                 cx.new(|_| Host(pane))
             })
             .expect("open a window");
@@ -361,8 +359,7 @@ mod real_glyphs {
 #[gpui::test]
 fn a_title_is_painted_in_its_colour_active_or_not(cx: &mut TestAppContext) {
     let tint = hsla(0.3, 0.6, 0.5, 1.);
-    let (host, cx) =
-        cx.add_window_view(|_, cx| Host(cx.new(|cx| ItemPane::new(UiTheme::default_dark(), cx))));
+    let (host, cx) = cx.add_window_view(|_, cx| Host(cx.new(ItemPane::new)));
     let pane = host.read_with(cx, |host, _| host.0.clone());
     let tinted = note("tinted", cx);
     tinted.update(cx, |note: &mut Note, _| note.tint = Some(tint));

@@ -337,7 +337,7 @@ impl Workbench {
         let terminal_dock = cx.new(|cx| {
             // Shown by the sidebar's Terminal action and `terminal.toggle`,
             // so it draws no rail of its own.
-            let state = DockState::new(DockPosition::Bottom, ui)
+            let state = DockState::new(DockPosition::Bottom)
                 .without_rail()
                 .shortcut_contexts([KEY_CONTEXT, fe_gpui::KEY_CONTEXT]);
             let mut dock = kiln_shell::Dock::with_state(state);
@@ -376,7 +376,6 @@ impl Workbench {
                 changes.clone(),
                 references,
                 problems,
-                ui,
                 cx,
             )
         });
@@ -436,7 +435,7 @@ impl Workbench {
         toast::init(cx);
         let toasts = cx.new(|cx| toast::ToastLayer::new(ui, window, cx));
         let shell = cx.new(|cx| {
-            let mut shell = Shell::new(KEY_CONTEXT, ui, window, cx).text_size(px(12.));
+            let mut shell = Shell::new(KEY_CONTEXT, window, cx).text_size(px(12.));
             shell.set_title(title_bar::name(launch_root.as_deref()), cx);
             shell.set_dock(DockPosition::Right, Some(dock.clone().into()), cx);
             shell.set_dock(DockPosition::Bottom, Some(terminal_dock.clone().into()), cx);

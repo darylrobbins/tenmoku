@@ -17,7 +17,7 @@ use gpui::{
 use kiln_core::{Keymap, KeymapLayer, MenuBar};
 use kiln_platform::{commands, keys, menus};
 use kiln_shell::{Dock, DockItem, DockPosition, ModalId, ModalView, PanelId, Shell};
-use kiln_ui::{Icon, ROW_HEIGHT, UiTheme};
+use kiln_ui::{Icon, ROW_HEIGHT};
 use std::{cell::Cell, rc::Rc};
 use support::{APP, KEYS, MENUS, Pad, linux, mac, pad};
 
@@ -112,8 +112,7 @@ fn open(cx: &mut TestAppContext, capabilities: kiln_platform::Capabilities) -> O
             ran: Vec::new(),
         });
         sink.set(Some(pad.clone()));
-        let mut shell =
-            Shell::new(APP, UiTheme::default_dark(), window, cx).platform_chrome(capabilities, cx);
+        let mut shell = Shell::new(APP, window, cx).platform_chrome(capabilities, cx);
         shell.set_center(pad, cx);
         shell.set_title("Notes", cx);
         shell
@@ -137,7 +136,7 @@ fn docks_beside_the_centre_and_the_status_bar_below(cx: &mut TestAppContext) {
     let docks = [(DockPosition::Left, &left), (DockPosition::Right, &right)].map(|(at, panel)| {
         let panel = panel.clone();
         let dock = s.cx.new(|cx| {
-            let mut dock = Dock::new(at, UiTheme::default_dark());
+            let mut dock = Dock::new(at);
             dock.add_panel(panel, cx);
             dock
         });

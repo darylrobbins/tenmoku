@@ -156,7 +156,7 @@ impl Pane {
         cx: &mut Context<Self>,
     ) -> Self {
         Self {
-            state: PaneState::new(ui, cx),
+            state: PaneState::new(cx),
             tabs: Vec::new(),
             opening: None,
             reads: HashMap::new(),

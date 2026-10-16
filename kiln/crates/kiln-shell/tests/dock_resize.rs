@@ -20,7 +20,7 @@ use kiln_shell::{
     dock::{MIN_DOCK_HEIGHT, MIN_DOCK_WIDTH, track_centre},
     pane_group::{MIN_PANE_HEIGHT, MIN_PANE_WIDTH},
 };
-use kiln_ui::{Icon, RAIL_WIDTH, UiTheme};
+use kiln_ui::{Icon, RAIL_WIDTH};
 
 /// The size every dock is built with.
 const BUILT: Pixels = px(200.);
@@ -105,7 +105,7 @@ impl Render for Host {
 /// given.
 fn new_dock(position: DockPosition, saved: Option<&Value>, cx: &mut App) -> Entity<Dock> {
     cx.new(|cx| {
-        let mut state = DockState::new(position, UiTheme::default_dark()).size(BUILT);
+        let mut state = DockState::new(position).size(BUILT);
         if let Some(saved) = saved {
             state.restore(saved);
         }
@@ -483,14 +483,13 @@ fn a_dock_replaced_while_kept_leaves_nothing_behind(cx: &mut TestAppContext) {
 
 #[test]
 fn the_size_is_saved_and_restored_at_least_the_least() {
-    let ui = UiTheme::default_dark();
-    let mut dock = DockState::new(DockPosition::Right, ui).size(BUILT);
+    let mut dock = DockState::new(DockPosition::Right).size(BUILT);
     dock.set_size(px(260.));
     let saved = dock.save();
     assert_eq!(saved.get("size").and_then(Value::as_f64), Some(260.));
 
     let restored = |position, saved: &Value| {
-        let mut dock = DockState::new(position, ui).size(BUILT);
+        let mut dock = DockState::new(position).size(BUILT);
         dock.restore(saved);
         dock.current_size()
     };

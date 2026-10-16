@@ -18,7 +18,7 @@ use kiln_shell::{
     Destination, Direction, ItemHandle, ItemPane, PaneView,
     pane::{DropTarget, DropZone, TabDropped, insertion, marker},
 };
-use kiln_ui::{TAB_HEIGHT, UiTheme};
+use kiln_ui::TAB_HEIGHT;
 use support::note::{Note, note};
 
 /// A host drawing one pane, and the tabs dropped on it.
@@ -84,7 +84,7 @@ fn open(cx: &mut TestAppContext) -> Opened<'_> {
     let first = Rc::new(RefCell::new(None));
     let made = first.clone();
     let (host, cx) = cx.add_window_view(move |_, cx| {
-        let pane = cx.new(|cx| ItemPane::new(UiTheme::default_dark(), cx));
+        let pane = cx.new(ItemPane::new);
         made.replace(Some(pane.clone()));
         let dropped: Rc<RefCell<Vec<Destination<ItemPane>>>> = Rc::default();
         let sink = dropped.clone();

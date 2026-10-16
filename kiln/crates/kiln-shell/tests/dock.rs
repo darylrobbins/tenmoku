@@ -18,7 +18,7 @@ use kiln_platform::keys;
 use kiln_shell::{
     Dock, DockItem, DockPosition, DockState, DockView as _, PanelId, dock::DockEvent,
 };
-use kiln_ui::{Icon, RAIL_WIDTH, UiTheme};
+use kiln_ui::{Icon, RAIL_WIDTH};
 
 /// What sets one test panel apart from another.
 trait Kind: 'static {
@@ -192,7 +192,7 @@ fn open(cx: &mut TestAppContext) -> Opened<'_> {
         made_notes.replace(Some(notes.clone()));
         made_log.replace(Some(log.clone()));
         let dock = cx.new(|cx| {
-            let state = DockState::new(DockPosition::Right, UiTheme::default_dark())
+            let state = DockState::new(DockPosition::Right)
                 .size(px(200.))
                 .shortcut_contexts(["host"]);
             let mut dock = Dock::with_state(state);
@@ -380,7 +380,7 @@ fn a_left_dock_has_its_rail_on_the_left(cx: &mut TestAppContext) {
     let (host, cx) = cx.add_window_view(|_, cx| {
         let notes = cx.new(|cx| Panel::<Notes>::new(0, cx));
         let dock = cx.new(|cx| {
-            let mut dock = Dock::new(DockPosition::Left, UiTheme::default_dark());
+            let mut dock = Dock::new(DockPosition::Left);
             dock.add_panel(notes, cx);
             dock
         });

@@ -17,7 +17,7 @@ use kiln_shell::{
     dock::{DrawnDock, MIN_DOCK_HEIGHT, MIN_DOCK_WIDTH, track_centre},
     pane_group::{MIN_PANE_HEIGHT, MIN_PANE_WIDTH},
 };
-use kiln_ui::{Icon, UiTheme};
+use kiln_ui::Icon;
 
 /// The size the dock is built with.
 const BUILT: Pixels = px(200.);
@@ -175,7 +175,7 @@ fn open(position: DockPosition, cx: &mut TestAppContext) -> Opened<'_> {
         let notes = panel(NOTES, Icon::Files, cx);
         let log = panel(LOG, Icon::ListTree, cx);
         let dock = cx.new(|cx| {
-            let state = DockState::new(position, UiTheme::default_dark()).size(BUILT);
+            let state = DockState::new(position).size(BUILT);
             let mut dock = Dock::with_state(state);
             dock.add_panel(notes, cx);
             dock.add_panel(log, cx);
@@ -330,8 +330,7 @@ fn the_width_at_a_side_and_the_height_at_the_bottom_are_kept_apart(cx: &mut Test
 
 #[test]
 fn both_sizes_are_saved_and_restored() {
-    let ui = UiTheme::default_dark();
-    let mut dock = DockState::new(DockPosition::Bottom, ui).size(BUILT);
+    let mut dock = DockState::new(DockPosition::Bottom).size(BUILT);
     dock.set_size(px(300.));
     dock.set_position(DockPosition::Right);
     dock.set_size(px(260.));
@@ -343,7 +342,7 @@ fn both_sizes_are_saved_and_restored() {
 
     // Restored at either position, both come back.
     for position in [DockPosition::Bottom, DockPosition::Left] {
-        let mut restored = DockState::new(position, ui).size(BUILT);
+        let mut restored = DockState::new(position).size(BUILT);
         restored.restore(&saved);
         assert_eq!(restored.side_size(), px(260.), "{position:?}");
         assert_eq!(restored.bottom_size(), px(300.), "{position:?}");
@@ -354,14 +353,14 @@ fn both_sizes_are_saved_and_restored() {
         ("side_size", Value::from(20.)),
         ("bottom_size", Value::from(20.)),
     ]);
-    let mut restored = DockState::new(DockPosition::Bottom, ui).size(BUILT);
+    let mut restored = DockState::new(DockPosition::Bottom).size(BUILT);
     restored.restore(&small);
     assert_eq!(restored.side_size(), MIN_DOCK_WIDTH);
     assert_eq!(restored.bottom_size(), MIN_DOCK_HEIGHT);
 
     // Saved with only a size, it's the size at the dock's position.
     let old = Value::from_iter([("size", Value::from(310.))]);
-    let mut restored = DockState::new(DockPosition::Bottom, ui).size(BUILT);
+    let mut restored = DockState::new(DockPosition::Bottom).size(BUILT);
     restored.restore(&old);
     assert_eq!(restored.bottom_size(), px(310.));
     assert_eq!(restored.side_size(), BUILT);

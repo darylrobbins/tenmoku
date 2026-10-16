@@ -19,7 +19,6 @@ use kiln_shell::{
     item::{ItemState, state},
     layout,
 };
-use kiln_ui::UiTheme;
 
 #[derive(Serialize, Deserialize)]
 #[serde(crate = "kiln_core::serde")]
@@ -116,11 +115,10 @@ fn slip(text: &str, caret: usize, cx: &mut VisualTestContext) -> Entity<Slip> {
 /// `groups`' panes saved as one group: the first pane, the others split
 /// to its right.
 fn save(panes: Vec<Vec<Entity<Slip>>>, cx: &mut VisualTestContext) -> Value {
-    let ui = UiTheme::default_dark();
     let mut made: Vec<Entity<ItemPane>> = Vec::new();
     let mut group: Option<PaneGroup<ItemPane>> = None;
     for items in panes {
-        let pane = cx.new(|cx| ItemPane::new(ui, cx));
+        let pane = cx.new(ItemPane::new);
         pane.update(cx, |pane, cx| {
             for item in items {
                 pane.add_item(Box::new(item), cx);
@@ -139,8 +137,7 @@ fn save(panes: Vec<Vec<Entity<Slip>>>, cx: &mut VisualTestContext) -> Value {
 /// The slips `saved` restores to, per pane, as (text, caret).
 fn restore(saved: &Value, cx: &mut VisualTestContext) -> Vec<Vec<(String, usize)>> {
     let restored = cx.update(|window, cx| {
-        let ui = UiTheme::default_dark();
-        let mut new_pane = |_: &mut Window, cx: &mut App| cx.new(|cx| ItemPane::new(ui, cx));
+        let mut new_pane = |_: &mut Window, cx: &mut App| cx.new(ItemPane::new);
         layout::restore_panes(saved, &mut new_pane, window, cx).unwrap()
     });
     let mut group = PaneGroup::new(restored.active.clone());

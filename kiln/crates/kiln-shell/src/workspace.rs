@@ -147,8 +147,8 @@ impl<P: PaneView> Workspace<P> {
             focus: cx.focus_handle(),
         });
         let shell = cx.new(|cx| {
-            let mut shell = Shell::new(context.clone(), ui_theme(cx), window, cx)
-                .platform_chrome(Capabilities::of(cx), cx);
+            let mut shell =
+                Shell::new(context.clone(), window, cx).platform_chrome(Capabilities::of(cx), cx);
             shell.set_center(centre, cx);
             shell
         });
@@ -263,8 +263,7 @@ impl<P: PaneView> Workspace<P> {
         let dock = match self.docks.get(&position) {
             Some(dock) => dock.clone(),
             None => {
-                let state = DockState::new(position, ui_theme(cx))
-                    .shortcut_contexts([self.context.clone()]);
+                let state = DockState::new(position).shortcut_contexts([self.context.clone()]);
                 let dock = cx.new(|_| Dock::with_state(state));
                 // A rail click hid the panel that had focus.
                 let hid =
@@ -777,7 +776,7 @@ impl Workspace<ItemPane> {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let new_pane = |_: &mut Window, cx: &mut App| cx.new(|cx| ItemPane::new(ui_theme(cx), cx));
+        let new_pane = |_: &mut Window, cx: &mut App| cx.new(ItemPane::new);
         let first = new_pane(window, cx);
         Self::new(context, first, new_pane, window, cx)
     }

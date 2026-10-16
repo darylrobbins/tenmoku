@@ -23,7 +23,6 @@ use kiln_shell::{
     Picker, Shell,
     command_palette::{self, COMMAND_PALETTE, CommandPalette},
 };
-use kiln_ui::UiTheme;
 
 const KEYS: &str = r#"
 [[bindings]]
@@ -136,7 +135,7 @@ fn open(cx: &mut TestAppContext) -> (Entity<Notes>, Entity<Shell>, &mut VisualTe
             ran: Vec::new(),
         });
         let shell = cx.new(|cx| {
-            let mut shell = Shell::new("notes_app", UiTheme::default_dark(), window, cx);
+            let mut shell = Shell::new("notes_app", window, cx);
             shell.set_center(notes, cx);
             shell
         });

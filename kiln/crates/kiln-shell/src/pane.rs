@@ -28,7 +28,7 @@ use gpui::{
     Pixels, Point, Render, ScrollHandle, SharedString, Styled as _, Subscription, WeakEntity,
     Window, canvas, div, point, px, size,
 };
-use kiln_ui::{TAB_HEIGHT, TabBar, UiTheme, ui_theme};
+use kiln_ui::{TAB_HEIGHT, TabBar, ui_theme};
 
 use crate::{
     ItemHandle, ItemId,
@@ -228,9 +228,8 @@ pub struct PaneState<V> {
 
 impl<V: PaneView> PaneState<V> {
     /// An empty pane, for the view `cx` makes. It draws in the active
-    /// theme's colours ([`ui_theme`]), so it follows a theme change; `_ui`
-    /// is unused, left for callers until a later API cleanup.
-    pub fn new(_ui: UiTheme, cx: &mut Context<V>) -> Self {
+    /// theme's colours ([`ui_theme`]), so it follows a theme change.
+    pub fn new(cx: &mut Context<V>) -> Self {
         Self {
             items: Vec::new(),
             active: 0,
@@ -790,9 +789,9 @@ pub struct ItemPane {
 }
 
 impl ItemPane {
-    pub fn new(ui: UiTheme, cx: &mut Context<Self>) -> Self {
+    pub fn new(cx: &mut Context<Self>) -> Self {
         Self {
-            state: PaneState::new(ui, cx),
+            state: PaneState::new(cx),
         }
     }
 
@@ -825,7 +824,7 @@ impl PaneView for ItemPane {
     }
 
     fn new_peer(&self, cx: &mut Context<Self>) -> Self {
-        let mut pane = Self::new(ui_theme(cx), cx);
+        let mut pane = Self::new(cx);
         pane.state.set_peers(self.state.peers.clone());
         pane
     }

@@ -30,7 +30,7 @@
 //!
 //! ```ignore
 //! let dock = cx.new(|cx| {
-//!     let mut dock = Dock::new(DockPosition::Left, ui);
+//!     let mut dock = Dock::new(DockPosition::Left);
 //!     dock.add_panel(outline.clone(), cx);
 //!     dock
 //! });
@@ -54,7 +54,7 @@ use gpui::{
 use kiln_command::{CommandId, ContextFrame, ContextStack, Invocation, Source, Value};
 use kiln_core::{shortcut_label, shortcuts};
 use kiln_platform::{command_actions::dispatch_invocation, keys};
-use kiln_ui::{ActivityRail, Icon, RAIL_WIDTH, RailButton, TAB_HEIGHT, Tooltip, UiTheme, ui_theme};
+use kiln_ui::{ActivityRail, Icon, RAIL_WIDTH, RailButton, TAB_HEIGHT, Tooltip, ui_theme};
 
 use crate::pane_group::{MIN_PANE_HEIGHT, MIN_PANE_WIDTH};
 
@@ -377,9 +377,8 @@ pub struct DockState {
 
 impl DockState {
     /// An empty dock at `position`, shown, 240 px across. It draws in the
-    /// active theme's colours ([`ui_theme`]), so it follows a theme change;
-    /// `_ui` is unused, left for callers until a later API cleanup.
-    pub fn new(position: DockPosition, _ui: UiTheme) -> Self {
+    /// active theme's colours ([`ui_theme`]), so it follows a theme change.
+    pub fn new(position: DockPosition) -> Self {
         Self {
             position,
             panels: Vec::new(),
@@ -1090,9 +1089,9 @@ pub struct Dock {
 }
 
 impl Dock {
-    pub fn new(position: DockPosition, ui: UiTheme) -> Self {
+    pub fn new(position: DockPosition) -> Self {
         Self {
-            state: DockState::new(position, ui),
+            state: DockState::new(position),
         }
     }
 
