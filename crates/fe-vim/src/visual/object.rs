@@ -184,14 +184,34 @@ pub(crate) fn select_object(
                 if count > 1 && matches!(args.text_object, InnerWord | InnerBigWord) =>
             {
                 let end = inner_words(&text, ends.cursor, count, big, false);
-                ran_out = end.is_none();
+                if end.is_none() {
+                    kind = ends.kind;
+                    ran_out = true;
+                }
                 (start, end.unwrap_or_else(|| position(&text, text.len())))
             }
             Some(_) if count > 1 => match object(ends.cursor, count) {
                 Some(found) => found,
+                // Running out of the text: from the caret's run to its end.
+                None if words => {
+                    let mut start = cursor_at(&text, ends.cursor);
+                    let class = start.class_on_row(start.ix, big);
+                    while start.ix > 0 && start.class_on_row(start.ix - 1, big) == class {
+                        start.ix -= 1;
+                    }
+                    kind = ends.kind;
+                    ran_out = true;
+                    (start.offset(), position(&text, text.len()))
+                }
                 None => return failed(state),
             },
             Some(found) => found,
+            // Only blanks to the end of the text: from the caret.
+            None if words && !text.is_empty() => {
+                kind = ends.kind;
+                ran_out = true;
+                (ends.anchor, position(&text, text.len()))
+            }
             None => return failed(state),
         }
     } else if !forward && matches!(args.text_object, AWord | ABigWord) {
